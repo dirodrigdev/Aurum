@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Landmark, RotateCcw, Settings as SettingsIcon } from 'lucide-react';
+import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
 import { cn, ConnectionBanner } from './Components';
 
 export const Layout: React.FC = () => {
@@ -9,7 +9,7 @@ export const Layout: React.FC = () => {
   const navItems = useMemo(
     () => [
       { to: '/patrimonio', label: 'Patrimonio', icon: Landmark },
-      { label: 'Actualizar', icon: RotateCcw, onClick: () => window.location.reload() },
+      { to: '/closing', label: 'Cierre', icon: CalendarRange },
       { to: '/settings', label: 'Ajustes', icon: SettingsIcon },
     ],
     [],
