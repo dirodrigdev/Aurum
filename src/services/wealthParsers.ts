@@ -64,9 +64,17 @@ const findAmountNearText = (text: string, pattern: RegExp): number | null => {
 };
 
 const extractAllLargeAmounts = (text: string): number[] => {
-  return [...text.matchAll(/([0-9][0-9.,]{4,})/g)]
+  return [...text.matchAll(/([0-9][0-9\s.,]{4,})/g)]
     .map((m) => parseLocalizedNumber(m[1]) || 0)
     .filter((n) => Number.isFinite(n) && n > 0);
+};
+
+const extractLargestAmountFromSnippet = (snippet: string): number | null => {
+  const values = [...snippet.matchAll(/([0-9][0-9\s.,]{4,})/g)]
+    .map((m) => parseLocalizedNumber(m[1]) || 0)
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => b - a);
+  return values[0] || null;
 };
 
 const build = (items: Array<ParsedWealthSuggestion | null>): ParsedWealthSuggestion[] => {
@@ -197,10 +205,17 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
 };
 
 const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
-  // Prioridad 1: valor explícito junto a "Total ahorrado actual"
+  // Prioridad 1: valor dentro del bloque "Total ahorrado actual" (OCR robusto)
+  const blockMatch =
+    text.match(/total\s+ahorrad[oó][\s\S]{0,140}?actual[\s\S]{0,180}/i) ||
+    text.match(/total[\s\S]{0,120}?ahorrad[oó][\s\S]{0,220}/i);
+  const totalFromBlock = blockMatch ? extractLargestAmountFromSnippet(blockMatch[0]) : null;
+
+  // Prioridad 2: detección directa junto a etiqueta
   const totalAhorradoActual =
-    findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,30}([0-9][0-9.,]{4,})/i) ||
-    findAmountNearText(text, /total\s+ahorrado[^0-9]{0,30}([0-9][0-9.,]{4,})/i);
+    totalFromBlock ||
+    findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i) ||
+    findAmountNearText(text, /total\s+ahorrado[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
 
   // Prioridad 2: fallback robusto para OCR ruidoso: tomar el monto mayor del documento
   const largestAmount = extractAllLargeAmounts(text).sort((a, b) => b - a)[0] || null;
@@ -286,8 +301,10 @@ export const parseWealthFromOcrText = (
     planvital:
       sourceHint === 'planvital' ||
       lower.includes('planvital') ||
+      lower.includes('plan vital') ||
       lower.includes('afp') ||
-      lower.includes('total ahorrado actual'),
+      lower.includes('total ahorrado') ||
+      lower.includes('ahorrado actual'),
     wise: sourceHint === 'wise' || lower.includes('wise'),
     global66:
       sourceHint === 'global66' ||
