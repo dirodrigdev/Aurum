@@ -66,7 +66,7 @@ const buildEnhancedOcrImage = async (file: File): Promise<Blob> => {
   const img = await fileToImage(file);
 
   // Escalamos para mejorar lectura de números pequeños y aplicamos alto contraste.
-  const scale = 2;
+  const scale = 3;
   const w = Math.max(1, Math.round(img.width * scale));
   const h = Math.max(1, Math.round(img.height * scale));
 
@@ -89,6 +89,40 @@ const buildEnhancedOcrImage = async (file: File): Promise<Blob> => {
     data[i + 2] = contrast;
   }
 
+  ctx.putImageData(imageData, 0, 0);
+  return canvasToBlob(canvas);
+};
+
+const buildFocusedCrop = async (
+  file: File,
+  area: { x: number; y: number; w: number; h: number },
+  scale = 3,
+): Promise<Blob> => {
+  const img = await fileToImage(file);
+  const cropX = Math.floor(img.width * area.x);
+  const cropY = Math.floor(img.height * area.y);
+  const cropW = Math.floor(img.width * area.w);
+  const cropH = Math.floor(img.height * area.h);
+
+  const outW = Math.max(1, Math.floor(cropW * scale));
+  const outH = Math.max(1, Math.floor(cropH * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No se pudo inicializar crop OCR.');
+
+  ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+  const imageData = ctx.getImageData(0, 0, outW, outH);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const boosted = gray > 165 ? 255 : gray < 80 ? 0 : gray;
+    data[i] = boosted;
+    data[i + 1] = boosted;
+    data[i + 2] = boosted;
+  }
   ctx.putImageData(imageData, 0, 0);
   return canvasToBlob(canvas);
 };
@@ -138,6 +172,7 @@ const scoreOcrText = (text: string): number => {
 
 export const runOcrFromFile = async (
   file: File,
+  sourceHint: string = 'auto',
   onProgress?: (pct: number, status: string) => void,
 ): Promise<string> => {
   const mime = file.type || '';
@@ -156,6 +191,7 @@ export const runOcrFromFile = async (
 
   let enhancedText = '';
   let focusedText = '';
+  let dividendFocusedText = '';
   try {
     onProgress?.(5, 'enhancing_image');
     const enhanced = await buildEnhancedOcrImage(file);
@@ -165,22 +201,43 @@ export const runOcrFromFile = async (
     // Si falla el preprocesado, seguimos con OCR original.
   }
 
-  try {
-    onProgress?.(8, 'focused_crop');
-    const focused = await buildFocusedCenterCrop(file);
-    const resultFocused = await window.Tesseract!.recognize(focused, 'spa+eng', {
-      tessedit_pageseg_mode: '6',
-      tessedit_char_whitelist: '0123456789$., TotalahorradoactualTOTALAHORRADOACTUAL',
-    });
-    focusedText = String(resultFocused?.data?.text || '').trim();
-  } catch {
-    // Si falla crop, no bloqueamos.
+  if (sourceHint === 'dividendo') {
+    try {
+      onProgress?.(8, 'focused_dividend_crop');
+      const topRight = await buildFocusedCrop(file, { x: 0.56, y: 0.26, w: 0.38, h: 0.16 }, 4);
+      const bottomCenter = await buildFocusedCrop(file, { x: 0.08, y: 0.44, w: 0.62, h: 0.22 }, 4);
+      const [r1, r2] = await Promise.all([
+        window.Tesseract!.recognize(topRight, 'spa+eng', {
+          tessedit_pageseg_mode: '6',
+          tessedit_char_whitelist: '0123456789$., PACTADOMAXIMOSALDODEUDADESPUESELPAGO',
+        }),
+        window.Tesseract!.recognize(bottomCenter, 'spa+eng', {
+          tessedit_pageseg_mode: '6',
+          tessedit_char_whitelist: '0123456789$., PACTADOSALDODEUDADESPUESELPAGOTOTAL',
+        }),
+      ]);
+      dividendFocusedText = `${String(r1?.data?.text || '').trim()}\n${String(r2?.data?.text || '').trim()}`.trim();
+    } catch {
+      // Si falla crop de dividendo, seguimos con OCR base.
+    }
+  } else {
+    try {
+      onProgress?.(8, 'focused_crop');
+      const focused = await buildFocusedCenterCrop(file);
+      const resultFocused = await window.Tesseract!.recognize(focused, 'spa+eng', {
+        tessedit_pageseg_mode: '6',
+        tessedit_char_whitelist: '0123456789$., TotalahorradoactualTOTALAHORRADOACTUAL',
+      });
+      focusedText = String(resultFocused?.data?.text || '').trim();
+    } catch {
+      // Si falla crop, no bloqueamos.
+    }
   }
 
   const originalText = String(resultOriginal?.data?.text || '').trim();
   const bestPrimary = scoreOcrText(enhancedText) > scoreOcrText(originalText) ? enhancedText : originalText;
 
   // Devolvemos texto combinado para que parsers puedan capturar montos que salieron solo en el crop.
-  const merged = [bestPrimary, focusedText].filter(Boolean).join('\n');
+  const merged = [bestPrimary, focusedText, dividendFocusedText].filter(Boolean).join('\n');
   return merged || bestPrimary;
 };

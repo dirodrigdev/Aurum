@@ -247,7 +247,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setOcrPreviewUrl(URL.createObjectURL(file));
 
     try {
-      const text = await runOcrFromFile(file, (pct, status) => setOcrProgress({ pct, status }));
+      const text = await runOcrFromFile(file, sourceHint, (pct, status) => setOcrProgress({ pct, status }));
       setOcrText(text);
 
       const rawParsed = parseWealthFromOcrText(text, sourceHint);
@@ -530,7 +530,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     <img
                       src={ocrPreviewUrl}
                       alt="Previsualización de carga"
-                      className="w-full max-h-56 object-contain rounded-lg"
+                      className="w-full max-h-[72vh] object-contain rounded-lg"
                     />
                   </div>
                 )}
