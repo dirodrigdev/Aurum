@@ -7,6 +7,7 @@ import {
   FileScan,
   Home,
   Landmark,
+  Pencil,
   Plus,
   Trash2,
   Wallet,
@@ -72,9 +73,15 @@ const realEstateBlockOptions = [
 ];
 
 const sectionTheme: Record<MainSection, string> = {
-  investment: 'from-orange-100 to-amber-50 border-orange-200',
-  real_estate: 'from-emerald-100 to-lime-50 border-emerald-200',
-  bank: 'from-sky-100 to-cyan-50 border-sky-200',
+  investment: 'from-orange-200 to-amber-100',
+  real_estate: 'from-emerald-200 to-lime-100',
+  bank: 'from-sky-200 to-cyan-100',
+};
+
+const sectionChecklist: Record<MainSection, string[]> = {
+  investment: ['SURA saldo total', 'BTG total valorización', 'Global66 Cuenta Vista USD', 'Wise Cuenta principal USD'],
+  real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
+  bank: ['Wise Cuenta principal USD', 'Global66 Cuenta Vista USD'],
 };
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
@@ -198,6 +205,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -292,6 +300,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     if (!draft.label.trim() || !Number.isFinite(amount) || amount <= 0) return;
 
     upsertWealthRecord({
+      id: editingId || undefined,
       block: draft.block,
       source: draft.source || 'manual',
       label: draft.label.trim(),
@@ -302,18 +311,31 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
 
     setDraft(buildDraft(section));
+    setEditingId(null);
     onDataChanged();
   };
 
+  const checklistStatus = useMemo(() => {
+    const labels = recordsForSection.map((r) => r.label.toLowerCase());
+    return sectionChecklist[section].map((name) => ({
+      name,
+      done: labels.some((label) => label.includes(name.toLowerCase())),
+    }));
+  }, [recordsForSection, section]);
+
   return (
     <div className="space-y-4 pb-24">
-      <Card className={`p-4 border bg-gradient-to-br ${sectionTheme[section]} shadow-sm`}>
+      <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
         <button className="inline-flex items-center gap-1 text-xs text-slate-600" onClick={onBack}>
           <ArrowLeft size={14} /> Volver
         </button>
         <div className="mt-2 text-lg font-bold text-slate-900">{sectionLabel[section]}</div>
         <div className="text-xs text-slate-600">{monthLabel(monthKey)}</div>
-        <div className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+        {section === 'bank' ? (
+          <div className="mt-3 text-sm font-medium text-slate-700">Vista informativa (no consolida patrimonio)</div>
+        ) : (
+          <div className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+        )}
       </Card>
 
       <Card className="p-4 space-y-2">
@@ -331,6 +353,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 {formatCurrency(item.amount, item.currency)}
               </span>
               <button
+                className="text-slate-400 hover:text-blue-600"
+                onClick={() => {
+                  setEditingId(item.id);
+                  setDraft({
+                    block: item.block,
+                    source: item.source,
+                    label: item.label,
+                    amount: String(item.amount),
+                    currency: item.currency,
+                    note: item.note || '',
+                    snapshotDate: item.snapshotDate,
+                  });
+                  setOpenLoadPanel(true);
+                }}
+              >
+                <Pencil size={14} />
+              </button>
+              <button
                 className="text-slate-400 hover:text-red-600"
                 onClick={() => {
                   removeWealthRecord(item.id);
@@ -340,6 +380,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <Trash2 size={14} />
               </button>
             </div>
+          </div>
+        ))}
+      </Card>
+
+      <Card className="p-4 space-y-2">
+        <div className="text-sm font-semibold">Checklist del bloque</div>
+        {checklistStatus.map((row) => (
+          <div key={row.name} className="flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1">
+            <span>{row.name}</span>
+            <span className={row.done ? 'text-emerald-700' : 'text-red-700'}>{row.done ? 'Listo' : 'Falta'}</span>
           </div>
         ))}
       </Card>
@@ -356,26 +406,30 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </button>
           </div>
 
-          <Button variant="secondary" size="sm" onClick={onUseMissing}>
-            Usar faltantes cierre anterior
-          </Button>
-
           {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
 
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <FileScan size={16} /> OCR desde screenshot
+            <FileScan size={16} /> Subir imagen
           </div>
-
-          <Select
-            options={sourceOptionsBySection[section]}
-            value={sourceHint}
-            onChange={(e) => setSourceHint(e.target.value)}
-          />
 
           <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
             <Camera size={16} /> Subir imagen
             <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
           </label>
+
+          <details>
+            <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
+            <div className="mt-2 space-y-2">
+              <Select
+                options={sourceOptionsBySection[section]}
+                value={sourceHint}
+                onChange={(e) => setSourceHint(e.target.value)}
+              />
+              <Button variant="secondary" size="sm" onClick={onUseMissing}>
+                Usar faltantes cierre anterior
+              </Button>
+            </div>
+          </details>
 
           {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
           {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
@@ -425,6 +479,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       setSuggestions(next);
                     }}
                   />
+                  <div className="text-[11px] text-slate-500">
+                    {formatCurrency(item.amount, item.currency)}
+                  </div>
                   <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
                     Guardar
                   </Button>
@@ -439,6 +496,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           <details>
             <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
             <div className="mt-2 space-y-2">
+              {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
               <Input
                 placeholder="Nombre del activo"
                 value={draft.label}
@@ -514,6 +572,7 @@ export const Patrimonio: React.FC = () => {
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
   const [carryMessage, setCarryMessage] = useState('');
+  const [closeError, setCloseError] = useState('');
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
@@ -598,6 +657,12 @@ export const Patrimonio: React.FC = () => {
   }, [activeSection, monthRecords]);
 
   const runMonthlyClose = () => {
+    const hasCarriedValues = monthRecords.some((r) => String(r.note || '').toLowerCase().includes('arrastrado desde cierre'));
+    if (hasCarriedValues) {
+      setCloseError('No se puede cerrar el mes: hay valores arrastrados del cierre anterior. Actualiza los faltantes.');
+      return;
+    }
+    setCloseError('');
     createMonthlyClosure(monthRecords, fx, toCloseDateFromMonthKey(monthKey));
     refreshClosures();
   };
@@ -616,7 +681,7 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
-    setCarryMessage(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}.`);
+    setCarryMessage(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}. Variación simulada hasta actualizar valores reales.`);
   };
 
   if (activeSection) {
@@ -645,7 +710,7 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-4 space-y-4">
-      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-[#9a5b2b] via-[#7f5a2f] to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(64,52,31,0.50)]">
+      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-orange-800 via-amber-800 to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(78,61,21,0.50)]">
         <div className="absolute inset-0 opacity-15 bg-[radial-gradient(circle_at_top_right,_#fdba74_0%,_transparent_45%)]" />
         <div className="relative">
           <div className="text-xs uppercase tracking-[0.22em] text-orange-100">Aurum Wealth</div>
@@ -678,11 +743,12 @@ export const Patrimonio: React.FC = () => {
                     className="w-full rounded-xl bg-white/12 p-3 text-left min-h-[72px]"
                     onClick={() => setShowNetWorth((v) => !v)}
                   >
+                    <div className="text-orange-100">Patrimonio total neto</div>
                     <div className="mt-1 text-base font-semibold">
                       {showNetWorth ? (
                         metricsDisplay.netWorth
                       ) : (
-                        <span className="inline-block blur-[1.2px] select-none">88.888.888</span>
+                        <span className="inline-block rounded-md bg-white/20 px-2 py-1 blur-[1.4px] select-none">■■■■■■■■</span>
                       )}
                     </div>
                   </button>
@@ -722,7 +788,7 @@ export const Patrimonio: React.FC = () => {
 
       <div className="grid grid-cols-2 gap-3">
         <button
-          className="rounded-2xl border border-orange-300 bg-gradient-to-br from-[#f9c79b] to-[#eb9d66] p-4 text-left shadow-sm hover:shadow-md transition"
+          className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] hover:shadow-[0_12px_24px_rgba(165,96,42,0.34)] transition"
           onClick={() => setActiveSection('investment')}
         >
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
@@ -735,7 +801,7 @@ export const Patrimonio: React.FC = () => {
         </button>
 
         <button
-          className="rounded-2xl border border-emerald-300 bg-gradient-to-br from-[#c5ddb4] to-[#8ba878] p-4 text-left shadow-sm hover:shadow-md transition"
+          className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] hover:shadow-[0_12px_24px_rgba(74,102,64,0.33)] transition"
           onClick={() => setActiveSection('real_estate')}
         >
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
@@ -769,6 +835,7 @@ export const Patrimonio: React.FC = () => {
             Cerrar mes
           </Button>
         </div>
+        {!!closeError && <div className="text-xs text-red-700">{closeError}</div>}
 
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">

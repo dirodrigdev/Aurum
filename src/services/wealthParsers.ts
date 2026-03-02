@@ -102,9 +102,6 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
     findAmountNearText(text, /saldo\s*actual(?:\s*es)?[^0-9]{0,24}([0-9][0-9.,]{4,})/i) ||
     findAmountNearText(text, /mi\s*resumen[\s\S]{0,140}?saldo[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
 
-  const inversion = findAmountNearText(text, /inversi[oó]n\s*financiera[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
-  const previsional = findAmountNearText(text, /ahorro\s*previsional[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
-
   return build([
     saldoActual
       ? {
@@ -114,26 +111,6 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
           amount: saldoActual,
           currency: 'CLP',
           confidence: 0.96,
-        }
-      : null,
-    inversion
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA inversión financiera',
-          amount: inversion,
-          currency: 'CLP',
-          confidence: 0.9,
-        }
-      : null,
-    previsional
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA ahorro previsional',
-          amount: previsional,
-          currency: 'CLP',
-          confidence: 0.9,
         }
       : null,
   ]);
