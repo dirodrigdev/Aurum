@@ -547,14 +547,28 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         <div className="text-[11px] text-slate-500">
                           {formatCurrency(item.amount, item.currency)}
                         </div>
-                        <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
-                          Guardar
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
+                            Guardar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSuggestions((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            Eliminar
+                          </Button>
+                        </div>
                       </div>
                     ))}
-                    <Button variant="secondary" onClick={saveAllSuggestions}>
-                      Guardar todo
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button variant="secondary" onClick={saveAllSuggestions}>
+                        Guardar todo
+                      </Button>
+                      <Button variant="outline" onClick={() => setSuggestions([])}>
+                        Limpiar lista
+                      </Button>
+                    </div>
                   </div>
                 )}
 
