@@ -464,7 +464,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         ...buildDraft(section),
         block: preferredBlock,
         label: name,
-        currency: section === 'real_estate' ? 'UF' : buildDraft(section).currency,
+        currency: buildDraft(section).currency,
       });
     }
     setOpenLoadPanel(true);
