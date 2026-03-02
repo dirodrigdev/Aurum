@@ -352,7 +352,12 @@ export const applyMortgageAutoCalculation = (
   targetMonthKey: string,
   snapshotDate: string,
   config: MortgageAutoCalcConfig = mortgageAutoCalcDefaults,
-): { changed: number; sourceMonth: string | null; skipped: boolean } => {
+): {
+  changed: number;
+  sourceMonth: string | null;
+  skipped: boolean;
+  reason?: 'missing_base_debt' | 'no_change';
+} => {
   const records = loadWealthRecords();
   const closures = loadClosures();
   const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
@@ -366,7 +371,7 @@ export const applyMortgageAutoCalculation = (
   const prevDebt =
     prevDebtCandidates.find((r) => r.label.toLowerCase().includes('saldo deuda hipotecaria')) ||
     prevDebtCandidates[0];
-  if (!prevDebt) return { changed: 0, sourceMonth, skipped: true };
+  if (!prevDebt) return { changed: 0, sourceMonth, skipped: true, reason: 'missing_base_debt' };
 
   const findByLabel = (label: string) =>
     monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
@@ -407,5 +412,8 @@ export const applyMortgageAutoCalculation = (
   if (upsertIfMissingOrAutofill('Amortización hipotecaria mensual', amortizationUf)) changed += 1;
   if (upsertIfMissingOrAutofill('Saldo deuda hipotecaria', newDebtUf)) changed += 1;
 
+  if (changed === 0) {
+    return { changed: 0, sourceMonth, skipped: false, reason: 'no_change' };
+  }
   return { changed, sourceMonth, skipped: false };
 };

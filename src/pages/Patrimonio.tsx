@@ -809,6 +809,11 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
+    if (!result.added && !auto.changed && auto.reason === 'missing_base_debt') {
+      setCarryMessage('Sin cierre previo y sin base de deuda: ingresa manualmente "Saldo deuda hipotecaria" para iniciar el autocálculo.');
+      return;
+    }
+
     if (!result.added && !auto.changed) {
       setCarryMessage(`No faltaba información para arrastrar desde ${result.sourceMonth}.`);
       return;
@@ -825,6 +830,10 @@ export const Patrimonio: React.FC = () => {
     refreshRecords();
     if (auto.changed > 0) {
       setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros (base ${auto.sourceMonth}).`);
+      return;
+    }
+    if (auto.reason === 'missing_base_debt') {
+      setCarryMessage('No pude aplicar autocálculo: primero ingresa manualmente "Saldo deuda hipotecaria" de este mes como base inicial.');
       return;
     }
     if (!auto.sourceMonth) {
