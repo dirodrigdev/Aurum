@@ -116,9 +116,9 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
   if (currency === 'UF') {
     const abs = Math.abs(value);
     const intPart = Math.trunc(abs);
-    const decimalPart = Math.round((abs - intPart) * 10000)
+    const decimalPart = Math.round((abs - intPart) * 10)
       .toString()
-      .padStart(4, '0');
+      .padStart(1, '0');
     return `${sign}${groupWithDots(intPart)},${decimalPart} UF`;
   }
   if (currency === 'CLP') {
@@ -211,6 +211,16 @@ interface SectionScreenProps {
   onApplyMortgageAuto: () => void;
 }
 
+interface QuickFillDraft {
+  id?: string;
+  block: WealthBlock;
+  source: string;
+  label: string;
+  amount: string;
+  currency: WealthCurrency;
+  snapshotDate: string;
+}
+
 const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
@@ -231,6 +241,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState('');
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
+  const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -402,6 +413,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
   }, [recordsForSection, section]);
 
+  const isSectionComplete = useMemo(() => {
+    return checklistStatus.every((row) => row.status !== 'pendiente');
+  }, [checklistStatus]);
+
   const openChecklistItem = (name: string) => {
     const existing = recordsForSection.find((r) => r.label.toLowerCase().includes(name.toLowerCase()));
     const debtLabels = [
@@ -417,6 +432,20 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         : section === 'real_estate'
           ? 'real_estate'
           : getSectionBlock(section);
+
+    if (section === 'real_estate') {
+      setQuickFill({
+        id: existing?.id,
+        block: preferredBlock,
+        source: existing?.source || 'manual',
+        label: existing?.label || name,
+        amount: existing ? String(existing.amount) : '',
+        currency: existing?.currency || 'UF',
+        snapshotDate: existing?.snapshotDate || todayYmd(),
+      });
+      setOpenLoadPanel(true);
+      return;
+    }
 
     if (existing) {
       setEditingId(existing.id);
@@ -441,6 +470,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setOpenLoadPanel(true);
   };
 
+  const saveQuickFill = () => {
+    if (!quickFill) return;
+    const amount = Number(quickFill.amount.replace(/,/g, '.'));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    upsertWealthRecord({
+      id: quickFill.id,
+      block: quickFill.block,
+      source: quickFill.source,
+      label: quickFill.label,
+      amount,
+      currency: quickFill.currency,
+      snapshotDate: quickFill.snapshotDate,
+    });
+    setQuickFill(null);
+    setOpenLoadPanel(false);
+    onDataChanged();
+  };
+
   return (
     <div className="space-y-4 pb-24">
       <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
@@ -451,6 +498,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <div className="text-xs text-slate-600">{monthLabel(monthKey)}</div>
         {section === 'bank' ? (
           <div className="mt-3 text-sm font-medium text-slate-700">Vista informativa (no consolida patrimonio)</div>
+        ) : section === 'real_estate' && !isSectionComplete ? (
+          <>
+            <div className="mt-3 text-3xl font-semibold text-slate-900">--</div>
+            <div className="text-xs text-slate-700">Completa Valor propiedad, Saldo deuda y Dividendo para ver total</div>
+          </>
         ) : (
           <div className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
         )}
@@ -555,7 +607,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <>
           <div
             className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
-            onClick={() => setOpenLoadPanel(false)}
+            onClick={() => {
+              setOpenLoadPanel(false);
+              setQuickFill(null);
+            }}
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
             <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
@@ -564,46 +619,65 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   <div className="text-sm font-semibold">Cargar información</div>
                   <button
                     className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
-                    onClick={() => setOpenLoadPanel(false)}
+                    onClick={() => {
+                      setOpenLoadPanel(false);
+                      setQuickFill(null);
+                    }}
                   >
                     <X size={14} />
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <FileScan size={16} /> Carga OCR
-                </div>
-
-                <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
-                  <Camera size={16} /> Seleccionar imagen
-                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
-                </label>
-
-                <details>
-                  <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
-                  <div className="mt-2 space-y-2">
-                    <Select
-                      options={sourceOptionsBySection[section]}
-                      value={sourceHint}
-                      onChange={(e) => setSourceHint(e.target.value)}
+                {quickFill ? (
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold">Ingresar valor</div>
+                    <div className="text-xs text-slate-600">{quickFill.label}</div>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      placeholder="Monto"
+                      value={quickFill.amount}
+                      onChange={(e) => setQuickFill({ ...quickFill, amount: e.target.value })}
                     />
+                    <div className="text-[11px] text-slate-500">Moneda: {quickFill.currency}</div>
+                    <Button onClick={saveQuickFill}>Guardar</Button>
                   </div>
-                </details>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <FileScan size={16} /> Carga OCR
+                    </div>
 
-                {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
-                {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
-                {!!ocrPreviewUrl && (
-                  <div className="rounded-xl border border-slate-200 p-2">
-                    <img
-                      src={ocrPreviewUrl}
-                      alt="Previsualización de carga"
-                      className="w-full max-h-[72vh] object-contain rounded-lg"
-                    />
-                  </div>
-                )}
+                    <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
+                      <Camera size={16} /> Seleccionar imagen
+                      <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
+                    </label>
 
-                {!!suggestions.length && (
-                  <div className="space-y-2">
+                    <details>
+                      <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
+                      <div className="mt-2 space-y-2">
+                        <Select
+                          options={sourceOptionsBySection[section]}
+                          value={sourceHint}
+                          onChange={(e) => setSourceHint(e.target.value)}
+                        />
+                      </div>
+                    </details>
+
+                    {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
+                    {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
+                    {!!ocrPreviewUrl && (
+                      <div className="rounded-xl border border-slate-200 p-2">
+                        <img
+                          src={ocrPreviewUrl}
+                          alt="Previsualización de carga"
+                          className="w-full max-h-[72vh] object-contain rounded-lg"
+                        />
+                      </div>
+                    )}
+
+                    {!!suggestions.length && (
+                      <div className="space-y-2">
                     {suggestions.map((item, idx) => (
                       <div key={`${item.label}-${idx}`} className="rounded-xl border border-slate-200 p-2 space-y-2">
                         <Input
@@ -672,12 +746,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         Limpiar lista
                       </Button>
                     </div>
-                  </div>
-                )}
+                      </div>
+                    )}
 
-                <details>
-                  <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
-                  <div className="mt-2 space-y-2">
+                    <details>
+                      <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
+                      <div className="mt-2 space-y-2">
                     {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
                     <Input
                       placeholder="Nombre del activo"
@@ -718,17 +792,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       value={draft.source}
                       onChange={(e) => setDraft({ ...draft, source: e.target.value })}
                     />
-                    <Button onClick={saveDraft}>Guardar registro</Button>
-                  </div>
-                </details>
+                        <Button onClick={saveDraft}>Guardar registro</Button>
+                      </div>
+                    </details>
 
-                {!!ocrText && (
-                  <details className="text-xs text-slate-500">
-                    <summary className="cursor-pointer">Texto OCR (opcional)</summary>
-                    <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
-                      {ocrText}
-                    </pre>
-                  </details>
+                    {!!ocrText && (
+                      <details className="text-xs text-slate-500">
+                        <summary className="cursor-pointer">Texto OCR (opcional)</summary>
+                        <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
+                          {ocrText}
+                        </pre>
+                      </details>
+                    )}
+                  </>
                 )}
               </Card>
             </div>
@@ -739,7 +815,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       {!openLoadPanel && (
         <button
           className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center z-30"
-          onClick={() => setOpenLoadPanel(true)}
+          onClick={() => {
+            setQuickFill(null);
+            setOpenLoadPanel(true);
+          }}
           aria-label="Sumar información"
         >
           <Plus size={22} />
