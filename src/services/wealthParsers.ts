@@ -250,32 +250,51 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
   ];
 };
 
+const extractLooseNumbers = (text: string): number[] => {
+  return [...text.matchAll(/([0-9][0-9\s.,]{1,12})/g)]
+    .map((m) => parseLocalizedNumber(m[1]) || 0)
+    .filter((n) => Number.isFinite(n) && n > 0);
+};
+
 const parseDividend = (text: string): ParsedWealthSuggestion[] => {
-  const totalPagar = findAmountAfterLabel(text, /total\s+a\s+pagar[\s\S]{0,40}?([0-9]+[.,][0-9]{2,4})/i);
-  const deudaDespues = findAmountAfterLabel(text, /deuda\s+despu[eé]s\s+del\s+pago[\s\S]{0,40}?([0-9]+[.,][0-9]{2,4})/i);
-  const saldoAntes = findAmountAfterLabel(text, /saldo\s+deuda\s+antes\s+del\s+pago[\s\S]{0,40}?([0-9]+[.,][0-9]{2,4})/i);
+  const totalPagar =
+    findAmountNearText(text, /total\s+a\s+pagar[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i) ||
+    findAmountNearText(text, /pactado[^0-9]{0,25}([0-9][0-9\s.,]{1,12})/i);
+
+  const deudaDespues =
+    findAmountNearText(text, /deuda\s+despu[eé]s\s+del\s+pago[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i) ||
+    findAmountNearText(text, /saldo\s+deuda[^0-9]{0,20}([0-9][0-9\s.,]{1,12})/i);
+
+  const saldoAntes = findAmountNearText(text, /saldo\s+deuda\s+antes\s+del\s+pago[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i);
+
+  const loose = extractLooseNumbers(text);
+  const looseDividend = loose.find((n) => n >= 10 && n <= 400) || null;
+  const looseDebt = loose.filter((n) => n >= 1000 && n <= 50000).sort((a, b) => b - a)[0] || null;
+
+  const effectiveDividend = totalPagar || looseDividend;
+  const effectiveDebt = deudaDespues || saldoAntes || looseDebt;
 
   return build([
-    totalPagar
+    effectiveDividend
       ? {
           source: 'Scotiabank dividendo',
           block: 'debt',
           label: 'Dividendo hipotecario mensual',
-          amount: totalPagar,
+          amount: effectiveDividend,
           currency: 'CLP',
-          confidence: 0.7,
-          note: 'OCR sugiere que el monto puede estar en UF. Confirmar antes de guardar.',
+          confidence: totalPagar ? 0.78 : 0.62,
+          note: 'OCR hipotecario: revisa que el valor corresponda al dividendo/UF del mes.',
         }
       : null,
-    (deudaDespues || saldoAntes)
+    effectiveDebt
       ? {
           source: 'Scotiabank dividendo',
           block: 'debt',
           label: 'Saldo deuda hipotecaria',
-          amount: deudaDespues || (saldoAntes as number),
+          amount: effectiveDebt,
           currency: 'CLP',
-          confidence: 0.72,
-          note: 'OCR sugiere que el monto puede estar en UF. Confirmar moneda/valor.',
+          confidence: deudaDespues || saldoAntes ? 0.8 : 0.65,
+          note: 'OCR hipotecario: revisa que el saldo corresponda al documento del mes.',
         }
       : null,
   ]);
@@ -338,7 +357,10 @@ export const parseWealthFromOcrText = (
       sourceHint === 'dividendo' ||
       lower.includes('aviso de vencimiento dividendo hipotecario') ||
       lower.includes('dividendo hipotecario') ||
-      lower.includes('scotiabank'),
+      lower.includes('scotiabank') ||
+      lower.includes('hipotecario') ||
+      lower.includes('saldo deuda') ||
+      lower.includes('vencimiento'),
   };
 
   if (hints.planvital) return parsePlanvital(text);

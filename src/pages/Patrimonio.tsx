@@ -207,7 +207,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   onDataChanged,
   onUseMissing,
 }) => {
-  const [sourceHint, setSourceHint] = useState('auto');
+  const [sourceHint, setSourceHint] = useState(section === 'real_estate' ? 'dividendo' : 'auto');
   const [ocrProgress, setOcrProgress] = useState<{ pct: number; status: string } | null>(null);
   const [ocrError, setOcrError] = useState('');
   const [ocrText, setOcrText] = useState('');
