@@ -20,18 +20,18 @@ export const Layout: React.FC = () => {
       <ConnectionBanner />
 
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="max-w-md mx-auto px-4 py-3">
+        <div className="max-w-xl mx-auto px-4 py-3">
           <div className="text-lg font-bold text-slate-900">Aurum</div>
           <div className="text-xs text-slate-500">Gestor de patrimonio neto</div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-md mx-auto w-full pb-20">
+      <main className="flex-1 max-w-xl mx-auto w-full pb-20">
         <Outlet />
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 border-t border-slate-200 bg-white/95 backdrop-blur pb-2 z-50">
-        <div className="max-w-md mx-auto flex justify-between px-4 pt-1.5 pb-3">
+        <div className="max-w-xl mx-auto flex justify-between px-4 pt-1.5 pb-3">
           {navItems.map((item: any) => {
             if (!('to' in item) && typeof item.onClick === 'function') {
               const Icon = item.icon;
