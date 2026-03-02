@@ -1,0 +1,14 @@
+# Env / secretos (NO subir)
+.env
+.env.*
+*.env
+*.local
+.en.local
+
+# Node / build
+node_modules/
+dist/
+build/
+
+# Logs
+*.log

@@ -1,0 +1,5 @@
+{
+  "name": "GastApp",
+  "description": "Gestión de gastos compartida para Diego y Gastón. Minimalista, rápida y mobile-first.",
+  "requestFramePermissions": []
+}

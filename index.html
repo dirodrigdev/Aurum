@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>GastApp</title>
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: { sans: ['Inter', 'sans-serif'] },
+            colors: {
+              brand: {
+                50: '#eff6ff',
+                100: '#dbeafe',
+                500: '#3b82f6',
+                600: '#2563eb',
+                700: '#1d4ed8',
+                900: '#1e3a8a'
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    <style>
+      body {
+        -webkit-tap-highlight-color: transparent;
+        overscroll-behavior-y: none;
+        background-color: #f8fafc;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      #error-overlay {
+        display: none;
+        padding: 20px;
+        text-align: center;
+        color: #ef4444;
+        position: fixed;
+        top: 0;
+        width: 100%;
+        z-index: 9999;
+        background: white;
+      }
+    </style>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+          "react-dom": "https://esm.sh/react-dom@18.3.1?deps=react@18.3.1",
+          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime?deps=react@18.3.1",
+          "react-router-dom": "https://esm.sh/react-router-dom@6.23.0?deps=react@18.3.1,react-dom@18.3.1",
+          "lucide-react": "https://esm.sh/lucide-react@0.378.0?deps=react@18.3.1",
+          "clsx": "https://esm.sh/clsx@2.1.1",
+          "date-fns": "https://esm.sh/date-fns@3.6.0",
+          "date-fns/locale": "https://esm.sh/date-fns@3.6.0/locale",
+          "tailwind-merge": "https://esm.sh/tailwind-merge@2.3.0",
+          "firebase/app": "https://esm.sh/firebase@10.11.0/app",
+          "firebase/firestore": "https://esm.sh/firebase@10.11.0/firestore",
+          "firebase/auth": "https://esm.sh/firebase@10.11.0/auth"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="error-overlay"><h2>Cargando...</h2></div>
+    <script>
+      window.onerror = function (msg) {
+        document.getElementById('error-overlay').innerHTML =
+          `<h2>Error</h2><p>${msg}</p>`;
+      };
+    </script>
+    <script type="module" src="./src/index.tsx"></script>
+  </body>
+</html>
