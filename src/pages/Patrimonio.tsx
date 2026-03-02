@@ -116,9 +116,9 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
   if (currency === 'UF') {
     const abs = Math.abs(value);
     const intPart = Math.trunc(abs);
-    const decimalPart = Math.round((abs - intPart) * 10)
+    const decimalPart = Math.round((abs - intPart) * 100)
       .toString()
-      .padStart(1, '0');
+      .padStart(2, '0');
     return `${sign}${groupWithDots(intPart)},${decimalPart} UF`;
   }
   if (currency === 'CLP') {
@@ -634,7 +634,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     <div className="text-xs text-slate-600">{quickFill.label}</div>
                     <Input
                       type="number"
-                      step="0.1"
+                      step="0.01"
                       placeholder="Monto"
                       value={quickFill.amount}
                       onChange={(e) => setQuickFill({ ...quickFill, amount: e.target.value })}
