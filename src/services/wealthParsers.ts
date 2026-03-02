@@ -261,6 +261,13 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
     return values[0] || null;
   };
 
+  const ufLikeCandidates = [...text.matchAll(/([0-9]{1,3}(?:[.\s][0-9]{3})?[.,][0-9]{4})/g)]
+    .map((m) => parseLocalizedNumber(m[1]) || 0)
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  const ufDividendCandidates = ufLikeCandidates.filter((n) => n >= 5 && n <= 300).sort((a, b) => b - a);
+  const ufDebtCandidates = ufLikeCandidates.filter((n) => n >= 500 && n <= 50000).sort((a, b) => a - b);
+
   // Dividendo mensual en UF suele venir en formato 53,2439 (rango típico acotado).
   const totalPagar =
     extractFromContext(
@@ -273,12 +280,17 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
       5,
       300,
     ) ||
-    extractFromContext(/pactado[^0-9]{0,24}([0-9]{1,3}[.,][0-9]{2,4})/gi, 5, 300);
+    extractFromContext(/pactado[^0-9]{0,24}([0-9]{1,3}[.,][0-9]{2,4})/gi, 5, 300) ||
+    ufDividendCandidates[0] ||
+    null;
 
   // Saldo deuda en UF suele estar en miles (ej: 8.831,5350).
   const effectiveDebt =
     extractFromContext(/saldo\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000) ||
-    extractFromContext(/deuda\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000);
+    extractFromContext(/deuda\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000) ||
+    // Fallback robusto para este formato de aviso: normalmente el menor saldo UF es "después del pago".
+    ufDebtCandidates[0] ||
+    null;
 
   const effectiveDividend = totalPagar || null;
 
@@ -336,6 +348,14 @@ export const parseWealthFromOcrText = (
 ): ParsedWealthSuggestion[] => {
   const text = cleanText(rawText);
   const lower = text.toLowerCase();
+
+  if (sourceHint === 'dividendo') return parseDividend(text);
+  if (sourceHint === 'planvital') return parsePlanvital(text);
+  if (sourceHint === 'sura_resumen') return parseSuraResumen(text);
+  if (sourceHint === 'sura_detalle') return parseSuraDetalle(text);
+  if (sourceHint === 'btg') return parseBtg(text);
+  if (sourceHint === 'wise') return parseWise(text);
+  if (sourceHint === 'global66') return parseGlobal66(text);
 
   const hints = {
     planvital:
