@@ -301,7 +301,7 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
           block: 'debt',
           label: 'Dividendo hipotecario mensual',
           amount: effectiveDividend,
-          currency: 'CLP',
+          currency: 'UF',
           confidence: 0.9,
           note: 'Detectado desde campo PACTADO del documento hipotecario (normalmente en UF).',
         }
@@ -312,7 +312,7 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
           block: 'debt',
           label: 'Saldo deuda hipotecaria',
           amount: effectiveDebt,
-          currency: 'CLP',
+          currency: 'UF',
           confidence: 0.9,
           note: 'Detectado desde campo "Saldo después del pago" (normalmente en UF).',
         }

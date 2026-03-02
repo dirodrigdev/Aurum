@@ -39,6 +39,18 @@ export const SettingsAurum: React.FC = () => {
               }}
             />
           </div>
+          <div>
+            <div className="text-xs text-slate-500 mb-1">UF a CLP</div>
+            <Input
+              value={fx.ufClp}
+              type="number"
+              onChange={(e) => {
+                const next = { ...fx, ufClp: Number(e.target.value) || 0 };
+                setFx(next);
+                saveFxRates(next);
+              }}
+            />
+          </div>
         </div>
       </Card>
     </div>

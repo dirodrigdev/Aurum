@@ -1,4 +1,4 @@
-export type WealthCurrency = 'CLP' | 'USD' | 'EUR';
+export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
 
 export type WealthBlock = 'bank' | 'investment' | 'real_estate' | 'debt';
 
@@ -17,6 +17,7 @@ export interface WealthRecord {
 export interface WealthFxRates {
   usdClp: number;
   eurClp: number;
+  ufClp: number;
 }
 
 export interface WealthSnapshotSummary {
@@ -36,6 +37,7 @@ export interface WealthMonthlyClosure {
 }
 
 export interface MortgageAutoCalcConfig {
+  initialDebtUf: number;
   dividendUf: number;
   interestUf: number;
   fireInsuranceUf: number;
@@ -47,6 +49,7 @@ const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
 
 export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
+  initialDebtUf: 8831.535,
   dividendUf: 53.2439,
   interestUf: 21.3361,
   fireInsuranceUf: 3.67,
@@ -68,6 +71,7 @@ export const currentMonthKey = () => {
 export const defaultFxRates: WealthFxRates = {
   usdClp: 950,
   eurClp: 1030,
+  ufClp: 39000,
 };
 
 const sortByCreatedDesc = (a: WealthRecord, b: WealthRecord) => {
@@ -145,6 +149,7 @@ export const loadFxRates = (): WealthFxRates => {
     return {
       usdClp: Math.max(1, toNumber(parsed?.usdClp, defaultFxRates.usdClp)),
       eurClp: Math.max(1, toNumber(parsed?.eurClp, defaultFxRates.eurClp)),
+      ufClp: Math.max(1, toNumber(parsed?.ufClp, defaultFxRates.ufClp)),
     };
   } catch {
     return { ...defaultFxRates };
@@ -159,6 +164,7 @@ const emptyCurrencyMap = (): Record<WealthCurrency, number> => ({
   CLP: 0,
   USD: 0,
   EUR: 0,
+  UF: 0,
 });
 
 const emptyBlockMap = (): Record<WealthBlock, Record<WealthCurrency, number>> => ({
@@ -214,10 +220,14 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
     CLP: assetsByCurrency.CLP - debtsByCurrency.CLP,
     USD: assetsByCurrency.USD - debtsByCurrency.USD,
     EUR: assetsByCurrency.EUR - debtsByCurrency.EUR,
+    UF: assetsByCurrency.UF - debtsByCurrency.UF,
   };
 
   const netConsolidatedClp =
-    netByCurrency.CLP + netByCurrency.USD * fxRates.usdClp + netByCurrency.EUR * fxRates.eurClp;
+    netByCurrency.CLP +
+    netByCurrency.USD * fxRates.usdClp +
+    netByCurrency.EUR * fxRates.eurClp +
+    netByCurrency.UF * fxRates.ufClp;
 
   return {
     netByCurrency,
@@ -396,7 +406,7 @@ export const applyMortgageAutoCalculation = (
       source: existing?.source || source,
       label,
       amount: Math.max(0, amount),
-      currency: existing?.currency || prevDebt.currency,
+      currency: existing?.currency || 'UF',
       snapshotDate: existing?.snapshotDate || snapshotDate,
       note: hasPreviousClosure
         ? `Estimado automático desde cierre ${previous?.monthKey}`
@@ -416,4 +426,44 @@ export const applyMortgageAutoCalculation = (
     return { changed: 0, sourceMonth, skipped: false, reason: 'no_change' };
   }
   return { changed, sourceMonth, skipped: false };
+};
+
+export const ensureInitialMortgageDefaults = (
+  targetMonthKey: string,
+  snapshotDate: string,
+  config: MortgageAutoCalcConfig = mortgageAutoCalcDefaults,
+): { added: number } => {
+  const records = loadWealthRecords();
+  const hasAnyDebtHistory = records.some((r) => r.block === 'debt');
+  if (hasAnyDebtHistory) return { added: 0 };
+
+  const monthRecords = latestRecordsForMonth(records, targetMonthKey);
+  const existingByLabel = new Set(monthRecords.filter((r) => r.block === 'debt').map((r) => r.label.toLowerCase()));
+  const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
+  const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
+
+  const defaults: Array<{ label: string; amount: number }> = [
+    { label: 'Saldo deuda hipotecaria', amount: config.initialDebtUf },
+    { label: 'Dividendo hipotecario mensual', amount: config.dividendUf },
+    { label: 'Interés hipotecario mensual', amount: config.interestUf },
+    { label: 'Seguros hipotecarios mensuales', amount: insuranceUf },
+    { label: 'Amortización hipotecaria mensual', amount: amortizationUf },
+  ];
+
+  let added = 0;
+  for (const item of defaults) {
+    if (existingByLabel.has(item.label.toLowerCase())) continue;
+    upsertWealthRecord({
+      block: 'debt',
+      source: 'Base inicial Aurum',
+      label: item.label,
+      amount: item.amount,
+      currency: 'UF',
+      snapshotDate,
+      note: 'Base inicial por defecto (editable)',
+    });
+    added += 1;
+  }
+
+  return { added };
 };

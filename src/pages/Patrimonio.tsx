@@ -25,6 +25,7 @@ import {
   currentMonthKey,
   applyMortgageAutoCalculation,
   fillMissingWithPreviousClosure,
+  ensureInitialMortgageDefaults,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -67,6 +68,7 @@ const currencyOptions = [
   { value: 'CLP', label: 'CLP' },
   { value: 'USD', label: 'USD' },
   { value: 'EUR', label: 'EUR' },
+  { value: 'UF', label: 'UF' },
 ];
 
 const realEstateBlockOptions = [
@@ -111,6 +113,14 @@ const groupWithDots = (value: number) => {
 
 const formatCurrency = (value: number, currency: WealthCurrency) => {
   const sign = value < 0 ? '-' : '';
+  if (currency === 'UF') {
+    const abs = Math.abs(value);
+    const intPart = Math.trunc(abs);
+    const decimalPart = Math.round((abs - intPart) * 10000)
+      .toString()
+      .padStart(4, '0');
+    return `${sign}${groupWithDots(intPart)},${decimalPart} UF`;
+  }
   if (currency === 'CLP') {
     return `${sign}$${groupWithDots(value)}`;
   }
@@ -123,15 +133,17 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
   return `${sign}${groupWithDots(intPart)},${decimalPart} ${currency}`;
 };
 
-const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
+const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
   if (currency === 'CLP') return amount;
   if (currency === 'USD') return amount * usdClp;
+  if (currency === 'UF') return amount * ufClp;
   return amount * eurClp;
 };
 
-const fromClp = (amountClp: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
+const fromClp = (amountClp: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
   if (currency === 'CLP') return amountClp;
   if (currency === 'USD') return amountClp / Math.max(1, usdClp);
+  if (currency === 'UF') return amountClp / Math.max(1, ufClp);
   return amountClp / Math.max(1, eurClp);
 };
 
@@ -176,7 +188,7 @@ const buildDraft = (section: MainSection): DraftRecord => ({
   source: 'manual',
   label: '',
   amount: '',
-  currency: 'CLP',
+  currency: section === 'real_estate' ? 'UF' : 'CLP',
   note: '',
   snapshotDate: todayYmd(),
 });
@@ -191,6 +203,7 @@ interface SectionScreenProps {
   recordsForSection: WealthRecord[];
   usdClp: number;
   eurClp: number;
+  ufClp: number;
   carryMessage: string;
   onBack: () => void;
   onDataChanged: () => void;
@@ -204,6 +217,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   recordsForSection,
   usdClp,
   eurClp,
+  ufClp,
   carryMessage,
   onBack,
   onDataChanged,
@@ -229,9 +243,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
       const signed = item.block === 'debt' ? -item.amount : item.amount;
-      return sum + toClp(signed, item.currency, usdClp, eurClp);
+      return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
     }, 0);
-  }, [recordsForSection, usdClp, eurClp]);
+  }, [recordsForSection, usdClp, eurClp, ufClp]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -388,6 +402,45 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
   }, [recordsForSection, section]);
 
+  const openChecklistItem = (name: string) => {
+    const existing = recordsForSection.find((r) => r.label.toLowerCase().includes(name.toLowerCase()));
+    const debtLabels = [
+      'Saldo deuda hipotecaria',
+      'Dividendo hipotecario mensual',
+      'Interés hipotecario mensual',
+      'Seguros hipotecarios mensuales',
+      'Amortización hipotecaria mensual',
+    ];
+    const preferredBlock: WealthBlock =
+      section === 'real_estate' && debtLabels.some((d) => name.toLowerCase().includes(d.toLowerCase()))
+        ? 'debt'
+        : section === 'real_estate'
+          ? 'real_estate'
+          : getSectionBlock(section);
+
+    if (existing) {
+      setEditingId(existing.id);
+      setDraft({
+        block: existing.block,
+        source: existing.source,
+        label: existing.label,
+        amount: String(existing.amount),
+        currency: existing.currency,
+        note: isCarriedRecord(existing) || isEstimatedRecord(existing) ? '' : existing.note || '',
+        snapshotDate: existing.snapshotDate,
+      });
+    } else {
+      setEditingId(null);
+      setDraft({
+        ...buildDraft(section),
+        block: preferredBlock,
+        label: name,
+        currency: section === 'real_estate' ? 'UF' : buildDraft(section).currency,
+      });
+    }
+    setOpenLoadPanel(true);
+  };
+
   return (
     <div className="space-y-4 pb-24">
       <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
@@ -466,7 +519,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </div>
         {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
         {checklistStatus.map((row) => (
-          <div key={row.name} className="flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1">
+          <button
+            key={row.name}
+            className="w-full text-left flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50"
+            onClick={() => openChecklistItem(row.name)}
+          >
             <div>
               <div>{row.name}</div>
               <div className="text-[11px] text-slate-500">{row.detail}</div>
@@ -490,7 +547,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     ? 'Estimado'
                     : 'Pendiente'}
             </span>
-          </div>
+          </button>
         ))}
       </Card>
 
@@ -741,7 +798,7 @@ export const Patrimonio: React.FC = () => {
   const sectionAmounts = useMemo(() => {
     const blockToClp = (block: WealthBlock) => {
       const b = summary.byBlock[block];
-      return b.CLP + b.USD * fx.usdClp + b.EUR * fx.eurClp;
+      return b.CLP + b.USD * fx.usdClp + b.EUR * fx.eurClp + b.UF * fx.ufClp;
     };
 
     return {
@@ -754,7 +811,7 @@ export const Patrimonio: React.FC = () => {
   const metricsDisplay = useMemo(() => {
     const convert = (value: number | null) => {
       if (value === null) return null;
-      return fromClp(value, displayCurrency, fx.usdClp, fx.eurClp);
+      return fromClp(value, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
     };
 
     const formatted = (value: number | null) => {
@@ -765,7 +822,7 @@ export const Patrimonio: React.FC = () => {
 
     return {
       netWorth: formatCurrency(
-        fromClp(summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp),
+        fromClp(summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp),
         displayCurrency,
       ),
       monthIncrease: formatted(convert(metrics.monthIncrease)),
@@ -800,11 +857,16 @@ export const Patrimonio: React.FC = () => {
   };
 
   const useMissingFromPrevious = () => {
+    const init = ensureInitialMortgageDefaults(monthKey, todayYmd());
     const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
     const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
     refreshRecords();
 
     if (!result.sourceMonth) {
+      if (init.added > 0 || auto.changed > 0) {
+        setCarryMessage('Base hipotecaria inicial cargada automáticamente.');
+        return;
+      }
       setCarryMessage('No hay un cierre anterior con detalle para arrastrar información.');
       return;
     }
@@ -847,8 +909,14 @@ export const Patrimonio: React.FC = () => {
     if (autoCarryAppliedRef.current.has(monthKey)) return;
     autoCarryAppliedRef.current.add(monthKey);
 
+    const init = ensureInitialMortgageDefaults(monthKey, todayYmd());
     const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
     const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
+    if (init.added > 0) {
+      refreshRecords();
+      setCarryMessage(`Base hipotecaria inicial aplicada (${init.added} registros).`);
+      return;
+    }
     if (result.added > 0) {
       refreshRecords();
       const msg = [
@@ -877,6 +945,7 @@ export const Patrimonio: React.FC = () => {
           recordsForSection={recordsForSection}
           usdClp={fx.usdClp}
           eurClp={fx.eurClp}
+          ufClp={fx.ufClp}
           carryMessage={carryMessage}
           onBack={() => {
             setActiveSection(null);
