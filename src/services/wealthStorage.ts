@@ -358,7 +358,7 @@ export const applyMortgageAutoCalculation = (
   const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
   const monthRecords = latestRecordsForMonth(records, targetMonthKey);
   const sourceRecords = previous?.records?.length ? dedupeLatestByAsset(previous.records) : monthRecords;
-  const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial)`;
+  const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial inferida)`;
 
   const prevDebtCandidates = sourceRecords
     .filter((r) => r.block === 'debt')
@@ -370,6 +370,12 @@ export const applyMortgageAutoCalculation = (
 
   const findByLabel = (label: string) =>
     monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
+
+  const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
+  const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
+  const hasPreviousClosure = !!previous?.records?.length;
+  const newDebtUf = hasPreviousClosure ? Math.max(0, prevDebt.amount - amortizationUf) : prevDebt.amount;
+  const inferredPreviousDebtUf = hasPreviousClosure ? null : prevDebt.amount + amortizationUf;
 
   const upsertIfMissingOrAutofill = (
     label: string,
@@ -387,15 +393,12 @@ export const applyMortgageAutoCalculation = (
       amount: Math.max(0, amount),
       currency: existing?.currency || prevDebt.currency,
       snapshotDate: existing?.snapshotDate || snapshotDate,
-      note: `Estimado automático desde cierre ${previous.monthKey}`,
+      note: hasPreviousClosure
+        ? `Estimado automático desde cierre ${previous?.monthKey}`
+        : `Estimado automático con base inicial. Saldo mes anterior inferido: ${inferredPreviousDebtUf?.toFixed(4)} UF`,
     });
     return true;
   };
-
-  const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
-  const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
-  const hasPreviousClosure = !!previous?.records?.length;
-  const newDebtUf = hasPreviousClosure ? Math.max(0, prevDebt.amount - amortizationUf) : prevDebt.amount;
 
   let changed = 0;
   if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', config.dividendUf)) changed += 1;
