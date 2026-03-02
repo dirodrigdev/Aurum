@@ -35,9 +35,23 @@ export interface WealthMonthlyClosure {
   records?: WealthRecord[];
 }
 
+export interface MortgageAutoCalcConfig {
+  dividendUf: number;
+  interestUf: number;
+  fireInsuranceUf: number;
+  lifeInsuranceUf: number;
+}
+
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
+
+export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
+  dividendUf: 53.2439,
+  interestUf: 21.3361,
+  fireInsuranceUf: 3.67,
+  lifeInsuranceUf: 0.4716,
+};
 
 const nowIso = () => new Date().toISOString();
 
@@ -327,4 +341,66 @@ export const fillMissingWithPreviousClosure = (
 
   saveWealthRecords([...toAdd, ...records].sort(sortByCreatedDesc));
   return { added: toAdd.length, sourceMonth: previous.monthKey };
+};
+
+const isAutoFillNote = (note?: string) => {
+  const n = String(note || '').toLowerCase();
+  return n.includes('arrastrado') || n.includes('estimado');
+};
+
+export const applyMortgageAutoCalculation = (
+  targetMonthKey: string,
+  snapshotDate: string,
+  config: MortgageAutoCalcConfig = mortgageAutoCalcDefaults,
+): { changed: number; sourceMonth: string | null; skipped: boolean } => {
+  const records = loadWealthRecords();
+  const closures = loadClosures();
+  const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
+
+  if (!previous || !previous.records?.length) {
+    return { changed: 0, sourceMonth: null, skipped: true };
+  }
+
+  const prevDebt = dedupeLatestByAsset(previous.records).find(
+    (r) => r.block === 'debt' && r.label.toLowerCase().includes('saldo deuda hipotecaria'),
+  );
+  if (!prevDebt) return { changed: 0, sourceMonth: previous.monthKey, skipped: true };
+
+  const monthRecords = latestRecordsForMonth(records, targetMonthKey);
+  const findByLabel = (label: string) =>
+    monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
+
+  const upsertIfMissingOrAutofill = (
+    label: string,
+    amount: number,
+    source = 'Autocálculo hipotecario',
+  ): boolean => {
+    const existing = findByLabel(label);
+    if (existing && !isAutoFillNote(existing.note)) return false;
+
+    upsertWealthRecord({
+      id: existing?.id,
+      block: 'debt',
+      source: existing?.source || source,
+      label,
+      amount: Math.max(0, amount),
+      currency: existing?.currency || prevDebt.currency,
+      snapshotDate: existing?.snapshotDate || snapshotDate,
+      note: `Estimado automático desde cierre ${previous.monthKey}`,
+    });
+    return true;
+  };
+
+  const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
+  const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
+  const newDebtUf = Math.max(0, prevDebt.amount - amortizationUf);
+
+  let changed = 0;
+  if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', config.dividendUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Interés hipotecario mensual', config.interestUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Seguros hipotecarios mensuales', insuranceUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Amortización hipotecaria mensual', amortizationUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Saldo deuda hipotecaria', newDebtUf)) changed += 1;
+
+  return { changed, sourceMonth: previous.monthKey, skipped: false };
 };

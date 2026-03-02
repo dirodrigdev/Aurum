@@ -23,6 +23,7 @@ import {
   WealthRecord,
   createMonthlyClosure,
   currentMonthKey,
+  applyMortgageAutoCalculation,
   fillMissingWithPreviousClosure,
   latestRecordsForMonth,
   loadClosures,
@@ -258,7 +259,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }));
 
       // En Bienes raíces el documento de dividendo debe traer ambos valores.
-      if (section === 'real_estate') {
+      if (section === 'real_estate' && sourceHint === 'dividendo') {
         const strictDividendParsed = parseWealthFromOcrText(text, 'dividendo').map((item) => ({
           ...item,
           block: normalizeSuggestionBlock(item.block),
@@ -791,6 +792,7 @@ export const Patrimonio: React.FC = () => {
 
   const useMissingFromPrevious = () => {
     const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
+    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
     refreshRecords();
 
     if (!result.sourceMonth) {
@@ -798,12 +800,15 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
-    if (!result.added) {
+    if (!result.added && !auto.changed) {
       setCarryMessage(`No faltaba información para arrastrar desde ${result.sourceMonth}.`);
       return;
     }
 
-    setCarryMessage(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}. Variación simulada hasta actualizar valores reales.`);
+    const parts: string[] = [];
+    if (result.added) parts.push(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}`);
+    if (auto.changed) parts.push(`Autocálculo hipotecario aplicado en ${auto.changed} registros`);
+    setCarryMessage(`${parts.join('. ')}. Variación simulada hasta actualizar valores reales.`);
   };
 
   useEffect(() => {
@@ -811,11 +816,22 @@ export const Patrimonio: React.FC = () => {
     autoCarryAppliedRef.current.add(monthKey);
 
     const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
+    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
     if (result.added > 0) {
       refreshRecords();
-      setCarryMessage(
-        `Arrastre automático aplicado: ${result.added} faltantes desde ${result.sourceMonth}. Actualiza lo nuevo del mes.`,
-      );
+      const msg = [
+        `Arrastre automático aplicado: ${result.added} faltantes desde ${result.sourceMonth}.`,
+        auto.changed ? `Autocálculo hipotecario aplicado en ${auto.changed} registros.` : '',
+        'Actualiza lo nuevo del mes.',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      setCarryMessage(msg);
+      return;
+    }
+    if (auto.changed > 0) {
+      refreshRecords();
+      setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros.`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthKey]);
