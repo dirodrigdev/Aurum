@@ -213,7 +213,7 @@ export const Patrimonio: React.FC = () => {
         <div className="text-sm font-semibold">Tipo de cambio para consolidado CLP</div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <div className="text-xs text-slate-500 mb-1">USD -> CLP</div>
+            <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
             <Input
               value={fx.usdClp}
               type="number"
@@ -225,7 +225,7 @@ export const Patrimonio: React.FC = () => {
             />
           </div>
           <div>
-            <div className="text-xs text-slate-500 mb-1">EUR -> CLP</div>
+            <div className="text-xs text-slate-500 mb-1">EUR a CLP</div>
             <Input
               value={fx.eurClp}
               type="number"
