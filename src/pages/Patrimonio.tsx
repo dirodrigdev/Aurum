@@ -457,160 +457,170 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       </Card>
 
       {openLoadPanel && (
-        <Card className="p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold">Cargar información</div>
-            <button
-              className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
-              onClick={() => setOpenLoadPanel(false)}
-            >
-              <X size={14} />
-            </button>
-          </div>
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
+            onClick={() => setOpenLoadPanel(false)}
+          />
+          <div className="fixed inset-x-0 bottom-0 z-50 pb-4 px-3">
+            <div className="max-w-xl mx-auto" onClick={(e) => e.stopPropagation()}>
+              <Card className="p-4 space-y-3 max-h-[78vh] overflow-auto shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold">Cargar información</div>
+                  <button
+                    className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
+                    onClick={() => setOpenLoadPanel(false)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
 
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <FileScan size={16} /> Carga OCR
-          </div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <FileScan size={16} /> Carga OCR
+                </div>
 
-          <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
-            <Camera size={16} /> Seleccionar imagen
-            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
-          </label>
+                <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
+                  <Camera size={16} /> Seleccionar imagen
+                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
+                </label>
 
-          <details>
-            <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
-            <div className="mt-2 space-y-2">
-              <Select
-                options={sourceOptionsBySection[section]}
-                value={sourceHint}
-                onChange={(e) => setSourceHint(e.target.value)}
-              />
-            </div>
-          </details>
-
-          {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
-          {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
-
-          {!!suggestions.length && (
-            <div className="space-y-2">
-              {suggestions.map((item, idx) => (
-                <div key={`${item.label}-${idx}`} className="rounded-xl border border-slate-200 p-2 space-y-2">
-                  <Input
-                    value={item.label}
-                    onChange={(e) => {
-                      const next = [...suggestions];
-                      next[idx].label = e.target.value;
-                      setSuggestions(next);
-                    }}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    {section === 'real_estate' ? (
-                      <Select
-                        options={realEstateBlockOptions}
-                        value={item.block}
-                        onChange={(e) => {
-                          const next = [...suggestions];
-                          next[idx].block = e.target.value as WealthBlock;
-                          setSuggestions(next);
-                        }}
-                      />
-                    ) : (
-                      <Input disabled value={sectionLabel[section]} />
-                    )}
+                <details>
+                  <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
+                  <div className="mt-2 space-y-2">
                     <Select
-                      options={currencyOptions}
-                      value={item.currency}
-                      onChange={(e) => {
-                        const next = [...suggestions];
-                        next[idx].currency = e.target.value as WealthCurrency;
-                        setSuggestions(next);
-                      }}
+                      options={sourceOptionsBySection[section]}
+                      value={sourceHint}
+                      onChange={(e) => setSourceHint(e.target.value)}
                     />
                   </div>
-                  <Input
-                    type="number"
-                    value={item.amount}
-                    onChange={(e) => {
-                      const next = [...suggestions];
-                      next[idx].amount = Number(e.target.value) || 0;
-                      setSuggestions(next);
-                    }}
-                  />
-                  <div className="text-[11px] text-slate-500">
-                    {formatCurrency(item.amount, item.currency)}
+                </details>
+
+                {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
+                {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
+
+                {!!suggestions.length && (
+                  <div className="space-y-2">
+                    {suggestions.map((item, idx) => (
+                      <div key={`${item.label}-${idx}`} className="rounded-xl border border-slate-200 p-2 space-y-2">
+                        <Input
+                          value={item.label}
+                          onChange={(e) => {
+                            const next = [...suggestions];
+                            next[idx].label = e.target.value;
+                            setSuggestions(next);
+                          }}
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          {section === 'real_estate' ? (
+                            <Select
+                              options={realEstateBlockOptions}
+                              value={item.block}
+                              onChange={(e) => {
+                                const next = [...suggestions];
+                                next[idx].block = e.target.value as WealthBlock;
+                                setSuggestions(next);
+                              }}
+                            />
+                          ) : (
+                            <Input disabled value={sectionLabel[section]} />
+                          )}
+                          <Select
+                            options={currencyOptions}
+                            value={item.currency}
+                            onChange={(e) => {
+                              const next = [...suggestions];
+                              next[idx].currency = e.target.value as WealthCurrency;
+                              setSuggestions(next);
+                            }}
+                          />
+                        </div>
+                        <Input
+                          type="number"
+                          value={item.amount}
+                          onChange={(e) => {
+                            const next = [...suggestions];
+                            next[idx].amount = Number(e.target.value) || 0;
+                            setSuggestions(next);
+                          }}
+                        />
+                        <div className="text-[11px] text-slate-500">
+                          {formatCurrency(item.amount, item.currency)}
+                        </div>
+                        <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
+                          Guardar
+                        </Button>
+                      </div>
+                    ))}
+                    <Button variant="secondary" onClick={saveAllSuggestions}>
+                      Guardar todo
+                    </Button>
                   </div>
-                  <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
-                    Guardar
-                  </Button>
-                </div>
-              ))}
-              <Button variant="secondary" onClick={saveAllSuggestions}>
-                Guardar todo
-              </Button>
-            </div>
-          )}
-
-          <details>
-            <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
-            <div className="mt-2 space-y-2">
-              {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
-              <Input
-                placeholder="Nombre del activo"
-                value={draft.label}
-                onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-              />
-              <div className="grid grid-cols-2 gap-2">
-                {section === 'real_estate' ? (
-                  <Select
-                    options={realEstateBlockOptions}
-                    value={draft.block}
-                    onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
-                  />
-                ) : (
-                  <Input disabled value={sectionLabel[section]} />
                 )}
-                <Select
-                  options={currencyOptions}
-                  value={draft.currency}
-                  onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  type="number"
-                  placeholder="Monto"
-                  value={draft.amount}
-                  onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
-                />
-                <Input
-                  type="date"
-                  value={draft.snapshotDate}
-                  onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
-                />
-              </div>
-              <Input
-                placeholder="Fuente"
-                value={draft.source}
-                onChange={(e) => setDraft({ ...draft, source: e.target.value })}
-              />
-              <Button onClick={saveDraft}>Guardar registro</Button>
-            </div>
-          </details>
 
-          {!!ocrText && (
-            <details className="text-xs text-slate-500">
-              <summary className="cursor-pointer">Texto OCR (opcional)</summary>
-              <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
-                {ocrText}
-              </pre>
-            </details>
-          )}
-        </Card>
+                <details>
+                  <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
+                  <div className="mt-2 space-y-2">
+                    {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
+                    <Input
+                      placeholder="Nombre del activo"
+                      value={draft.label}
+                      onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      {section === 'real_estate' ? (
+                        <Select
+                          options={realEstateBlockOptions}
+                          value={draft.block}
+                          onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
+                        />
+                      ) : (
+                        <Input disabled value={sectionLabel[section]} />
+                      )}
+                      <Select
+                        options={currencyOptions}
+                        value={draft.currency}
+                        onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="number"
+                        placeholder="Monto"
+                        value={draft.amount}
+                        onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
+                      />
+                      <Input
+                        type="date"
+                        value={draft.snapshotDate}
+                        onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
+                      />
+                    </div>
+                    <Input
+                      placeholder="Fuente"
+                      value={draft.source}
+                      onChange={(e) => setDraft({ ...draft, source: e.target.value })}
+                    />
+                    <Button onClick={saveDraft}>Guardar registro</Button>
+                  </div>
+                </details>
+
+                {!!ocrText && (
+                  <details className="text-xs text-slate-500">
+                    <summary className="cursor-pointer">Texto OCR (opcional)</summary>
+                    <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
+                      {ocrText}
+                    </pre>
+                  </details>
+                )}
+              </Card>
+            </div>
+          </div>
+        </>
       )}
 
       {!openLoadPanel && (
         <button
-          className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center"
+          className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center z-30"
           onClick={() => setOpenLoadPanel(true)}
           aria-label="Sumar información"
         >
