@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -82,6 +82,14 @@ const sectionChecklist: Record<MainSection, string[]> = {
   investment: ['SURA saldo total', 'BTG total valorización', 'Global66 Cuenta Vista USD', 'Wise Cuenta principal USD'],
   real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
   bank: ['Wise Cuenta principal USD', 'Global66 Cuenta Vista USD'],
+};
+
+const isCarriedRecord = (record: WealthRecord) => {
+  return String(record.note || '').toLowerCase().includes('arrastrado');
+};
+
+const isEstimatedRecord = (record: WealthRecord) => {
+  return String(record.note || '').toLowerCase().includes('estimado');
 };
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
@@ -334,11 +342,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const checklistStatus = useMemo(() => {
-    const labels = recordsForSection.map((r) => r.label.toLowerCase());
-    return sectionChecklist[section].map((name) => ({
-      name,
-      done: labels.some((label) => label.includes(name.toLowerCase())),
-    }));
+    return sectionChecklist[section].map((name) => {
+      const match = recordsForSection.find((r) => r.label.toLowerCase().includes(name.toLowerCase()));
+      if (!match) {
+        return { name, status: 'pendiente' as const, detail: 'Sin base previa' };
+      }
+      if (isCarriedRecord(match)) {
+        return { name, status: 'arrastrado' as const, detail: `Desde cierre anterior (${match.snapshotDate})` };
+      }
+      if (isEstimatedRecord(match)) {
+        return { name, status: 'estimado' as const, detail: `Estimado (${match.snapshotDate})` };
+      }
+      return { name, status: 'actualizado' as const, detail: `Actualizado ${match.snapshotDate}` };
+    });
   }, [recordsForSection, section]);
 
   return (
@@ -381,7 +397,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     label: item.label,
                     amount: String(item.amount),
                     currency: item.currency,
-                    note: item.note || '',
+                    note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
                     snapshotDate: item.snapshotDate,
                   });
                   setOpenLoadPanel(true);
@@ -413,8 +429,29 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
         {checklistStatus.map((row) => (
           <div key={row.name} className="flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1">
-            <span>{row.name}</span>
-            <span className={row.done ? 'text-emerald-700' : 'text-red-700'}>{row.done ? 'Listo' : 'Falta'}</span>
+            <div>
+              <div>{row.name}</div>
+              <div className="text-[11px] text-slate-500">{row.detail}</div>
+            </div>
+            <span
+              className={
+                row.status === 'actualizado'
+                  ? 'text-emerald-700'
+                  : row.status === 'arrastrado'
+                    ? 'text-amber-700'
+                    : row.status === 'estimado'
+                      ? 'text-indigo-700'
+                      : 'text-red-700'
+              }
+            >
+              {row.status === 'actualizado'
+                ? 'Actualizado'
+                : row.status === 'arrastrado'
+                  ? 'Arrastrado'
+                  : row.status === 'estimado'
+                    ? 'Estimado'
+                    : 'Pendiente'}
+            </span>
           </div>
         ))}
       </Card>
@@ -597,6 +634,7 @@ export const Patrimonio: React.FC = () => {
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>('CLP');
+  const autoCarryAppliedRef = useRef<Set<string>>(new Set());
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
   const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);
@@ -677,7 +715,10 @@ export const Patrimonio: React.FC = () => {
   }, [activeSection, monthRecords]);
 
   const runMonthlyClose = () => {
-    const hasCarriedValues = monthRecords.some((r) => String(r.note || '').toLowerCase().includes('arrastrado desde cierre'));
+    const hasCarriedValues = monthRecords.some(
+      (r) =>
+        isCarriedRecord(r) && (r.block === 'investment' || r.block === 'real_estate' || r.block === 'debt'),
+    );
     if (hasCarriedValues) {
       setCloseError('No se puede cerrar el mes: hay valores arrastrados del cierre anterior. Actualiza los faltantes.');
       return;
@@ -703,6 +744,20 @@ export const Patrimonio: React.FC = () => {
 
     setCarryMessage(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}. Variación simulada hasta actualizar valores reales.`);
   };
+
+  useEffect(() => {
+    if (autoCarryAppliedRef.current.has(monthKey)) return;
+    autoCarryAppliedRef.current.add(monthKey);
+
+    const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
+    if (result.added > 0) {
+      refreshRecords();
+      setCarryMessage(
+        `Arrastre automático aplicado: ${result.added} faltantes desde ${result.sourceMonth}. Actualiza lo nuevo del mes.`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthKey]);
 
   if (activeSection) {
     return (
