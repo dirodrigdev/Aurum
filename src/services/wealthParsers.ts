@@ -231,7 +231,8 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
   const largestAmount = extractAllLargeAmounts(text).sort((a, b) => b - a)[0] || null;
   const candidates = [totalFromBlock, nearLabelA, nearLabelB, largestAmount]
     .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0);
-  const amount = candidates.length ? Math.max(...candidates) : null;
+  const plausibleCandidates = candidates.filter((n) => n >= 10_000_000 && n <= 2_000_000_000);
+  const amount = (plausibleCandidates.length ? Math.max(...plausibleCandidates) : Math.max(...candidates)) || null;
   if (!amount) return [];
 
   return [

@@ -4,7 +4,7 @@ declare global {
       recognize: (
         image: File | Blob | string,
         lang?: string,
-        options?: { logger?: (data: any) => void },
+        options?: { logger?: (data: any) => void; [key: string]: any },
       ) => Promise<{ data?: { text?: string } }>;
     };
   }
@@ -93,6 +93,40 @@ const buildEnhancedOcrImage = async (file: File): Promise<Blob> => {
   return canvasToBlob(canvas);
 };
 
+const buildFocusedCenterCrop = async (file: File): Promise<Blob> => {
+  const img = await fileToImage(file);
+
+  // Región donde suele aparecer el monto principal en screenshots mobile de PlanVital.
+  const cropX = Math.floor(img.width * 0.12);
+  const cropY = Math.floor(img.height * 0.24);
+  const cropW = Math.floor(img.width * 0.78);
+  const cropH = Math.floor(img.height * 0.34);
+
+  const scale = 2.6;
+  const outW = Math.max(1, Math.floor(cropW * scale));
+  const outH = Math.max(1, Math.floor(cropH * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No se pudo inicializar crop OCR.');
+
+  ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+  const imageData = ctx.getImageData(0, 0, outW, outH);
+  const data = imageData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const boosted = gray > 165 ? 255 : gray < 80 ? 0 : gray;
+    data[i] = boosted;
+    data[i + 1] = boosted;
+    data[i + 2] = boosted;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvasToBlob(canvas);
+};
+
 const scoreOcrText = (text: string): number => {
   const lower = text.toLowerCase();
   const digitCount = (text.match(/[0-9]/g) || []).length;
@@ -121,6 +155,7 @@ export const runOcrFromFile = async (
   });
 
   let enhancedText = '';
+  let focusedText = '';
   try {
     onProgress?.(5, 'enhancing_image');
     const enhanced = await buildEnhancedOcrImage(file);
@@ -130,7 +165,22 @@ export const runOcrFromFile = async (
     // Si falla el preprocesado, seguimos con OCR original.
   }
 
+  try {
+    onProgress?.(8, 'focused_crop');
+    const focused = await buildFocusedCenterCrop(file);
+    const resultFocused = await window.Tesseract!.recognize(focused, 'spa+eng', {
+      tessedit_pageseg_mode: '6',
+      tessedit_char_whitelist: '0123456789$., TotalahorradoactualTOTALAHORRADOACTUAL',
+    });
+    focusedText = String(resultFocused?.data?.text || '').trim();
+  } catch {
+    // Si falla crop, no bloqueamos.
+  }
+
   const originalText = String(resultOriginal?.data?.text || '').trim();
-  const bestText = scoreOcrText(enhancedText) > scoreOcrText(originalText) ? enhancedText : originalText;
-  return bestText;
+  const bestPrimary = scoreOcrText(enhancedText) > scoreOcrText(originalText) ? enhancedText : originalText;
+
+  // Devolvemos texto combinado para que parsers puedan capturar montos que salieron solo en el crop.
+  const merged = [bestPrimary, focusedText].filter(Boolean).join('\n');
+  return merged || bestPrimary;
 };
