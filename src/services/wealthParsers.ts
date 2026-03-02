@@ -57,6 +57,12 @@ const findAmountAfterLabel = (text: string, label: RegExp): number | null => {
   return parseLocalizedNumber(match[1]);
 };
 
+const findAmountNearText = (text: string, pattern: RegExp): number | null => {
+  const match = text.match(pattern);
+  if (!match) return null;
+  return parseLocalizedNumber(match[1]);
+};
+
 const build = (items: Array<ParsedWealthSuggestion | null>): ParsedWealthSuggestion[] => {
   return items.filter((item): item is ParsedWealthSuggestion => !!item && item.amount > 0);
 };
@@ -92,9 +98,12 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
 };
 
 const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
-  const saldoActual = findAmountAfterLabel(text, /saldo\s+actual\s+es[:\s$]*([0-9.]+)/i);
-  const inversion = findAmountAfterLabel(text, /inversi[oó]n\s+financiera[:\s$]*([0-9.]+)/i);
-  const previsional = findAmountAfterLabel(text, /ahorro\s+previsional[:\s$]*([0-9.]+)/i);
+  const saldoActual =
+    findAmountNearText(text, /saldo\s*actual(?:\s*es)?[^0-9]{0,24}([0-9][0-9.,]{4,})/i) ||
+    findAmountNearText(text, /mi\s*resumen[\s\S]{0,140}?saldo[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
+
+  const inversion = findAmountNearText(text, /inversi[oó]n\s*financiera[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
+  const previsional = findAmountNearText(text, /ahorro\s*previsional[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
 
   return build([
     saldoActual

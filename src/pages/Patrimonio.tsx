@@ -86,13 +86,24 @@ const monthLabel = (monthKey: string) => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 
+const groupWithDots = (value: number) => {
+  return Math.abs(Math.trunc(value))
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+};
+
 const formatCurrency = (value: number, currency: WealthCurrency) => {
-  const locale = currency === 'CLP' ? 'es-CL' : 'es-ES';
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'CLP' ? 0 : 2,
-  }).format(value);
+  const sign = value < 0 ? '-' : '';
+  if (currency === 'CLP') {
+    return `${sign}$${groupWithDots(value)}`;
+  }
+
+  const abs = Math.abs(value);
+  const intPart = Math.trunc(abs);
+  const decimalPart = Math.round((abs - intPart) * 100)
+    .toString()
+    .padStart(2, '0');
+  return `${sign}${groupWithDots(intPart)},${decimalPart} ${currency}`;
 };
 
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
@@ -220,6 +231,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       if (!parsed.length) {
         setOcrError('No pude detectar montos claros. Intenta con otra captura.');
         return;
+      }
+
+      const rawParsed = parseWealthFromOcrText(text, sourceHint);
+      const isLikelyWrongSection =
+        (section === 'investment' && rawParsed.some((r) => r.block === 'debt' || r.block === 'real_estate')) ||
+        (section === 'real_estate' && rawParsed.some((r) => r.block === 'investment' || r.block === 'bank')) ||
+        (section === 'bank' && rawParsed.some((r) => r.block !== 'bank'));
+
+      if (isLikelyWrongSection) {
+        setOcrError('La imagen parece pertenecer a otro bloque. Revisa antes de guardar.');
       }
 
       // Permite subir varias imágenes antes de guardar todo.
@@ -624,7 +645,7 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-4 space-y-4">
-      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-orange-800 via-amber-800 to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(78,61,21,0.50)]">
+      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-[#9a5b2b] via-[#7f5a2f] to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(64,52,31,0.50)]">
         <div className="absolute inset-0 opacity-15 bg-[radial-gradient(circle_at_top_right,_#fdba74_0%,_transparent_45%)]" />
         <div className="relative">
           <div className="text-xs uppercase tracking-[0.22em] text-orange-100">Aurum Wealth</div>
@@ -633,7 +654,7 @@ export const Patrimonio: React.FC = () => {
           {!showSummary ? (
             <div className="mt-6 flex justify-center">
               <button
-                className="px-4 py-1.5 rounded-full bg-white/15 border border-white/20 text-sm font-medium shadow-sm"
+                className="px-3 py-1 rounded-full bg-white/12 border border-white/20 text-xs text-orange-100/90 shadow-sm"
                 onClick={() => setShowSummary(true)}
               >
                 Resumen oculto
@@ -651,46 +672,47 @@ export const Patrimonio: React.FC = () => {
                 Ocultar
               </button>
 
-              <div className="mt-4 inline-flex rounded-full bg-white/12 border border-white/20 p-1 text-xs">
-                {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+              <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
+                <div className="space-y-2">
                   <button
-                    key={curr}
-                    className={`px-3 py-1 rounded-full ${displayCurrency === curr ? 'bg-white text-slate-900' : 'text-white'}`}
-                    onClick={() => setDisplayCurrency(curr)}
+                    className="w-full rounded-xl bg-white/12 p-3 text-left min-h-[72px]"
+                    onClick={() => setShowNetWorth((v) => !v)}
                   >
-                    {curr}
+                    <div className="mt-1 text-base font-semibold">
+                      {showNetWorth ? (
+                        metricsDisplay.netWorth
+                      ) : (
+                        <span className="inline-block blur-[1.2px] select-none">88.888.888</span>
+                      )}
+                    </div>
                   </button>
-                ))}
-              </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <button
-                  className="rounded-xl bg-white/12 p-3 text-left min-h-[80px]"
-                  onClick={() => setShowNetWorth((v) => !v)}
-                >
-                  <div className="text-orange-100">Patrimonio total</div>
-                  <div className="mt-1 text-base font-semibold">
-                    {showNetWorth ? (
-                      metricsDisplay.netWorth
-                    ) : (
-                      <span className="inline-block blur-[1.2px] select-none">88.888.888</span>
-                    )}
+                  <div className="rounded-xl bg-white/12 p-3">
+                    <div className="text-orange-100">Incremento mensual vs mes anterior</div>
+                    <div className="mt-1 text-base font-semibold">{metricsDisplay.monthIncrease}</div>
                   </div>
-                </button>
 
-                <div className="rounded-xl bg-white/12 p-3">
-                  <div className="text-orange-100">Incremento mensual</div>
-                  <div className="mt-1 text-base font-semibold">{metricsDisplay.monthIncrease}</div>
+                  <div className="rounded-xl bg-white/12 p-3">
+                    <div className="text-orange-100">Promedio mensual últimos 12 meses</div>
+                    <div className="mt-1 text-base font-semibold">{metricsDisplay.avg12}</div>
+                  </div>
+
+                  <div className="rounded-xl bg-white/12 p-3">
+                    <div className="text-orange-100">Promedio mensual desde inicio</div>
+                    <div className="mt-1 text-base font-semibold">{metricsDisplay.avgSinceStart}</div>
+                  </div>
                 </div>
 
-                <div className="rounded-xl bg-white/12 p-3">
-                  <div className="text-orange-100">Promedio mensual últimos 12 meses</div>
-                  <div className="mt-1 text-base font-semibold">{metricsDisplay.avg12}</div>
-                </div>
-
-                <div className="rounded-xl bg-white/12 p-3">
-                  <div className="text-orange-100">Promedio mensual desde inicio</div>
-                  <div className="mt-1 text-base font-semibold">{metricsDisplay.avgSinceStart}</div>
+                <div className="flex flex-col gap-2">
+                  {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+                    <button
+                      key={curr}
+                      className={`px-3 py-2 rounded-lg border border-white/20 text-xs ${displayCurrency === curr ? 'bg-white text-slate-900' : 'bg-white/8 text-white'}`}
+                      onClick={() => setDisplayCurrency(curr)}
+                    >
+                      {curr}
+                    </button>
+                  ))}
                 </div>
               </div>
             </>
@@ -700,27 +722,27 @@ export const Patrimonio: React.FC = () => {
 
       <div className="grid grid-cols-2 gap-3">
         <button
-          className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-left shadow-sm hover:shadow-md transition"
+          className="rounded-2xl border border-orange-300 bg-gradient-to-br from-[#f9c79b] to-[#eb9d66] p-4 text-left shadow-sm hover:shadow-md transition"
           onClick={() => setActiveSection('investment')}
         >
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-orange-900">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
             <Landmark size={16} /> Inversiones
           </div>
-          <div className="mt-1 text-xs text-orange-700">{formatCurrency(sectionAmounts.investment, 'CLP')}</div>
-          <div className="mt-3 inline-flex items-center gap-1 text-xs text-orange-800">
+          <div className="mt-1 text-xs text-[#6b3a1f]">{formatCurrency(sectionAmounts.investment, 'CLP')}</div>
+          <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#6b3a1f]">
             Entrar <ArrowRight size={13} />
           </div>
         </button>
 
         <button
-          className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left shadow-sm hover:shadow-md transition"
+          className="rounded-2xl border border-emerald-300 bg-gradient-to-br from-[#c5ddb4] to-[#8ba878] p-4 text-left shadow-sm hover:shadow-md transition"
           onClick={() => setActiveSection('real_estate')}
         >
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-900">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
             <Home size={16} /> Bienes raíces
           </div>
-          <div className="mt-1 text-xs text-emerald-700">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
-          <div className="mt-3 inline-flex items-center gap-1 text-xs text-emerald-700">
+          <div className="mt-1 text-xs text-[#275238]">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
+          <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]">
             Entrar <ArrowRight size={13} />
           </div>
         </button>
@@ -735,7 +757,6 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
             </div>
-            <div className="mt-1 text-xs text-sky-700">{formatCurrency(sectionAmounts.bank, 'CLP')}</div>
           </div>
           <Wallet size={18} className="text-sky-700" />
         </div>
@@ -764,7 +785,7 @@ export const Patrimonio: React.FC = () => {
         )}
 
         <details>
-          <summary className="text-xs text-slate-500 cursor-pointer">Cambiar mes de trabajo</summary>
+          <summary className="text-xs text-slate-500 cursor-pointer">Cambiar mes de visualización</summary>
           <div className="mt-2">
             <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value || currentMonthKey())} />
           </div>
