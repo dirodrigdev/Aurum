@@ -812,7 +812,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </>
       )}
 
-      {!openLoadPanel && (
+      {!openLoadPanel && section !== 'real_estate' && (
         <button
           className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center z-30"
           onClick={() => {

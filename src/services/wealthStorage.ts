@@ -386,8 +386,15 @@ export const applyMortgageAutoCalculation = (
   const findByLabel = (label: string) =>
     monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
 
-  const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
-  const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
+  const readPrevDebtValue = (labelPart: string) =>
+    sourceRecords.find((r) => r.block === 'debt' && r.label.toLowerCase().includes(labelPart.toLowerCase()))?.amount;
+
+  const dividendUf = readPrevDebtValue('Dividendo hipotecario mensual') ?? config.dividendUf;
+  const interestUf = readPrevDebtValue('Interés hipotecario mensual') ?? config.interestUf;
+  const insuranceUf =
+    readPrevDebtValue('Seguros hipotecarios mensuales') ?? config.fireInsuranceUf + config.lifeInsuranceUf;
+  const amortizationUf =
+    readPrevDebtValue('Amortización hipotecaria mensual') ?? (dividendUf - interestUf - insuranceUf);
   const hasPreviousClosure = !!previous?.records?.length;
   const newDebtUf = hasPreviousClosure ? Math.max(0, prevDebt.amount - amortizationUf) : prevDebt.amount;
   const inferredPreviousDebtUf = hasPreviousClosure ? null : prevDebt.amount + amortizationUf;
@@ -416,8 +423,8 @@ export const applyMortgageAutoCalculation = (
   };
 
   let changed = 0;
-  if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', config.dividendUf)) changed += 1;
-  if (upsertIfMissingOrAutofill('Interés hipotecario mensual', config.interestUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', dividendUf)) changed += 1;
+  if (upsertIfMissingOrAutofill('Interés hipotecario mensual', interestUf)) changed += 1;
   if (upsertIfMissingOrAutofill('Seguros hipotecarios mensuales', insuranceUf)) changed += 1;
   if (upsertIfMissingOrAutofill('Amortización hipotecaria mensual', amortizationUf)) changed += 1;
   if (upsertIfMissingOrAutofill('Saldo deuda hipotecaria', newDebtUf)) changed += 1;
