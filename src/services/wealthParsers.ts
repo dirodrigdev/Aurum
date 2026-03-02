@@ -265,29 +265,29 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
     .map((m) => parseLocalizedNumber(m[1]) || 0)
     .filter((n) => Number.isFinite(n) && n > 0);
 
-  const ufDividendCandidates = ufLikeCandidates.filter((n) => n >= 5 && n <= 300).sort((a, b) => b - a);
-  const ufDebtCandidates = ufLikeCandidates.filter((n) => n >= 500 && n <= 50000).sort((a, b) => a - b);
+  const ufDividendCandidates = ufLikeCandidates.filter((n) => n >= 51 && n <= 53).sort((a, b) => b - a);
+  const ufDebtCandidates = ufLikeCandidates.filter((n) => n >= 2000 && n <= 8850).sort((a, b) => a - b);
 
   // Dividendo mensual en UF suele venir en formato 53,2439 (rango típico acotado).
   const totalPagar =
     extractFromContext(
       /total\s+a\s+pagar\s+por\s+tipo\s+de\s+dividendo[\s\S]{0,240}?pactado[^0-9]{0,40}([0-9][0-9\s.,]{2,16})/gi,
-      5,
-      300,
+      51,
+      53,
     ) ||
     extractFromContext(
       /dividendo\s+a\s+pagar[\s\S]{0,260}?pactado[^0-9]{0,40}([0-9][0-9\s.,]{2,16})/gi,
-      5,
-      300,
+      51,
+      53,
     ) ||
-    extractFromContext(/pactado[^0-9]{0,24}([0-9]{1,3}[.,][0-9]{2,4})/gi, 5, 300) ||
+    extractFromContext(/pactado[^0-9]{0,24}([0-9]{1,3}[.,][0-9]{2,4})/gi, 51, 53) ||
     ufDividendCandidates[0] ||
     null;
 
   // Saldo deuda en UF suele estar en miles (ej: 8.831,5350).
   const effectiveDebt =
-    extractFromContext(/saldo\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000) ||
-    extractFromContext(/deuda\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000) ||
+    extractFromContext(/saldo\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 2000, 8850) ||
+    extractFromContext(/deuda\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 2000, 8850) ||
     // Fallback robusto para este formato de aviso: normalmente el menor saldo UF es "después del pago".
     ufDebtCandidates[0] ||
     null;
