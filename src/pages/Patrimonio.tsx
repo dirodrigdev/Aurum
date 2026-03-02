@@ -211,10 +211,17 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [ocrProgress, setOcrProgress] = useState<{ pct: number; status: string } | null>(null);
   const [ocrError, setOcrError] = useState('');
   const [ocrText, setOcrText] = useState('');
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState('');
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
+    };
+  }, [ocrPreviewUrl]);
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -234,23 +241,43 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     setOcrError('');
     setOcrProgress({ pct: 0, status: 'iniciando' });
+    if (ocrPreviewUrl) {
+      URL.revokeObjectURL(ocrPreviewUrl);
+    }
+    setOcrPreviewUrl(URL.createObjectURL(file));
 
     try {
       const text = await runOcrFromFile(file, (pct, status) => setOcrProgress({ pct, status }));
       setOcrText(text);
 
-      const parsed = parseWealthFromOcrText(text, sourceHint).map((item) => ({
+      const rawParsed = parseWealthFromOcrText(text, sourceHint);
+      let parsed = rawParsed.map((item) => ({
         ...item,
         block: normalizeSuggestionBlock(item.block),
         snapshotDate: todayYmd(),
       }));
+
+      // En Bienes raíces el documento de dividendo debe traer ambos valores.
+      if (section === 'real_estate') {
+        const strictDividendParsed = parseWealthFromOcrText(text, 'dividendo').map((item) => ({
+          ...item,
+          block: normalizeSuggestionBlock(item.block),
+          snapshotDate: todayYmd(),
+        }));
+        const hasDividend = strictDividendParsed.some((i) => i.label === 'Dividendo hipotecario mensual');
+        const hasDebt = strictDividendParsed.some((i) => i.label === 'Saldo deuda hipotecaria');
+        if (!hasDividend || !hasDebt) {
+          setOcrError('Para este documento deben detectarse ambos valores: dividendo y saldo deuda después del pago.');
+          return;
+        }
+        parsed = strictDividendParsed;
+      }
 
       if (!parsed.length) {
         setOcrError('No pude detectar montos claros. Intenta con otra captura.');
         return;
       }
 
-      const rawParsed = parseWealthFromOcrText(text, sourceHint);
       const isLikelyWrongSection =
         (section === 'investment' && rawParsed.some((r) => r.block === 'debt' || r.block === 'real_estate')) ||
         (section === 'real_estate' && rawParsed.some((r) => r.block === 'investment' || r.block === 'bank')) ||
@@ -498,6 +525,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
                 {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
                 {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
+                {!!ocrPreviewUrl && (
+                  <div className="rounded-xl border border-slate-200 p-2">
+                    <img
+                      src={ocrPreviewUrl}
+                      alt="Previsualización de carga"
+                      className="w-full max-h-56 object-contain rounded-lg"
+                    />
+                  </div>
+                )}
 
                 {!!suggestions.length && (
                   <div className="space-y-2">
