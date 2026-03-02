@@ -10,6 +10,7 @@ import {
   Plus,
   Trash2,
   Wallet,
+  X,
 } from 'lucide-react';
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
@@ -78,6 +79,13 @@ const sectionTheme: Record<MainSection, string> = {
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 
+const monthLabel = (monthKey: string) => {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
+  const label = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
+
 const formatCurrency = (value: number, currency: WealthCurrency) => {
   const locale = currency === 'CLP' ? 'es-CL' : 'es-ES';
   return new Intl.NumberFormat(locale, {
@@ -87,18 +95,16 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
   }).format(value);
 };
 
-const formatClp = (value: number) => formatCurrency(value, 'CLP');
-
-const monthLabel = (monthKey: string) => {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
-  const label = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
-  return label.charAt(0).toUpperCase() + label.slice(1);
+const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
+  if (currency === 'CLP') return amount;
+  if (currency === 'USD') return amount * usdClp;
+  return amount * eurClp;
 };
 
-const deltaText = (value: number | null) => {
-  if (value === null) return 'Sin base';
-  return `${value >= 0 ? '+' : ''}${formatClp(value)}`;
+const fromClp = (amountClp: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
+  if (currency === 'CLP') return amountClp;
+  if (currency === 'USD') return amountClp / Math.max(1, usdClp);
+  return amountClp / Math.max(1, eurClp);
 };
 
 const average = (arr: number[]) => {
@@ -125,12 +131,6 @@ const getSectionBlock = (section: MainSection): WealthBlock => {
   if (section === 'investment') return 'investment';
   if (section === 'bank') return 'bank';
   return 'real_estate';
-};
-
-const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number) => {
-  if (currency === 'CLP') return amount;
-  if (currency === 'USD') return amount * usdClp;
-  return amount * eurClp;
 };
 
 interface DraftRecord {
@@ -217,19 +217,22 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         snapshotDate: todayYmd(),
       }));
 
-      setSuggestions(parsed);
-      if (!parsed.length) setOcrError('No pude detectar montos claros. Intenta con otra captura.');
+      if (!parsed.length) {
+        setOcrError('No pude detectar montos claros. Intenta con otra captura.');
+        return;
+      }
+
+      // Permite subir varias imágenes antes de guardar todo.
+      setSuggestions((prev) => [...prev, ...parsed]);
     } catch (err: any) {
       setOcrError(err?.message || 'Error leyendo imagen');
-      setSuggestions([]);
-      setOcrText('');
     } finally {
       setOcrProgress(null);
       event.target.value = '';
     }
   };
 
-  const saveSuggestion = (item: EditableSuggestion) => {
+  const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
     upsertWealthRecord({
       block: item.block,
       source: item.source,
@@ -239,6 +242,27 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       note: item.note,
       snapshotDate: item.snapshotDate,
     });
+
+    if (typeof idx === 'number') {
+      setSuggestions((prev) => prev.filter((_, i) => i !== idx));
+    }
+
+    onDataChanged();
+  };
+
+  const saveAllSuggestions = () => {
+    suggestions.forEach((item) => {
+      upsertWealthRecord({
+        block: item.block,
+        source: item.source,
+        label: item.label,
+        amount: item.amount,
+        currency: item.currency,
+        note: item.note,
+        snapshotDate: item.snapshotDate,
+      });
+    });
+    setSuggestions([]);
     onDataChanged();
   };
 
@@ -268,11 +292,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </button>
         <div className="mt-2 text-lg font-bold text-slate-900">{sectionLabel[section]}</div>
         <div className="text-xs text-slate-600">{monthLabel(monthKey)}</div>
-      </Card>
-
-      <Card className="p-4 border-0 bg-gradient-to-br from-slate-900 to-slate-700 text-white shadow-[0_10px_25px_rgba(15,23,42,0.28)]">
-        <div className="text-xs uppercase tracking-wider text-slate-300">Total del bloque</div>
-        <div className="mt-1 text-3xl font-semibold">{formatClp(sectionTotalClp)}</div>
+        <div className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
       </Card>
 
       <Card className="p-4 space-y-2">
@@ -307,10 +327,17 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <Card className="p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-semibold">Cargar información</div>
-            <Button variant="secondary" size="sm" onClick={onUseMissing}>
-              Usar faltantes cierre anterior
-            </Button>
+            <button
+              className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
+              onClick={() => setOpenLoadPanel(false)}
+            >
+              <X size={14} />
+            </button>
           </div>
+
+          <Button variant="secondary" size="sm" onClick={onUseMissing}>
+            Usar faltantes cierre anterior
+          </Button>
 
           {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
 
@@ -377,12 +404,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       setSuggestions(next);
                     }}
                   />
-                  <Button size="sm" onClick={() => saveSuggestion(item)}>
+                  <Button size="sm" onClick={() => saveSuggestion(item, idx)}>
                     Guardar
                   </Button>
                 </div>
               ))}
-              <Button variant="secondary" onClick={() => suggestions.forEach((s) => saveSuggestion(s))}>
+              <Button variant="secondary" onClick={saveAllSuggestions}>
                 Guardar todo
               </Button>
             </div>
@@ -445,13 +472,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </Card>
       )}
 
-      <button
-        className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center"
-        onClick={() => setOpenLoadPanel((v) => !v)}
-        aria-label="Sumar información"
-      >
-        <Plus size={22} />
-      </button>
+      {!openLoadPanel && (
+        <button
+          className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center"
+          onClick={() => setOpenLoadPanel(true)}
+          aria-label="Sumar información"
+        >
+          <Plus size={22} />
+        </button>
+      )}
     </div>
   );
 };
@@ -467,6 +496,7 @@ export const Patrimonio: React.FC = () => {
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>('CLP');
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
   const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);
@@ -511,6 +541,29 @@ export const Patrimonio: React.FC = () => {
       realEstateNet: blockToClp('real_estate') - blockToClp('debt'),
     };
   }, [summary, fx]);
+
+  const metricsDisplay = useMemo(() => {
+    const convert = (value: number | null) => {
+      if (value === null) return null;
+      return fromClp(value, displayCurrency, fx.usdClp, fx.eurClp);
+    };
+
+    const formatted = (value: number | null) => {
+      if (value === null) return 'Sin base';
+      const prefix = value >= 0 ? '+' : '';
+      return `${prefix}${formatCurrency(value, displayCurrency)}`;
+    };
+
+    return {
+      netWorth: formatCurrency(
+        fromClp(summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp),
+        displayCurrency,
+      ),
+      monthIncrease: formatted(convert(metrics.monthIncrease)),
+      avg12: formatted(convert(metrics.avg12)),
+      avgSinceStart: formatted(convert(metrics.avgSinceStart)),
+    };
+  }, [displayCurrency, fx, metrics, summary.netConsolidatedClp]);
 
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
@@ -571,19 +624,21 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-4 space-y-4">
-      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-orange-700 via-amber-700 to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(105,82,24,0.45)]">
-        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#fdba74_0%,_transparent_50%)]" />
+      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-orange-800 via-amber-800 to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(78,61,21,0.50)]">
+        <div className="absolute inset-0 opacity-15 bg-[radial-gradient(circle_at_top_right,_#fdba74_0%,_transparent_45%)]" />
         <div className="relative">
           <div className="text-xs uppercase tracking-[0.22em] text-orange-100">Aurum Wealth</div>
           <div className="mt-1 text-sm text-orange-100/90">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
           {!showSummary ? (
-            <button
-              className="mt-4 text-sm font-medium underline underline-offset-4"
-              onClick={() => setShowSummary(true)}
-            >
-              Resumen oculto
-            </button>
+            <div className="mt-6 flex justify-center">
+              <button
+                className="px-4 py-1.5 rounded-full bg-white/15 border border-white/20 text-sm font-medium shadow-sm"
+                onClick={() => setShowSummary(true)}
+              >
+                Resumen oculto
+              </button>
+            </div>
           ) : (
             <>
               <button
@@ -596,31 +651,46 @@ export const Patrimonio: React.FC = () => {
                 Ocultar
               </button>
 
-              <div
-                className="mt-4 rounded-xl border border-white/20 bg-black/15 p-4 relative cursor-pointer"
-                onClick={() => setShowNetWorth((v) => !v)}
-              >
-                <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.25em] text-white/10 pointer-events-none">
-                  PATRIMONIO TOTAL
-                </div>
-                <div className="relative z-10 text-xs text-orange-100">Patrimonio total</div>
-                <div className="relative z-10 mt-1 text-3xl font-semibold tracking-tight">
-                  {showNetWorth ? formatClp(summary.netConsolidatedClp) : 'Tocar para desbloquear'}
-                </div>
+              <div className="mt-4 inline-flex rounded-full bg-white/12 border border-white/20 p-1 text-xs">
+                {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+                  <button
+                    key={curr}
+                    className={`px-3 py-1 rounded-full ${displayCurrency === curr ? 'bg-white text-slate-900' : 'text-white'}`}
+                    onClick={() => setDisplayCurrency(curr)}
+                  >
+                    {curr}
+                  </button>
+                ))}
               </div>
 
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <button
+                  className="rounded-xl bg-white/12 p-3 text-left min-h-[80px]"
+                  onClick={() => setShowNetWorth((v) => !v)}
+                >
+                  <div className="text-orange-100">Patrimonio total</div>
+                  <div className="mt-1 text-base font-semibold">
+                    {showNetWorth ? (
+                      metricsDisplay.netWorth
+                    ) : (
+                      <span className="inline-block blur-[1.2px] select-none">88.888.888</span>
+                    )}
+                  </div>
+                </button>
+
                 <div className="rounded-xl bg-white/12 p-3">
                   <div className="text-orange-100">Incremento mensual</div>
-                  <div className="mt-1 text-base font-semibold">{deltaText(metrics.monthIncrease)}</div>
+                  <div className="mt-1 text-base font-semibold">{metricsDisplay.monthIncrease}</div>
                 </div>
+
                 <div className="rounded-xl bg-white/12 p-3">
-                  <div className="text-orange-100">Promedio 12 meses</div>
-                  <div className="mt-1 text-base font-semibold">{deltaText(metrics.avg12)}</div>
+                  <div className="text-orange-100">Promedio mensual últimos 12 meses</div>
+                  <div className="mt-1 text-base font-semibold">{metricsDisplay.avg12}</div>
                 </div>
+
                 <div className="rounded-xl bg-white/12 p-3">
-                  <div className="text-orange-100">Promedio desde inicio</div>
-                  <div className="mt-1 text-base font-semibold">{deltaText(metrics.avgSinceStart)}</div>
+                  <div className="text-orange-100">Promedio mensual desde inicio</div>
+                  <div className="mt-1 text-base font-semibold">{metricsDisplay.avgSinceStart}</div>
                 </div>
               </div>
             </>
@@ -636,7 +706,7 @@ export const Patrimonio: React.FC = () => {
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-orange-900">
             <Landmark size={16} /> Inversiones
           </div>
-          <div className="mt-1 text-xs text-orange-700">{formatClp(sectionAmounts.investment)}</div>
+          <div className="mt-1 text-xs text-orange-700">{formatCurrency(sectionAmounts.investment, 'CLP')}</div>
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-orange-800">
             Entrar <ArrowRight size={13} />
           </div>
@@ -649,7 +719,7 @@ export const Patrimonio: React.FC = () => {
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-900">
             <Home size={16} /> Bienes raíces
           </div>
-          <div className="mt-1 text-xs text-emerald-700">{formatClp(sectionAmounts.realEstateNet)}</div>
+          <div className="mt-1 text-xs text-emerald-700">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-emerald-700">
             Entrar <ArrowRight size={13} />
           </div>
@@ -665,7 +735,7 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
             </div>
-            <div className="mt-1 text-xs text-sky-700">{formatClp(sectionAmounts.bank)}</div>
+            <div className="mt-1 text-xs text-sky-700">{formatCurrency(sectionAmounts.bank, 'CLP')}</div>
           </div>
           <Wallet size={18} className="text-sky-700" />
         </div>
@@ -682,11 +752,11 @@ export const Patrimonio: React.FC = () => {
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
             <div className="font-semibold">Último cierre: {latestClosure.monthKey}</div>
-            <div>Neto consolidado: {formatClp(latestClosure.summary.netConsolidatedClp)}</div>
+            <div>Neto consolidado: {formatCurrency(latestClosure.summary.netConsolidatedClp, 'CLP')}</div>
             {growthVsPrevClosure && (
               <div className={growthVsPrevClosure.abs >= 0 ? 'text-emerald-700' : 'text-red-700'}>
                 vs cierre anterior: {growthVsPrevClosure.abs >= 0 ? '+' : ''}
-                {formatClp(growthVsPrevClosure.abs)}
+                {formatCurrency(growthVsPrevClosure.abs, 'CLP')}
                 {growthVsPrevClosure.pct !== null ? ` (${growthVsPrevClosure.pct.toFixed(2)}%)` : ''}
               </div>
             )}
