@@ -463,9 +463,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
             onClick={() => setOpenLoadPanel(false)}
           />
-          <div className="fixed inset-x-0 bottom-0 z-50 pb-4 px-3">
-            <div className="max-w-xl mx-auto" onClick={(e) => e.stopPropagation()}>
-              <Card className="p-4 space-y-3 max-h-[78vh] overflow-auto shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+            <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+              <Card className="p-4 space-y-3 max-h-[84vh] overflow-y-auto shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold">Cargar información</div>
                   <button
