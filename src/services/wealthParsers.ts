@@ -224,14 +224,14 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
   const totalFromBlock = blockMatch ? extractLargestAmountFromSnippet(blockMatch[0]) : null;
 
   // Prioridad 2: detección directa junto a etiqueta
-  const totalAhorradoActual =
-    totalFromBlock ||
-    findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i) ||
-    findAmountNearText(text, /total\s+ahorrado[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
+  const nearLabelA = findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
+  const nearLabelB = findAmountNearText(text, /total\s+ahorrado[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
 
   // Prioridad 2: fallback robusto para OCR ruidoso: tomar el monto mayor del documento
   const largestAmount = extractAllLargeAmounts(text).sort((a, b) => b - a)[0] || null;
-  const amount = totalAhorradoActual || largestAmount;
+  const candidates = [totalFromBlock, nearLabelA, nearLabelB, largestAmount]
+    .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0);
+  const amount = candidates.length ? Math.max(...candidates) : null;
   if (!amount) return [];
 
   return [
@@ -241,8 +241,8 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
       label: 'PlanVital saldo total',
       amount,
       currency: 'CLP',
-      confidence: totalAhorradoActual ? 0.94 : 0.78,
-      note: totalAhorradoActual
+      confidence: totalFromBlock || nearLabelA || nearLabelB ? 0.94 : 0.78,
+      note: totalFromBlock || nearLabelA || nearLabelB
         ? undefined
         : 'No se detectó "Total ahorrado actual" claramente. Se usó el monto más alto detectado.',
     },
