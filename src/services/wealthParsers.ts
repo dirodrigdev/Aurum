@@ -38,13 +38,19 @@ const parseLocalizedNumber = (raw: string): number | null => {
       normalized = stripped.replace(/,/g, '');
     }
   } else if (hasComma) {
-    if (/,[0-9]{1,4}$/.test(stripped)) {
+    const commaGroups = stripped.split(',');
+    const looksLikeThousands = commaGroups.length > 2 || commaGroups.slice(1).every((g) => g.length === 3);
+    if (looksLikeThousands) {
+      normalized = stripped.replace(/,/g, '');
+    } else if (/,[0-9]{1,4}$/.test(stripped)) {
       normalized = stripped.replace(/\./g, '').replace(',', '.');
     } else {
       normalized = stripped.replace(/,/g, '');
     }
   } else {
-    normalized = stripped.replace(/\./g, '');
+    const dotGroups = stripped.split('.');
+    const looksLikeThousands = dotGroups.length > 2 || dotGroups.slice(1).every((g) => g.length === 3);
+    normalized = looksLikeThousands ? stripped.replace(/\./g, '') : stripped;
   }
 
   const value = Number(normalized);
