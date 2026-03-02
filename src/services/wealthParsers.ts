@@ -20,7 +20,13 @@ const cleanText = (input: string) =>
 const parseLocalizedNumber = (raw: string): number | null => {
   if (!raw) return null;
 
-  const stripped = raw.replace(/[^0-9.,-]/g, '');
+  const normalizedRaw = raw
+    .replace(/[Oo]/g, '0')
+    .replace(/[Il|]/g, '1')
+    .replace(/[Ss]/g, '5')
+    .replace(/[’'`´]/g, '.');
+
+  const stripped = normalizedRaw.replace(/[^0-9.,-]/g, '');
   if (!stripped) return null;
 
   const hasDot = stripped.includes('.');
@@ -70,13 +76,13 @@ const findAmountNearText = (text: string, pattern: RegExp): number | null => {
 };
 
 const extractAllLargeAmounts = (text: string): number[] => {
-  return [...text.matchAll(/([0-9][0-9\s.,]{4,})/g)]
+  return [...text.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{4,})/g)]
     .map((m) => parseLocalizedNumber(m[1]) || 0)
     .filter((n) => Number.isFinite(n) && n > 0);
 };
 
 const extractLargestAmountFromSnippet = (snippet: string): number | null => {
-  const values = [...snippet.matchAll(/([0-9][0-9\s.,]{4,})/g)]
+  const values = [...snippet.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{4,})/g)]
     .map((m) => parseLocalizedNumber(m[1]) || 0)
     .filter((n) => Number.isFinite(n) && n > 0)
     .sort((a, b) => b - a);
