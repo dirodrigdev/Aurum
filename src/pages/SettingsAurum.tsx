@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Card, Input } from '../components/Components';
-import { loadFxRates, saveFxRates } from '../services/wealthStorage';
+import { Button, Card, Input } from '../components/Components';
+import { loadFxRates, saveFxRates, seedDemoWealthTimeline } from '../services/wealthStorage';
 
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
+  const [seedMessage, setSeedMessage] = useState('');
 
   return (
     <div className="p-4 space-y-4">
@@ -52,6 +53,23 @@ export const SettingsAurum: React.FC = () => {
             />
           </div>
         </div>
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Simulación de cierres</div>
+        <div className="text-xs text-slate-600">
+          Crea datos demo: enero (cierre), febrero (cierre) y marzo en curso, para probar Hoy/Cierre/Evolución.
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            const timeline = seedDemoWealthTimeline();
+            setSeedMessage(`Demo cargada: ${timeline.janKey}, ${timeline.febKey} y ${timeline.marKey}.`);
+          }}
+        >
+          Cargar demo Ene-Feb-Mar
+        </Button>
+        {!!seedMessage && <div className="text-xs text-emerald-700">{seedMessage}</div>}
       </Card>
     </div>
   );

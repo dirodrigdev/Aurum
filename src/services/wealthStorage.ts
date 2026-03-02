@@ -474,3 +474,113 @@ export const ensureInitialMortgageDefaults = (
 
   return { added };
 };
+
+const dateFromMonthOffset = (offset: number) => {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  d.setHours(12, 0, 0, 0);
+  return d;
+};
+
+const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+const ymdFromDate = (d: Date, day = 15) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+const makeDemoRecord = (
+  block: WealthBlock,
+  source: string,
+  label: string,
+  amount: number,
+  currency: WealthCurrency,
+  snapshotDate: string,
+  note?: string,
+): WealthRecord => ({
+  id: crypto.randomUUID(),
+  block,
+  source,
+  label,
+  amount,
+  currency,
+  snapshotDate,
+  createdAt: nowIso(),
+  note,
+});
+
+export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marKey: string } => {
+  const janDate = dateFromMonthOffset(-2);
+  const febDate = dateFromMonthOffset(-1);
+  const marDate = dateFromMonthOffset(0);
+
+  const janKey = monthKeyFromDate(janDate);
+  const febKey = monthKeyFromDate(febDate);
+  const marKey = monthKeyFromDate(marDate);
+
+  const janRecords = [
+    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 895_023_859, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_098.43, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_812.81, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_350, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_859.30, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(janDate, 30)),
+  ];
+
+  const febRecords = [
+    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 907_392_657, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 68_210.12, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_470.60, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_420, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_831.54, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(febDate, 28)),
+  ];
+
+  const marRecords = [
+    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 912_740_210, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
+    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_430, 'UF', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
+    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_803.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+  ];
+
+  const janSummary = summarizeWealth(dedupeLatestByAsset(janRecords), loadFxRates());
+  const febSummary = summarizeWealth(dedupeLatestByAsset(febRecords), loadFxRates());
+
+  const closures: WealthMonthlyClosure[] = [
+    {
+      id: crypto.randomUUID(),
+      monthKey: febKey,
+      closedAt: new Date(febDate.getFullYear(), febDate.getMonth(), 28, 18, 0, 0, 0).toISOString(),
+      summary: febSummary,
+      records: dedupeLatestByAsset(febRecords),
+    },
+    {
+      id: crypto.randomUUID(),
+      monthKey: janKey,
+      closedAt: new Date(janDate.getFullYear(), janDate.getMonth(), 31, 18, 0, 0, 0).toISOString(),
+      summary: janSummary,
+      records: dedupeLatestByAsset(janRecords),
+    },
+  ];
+
+  saveWealthRecords([...marRecords, ...febRecords, ...janRecords].sort(sortByCreatedDesc));
+  saveClosures(closures);
+
+  return { janKey, febKey, marKey };
+};
