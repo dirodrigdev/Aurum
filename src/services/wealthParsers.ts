@@ -101,6 +101,12 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
   const saldoActual =
     findAmountNearText(text, /saldo\s*actual(?:\s*es)?[^0-9]{0,24}([0-9][0-9.,]{4,})/i) ||
     findAmountNearText(text, /mi\s*resumen[\s\S]{0,140}?saldo[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
+  const inversion = findAmountNearText(text, /inversi[oó]n\s*financiera[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
+  const previsional = findAmountNearText(text, /ahorro\s*previsional[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
+  const detail =
+    inversion && previsional
+      ? `Detalle OCR: inversión financiera ${inversion.toLocaleString('es-CL')} + previsional ${previsional.toLocaleString('es-CL')}`
+      : undefined;
 
   return build([
     saldoActual
@@ -111,6 +117,7 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
           amount: saldoActual,
           currency: 'CLP',
           confidence: 0.96,
+          note: detail,
         }
       : null,
   ]);
@@ -174,7 +181,11 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
       amount: total,
       currency: 'CLP',
       confidence: 0.82,
-      note: 'Revisar: se sumaron líneas de Valorización detectadas en la imagen.',
+      note: `Detalle OCR: ${matches
+        .map((m) => parseLocalizedNumber(m[1]) || 0)
+        .filter((n) => n > 0)
+        .map((n) => n.toLocaleString('es-CL'))
+        .join(' + ')}`,
     },
   ];
 };

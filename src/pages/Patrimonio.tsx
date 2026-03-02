@@ -262,7 +262,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
+    const existing = recordsForSection.find(
+      (r) =>
+        r.block === item.block &&
+        r.currency === item.currency &&
+        r.source.toLowerCase() === item.source.toLowerCase() &&
+        r.label.toLowerCase() === item.label.toLowerCase(),
+    );
+
     upsertWealthRecord({
+      id: existing?.id,
       block: item.block,
       source: item.source,
       label: item.label,
@@ -281,7 +290,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveAllSuggestions = () => {
     suggestions.forEach((item) => {
+      const existing = recordsForSection.find(
+        (r) =>
+          r.block === item.block &&
+          r.currency === item.currency &&
+          r.source.toLowerCase() === item.source.toLowerCase() &&
+          r.label.toLowerCase() === item.label.toLowerCase(),
+      );
+
       upsertWealthRecord({
+        id: existing?.id,
         block: item.block,
         source: item.source,
         label: item.label,
@@ -346,6 +364,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             <div>
               <div className="font-medium text-slate-800">{item.label}</div>
               <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
+              {item.note && <div className="text-[11px] text-slate-500">{item.note}</div>}
             </div>
             <div className="flex items-center gap-2">
               <span className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}>
@@ -385,7 +404,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       </Card>
 
       <Card className="p-4 space-y-2">
-        <div className="text-sm font-semibold">Checklist del bloque</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Checklist del bloque</div>
+          <Button variant="secondary" size="sm" onClick={onUseMissing}>
+            Usar faltantes
+          </Button>
+        </div>
+        {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
         {checklistStatus.map((row) => (
           <div key={row.name} className="flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1">
             <span>{row.name}</span>
@@ -406,14 +431,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </button>
           </div>
 
-          {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
-
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <FileScan size={16} /> Subir imagen
+            <FileScan size={16} /> Carga OCR
           </div>
 
           <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
-            <Camera size={16} /> Subir imagen
+            <Camera size={16} /> Seleccionar imagen
             <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
           </label>
 
@@ -425,9 +448,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 value={sourceHint}
                 onChange={(e) => setSourceHint(e.target.value)}
               />
-              <Button variant="secondary" size="sm" onClick={onUseMissing}>
-                Usar faltantes cierre anterior
-              </Button>
             </div>
           </details>
 
@@ -542,7 +562,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
           {!!ocrText && (
             <details className="text-xs text-slate-500">
-              <summary className="cursor-pointer">Ver texto OCR</summary>
+              <summary className="cursor-pointer">Texto OCR (opcional)</summary>
               <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
                 {ocrText}
               </pre>
