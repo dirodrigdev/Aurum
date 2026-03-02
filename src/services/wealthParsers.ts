@@ -250,29 +250,37 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
   ];
 };
 
-const extractLooseNumbers = (text: string): number[] => {
-  return [...text.matchAll(/([0-9][0-9\s.,]{1,12})/g)]
-    .map((m) => parseLocalizedNumber(m[1]) || 0)
-    .filter((n) => Number.isFinite(n) && n > 0);
-};
-
 const parseDividend = (text: string): ParsedWealthSuggestion[] => {
+  // Parser estricto para "Aviso de vencimiento dividendo hipotecario" (Scotiabank).
+  // Priorizamos "PACTADO" y "Saldo después del pago" para evitar tomar números basura.
+  const extractFromContext = (pattern: RegExp, min: number, max: number) => {
+    const values = [...text.matchAll(pattern)]
+      .map((m) => parseLocalizedNumber(m[1]) || 0)
+      .filter((n) => Number.isFinite(n) && n >= min && n <= max)
+      .sort((a, b) => b - a);
+    return values[0] || null;
+  };
+
+  // Dividendo mensual en UF suele venir en formato 53,2439 (rango típico acotado).
   const totalPagar =
-    findAmountNearText(text, /total\s+a\s+pagar[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i) ||
-    findAmountNearText(text, /pactado[^0-9]{0,25}([0-9][0-9\s.,]{1,12})/i);
+    extractFromContext(
+      /total\s+a\s+pagar\s+por\s+tipo\s+de\s+dividendo[\s\S]{0,240}?pactado[^0-9]{0,40}([0-9][0-9\s.,]{2,16})/gi,
+      5,
+      300,
+    ) ||
+    extractFromContext(
+      /dividendo\s+a\s+pagar[\s\S]{0,260}?pactado[^0-9]{0,40}([0-9][0-9\s.,]{2,16})/gi,
+      5,
+      300,
+    ) ||
+    extractFromContext(/pactado[^0-9]{0,24}([0-9]{1,3}[.,][0-9]{2,4})/gi, 5, 300);
 
-  const deudaDespues =
-    findAmountNearText(text, /deuda\s+despu[eé]s\s+del\s+pago[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i) ||
-    findAmountNearText(text, /saldo\s+deuda[^0-9]{0,20}([0-9][0-9\s.,]{1,12})/i);
+  // Saldo deuda en UF suele estar en miles (ej: 8.831,5350).
+  const effectiveDebt =
+    extractFromContext(/saldo\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000) ||
+    extractFromContext(/deuda\s+despu[eé]s\s+del\s+pago[^0-9]{0,80}([0-9][0-9\s.,]{2,20})/gi, 500, 50000);
 
-  const saldoAntes = findAmountNearText(text, /saldo\s+deuda\s+antes\s+del\s+pago[\s\S]{0,45}?([0-9][0-9\s.,]{1,12})/i);
-
-  const loose = extractLooseNumbers(text);
-  const looseDividend = loose.find((n) => n >= 10 && n <= 400) || null;
-  const looseDebt = loose.filter((n) => n >= 1000 && n <= 50000).sort((a, b) => b - a)[0] || null;
-
-  const effectiveDividend = totalPagar || looseDividend;
-  const effectiveDebt = deudaDespues || saldoAntes || looseDebt;
+  const effectiveDividend = totalPagar || null;
 
   return build([
     effectiveDividend
@@ -282,8 +290,8 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
           label: 'Dividendo hipotecario mensual',
           amount: effectiveDividend,
           currency: 'CLP',
-          confidence: totalPagar ? 0.78 : 0.62,
-          note: 'OCR hipotecario: revisa que el valor corresponda al dividendo/UF del mes.',
+          confidence: 0.9,
+          note: 'Detectado desde campo PACTADO del documento hipotecario (normalmente en UF).',
         }
       : null,
     effectiveDebt
@@ -293,8 +301,8 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
           label: 'Saldo deuda hipotecaria',
           amount: effectiveDebt,
           currency: 'CLP',
-          confidence: deudaDespues || saldoAntes ? 0.8 : 0.65,
-          note: 'OCR hipotecario: revisa que el saldo corresponda al documento del mes.',
+          confidence: 0.9,
+          note: 'Detectado desde campo "Saldo después del pago" (normalmente en UF).',
         }
       : null,
   ]);
