@@ -361,9 +361,12 @@ export const applyMortgageAutoCalculation = (
     return { changed: 0, sourceMonth: null, skipped: true };
   }
 
-  const prevDebt = dedupeLatestByAsset(previous.records).find(
-    (r) => r.block === 'debt' && r.label.toLowerCase().includes('saldo deuda hipotecaria'),
-  );
+  const prevDebtCandidates = dedupeLatestByAsset(previous.records)
+    .filter((r) => r.block === 'debt')
+    .sort((a, b) => b.amount - a.amount);
+  const prevDebt =
+    prevDebtCandidates.find((r) => r.label.toLowerCase().includes('saldo deuda hipotecaria')) ||
+    prevDebtCandidates[0];
   if (!prevDebt) return { changed: 0, sourceMonth: previous.monthKey, skipped: true };
 
   const monthRecords = latestRecordsForMonth(records, targetMonthKey);

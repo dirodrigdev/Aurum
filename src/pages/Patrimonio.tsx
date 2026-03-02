@@ -195,6 +195,7 @@ interface SectionScreenProps {
   onBack: () => void;
   onDataChanged: () => void;
   onUseMissing: () => void;
+  onApplyMortgageAuto: () => void;
 }
 
 const SectionScreen: React.FC<SectionScreenProps> = ({
@@ -207,6 +208,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   onBack,
   onDataChanged,
   onUseMissing,
+  onApplyMortgageAuto,
 }) => {
   const [sourceHint, setSourceHint] = useState(section === 'real_estate' ? 'dividendo' : 'auto');
   const [ocrProgress, setOcrProgress] = useState<{ pct: number; status: string } | null>(null);
@@ -451,9 +453,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       <Card className="p-4 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold">Checklist del bloque</div>
-          <Button variant="secondary" size="sm" onClick={onUseMissing}>
-            Usar faltantes
-          </Button>
+          <div className="flex items-center gap-2">
+            {section === 'real_estate' && (
+              <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
+                Autocálculo hipotecario
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={onUseMissing}>
+              Usar faltantes
+            </Button>
+          </div>
         </div>
         {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
         {checklistStatus.map((row) => (
@@ -811,6 +820,20 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage(`${parts.join('. ')}. Variación simulada hasta actualizar valores reales.`);
   };
 
+  const applyMortgageAutoNow = () => {
+    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
+    refreshRecords();
+    if (auto.changed > 0) {
+      setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros (base ${auto.sourceMonth}).`);
+      return;
+    }
+    if (!auto.sourceMonth) {
+      setCarryMessage('No pude aplicar autocálculo: falta un cierre anterior con registros.');
+      return;
+    }
+    setCarryMessage(`No hubo cambios por autocálculo (ya había datos actualizados en este mes).`);
+  };
+
   useEffect(() => {
     if (autoCarryAppliedRef.current.has(monthKey)) return;
     autoCarryAppliedRef.current.add(monthKey);
@@ -855,6 +878,7 @@ export const Patrimonio: React.FC = () => {
             setCarryMessage('');
           }}
           onUseMissing={useMissingFromPrevious}
+          onApplyMortgageAuto={applyMortgageAutoNow}
         />
       </div>
     );
