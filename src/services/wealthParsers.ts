@@ -229,7 +229,7 @@ const parseGeneric = (text: string): ParsedWealthSuggestion[] => {
   if (!amountMatches.length) return [];
 
   return amountMatches
-    .map((match, idx) => {
+    .map<ParsedWealthSuggestion | null>((match, idx) => {
       const amount = parseLocalizedNumber(match[1]);
       if (!amount || amount <= 0) return null;
 
@@ -243,7 +243,7 @@ const parseGeneric = (text: string): ParsedWealthSuggestion[] => {
         note: 'Detección genérica: valida origen y moneda.',
       };
     })
-    .filter((item): item is ParsedWealthSuggestion => !!item);
+    .filter((item): item is ParsedWealthSuggestion => item !== null);
 };
 
 export const parseWealthFromOcrText = (
