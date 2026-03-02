@@ -356,20 +356,18 @@ export const applyMortgageAutoCalculation = (
   const records = loadWealthRecords();
   const closures = loadClosures();
   const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
+  const monthRecords = latestRecordsForMonth(records, targetMonthKey);
+  const sourceRecords = previous?.records?.length ? dedupeLatestByAsset(previous.records) : monthRecords;
+  const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial)`;
 
-  if (!previous || !previous.records?.length) {
-    return { changed: 0, sourceMonth: null, skipped: true };
-  }
-
-  const prevDebtCandidates = dedupeLatestByAsset(previous.records)
+  const prevDebtCandidates = sourceRecords
     .filter((r) => r.block === 'debt')
     .sort((a, b) => b.amount - a.amount);
   const prevDebt =
     prevDebtCandidates.find((r) => r.label.toLowerCase().includes('saldo deuda hipotecaria')) ||
     prevDebtCandidates[0];
-  if (!prevDebt) return { changed: 0, sourceMonth: previous.monthKey, skipped: true };
+  if (!prevDebt) return { changed: 0, sourceMonth, skipped: true };
 
-  const monthRecords = latestRecordsForMonth(records, targetMonthKey);
   const findByLabel = (label: string) =>
     monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
 
@@ -396,7 +394,8 @@ export const applyMortgageAutoCalculation = (
 
   const insuranceUf = config.fireInsuranceUf + config.lifeInsuranceUf;
   const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
-  const newDebtUf = Math.max(0, prevDebt.amount - amortizationUf);
+  const hasPreviousClosure = !!previous?.records?.length;
+  const newDebtUf = hasPreviousClosure ? Math.max(0, prevDebt.amount - amortizationUf) : prevDebt.amount;
 
   let changed = 0;
   if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', config.dividendUf)) changed += 1;
@@ -405,5 +404,5 @@ export const applyMortgageAutoCalculation = (
   if (upsertIfMissingOrAutofill('Amortización hipotecaria mensual', amortizationUf)) changed += 1;
   if (upsertIfMissingOrAutofill('Saldo deuda hipotecaria', newDebtUf)) changed += 1;
 
-  return { changed, sourceMonth: previous.monthKey, skipped: false };
+  return { changed, sourceMonth, skipped: false };
 };
