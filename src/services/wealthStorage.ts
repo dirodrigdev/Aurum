@@ -32,6 +32,7 @@ export interface WealthMonthlyClosure {
   monthKey: string;
   closedAt: string;
   summary: WealthSnapshotSummary;
+  records?: WealthRecord[];
 }
 
 const RECORDS_KEY = 'wealth_records_v1';
@@ -45,6 +46,11 @@ const toNumber = (v: unknown, fallback = 0): number => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+export const currentMonthKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 export const defaultFxRates: WealthFxRates = {
   usdClp: 950,
   eurClp: 1030,
@@ -52,6 +58,12 @@ export const defaultFxRates: WealthFxRates = {
 
 const sortByCreatedDesc = (a: WealthRecord, b: WealthRecord) => {
   return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+};
+
+export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency'>) => {
+  return `${record.block}::${record.source.trim().toLowerCase()}::${record.label
+    .trim()
+    .toLowerCase()}::${record.currency}`;
 };
 
 export const loadWealthRecords = (): WealthRecord[] => {
@@ -100,9 +112,7 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
     note: input.note,
   };
 
-  const merged = existing
-    ? current.map((r) => (r.id === id ? next : r))
-    : [next, ...current];
+  const merged = existing ? current.map((r) => (r.id === id ? next : r)) : [next, ...current];
 
   saveWealthRecords(merged.sort(sortByCreatedDesc));
   return next;
@@ -144,10 +154,34 @@ const emptyBlockMap = (): Record<WealthBlock, Record<WealthCurrency, number>> =>
   debt: emptyCurrencyMap(),
 });
 
-export const summarizeWealth = (
-  records: WealthRecord[],
-  fxRates: WealthFxRates,
-): WealthSnapshotSummary => {
+const dateToComparable = (date: string) => String(date || '').replace(/-/g, '');
+
+const dedupeLatestByAsset = (records: WealthRecord[]): WealthRecord[] => {
+  const map = new Map<string, WealthRecord>();
+
+  const ordered = [...records].sort((a, b) => {
+    const ds = dateToComparable(b.snapshotDate).localeCompare(dateToComparable(a.snapshotDate));
+    if (ds !== 0) return ds;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  for (const item of ordered) {
+    const key = makeAssetKey(item);
+    if (!map.has(key)) map.set(key, item);
+  }
+
+  return [...map.values()];
+};
+
+export const getRecordsForMonth = (records: WealthRecord[], monthKey: string) => {
+  return records.filter((item) => item.snapshotDate.startsWith(`${monthKey}-`));
+};
+
+export const latestRecordsForMonth = (records: WealthRecord[], monthKey: string) => {
+  return dedupeLatestByAsset(getRecordsForMonth(records, monthKey));
+};
+
+export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates): WealthSnapshotSummary => {
   const assetsByCurrency = emptyCurrencyMap();
   const debtsByCurrency = emptyCurrencyMap();
   const byBlock = emptyBlockMap();
@@ -192,6 +226,19 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
         monthKey: String(item?.monthKey || ''),
         closedAt: String(item?.closedAt || nowIso()),
         summary: item?.summary,
+        records: Array.isArray(item?.records)
+          ? item.records.map((r: any) => ({
+              id: String(r?.id || crypto.randomUUID()),
+              block: (r?.block || 'investment') as WealthBlock,
+              source: String(r?.source || 'manual'),
+              label: String(r?.label || 'Registro'),
+              amount: toNumber(r?.amount),
+              currency: (r?.currency || 'CLP') as WealthCurrency,
+              snapshotDate: String(r?.snapshotDate || nowIso().slice(0, 10)),
+              createdAt: String(r?.createdAt || nowIso()),
+              note: r?.note ? String(r.note) : undefined,
+            }))
+          : undefined,
       }))
       .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
       .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
@@ -216,13 +263,15 @@ export const createMonthlyClosure = (
   const monthKey = `${year}-${month}`;
 
   const closures = loadClosures();
-  const summary = summarizeWealth(records, fxRates);
+  const latest = dedupeLatestByAsset(records);
+  const summary = summarizeWealth(latest, fxRates);
 
   const nextClosure: WealthMonthlyClosure = {
     id: crypto.randomUUID(),
     monthKey,
     closedAt: nowIso(),
     summary,
+    records: latest,
   };
 
   const withoutSameMonth = closures.filter((c) => c.monthKey !== monthKey);
@@ -232,4 +281,50 @@ export const createMonthlyClosure = (
 
   saveClosures(next);
   return nextClosure;
+};
+
+const findPreviousClosureWithRecords = (monthKey: string, closures: WealthMonthlyClosure[]) => {
+  const ordered = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  return ordered.find((closure) => closure.monthKey < monthKey && Array.isArray(closure.records) && closure.records.length > 0) || null;
+};
+
+export const fillMissingWithPreviousClosure = (
+  targetMonthKey: string,
+  snapshotDate: string,
+): { added: number; sourceMonth: string | null } => {
+  const records = loadWealthRecords();
+  const closures = loadClosures();
+  const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
+
+  if (!previous || !previous.records?.length) {
+    return { added: 0, sourceMonth: null };
+  }
+
+  const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
+
+  const toAdd: WealthRecord[] = [];
+
+  for (const oldRecord of previous.records) {
+    const key = makeAssetKey(oldRecord);
+    if (currentKeys.has(key)) continue;
+
+    toAdd.push({
+      id: crypto.randomUUID(),
+      block: oldRecord.block,
+      source: oldRecord.source,
+      label: oldRecord.label,
+      amount: oldRecord.amount,
+      currency: oldRecord.currency,
+      snapshotDate,
+      createdAt: nowIso(),
+      note: `Arrastrado desde cierre ${previous.monthKey}`,
+    });
+  }
+
+  if (!toAdd.length) {
+    return { added: 0, sourceMonth: previous.monthKey };
+  }
+
+  saveWealthRecords([...toAdd, ...records].sort(sortByCreatedDesc));
+  return { added: toAdd.length, sourceMonth: previous.monthKey };
 };

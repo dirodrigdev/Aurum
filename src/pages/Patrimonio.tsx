@@ -1,37 +1,32 @@
 import React, { useMemo, useState } from 'react';
-import { Camera, FileScan, Landmark, Plus, Trash2 } from 'lucide-react';
+import { ArrowRight, Camera, FileScan, Landmark, Plus, Trash2, Wallet } from 'lucide-react';
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
 import {
   WealthBlock,
   WealthCurrency,
-  WealthFxRates,
   WealthMonthlyClosure,
   WealthRecord,
   createMonthlyClosure,
+  currentMonthKey,
+  fillMissingWithPreviousClosure,
+  latestRecordsForMonth,
   loadClosures,
   loadFxRates,
   loadWealthRecords,
   removeWealthRecord,
-  saveFxRates,
   summarizeWealth,
   upsertWealthRecord,
 } from '../services/wealthStorage';
 
-const blockLabel: Record<WealthBlock, string> = {
-  bank: 'Bancos',
+type MainSection = 'investment' | 'real_estate' | 'bank';
+
+const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
   real_estate: 'Bienes raíces',
-  debt: 'Deudas',
+  bank: 'Bancos',
 };
-
-const blockOptions = [
-  { value: 'bank', label: 'Bancos' },
-  { value: 'investment', label: 'Inversiones' },
-  { value: 'real_estate', label: 'Bienes raíces' },
-  { value: 'debt', label: 'Deudas' },
-];
 
 const currencyOptions = [
   { value: 'CLP', label: 'CLP' },
@@ -39,15 +34,30 @@ const currencyOptions = [
   { value: 'EUR', label: 'EUR' },
 ];
 
-const sourceOptions = [
-  { value: 'auto', label: 'Auto detectar' },
-  { value: 'wise', label: 'Wise' },
-  { value: 'global66', label: 'Global66' },
-  { value: 'sura_resumen', label: 'SURA resumen' },
-  { value: 'sura_detalle', label: 'SURA detalle' },
-  { value: 'btg', label: 'BTG' },
-  { value: 'dividendo', label: 'Dividendo hipotecario' },
+const debtOrRealEstateOptions = [
+  { value: 'real_estate', label: 'Activo inmobiliario' },
+  { value: 'debt', label: 'Deuda hipotecaria' },
 ];
+
+const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: string }>> = {
+  investment: [
+    { value: 'auto', label: 'Auto detectar' },
+    { value: 'sura_resumen', label: 'SURA resumen' },
+    { value: 'sura_detalle', label: 'SURA detalle' },
+    { value: 'btg', label: 'BTG' },
+    { value: 'wise', label: 'Wise' },
+    { value: 'global66', label: 'Global66' },
+  ],
+  real_estate: [
+    { value: 'auto', label: 'Auto detectar' },
+    { value: 'dividendo', label: 'Dividendo hipotecario' },
+  ],
+  bank: [
+    { value: 'auto', label: 'Auto detectar' },
+    { value: 'wise', label: 'Wise' },
+    { value: 'global66', label: 'Global66' },
+  ],
+};
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 
@@ -72,32 +82,51 @@ interface DraftRecord {
   snapshotDate: string;
 }
 
-const emptyDraft: DraftRecord = {
-  block: 'investment',
+const buildEmptyDraft = (section: MainSection): DraftRecord => ({
+  block: section === 'investment' ? 'investment' : section === 'real_estate' ? 'real_estate' : 'bank',
   source: 'manual',
   label: '',
   amount: '',
   currency: 'CLP',
   note: '',
   snapshotDate: todayYmd(),
-};
+});
 
 interface EditableSuggestion extends ParsedWealthSuggestion {
   snapshotDate: string;
 }
 
+const normalizeSuggestionBlock = (section: MainSection, block: WealthBlock): WealthBlock => {
+  if (section === 'real_estate') {
+    if (block === 'debt') return 'debt';
+    return 'real_estate';
+  }
+  if (section === 'investment') return 'investment';
+  return 'bank';
+};
+
+const toCloseDateFromMonthKey = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  return new Date(year, (month || 1) - 1, 1, 12, 0, 0, 0);
+};
+
 export const Patrimonio: React.FC = () => {
   const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => loadClosures());
-  const [fx, setFx] = useState<WealthFxRates>(() => loadFxRates());
+  const [fx] = useState(() => loadFxRates());
+
+  const [monthKey, setMonthKey] = useState<string>(() => currentMonthKey());
+  const [activeSection, setActiveSection] = useState<MainSection>('investment');
   const [sourceHint, setSourceHint] = useState<string>('auto');
   const [ocrProgress, setOcrProgress] = useState<{ pct: number; status: string } | null>(null);
   const [ocrError, setOcrError] = useState<string>('');
   const [ocrText, setOcrText] = useState<string>('');
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
-  const [draft, setDraft] = useState<DraftRecord>(emptyDraft);
+  const [draft, setDraft] = useState<DraftRecord>(() => buildEmptyDraft('investment'));
+  const [carryMessage, setCarryMessage] = useState<string>('');
 
-  const summary = useMemo(() => summarizeWealth(records, fx), [records, fx]);
+  const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
+  const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);
 
   const latestClosure = closures[0] || null;
   const previousClosure = closures[1] || null;
@@ -113,6 +142,55 @@ export const Patrimonio: React.FC = () => {
 
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
+
+  const setSection = (section: MainSection) => {
+    setActiveSection(section);
+    setSourceHint('auto');
+    setSuggestions([]);
+    setDraft(buildEmptyDraft(section));
+    setCarryMessage('');
+    setOcrError('');
+    setOcrText('');
+  };
+
+  const recordsForActiveSection = useMemo(() => {
+    if (activeSection === 'real_estate') {
+      return monthRecords.filter((r) => r.block === 'real_estate' || r.block === 'debt');
+    }
+    return monthRecords.filter((r) => r.block === activeSection);
+  }, [activeSection, monthRecords]);
+
+  const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setOcrError('');
+    setCarryMessage('');
+    setOcrProgress({ pct: 0, status: 'iniciando' });
+
+    try {
+      const text = await runOcrFromFile(file, (pct, status) => setOcrProgress({ pct, status }));
+      setOcrText(text);
+
+      const parsed = parseWealthFromOcrText(text, sourceHint).map((item) => ({
+        ...item,
+        block: normalizeSuggestionBlock(activeSection, item.block),
+        snapshotDate: todayYmd(),
+      }));
+
+      setSuggestions(parsed);
+      if (!parsed.length) {
+        setOcrError('No pude detectar montos claros. Prueba con una captura más cerca del saldo principal.');
+      }
+    } catch (err: any) {
+      setOcrError(err?.message || 'Error leyendo la imagen.');
+      setSuggestions([]);
+      setOcrText('');
+    } finally {
+      setOcrProgress(null);
+      event.target.value = '';
+    }
+  };
 
   const saveSuggestion = (item: EditableSuggestion) => {
     upsertWealthRecord({
@@ -132,36 +210,6 @@ export const Patrimonio: React.FC = () => {
     setSuggestions([]);
   };
 
-  const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setOcrError('');
-    setOcrProgress({ pct: 0, status: 'starting' });
-
-    try {
-      const text = await runOcrFromFile(file, (pct, status) => setOcrProgress({ pct, status }));
-      setOcrText(text);
-
-      const parsed = parseWealthFromOcrText(text, sourceHint).map((item) => ({
-        ...item,
-        snapshotDate: todayYmd(),
-      }));
-
-      setSuggestions(parsed);
-      if (!parsed.length) {
-        setOcrError('No pude detectar montos claros. Prueba con una captura más cerca del saldo principal.');
-      }
-    } catch (err: any) {
-      setOcrError(err?.message || 'Error leyendo la imagen.');
-      setSuggestions([]);
-      setOcrText('');
-    } finally {
-      setOcrProgress(null);
-      event.target.value = '';
-    }
-  };
-
   const saveDraft = () => {
     const amount = Number(draft.amount.replace(/,/g, '.'));
     if (!draft.label.trim() || !Number.isFinite(amount) || amount <= 0) return;
@@ -177,12 +225,29 @@ export const Patrimonio: React.FC = () => {
     });
 
     refreshRecords();
-    setDraft(emptyDraft);
+    setDraft(buildEmptyDraft(activeSection));
   };
 
   const runMonthlyClose = () => {
-    createMonthlyClosure(records, fx, new Date());
+    createMonthlyClosure(monthRecords, fx, toCloseDateFromMonthKey(monthKey));
     refreshClosures();
+  };
+
+  const useMissingFromPrevious = () => {
+    const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
+    refreshRecords();
+
+    if (!result.sourceMonth) {
+      setCarryMessage('No hay un cierre anterior con detalle para arrastrar información.');
+      return;
+    }
+
+    if (!result.added) {
+      setCarryMessage(`No faltaba información para arrastrar desde ${result.sourceMonth}.`);
+      return;
+    }
+
+    setCarryMessage(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}.`);
   };
 
   return (
@@ -190,7 +255,7 @@ export const Patrimonio: React.FC = () => {
       <Card className="p-4 bg-gradient-to-br from-slate-900 to-slate-700 text-white border-0">
         <div className="flex items-center gap-2 text-sm text-slate-200">
           <Landmark size={16} />
-          <span>Patrimonio neto</span>
+          <span>Patrimonio neto ({monthKey})</span>
         </div>
         <div className="mt-2 text-2xl font-bold">{formatClp(summary.netConsolidatedClp)}</div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
@@ -210,42 +275,73 @@ export const Patrimonio: React.FC = () => {
       </Card>
 
       <Card className="p-4 space-y-3">
-        <div className="text-sm font-semibold">Tipo de cambio para consolidado CLP</div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
-            <Input
-              value={fx.usdClp}
-              type="number"
-              onChange={(e) => {
-                const next = { ...fx, usdClp: Number(e.target.value) || 0 };
-                setFx(next);
-                saveFxRates(next);
-              }}
-            />
-          </div>
-          <div>
-            <div className="text-xs text-slate-500 mb-1">EUR a CLP</div>
-            <Input
-              value={fx.eurClp}
-              type="number"
-              onChange={(e) => {
-                const next = { ...fx, eurClp: Number(e.target.value) || 0 };
-                setFx(next);
-                saveFxRates(next);
-              }}
-            />
-          </div>
-        </div>
+        <div className="text-sm font-semibold">Mes de trabajo</div>
+        <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value || currentMonthKey())} />
       </Card>
 
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          className={`rounded-2xl border p-4 text-left ${
+            activeSection === 'investment' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'
+          }`}
+          onClick={() => setSection('investment')}
+        >
+          <div className="text-sm font-semibold text-slate-900">Inversiones</div>
+          <div className="mt-1 text-xs text-slate-500">SURA, BTG, previsional, fondos</div>
+          <div className="mt-3 inline-flex items-center gap-1 text-xs text-blue-700">
+            Entrar <ArrowRight size={13} />
+          </div>
+        </button>
+
+        <button
+          className={`rounded-2xl border p-4 text-left ${
+            activeSection === 'real_estate' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'
+          }`}
+          onClick={() => setSection('real_estate')}
+        >
+          <div className="text-sm font-semibold text-slate-900">Bienes raíces</div>
+          <div className="mt-1 text-xs text-slate-500">Valor, dividendo, deuda hipotecaria</div>
+          <div className="mt-3 inline-flex items-center gap-1 text-xs text-blue-700">
+            Entrar <ArrowRight size={13} />
+          </div>
+        </button>
+      </div>
+
+      <button
+        className={`w-full rounded-2xl border p-4 text-left ${
+          activeSection === 'bank' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'
+        }`}
+        onClick={() => setSection('bank')}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Bancos</div>
+            <div className="mt-1 text-xs text-slate-500">Wise, Global66 y cuentas corrientes</div>
+          </div>
+          <Wallet size={18} className="text-slate-500" />
+        </div>
+      </button>
+
       <Card className="p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <FileScan size={16} />
-          Cargar screenshot (OCR)
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Módulo: {sectionLabel[activeSection]}</div>
+          <Button variant="secondary" size="sm" onClick={useMissingFromPrevious}>
+            Usar info faltante cierre anterior
+          </Button>
         </div>
 
-        <Select options={sourceOptions} value={sourceHint} onChange={(e) => setSourceHint(e.target.value)} />
+        {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
+
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <FileScan size={16} />
+          Subir screenshot (OCR)
+        </div>
+
+        <Select
+          options={sourceOptionsBySection[activeSection]}
+          value={sourceHint}
+          onChange={(e) => setSourceHint(e.target.value)}
+        />
 
         <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
           <Camera size={16} />
@@ -276,7 +372,7 @@ export const Patrimonio: React.FC = () => {
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <Select
-                    options={blockOptions}
+                    options={activeSection === 'real_estate' ? debtOrRealEstateOptions : [{ value: item.block, label: sectionLabel[activeSection] }]}
                     value={item.block}
                     onChange={(e) => {
                       const next = [...suggestions];
@@ -303,85 +399,77 @@ export const Patrimonio: React.FC = () => {
                     setSuggestions(next);
                   }}
                 />
-                <div className="text-[11px] text-slate-500">
-                  Fuente: {item.source} · Confianza OCR: {(item.confidence * 100).toFixed(0)}%
-                </div>
-                {item.note && <div className="text-[11px] text-amber-700">{item.note}</div>}
                 <Button size="sm" onClick={() => saveSuggestion(item)}>
                   Guardar este
                 </Button>
               </div>
             ))}
-            <Button variant="secondary" onClick={saveAllSuggestions}>Guardar todo</Button>
+            <Button variant="secondary" onClick={saveAllSuggestions}>
+              Guardar todo
+            </Button>
           </div>
         )}
 
-        {!!ocrText && (
-          <details className="text-xs text-slate-500">
-            <summary className="cursor-pointer">Ver texto OCR</summary>
-            <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">{ocrText}</pre>
-          </details>
-        )}
-      </Card>
+        <div className="pt-2 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Agregar registro manual</div>
+            <Plus size={16} className="text-slate-500" />
+          </div>
 
-      <Card className="p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold">Agregar registro manual</div>
-          <Plus size={16} className="text-slate-500" />
-        </div>
-
-        <Input
-          placeholder="Nombre (ej: SURA saldo total)"
-          value={draft.label}
-          onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-        />
-
-        <div className="grid grid-cols-2 gap-2">
-          <Select
-            options={blockOptions}
-            value={draft.block}
-            onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
-          />
-          <Select
-            options={currencyOptions}
-            value={draft.currency}
-            onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
           <Input
-            type="number"
-            placeholder="Monto"
-            value={draft.amount}
-            onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
+            placeholder="Nombre del activo"
+            value={draft.label}
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
           />
+
+          <div className="grid grid-cols-2 gap-2">
+            {activeSection === 'real_estate' ? (
+              <Select
+                options={debtOrRealEstateOptions}
+                value={draft.block}
+                onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
+              />
+            ) : (
+              <Input value={sectionLabel[activeSection]} disabled />
+            )}
+
+            <Select
+              options={currencyOptions}
+              value={draft.currency}
+              onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              placeholder="Monto"
+              value={draft.amount}
+              onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
+            />
+            <Input
+              type="date"
+              value={draft.snapshotDate}
+              onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
+            />
+          </div>
+
           <Input
-            type="date"
-            value={draft.snapshotDate}
-            onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
+            placeholder="Fuente"
+            value={draft.source}
+            onChange={(e) => setDraft({ ...draft, source: e.target.value })}
           />
+
+          <Button onClick={saveDraft}>Guardar registro</Button>
         </div>
-
-        <Input
-          placeholder="Fuente (manual / Wise / SURA ...)"
-          value={draft.source}
-          onChange={(e) => setDraft({ ...draft, source: e.target.value })}
-        />
-
-        <Input
-          placeholder="Nota opcional"
-          value={draft.note}
-          onChange={(e) => setDraft({ ...draft, note: e.target.value })}
-        />
-
-        <Button onClick={saveDraft}>Guardar registro</Button>
       </Card>
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold">Cierre mensual manual</div>
-          <Button size="sm" onClick={runMonthlyClose}>Cerrar mes actual</Button>
+          <div className="text-sm font-semibold">Cierre mensual manual ({monthKey})</div>
+          <Button size="sm" onClick={runMonthlyClose}>
+            Cerrar mes
+          </Button>
         </div>
 
         {latestClosure && (
@@ -390,64 +478,58 @@ export const Patrimonio: React.FC = () => {
             <div>Neto consolidado: {formatClp(latestClosure.summary.netConsolidatedClp)}</div>
             {growthVsPrev && (
               <div className={growthVsPrev.abs >= 0 ? 'text-emerald-700' : 'text-red-700'}>
-                vs cierre anterior: {growthVsPrev.abs >= 0 ? '+' : ''}{formatClp(growthVsPrev.abs)}
+                vs cierre anterior: {growthVsPrev.abs >= 0 ? '+' : ''}
+                {formatClp(growthVsPrev.abs)}
                 {growthVsPrev.pct !== null ? ` (${growthVsPrev.pct.toFixed(2)}%)` : ''}
               </div>
             )}
           </div>
         )}
-
-        {!!closures.length && (
-          <div className="space-y-1 text-xs text-slate-600">
-            {closures.slice(0, 6).map((item) => (
-              <div key={item.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-2 py-1">
-                <span>{item.monthKey}</span>
-                <span>{formatClp(item.summary.netConsolidatedClp)}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </Card>
 
       <Card className="p-4 space-y-2">
-        <div className="text-sm font-semibold">Registros actuales</div>
-        {(['bank', 'investment', 'real_estate', 'debt'] as WealthBlock[]).map((block) => {
-          const byCurrency = summary.byBlock[block];
-          const blockItems = records.filter((r) => r.block === block).slice(0, 20);
-          return (
-            <div key={block} className="rounded-xl border border-slate-200 p-2">
-              <div className="text-sm font-semibold">{blockLabel[block]}</div>
-              <div className="text-xs text-slate-600">
-                CLP {formatCurrency(byCurrency.CLP, 'CLP')} · USD {formatCurrency(byCurrency.USD, 'USD')} · EUR {formatCurrency(byCurrency.EUR, 'EUR')}
-              </div>
-              <div className="mt-2 space-y-1">
-                {blockItems.length === 0 && <div className="text-xs text-slate-400">Sin registros.</div>}
-                {blockItems.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
-                    <div className="pr-2">
-                      <div className="font-medium text-slate-800">{item.label}</div>
-                      <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{formatCurrency(item.amount, item.currency)}</span>
-                      <button
-                        className="text-slate-400 hover:text-red-600"
-                        onClick={() => {
-                          removeWealthRecord(item.id);
-                          refreshRecords();
-                        }}
-                        aria-label="Eliminar registro"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+        <div className="text-sm font-semibold">{sectionLabel[activeSection]} ({monthKey})</div>
+        {recordsForActiveSection.length === 0 && (
+          <div className="text-xs text-slate-500">
+            No hay datos en este bloque para el mes seleccionado. Puedes cargar imagen o usar faltantes desde el cierre anterior.
+          </div>
+        )}
+        {recordsForActiveSection.map((item) => (
+          <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
+            <div className="pr-2">
+              <div className="font-medium text-slate-800">{item.label}</div>
+              <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
             </div>
-          );
-        })}
+            <div className="flex items-center gap-2">
+              <span className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}>
+                {item.block === 'debt' ? '-' : ''}
+                {formatCurrency(item.amount, item.currency)}
+              </span>
+              <button
+                className="text-slate-400 hover:text-red-600"
+                onClick={() => {
+                  removeWealthRecord(item.id);
+                  refreshRecords();
+                }}
+                aria-label="Eliminar registro"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
       </Card>
+
+      {!!ocrText && (
+        <Card className="p-4">
+          <details className="text-xs text-slate-500">
+            <summary className="cursor-pointer">Ver texto OCR</summary>
+            <pre className="whitespace-pre-wrap break-words mt-2 max-h-56 overflow-auto bg-slate-50 p-2 rounded-lg">
+              {ocrText}
+            </pre>
+          </details>
+        </Card>
+      )}
     </div>
   );
 };
