@@ -44,6 +44,7 @@ const sectionLabel: Record<MainSection, string> = {
 const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: string }>> = {
   investment: [
     { value: 'auto', label: 'Auto detectar' },
+    { value: 'planvital', label: 'PlanVital (AFP)' },
     { value: 'sura_resumen', label: 'SURA resumen' },
     { value: 'sura_detalle', label: 'SURA detalle' },
     { value: 'btg', label: 'BTG' },

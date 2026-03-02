@@ -63,6 +63,12 @@ const findAmountNearText = (text: string, pattern: RegExp): number | null => {
   return parseLocalizedNumber(match[1]);
 };
 
+const extractAllLargeAmounts = (text: string): number[] => {
+  return [...text.matchAll(/([0-9][0-9.,]{4,})/g)]
+    .map((m) => parseLocalizedNumber(m[1]) || 0)
+    .filter((n) => Number.isFinite(n) && n > 0);
+};
+
 const build = (items: Array<ParsedWealthSuggestion | null>): ParsedWealthSuggestion[] => {
   return items.filter((item): item is ParsedWealthSuggestion => !!item && item.amount > 0);
 };
@@ -190,6 +196,32 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
   ];
 };
 
+const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
+  // Prioridad 1: valor explícito junto a "Total ahorrado actual"
+  const totalAhorradoActual =
+    findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,30}([0-9][0-9.,]{4,})/i) ||
+    findAmountNearText(text, /total\s+ahorrado[^0-9]{0,30}([0-9][0-9.,]{4,})/i);
+
+  // Prioridad 2: fallback robusto para OCR ruidoso: tomar el monto mayor del documento
+  const largestAmount = extractAllLargeAmounts(text).sort((a, b) => b - a)[0] || null;
+  const amount = totalAhorradoActual || largestAmount;
+  if (!amount) return [];
+
+  return [
+    {
+      source: 'PlanVital',
+      block: 'investment',
+      label: 'PlanVital saldo total',
+      amount,
+      currency: 'CLP',
+      confidence: totalAhorradoActual ? 0.94 : 0.78,
+      note: totalAhorradoActual
+        ? undefined
+        : 'No se detectó "Total ahorrado actual" claramente. Se usó el monto más alto detectado.',
+    },
+  ];
+};
+
 const parseDividend = (text: string): ParsedWealthSuggestion[] => {
   const totalPagar = findAmountAfterLabel(text, /total\s+a\s+pagar[\s\S]{0,40}?([0-9]+[.,][0-9]{2,4})/i);
   const deudaDespues = findAmountAfterLabel(text, /deuda\s+despu[eé]s\s+del\s+pago[\s\S]{0,40}?([0-9]+[.,][0-9]{2,4})/i);
@@ -251,6 +283,11 @@ export const parseWealthFromOcrText = (
   const lower = text.toLowerCase();
 
   const hints = {
+    planvital:
+      sourceHint === 'planvital' ||
+      lower.includes('planvital') ||
+      lower.includes('afp') ||
+      lower.includes('total ahorrado actual'),
     wise: sourceHint === 'wise' || lower.includes('wise'),
     global66:
       sourceHint === 'global66' ||
@@ -274,6 +311,7 @@ export const parseWealthFromOcrText = (
       lower.includes('scotiabank'),
   };
 
+  if (hints.planvital) return parsePlanvital(text);
   if (hints.wise) return parseWise(text);
   if (hints.global66) return parseGlobal66(text);
   if (hints.suraResumen) return parseSuraResumen(text);
@@ -281,7 +319,7 @@ export const parseWealthFromOcrText = (
   if (hints.btg) return parseBtg(text);
   if (hints.dividendo) return parseDividend(text);
 
-  const rankedParsers = [parseSuraResumen, parseSuraDetalle, parseWise, parseGlobal66, parseBtg, parseDividend];
+  const rankedParsers = [parsePlanvital, parseSuraResumen, parseSuraDetalle, parseWise, parseGlobal66, parseBtg, parseDividend];
 
   for (const parser of rankedParsers) {
     const result = parser(text);
