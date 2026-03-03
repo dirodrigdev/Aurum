@@ -5,6 +5,7 @@ import {
   WealthFxRates,
   WealthRecord,
   currentMonthKey,
+  FX_RATES_UPDATED_EVENT,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -394,13 +395,32 @@ const BreakdownCard: React.FC<{
 export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('hoy');
   const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
+  const [currentFx, setCurrentFx] = useState<WealthFxRates>(() => loadFxRates());
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
   }, [currency]);
 
+  useEffect(() => {
+    const refreshFx = () => setCurrentFx(loadFxRates());
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshFx();
+    };
+
+    window.addEventListener('focus', refreshFx);
+    window.addEventListener('storage', refreshFx);
+    window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.removeEventListener('focus', refreshFx);
+      window.removeEventListener('storage', refreshFx);
+      window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
   const monthKey = useMemo(() => currentMonthKey(), []);
-  const currentFx = useMemo(() => loadFxRates(), []);
   const closures = useMemo(() => loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)), []);
 
   const latestClosure = closures[0] || null;

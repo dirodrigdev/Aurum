@@ -24,6 +24,7 @@ import {
   createMonthlyClosure,
   currentMonthKey,
   applyMortgageAutoCalculation,
+  FX_RATES_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
   ensureInitialMortgageDefaults,
   latestRecordsForMonth,
@@ -844,7 +845,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 export const Patrimonio: React.FC = () => {
   const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => loadClosures());
-  const [fx] = useState(() => loadFxRates());
+  const [fx, setFx] = useState(() => loadFxRates());
 
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
@@ -859,6 +860,25 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
   }, [displayCurrency]);
+
+  useEffect(() => {
+    const refreshFx = () => setFx(loadFxRates());
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshFx();
+    };
+
+    window.addEventListener('focus', refreshFx);
+    window.addEventListener('storage', refreshFx);
+    window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.removeEventListener('focus', refreshFx);
+      window.removeEventListener('storage', refreshFx);
+      window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
   const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);

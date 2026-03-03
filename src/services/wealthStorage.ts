@@ -48,6 +48,7 @@ export interface MortgageAutoCalcConfig {
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
+export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 
 export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
   initialDebtUf: 8831.535,
@@ -159,6 +160,9 @@ export const loadFxRates = (): WealthFxRates => {
 
 export const saveFxRates = (rates: WealthFxRates) => {
   localStorage.setItem(FX_KEY, JSON.stringify(rates));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: rates }));
+  }
 };
 
 const emptyCurrencyMap = (): Record<WealthCurrency, number> => ({
