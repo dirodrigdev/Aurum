@@ -34,7 +34,6 @@ const parseArrayPayload = (payload) => {
   if (Array.isArray(payload.data)) return payload.data;
   if (Array.isArray(payload.accounts)) return payload.accounts;
   if (Array.isArray(payload.movements)) return payload.movements;
-  if (Array.isArray(payload.transactions)) return payload.transactions;
   return [];
 };
 
@@ -127,7 +126,10 @@ export default async function handler(req, res) {
       const accountId = String(account?.id || '');
       if (!accountId) continue;
 
-      const movementsProbe = await probeEndpoint(`/accounts/${encodeURIComponent(accountId)}/movements`, secretKey);
+      const movementsProbe = await probeEndpoint(
+        `/accounts/${encodeURIComponent(accountId)}/movements?link_token=${encodeURIComponent(linkToken)}`,
+        secretKey,
+      );
       probes.push({
         endpoint: movementsProbe.endpoint,
         ok: movementsProbe.ok,
@@ -136,19 +138,7 @@ export default async function handler(req, res) {
         error: movementsProbe.error,
       });
 
-      const altTransactionsProbe = await probeEndpoint(
-        `/accounts/${encodeURIComponent(accountId)}/transactions`,
-        secretKey,
-      );
-      probes.push({
-        endpoint: altTransactionsProbe.endpoint,
-        ok: altTransactionsProbe.ok,
-        status: altTransactionsProbe.status,
-        items: altTransactionsProbe.items,
-        error: altTransactionsProbe.error,
-      });
-
-      const movementCount = movementsProbe.items || altTransactionsProbe.items || 0;
+      const movementCount = movementsProbe.items || 0;
       movementTotal += movementCount;
 
       normalizedAccounts.push({
@@ -191,4 +181,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
