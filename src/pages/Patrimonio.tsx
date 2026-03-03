@@ -906,26 +906,37 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     const refreshFx = () => setFx(loadFxRates());
-    const refreshAll = () => {
+    const refreshAll = async () => {
+      await hydrateWealthFromCloud();
       setRecords(loadWealthRecords());
       setClosures(loadClosures());
       refreshFx();
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refreshAll();
+      if (document.visibilityState === 'visible') void refreshAll();
     };
 
-    window.addEventListener('focus', refreshAll);
-    window.addEventListener('storage', refreshAll);
+    const onFocus = () => {
+      void refreshAll();
+    };
+    const onStorage = () => {
+      void refreshAll();
+    };
+    const onWealthUpdated = () => {
+      void refreshAll();
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('storage', onStorage);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
-    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      window.removeEventListener('focus', refreshAll);
-      window.removeEventListener('storage', refreshAll);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('storage', onStorage);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
-      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);

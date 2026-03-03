@@ -87,6 +87,14 @@ const touchWealthUpdatedAt = () => {
   }
 };
 
+const readWealthUpdatedAt = () => {
+  try {
+    return String(localStorage.getItem(WEALTH_UPDATED_AT_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
 const dispatchWealthDataUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
@@ -160,6 +168,56 @@ export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'la
   return `${record.block}::${record.source.trim().toLowerCase()}::${record.label
     .trim()
     .toLowerCase()}::${record.currency}`;
+};
+
+const logicalRecordKey = (record: WealthRecord) => `${makeAssetKey(record)}::${record.snapshotDate}`;
+
+const recordTimestamp = (record: WealthRecord) => {
+  const t = new Date(record.createdAt).getTime();
+  return Number.isFinite(t) ? t : 0;
+};
+
+const pickLatestRecord = (a: WealthRecord, b: WealthRecord): WealthRecord => {
+  const ta = recordTimestamp(a);
+  const tb = recordTimestamp(b);
+  if (tb > ta) return b;
+  if (ta > tb) return a;
+  return b;
+};
+
+const normalizeRecordsFromRaw = (raw: any[]): WealthRecord[] =>
+  raw
+    .map((item: any) => normalizeRecord(item))
+    .filter((item: WealthRecord) => Number.isFinite(item.amount))
+    .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item));
+
+const mergeRecords = (localRecords: WealthRecord[], remoteRecords: WealthRecord[]): WealthRecord[] => {
+  const merged = new Map<string, WealthRecord>();
+  for (const item of [...localRecords, ...remoteRecords]) {
+    const key = logicalRecordKey(item);
+    const prev = merged.get(key);
+    merged.set(key, prev ? pickLatestRecord(prev, item) : item);
+  }
+  return [...merged.values()].sort(sortByCreatedDesc);
+};
+
+const normalizeFxRates = (raw: any): WealthFxRates => ({
+  usdClp: Math.max(1, toNumber(raw?.usdClp, defaultFxRates.usdClp)),
+  eurClp: Math.max(1, toNumber(raw?.eurClp, defaultFxRates.eurClp)),
+  ufClp: Math.max(1, toNumber(raw?.ufClp, defaultFxRates.ufClp)),
+});
+
+const serializeRecord = (r: WealthRecord) =>
+  `${r.id}|${r.block}|${r.source}|${r.label}|${r.amount}|${r.currency}|${r.snapshotDate}|${r.createdAt}|${r.note || ''}`;
+
+const sameRecords = (a: WealthRecord[], b: WealthRecord[]) => {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort(sortByCreatedDesc).map(serializeRecord);
+  const sb = [...b].sort(sortByCreatedDesc).map(serializeRecord);
+  for (let i = 0; i < sa.length; i += 1) {
+    if (sa[i] !== sb[i]) return false;
+  }
+  return true;
 };
 
 export const loadWealthRecords = (): WealthRecord[] => {
@@ -384,17 +442,52 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
     const ref = await getWealthCloudRef();
     if (!ref) return false;
     setFirestoreChecking();
+    const localRecords = loadWealthRecords();
+    const localClosures = loadClosures();
+    const localFx = loadFxRates();
+    const localUpdatedAt = readWealthUpdatedAt();
+
+    const remoteSnap = await getDoc(ref);
+    const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
+    const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
+    const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
+    const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
+    const remoteUpdatedAt = String(remoteData.updatedAt || '');
+
+    const mergedRecords = mergeRecords(localRecords, remoteRecords);
+    const mergedClosures = mergeClosures(localClosures, remoteClosures);
+    const useLocalFx =
+      !remoteUpdatedAt || (!!localUpdatedAt && new Date(localUpdatedAt).getTime() >= new Date(remoteUpdatedAt).getTime());
+    const mergedFx = useLocalFx ? localFx : remoteFx;
+    const mergedUpdatedAt = nowIso();
+
     await setDoc(
       ref,
       {
         schemaVersion: 1,
-        updatedAt: nowIso(),
-        fx: loadFxRates(),
-        records: loadWealthRecords(),
-        closures: loadClosures(),
+        updatedAt: mergedUpdatedAt,
+        fx: mergedFx,
+        records: mergedRecords,
+        closures: mergedClosures,
       },
       { merge: true },
     );
+
+    if (
+      !sameRecords(localRecords, mergedRecords) ||
+      !sameClosures(localClosures, mergedClosures) ||
+      JSON.stringify(localFx) !== JSON.stringify(mergedFx)
+    ) {
+      saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
+      saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
+      saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
+      touchWealthUpdatedAt();
+      dispatchWealthDataUpdated();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
+      }
+    }
+
     setFirestoreOk();
     return true;
   } catch (err) {
@@ -431,37 +524,50 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const data = snap.data() || {};
     const localRecords = loadWealthRecords();
     const localClosures = loadClosures();
+    const localFx = loadFxRates();
+    const localUpdatedAt = readWealthUpdatedAt();
+
+    const remoteUpdatedAt = String(data.updatedAt || '');
+    const remoteRecords = normalizeRecordsFromRaw(Array.isArray(data.records) ? data.records : []);
+    const remoteClosures = loadClosuresFromRaw(Array.isArray(data.closures) ? data.closures : []);
+    const remoteFx = normalizeFxRates(data.fx || defaultFxRates);
+
+    const mergedRecords = mergeRecords(localRecords, remoteRecords);
+    const mergedClosures = mergeClosures(localClosures, remoteClosures);
+
     const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
-    const remoteRecords = Array.isArray(data.records) ? data.records : [];
-    const remoteClosures = Array.isArray(data.closures) ? data.closures : [];
     const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
 
-    // Regla de seguridad fuerte:
-    // Si hay datos locales, nunca pisarlos automáticamente con nube.
-    // Primero preservamos edición local y luego sincronizamos a cloud.
-    if (hasLocalData) {
-      scheduleWealthCloudSync(10);
-      return 'local';
-    }
+    const useRemoteFx =
+      !!remoteUpdatedAt && (!localUpdatedAt || new Date(remoteUpdatedAt).getTime() > new Date(localUpdatedAt).getTime());
+    const mergedFx = useRemoteFx ? remoteFx : localFx;
 
-    // Solo si local está vacío y nube tiene datos, hidratamos desde cloud.
-    if (!hasLocalData && hasRemoteData) {
-      const remoteRates = data.fx || defaultFxRates;
-      saveWealthRecords(
-        remoteRecords
-          .map((item: any) => normalizeRecord(item))
-          .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item)),
-        { skipCloudSync: true, silent: true },
-      );
-      saveClosures(loadClosuresFromRaw(remoteClosures), { skipCloudSync: true, silent: true });
-      saveFxRatesInternal(remoteRates, { skipCloudSync: true, silent: true });
+    const localNeedsUpdate =
+      !sameRecords(localRecords, mergedRecords) ||
+      !sameClosures(localClosures, mergedClosures) ||
+      JSON.stringify(localFx) !== JSON.stringify(mergedFx);
+
+    if (localNeedsUpdate) {
+      saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
+      saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
+      saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
       touchWealthUpdatedAt();
       dispatchWealthDataUpdated();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
       }
-      return 'cloud';
     }
+
+    const cloudNeedsUpdate =
+      (hasLocalData && !hasRemoteData) ||
+      !sameRecords(mergedRecords, remoteRecords) ||
+      !sameClosures(mergedClosures, remoteClosures) ||
+      JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
+
+    if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
+
+    if (!hasLocalData && hasRemoteData) return 'cloud';
+    if (localNeedsUpdate && hasRemoteData) return 'cloud';
     return 'local';
   } catch (err) {
     setFirestoreStatusFromError(err);
@@ -502,6 +608,45 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
       return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
     });
+};
+
+const mergeClosures = (localClosures: WealthMonthlyClosure[], remoteClosures: WealthMonthlyClosure[]) => {
+  const map = new Map<string, WealthMonthlyClosure>();
+  for (const closure of [...localClosures, ...remoteClosures]) {
+    const key = closure.monthKey;
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, closure);
+      continue;
+    }
+    const tPrev = new Date(prev.closedAt).getTime();
+    const tCurr = new Date(closure.closedAt).getTime();
+    map.set(key, tCurr >= tPrev ? closure : prev);
+  }
+  return [...map.values()].sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime());
+};
+
+const serializeClosure = (c: WealthMonthlyClosure) =>
+  JSON.stringify({
+    monthKey: c.monthKey,
+    closedAt: c.closedAt,
+    fxRates: c.fxRates || null,
+    records: (c.records || []).map(serializeRecord),
+    summary: c.summary,
+  });
+
+const sameClosures = (a: WealthMonthlyClosure[], b: WealthMonthlyClosure[]) => {
+  if (a.length !== b.length) return false;
+  const sa = [...a]
+    .sort((x, y) => x.monthKey.localeCompare(y.monthKey))
+    .map(serializeClosure);
+  const sb = [...b]
+    .sort((x, y) => x.monthKey.localeCompare(y.monthKey))
+    .map(serializeClosure);
+  for (let i = 0; i < sa.length; i += 1) {
+    if (sa[i] !== sb[i]) return false;
+  }
+  return true;
 };
 
 const saveFxRatesInternal = (rates: WealthFxRates, options?: PersistOptions) => {
