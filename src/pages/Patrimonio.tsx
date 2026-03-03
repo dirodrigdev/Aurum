@@ -88,6 +88,7 @@ const sectionChecklist: Record<MainSection, string[]> = {
   investment: [
     'SURA inversión financiera',
     'SURA ahorro previsional',
+    'PlanVital saldo total',
     'BTG total valorización',
     'Global66 Cuenta Vista USD',
     'Wise Cuenta principal USD',
