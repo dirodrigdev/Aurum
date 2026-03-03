@@ -34,6 +34,7 @@ interface InvestmentDetailRow {
   label: string;
   currentClp: number;
   compareClp: number | null;
+  group: 'financieras' | 'previsionales' | 'otros';
 }
 
 const groupWithDots = (value: number) =>
@@ -122,16 +123,16 @@ const pct = (curr: number, prev: number | null) => {
   return ((curr - prev) / prev) * 100;
 };
 
-const investmentBucket = (r: WealthRecord): string | null => {
+const investmentBucket = (r: WealthRecord): { label: string; group: 'financieras' | 'previsionales' | 'otros' } | null => {
   const src = r.source.toLowerCase();
   const label = r.label.toLowerCase();
-  if (src.includes('btg') || label.includes('btg')) return 'BTG';
-  if (src.includes('planvital') || label.includes('planvital')) return 'PlanVital (previsional)';
-  if (src.includes('wise') || label.includes('wise')) return 'Wise';
-  if (src.includes('global66') || label.includes('global66')) return 'Global66';
+  if (src.includes('btg') || label.includes('btg')) return { label: 'BTG', group: 'financieras' };
+  if (src.includes('planvital') || label.includes('planvital')) return { label: 'PlanVital', group: 'previsionales' };
+  if (src.includes('wise') || label.includes('wise')) return { label: 'Wise', group: 'financieras' };
+  if (src.includes('global66') || label.includes('global66')) return { label: 'Global66', group: 'financieras' };
   if (src.includes('sura') || label.includes('sura')) {
-    if (label.includes('previsional')) return 'SURA previsional';
-    return 'SURA financiero';
+    if (label.includes('previsional')) return { label: 'SURA previsional', group: 'previsionales' };
+    return { label: 'SURA financiero', group: 'financieras' };
   }
   return null;
 };
@@ -142,20 +143,24 @@ const buildInvestmentDetails = (
   compareRecords: WealthRecord[] | null,
   compareFx: WealthFxRates | null,
 ): InvestmentDetailRow[] => {
-  const current = new Map<string, number>();
+  const current = new Map<string, { amount: number; group: 'financieras' | 'previsionales' | 'otros' }>();
   const compare = new Map<string, number>();
 
   currentRecords.forEach((r) => {
     const bucket = investmentBucket(r);
     if (!bucket) return;
-    current.set(bucket, (current.get(bucket) || 0) + toClp(r.amount, r.currency, currentFx));
+    const prev = current.get(bucket.label);
+    current.set(bucket.label, {
+      amount: (prev?.amount || 0) + toClp(r.amount, r.currency, currentFx),
+      group: bucket.group,
+    });
   });
 
   if (compareRecords && compareFx) {
     compareRecords.forEach((r) => {
       const bucket = investmentBucket(r);
       if (!bucket) return;
-      compare.set(bucket, (compare.get(bucket) || 0) + toClp(r.amount, r.currency, compareFx));
+      compare.set(bucket.label, (compare.get(bucket.label) || 0) + toClp(r.amount, r.currency, compareFx));
     });
   }
 
@@ -164,8 +169,9 @@ const buildInvestmentDetails = (
     .map((key) => ({
       key,
       label: key,
-      currentClp: current.get(key) || 0,
+      currentClp: current.get(key)?.amount || 0,
       compareClp: compare.has(key) ? compare.get(key)! : null,
+      group: current.get(key)?.group || 'otros',
     }))
     .sort((a, b) => b.currentClp - a.currentClp);
 };
@@ -209,6 +215,19 @@ const BreakdownCard: React.FC<{
     () => buildInvestmentDetails(currentRecords, fx, compareRecords || null, compareFx || null),
     [currentRecords, fx, compareRecords, compareFx],
   );
+  const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
+  const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
+  const rightDeltaRows = rows
+    .filter((r) => r.key !== 'bank')
+    .map((r) => {
+      const curr = fromClp(r.valueClp, currency, fx);
+      const prev = r.prevClp !== null && compareFx ? fromClp(r.prevClp, currency, compareFx) : null;
+      return {
+        label: r.label,
+        delta: prev !== null ? curr - prev : null,
+        pct: prev !== null ? pct(curr, prev) : null,
+      };
+    });
 
   return (
     <Card className="p-4 space-y-3">
@@ -222,6 +241,20 @@ const BreakdownCard: React.FC<{
           {deltaNet >= 0 ? '+' : ''}
           {formatCurrency(deltaNet, currency)}
           {deltaPct !== null ? ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)` : ''}
+        </div>
+      )}
+      {deltaNet !== null && (
+        <div className="space-y-1 text-[11px] text-right">
+          {rightDeltaRows.map((r) => (
+            <div key={r.label}>
+              <span className="text-slate-500 mr-1">{r.label}:</span>
+              <span className={r.delta !== null && r.delta >= 0 ? 'text-emerald-700 font-medium' : 'text-red-700 font-medium'}>
+                {r.delta === null
+                  ? '—'
+                  : `${r.delta >= 0 ? '+' : ''}${formatCurrency(r.delta, currency)}${r.pct !== null ? ` (${r.pct >= 0 ? '+' : ''}${r.pct.toFixed(2)}%)` : ''}`}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -255,27 +288,58 @@ const BreakdownCard: React.FC<{
         </button>
         {showInvestments && (
           <div className="mt-2 space-y-2 text-xs">
-            {investmentDetails.map((row) => {
-              const current = fromClp(row.currentClp, currency, fx);
-              const prev = row.compareClp !== null && compareFx ? fromClp(row.compareClp, currency, compareFx) : null;
-              const delta = prev !== null ? current - prev : null;
-              const p = prev !== null ? pct(current, prev) : null;
-              return (
-                <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
-                  <div className="flex items-center justify-between">
-                    <span>{row.label}</span>
-                    <span className="font-semibold">{formatCurrency(current, currency)}</span>
-                  </div>
-                  {delta !== null && (
-                    <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {delta >= 0 ? '+' : ''}
-                      {formatCurrency(delta, currency)}
-                      {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+            <details open className="rounded-lg border border-slate-100 p-2">
+              <summary className="cursor-pointer font-medium">Inversiones financieras</summary>
+              <div className="mt-2 space-y-2">
+                {investmentFinancial.map((row) => {
+                  const current = fromClp(row.currentClp, currency, fx);
+                  const prev = row.compareClp !== null && compareFx ? fromClp(row.compareClp, currency, compareFx) : null;
+                  const delta = prev !== null ? current - prev : null;
+                  const p = prev !== null ? pct(current, prev) : null;
+                  return (
+                    <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
+                      <div className="flex items-center justify-between">
+                        <span>{row.label}</span>
+                        <span className="font-semibold">{formatCurrency(current, currency)}</span>
+                      </div>
+                      {delta !== null && (
+                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {delta >= 0 ? '+' : ''}
+                          {formatCurrency(delta, currency)}
+                          {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            </details>
+            <details open className="rounded-lg border border-slate-100 p-2">
+              <summary className="cursor-pointer font-medium">Inversiones previsionales</summary>
+              <div className="mt-2 space-y-2">
+                {investmentPrevisional.map((row) => {
+                  const current = fromClp(row.currentClp, currency, fx);
+                  const prev = row.compareClp !== null && compareFx ? fromClp(row.compareClp, currency, compareFx) : null;
+                  const delta = prev !== null ? current - prev : null;
+                  const p = prev !== null ? pct(current, prev) : null;
+                  return (
+                    <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
+                      <div className="flex items-center justify-between">
+                        <span>{row.label}</span>
+                        <span className="font-semibold">{formatCurrency(current, currency)}</span>
+                      </div>
+                      {delta !== null && (
+                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {delta >= 0 ? '+' : ''}
+                          {formatCurrency(delta, currency)}
+                          {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
             {!investmentDetails.length && <div className="text-[11px] text-slate-500">Sin detalle de inversiones aún.</div>}
           </div>
         )}
@@ -357,12 +421,21 @@ export const ClosingAurum: React.FC = () => {
         </Button>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
-        {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((curr) => (
-          <Button key={curr} size="sm" variant={currency === curr ? 'primary' : 'secondary'} onClick={() => setCurrency(curr)}>
-            {curr}
-          </Button>
-        ))}
+      <div className="rounded-2xl bg-gradient-to-r from-[#f5efe2] to-[#e4eadf] border border-[#d8d2c6] p-2">
+        <div className="text-[10px] uppercase tracking-wide text-[#6f6552] px-1 pb-1">Moneda de visualización</div>
+        <div className="grid grid-cols-4 gap-2">
+          {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((curr) => (
+            <Button
+              key={curr}
+              size="sm"
+              variant={currency === curr ? 'primary' : 'secondary'}
+              className={currency === curr ? 'bg-[#5c4b2d] hover:bg-[#4d3f26]' : 'bg-white text-[#5c4b2d] hover:bg-[#f8f5ee]'}
+              onClick={() => setCurrency(curr)}
+            >
+              {curr}
+            </Button>
+          ))}
+        </div>
       </div>
 
       {tab === 'hoy' && (
