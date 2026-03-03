@@ -435,6 +435,17 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const data = snap.data() || {};
     const remoteUpdatedAt = String(data.updatedAt || '');
     const localUpdatedAt = readWealthUpdatedAt();
+    const localRecords = loadWealthRecords();
+    const localClosures = loadClosures();
+    const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
+
+    // Regla de seguridad:
+    // Si local tiene datos pero todavía no tiene marca temporal (caso migración),
+    // NO dejamos que una nube vacía los pise.
+    if (!localUpdatedAt && hasLocalData) {
+      scheduleWealthCloudSync(10);
+      return 'local';
+    }
 
     const shouldUseRemote =
       !localUpdatedAt ||
