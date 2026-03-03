@@ -187,8 +187,6 @@ const BreakdownCard: React.FC<{
   currentRecords: WealthRecord[];
   compareRecords?: WealthRecord[] | null;
 }> = ({ title, subtitle, breakdown, currency, fx, compareAgainst, compareFx, currentRecords, compareRecords }) => {
-  const [showInvestments, setShowInvestments] = useState(false);
-
   const rows = [
     { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
     {
@@ -217,6 +215,12 @@ const BreakdownCard: React.FC<{
   );
   const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
   const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
+  const financialCurrentClp = investmentFinancial.reduce((sum, row) => sum + row.currentClp, 0);
+  const financialCompareClp = investmentFinancial.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
+  const financialHasCompare = investmentFinancial.some((row) => row.compareClp !== null);
+  const previsionalCurrentClp = investmentPrevisional.reduce((sum, row) => sum + row.currentClp, 0);
+  const previsionalCompareClp = investmentPrevisional.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
+  const previsionalHasCompare = investmentPrevisional.some((row) => row.compareClp !== null);
 
   return (
     <Card className="p-4 space-y-3">
@@ -226,7 +230,7 @@ const BreakdownCard: React.FC<{
       </div>
       <div className="text-3xl font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
       {deltaNet !== null && (
-        <div className={`text-sm font-semibold ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+        <div className={`text-sm font-semibold text-right ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
           {deltaNet >= 0 ? '+' : ''}
           {formatCurrency(deltaNet, currency)}
           {deltaPct !== null ? ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)` : ''}
@@ -258,13 +262,34 @@ const BreakdownCard: React.FC<{
       </div>
 
       <div className="pt-1">
-        <button className="text-xs text-blue-700 font-medium" onClick={() => setShowInvestments((v) => !v)}>
-          {showInvestments ? 'Ocultar detalle inversiones' : 'Ver detalle inversiones'}
-        </button>
-        {showInvestments && (
-          <div className="mt-2 space-y-2 text-xs">
+        <div className="mt-2 space-y-2 text-xs">
             <details open className="rounded-lg border border-slate-100 p-2">
               <summary className="cursor-pointer font-medium">Inversiones financieras</summary>
+              <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">Subtotal</span>
+                  <span className="font-semibold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</span>
+                </div>
+                {financialHasCompare && (
+                  <div
+                    className={`text-[11px] text-right ${
+                      financialCurrentClp - financialCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                    }`}
+                  >
+                    {financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}
+                    {formatCurrency(
+                      fromClp(financialCurrentClp, currency, fx) - fromClp(financialCompareClp, currency, compareFx || fx),
+                      currency,
+                    )}
+                    {financialCompareClp !== 0
+                      ? ` (${financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}${(
+                          ((financialCurrentClp - financialCompareClp) / financialCompareClp) *
+                          100
+                        ).toFixed(2)}%)`
+                      : ''}
+                  </div>
+                )}
+              </div>
               <div className="mt-2 space-y-2">
                 {investmentFinancial.map((row) => {
                   const current = fromClp(row.currentClp, currency, fx);
@@ -278,7 +303,7 @@ const BreakdownCard: React.FC<{
                         <span className="font-semibold">{formatCurrency(current, currency)}</span>
                       </div>
                       {delta !== null && (
-                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <div className={`text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                           {delta >= 0 ? '+' : ''}
                           {formatCurrency(delta, currency)}
                           {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
@@ -291,6 +316,32 @@ const BreakdownCard: React.FC<{
             </details>
             <details open className="rounded-lg border border-slate-100 p-2">
               <summary className="cursor-pointer font-medium">Inversiones previsionales</summary>
+              <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">Subtotal</span>
+                  <span className="font-semibold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</span>
+                </div>
+                {previsionalHasCompare && (
+                  <div
+                    className={`text-[11px] text-right ${
+                      previsionalCurrentClp - previsionalCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                    }`}
+                  >
+                    {previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}
+                    {formatCurrency(
+                      fromClp(previsionalCurrentClp, currency, fx) -
+                        fromClp(previsionalCompareClp, currency, compareFx || fx),
+                      currency,
+                    )}
+                    {previsionalCompareClp !== 0
+                      ? ` (${previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}${(
+                          ((previsionalCurrentClp - previsionalCompareClp) / previsionalCompareClp) *
+                          100
+                        ).toFixed(2)}%)`
+                      : ''}
+                  </div>
+                )}
+              </div>
               <div className="mt-2 space-y-2">
                 {investmentPrevisional.map((row) => {
                   const current = fromClp(row.currentClp, currency, fx);
@@ -304,7 +355,7 @@ const BreakdownCard: React.FC<{
                         <span className="font-semibold">{formatCurrency(current, currency)}</span>
                       </div>
                       {delta !== null && (
-                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <div className={`text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                           {delta >= 0 ? '+' : ''}
                           {formatCurrency(delta, currency)}
                           {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
@@ -316,8 +367,7 @@ const BreakdownCard: React.FC<{
               </div>
             </details>
             {!investmentDetails.length && <div className="text-[11px] text-slate-500">Sin detalle de inversiones aún.</div>}
-          </div>
-        )}
+        </div>
       </div>
     </Card>
   );

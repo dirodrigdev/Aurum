@@ -83,7 +83,13 @@ const sectionTheme: Record<MainSection, string> = {
 };
 
 const sectionChecklist: Record<MainSection, string[]> = {
-  investment: ['SURA saldo total', 'BTG total valorización', 'Global66 Cuenta Vista USD', 'Wise Cuenta principal USD'],
+  investment: [
+    'SURA inversión financiera',
+    'SURA ahorro previsional',
+    'BTG total valorización',
+    'Global66 Cuenta Vista USD',
+    'Wise Cuenta principal USD',
+  ],
   real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
   bank: ['Wise Cuenta principal USD', 'Global66 Cuenta Vista USD'],
 };
