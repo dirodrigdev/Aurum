@@ -47,3 +47,6 @@ Referencia: ver archivo [firebase.env.template](/Users/diegorodriguezpizarro/Doc
 - Cierre mensual manual con comparativa cierre vs cierre
 - Sincronización bancos (MVP) por API Fintoc en `Bancos > Checklist del bloque > Sincronizar API banco`
 - Exploración de disponibilidad API (cuentas/movimientos/endpoints) en `Bancos > Checklist del bloque > Explorar API banco`
+- En sync de bancos se clasifica automáticamente:
+  - Cuentas activas -> bloque `bank`
+  - Tarjetas de crédito -> bloque `debt` (no hipotecaria)

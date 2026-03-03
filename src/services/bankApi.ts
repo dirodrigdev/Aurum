@@ -3,6 +3,17 @@ export interface FintocAccountNormalized {
   name: string;
   currency: string;
   balance: number;
+  type?: string;
+  number?: string;
+  holder?: string;
+  movementCount?: number;
+  movementsSample?: Array<{
+    id: string;
+    description: string;
+    amount: number;
+    currency: string;
+    date: string;
+  }>;
 }
 
 export interface FintocSyncResponse {
@@ -15,6 +26,7 @@ export interface FintocSyncResponse {
   debug?: {
     source: string;
     count: number;
+    movements?: number;
   };
   error?: string;
 }

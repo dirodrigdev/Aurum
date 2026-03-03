@@ -16,7 +16,7 @@ import {
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
-import { discoverFintocData, FintocDiscoverResponse, syncFintocAccounts } from '../services/bankApi';
+import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse, syncFintocAccounts } from '../services/bankApi';
 import {
   WealthBlock,
   WealthCurrency,
@@ -100,6 +100,10 @@ const sectionChecklist: Record<MainSection, string[]> = {
   bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
 };
 const FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
+const FINTOC_SYNC_PREFIX_ACCOUNT = 'Cuenta bancaria:';
+const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
+const FINTOC_SYNC_PREFIX_BANK_TOTAL = 'Saldo bancos ';
+const FINTOC_SYNC_PREFIX_CARD_TOTAL = 'Deuda tarjetas ';
 
 const isCarriedRecord = (record: WealthRecord) => {
   const note = String(record.note || '').toLowerCase();
@@ -159,6 +163,29 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
     .toString()
     .padStart(2, '0');
   return `${sign}${groupWithDots(intPart)},${decimalPart} ${currency}`;
+};
+
+const toWealthCurrency = (currency: string): WealthCurrency | null => {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'CLP' || normalized === 'USD' || normalized === 'EUR' || normalized === 'UF') {
+    return normalized as WealthCurrency;
+  }
+  return null;
+};
+
+const isCreditCardAccount = (account: Pick<FintocAccountNormalized, 'type' | 'name'>) => {
+  const token = `${String(account.type || '').toLowerCase()} ${String(account.name || '').toLowerCase()}`;
+  return token.includes('credit') || token.includes('card') || token.includes('tarjeta') || token.includes('tc');
+};
+
+const accountLabel = (account: Pick<FintocAccountNormalized, 'name' | 'number'>) => {
+  const suffix = account.number ? ` · ${account.number}` : '';
+  return `${FINTOC_SYNC_PREFIX_ACCOUNT}${account.name}${suffix}`;
+};
+
+const cardLabel = (account: Pick<FintocAccountNormalized, 'name' | 'number'>) => {
+  const suffix = account.number ? ` · ${account.number}` : '';
+  return `${FINTOC_SYNC_PREFIX_CARD}${account.name}${suffix}`;
 };
 
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
@@ -275,6 +302,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [fintocStatus, setFintocStatus] = useState('');
   const [fintocDiscovering, setFintocDiscovering] = useState(false);
   const [fintocDiscovery, setFintocDiscovery] = useState<FintocDiscoverResponse | null>(null);
+  const [fintocLastSync, setFintocLastSync] = useState<{
+    assets: FintocAccountNormalized[];
+    cards: FintocAccountNormalized[];
+  } | null>(null);
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -555,33 +586,83 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }
 
       const snapshotDate = todayYmd();
-      const nextRows: Array<{ label: string; currency: WealthCurrency; amount: number }> = [
-        { label: 'Saldo bancos CLP', currency: 'CLP', amount: result.totals.clp },
-        { label: 'Saldo bancos USD', currency: 'USD', amount: result.totals.usd },
-      ];
+      const assets = result.accounts.filter((acc) => !isCreditCardAccount(acc));
+      const cards = result.accounts.filter((acc) => isCreditCardAccount(acc));
+      setFintocLastSync({ assets, cards });
 
-      nextRows.forEach((row) => {
+      const staleFintocRows = recordsForSection.filter((record) => {
+        const source = normalizeForMatch(record.source);
+        if (!source.includes('fintoc')) return false;
+        const label = record.label || '';
+        return (
+          label.startsWith(FINTOC_SYNC_PREFIX_ACCOUNT) ||
+          label.startsWith(FINTOC_SYNC_PREFIX_CARD) ||
+          label.startsWith(FINTOC_SYNC_PREFIX_BANK_TOTAL) ||
+          label.startsWith(FINTOC_SYNC_PREFIX_CARD_TOTAL)
+        );
+      });
+      staleFintocRows.forEach((row) => removeWealthRecord(row.id));
+
+      const totals = {
+        bankClp: 0,
+        bankUsd: 0,
+        cardClp: 0,
+        cardUsd: 0,
+      };
+
+      const upsertByLabel = (
+        block: WealthBlock,
+        label: string,
+        currency: WealthCurrency,
+        amount: number,
+        note?: string,
+      ) => {
         const existing = recordsForSection.find(
           (r) =>
-            normalizeForMatch(r.label) === normalizeForMatch(row.label) &&
-            r.currency === row.currency &&
-            r.block === 'bank',
+            normalizeForMatch(r.label) === normalizeForMatch(label) &&
+            r.currency === currency &&
+            r.block === block,
         );
         upsertWealthRecord({
           id: existing?.id,
-          block: 'bank',
+          block,
           source: 'Fintoc API',
-          label: row.label,
-          amount: Math.max(0, row.amount),
-          currency: row.currency,
+          label,
+          amount: Math.max(0, amount),
+          currency,
           snapshotDate,
-          note: `API sync (${result.accounts.length} cuentas)`,
+          note,
         });
+      };
+
+      assets.forEach((account) => {
+        const currency = toWealthCurrency(account.currency);
+        if (!currency) return;
+        const label = accountLabel(account);
+        const note = `Tipo: ${account.type || 'N/D'} · Movimientos: ${account.movementCount || 0}`;
+        upsertByLabel('bank', label, currency, account.balance, note);
+        if (currency === 'CLP') totals.bankClp += account.balance;
+        if (currency === 'USD') totals.bankUsd += account.balance;
       });
+
+      cards.forEach((card) => {
+        const currency = toWealthCurrency(card.currency);
+        if (!currency) return;
+        const label = cardLabel(card);
+        const note = `Tipo: ${card.type || 'N/D'} · Movimientos: ${card.movementCount || 0}`;
+        upsertByLabel('debt', label, currency, Math.abs(card.balance), note);
+        if (currency === 'CLP') totals.cardClp += Math.abs(card.balance);
+        if (currency === 'USD') totals.cardUsd += Math.abs(card.balance);
+      });
+
+      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totals.bankClp, `API sync (${assets.length} cuentas activas)`);
+      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totals.bankUsd, `API sync (${assets.length} cuentas activas)`);
+      upsertByLabel('debt', 'Deuda tarjetas CLP', 'CLP', totals.cardClp, `API sync (${cards.length} tarjetas)`);
+      upsertByLabel('debt', 'Deuda tarjetas USD', 'USD', totals.cardUsd, `API sync (${cards.length} tarjetas)`);
 
       onDataChanged();
       setFintocStatus(
-        `Sincronizado: ${result.accounts.length} cuentas (${result.debug?.source || 'fintoc'}).`,
+        `Sincronizado: ${assets.length} cuentas activas + ${cards.length} tarjetas (${result.debug?.movements || 0} mov).`,
       );
     } catch (error: any) {
       setFintocStatus(`Error API: ${error?.message || 'No se pudo sincronizar.'}`);
@@ -728,6 +809,47 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {!!fintocStatus && (
           <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
             {fintocStatus}
+          </div>
+        )}
+        {section === 'bank' && fintocLastSync && (
+          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+            <div className="text-xs font-semibold text-slate-700">Sincronización bancaria organizada</div>
+            <div className="grid md:grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                <div className="font-medium text-slate-700 mb-1">Cuentas activas</div>
+                {!fintocLastSync.assets.length && <div className="text-slate-500">No detectadas.</div>}
+                {fintocLastSync.assets.map((acc) => (
+                  <div key={`asset-${acc.id}`} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0">
+                    <div className="text-slate-600">
+                      <div>{acc.name}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {acc.type || 'tipo N/D'}
+                        {acc.number ? ` · ${acc.number}` : ''}
+                        {acc.movementCount ? ` · mov: ${acc.movementCount}` : ''}
+                      </div>
+                    </div>
+                    <div className="font-semibold">{formatCurrency(acc.balance, (toWealthCurrency(acc.currency) || 'CLP'))}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-lg border border-rose-100 bg-rose-50/50 p-2">
+                <div className="font-medium text-rose-700 mb-1">Tarjetas / deudas</div>
+                {!fintocLastSync.cards.length && <div className="text-slate-500">No detectadas.</div>}
+                {fintocLastSync.cards.map((acc) => (
+                  <div key={`card-${acc.id}`} className="flex items-center justify-between py-1 border-b border-rose-100 last:border-0">
+                    <div className="text-slate-600">
+                      <div>{acc.name}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {acc.type || 'tipo N/D'}
+                        {acc.number ? ` · ${acc.number}` : ''}
+                        {acc.movementCount ? ` · mov: ${acc.movementCount}` : ''}
+                      </div>
+                    </div>
+                    <div className="font-semibold text-rose-700">-{formatCurrency(Math.abs(acc.balance), (toWealthCurrency(acc.currency) || 'CLP'))}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {section === 'bank' && fintocDiscovery && (
@@ -1181,6 +1303,15 @@ export const Patrimonio: React.FC = () => {
     if (!activeSection) return [];
     if (activeSection === 'real_estate') {
       return monthRecords.filter((r) => r.block === 'real_estate' || r.block === 'debt');
+    }
+    if (activeSection === 'bank') {
+      return monthRecords.filter((r) => {
+        if (r.block === 'bank') return true;
+        if (r.block !== 'debt') return false;
+        const source = normalizeForMatch(r.source);
+        const label = normalizeForMatch(r.label);
+        return source.includes('fintoc') || label.includes('tarjeta');
+      });
     }
     return monthRecords.filter((r) => r.block === activeSection);
   }, [activeSection, monthRecords]);

@@ -33,6 +33,9 @@ const normalizeAccount = (account) => ({
   name: String(account?.name || account?.official_name || account?.holder_name || 'Cuenta'),
   currency: normalizeCurrency(account?.currency || account?.balance?.currency),
   balance: readBalance(account),
+  type: String(account?.type || account?.subtype || ''),
+  number: String(account?.number || account?.masked_number || ''),
+  holder: String(account?.holder_name || account?.holder || ''),
 });
 
 const requestFintoc = async (path, secretKey) => {
@@ -65,6 +68,14 @@ const parseAccountsFromPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload.accounts)) return payload.accounts;
   if (Array.isArray(payload.data)) return payload.data;
+  return [];
+};
+
+const parseMovementsFromPayload = (payload) => {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.movements)) return payload.movements;
   return [];
 };
 
@@ -103,6 +114,26 @@ export default async function handler(req, res) {
       .map(normalizeAccount)
       .filter((a) => a.id && a.currency && Number.isFinite(a.balance));
 
+    // Enriquecer con movimientos por cuenta para identificar qué tan útil es cada conexión.
+    let movementsTotal = 0;
+    for (const account of normalized) {
+      const movementResponse = await requestFintoc(
+        `/accounts/${encodeURIComponent(account.id)}/movements?link_token=${encodeURIComponent(linkToken)}`,
+        secretKey,
+      );
+      const movements = movementResponse.ok ? parseMovementsFromPayload(movementResponse.json) : [];
+      const sample = movements.slice(0, 5).map((m) => ({
+        id: String(m?.id || ''),
+        description: String(m?.description || m?.memo || m?.name || ''),
+        amount: asNumber(m?.amount || m?.amount_in_account_currency || m?.transaction_amount),
+        currency: normalizeCurrency(m?.currency || m?.amount_currency || account.currency),
+        date: String(m?.post_date || m?.date || m?.transaction_date || ''),
+      }));
+      account.movementCount = movements.length;
+      account.movementsSample = sample;
+      movementsTotal += movements.length;
+    }
+
     const totals = normalized.reduce(
       (acc, account) => {
         if (account.currency === 'CLP') acc.clp += account.balance;
@@ -116,7 +147,7 @@ export default async function handler(req, res) {
       ok: true,
       accounts: normalized,
       totals,
-      debug: { source, count: normalized.length },
+      debug: { source, count: normalized.length, movements: movementsTotal },
     });
   } catch (error) {
     return res.status(500).json({
@@ -125,4 +156,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
