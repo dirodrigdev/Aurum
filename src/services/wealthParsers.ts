@@ -146,6 +146,26 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
           note: detail,
         }
       : null,
+    inversion
+      ? {
+          source: 'SURA',
+          block: 'investment',
+          label: 'SURA inversión financiera',
+          amount: inversion,
+          currency: 'CLP',
+          confidence: 0.9,
+        }
+      : null,
+    previsional
+      ? {
+          source: 'SURA',
+          block: 'investment',
+          label: 'SURA ahorro previsional',
+          amount: previsional,
+          currency: 'CLP',
+          confidence: 0.9,
+        }
+      : null,
   ]);
 };
 
