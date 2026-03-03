@@ -90,7 +90,7 @@ export const ClosingAurum: React.FC = () => {
   }, [latestClosure, previousClosure]);
 
   const evolutionPoints = useMemo(() => {
-    const points = closures
+    const points: Array<{ key: string; net: number; kind: 'cierre' | 'hoy' }> = closures
       .slice()
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .map((c) => ({ key: c.monthKey, net: c.summary.netConsolidatedClp, kind: 'cierre' as const }));
