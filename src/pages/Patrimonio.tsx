@@ -888,6 +888,7 @@ export const Patrimonio: React.FC = () => {
   const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => loadClosures());
   const [fx, setFx] = useState(() => loadFxRates());
+  const [hydrationReady, setHydrationReady] = useState(false);
 
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
@@ -937,6 +938,7 @@ export const Patrimonio: React.FC = () => {
       setRecords(loadWealthRecords());
       setClosures(loadClosures());
       setFx(loadFxRates());
+      setHydrationReady(true);
     })();
 
     return () => {
@@ -1103,6 +1105,7 @@ export const Patrimonio: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!hydrationReady) return;
     if (autoCarryAppliedRef.current.has(monthKey)) return;
     autoCarryAppliedRef.current.add(monthKey);
 
@@ -1131,7 +1134,7 @@ export const Patrimonio: React.FC = () => {
       setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros.`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey]);
+  }, [monthKey, hydrationReady]);
 
   if (activeSection) {
     return (

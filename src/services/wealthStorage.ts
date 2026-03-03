@@ -438,6 +438,9 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localRecords = loadWealthRecords();
     const localClosures = loadClosures();
     const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
+    const remoteRecords = Array.isArray(data.records) ? data.records : [];
+    const remoteClosures = Array.isArray(data.closures) ? data.closures : [];
+    const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
 
     // Regla de seguridad:
     // Si local tiene datos pero todavía no tiene marca temporal (caso migración),
@@ -445,6 +448,25 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     if (!localUpdatedAt && hasLocalData) {
       scheduleWealthCloudSync(10);
       return 'local';
+    }
+
+    // Si la nube tiene datos y local no, siempre priorizamos nube.
+    if (!hasLocalData && hasRemoteData) {
+      const remoteRates = data.fx || defaultFxRates;
+      saveWealthRecords(
+        remoteRecords
+          .map((item: any) => normalizeRecord(item))
+          .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item)),
+        { skipCloudSync: true, silent: true },
+      );
+      saveClosures(loadClosuresFromRaw(remoteClosures), { skipCloudSync: true, silent: true });
+      saveFxRatesInternal(remoteRates, { skipCloudSync: true, silent: true });
+      touchWealthUpdatedAt();
+      dispatchWealthDataUpdated();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
+      }
+      return 'cloud';
     }
 
     const shouldUseRemote =
@@ -457,8 +479,6 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     }
 
     const remoteRates = data.fx || defaultFxRates;
-    const remoteRecords = Array.isArray(data.records) ? data.records : [];
-    const remoteClosures = Array.isArray(data.closures) ? data.closures : [];
 
     saveWealthRecords(
       remoteRecords.map((item: any) => normalizeRecord(item)).filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item)),
