@@ -100,7 +100,7 @@ const parseWise = (text: string): ParsedWealthSuggestion[] => {
 
   return [{
     source: 'Wise',
-    block: 'bank',
+    block: 'investment',
     label: 'Wise Cuenta principal USD',
     amount,
     currency: 'USD',
@@ -142,7 +142,7 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
     if (headerAmount) {
       return [{
         source: 'Global66',
-        block: 'bank',
+        block: 'investment',
         label: 'Global66 Cuenta Vista USD',
         amount: headerAmount,
         currency: 'USD',
@@ -200,7 +200,7 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
 
   return [{
     source: 'Global66',
-    block: 'bank',
+    block: 'investment',
     label: 'Global66 Cuenta Vista USD',
     amount,
     currency: 'USD',

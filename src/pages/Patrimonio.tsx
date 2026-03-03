@@ -61,8 +61,8 @@ const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: 
   ],
   bank: [
     { value: 'auto', label: 'Auto detectar' },
-    { value: 'wise', label: 'Wise' },
-    { value: 'global66', label: 'Global66' },
+    { value: 'banco_clp', label: 'Banco Chile/Scotia/Santander (CLP)' },
+    { value: 'banco_usd', label: 'Banco Chile/Scotia/Santander (USD)' },
   ],
 };
 
@@ -93,7 +93,7 @@ const sectionChecklist: Record<MainSection, string[]> = {
     'Wise Cuenta principal USD',
   ],
   real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
-  bank: ['Wise Cuenta principal USD', 'Global66 Cuenta Vista USD'],
+  bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
 };
 
 const isCarriedRecord = (record: WealthRecord) => {

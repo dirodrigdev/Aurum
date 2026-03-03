@@ -81,6 +81,17 @@ const isDeprecatedSuraTotalRecord = (
   return normalizedSource.includes('sura') || record.block === 'investment';
 };
 
+const remapLegacyInvestmentBanks = (
+  block: WealthBlock,
+  source: string,
+  label: string,
+): WealthBlock => {
+  if (block !== 'bank') return block;
+  const token = `${normalizeText(source)} ${normalizeText(label)}`;
+  if (token.includes('wise') || token.includes('global66')) return 'investment';
+  return block;
+};
+
 export const currentMonthKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -111,7 +122,11 @@ export const loadWealthRecords = (): WealthRecord[] => {
     return parsed
       .map((item: any) => ({
         id: String(item?.id || crypto.randomUUID()),
-        block: (item?.block || 'investment') as WealthBlock,
+        block: remapLegacyInvestmentBanks(
+          (item?.block || 'investment') as WealthBlock,
+          String(item?.source || 'manual'),
+          String(item?.label || 'Registro'),
+        ),
         source: String(item?.source || 'manual'),
         label: String(item?.label || 'Registro'),
         amount: toNumber(item?.amount),
@@ -280,7 +295,11 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           ? item.records
               .map((r: any) => ({
                 id: String(r?.id || crypto.randomUUID()),
-                block: (r?.block || 'investment') as WealthBlock,
+                block: remapLegacyInvestmentBanks(
+                  (r?.block || 'investment') as WealthBlock,
+                  String(r?.source || 'manual'),
+                  String(r?.label || 'Registro'),
+                ),
                 source: String(r?.source || 'manual'),
                 label: String(r?.label || 'Registro'),
                 amount: toNumber(r?.amount),
@@ -566,8 +585,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 287_631_202, 'CLP', ymdFromDate(janDate, 30)),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_098.43, 'USD', ymdFromDate(janDate, 30)),
-    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_812.81, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 67_098.43, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_812.81, 'USD', ymdFromDate(janDate, 30)),
     makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_350, 'UF', ymdFromDate(janDate, 30)),
     makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_859.30, 'UF', ymdFromDate(janDate, 30)),
     makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(janDate, 30)),
@@ -581,8 +600,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_702_447, 'CLP', ymdFromDate(febDate, 28)),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 68_210.12, 'USD', ymdFromDate(febDate, 28)),
-    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_470.60, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 68_210.12, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_470.60, 'USD', ymdFromDate(febDate, 28)),
     makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_420, 'UF', ymdFromDate(febDate, 28)),
     makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_831.54, 'UF', ymdFromDate(febDate, 28)),
     makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(febDate, 28)),
@@ -596,8 +615,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_800_030, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
-    makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('bank', 'Wise', 'Wise Cuenta principal USD', 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
     makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_430, 'UF', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
     makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_803.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
     makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),

@@ -156,6 +156,7 @@ const buildInvestmentDetails = (
   const compare = new Map<string, number>();
 
   currentRecords.forEach((r) => {
+    if (r.block !== 'investment') return;
     const bucket = investmentBucket(r);
     if (!bucket) return;
     const prev = current.get(bucket.label);
@@ -167,6 +168,7 @@ const buildInvestmentDetails = (
 
   if (compareRecords && compareFx) {
     compareRecords.forEach((r) => {
+      if (r.block !== 'investment') return;
       const bucket = investmentBucket(r);
       if (!bucket) return;
       compare.set(bucket.label, (compare.get(bucket.label) || 0) + toClp(r.amount, r.currency, compareFx));
