@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
-import { cn, ConnectionBanner } from './Components';
+import { cn, ConnectionBanner, FirestoreStatusBanner } from './Components';
 
 export const Layout: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navItems = useMemo(
     () => [
@@ -18,6 +19,7 @@ export const Layout: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       <ConnectionBanner />
+      <FirestoreStatusBanner onGoSettings={() => navigate('/settings')} />
 
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="max-w-xl mx-auto px-4 py-3">

@@ -498,6 +498,10 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
   }
 };
 
+export const syncWealthNow = async (): Promise<boolean> => {
+  return syncWealthToCloudNow();
+};
+
 export const scheduleWealthCloudSync = (delayMs = 700) => {
   if (typeof window === 'undefined') return;
   if (wealthCloudSyncTimer) clearTimeout(wealthCloudSyncTimer);

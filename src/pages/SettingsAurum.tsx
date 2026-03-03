@@ -1,16 +1,70 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
-import { loadFxRates, saveFxRates, seedDemoWealthTimeline } from '../services/wealthStorage';
+import {
+  hydrateWealthFromCloud,
+  loadFxRates,
+  saveFxRates,
+  seedDemoWealthTimeline,
+  syncWealthNow,
+} from '../services/wealthStorage';
+import { auth, signOutUser } from '../services/firebase';
 
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
   const [seedMessage, setSeedMessage] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authUid, setAuthUid] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (user) => {
+      setAuthEmail(user?.email || '');
+      setAuthUid(user?.uid || '');
+    });
+  }, []);
 
   return (
     <div className="p-4 space-y-4">
       <Card className="p-4">
         <div className="text-lg font-bold text-slate-900">Ajustes</div>
         <div className="mt-1 text-sm text-slate-600">Configuración general de Aurum.</div>
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Sesión activa</div>
+        <div className="text-xs text-slate-600">
+          Usa el mismo correo y UID en notebook/celular para sincronizar el mismo patrimonio.
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
+          <div>
+            <span className="text-slate-500">Correo:</span> {authEmail || 'Sin correo (sesión no lista)'}
+          </div>
+          <div className="mt-1 break-all">
+            <span className="text-slate-500">UID:</span> {authUid || 'Sin UID'}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              const pushed = await syncWealthNow();
+              const hydrated = await hydrateWealthFromCloud();
+              setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}.`);
+            }}
+          >
+            Sincronizar ahora
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              await signOutUser();
+            }}
+          >
+            Cerrar sesión
+          </Button>
+        </div>
+        {!!syncMessage && <div className="text-xs text-emerald-700">{syncMessage}</div>}
       </Card>
 
       <Card className="p-4 space-y-3">
