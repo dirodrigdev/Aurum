@@ -9,6 +9,7 @@ import {
   syncWealthNow,
 } from '../services/wealthStorage';
 import { auth, signOutUser } from '../services/firebase';
+import { getFirestoreStatus } from '../services/firestoreStatus';
 
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
@@ -16,6 +17,7 @@ export const SettingsAurum: React.FC = () => {
   const [authEmail, setAuthEmail] = useState('');
   const [authUid, setAuthUid] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
+  const [fsDebug, setFsDebug] = useState('');
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
@@ -50,7 +52,10 @@ export const SettingsAurum: React.FC = () => {
             onClick={async () => {
               const pushed = await syncWealthNow();
               const hydrated = await hydrateWealthFromCloud();
-              setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}.`);
+              const fs = getFirestoreStatus();
+              const detail = `${fs.state}${fs.code ? `/${fs.code}` : ''}`;
+              setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}, firestore=${detail}.`);
+              setFsDebug(fs.message || '');
             }}
           >
             Sincronizar ahora
@@ -65,6 +70,10 @@ export const SettingsAurum: React.FC = () => {
           </Button>
         </div>
         {!!syncMessage && <div className="text-xs text-emerald-700">{syncMessage}</div>}
+        {!!fsDebug && <div className="text-xs text-slate-500 break-words">Detalle Firestore: {fsDebug}</div>}
+        <div className="text-[11px] text-slate-500 break-words">
+          Proyecto activo (frontend): {import.meta.env.VITE_FIREBASE_PROJECT_ID || 'no definido'}
+        </div>
       </Card>
 
       <Card className="p-4 space-y-3">
