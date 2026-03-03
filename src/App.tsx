@@ -14,11 +14,30 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   useEffect(() => {
     void ensureAuthPersistence();
-    const unsub = onAuthStateChanged(auth, (nextUser) => {
-      setUser(nextUser);
+    const timeout = window.setTimeout(() => {
       setLoading(false);
-    });
-    return () => unsub();
+      setAuthError(
+        'No pude validar la sesión automáticamente. Puedes continuar con "Entrar con Google".',
+      );
+    }, 6000);
+
+    const unsub = onAuthStateChanged(
+      auth,
+      (nextUser) => {
+        window.clearTimeout(timeout);
+        setUser(nextUser);
+        setLoading(false);
+      },
+      (err) => {
+        window.clearTimeout(timeout);
+        setAuthError(String(err?.message || 'Error inicializando autenticación.'));
+        setLoading(false);
+      },
+    );
+    return () => {
+      window.clearTimeout(timeout);
+      unsub();
+    };
   }, []);
 
   if (loading) {
