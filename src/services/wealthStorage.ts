@@ -56,6 +56,7 @@ const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
+const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 
 type PersistOptions = {
   skipCloudSync?: boolean;
@@ -98,6 +99,23 @@ const readWealthUpdatedAt = () => {
 const dispatchWealthDataUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
+  }
+};
+
+const setLastWealthSyncIssue = (message: string) => {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(WEALTH_SYNC_ISSUE_KEY, message || '');
+  } catch {
+    // ignore
+  }
+};
+
+export const getLastWealthSyncIssue = () => {
+  try {
+    if (typeof window === 'undefined') return '';
+    return String(window.localStorage.getItem(WEALTH_SYNC_ISSUE_KEY) || '');
+  } catch {
+    return '';
   }
 };
 
@@ -433,73 +451,88 @@ const getWealthCloudRef = async () => {
 };
 
 let wealthCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
-let wealthCloudSyncInFlight = false;
+let wealthCloudSyncPromise: Promise<boolean> | null = null;
 
 const syncWealthToCloudNow = async (): Promise<boolean> => {
-  if (wealthCloudSyncInFlight) return false;
-  wealthCloudSyncInFlight = true;
-  try {
-    const ref = await getWealthCloudRef();
-    if (!ref) return false;
-    setFirestoreChecking();
-    const localRecords = loadWealthRecords();
-    const localClosures = loadClosures();
-    const localFx = loadFxRates();
-    const localUpdatedAt = readWealthUpdatedAt();
+  if (wealthCloudSyncPromise) return wealthCloudSyncPromise;
 
-    const remoteSnap = await getDoc(ref);
-    const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
-    const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
-    const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
-    const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
-    const remoteUpdatedAt = String(remoteData.updatedAt || '');
-
-    const mergedRecords = mergeRecords(localRecords, remoteRecords);
-    const mergedClosures = mergeClosures(localClosures, remoteClosures);
-    const useLocalFx =
-      !remoteUpdatedAt || (!!localUpdatedAt && new Date(localUpdatedAt).getTime() >= new Date(remoteUpdatedAt).getTime());
-    const mergedFx = useLocalFx ? localFx : remoteFx;
-    const mergedUpdatedAt = nowIso();
-
-    await setDoc(
-      ref,
-      {
-        schemaVersion: 1,
-        updatedAt: mergedUpdatedAt,
-        fx: mergedFx,
-        records: mergedRecords,
-        closures: mergedClosures,
-      },
-      { merge: true },
-    );
-
-    if (
-      !sameRecords(localRecords, mergedRecords) ||
-      !sameClosures(localClosures, mergedClosures) ||
-      JSON.stringify(localFx) !== JSON.stringify(mergedFx)
-    ) {
-      saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
-      saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
-      saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
-      touchWealthUpdatedAt();
-      dispatchWealthDataUpdated();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
+  wealthCloudSyncPromise = (async () => {
+    try {
+      const ref = await getWealthCloudRef();
+      if (!ref) {
+        setLastWealthSyncIssue('no_uid_or_firebase_config');
+        return false;
       }
-    }
+      setFirestoreChecking();
+      const localRecords = loadWealthRecords();
+      const localClosures = loadClosures();
+      const localFx = loadFxRates();
+      const localUpdatedAt = readWealthUpdatedAt();
 
-    setFirestoreOk();
-    return true;
-  } catch (err) {
-    setFirestoreStatusFromError(err);
-    return false;
-  } finally {
-    wealthCloudSyncInFlight = false;
-  }
+      const remoteSnap = await getDoc(ref);
+      const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
+      const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
+      const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
+      const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
+      const remoteUpdatedAt = String(remoteData.updatedAt || '');
+
+      const mergedRecords = mergeRecords(localRecords, remoteRecords);
+      const mergedClosures = mergeClosures(localClosures, remoteClosures);
+      const useLocalFx =
+        !remoteUpdatedAt || (!!localUpdatedAt && new Date(localUpdatedAt).getTime() >= new Date(remoteUpdatedAt).getTime());
+      const mergedFx = useLocalFx ? localFx : remoteFx;
+      const mergedUpdatedAt = nowIso();
+
+      await setDoc(
+        ref,
+        {
+          schemaVersion: 1,
+          updatedAt: mergedUpdatedAt,
+          fx: mergedFx,
+          records: mergedRecords,
+          closures: mergedClosures,
+        },
+        { merge: true },
+      );
+
+      if (
+        !sameRecords(localRecords, mergedRecords) ||
+        !sameClosures(localClosures, mergedClosures) ||
+        JSON.stringify(localFx) !== JSON.stringify(mergedFx)
+      ) {
+        saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
+        saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
+        saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
+        touchWealthUpdatedAt();
+        dispatchWealthDataUpdated();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
+        }
+      }
+
+      setLastWealthSyncIssue('');
+      setFirestoreOk();
+      return true;
+    } catch (err: any) {
+      setLastWealthSyncIssue(`${err?.code || 'sync_error'} ${err?.message || ''}`.trim());
+      setFirestoreStatusFromError(err);
+      return false;
+    } finally {
+      wealthCloudSyncPromise = null;
+    }
+  })();
+
+  return wealthCloudSyncPromise;
 };
 
 export const syncWealthNow = async (): Promise<boolean> => {
-  return syncWealthToCloudNow();
+  // Reintento corto para tolerar ventanas donde auth.currentUser aún se rehidrata.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const ok = await syncWealthToCloudNow();
+    if (ok) return true;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  return false;
 };
 
 export const scheduleWealthCloudSync = (delayMs = 700) => {

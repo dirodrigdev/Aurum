@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import {
   hydrateWealthFromCloud,
+  getLastWealthSyncIssue,
   loadFxRates,
   saveFxRates,
   seedDemoWealthTimeline,
@@ -55,7 +56,7 @@ export const SettingsAurum: React.FC = () => {
               const fs = getFirestoreStatus();
               const detail = `${fs.state}${fs.code ? `/${fs.code}` : ''}`;
               setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}, firestore=${detail}.`);
-              setFsDebug(fs.message || '');
+              setFsDebug(getLastWealthSyncIssue() || fs.message || '');
             }}
           >
             Sincronizar ahora
