@@ -300,17 +300,19 @@ const BreakdownCard: React.FC<{
                   const p = prev !== null ? pct(current, prev) : null;
                   return (
                     <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span>{row.label}</span>
-                        <span className="text-sm font-semibold">{formatCurrency(current, currency)}</span>
-                      </div>
-                      {delta !== null && (
-                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {delta >= 0 ? '+' : ''}
-                          {formatCurrency(delta, currency)}
-                          {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                        <div className="text-right">
+                          <div className="text-sm font-semibold">{formatCurrency(current, currency)}</div>
+                          {delta !== null && (
+                            <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                              {delta >= 0 ? '+' : ''}
+                              {formatCurrency(delta, currency)}
+                              {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
@@ -352,17 +354,19 @@ const BreakdownCard: React.FC<{
                   const p = prev !== null ? pct(current, prev) : null;
                   return (
                     <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span>{row.label}</span>
-                        <span className="text-sm font-semibold">{formatCurrency(current, currency)}</span>
-                      </div>
-                      {delta !== null && (
-                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {delta >= 0 ? '+' : ''}
-                          {formatCurrency(delta, currency)}
-                          {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                        <div className="text-right">
+                          <div className="text-sm font-semibold">{formatCurrency(current, currency)}</div>
+                          {delta !== null && (
+                            <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                              {delta >= 0 ? '+' : ''}
+                              {formatCurrency(delta, currency)}
+                              {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
