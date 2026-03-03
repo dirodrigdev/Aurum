@@ -36,6 +36,7 @@ import {
 } from '../services/wealthStorage';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
+const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 
 const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
@@ -103,6 +104,12 @@ const isEstimatedRecord = (record: WealthRecord) => {
 };
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
+const readPreferredDisplayCurrency = (): WealthCurrency => {
+  if (typeof window === 'undefined') return 'CLP';
+  const stored = window.localStorage.getItem(PREFERRED_DISPLAY_CURRENCY_KEY);
+  if (stored === 'CLP' || stored === 'USD' || stored === 'EUR') return stored;
+  return 'CLP';
+};
 
 const monthLabel = (monthKey: string) => {
   const [y, m] = monthKey.split('-').map(Number);
@@ -846,8 +853,12 @@ export const Patrimonio: React.FC = () => {
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
-  const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>('CLP');
+  const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
   const autoCarryAppliedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
+  }, [displayCurrency]);
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
   const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card } from '../components/Components';
 import {
   WealthCurrency,
@@ -13,6 +13,7 @@ import {
 
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
 type EvolutionKind = 'cierre' | 'hoy';
+const PREFERRED_CLOSING_CURRENCY_KEY = 'aurum.preferred.closing.currency';
 
 interface EvolutionRow {
   key: string;
@@ -66,6 +67,13 @@ const monthLabel = (monthKey: string) => {
   const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
   const label = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
   return label.charAt(0).toUpperCase() + label.slice(1);
+};
+
+const readPreferredClosingCurrency = (): WealthCurrency => {
+  if (typeof window === 'undefined') return 'CLP';
+  const stored = window.localStorage.getItem(PREFERRED_CLOSING_CURRENCY_KEY);
+  if (stored === 'CLP' || stored === 'USD' || stored === 'EUR' || stored === 'UF') return stored;
+  return 'CLP';
 };
 
 const toClp = (amount: number, currency: WealthCurrency, fx: WealthFxRates) => {
@@ -385,7 +393,11 @@ const BreakdownCard: React.FC<{
 
 export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('hoy');
-  const [currency, setCurrency] = useState<WealthCurrency>('CLP');
+  const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
+
+  useEffect(() => {
+    window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
+  }, [currency]);
 
   const monthKey = useMemo(() => currentMonthKey(), []);
   const currentFx = useMemo(() => loadFxRates(), []);
