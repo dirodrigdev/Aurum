@@ -16,7 +16,7 @@ import {
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
-import { syncFintocAccounts } from '../services/bankApi';
+import { discoverFintocData, FintocDiscoverResponse, syncFintocAccounts } from '../services/bankApi';
 import {
   WealthBlock,
   WealthCurrency,
@@ -273,6 +273,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fintocSyncing, setFintocSyncing] = useState(false);
   const [fintocStatus, setFintocStatus] = useState('');
+  const [fintocDiscovering, setFintocDiscovering] = useState(false);
+  const [fintocDiscovery, setFintocDiscovery] = useState<FintocDiscoverResponse | null>(null);
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -588,6 +590,34 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
   };
 
+  const runFintocDiscovery = async () => {
+    if (section !== 'bank') return;
+    const savedToken = typeof window !== 'undefined' ? window.localStorage.getItem(FINTOC_LINK_TOKEN_KEY) || '' : '';
+    const linkToken = window.prompt('Pega tu link_token de Fintoc para explorar disponibilidad', savedToken)?.trim() || '';
+    if (!linkToken) return;
+
+    window.localStorage.setItem(FINTOC_LINK_TOKEN_KEY, linkToken);
+    setFintocDiscovering(true);
+    setFintocStatus('');
+    setFintocDiscovery(null);
+
+    try {
+      const result = await discoverFintocData(linkToken);
+      if (!result.ok) {
+        setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
+        return;
+      }
+      setFintocDiscovery(result);
+      setFintocStatus(
+        `Exploración OK: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos detectados.`,
+      );
+    } catch (error: any) {
+      setFintocStatus(`Error API: ${error?.message || 'No se pudo explorar.'}`);
+    } finally {
+      setFintocDiscovering(false);
+    }
+  };
+
   return (
     <div className="space-y-4 pb-24">
       <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
@@ -675,9 +705,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           <div className="text-sm font-semibold">Checklist del bloque</div>
           <div className="flex items-center gap-2">
             {section === 'bank' && (
-              <Button variant="outline" size="sm" onClick={runFintocSync} disabled={fintocSyncing}>
-                {fintocSyncing ? 'Sincronizando API...' : 'Sincronizar API banco'}
-              </Button>
+              <>
+                <Button variant="outline" size="sm" onClick={runFintocDiscovery} disabled={fintocDiscovering}>
+                  {fintocDiscovering ? 'Explorando API...' : 'Explorar API banco'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={runFintocSync} disabled={fintocSyncing}>
+                  {fintocSyncing ? 'Sincronizando API...' : 'Sincronizar API banco'}
+                </Button>
+              </>
             )}
             {section === 'real_estate' && (
               <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
@@ -693,6 +728,54 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {!!fintocStatus && (
           <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
             {fintocStatus}
+          </div>
+        )}
+        {section === 'bank' && fintocDiscovery && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+            <div className="text-xs font-semibold text-slate-700">Disponibilidad detectada (API)</div>
+            <div className="text-xs text-slate-600">
+              Institución: <span className="font-medium">{fintocDiscovery.summary.institution}</span> · Cuentas:{' '}
+              <span className="font-medium">{fintocDiscovery.summary.accounts}</span> · Movimientos:{' '}
+              <span className="font-medium">{fintocDiscovery.summary.movements}</span>
+            </div>
+            <div className="text-xs text-slate-600">
+              Totales detectados: {formatCurrency(fintocDiscovery.summary.clp, 'CLP')} /{' '}
+              {formatCurrency(fintocDiscovery.summary.usd, 'USD')}
+            </div>
+
+            {!!fintocDiscovery.accounts.length && (
+              <div className="space-y-1">
+                {fintocDiscovery.accounts.map((acc) => (
+                  <div
+                    key={acc.id}
+                    className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+                  >
+                    <div>
+                      <div className="font-medium text-slate-800">{acc.name}</div>
+                      <div className="text-slate-500">
+                        {acc.type || 'tipo N/D'}
+                        {acc.number ? ` · ${acc.number}` : ''}
+                        {acc.movementCount ? ` · mov: ${acc.movementCount}` : ''}
+                      </div>
+                    </div>
+                    <div className="font-semibold text-slate-800">{formatCurrency(acc.balance, (acc.currency as WealthCurrency) || 'CLP')}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!!fintocDiscovery.probes.length && (
+              <details>
+                <summary className="text-xs text-slate-500 cursor-pointer">Ver endpoints probados</summary>
+                <div className="mt-2 space-y-1">
+                  {fintocDiscovery.probes.map((probe, idx) => (
+                    <div key={`${probe.endpoint}-${idx}`} className="text-[11px] text-slate-600">
+                      [{probe.ok ? 'OK' : 'FAIL'} {probe.status}] {probe.endpoint} · items: {probe.items}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         )}
         {checklistStatus.map((row) => (
