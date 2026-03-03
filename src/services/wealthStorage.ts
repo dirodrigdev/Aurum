@@ -33,6 +33,7 @@ export interface WealthMonthlyClosure {
   monthKey: string;
   closedAt: string;
   summary: WealthSnapshotSummary;
+  fxRates?: WealthFxRates;
   records?: WealthRecord[];
 }
 
@@ -250,6 +251,13 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
         monthKey: String(item?.monthKey || ''),
         closedAt: String(item?.closedAt || nowIso()),
         summary: item?.summary,
+        fxRates: item?.fxRates
+          ? {
+              usdClp: Math.max(1, toNumber(item.fxRates?.usdClp, defaultFxRates.usdClp)),
+              eurClp: Math.max(1, toNumber(item.fxRates?.eurClp, defaultFxRates.eurClp)),
+              ufClp: Math.max(1, toNumber(item.fxRates?.ufClp, defaultFxRates.ufClp)),
+            }
+          : undefined,
         records: Array.isArray(item?.records)
           ? item.records.map((r: any) => ({
               id: String(r?.id || crypto.randomUUID()),
@@ -295,6 +303,7 @@ export const createMonthlyClosure = (
     monthKey,
     closedAt: nowIso(),
     summary,
+    fxRates: { ...fxRates },
     records: latest,
   };
 
@@ -509,6 +518,7 @@ const makeDemoRecord = (
 });
 
 export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marKey: string } => {
+  const fx = loadFxRates();
   const janDate = dateFromMonthOffset(-2);
   const febDate = dateFromMonthOffset(-1);
   const marDate = dateFromMonthOffset(0);
@@ -559,8 +569,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
   ];
 
-  const janSummary = summarizeWealth(dedupeLatestByAsset(janRecords), loadFxRates());
-  const febSummary = summarizeWealth(dedupeLatestByAsset(febRecords), loadFxRates());
+  const janSummary = summarizeWealth(dedupeLatestByAsset(janRecords), fx);
+  const febSummary = summarizeWealth(dedupeLatestByAsset(febRecords), fx);
 
   const closures: WealthMonthlyClosure[] = [
     {
@@ -568,6 +578,7 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
       monthKey: febKey,
       closedAt: new Date(febDate.getFullYear(), febDate.getMonth(), 28, 18, 0, 0, 0).toISOString(),
       summary: febSummary,
+      fxRates: { ...fx },
       records: dedupeLatestByAsset(febRecords),
     },
     {
@@ -575,6 +586,7 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
       monthKey: janKey,
       closedAt: new Date(janDate.getFullYear(), janDate.getMonth(), 31, 18, 0, 0, 0).toISOString(),
       summary: janSummary,
+      fxRates: { ...fx },
       records: dedupeLatestByAsset(janRecords),
     },
   ];
