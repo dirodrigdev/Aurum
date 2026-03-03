@@ -270,27 +270,29 @@ const BreakdownCard: React.FC<{
               <div className="mt-2 rounded-lg bg-white/80 px-2 py-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-slate-500">Subtotal</span>
-                  <span className="text-base font-bold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</span>
-                </div>
-                {financialHasCompare && (
-                  <div
-                    className={`text-[11px] ${
-                      financialCurrentClp - financialCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
-                    }`}
-                  >
-                    {financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}
-                    {formatCurrency(
-                      fromClp(financialCurrentClp, currency, fx) - fromClp(financialCompareClp, currency, compareFx || fx),
-                      currency,
+                  <div className="text-right">
+                    <div className="text-base font-bold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</div>
+                    {financialHasCompare && (
+                      <div
+                        className={`text-[11px] ${
+                          financialCurrentClp - financialCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                        }`}
+                      >
+                        {financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}
+                        {formatCurrency(
+                          fromClp(financialCurrentClp, currency, fx) - fromClp(financialCompareClp, currency, compareFx || fx),
+                          currency,
+                        )}
+                        {financialCompareClp !== 0
+                          ? ` (${financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}${(
+                              ((financialCurrentClp - financialCompareClp) / financialCompareClp) *
+                              100
+                            ).toFixed(2)}%)`
+                          : ''}
+                      </div>
                     )}
-                    {financialCompareClp !== 0
-                      ? ` (${financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}${(
-                          ((financialCurrentClp - financialCompareClp) / financialCompareClp) *
-                          100
-                        ).toFixed(2)}%)`
-                      : ''}
                   </div>
-                )}
+                </div>
               </div>
               <div className="mt-2 space-y-2">
                 {investmentFinancial.map((row) => {
@@ -323,28 +325,30 @@ const BreakdownCard: React.FC<{
               <div className="mt-2 rounded-lg bg-white/80 px-2 py-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-slate-500">Subtotal</span>
-                  <span className="text-base font-bold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</span>
-                </div>
-                {previsionalHasCompare && (
-                  <div
-                    className={`text-[11px] ${
-                      previsionalCurrentClp - previsionalCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
-                    }`}
-                  >
-                    {previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}
-                    {formatCurrency(
-                      fromClp(previsionalCurrentClp, currency, fx) -
-                        fromClp(previsionalCompareClp, currency, compareFx || fx),
-                      currency,
+                  <div className="text-right">
+                    <div className="text-base font-bold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</div>
+                    {previsionalHasCompare && (
+                      <div
+                        className={`text-[11px] ${
+                          previsionalCurrentClp - previsionalCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                        }`}
+                      >
+                        {previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}
+                        {formatCurrency(
+                          fromClp(previsionalCurrentClp, currency, fx) -
+                            fromClp(previsionalCompareClp, currency, compareFx || fx),
+                          currency,
+                        )}
+                        {previsionalCompareClp !== 0
+                          ? ` (${previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}${(
+                              ((previsionalCurrentClp - previsionalCompareClp) / previsionalCompareClp) *
+                              100
+                            ).toFixed(2)}%)`
+                          : ''}
+                      </div>
                     )}
-                    {previsionalCompareClp !== 0
-                      ? ` (${previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}${(
-                          ((previsionalCurrentClp - previsionalCompareClp) / previsionalCompareClp) *
-                          100
-                        ).toFixed(2)}%)`
-                      : ''}
                   </div>
-                )}
+                </div>
               </div>
               <div className="mt-2 space-y-2">
                 {investmentPrevisional.map((row) => {
