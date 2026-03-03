@@ -217,17 +217,6 @@ const BreakdownCard: React.FC<{
   );
   const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
   const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
-  const rightDeltaRows = rows
-    .filter((r) => r.key !== 'bank')
-    .map((r) => {
-      const curr = fromClp(r.valueClp, currency, fx);
-      const prev = r.prevClp !== null && compareFx ? fromClp(r.prevClp, currency, compareFx) : null;
-      return {
-        label: r.label,
-        delta: prev !== null ? curr - prev : null,
-        pct: prev !== null ? pct(curr, prev) : null,
-      };
-    });
 
   return (
     <Card className="p-4 space-y-3">
@@ -241,20 +230,6 @@ const BreakdownCard: React.FC<{
           {deltaNet >= 0 ? '+' : ''}
           {formatCurrency(deltaNet, currency)}
           {deltaPct !== null ? ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)` : ''}
-        </div>
-      )}
-      {deltaNet !== null && (
-        <div className="space-y-1 text-[11px] text-right">
-          {rightDeltaRows.map((r) => (
-            <div key={r.label}>
-              <span className="text-slate-500 mr-1">{r.label}:</span>
-              <span className={r.delta !== null && r.delta >= 0 ? 'text-emerald-700 font-medium' : 'text-red-700 font-medium'}>
-                {r.delta === null
-                  ? '—'
-                  : `${r.delta >= 0 ? '+' : ''}${formatCurrency(r.delta, currency)}${r.pct !== null ? ` (${r.pct >= 0 ? '+' : ''}${r.pct.toFixed(2)}%)` : ''}`}
-              </span>
-            </div>
-          ))}
         </div>
       )}
 
@@ -271,7 +246,7 @@ const BreakdownCard: React.FC<{
                 <span className="font-semibold">{formatCurrency(current, currency)}</span>
               </div>
               {delta !== null && (
-                <div className={`mt-0.5 text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                <div className={`mt-0.5 text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                   {delta >= 0 ? '+' : ''}
                   {formatCurrency(delta, currency)}
                   {deltaRowPct !== null ? ` (${deltaRowPct >= 0 ? '+' : ''}${deltaRowPct.toFixed(2)}%)` : ''}
