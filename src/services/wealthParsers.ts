@@ -128,9 +128,32 @@ const parseGlobalUsdCandidate = (raw: string): number | null => {
 };
 
 const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
+  const headerSectionMatch = text.match(
+    /d[o0ó]lar\s*estadounidense[\s\S]{0,260}?(?:rendim|datos\s+de\s+tu\s+cuenta|n[°º]\s*de\s+cuenta|ingresar|$)/i,
+  );
+  const headerSection = headerSectionMatch?.[0] || '';
+  if (headerSection) {
+    const headerAmountCandidates = [...headerSection.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{3,})/g)]
+      .map((m) => parseGlobalUsdCandidate(m[1]) || 0)
+      .filter((n) => Number.isFinite(n) && n >= 1000 && n <= 1_000_000)
+      .sort((a, b) => b - a);
+
+    const headerAmount = headerAmountCandidates[0] || null;
+    if (headerAmount) {
+      return [{
+        source: 'Global66',
+        block: 'bank',
+        label: 'Global66 Cuenta Vista USD',
+        amount: headerAmount,
+        currency: 'USD',
+        confidence: 0.99,
+      }];
+    }
+  }
+
   const collectGlobalCandidates = (scopeText: string, scopeWeight: number) => {
     const scopeLower = cleanText(scopeText).toLowerCase();
-    return [...scopeText.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{2,})\s*USD/gi)]
+    return [...scopeText.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{2,})\s*(?:[a-zA-Z]{1,2}\s*)?USD/gi)]
       .map((m) => {
         const amount = parseGlobalUsdCandidate(m[1]);
         if (!amount || amount <= 0) return null;
