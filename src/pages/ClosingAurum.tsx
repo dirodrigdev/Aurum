@@ -230,7 +230,7 @@ const BreakdownCard: React.FC<{
       </div>
       <div className="text-3xl font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
       {deltaNet !== null && (
-        <div className={`text-sm font-semibold text-right ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+        <div className={`text-sm font-semibold ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
           {deltaNet >= 0 ? '+' : ''}
           {formatCurrency(deltaNet, currency)}
           {deltaPct !== null ? ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)` : ''}
@@ -246,16 +246,18 @@ const BreakdownCard: React.FC<{
           return (
             <div key={row.key} className="border-b border-slate-100 pb-2">
               <div className="flex items-center justify-between">
-                <span>{row.label}</span>
-                <span className="font-semibold">{formatCurrency(current, currency)}</span>
-              </div>
-              {delta !== null && (
-                <div className={`mt-0.5 text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                  {delta >= 0 ? '+' : ''}
-                  {formatCurrency(delta, currency)}
-                  {deltaRowPct !== null ? ` (${deltaRowPct >= 0 ? '+' : ''}${deltaRowPct.toFixed(2)}%)` : ''}
+                <span className="text-sm font-medium">{row.label}</span>
+                <div className="min-w-[44%]">
+                  <div className="text-base font-bold">{formatCurrency(current, currency)}</div>
+                  {delta !== null && (
+                    <div className={`mt-0.5 text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {delta >= 0 ? '+' : ''}
+                      {formatCurrency(delta, currency)}
+                      {deltaRowPct !== null ? ` (${deltaRowPct >= 0 ? '+' : ''}${deltaRowPct.toFixed(2)}%)` : ''}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
@@ -263,16 +265,16 @@ const BreakdownCard: React.FC<{
 
       <div className="pt-1">
         <div className="mt-2 space-y-2 text-xs">
-            <details open className="rounded-lg border border-slate-100 p-2">
+            <details open className="rounded-lg border border-amber-100 bg-amber-50/50 p-2">
               <summary className="cursor-pointer font-medium">Inversiones financieras</summary>
-              <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1">
+              <div className="mt-2 rounded-lg bg-white/80 px-2 py-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-slate-500">Subtotal</span>
-                  <span className="font-semibold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</span>
+                  <span className="text-base font-bold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</span>
                 </div>
                 {financialHasCompare && (
                   <div
-                    className={`text-[11px] text-right ${
+                    className={`text-[11px] ${
                       financialCurrentClp - financialCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
                     }`}
                   >
@@ -300,10 +302,10 @@ const BreakdownCard: React.FC<{
                     <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
                       <div className="flex items-center justify-between">
                         <span>{row.label}</span>
-                        <span className="font-semibold">{formatCurrency(current, currency)}</span>
+                        <span className="text-sm font-semibold">{formatCurrency(current, currency)}</span>
                       </div>
                       {delta !== null && (
-                        <div className={`text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                           {delta >= 0 ? '+' : ''}
                           {formatCurrency(delta, currency)}
                           {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
@@ -314,16 +316,16 @@ const BreakdownCard: React.FC<{
                 })}
               </div>
             </details>
-            <details open className="rounded-lg border border-slate-100 p-2">
+            <details open className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-2">
               <summary className="cursor-pointer font-medium">Inversiones previsionales</summary>
-              <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1">
+              <div className="mt-2 rounded-lg bg-white/80 px-2 py-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-slate-500">Subtotal</span>
-                  <span className="font-semibold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</span>
+                  <span className="text-base font-bold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</span>
                 </div>
                 {previsionalHasCompare && (
                   <div
-                    className={`text-[11px] text-right ${
+                    className={`text-[11px] ${
                       previsionalCurrentClp - previsionalCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
                     }`}
                   >
@@ -352,10 +354,10 @@ const BreakdownCard: React.FC<{
                     <div key={row.key} className="rounded-lg border border-slate-100 px-2 py-1">
                       <div className="flex items-center justify-between">
                         <span>{row.label}</span>
-                        <span className="font-semibold">{formatCurrency(current, currency)}</span>
+                        <span className="text-sm font-semibold">{formatCurrency(current, currency)}</span>
                       </div>
                       {delta !== null && (
-                        <div className={`text-[11px] text-right ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                           {delta >= 0 ? '+' : ''}
                           {formatCurrency(delta, currency)}
                           {p !== null ? ` (${p >= 0 ? '+' : ''}${p.toFixed(2)}%)` : ''}
