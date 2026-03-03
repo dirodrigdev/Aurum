@@ -152,20 +152,43 @@ const remapLegacyInvestmentBanks = (
 };
 
 const normalizeRecord = (item: any): WealthRecord => ({
-  id: String(item?.id || crypto.randomUUID()),
-  block: remapLegacyInvestmentBanks(
-    (item?.block || 'investment') as WealthBlock,
-    String(item?.source || 'manual'),
-    String(item?.label || 'Registro'),
-  ),
-  source: String(item?.source || 'manual'),
-  label: String(item?.label || 'Registro'),
-  amount: toNumber(item?.amount),
-  currency: (item?.currency || 'CLP') as WealthCurrency,
-  snapshotDate: String(item?.snapshotDate || nowIso().slice(0, 10)),
-  createdAt: String(item?.createdAt || nowIso()),
-  note: item?.note ? String(item.note) : undefined,
+  ...(() => {
+    const base = {
+      id: String(item?.id || crypto.randomUUID()),
+      block: remapLegacyInvestmentBanks(
+        (item?.block || 'investment') as WealthBlock,
+        String(item?.source || 'manual'),
+        String(item?.label || 'Registro'),
+      ),
+      source: String(item?.source || 'manual'),
+      label: String(item?.label || 'Registro'),
+      amount: toNumber(item?.amount),
+      currency: (item?.currency || 'CLP') as WealthCurrency,
+      snapshotDate: String(item?.snapshotDate || nowIso().slice(0, 10)),
+      createdAt: String(item?.createdAt || nowIso()),
+    } satisfies Omit<WealthRecord, 'note'>;
+
+    const note = item?.note ? String(item.note) : '';
+    return note ? { ...base, note } : base;
+  })(),
 });
+
+const stripUndefinedDeep = (value: any): any => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item));
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value)) {
+      const cleaned = stripUndefinedDeep(val);
+      if (cleaned !== undefined) out[key] = cleaned;
+    }
+    return out;
+  }
+  return value;
+};
 
 export const currentMonthKey = () => {
   const d = new Date();
@@ -266,7 +289,7 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
   const id = input.id || crypto.randomUUID();
   const existing = current.find((r) => r.id === id);
 
-  const next: WealthRecord = {
+  const nextBase = {
     id,
     // En Aurum usamos createdAt como "última actualización efectiva" para resolver
     // cuál registro manda dentro del mismo activo/mes.
@@ -277,8 +300,9 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
     amount: toNumber(input.amount),
     currency: input.currency,
     snapshotDate: input.snapshotDate,
-    note: input.note,
-  };
+  } satisfies Omit<WealthRecord, 'note'>;
+
+  const next: WealthRecord = input.note ? { ...nextBase, note: input.note } : nextBase;
 
   const merged = existing ? current.map((r) => (r.id === id ? next : r)) : [next, ...current];
 
@@ -485,13 +509,13 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
 
       await setDoc(
         ref,
-        {
+        stripUndefinedDeep({
           schemaVersion: 1,
           updatedAt: mergedUpdatedAt,
           fx: mergedFx,
           records: mergedRecords,
           closures: mergedClosures,
-        },
+        }),
         { merge: true },
       );
 
