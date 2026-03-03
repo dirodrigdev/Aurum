@@ -16,6 +16,7 @@ import {
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
+import { syncFintocAccounts } from '../services/bankApi';
 import {
   WealthBlock,
   WealthCurrency,
@@ -98,6 +99,7 @@ const sectionChecklist: Record<MainSection, string[]> = {
   real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
   bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
 };
+const FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
 
 const isCarriedRecord = (record: WealthRecord) => {
   const note = String(record.note || '').toLowerCase();
@@ -269,6 +271,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [fintocSyncing, setFintocSyncing] = useState(false);
+  const [fintocStatus, setFintocStatus] = useState('');
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -531,6 +535,59 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     onDataChanged();
   };
 
+  const runFintocSync = async () => {
+    if (section !== 'bank') return;
+    const savedToken = typeof window !== 'undefined' ? window.localStorage.getItem(FINTOC_LINK_TOKEN_KEY) || '' : '';
+    const linkToken = window.prompt('Pega tu link_token de Fintoc', savedToken)?.trim() || '';
+    if (!linkToken) return;
+
+    window.localStorage.setItem(FINTOC_LINK_TOKEN_KEY, linkToken);
+    setFintocSyncing(true);
+    setFintocStatus('');
+
+    try {
+      const result = await syncFintocAccounts(linkToken);
+      if (!result.ok) {
+        setFintocStatus(`Error API: ${result.error || 'No se pudo sincronizar.'}`);
+        return;
+      }
+
+      const snapshotDate = todayYmd();
+      const nextRows: Array<{ label: string; currency: WealthCurrency; amount: number }> = [
+        { label: 'Saldo bancos CLP', currency: 'CLP', amount: result.totals.clp },
+        { label: 'Saldo bancos USD', currency: 'USD', amount: result.totals.usd },
+      ];
+
+      nextRows.forEach((row) => {
+        const existing = recordsForSection.find(
+          (r) =>
+            normalizeForMatch(r.label) === normalizeForMatch(row.label) &&
+            r.currency === row.currency &&
+            r.block === 'bank',
+        );
+        upsertWealthRecord({
+          id: existing?.id,
+          block: 'bank',
+          source: 'Fintoc API',
+          label: row.label,
+          amount: Math.max(0, row.amount),
+          currency: row.currency,
+          snapshotDate,
+          note: `API sync (${result.accounts.length} cuentas)`,
+        });
+      });
+
+      onDataChanged();
+      setFintocStatus(
+        `Sincronizado: ${result.accounts.length} cuentas (${result.debug?.source || 'fintoc'}).`,
+      );
+    } catch (error: any) {
+      setFintocStatus(`Error API: ${error?.message || 'No se pudo sincronizar.'}`);
+    } finally {
+      setFintocSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-4 pb-24">
       <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
@@ -617,6 +674,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold">Checklist del bloque</div>
           <div className="flex items-center gap-2">
+            {section === 'bank' && (
+              <Button variant="outline" size="sm" onClick={runFintocSync} disabled={fintocSyncing}>
+                {fintocSyncing ? 'Sincronizando API...' : 'Sincronizar API banco'}
+              </Button>
+            )}
             {section === 'real_estate' && (
               <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
                 Autocálculo hipotecario
@@ -628,6 +690,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           </div>
         </div>
         {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
+        {!!fintocStatus && (
+          <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
+            {fintocStatus}
+          </div>
+        )}
         {checklistStatus.map((row) => (
           <div key={row.name} className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50">
             <div className="flex items-center justify-between gap-2">

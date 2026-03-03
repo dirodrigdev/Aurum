@@ -27,13 +27,15 @@ Define estas variables en local (`.env`) y en Vercel:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
+- `FINTOC_SECRET_KEY` (solo backend/Vercel)
+- `FINTOC_BASE_URL` (opcional, default `https://api.fintoc.com/v1`)
 
 Referencia: ver archivo [firebase.env.template](/Users/diegorodriguezpizarro/Documents/New%20project/Aurum/firebase.env.template).
 
 ## Infraestructura (owner)
 - Firebase/GCP de Aurum están bajo la cuenta: `diegorp.madrid@gmail.com`
 - Proyecto Firebase: `Aurum Prod`
-- Proyecto GCP (id): `aurum-prod-489114`
+- Proyecto GCP activo (id): `aurum-prod-a1918`
 - Billing account vinculada: `015D3D-32E945-FFB957`
 
 ### Nota operativa
@@ -43,3 +45,4 @@ Referencia: ver archivo [firebase.env.template](/Users/diegorodriguezpizarro/Doc
 - Módulo `Patrimonio`
 - OCR para screenshots (Wise, Global66, SURA, BTG, Dividendo)
 - Cierre mensual manual con comparativa cierre vs cierre
+- Sincronización bancos (MVP) por API Fintoc en `Bancos > Checklist del bloque > Sincronizar API banco`
