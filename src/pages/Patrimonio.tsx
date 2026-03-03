@@ -25,7 +25,9 @@ import {
   currentMonthKey,
   applyMortgageAutoCalculation,
   FX_RATES_UPDATED_EVENT,
+  WEALTH_DATA_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
+  hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
   latestRecordsForMonth,
   loadClosures,
@@ -903,20 +905,42 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     const refreshFx = () => setFx(loadFxRates());
+    const refreshAll = () => {
+      setRecords(loadWealthRecords());
+      setClosures(loadClosures());
+      refreshFx();
+    };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refreshFx();
+      if (document.visibilityState === 'visible') refreshAll();
     };
 
-    window.addEventListener('focus', refreshFx);
-    window.addEventListener('storage', refreshFx);
+    window.addEventListener('focus', refreshAll);
+    window.addEventListener('storage', refreshAll);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      window.removeEventListener('focus', refreshFx);
-      window.removeEventListener('storage', refreshFx);
+      window.removeEventListener('focus', refreshAll);
+      window.removeEventListener('storage', refreshAll);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
       document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      await hydrateWealthFromCloud();
+      if (!alive) return;
+      setRecords(loadWealthRecords());
+      setClosures(loadClosures());
+      setFx(loadFxRates());
+    })();
+
+    return () => {
+      alive = false;
     };
   }, []);
 

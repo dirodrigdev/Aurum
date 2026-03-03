@@ -1,3 +1,7 @@
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, ensureAnonymousAuth, getCurrentUid } from './firebase';
+import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
+
 export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
 
 export type WealthBlock = 'bank' | 'investment' | 'real_estate' | 'debt';
@@ -48,7 +52,15 @@ export interface MortgageAutoCalcConfig {
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
+const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
+export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
+const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
+
+type PersistOptions = {
+  skipCloudSync?: boolean;
+  silent?: boolean;
+};
 
 export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
   initialDebtUf: 8831.535,
@@ -59,6 +71,35 @@ export const mortgageAutoCalcDefaults: MortgageAutoCalcConfig = {
 };
 
 const nowIso = () => new Date().toISOString();
+
+const isFirebaseConfigured = () =>
+  Boolean(
+    import.meta.env.VITE_FIREBASE_PROJECT_ID &&
+      import.meta.env.VITE_FIREBASE_API_KEY &&
+      import.meta.env.VITE_FIREBASE_APP_ID,
+  );
+
+const touchWealthUpdatedAt = () => {
+  try {
+    localStorage.setItem(WEALTH_UPDATED_AT_KEY, nowIso());
+  } catch {
+    // ignore
+  }
+};
+
+const readWealthUpdatedAt = () => {
+  try {
+    return String(localStorage.getItem(WEALTH_UPDATED_AT_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
+const dispatchWealthDataUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
+  }
+};
 
 const toNumber = (v: unknown, fallback = 0): number => {
   const n = Number(v);
@@ -92,6 +133,22 @@ const remapLegacyInvestmentBanks = (
   return block;
 };
 
+const normalizeRecord = (item: any): WealthRecord => ({
+  id: String(item?.id || crypto.randomUUID()),
+  block: remapLegacyInvestmentBanks(
+    (item?.block || 'investment') as WealthBlock,
+    String(item?.source || 'manual'),
+    String(item?.label || 'Registro'),
+  ),
+  source: String(item?.source || 'manual'),
+  label: String(item?.label || 'Registro'),
+  amount: toNumber(item?.amount),
+  currency: (item?.currency || 'CLP') as WealthCurrency,
+  snapshotDate: String(item?.snapshotDate || nowIso().slice(0, 10)),
+  createdAt: String(item?.createdAt || nowIso()),
+  note: item?.note ? String(item.note) : undefined,
+});
+
 export const currentMonthKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -120,21 +177,7 @@ export const loadWealthRecords = (): WealthRecord[] => {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((item: any) => ({
-        id: String(item?.id || crypto.randomUUID()),
-        block: remapLegacyInvestmentBanks(
-          (item?.block || 'investment') as WealthBlock,
-          String(item?.source || 'manual'),
-          String(item?.label || 'Registro'),
-        ),
-        source: String(item?.source || 'manual'),
-        label: String(item?.label || 'Registro'),
-        amount: toNumber(item?.amount),
-        currency: (item?.currency || 'CLP') as WealthCurrency,
-        snapshotDate: String(item?.snapshotDate || nowIso().slice(0, 10)),
-        createdAt: String(item?.createdAt || nowIso()),
-        note: item?.note ? String(item.note) : undefined,
-      }))
+      .map((item: any) => normalizeRecord(item))
       .filter((item: WealthRecord) => Number.isFinite(item.amount))
       .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item))
       .sort(sortByCreatedDesc);
@@ -143,8 +186,11 @@ export const loadWealthRecords = (): WealthRecord[] => {
   }
 };
 
-export const saveWealthRecords = (records: WealthRecord[]) => {
+export const saveWealthRecords = (records: WealthRecord[], options?: PersistOptions) => {
   localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
 export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string }) => {
@@ -191,10 +237,7 @@ export const loadFxRates = (): WealthFxRates => {
 };
 
 export const saveFxRates = (rates: WealthFxRates) => {
-  localStorage.setItem(FX_KEY, JSON.stringify(rates));
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: rates }));
-  }
+  saveFxRatesInternal(rates);
 };
 
 const emptyCurrencyMap = (): Record<WealthCurrency, number> => ({
@@ -293,21 +336,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
 
         const records = Array.isArray(item?.records)
           ? item.records
-              .map((r: any) => ({
-                id: String(r?.id || crypto.randomUUID()),
-                block: remapLegacyInvestmentBanks(
-                  (r?.block || 'investment') as WealthBlock,
-                  String(r?.source || 'manual'),
-                  String(r?.label || 'Registro'),
-                ),
-                source: String(r?.source || 'manual'),
-                label: String(r?.label || 'Registro'),
-                amount: toNumber(r?.amount),
-                currency: (r?.currency || 'CLP') as WealthCurrency,
-                snapshotDate: String(r?.snapshotDate || nowIso().slice(0, 10)),
-                createdAt: String(r?.createdAt || nowIso()),
-                note: r?.note ? String(r.note) : undefined,
-              }))
+              .map((r: any) => normalizeRecord(r))
               .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r))
           : undefined;
 
@@ -334,8 +363,153 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
   }
 };
 
-export const saveClosures = (closures: WealthMonthlyClosure[]) => {
+export const saveClosures = (closures: WealthMonthlyClosure[], options?: PersistOptions) => {
   localStorage.setItem(CLOSURES_KEY, JSON.stringify(closures));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+};
+
+const getWealthCloudRef = async () => {
+  if (!isFirebaseConfigured()) return null;
+  await ensureAnonymousAuth();
+  const uid = getCurrentUid();
+  if (!uid) return null;
+  return doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);
+};
+
+let wealthCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let wealthCloudSyncInFlight = false;
+
+const syncWealthToCloudNow = async (): Promise<boolean> => {
+  if (wealthCloudSyncInFlight) return false;
+  wealthCloudSyncInFlight = true;
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) return false;
+    setFirestoreChecking();
+    await setDoc(
+      ref,
+      {
+        schemaVersion: 1,
+        updatedAt: nowIso(),
+        fx: loadFxRates(),
+        records: loadWealthRecords(),
+        closures: loadClosures(),
+      },
+      { merge: true },
+    );
+    setFirestoreOk();
+    return true;
+  } catch (err) {
+    setFirestoreStatusFromError(err);
+    return false;
+  } finally {
+    wealthCloudSyncInFlight = false;
+  }
+};
+
+export const scheduleWealthCloudSync = (delayMs = 700) => {
+  if (typeof window === 'undefined') return;
+  if (wealthCloudSyncTimer) clearTimeout(wealthCloudSyncTimer);
+  wealthCloudSyncTimer = setTimeout(() => {
+    wealthCloudSyncTimer = null;
+    void syncWealthToCloudNow();
+  }, delayMs);
+};
+
+export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'unavailable'> => {
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) return 'unavailable';
+
+    setFirestoreChecking();
+    const snap = await getDoc(ref);
+    setFirestoreOk();
+
+    if (!snap.exists()) {
+      await syncWealthToCloudNow();
+      return 'local';
+    }
+
+    const data = snap.data() || {};
+    const remoteUpdatedAt = String(data.updatedAt || '');
+    const localUpdatedAt = readWealthUpdatedAt();
+
+    const shouldUseRemote =
+      !localUpdatedAt ||
+      (remoteUpdatedAt && new Date(remoteUpdatedAt).getTime() > new Date(localUpdatedAt).getTime());
+
+    if (!shouldUseRemote) {
+      scheduleWealthCloudSync(10);
+      return 'local';
+    }
+
+    const remoteRates = data.fx || defaultFxRates;
+    const remoteRecords = Array.isArray(data.records) ? data.records : [];
+    const remoteClosures = Array.isArray(data.closures) ? data.closures : [];
+
+    saveWealthRecords(
+      remoteRecords.map((item: any) => normalizeRecord(item)).filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item)),
+      { skipCloudSync: true, silent: true },
+    );
+    saveClosures(loadClosuresFromRaw(remoteClosures), { skipCloudSync: true, silent: true });
+    saveFxRatesInternal(remoteRates, { skipCloudSync: true, silent: true });
+    touchWealthUpdatedAt();
+    dispatchWealthDataUpdated();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
+    }
+    return 'cloud';
+  } catch (err) {
+    setFirestoreStatusFromError(err);
+    return 'unavailable';
+  }
+};
+
+const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
+  return parsed
+    .map((item: any) => {
+      const fxRates = item?.fxRates
+        ? {
+            usdClp: Math.max(1, toNumber(item.fxRates?.usdClp, defaultFxRates.usdClp)),
+            eurClp: Math.max(1, toNumber(item.fxRates?.eurClp, defaultFxRates.eurClp)),
+            ufClp: Math.max(1, toNumber(item.fxRates?.ufClp, defaultFxRates.ufClp)),
+          }
+        : undefined;
+
+      const records = Array.isArray(item?.records)
+        ? item.records
+            .map((r: any) => normalizeRecord(r))
+            .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r))
+        : undefined;
+
+      const summary =
+        records && records.length ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates) : item?.summary;
+
+      return {
+        id: String(item?.id || crypto.randomUUID()),
+        monthKey: String(item?.monthKey || ''),
+        closedAt: String(item?.closedAt || nowIso()),
+        summary,
+        fxRates,
+        records,
+      };
+    })
+    .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
+    .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
+      return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
+    });
+};
+
+const saveFxRatesInternal = (rates: WealthFxRates, options?: PersistOptions) => {
+  localStorage.setItem(FX_KEY, JSON.stringify(rates));
+  touchWealthUpdatedAt();
+  if (!options?.silent && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: rates }));
+  }
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
 export const createMonthlyClosure = (

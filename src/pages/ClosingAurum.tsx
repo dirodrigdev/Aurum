@@ -6,6 +6,8 @@ import {
   WealthRecord,
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
+  WEALTH_DATA_UPDATED_EVENT,
+  hydrateWealthFromCloud,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -398,6 +400,7 @@ export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('hoy');
   const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
   const [currentFx, setCurrentFx] = useState<WealthFxRates>(() => loadFxRates());
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
@@ -405,30 +408,49 @@ export const ClosingAurum: React.FC = () => {
 
   useEffect(() => {
     const refreshFx = () => setCurrentFx(loadFxRates());
+    const refreshAll = () => {
+      refreshFx();
+      setRevision((v) => v + 1);
+    };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refreshFx();
+      if (document.visibilityState === 'visible') refreshAll();
     };
 
-    window.addEventListener('focus', refreshFx);
-    window.addEventListener('storage', refreshFx);
+    window.addEventListener('focus', refreshAll);
+    window.addEventListener('storage', refreshAll);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      window.removeEventListener('focus', refreshFx);
-      window.removeEventListener('storage', refreshFx);
+      window.removeEventListener('focus', refreshAll);
+      window.removeEventListener('storage', refreshAll);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshAll as EventListener);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      await hydrateWealthFromCloud();
+      if (!alive) return;
+      setCurrentFx(loadFxRates());
+      setRevision((v) => v + 1);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const monthKey = useMemo(() => currentMonthKey(), []);
-  const closures = useMemo(() => loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)), []);
+  const closures = useMemo(() => loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)), [revision]);
 
   const latestClosure = closures[0] || null;
   const previousClosure = closures[1] || null;
 
-  const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey]);
+  const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
 
   const latestClosureRecords = latestClosure?.records || null;
