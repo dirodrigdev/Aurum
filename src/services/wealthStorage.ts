@@ -87,14 +87,6 @@ const touchWealthUpdatedAt = () => {
   }
 };
 
-const readWealthUpdatedAt = () => {
-  try {
-    return String(localStorage.getItem(WEALTH_UPDATED_AT_KEY) || '');
-  } catch {
-    return '';
-  }
-};
-
 const dispatchWealthDataUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
@@ -437,8 +429,6 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     }
 
     const data = snap.data() || {};
-    const remoteUpdatedAt = String(data.updatedAt || '');
-    const localUpdatedAt = readWealthUpdatedAt();
     const localRecords = loadWealthRecords();
     const localClosures = loadClosures();
     const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
@@ -446,15 +436,15 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const remoteClosures = Array.isArray(data.closures) ? data.closures : [];
     const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
 
-    // Regla de seguridad:
-    // Si local tiene datos pero todavía no tiene marca temporal (caso migración),
-    // NO dejamos que una nube vacía los pise.
-    if (!localUpdatedAt && hasLocalData) {
+    // Regla de seguridad fuerte:
+    // Si hay datos locales, nunca pisarlos automáticamente con nube.
+    // Primero preservamos edición local y luego sincronizamos a cloud.
+    if (hasLocalData) {
       scheduleWealthCloudSync(10);
       return 'local';
     }
 
-    // Si la nube tiene datos y local no, siempre priorizamos nube.
+    // Solo si local está vacío y nube tiene datos, hidratamos desde cloud.
     if (!hasLocalData && hasRemoteData) {
       const remoteRates = data.fx || defaultFxRates;
       saveWealthRecords(
@@ -472,30 +462,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       }
       return 'cloud';
     }
-
-    const shouldUseRemote =
-      !localUpdatedAt ||
-      (remoteUpdatedAt && new Date(remoteUpdatedAt).getTime() > new Date(localUpdatedAt).getTime());
-
-    if (!shouldUseRemote) {
-      scheduleWealthCloudSync(10);
-      return 'local';
-    }
-
-    const remoteRates = data.fx || defaultFxRates;
-
-    saveWealthRecords(
-      remoteRecords.map((item: any) => normalizeRecord(item)).filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item)),
-      { skipCloudSync: true, silent: true },
-    );
-    saveClosures(loadClosuresFromRaw(remoteClosures), { skipCloudSync: true, silent: true });
-    saveFxRatesInternal(remoteRates, { skipCloudSync: true, silent: true });
-    touchWealthUpdatedAt();
-    dispatchWealthDataUpdated();
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
-    }
-    return 'cloud';
+    return 'local';
   } catch (err) {
     setFirestoreStatusFromError(err);
     return 'unavailable';
