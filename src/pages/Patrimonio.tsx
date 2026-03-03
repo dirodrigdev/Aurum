@@ -120,6 +120,61 @@ const MANUAL_CARD_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Mastercard Santander', currency: 'CLP' },
   { label: 'American Express Santander', currency: 'CLP' },
 ];
+const MANUAL_BANK_GROUPS: Array<{ bank: string; items: Array<{ label: string; currency: WealthCurrency }> }> = [
+  {
+    bank: 'Banco de Chile',
+    items: [
+      { label: 'Banco de Chile CLP', currency: 'CLP' },
+      { label: 'Banco de Chile USD', currency: 'USD' },
+    ],
+  },
+  {
+    bank: 'Scotiabank',
+    items: [
+      { label: 'Scotiabank CLP', currency: 'CLP' },
+      { label: 'Scotiabank USD', currency: 'USD' },
+    ],
+  },
+  {
+    bank: 'Santander',
+    items: [
+      { label: 'Santander CLP', currency: 'CLP' },
+      { label: 'Santander USD', currency: 'USD' },
+    ],
+  },
+];
+const MANUAL_CARD_GROUPS: Array<{
+  bank: string;
+  className: string;
+  items: Array<{ label: string; currency: WealthCurrency }>;
+}> = [
+  {
+    bank: 'Banco de Chile',
+    className: 'border-blue-200 bg-blue-50/40',
+    items: [{ label: 'Visa Banco de Chile', currency: 'CLP' }],
+  },
+  {
+    bank: 'Scotiabank',
+    className: 'border-slate-300 bg-slate-100/70',
+    items: [
+      { label: 'Visa Scotia', currency: 'CLP' },
+      { label: 'Mastercard Scotia', currency: 'CLP' },
+    ],
+  },
+  {
+    bank: 'Santander',
+    className: 'border-red-200 bg-red-50/40',
+    items: [
+      { label: 'Mastercard Santander', currency: 'CLP' },
+      { label: 'American Express Santander', currency: 'CLP' },
+    ],
+  },
+  {
+    bank: 'Falabella',
+    className: 'border-emerald-200 bg-emerald-50/40',
+    items: [{ label: 'Mastercard Falabella', currency: 'CLP' }],
+  },
+];
 
 const isCarriedRecord = (record: WealthRecord) => {
   const note = String(record.note || '').toLowerCase();
@@ -338,7 +393,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         byBank: [] as Array<{ label: string; amount: number; currency: WealthCurrency }>,
         cards: [] as Array<{ label: string; amount: number; currency: WealthCurrency }>,
         movements: [] as Array<{ account: string; description: string; date: string; amount: number; currency: WealthCurrency }>,
-        rowsForCompose: recordsForSection,
       };
     }
 
@@ -352,7 +406,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       .filter((r) => r.block === 'bank' && r.label.startsWith(FINTOC_SYNC_PREFIX_BANK_TOTAL) && r.currency === 'USD')
       .reduce((sum, r) => sum + r.amount, 0);
 
-    const movements = (fintocLastSync?.assets || []).flatMap((acc) =>
+    const syncAccounts = fintocLastSync?.assets?.length
+      ? fintocLastSync.assets
+      : (fintocDiscovery?.accounts || []).filter((acc) => !isCreditCardAccount(acc));
+
+    const movements = syncAccounts.flatMap((acc) =>
       (acc.movementsSample || []).map((m) => ({
         account: `${acc.name}${acc.number ? ` · ${acc.number}` : ''}`,
         description: m.description || 'Movimiento',
@@ -362,16 +420,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       })),
     );
 
-    const rowsForCompose = recordsForSection.filter((r) => {
-      if (MANUAL_BANK_ITEMS.some((i) => i.label === r.label)) return true;
-      if (MANUAL_CARD_ITEMS.some((i) => i.label === r.label)) return true;
-      if (r.label === 'Saldo bancos CLP' || r.label === 'Saldo bancos USD') return true;
-      if (r.label === 'Deuda tarjetas CLP' || r.label === 'Deuda tarjetas USD') return true;
-      return false;
-    });
-
-    return { bankClp, bankUsd, byBank, cards, movements, rowsForCompose };
-  }, [section, recordsForSection, fintocLastSync]);
+    return { bankClp, bankUsd, byBank, cards, movements };
+  }, [section, recordsForSection, fintocLastSync, fintocDiscovery]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -647,7 +697,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const snapshotDate = todayYmd();
       const assets = result.accounts.filter((acc) => !isCreditCardAccount(acc));
       const cards = result.accounts.filter((acc) => isCreditCardAccount(acc));
-      setFintocLastSync({ assets, cards });
+      let syncedAssets = assets;
+      let syncedCards = cards;
+      const movementCount = result.accounts.reduce((sum, acc) => sum + (acc.movementCount || 0), 0);
+      if (movementCount === 0) {
+        const discovered = await discoverFintocData(linkToken);
+        if (discovered.ok) {
+          setFintocDiscovery(discovered);
+          syncedAssets = discovered.accounts.filter((acc) => !isCreditCardAccount(acc));
+          syncedCards = discovered.accounts.filter((acc) => isCreditCardAccount(acc));
+        }
+      }
+      setFintocLastSync({ assets: syncedAssets, cards: syncedCards });
 
       const staleFintocRows = recordsForSection.filter((record) => {
         const source = normalizeForMatch(record.source);
@@ -694,7 +755,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         });
       };
 
-      assets.forEach((account) => {
+      syncedAssets.forEach((account) => {
         const currency = toWealthCurrency(account.currency);
         if (!currency) return;
         const label = accountLabel(account);
@@ -704,7 +765,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         if (currency === 'USD') totals.bankUsd += account.balance;
       });
 
-      cards.forEach((card) => {
+      syncedCards.forEach((card) => {
         const currency = toWealthCurrency(card.currency);
         if (!currency) return;
         const label = cardLabel(card);
@@ -714,14 +775,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         if (currency === 'USD') totals.cardUsd += Math.abs(card.balance);
       });
 
-      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totals.bankClp, `API sync (${assets.length} cuentas activas)`);
-      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totals.bankUsd, `API sync (${assets.length} cuentas activas)`);
-      upsertByLabel('debt', 'Deuda tarjetas CLP', 'CLP', totals.cardClp, `API sync (${cards.length} tarjetas)`);
-      upsertByLabel('debt', 'Deuda tarjetas USD', 'USD', totals.cardUsd, `API sync (${cards.length} tarjetas)`);
+      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totals.bankClp, `API sync (${syncedAssets.length} cuentas activas)`);
+      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totals.bankUsd, `API sync (${syncedAssets.length} cuentas activas)`);
+      upsertByLabel('debt', 'Deuda tarjetas CLP', 'CLP', totals.cardClp, `API sync (${syncedCards.length} tarjetas)`);
+      upsertByLabel('debt', 'Deuda tarjetas USD', 'USD', totals.cardUsd, `API sync (${syncedCards.length} tarjetas)`);
 
+      const detectedMovements = [...syncedAssets, ...syncedCards].reduce(
+        (sum, account) => sum + (account.movementCount || 0),
+        0,
+      );
       onDataChanged();
       setFintocStatus(
-        `Sincronizado: ${assets.length} cuentas activas + ${cards.length} tarjetas (${result.debug?.movements || 0} mov).`,
+        `Sincronizado: ${syncedAssets.length} cuentas activas + ${syncedCards.length} tarjetas (${detectedMovements} mov).`,
       );
     } catch (error: any) {
       setFintocStatus(`Error API: ${error?.message || 'No se pudo sincronizar.'}`);
@@ -748,6 +813,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return;
       }
       setFintocDiscovery(result);
+      setFintocLastSync({
+        assets: result.accounts.filter((acc) => !isCreditCardAccount(acc)),
+        cards: result.accounts.filter((acc) => isCreditCardAccount(acc)),
+      });
       setFintocStatus(
         `Exploración OK: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos detectados.`,
       );
@@ -794,65 +863,79 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
           <details open className="rounded-lg border border-slate-200 bg-slate-50 p-2">
             <summary className="cursor-pointer text-sm font-medium">Bancos manuales (Chile / Scotia / Santander)</summary>
-            <div className="mt-2 grid md:grid-cols-2 gap-2">
-              {MANUAL_BANK_ITEMS.map((item) => {
-                const existing = recordsForSection.find((r) => r.label === item.label);
-                return (
-                  <button
-                    key={item.label}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-left hover:bg-slate-50"
-                    onClick={() => {
-                      setQuickFill({
-                        id: existing?.id,
-                        block: 'bank',
-                        source: existing?.source || 'Manual bancos',
-                        label: item.label,
-                        amount: existing ? String(existing.amount) : '',
-                        currency: existing?.currency || item.currency,
-                        snapshotDate: existing?.snapshotDate || todayYmd(),
-                      });
-                      setOpenLoadPanel(true);
-                    }}
-                  >
-                    <div className="text-xs font-medium text-slate-700">{item.label}</div>
-                    <div className="text-sm font-semibold text-slate-900 mt-1">
-                      {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="mt-2 space-y-2">
+              {MANUAL_BANK_GROUPS.map((group) => (
+                <div key={group.bank} className="rounded-lg border border-slate-200 bg-white p-2">
+                  <div className="text-xs font-semibold text-slate-600 mb-2">{group.bank}</div>
+                  <div className="grid md:grid-cols-2 gap-2">
+                    {group.items.map((item) => {
+                      const existing = recordsForSection.find((r) => r.label === item.label);
+                      return (
+                        <button
+                          key={item.label}
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-left hover:bg-slate-100"
+                          onClick={() => {
+                            setQuickFill({
+                              id: existing?.id,
+                              block: 'bank',
+                              source: existing?.source || 'Manual bancos',
+                              label: item.label,
+                              amount: existing ? String(existing.amount) : '',
+                              currency: existing?.currency || item.currency,
+                              snapshotDate: existing?.snapshotDate || todayYmd(),
+                            });
+                            setOpenLoadPanel(true);
+                          }}
+                        >
+                          <div className="text-xs font-medium text-slate-700">{item.currency}</div>
+                          <div className="text-sm font-semibold text-slate-900 mt-1">
+                            {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </details>
 
           <details open className="rounded-lg border border-rose-200 bg-rose-50/40 p-2">
             <summary className="cursor-pointer text-sm font-medium text-rose-700">Tarjetas (cupo usado manual)</summary>
-            <div className="mt-2 grid md:grid-cols-2 gap-2">
-              {MANUAL_CARD_ITEMS.map((item) => {
-                const existing = recordsForSection.find((r) => r.label === item.label);
-                return (
-                  <button
-                    key={item.label}
-                    className="rounded-lg border border-rose-200 bg-white px-2 py-2 text-left hover:bg-rose-50"
-                    onClick={() => {
-                      setQuickFill({
-                        id: existing?.id,
-                        block: 'debt',
-                        source: existing?.source || 'Manual tarjetas',
-                        label: item.label,
-                        amount: existing ? String(existing.amount) : '',
-                        currency: existing?.currency || item.currency,
-                        snapshotDate: existing?.snapshotDate || todayYmd(),
-                      });
-                      setOpenLoadPanel(true);
-                    }}
-                  >
-                    <div className="text-xs font-medium text-slate-700">{item.label}</div>
-                    <div className="text-sm font-semibold text-rose-700 mt-1">
-                      {existing ? `-${formatCurrency(existing.amount, existing.currency)}` : 'Pendiente'}
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="mt-2 space-y-2">
+              {MANUAL_CARD_GROUPS.map((group) => (
+                <div key={group.bank} className={`rounded-lg border p-2 ${group.className}`}>
+                  <div className="text-xs font-semibold text-slate-700 mb-2">{group.bank}</div>
+                  <div className="grid md:grid-cols-2 gap-2">
+                    {group.items.map((item) => {
+                      const existing = recordsForSection.find((r) => r.label === item.label);
+                      return (
+                        <button
+                          key={item.label}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-left hover:bg-slate-50"
+                          onClick={() => {
+                            setQuickFill({
+                              id: existing?.id,
+                              block: 'debt',
+                              source: existing?.source || 'Manual tarjetas',
+                              label: item.label,
+                              amount: existing ? String(existing.amount) : '',
+                              currency: existing?.currency || item.currency,
+                              snapshotDate: existing?.snapshotDate || todayYmd(),
+                            });
+                            setOpenLoadPanel(true);
+                          }}
+                        >
+                          <div className="text-xs font-medium text-slate-700">{item.label}</div>
+                          <div className="text-sm font-semibold text-rose-700 mt-1">
+                            {existing ? `-${formatCurrency(existing.amount, existing.currency)}` : 'Pendiente'}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </details>
 
@@ -878,69 +961,69 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </Card>
       )}
 
-      <Card className="p-4 space-y-2">
-        <div className="text-sm font-semibold">Cómo se compone</div>
-        {(section === 'bank' ? bankDashboard.rowsForCompose : recordsForSection).length === 0 && (
-          <div className="text-xs text-slate-500">Sin datos para este mes.</div>
-        )}
-        {(section === 'bank' ? bankDashboard.rowsForCompose : recordsForSection).map((item) => (
-          <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
-            <div>
-              <div className="font-medium text-slate-800">{item.label}</div>
-              <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
-              {item.note && <div className="text-[11px] text-slate-500">{item.note}</div>}
+      {section !== 'bank' && (
+        <Card className="p-4 space-y-2">
+          <div className="text-sm font-semibold">Cómo se compone</div>
+          {recordsForSection.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
+          {recordsForSection.map((item) => (
+            <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
+              <div>
+                <div className="font-medium text-slate-800">{item.label}</div>
+                <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
+                {item.note && <div className="text-[11px] text-slate-500">{item.note}</div>}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
+                  onClick={() => {
+                    setEditingId(item.id);
+                    setDraft({
+                      block: item.block,
+                      source: item.source,
+                      label: item.label,
+                      amount: String(item.amount),
+                      currency: item.currency,
+                      note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+                      snapshotDate: item.snapshotDate,
+                    });
+                    setOpenLoadPanel(true);
+                  }}
+                >
+                  {item.block === 'debt' ? '-' : ''}
+                  {formatCurrency(item.amount, item.currency)}
+                </button>
+                <button
+                  className="text-slate-400 hover:text-blue-600"
+                  onClick={() => {
+                    setEditingId(item.id);
+                    setDraft({
+                      block: item.block,
+                      source: item.source,
+                      label: item.label,
+                      amount: String(item.amount),
+                      currency: item.currency,
+                      note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+                      snapshotDate: item.snapshotDate,
+                    });
+                    setOpenLoadPanel(true);
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  className="text-slate-400 hover:text-red-600"
+                  onClick={() => {
+                    removeWealthRecord(item.id);
+                    onDataChanged();
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
-                onClick={() => {
-                  setEditingId(item.id);
-                  setDraft({
-                    block: item.block,
-                    source: item.source,
-                    label: item.label,
-                    amount: String(item.amount),
-                    currency: item.currency,
-                    note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                    snapshotDate: item.snapshotDate,
-                  });
-                  setOpenLoadPanel(true);
-                }}
-              >
-                {item.block === 'debt' ? '-' : ''}
-                {formatCurrency(item.amount, item.currency)}
-              </button>
-              <button
-                className="text-slate-400 hover:text-blue-600"
-                onClick={() => {
-                  setEditingId(item.id);
-                  setDraft({
-                    block: item.block,
-                    source: item.source,
-                    label: item.label,
-                    amount: String(item.amount),
-                    currency: item.currency,
-                    note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                    snapshotDate: item.snapshotDate,
-                  });
-                  setOpenLoadPanel(true);
-                }}
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                className="text-slate-400 hover:text-red-600"
-                onClick={() => {
-                  removeWealthRecord(item.id);
-                  onDataChanged();
-                }}
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          </div>
-        ))}
-      </Card>
+          ))}
+        </Card>
+      )}
 
       <Card className="p-4 space-y-2">
         <div className="flex items-center justify-between gap-2">
