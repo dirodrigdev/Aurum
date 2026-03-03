@@ -109,8 +109,10 @@ const parseWise = (text: string): ParsedWealthSuggestion[] => {
 };
 
 const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
-  const m = text.match(/([0-9][0-9.,]{2,})\s*USD/i);
-  const amount = m ? parseLocalizedNumber(m[1]) : null;
+  const amounts = [...text.matchAll(/([0-9][0-9.,]{2,})\s*USD/gi)]
+    .map((m) => parseLocalizedNumber(m[1]) || 0)
+    .filter((v) => v > 0);
+  const amount = amounts.length ? Math.max(...amounts) : null;
   if (!amount) return [];
 
   return [{
@@ -129,10 +131,26 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
     findAmountNearText(text, /mi\s*resumen[\s\S]{0,140}?saldo[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
   const inversion = findAmountNearText(text, /inversi[oó]n\s*financiera[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
   const previsional = findAmountNearText(text, /ahorro\s*previsional[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
-  const detail =
-    inversion && previsional
-      ? `Detalle OCR: inversión financiera ${inversion.toLocaleString('es-CL')} + previsional ${previsional.toLocaleString('es-CL')}`
-      : undefined;
+  if (inversion && previsional) {
+    return build([
+      {
+        source: 'SURA',
+        block: 'investment',
+        label: 'SURA inversión financiera',
+        amount: inversion,
+        currency: 'CLP',
+        confidence: 0.9,
+      },
+      {
+        source: 'SURA',
+        block: 'investment',
+        label: 'SURA ahorro previsional',
+        amount: previsional,
+        currency: 'CLP',
+        confidence: 0.9,
+      },
+    ]);
+  }
 
   return build([
     saldoActual
@@ -143,27 +161,6 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
           amount: saldoActual,
           currency: 'CLP',
           confidence: 0.96,
-          note: detail,
-        }
-      : null,
-    inversion
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA inversión financiera',
-          amount: inversion,
-          currency: 'CLP',
-          confidence: 0.9,
-        }
-      : null,
-    previsional
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA ahorro previsional',
-          amount: previsional,
-          currency: 'CLP',
-          confidence: 0.9,
         }
       : null,
   ]);

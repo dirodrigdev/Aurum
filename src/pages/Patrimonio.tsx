@@ -207,7 +207,7 @@ interface SectionScreenProps {
   carryMessage: string;
   onBack: () => void;
   onDataChanged: () => void;
-  onUseMissing: () => void;
+  onUseMissing: (section: MainSection) => void;
   onApplyMortgageAuto: () => void;
 }
 
@@ -238,18 +238,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [ocrProgress, setOcrProgress] = useState<{ pct: number; status: string } | null>(null);
   const [ocrError, setOcrError] = useState('');
   const [ocrText, setOcrText] = useState('');
-  const [ocrPreviewUrl, setOcrPreviewUrl] = useState('');
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
   const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (ocrPreviewUrl) URL.revokeObjectURL(ocrPreviewUrl);
-    };
-  }, [ocrPreviewUrl]);
 
   const sectionTotalClp = useMemo(() => {
     return recordsForSection.reduce((sum, item) => {
@@ -269,10 +262,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     setOcrError('');
     setOcrProgress({ pct: 0, status: 'iniciando' });
-    if (ocrPreviewUrl) {
-      URL.revokeObjectURL(ocrPreviewUrl);
-    }
-    setOcrPreviewUrl(URL.createObjectURL(file));
 
     try {
       const text = await runOcrFromFile(file, sourceHint, (pct, status) => setOcrProgress({ pct, status }));
@@ -349,6 +338,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
     }
 
+    setOpenLoadPanel(false);
+    setQuickFill(null);
     onDataChanged();
   };
 
@@ -374,6 +365,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       });
     });
     setSuggestions([]);
+    setOpenLoadPanel(false);
+    setQuickFill(null);
     onDataChanged();
   };
 
@@ -394,6 +387,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     setDraft(buildDraft(section));
     setEditingId(null);
+    setOpenLoadPanel(false);
+    setQuickFill(null);
     onDataChanged();
   };
 
@@ -519,10 +514,25 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               {item.note && <div className="text-[11px] text-slate-500">{item.note}</div>}
             </div>
             <div className="flex items-center gap-2">
-              <span className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}>
+              <button
+                className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
+                onClick={() => {
+                  setEditingId(item.id);
+                  setDraft({
+                    block: item.block,
+                    source: item.source,
+                    label: item.label,
+                    amount: String(item.amount),
+                    currency: item.currency,
+                    note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+                    snapshotDate: item.snapshotDate,
+                  });
+                  setOpenLoadPanel(true);
+                }}
+              >
                 {item.block === 'debt' ? '-' : ''}
                 {formatCurrency(item.amount, item.currency)}
-              </span>
+              </button>
               <button
                 className="text-slate-400 hover:text-blue-600"
                 onClick={() => {
@@ -564,7 +574,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 Autocálculo hipotecario
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={onUseMissing}>
+            <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
               Usar faltantes
             </Button>
           </div>
@@ -666,16 +676,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
                     {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
                     {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
-                    {!!ocrPreviewUrl && (
-                      <div className="rounded-xl border border-slate-200 p-2">
-                        <img
-                          src={ocrPreviewUrl}
-                          alt="Previsualización de carga"
-                          className="w-full max-h-[72vh] object-contain rounded-lg"
-                        />
-                      </div>
-                    )}
-
                     {!!suggestions.length && (
                       <div className="space-y-2">
                     {suggestions.map((item, idx) => (
@@ -935,10 +935,13 @@ export const Patrimonio: React.FC = () => {
     refreshClosures();
   };
 
-  const useMissingFromPrevious = () => {
-    const init = ensureInitialMortgageDefaults(monthKey, todayYmd());
+  const useMissingFromPrevious = (section: MainSection) => {
+    const isRealEstate = section === 'real_estate';
+    const init = isRealEstate ? ensureInitialMortgageDefaults(monthKey, todayYmd()) : { added: 0 };
     const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
-    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
+    const auto = isRealEstate
+      ? applyMortgageAutoCalculation(monthKey, todayYmd())
+      : { changed: 0, sourceMonth: null, reason: null };
     refreshRecords();
 
     if (!result.sourceMonth) {
@@ -950,7 +953,7 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
-    if (!result.added && !auto.changed && auto.reason === 'missing_base_debt') {
+    if (isRealEstate && !result.added && !auto.changed && auto.reason === 'missing_base_debt') {
       setCarryMessage('Sin cierre previo y sin base de deuda: ingresa manualmente "Saldo deuda hipotecaria" para iniciar el autocálculo.');
       return;
     }
@@ -962,7 +965,7 @@ export const Patrimonio: React.FC = () => {
 
     const parts: string[] = [];
     if (result.added) parts.push(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}`);
-    if (auto.changed) parts.push(`Autocálculo hipotecario aplicado en ${auto.changed} registros`);
+    if (isRealEstate && auto.changed) parts.push(`Autocálculo hipotecario aplicado en ${auto.changed} registros`);
     setCarryMessage(`${parts.join('. ')}. Variación simulada hasta actualizar valores reales.`);
   };
 
