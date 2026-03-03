@@ -98,7 +98,8 @@ const sectionChecklist: Record<MainSection, string[]> = {
 };
 
 const isCarriedRecord = (record: WealthRecord) => {
-  return String(record.note || '').toLowerCase().includes('arrastrado');
+  const note = String(record.note || '').toLowerCase();
+  return note.includes('arrastrado') || note.includes('mes anterior');
 };
 
 const isEstimatedRecord = (record: WealthRecord) => {
@@ -230,7 +231,7 @@ interface SectionScreenProps {
   carryMessage: string;
   onBack: () => void;
   onDataChanged: () => void;
-  onUseMissing: (section: MainSection) => void;
+  onUseMissing: (section: MainSection, itemName?: string) => void;
   onApplyMortgageAuto: () => void;
 }
 
@@ -444,7 +445,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return { name, status: 'pendiente' as const, detail: 'Sin base previa' };
       }
       if (isCarriedRecord(match)) {
-        return { name, status: 'arrastrado' as const, detail: `Desde cierre anterior (${match.snapshotDate})` };
+        return { name, status: 'mes_anterior' as const, detail: `Mes anterior (${match.snapshotDate})` };
       }
       if (isEstimatedRecord(match)) {
         return { name, status: 'estimado' as const, detail: `Estimado (${match.snapshotDate})` };
@@ -620,41 +621,49 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
-              Usar faltantes
+              Completar pendientes con mes anterior
             </Button>
           </div>
         </div>
         {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
         {checklistStatus.map((row) => (
-          <button
-            key={row.name}
-            className="w-full text-left flex items-center justify-between text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50"
-            onClick={() => openChecklistItem(row.name)}
-          >
-            <div>
-              <div>{row.name}</div>
-              <div className="text-[11px] text-slate-500">{row.detail}</div>
-            </div>
-            <span
-              className={
-                row.status === 'actualizado'
-                  ? 'text-emerald-700'
-                  : row.status === 'arrastrado'
-                    ? 'text-amber-700'
+          <div key={row.name} className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50">
+            <div className="flex items-center justify-between gap-2">
+              <button className="text-left flex-1" onClick={() => openChecklistItem(row.name)}>
+                <div>{row.name}</div>
+                <div className="text-[11px] text-slate-500">{row.detail}</div>
+              </button>
+              {row.status === 'pendiente' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => onUseMissing(section, row.name)}
+                >
+                  Usar mes anterior
+                </Button>
+              )}
+              <span
+                className={
+                  row.status === 'actualizado'
+                    ? 'text-emerald-700'
+                    : row.status === 'mes_anterior'
+                      ? 'text-amber-700'
+                      : row.status === 'estimado'
+                        ? 'text-indigo-700'
+                        : 'text-red-700'
+                }
+              >
+                {row.status === 'actualizado'
+                  ? 'Actualizado'
+                  : row.status === 'mes_anterior'
+                    ? 'Mes anterior'
                     : row.status === 'estimado'
-                      ? 'text-indigo-700'
-                      : 'text-red-700'
-              }
-            >
-              {row.status === 'actualizado'
-                ? 'Actualizado'
-                : row.status === 'arrastrado'
-                  ? 'Arrastrado'
-                  : row.status === 'estimado'
-                    ? 'Estimado'
-                    : 'Pendiente'}
-            </span>
-          </button>
+                      ? 'Estimado'
+                      : 'Pendiente'}
+              </span>
+            </div>
+          </div>
         ))}
       </Card>
 
@@ -995,7 +1004,7 @@ export const Patrimonio: React.FC = () => {
         isCarriedRecord(r) && (r.block === 'investment' || r.block === 'real_estate' || r.block === 'debt'),
     );
     if (hasCarriedValues) {
-      setCloseError('No se puede cerrar el mes: hay valores arrastrados del cierre anterior. Actualiza los faltantes.');
+      setCloseError('No se puede cerrar el mes: hay valores en estado "Mes anterior". Actualiza esos pendientes.');
       return;
     }
     setCloseError('');
@@ -1003,21 +1012,35 @@ export const Patrimonio: React.FC = () => {
     refreshClosures();
   };
 
-  const useMissingFromPrevious = (section: MainSection) => {
+  const useMissingFromPrevious = (section: MainSection, itemName?: string) => {
+    const isSingleItem = !!itemName;
     const isRealEstate = section === 'real_estate';
-    const init = isRealEstate ? ensureInitialMortgageDefaults(monthKey, todayYmd()) : { added: 0 };
-    const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
-    const auto = isRealEstate
+    const init = isRealEstate && !isSingleItem ? ensureInitialMortgageDefaults(monthKey, todayYmd()) : { added: 0 };
+    const result = fillMissingWithPreviousClosure(monthKey, todayYmd(), itemName ? [itemName] : undefined);
+    const auto = isRealEstate && !isSingleItem
       ? applyMortgageAutoCalculation(monthKey, todayYmd())
       : { changed: 0, sourceMonth: null, reason: null };
     refreshRecords();
+
+    if (isSingleItem) {
+      if (!result.sourceMonth) {
+        setCarryMessage(`No hay cierre anterior disponible para completar "${itemName}".`);
+        return;
+      }
+      if (result.added > 0) {
+        setCarryMessage(`Completado con mes anterior: "${itemName}" (base ${result.sourceMonth}).`);
+        return;
+      }
+      setCarryMessage(`"${itemName}" ya estaba actualizado o no existe en el cierre ${result.sourceMonth}.`);
+      return;
+    }
 
     if (!result.sourceMonth) {
       if (init.added > 0 || auto.changed > 0) {
         setCarryMessage('Base hipotecaria inicial cargada automáticamente.');
         return;
       }
-      setCarryMessage('No hay un cierre anterior con detalle para arrastrar información.');
+      setCarryMessage('No hay un cierre anterior con detalle para completar pendientes.');
       return;
     }
 
@@ -1027,12 +1050,12 @@ export const Patrimonio: React.FC = () => {
     }
 
     if (!result.added && !auto.changed) {
-      setCarryMessage(`No faltaba información para arrastrar desde ${result.sourceMonth}.`);
+      setCarryMessage(`No había pendientes para completar desde ${result.sourceMonth}.`);
       return;
     }
 
     const parts: string[] = [];
-    if (result.added) parts.push(`Se arrastraron ${result.added} registros faltantes desde ${result.sourceMonth}`);
+    if (result.added) parts.push(`Se completaron ${result.added} pendientes con mes anterior (${result.sourceMonth})`);
     if (isRealEstate && auto.changed) parts.push(`Autocálculo hipotecario aplicado en ${auto.changed} registros`);
     setCarryMessage(`${parts.join('. ')}. Variación simulada hasta actualizar valores reales.`);
   };
@@ -1070,7 +1093,7 @@ export const Patrimonio: React.FC = () => {
     if (result.added > 0) {
       refreshRecords();
       const msg = [
-        `Arrastre automático aplicado: ${result.added} faltantes desde ${result.sourceMonth}.`,
+        `Completado automático: ${result.added} pendientes con mes anterior (${result.sourceMonth}).`,
         auto.changed ? `Autocálculo hipotecario aplicado en ${auto.changed} registros.` : '',
         'Actualiza lo nuevo del mes.',
       ]

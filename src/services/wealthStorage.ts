@@ -377,6 +377,7 @@ const findPreviousClosureWithRecords = (monthKey: string, closures: WealthMonthl
 export const fillMissingWithPreviousClosure = (
   targetMonthKey: string,
   snapshotDate: string,
+  onlyLabels?: string[],
 ): { added: number; sourceMonth: string | null } => {
   const records = loadWealthRecords();
   const closures = loadClosures();
@@ -389,8 +390,17 @@ export const fillMissingWithPreviousClosure = (
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
 
   const toAdd: WealthRecord[] = [];
+  const normalizedFilters = (onlyLabels || []).map((l) => normalizeText(l)).filter(Boolean);
 
   for (const oldRecord of previous.records) {
+    if (normalizedFilters.length) {
+      const oldLabel = normalizeText(oldRecord.label);
+      const matchesFilter = normalizedFilters.some(
+        (filter) => oldLabel.includes(filter) || filter.includes(oldLabel),
+      );
+      if (!matchesFilter) continue;
+    }
+
     const key = makeAssetKey(oldRecord);
     if (currentKeys.has(key)) continue;
 
@@ -403,7 +413,7 @@ export const fillMissingWithPreviousClosure = (
       currency: oldRecord.currency,
       snapshotDate,
       createdAt: nowIso(),
-      note: `Arrastrado desde cierre ${previous.monthKey}`,
+      note: `Mes anterior: cierre ${previous.monthKey}`,
     });
   }
 
@@ -417,7 +427,7 @@ export const fillMissingWithPreviousClosure = (
 
 const isAutoFillNote = (note?: string) => {
   const n = String(note || '').toLowerCase();
-  return n.includes('arrastrado') || n.includes('estimado');
+  return n.includes('arrastrado') || n.includes('mes anterior') || n.includes('estimado');
 };
 
 export const applyMortgageAutoCalculation = (
