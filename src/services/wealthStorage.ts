@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db, ensureAnonymousAuth, getCurrentUid } from './firebase';
+import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 
 export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
@@ -372,7 +372,7 @@ export const saveClosures = (closures: WealthMonthlyClosure[], options?: Persist
 
 const getWealthCloudRef = async () => {
   if (!isFirebaseConfigured()) return null;
-  await ensureAnonymousAuth();
+  await ensureAuthPersistence();
   const uid = getCurrentUid();
   if (!uid) return null;
   return doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);

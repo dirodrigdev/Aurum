@@ -51,7 +51,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  if (!user) {
+  if (!user || user.isAnonymous) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#f6f3eb] to-[#e9efe4] p-6">
         <div className="w-full max-w-md rounded-3xl border border-[#ddd4c6] bg-white/90 p-7 shadow-lg">
@@ -59,6 +59,11 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <div className="mt-2 text-sm text-slate-600">
             Inicia sesión con tu cuenta Google para sincronizar el mismo patrimonio en todos tus dispositivos.
           </div>
+          {user?.isAnonymous && (
+            <div className="mt-2 text-xs text-amber-700">
+              Se detectó sesión anónima anterior. Entra con Google para unificar datos entre dispositivos.
+            </div>
+          )}
           <button
             className="mt-6 w-full rounded-xl bg-[#2f4f2f] px-4 py-3 text-sm font-semibold text-white hover:bg-[#264226]"
             onClick={async () => {
