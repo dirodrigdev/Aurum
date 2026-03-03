@@ -65,6 +65,22 @@ const toNumber = (v: unknown, fallback = 0): number => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const normalizeText = (value: string) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const isDeprecatedSuraTotalRecord = (
+  record: Pick<WealthRecord, 'label' | 'source' | 'block'>,
+) => {
+  const normalizedLabel = normalizeText(record.label);
+  if (!normalizedLabel.includes('sura saldo total')) return false;
+  const normalizedSource = normalizeText(record.source);
+  return normalizedSource.includes('sura') || record.block === 'investment';
+};
+
 export const currentMonthKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -105,6 +121,7 @@ export const loadWealthRecords = (): WealthRecord[] => {
         note: item?.note ? String(item.note) : undefined,
       }))
       .filter((item: WealthRecord) => Number.isFinite(item.amount))
+      .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item))
       .sort(sortByCreatedDesc);
   } catch {
     return [];
@@ -250,32 +267,45 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((item: any) => ({
-        id: String(item?.id || crypto.randomUUID()),
-        monthKey: String(item?.monthKey || ''),
-        closedAt: String(item?.closedAt || nowIso()),
-        summary: item?.summary,
-        fxRates: item?.fxRates
+      .map((item: any) => {
+        const fxRates = item?.fxRates
           ? {
               usdClp: Math.max(1, toNumber(item.fxRates?.usdClp, defaultFxRates.usdClp)),
               eurClp: Math.max(1, toNumber(item.fxRates?.eurClp, defaultFxRates.eurClp)),
               ufClp: Math.max(1, toNumber(item.fxRates?.ufClp, defaultFxRates.ufClp)),
             }
-          : undefined,
-        records: Array.isArray(item?.records)
-          ? item.records.map((r: any) => ({
-              id: String(r?.id || crypto.randomUUID()),
-              block: (r?.block || 'investment') as WealthBlock,
-              source: String(r?.source || 'manual'),
-              label: String(r?.label || 'Registro'),
-              amount: toNumber(r?.amount),
-              currency: (r?.currency || 'CLP') as WealthCurrency,
-              snapshotDate: String(r?.snapshotDate || nowIso().slice(0, 10)),
-              createdAt: String(r?.createdAt || nowIso()),
-              note: r?.note ? String(r.note) : undefined,
-            }))
-          : undefined,
-      }))
+          : undefined;
+
+        const records = Array.isArray(item?.records)
+          ? item.records
+              .map((r: any) => ({
+                id: String(r?.id || crypto.randomUUID()),
+                block: (r?.block || 'investment') as WealthBlock,
+                source: String(r?.source || 'manual'),
+                label: String(r?.label || 'Registro'),
+                amount: toNumber(r?.amount),
+                currency: (r?.currency || 'CLP') as WealthCurrency,
+                snapshotDate: String(r?.snapshotDate || nowIso().slice(0, 10)),
+                createdAt: String(r?.createdAt || nowIso()),
+                note: r?.note ? String(r.note) : undefined,
+              }))
+              .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r))
+          : undefined;
+
+        const summary =
+          records && records.length
+            ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+            : item?.summary;
+
+        return {
+          id: String(item?.id || crypto.randomUUID()),
+          monthKey: String(item?.monthKey || ''),
+          closedAt: String(item?.closedAt || nowIso()),
+          summary,
+          fxRates,
+          records,
+        };
+      })
       .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
       .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
         return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
@@ -532,7 +562,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const marKey = monthKeyFromDate(marDate);
 
   const janRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 895_023_859, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 607_392_657, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 287_631_202, 'CLP', ymdFromDate(janDate, 30)),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
     makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_098.43, 'USD', ymdFromDate(janDate, 30)),
@@ -546,7 +577,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   ];
 
   const febRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 907_392_657, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 618_690_210, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_702_447, 'CLP', ymdFromDate(febDate, 28)),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
     makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 68_210.12, 'USD', ymdFromDate(febDate, 28)),
@@ -560,7 +592,8 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   ];
 
   const marRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA saldo total', 912_740_210, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 623_940_180, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_800_030, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
     makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
     makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
     makeDemoRecord('bank', 'Global66', 'Global66 Cuenta Vista USD', 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),

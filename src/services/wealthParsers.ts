@@ -126,41 +126,27 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
 };
 
 const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
-  const saldoActual =
-    findAmountNearText(text, /saldo\s*actual(?:\s*es)?[^0-9]{0,24}([0-9][0-9.,]{4,})/i) ||
-    findAmountNearText(text, /mi\s*resumen[\s\S]{0,140}?saldo[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
   const inversion = findAmountNearText(text, /inversi[oó]n\s*financiera[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
   const previsional = findAmountNearText(text, /ahorro\s*previsional[^0-9]{0,24}([0-9][0-9.,]{4,})/i);
-  if (inversion && previsional) {
-    return build([
-      {
-        source: 'SURA',
-        block: 'investment',
-        label: 'SURA inversión financiera',
-        amount: inversion,
-        currency: 'CLP',
-        confidence: 0.9,
-      },
-      {
-        source: 'SURA',
-        block: 'investment',
-        label: 'SURA ahorro previsional',
-        amount: previsional,
-        currency: 'CLP',
-        confidence: 0.9,
-      },
-    ]);
-  }
-
   return build([
-    saldoActual
+    inversion
       ? {
           source: 'SURA',
           block: 'investment',
-          label: 'SURA saldo total',
-          amount: saldoActual,
+          label: 'SURA inversión financiera',
+          amount: inversion,
           currency: 'CLP',
-          confidence: 0.96,
+          confidence: 0.9,
+        }
+      : null,
+    previsional
+      ? {
+          source: 'SURA',
+          block: 'investment',
+          label: 'SURA ahorro previsional',
+          amount: previsional,
+          currency: 'CLP',
+          confidence: 0.9,
         }
       : null,
   ]);
@@ -170,36 +156,21 @@ const parseSuraDetalle = (text: string): ParsedWealthSuggestion[] => {
   const fondosMutuos = findAmountAfterLabel(text, /fondos\s+mutuos\s*\$?\s*([0-9.]+)/i);
   const seguroAhorro = findAmountAfterLabel(text, /seguro\s+ahorro\s+patrimonial\s+plus[\s\S]{0,40}?\$\s*([0-9.]+)/i);
   const saldo = findAmountAfterLabel(text, /saldo\s*\$\s*([0-9.]+)/i);
+  const financialTotal = saldo || ((fondosMutuos || 0) + (seguroAhorro || 0)) || null;
 
   return build([
-    fondosMutuos
+    financialTotal
       ? {
           source: 'SURA',
           block: 'investment',
-          label: 'SURA Fondos Mutuos',
-          amount: fondosMutuos,
+          label: 'SURA inversión financiera',
+          amount: financialTotal,
           currency: 'CLP',
-          confidence: 0.88,
-        }
-      : null,
-    seguroAhorro
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA Seguro Ahorro Patrimonial Plus',
-          amount: seguroAhorro,
-          currency: 'CLP',
-          confidence: 0.88,
-        }
-      : null,
-    saldo
-      ? {
-          source: 'SURA',
-          block: 'investment',
-          label: 'SURA saldo total',
-          amount: saldo,
-          currency: 'CLP',
-          confidence: 0.92,
+          confidence: saldo ? 0.9 : 0.86,
+          note:
+            fondosMutuos && seguroAhorro
+              ? `Detalle OCR: Fondos Mutuos ${fondosMutuos.toLocaleString('es-CL')} + Seguro ${seguroAhorro.toLocaleString('es-CL')}`
+              : undefined,
         }
       : null,
   ]);
