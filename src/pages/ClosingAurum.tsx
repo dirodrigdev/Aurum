@@ -13,6 +13,14 @@ import {
 } from '../services/wealthStorage';
 
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
+type EvolutionKind = 'cierre' | 'hoy';
+
+interface EvolutionRow {
+  key: string;
+  label: string;
+  kind: EvolutionKind;
+  net: number | null;
+}
 
 interface NetBreakdown {
   netClp: number;
@@ -176,7 +184,7 @@ export const ClosingAurum: React.FC = () => {
   }, [previousClosure, currentFx]);
 
   const evolutionRows = useMemo(() => {
-    const rows = closures
+    const rows: EvolutionRow[] = closures
       .slice()
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .map((c) => {
@@ -185,7 +193,7 @@ export const ClosingAurum: React.FC = () => {
         return {
           key: c.monthKey,
           label: monthLabel(c.monthKey),
-          kind: 'cierre' as const,
+          kind: 'cierre',
           net: breakdown ? fromClp(breakdown.netClp, currency, fx) : null,
         };
       });
@@ -193,7 +201,7 @@ export const ClosingAurum: React.FC = () => {
     rows.push({
       key: monthKey,
       label: monthLabel(monthKey),
-      kind: 'hoy' as const,
+      kind: 'hoy',
       net: fromClp(currentBreakdown.netClp, currency, currentFx),
     });
 
