@@ -108,11 +108,70 @@ const parseWise = (text: string): ParsedWealthSuggestion[] => {
   }];
 };
 
+const parseGlobalUsdCandidate = (raw: string): number | null => {
+  const parsed = parseLocalizedNumber(raw);
+  if (!parsed) return null;
+
+  const digitsOnly = raw.replace(/[^0-9]/g, '');
+  const compact = Number(digitsOnly);
+  if (!Number.isFinite(compact) || compact <= 0) return parsed;
+
+  // OCR de Global66 a veces pierde/mueve el separador decimal:
+  // 67,09843  -> 6709843 (debe ser 67,098.43)
+  // 67.09843  -> 67.09843 (debe ser 67,098.43)
+  if ((parsed < 1000 || parsed > 1_000_000) && digitsOnly.length >= 5 && digitsOnly.length <= 9) {
+    const corrected = compact / 100;
+    if (corrected >= 1000 && corrected <= 1_000_000) return corrected;
+  }
+
+  return parsed;
+};
+
 const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
-  const amounts = [...text.matchAll(/([0-9][0-9.,]{2,})\s*USD/gi)]
-    .map((m) => parseLocalizedNumber(m[1]) || 0)
-    .filter((v) => v > 0);
-  const amount = amounts.length ? Math.max(...amounts) : null;
+  const headerMatch = text.match(
+    /d[o0ó]lar\s*estadounidense[\s\S]{0,220}?([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{2,})\s*USD/i,
+  );
+  const headerAmount = headerMatch ? parseGlobalUsdCandidate(headerMatch[1]) : null;
+  if (headerAmount && headerAmount > 0) {
+    return [{
+      source: 'Global66',
+      block: 'bank',
+      label: 'Global66 Cuenta Vista USD',
+      amount: headerAmount,
+      currency: 'USD',
+      confidence: 0.98,
+    }];
+  }
+
+  const lower = cleanText(text).toLowerCase();
+  const usdMatches = [...text.matchAll(/([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{2,})\s*USD/gi)];
+  const candidates = usdMatches
+    .map((m) => {
+      const amount = parseGlobalUsdCandidate(m[1]);
+      if (!amount || amount <= 0) return null;
+      const idx = m.index || 0;
+      const context = lower.slice(Math.max(0, idx - 80), idx + 80);
+      let score = 0;
+      if (amount >= 1000 && amount <= 1_000_000) score += 2;
+      if (amount > 1_000_000) score -= 4;
+      if (context.includes('dolar estadounidense') || context.includes('dólar estadounidense')) score += 6;
+      if (context.includes('cuenta')) score += 2;
+      if (
+        context.includes('rendim') ||
+        context.includes('interes') ||
+        context.includes('conversi') ||
+        context.includes('comision') ||
+        context.includes('retirad') ||
+        context.includes('transacci')
+      ) {
+        score -= 5;
+      }
+      return { amount, score };
+    })
+    .filter((item): item is { amount: number; score: number } => !!item);
+
+  candidates.sort((a, b) => (b.score === a.score ? b.amount - a.amount : b.score - a.score));
+  const amount = candidates[0]?.amount || null;
   if (!amount) return [];
 
   return [{
