@@ -125,6 +125,14 @@ const groupWithDots = (value: number) => {
     .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 };
 
+const normalizeForMatch = (value: string) => {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+};
+
 const formatCurrency = (value: number, currency: WealthCurrency) => {
   const sign = value < 0 ? '-' : '';
   if (currency === 'UF') {
@@ -269,6 +277,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
     return getSectionBlock(section);
   };
+  const suggestionKey = (item: Pick<EditableSuggestion, 'block' | 'source' | 'label' | 'currency'>) =>
+    `${item.block}::${normalizeForMatch(item.source)}::${normalizeForMatch(item.label)}::${item.currency}`;
 
   const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -318,8 +328,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         setOcrError('La imagen parece pertenecer a otro bloque. Revisa antes de guardar.');
       }
 
-      // Permite subir varias imágenes antes de guardar todo.
-      setSuggestions((prev) => [...prev, ...parsed]);
+      // Permite subir varias imágenes antes de guardar todo, evitando duplicados por activo.
+      setSuggestions((prev) => {
+        const next = [...prev];
+        const indexByKey = new Map(next.map((item, idx) => [suggestionKey(item), idx]));
+
+        parsed.forEach((item) => {
+          const key = suggestionKey(item);
+          const existingIdx = indexByKey.get(key);
+          if (existingIdx === undefined) {
+            indexByKey.set(key, next.length);
+            next.push(item);
+          } else {
+            next[existingIdx] = item;
+          }
+        });
+
+        return next;
+      });
     } catch (err: any) {
       setOcrError(err?.message || 'Error leyendo imagen');
     } finally {
@@ -329,12 +355,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
+    const itemSource = normalizeForMatch(item.source);
+    const itemLabel = normalizeForMatch(item.label);
     const existing = recordsForSection.find(
       (r) =>
         r.block === item.block &&
         r.currency === item.currency &&
-        r.source.toLowerCase() === item.source.toLowerCase() &&
-        r.label.toLowerCase() === item.label.toLowerCase(),
+        normalizeForMatch(r.source) === itemSource &&
+        normalizeForMatch(r.label) === itemLabel,
     );
 
     upsertWealthRecord({
@@ -359,12 +387,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveAllSuggestions = () => {
     suggestions.forEach((item) => {
+      const itemSource = normalizeForMatch(item.source);
+      const itemLabel = normalizeForMatch(item.label);
       const existing = recordsForSection.find(
         (r) =>
           r.block === item.block &&
           r.currency === item.currency &&
-          r.source.toLowerCase() === item.source.toLowerCase() &&
-          r.label.toLowerCase() === item.label.toLowerCase(),
+          normalizeForMatch(r.source) === itemSource &&
+          normalizeForMatch(r.label) === itemLabel,
       );
 
       upsertWealthRecord({
@@ -408,7 +438,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const checklistStatus = useMemo(() => {
     return sectionChecklist[section].map((name) => {
-      const match = recordsForSection.find((r) => r.label.toLowerCase().includes(name.toLowerCase()));
+      const match = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
       if (!match) {
         return { name, status: 'pendiente' as const, detail: 'Sin base previa' };
       }
@@ -427,7 +457,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }, [checklistStatus]);
 
   const openChecklistItem = (name: string) => {
-    const existing = recordsForSection.find((r) => r.label.toLowerCase().includes(name.toLowerCase()));
+    const existing = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
     const debtLabels = [
       'Saldo deuda hipotecaria',
       'Dividendo hipotecario mensual',
@@ -436,7 +466,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       'Amortización hipotecaria mensual',
     ];
     const preferredBlock: WealthBlock =
-      section === 'real_estate' && debtLabels.some((d) => name.toLowerCase().includes(d.toLowerCase()))
+      section === 'real_estate' && debtLabels.some((d) => normalizeForMatch(name).includes(normalizeForMatch(d)))
         ? 'debt'
         : section === 'real_estate'
           ? 'real_estate'
