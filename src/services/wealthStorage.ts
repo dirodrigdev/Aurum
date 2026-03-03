@@ -200,7 +200,9 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
 
   const next: WealthRecord = {
     id,
-    createdAt: existing?.createdAt || nowIso(),
+    // En Aurum usamos createdAt como "última actualización efectiva" para resolver
+    // cuál registro manda dentro del mismo activo/mes.
+    createdAt: nowIso(),
     block: input.block,
     source: input.source,
     label: input.label,
@@ -260,9 +262,11 @@ const dedupeLatestByAsset = (records: WealthRecord[]): WealthRecord[] => {
   const map = new Map<string, WealthRecord>();
 
   const ordered = [...records].sort((a, b) => {
-    const ds = dateToComparable(b.snapshotDate).localeCompare(dateToComparable(a.snapshotDate));
-    if (ds !== 0) return ds;
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    // Prioridad principal: la última edición/guardado hecha por el usuario.
+    const byCreated = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if (byCreated !== 0) return byCreated;
+    // Si empatan por timestamp, usa snapshotDate como desempate.
+    return dateToComparable(b.snapshotDate).localeCompare(dateToComparable(a.snapshotDate));
   });
 
   for (const item of ordered) {
