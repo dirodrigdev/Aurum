@@ -50,3 +50,6 @@ Referencia: ver archivo [firebase.env.template](/Users/diegorodriguezpizarro/Doc
 - En sync de bancos se clasifica automáticamente:
   - Cuentas activas -> bloque `bank`
   - Tarjetas de crédito -> bloque `debt` (no hipotecaria)
+- En módulo Bancos se puede cargar manualmente:
+  - Bancos: Banco de Chile, Scotiabank, Santander (CLP/USD)
+  - Tarjetas: Visa Banco de Chile, Visa Scotia, Mastercard Scotia, Mastercard Falabella, Mastercard Santander, American Express Santander

@@ -28,6 +28,15 @@ const readBalance = (account) => {
   );
 };
 
+const maybeRescaleFxBalance = (currency, balance) => {
+  const normalized = String(currency || '').toUpperCase();
+  const n = asNumber(balance);
+  if ((normalized === 'USD' || normalized === 'EUR') && Number.isInteger(n) && Math.abs(n) >= 100000) {
+    return n / 100;
+  }
+  return n;
+};
+
 const parseArrayPayload = (payload) => {
   if (!payload) return [];
   if (Array.isArray(payload)) return payload;
@@ -145,7 +154,10 @@ export default async function handler(req, res) {
         id: accountId,
         name: String(account?.name || account?.official_name || account?.holder_name || 'Cuenta'),
         currency: normalizeCurrency(account?.currency || account?.balance?.currency),
-        balance: readBalance(account),
+        balance: maybeRescaleFxBalance(
+          normalizeCurrency(account?.currency || account?.balance?.currency),
+          readBalance(account),
+        ),
         type: String(account?.type || account?.subtype || ''),
         number: String(account?.number || account?.masked_number || ''),
         holder: String(account?.holder_name || account?.holder || ''),

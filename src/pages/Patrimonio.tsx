@@ -104,6 +104,22 @@ const FINTOC_SYNC_PREFIX_ACCOUNT = 'Cuenta bancaria:';
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
 const FINTOC_SYNC_PREFIX_BANK_TOTAL = 'Saldo bancos ';
 const FINTOC_SYNC_PREFIX_CARD_TOTAL = 'Deuda tarjetas ';
+const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
+  { label: 'Banco de Chile CLP', currency: 'CLP' },
+  { label: 'Banco de Chile USD', currency: 'USD' },
+  { label: 'Scotiabank CLP', currency: 'CLP' },
+  { label: 'Scotiabank USD', currency: 'USD' },
+  { label: 'Santander CLP', currency: 'CLP' },
+  { label: 'Santander USD', currency: 'USD' },
+];
+const MANUAL_CARD_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
+  { label: 'Visa Banco de Chile', currency: 'CLP' },
+  { label: 'Visa Scotia', currency: 'CLP' },
+  { label: 'Mastercard Scotia', currency: 'CLP' },
+  { label: 'Mastercard Falabella', currency: 'CLP' },
+  { label: 'Mastercard Santander', currency: 'CLP' },
+  { label: 'American Express Santander', currency: 'CLP' },
+];
 
 const isCarriedRecord = (record: WealthRecord) => {
   const note = String(record.note || '').toLowerCase();
@@ -313,6 +329,49 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
     }, 0);
   }, [recordsForSection, usdClp, eurClp, ufClp]);
+
+  const bankDashboard = useMemo(() => {
+    if (section !== 'bank') {
+      return {
+        bankClp: 0,
+        bankUsd: 0,
+        byBank: [] as Array<{ label: string; amount: number; currency: WealthCurrency }>,
+        cards: [] as Array<{ label: string; amount: number; currency: WealthCurrency }>,
+        movements: [] as Array<{ account: string; description: string; date: string; amount: number; currency: WealthCurrency }>,
+        rowsForCompose: recordsForSection,
+      };
+    }
+
+    const byBank = recordsForSection.filter((r) => MANUAL_BANK_ITEMS.some((i) => i.label === r.label));
+    const cards = recordsForSection.filter((r) => MANUAL_CARD_ITEMS.some((i) => i.label === r.label));
+
+    const bankClp = recordsForSection
+      .filter((r) => r.block === 'bank' && r.label.startsWith(FINTOC_SYNC_PREFIX_BANK_TOTAL) && r.currency === 'CLP')
+      .reduce((sum, r) => sum + r.amount, 0);
+    const bankUsd = recordsForSection
+      .filter((r) => r.block === 'bank' && r.label.startsWith(FINTOC_SYNC_PREFIX_BANK_TOTAL) && r.currency === 'USD')
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    const movements = (fintocLastSync?.assets || []).flatMap((acc) =>
+      (acc.movementsSample || []).map((m) => ({
+        account: `${acc.name}${acc.number ? ` · ${acc.number}` : ''}`,
+        description: m.description || 'Movimiento',
+        date: m.date || '',
+        amount: m.amount,
+        currency: (toWealthCurrency(m.currency) || toWealthCurrency(acc.currency) || 'CLP') as WealthCurrency,
+      })),
+    );
+
+    const rowsForCompose = recordsForSection.filter((r) => {
+      if (MANUAL_BANK_ITEMS.some((i) => i.label === r.label)) return true;
+      if (MANUAL_CARD_ITEMS.some((i) => i.label === r.label)) return true;
+      if (r.label === 'Saldo bancos CLP' || r.label === 'Saldo bancos USD') return true;
+      if (r.label === 'Deuda tarjetas CLP' || r.label === 'Deuda tarjetas USD') return true;
+      return false;
+    });
+
+    return { bankClp, bankUsd, byBank, cards, movements, rowsForCompose };
+  }, [section, recordsForSection, fintocLastSync]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -719,10 +778,112 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         )}
       </Card>
 
+      {section === 'bank' && (
+        <Card className="p-4 space-y-3">
+          <div className="text-sm font-semibold">Dashboard bancario</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            <div className="rounded-xl p-3 text-white bg-gradient-to-r from-cyan-600 to-blue-500">
+              <div className="text-xs opacity-90">Total CLP disponible</div>
+              <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankClp, 'CLP')}</div>
+            </div>
+            <div className="rounded-xl p-3 text-white bg-gradient-to-r from-teal-600 to-sky-500">
+              <div className="text-xs opacity-90">Total USD disponible</div>
+              <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankUsd, 'USD')}</div>
+            </div>
+          </div>
+
+          <details open className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+            <summary className="cursor-pointer text-sm font-medium">Bancos manuales (Chile / Scotia / Santander)</summary>
+            <div className="mt-2 grid md:grid-cols-2 gap-2">
+              {MANUAL_BANK_ITEMS.map((item) => {
+                const existing = recordsForSection.find((r) => r.label === item.label);
+                return (
+                  <button
+                    key={item.label}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-left hover:bg-slate-50"
+                    onClick={() => {
+                      setQuickFill({
+                        id: existing?.id,
+                        block: 'bank',
+                        source: existing?.source || 'Manual bancos',
+                        label: item.label,
+                        amount: existing ? String(existing.amount) : '',
+                        currency: existing?.currency || item.currency,
+                        snapshotDate: existing?.snapshotDate || todayYmd(),
+                      });
+                      setOpenLoadPanel(true);
+                    }}
+                  >
+                    <div className="text-xs font-medium text-slate-700">{item.label}</div>
+                    <div className="text-sm font-semibold text-slate-900 mt-1">
+                      {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+
+          <details open className="rounded-lg border border-rose-200 bg-rose-50/40 p-2">
+            <summary className="cursor-pointer text-sm font-medium text-rose-700">Tarjetas (cupo usado manual)</summary>
+            <div className="mt-2 grid md:grid-cols-2 gap-2">
+              {MANUAL_CARD_ITEMS.map((item) => {
+                const existing = recordsForSection.find((r) => r.label === item.label);
+                return (
+                  <button
+                    key={item.label}
+                    className="rounded-lg border border-rose-200 bg-white px-2 py-2 text-left hover:bg-rose-50"
+                    onClick={() => {
+                      setQuickFill({
+                        id: existing?.id,
+                        block: 'debt',
+                        source: existing?.source || 'Manual tarjetas',
+                        label: item.label,
+                        amount: existing ? String(existing.amount) : '',
+                        currency: existing?.currency || item.currency,
+                        snapshotDate: existing?.snapshotDate || todayYmd(),
+                      });
+                      setOpenLoadPanel(true);
+                    }}
+                  >
+                    <div className="text-xs font-medium text-slate-700">{item.label}</div>
+                    <div className="text-sm font-semibold text-rose-700 mt-1">
+                      {existing ? `-${formatCurrency(existing.amount, existing.currency)}` : 'Pendiente'}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+
+          <details open className="rounded-lg border border-slate-200 bg-white p-2">
+            <summary className="cursor-pointer text-sm font-medium">Movimientos recientes (API)</summary>
+            <div className="mt-2 space-y-1">
+              {!bankDashboard.movements.length && <div className="text-xs text-slate-500">Aún sin movimientos cargados.</div>}
+              {bankDashboard.movements.slice(0, 12).map((mv, idx) => (
+                <div key={`${mv.account}-${idx}`} className="grid grid-cols-[90px_1fr_120px] gap-2 text-xs border-b border-slate-100 py-1">
+                  <div className="text-slate-500">{mv.date || '-'}</div>
+                  <div>
+                    <div className="font-medium text-slate-700">{mv.account}</div>
+                    <div className="text-slate-500">{mv.description}</div>
+                  </div>
+                  <div className={`text-right font-semibold ${mv.amount >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {mv.amount >= 0 ? '+' : ''}
+                    {formatCurrency(mv.amount, mv.currency)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+        </Card>
+      )}
+
       <Card className="p-4 space-y-2">
         <div className="text-sm font-semibold">Cómo se compone</div>
-        {recordsForSection.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
-        {recordsForSection.map((item) => (
+        {(section === 'bank' ? bankDashboard.rowsForCompose : recordsForSection).length === 0 && (
+          <div className="text-xs text-slate-500">Sin datos para este mes.</div>
+        )}
+        {(section === 'bank' ? bankDashboard.rowsForCompose : recordsForSection).map((item) => (
           <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
             <div>
               <div className="font-medium text-slate-800">{item.label}</div>

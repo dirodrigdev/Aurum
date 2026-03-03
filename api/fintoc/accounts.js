@@ -38,6 +38,22 @@ const normalizeAccount = (account) => ({
   holder: String(account?.holder_name || account?.holder || ''),
 });
 
+const maybeRescaleFxBalance = (account, movements) => {
+  if (!account || (account.currency !== 'USD' && account.currency !== 'EUR')) return account;
+  const absBalance = Math.abs(asNumber(account.balance));
+  if (!absBalance) return account;
+
+  const maxMovement = movements.reduce((max, m) => Math.max(max, Math.abs(asNumber(m?.amount))), 0);
+  const looksLikeCents = Number.isInteger(account.balance) && absBalance >= 100000 && maxMovement > 0 && absBalance > maxMovement * 15;
+  if (!looksLikeCents) return account;
+
+  return {
+    ...account,
+    balance: account.balance / 100,
+    scaleFix: 'cents_to_units',
+  };
+};
+
 const requestFintoc = async (path, secretKey) => {
   const response = await fetch(`${FINTOC_BASE_URL}${path}`, {
     method: 'GET',
@@ -116,7 +132,8 @@ export default async function handler(req, res) {
 
     // Enriquecer con movimientos por cuenta para identificar qué tan útil es cada conexión.
     let movementsTotal = 0;
-    for (const account of normalized) {
+    for (let index = 0; index < normalized.length; index += 1) {
+      const account = normalized[index];
       const movementResponse = await requestFintoc(
         `/accounts/${encodeURIComponent(account.id)}/movements?link_token=${encodeURIComponent(linkToken)}`,
         secretKey,
@@ -129,8 +146,10 @@ export default async function handler(req, res) {
         currency: normalizeCurrency(m?.currency || m?.amount_currency || account.currency),
         date: String(m?.post_date || m?.date || m?.transaction_date || ''),
       }));
-      account.movementCount = movements.length;
-      account.movementsSample = sample;
+      const normalizedAccount = maybeRescaleFxBalance(account, sample);
+      normalizedAccount.movementCount = movements.length;
+      normalizedAccount.movementsSample = sample;
+      normalized[index] = normalizedAccount;
       movementsTotal += movements.length;
     }
 
