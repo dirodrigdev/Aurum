@@ -1625,7 +1625,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
+                  className={`font-semibold ${
+                    item.block === 'debt'
+                      ? 'text-red-700'
+                      : section === 'investment' && !isCarriedRecord(item) && !isEstimatedRecord(item)
+                        ? 'text-emerald-700'
+                        : ''
+                  }`}
                   onClick={() => openRecordEditor(item)}
                 >
                   {item.block === 'debt' ? '-' : ''}
