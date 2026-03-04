@@ -142,6 +142,17 @@ const normalizeText = (value: string) =>
     .toLowerCase()
     .trim();
 
+const isSyntheticAggregateLabel = (record: Pick<WealthRecord, 'label' | 'block'>) => {
+  const label = normalizeText(record.label);
+  if (record.block === 'bank') {
+    return label === normalizeText('Saldo bancos CLP') || label === normalizeText('Saldo bancos USD');
+  }
+  if (record.block === 'debt') {
+    return label === normalizeText('Deuda tarjetas CLP') || label === normalizeText('Deuda tarjetas USD');
+  }
+  return false;
+};
+
 const isDeprecatedSuraTotalRecord = (
   record: Pick<WealthRecord, 'label' | 'source' | 'block'>,
 ) => {
@@ -600,6 +611,7 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
   const byBlock = emptyBlockMap();
 
   for (const item of records) {
+    if (isSyntheticAggregateLabel(item)) continue;
     byBlock[item.block][item.currency] += item.amount;
 
     if (item.block === 'debt') {

@@ -272,6 +272,23 @@ const normalizeForMatch = (value: string) => {
     .trim();
 };
 
+const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
+  const label = normalizeForMatch(record.label);
+  if (record.block === 'bank') {
+    return (
+      label === normalizeForMatch('Saldo bancos CLP') ||
+      label === normalizeForMatch('Saldo bancos USD')
+    );
+  }
+  if (record.block === 'debt') {
+    return (
+      label === normalizeForMatch('Deuda tarjetas CLP') ||
+      label === normalizeForMatch('Deuda tarjetas USD')
+    );
+  }
+  return false;
+};
+
 const formatCurrency = (value: number, currency: WealthCurrency) => {
   const sign = value < 0 ? '-' : '';
   if (currency === 'UF') {
@@ -2333,18 +2350,19 @@ export const Patrimonio: React.FC = () => {
   }, [latestClosure, previousClosure]);
 
   const sectionAmounts = useMemo(() => {
+    const monthRecordsWithoutSynthetic = monthRecords.filter((record) => !isSyntheticAggregateRecord(record));
     const toClpFromRecord = (record: WealthRecord) =>
       toClp(record.amount, record.currency, fx.usdClp, fx.eurClp, fx.ufClp);
-    const investment = monthRecords
+    const investment = monthRecordsWithoutSynthetic
       .filter((record) => record.block === 'investment')
       .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const bank = monthRecords
+    const bank = monthRecordsWithoutSynthetic
       .filter((record) => record.block === 'bank')
       .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const realEstateAssets = monthRecords
+    const realEstateAssets = monthRecordsWithoutSynthetic
       .filter((record) => record.block === 'real_estate')
       .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const mortgageDebt = monthRecords
+    const mortgageDebt = monthRecordsWithoutSynthetic
       .filter((record) => record.block === 'debt' && isMortgagePrincipalLabel(record.label))
       .reduce((sum, record) => sum + toClpFromRecord(record), 0);
 
@@ -2474,6 +2492,21 @@ export const Patrimonio: React.FC = () => {
   };
 
   const runMonthlyClose = () => {
+    const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
+    const missingRequired = requiredNames.filter((required) => {
+      const target = normalizeForMatch(required);
+      return !monthRecords.some((record) => {
+        if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
+        const label = normalizeForMatch(record.label);
+        return label.includes(target) || target.includes(label);
+      });
+    });
+    if (missingRequired.length) {
+      setCloseError(
+        `No se puede cerrar: faltan obligatorios (${missingRequired.join(', ')}).`,
+      );
+      return;
+    }
     if (missingCustomInvestmentLabels.length) {
       setCloseError(
         `No se puede cerrar: faltan instrumentos sin valor (${missingCustomInvestmentLabels.join(', ')}). Cárgalos o exclúyelos este mes.`,

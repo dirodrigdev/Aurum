@@ -106,6 +106,24 @@ const isMortgageMeta = (label: string) => {
   );
 };
 
+const normalizeForMatch = (value: string) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const isSyntheticAggregateRecord = (record: WealthRecord) => {
+  const label = normalizeForMatch(record.label);
+  if (record.block === 'bank') {
+    return label === normalizeForMatch('Saldo bancos CLP') || label === normalizeForMatch('Saldo bancos USD');
+  }
+  if (record.block === 'debt') {
+    return label === normalizeForMatch('Deuda tarjetas CLP') || label === normalizeForMatch('Deuda tarjetas USD');
+  }
+  return false;
+};
+
 const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown => {
   let investmentClp = 0;
   let realEstateAssetsClp = 0;
@@ -114,6 +132,7 @@ const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreak
   let nonMortgageDebtClp = 0;
 
   records.forEach((r) => {
+    if (isSyntheticAggregateRecord(r)) return;
     const clp = toClp(r.amount, r.currency, fx);
     if (r.block === 'investment') investmentClp += clp;
     if (r.block === 'real_estate') realEstateAssetsClp += clp;
@@ -234,6 +253,16 @@ const BreakdownCard: React.FC<{
   const previsionalCurrentClp = investmentPrevisional.reduce((sum, row) => sum + row.currentClp, 0);
   const previsionalCompareClp = investmentPrevisional.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
   const previsionalHasCompare = investmentPrevisional.some((row) => row.compareClp !== null);
+  const financialCurrentDisplay = fromClp(financialCurrentClp, currency, fx);
+  const financialCompareDisplay = fromClp(financialCompareClp, currency, compareFx || fx);
+  const financialDeltaDisplay = financialCurrentDisplay - financialCompareDisplay;
+  const financialPctDisplay =
+    financialCompareDisplay !== 0 ? (financialDeltaDisplay / financialCompareDisplay) * 100 : null;
+  const previsionalCurrentDisplay = fromClp(previsionalCurrentClp, currency, fx);
+  const previsionalCompareDisplay = fromClp(previsionalCompareClp, currency, compareFx || fx);
+  const previsionalDeltaDisplay = previsionalCurrentDisplay - previsionalCompareDisplay;
+  const previsionalPctDisplay =
+    previsionalCompareDisplay !== 0 ? (previsionalDeltaDisplay / previsionalCompareDisplay) * 100 : null;
 
   return (
     <Card className="p-4 space-y-3">
@@ -288,19 +317,13 @@ const BreakdownCard: React.FC<{
                     {financialHasCompare && (
                       <div
                         className={`text-[11px] ${
-                          financialCurrentClp - financialCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                          financialDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'
                         }`}
                       >
-                        {financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}
-                        {formatCurrency(
-                          fromClp(financialCurrentClp, currency, fx) - fromClp(financialCompareClp, currency, compareFx || fx),
-                          currency,
-                        )}
-                        {financialCompareClp !== 0
-                          ? ` (${financialCurrentClp - financialCompareClp >= 0 ? '+' : ''}${(
-                              ((financialCurrentClp - financialCompareClp) / financialCompareClp) *
-                              100
-                            ).toFixed(2)}%)`
+                        {financialDeltaDisplay >= 0 ? '+' : ''}
+                        {formatCurrency(financialDeltaDisplay, currency)}
+                        {financialPctDisplay !== null
+                          ? ` (${financialPctDisplay >= 0 ? '+' : ''}${financialPctDisplay.toFixed(2)}%)`
                           : ''}
                       </div>
                     )}
@@ -343,20 +366,13 @@ const BreakdownCard: React.FC<{
                     {previsionalHasCompare && (
                       <div
                         className={`text-[11px] ${
-                          previsionalCurrentClp - previsionalCompareClp >= 0 ? 'text-emerald-700' : 'text-red-700'
+                          previsionalDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'
                         }`}
                       >
-                        {previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}
-                        {formatCurrency(
-                          fromClp(previsionalCurrentClp, currency, fx) -
-                            fromClp(previsionalCompareClp, currency, compareFx || fx),
-                          currency,
-                        )}
-                        {previsionalCompareClp !== 0
-                          ? ` (${previsionalCurrentClp - previsionalCompareClp >= 0 ? '+' : ''}${(
-                              ((previsionalCurrentClp - previsionalCompareClp) / previsionalCompareClp) *
-                              100
-                            ).toFixed(2)}%)`
+                        {previsionalDeltaDisplay >= 0 ? '+' : ''}
+                        {formatCurrency(previsionalDeltaDisplay, currency)}
+                        {previsionalPctDisplay !== null
+                          ? ` (${previsionalPctDisplay >= 0 ? '+' : ''}${previsionalPctDisplay.toFixed(2)}%)`
                           : ''}
                       </div>
                     )}
@@ -400,6 +416,7 @@ export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('hoy');
   const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
   const [currentFx, setCurrentFx] = useState<WealthFxRates>(() => loadFxRates());
+  const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -411,6 +428,7 @@ export const ClosingAurum: React.FC = () => {
     const refreshAll = async () => {
       await hydrateWealthFromCloud();
       refreshFx();
+      setMonthKey(currentMonthKey());
       setRevision((v) => v + 1);
     };
     const onVisibility = () => {
@@ -448,6 +466,7 @@ export const ClosingAurum: React.FC = () => {
       await hydrateWealthFromCloud();
       if (!alive) return;
       setCurrentFx(loadFxRates());
+      setMonthKey(currentMonthKey());
       setRevision((v) => v + 1);
     })();
     return () => {
@@ -455,7 +474,6 @@ export const ClosingAurum: React.FC = () => {
     };
   }, []);
 
-  const monthKey = useMemo(() => currentMonthKey(), []);
   const closures = useMemo(() => loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)), [revision]);
 
   const latestClosure = closures[0] || null;
