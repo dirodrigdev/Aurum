@@ -528,21 +528,33 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     writeBankTokens(nextTokens);
   }, [section, bankTokens]);
 
+  const dedupedSectionRecords = useMemo(() => {
+    const byLogicalKey = new Map<string, WealthRecord>();
+    const ordered = [...recordsForSection].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    for (const item of ordered) {
+      const key = `${item.block}::${normalizeForMatch(item.label)}::${item.currency}`;
+      if (!byLogicalKey.has(key)) byLogicalKey.set(key, item);
+    }
+    return [...byLogicalKey.values()];
+  }, [recordsForSection]);
+
   const sectionTotalClp = useMemo(() => {
     if (section === 'real_estate') {
-      const realEstateAssetsClp = recordsForSection
+      const realEstateAssetsClp = dedupedSectionRecords
         .filter((item) => item.block === 'real_estate')
         .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
-      const mortgageDebtClp = recordsForSection
+      const mortgageDebtClp = dedupedSectionRecords
         .filter((item) => item.block === 'debt' && isMortgagePrincipalLabel(item.label))
         .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
       return realEstateAssetsClp - mortgageDebtClp;
     }
-    return recordsForSection.reduce((sum, item) => {
+    return dedupedSectionRecords.reduce((sum, item) => {
       const signed = item.block === 'debt' ? -item.amount : item.amount;
       return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
     }, 0);
-  }, [section, recordsForSection, usdClp, eurClp, ufClp]);
+  }, [section, dedupedSectionRecords, usdClp, eurClp, ufClp]);
 
   const bankDashboard = useMemo(() => {
     if (section !== 'bank') {
@@ -564,10 +576,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       };
     }
 
-    const bankDetails = recordsForSection.filter(
+    const bankDetails = dedupedSectionRecords.filter(
       (r) => r.block === 'bank' && MANUAL_BANK_ITEMS.some((i) => i.label === r.label),
     );
-    const cardDetails = recordsForSection.filter(
+    const cardDetails = dedupedSectionRecords.filter(
       (r) =>
         r.block === 'debt' &&
         (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
@@ -595,7 +607,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       })),
     );
     return { bankClp, bankUsd, cardClp, cardUsd, hasCardClpData, hasCardUsdData, movements: allMovements };
-  }, [section, recordsForSection, fintocLastSync, fintocDiscovery]);
+  }, [section, dedupedSectionRecords, fintocLastSync, fintocDiscovery]);
 
   const modalMovements = useMemo(() => {
     if (!movementsModal) return [];
@@ -679,7 +691,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const findRecordForLabel = (label: string, currency?: WealthCurrency) => {
     const target = normalizeForMatch(label);
-    return recordsForSection.find((r) => {
+    return dedupedSectionRecords.find((r) => {
       if (r.block !== 'investment') return false;
       if (currency && r.currency !== currency) return false;
       return normalizeForMatch(r.label) === target;
@@ -688,7 +700,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const checklistRows = useMemo<ChecklistRow[]>(() => {
     const baseRows = sectionChecklist[section].map((name): ChecklistRow => {
-      const match = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
+      const match = dedupedSectionRecords.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
       if (!match) {
         return {
           name,
@@ -768,7 +780,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
 
     return [...baseRows, ...customRows];
-  }, [section, recordsForSection, investmentInstruments, monthKey]);
+  }, [section, dedupedSectionRecords, investmentInstruments, monthKey]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -900,13 +912,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
-    const itemSource = normalizeForMatch(item.source);
     const itemLabel = normalizeForMatch(item.label);
-    const existing = recordsForSection.find(
+    const existing = dedupedSectionRecords.find(
       (r) =>
         r.block === item.block &&
         r.currency === item.currency &&
-        normalizeForMatch(r.source) === itemSource &&
         normalizeForMatch(r.label) === itemLabel,
     );
 
@@ -934,13 +944,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveAllSuggestions = () => {
     suggestions.forEach((item) => {
-      const itemSource = normalizeForMatch(item.source);
       const itemLabel = normalizeForMatch(item.label);
-      const existing = recordsForSection.find(
+      const existing = dedupedSectionRecords.find(
         (r) =>
           r.block === item.block &&
           r.currency === item.currency &&
-          normalizeForMatch(r.source) === itemSource &&
           normalizeForMatch(r.label) === itemLabel,
       );
 
@@ -1001,6 +1009,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     };
     return [...checklistRows].sort((a, b) => weight(a) - weight(b));
   }, [checklistRows]);
+
+  const missingRowsForCompose = useMemo(
+    () => sortedChecklistRows.filter((row) => row.status === 'pendiente').map((row) => row.name),
+    [sortedChecklistRows],
+  );
 
   const checklistSummary = useMemo(() => {
     const total = checklistRows.length;
@@ -1067,7 +1080,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return;
     }
 
-    const existing = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(row.name)));
+    const existing = dedupedSectionRecords.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(row.name)));
     const preferredBlock: WealthBlock =
       section === 'real_estate' &&
       REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(row.name).includes(normalizeForMatch(item)))
@@ -1242,7 +1255,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         amount: number,
         note?: string,
       ) => {
-        const existing = recordsForSection.find(
+        const existing = dedupedSectionRecords.find(
           (r) =>
             normalizeForMatch(r.label) === normalizeForMatch(label) &&
             r.currency === currency &&
@@ -1441,7 +1454,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   <div className="text-xs font-semibold text-slate-600 mb-2">{group.bank}</div>
                   <div className="grid md:grid-cols-2 gap-2">
                     {group.items.map((item) => {
-                      const existing = recordsForSection.find((r) => r.label === item.label);
+                      const existing = dedupedSectionRecords.find((r) => r.label === item.label);
                       const providerId = BANK_PROVIDERS.find((bank) => bank.label === group.bank)?.id;
                       const movementMeta = providerId ? bankMovementMeta[providerId] : undefined;
                       const movementLabel = !movementMeta
@@ -1516,7 +1529,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   <div className="text-xs font-semibold text-slate-700 mb-2">{group.bank}</div>
                   <div className="grid md:grid-cols-2 gap-2">
                     {group.items.map((item) => {
-                      const existing = recordsForSection.find((r) => r.label === item.label);
+                      const existing = dedupedSectionRecords.find((r) => r.label === item.label);
                       return (
                         <button
                           key={item.label}
@@ -1604,8 +1617,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       {section !== 'bank' && (
         <Card className="p-4 space-y-2 border border-slate-200 shadow-sm bg-white">
           <div className="text-sm font-semibold text-slate-900">Cómo se compone</div>
-          {recordsForSection.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
-          {recordsForSection.map((item) => (
+          {dedupedSectionRecords.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
+          {dedupedSectionRecords.map((item) => (
             <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
               <div>
                 <div className="font-medium text-slate-800">{item.label}</div>
@@ -1641,6 +1654,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               </div>
             </div>
           ))}
+          {!!missingRowsForCompose.length && (
+            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/70 px-2 py-2 text-xs text-amber-800">
+              <div className="font-medium">Falta cargar</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {missingRowsForCompose.map((name) => (
+                  <span key={name} className="rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px]">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
 

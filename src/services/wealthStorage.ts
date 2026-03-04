@@ -241,9 +241,7 @@ const sortByCreatedDesc = (a: WealthRecord, b: WealthRecord) => {
 };
 
 export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency'>) => {
-  return `${record.block}::${record.source.trim().toLowerCase()}::${record.label
-    .trim()
-    .toLowerCase()}::${record.currency}`;
+  return `${record.block}::${normalizeText(record.label)}::${record.currency}`;
 };
 
 const logicalRecordKey = (record: WealthRecord) => `${makeAssetKey(record)}::${record.snapshotDate}`;
