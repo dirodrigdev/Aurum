@@ -103,6 +103,13 @@ const sectionChecklist: Record<MainSection, string[]> = {
   real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
   bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
 };
+const REAL_ESTATE_DEBT_LABELS = [
+  'Saldo deuda hipotecaria',
+  'Dividendo hipotecario mensual',
+  'Interés hipotecario mensual',
+  'Seguros hipotecarios mensuales',
+  'Amortización hipotecaria mensual',
+];
 type BankProviderId = 'bchile' | 'scotia' | 'santander';
 
 const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
@@ -472,6 +479,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
+  const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (section !== 'bank') return;
@@ -722,6 +730,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const suggestionKey = (item: Pick<EditableSuggestion, 'block' | 'source' | 'label' | 'currency'>) =>
     `${item.block}::${normalizeForMatch(item.source)}::${normalizeForMatch(item.label)}::${item.currency}`;
 
+  const openImagePicker = () => {
+    if (!hiddenUploadInputRef.current) return;
+    hiddenUploadInputRef.current.click();
+  };
+
   const applyInvestmentContextToParsed = (parsed: EditableSuggestion[]): EditableSuggestion[] => {
     if (section !== 'investment' || !activeSourceContext) return parsed;
 
@@ -760,6 +773,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setOpenLoadPanel(true);
     setOcrError('');
     setOcrProgress({ pct: 0, status: 'iniciando' });
 
@@ -986,21 +1000,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     const existing = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(row.name)));
-    const debtLabels = [
-      'Saldo deuda hipotecaria',
-      'Dividendo hipotecario mensual',
-      'Interés hipotecario mensual',
-      'Seguros hipotecarios mensuales',
-      'Amortización hipotecaria mensual',
-    ];
     const preferredBlock: WealthBlock =
-      section === 'real_estate' && debtLabels.some((d) => normalizeForMatch(row.name).includes(normalizeForMatch(d)))
+      section === 'real_estate' &&
+      REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(row.name).includes(normalizeForMatch(item)))
         ? 'debt'
         : section === 'real_estate'
           ? 'real_estate'
           : getSectionBlock(section);
 
     if (section === 'real_estate') {
+      setActiveSourceContext(null);
       setQuickFill({
         id: existing?.id,
         block: preferredBlock,
@@ -1247,6 +1256,59 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
   };
 
+  const openRecordEditor = (item: WealthRecord) => {
+    if (section === 'investment') {
+      setActiveSourceContext({
+        title: item.label,
+        sourceHint: 'auto',
+        source: item.source,
+        labels: [{ label: item.label, currency: item.currency }],
+      });
+      setQuickFill({
+        id: item.id,
+        block: item.block,
+        source: item.source,
+        label: item.label,
+        amount: String(item.amount),
+        currency: item.currency,
+        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+        snapshotDate: item.snapshotDate,
+      });
+      setMultiQuickFill(null);
+      setOpenLoadPanel(true);
+      return;
+    }
+
+    if (section === 'real_estate') {
+      setActiveSourceContext(null);
+      setQuickFill({
+        id: item.id,
+        block: item.block,
+        source: item.source,
+        label: item.label,
+        amount: String(item.amount),
+        currency: item.currency,
+        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+        snapshotDate: item.snapshotDate,
+      });
+      setMultiQuickFill(null);
+      setOpenLoadPanel(true);
+      return;
+    }
+
+    setEditingId(item.id);
+    setDraft({
+      block: item.block,
+      source: item.source,
+      label: item.label,
+      amount: String(item.amount),
+      currency: item.currency,
+      note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+      snapshotDate: item.snapshotDate,
+    });
+    setOpenLoadPanel(true);
+  };
+
   useEffect(() => {
     if (section !== 'bank') return;
     void runUpdateAllBanks(true);
@@ -1255,6 +1317,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   return (
     <div className="space-y-4 pb-24">
+      <input ref={hiddenUploadInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
+
       <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
         <button className="inline-flex items-center gap-1 text-xs text-slate-600" onClick={onBack}>
           <ArrowLeft size={14} /> Volver
@@ -1483,80 +1547,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
-                  onClick={() => {
-                    if (section === 'investment') {
-                      setActiveSourceContext({
-                        title: item.label,
-                        sourceHint: 'auto',
-                        source: item.source,
-                        labels: [{ label: item.label, currency: item.currency }],
-                      });
-                      setQuickFill({
-                        id: item.id,
-                        block: item.block,
-                        source: item.source,
-                        label: item.label,
-                        amount: String(item.amount),
-                        currency: item.currency,
-                        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                        snapshotDate: item.snapshotDate,
-                      });
-                      setMultiQuickFill(null);
-                      setOpenLoadPanel(true);
-                      return;
-                    }
-                    setEditingId(item.id);
-                    setDraft({
-                      block: item.block,
-                      source: item.source,
-                      label: item.label,
-                      amount: String(item.amount),
-                      currency: item.currency,
-                      note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                      snapshotDate: item.snapshotDate,
-                    });
-                    setOpenLoadPanel(true);
-                  }}
+                  onClick={() => openRecordEditor(item)}
                 >
                   {item.block === 'debt' ? '-' : ''}
                   {formatCurrency(item.amount, item.currency)}
                 </button>
                 <button
                   className="text-slate-400 hover:text-blue-600"
-                  onClick={() => {
-                    if (section === 'investment') {
-                      setActiveSourceContext({
-                        title: item.label,
-                        sourceHint: 'auto',
-                        source: item.source,
-                        labels: [{ label: item.label, currency: item.currency }],
-                      });
-                      setQuickFill({
-                        id: item.id,
-                        block: item.block,
-                        source: item.source,
-                        label: item.label,
-                        amount: String(item.amount),
-                        currency: item.currency,
-                        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                        snapshotDate: item.snapshotDate,
-                      });
-                      setMultiQuickFill(null);
-                      setOpenLoadPanel(true);
-                      return;
-                    }
-                    setEditingId(item.id);
-                    setDraft({
-                      block: item.block,
-                      source: item.source,
-                      label: item.label,
-                      amount: String(item.amount),
-                      currency: item.currency,
-                      note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
-                      snapshotDate: item.snapshotDate,
-                    });
-                    setOpenLoadPanel(true);
-                  }}
+                  onClick={() => openRecordEditor(item)}
                 >
                   <Pencil size={14} />
                 </button>
@@ -1641,19 +1639,23 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {checklistRows.map((row) => (
           <div
             key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
-            className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50"
+            className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50 cursor-pointer"
+            onClick={() => openChecklistItem(row)}
           >
             <div className="flex items-center justify-between gap-2">
-              <button className="text-left flex-1" onClick={() => openChecklistItem(row)}>
+              <div className="text-left flex-1">
                 <div>{row.name}</div>
                 <div className="text-[11px] text-slate-500">{row.detail}</div>
-              </button>
+              </div>
               {row.status === 'pendiente' && (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-7 px-2 text-[11px]"
-                  onClick={() => onUseMissing(section, row.name)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUseMissing(section, row.name);
+                  }}
                 >
                   Usar mes anterior
                 </Button>
@@ -1663,7 +1665,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   size="sm"
                   variant="outline"
                   className="h-7 px-2 text-[11px]"
-                  onClick={() => onSetInvestmentExcluded(row.instrumentId as string, row.status !== 'excluido')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSetInvestmentExcluded(row.instrumentId as string, row.status !== 'excluido');
+                  }}
                 >
                   {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
                 </Button>
@@ -1733,7 +1738,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     setOcrError('');
                     setOcrText('');
                     setOpenSourceMenu(false);
-                    setOpenLoadPanel(true);
+                    requestAnimationFrame(() => openImagePicker());
                   }}
                 >
                   Subir imagen
@@ -1907,10 +1912,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       <FileScan size={16} /> Carga OCR
                     </div>
 
-                    <label className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50">
+                    <button
+                      className="h-10 rounded-xl border border-slate-200 px-3 flex items-center justify-center gap-2 text-sm cursor-pointer hover:bg-slate-50"
+                      onClick={() => openImagePicker()}
+                    >
                       <Camera size={16} /> Seleccionar imagen
-                      <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
-                    </label>
+                    </button>
 
                     {activeSourceContext ? (
                       <div className="text-[11px] text-slate-500">Fuente fija: {activeSourceContext.title}</div>
@@ -2223,7 +2230,12 @@ export const Patrimonio: React.FC = () => {
   const recordsForSection = useMemo(() => {
     if (!activeSection) return [];
     if (activeSection === 'real_estate') {
-      return monthRecords.filter((r) => r.block === 'real_estate' || r.block === 'debt');
+      return monthRecords.filter((record) => {
+        if (record.block === 'real_estate') return true;
+        if (record.block !== 'debt') return false;
+        const label = normalizeForMatch(record.label);
+        return REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === label);
+      });
     }
     if (activeSection === 'bank') {
       return monthRecords.filter((r) => {
