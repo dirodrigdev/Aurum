@@ -423,9 +423,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     const bankDetails = recordsForSection.filter(
-      (r) =>
-        r.block === 'bank' &&
-        (r.label.startsWith(FINTOC_SYNC_PREFIX_ACCOUNT) || MANUAL_BANK_ITEMS.some((i) => i.label === r.label)),
+      (r) => r.block === 'bank' && MANUAL_BANK_ITEMS.some((i) => i.label === r.label),
     );
     const cardDetails = recordsForSection.filter(
       (r) =>
@@ -828,12 +826,39 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         upsertByLabel('debt', label, currency, Math.abs(card.balance), note);
       });
 
-      const refreshedMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthKey);
-      const refreshedBankDetails = refreshedMonthRecords.filter(
-        (record) =>
-          record.block === 'bank' &&
-          (record.label.startsWith(FINTOC_SYNC_PREFIX_ACCOUNT) || MANUAL_BANK_ITEMS.some((item) => item.label === record.label)),
+      const providerTotals = syncedAssets.reduce(
+        (acc, account) => {
+          const currency = toWealthCurrency(account.currency);
+          if (!currency) return acc;
+          if (currency === 'CLP') acc.clp += account.balance;
+          if (currency === 'USD') acc.usd += account.balance;
+          return acc;
+        },
+        { clp: 0, usd: 0 },
       );
+
+      // Rellena automáticamente los bloques manuales por banco (los cuadros de abajo).
+      const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
+      upsertByLabel(
+        'bank',
+        `${manualProviderPrefix} CLP`,
+        'CLP',
+        providerTotals.clp,
+        `API ${detectedInstitution} (${syncedAssets.length} cuentas)`,
+      );
+      upsertByLabel(
+        'bank',
+        `${manualProviderPrefix} USD`,
+        'USD',
+        providerTotals.usd,
+        `API ${detectedInstitution} (${syncedAssets.length} cuentas)`,
+      );
+
+      const refreshedMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthKey);
+      const refreshedBankDetails = refreshedMonthRecords.filter((record) => {
+        if (record.block !== 'bank') return false;
+        return MANUAL_BANK_ITEMS.some((item) => item.label === record.label);
+      });
       const refreshedCardDetails = refreshedMonthRecords.filter(
         (record) =>
           record.block === 'debt' &&
