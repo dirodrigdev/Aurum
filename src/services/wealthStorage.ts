@@ -535,11 +535,16 @@ export const removeWealthRecordForMonthAsset = (input: {
   const removedIds: string[] = [];
 
   const next = current.filter((record) => {
+    const recordLabel = normalizeText(record.label);
+    const sameLabel =
+      recordLabel === targetLabel ||
+      recordLabel.includes(targetLabel) ||
+      targetLabel.includes(recordLabel);
     const shouldRemove =
       record.block === input.block &&
       record.currency === input.currency &&
       record.snapshotDate.startsWith(monthPrefix) &&
-      normalizeText(record.label) === targetLabel;
+      sameLabel;
     if (shouldRemove) removedIds.push(record.id);
     return !shouldRemove;
   });

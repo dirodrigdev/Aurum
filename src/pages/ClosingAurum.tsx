@@ -497,6 +497,15 @@ export const ClosingAurum: React.FC = () => {
     return buildNetBreakdown(previousClosureRecords, previousClosureFx);
   }, [previousClosureRecords, previousClosureFx]);
 
+  const compareClosureForHoy =
+    latestClosure && latestClosure.monthKey === monthKey ? previousClosure : latestClosure;
+  const compareClosureForHoyRecords = compareClosureForHoy?.records || null;
+  const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
+  const compareClosureForHoyBreakdown = useMemo(() => {
+    if (!compareClosureForHoyRecords?.length) return null;
+    return buildNetBreakdown(compareClosureForHoyRecords, compareClosureForHoyFx);
+  }, [compareClosureForHoyRecords, compareClosureForHoyFx]);
+
   const evolutionRows = useMemo(() => {
     const rows: EvolutionRow[] = closures
       .slice()
@@ -561,14 +570,16 @@ export const ClosingAurum: React.FC = () => {
       {tab === 'hoy' && (
         <BreakdownCard
           title="Patrimonio hoy"
-          subtitle={`${monthLabel(monthKey)} vs ${latestClosure ? monthLabel(latestClosure.monthKey) : 'sin cierre previo'}`}
+          subtitle={`${monthLabel(monthKey)} vs ${
+            compareClosureForHoy ? monthLabel(compareClosureForHoy.monthKey) : 'sin cierre previo'
+          }`}
           breakdown={currentBreakdown}
           currency={currency}
           fx={currentFx}
-          compareAgainst={latestClosureBreakdown}
-          compareFx={latestClosureFx}
+          compareAgainst={compareClosureForHoyBreakdown}
+          compareFx={compareClosureForHoyFx}
           currentRecords={currentRecords}
-          compareRecords={latestClosureRecords}
+          compareRecords={compareClosureForHoyRecords}
         />
       )}
 

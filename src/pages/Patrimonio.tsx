@@ -2831,7 +2831,7 @@ export const Patrimonio: React.FC = () => {
                 </div>
               ))}
             </div>
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -2840,15 +2840,6 @@ export const Patrimonio: React.FC = () => {
                 }}
               >
                 Revisar
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setPendingCloseCarryItems(null);
-                  setCloseError('');
-                }}
-              >
-                Mantener por ahora
               </Button>
               <Button onClick={completeMonthlyClose}>Cerrar igual</Button>
             </div>
