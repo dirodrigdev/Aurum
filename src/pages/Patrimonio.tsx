@@ -364,6 +364,11 @@ interface QuickFillDraft {
   snapshotDate: string;
 }
 
+interface BankMovementsModalState {
+  bank: string;
+  currency: WealthCurrency;
+}
+
 const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
@@ -395,7 +400,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     cards: FintocAccountNormalized[];
   } | null>(null);
   const [bankTokens, setBankTokens] = useState<Partial<Record<BankProviderId, string>>>(() => readBankTokens());
-  const [movementFilter, setMovementFilter] = useState<'ALL' | 'CLP' | 'USD'>('ALL');
+  const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
 
   useEffect(() => {
     if (section !== 'bank') return;
@@ -418,7 +423,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return {
         bankClp: 0,
         bankUsd: 0,
-        movements: [] as Array<{ account: string; description: string; date: string; amount: number; currency: WealthCurrency }>,
+        movements: [] as Array<{
+          bank: string;
+          account: string;
+          description: string;
+          date: string;
+          amount: number;
+          currency: WealthCurrency;
+        }>,
       };
     }
 
@@ -440,6 +452,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     const allMovements = syncAccounts.flatMap((acc) =>
       (acc.movementsSample || []).map((m) => ({
+        bank: acc.bank || 'Banco',
         account: `${acc.name}${acc.number ? ` · ${acc.number}` : ''}`,
         description: m.description || 'Movimiento',
         date: m.date || '',
@@ -447,13 +460,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: (toWealthCurrency(m.currency) || toWealthCurrency(acc.currency) || 'CLP') as WealthCurrency,
       })),
     );
-    const movements =
-      movementFilter === 'ALL'
-        ? allMovements
-        : allMovements.filter((movement) => movement.currency === movementFilter);
+    return { bankClp, bankUsd, movements: allMovements };
+  }, [section, recordsForSection, fintocLastSync, fintocDiscovery]);
 
-    return { bankClp, bankUsd, movements };
-  }, [section, recordsForSection, fintocLastSync, fintocDiscovery, movementFilter]);
+  const modalMovements = useMemo(() => {
+    if (!movementsModal) return [];
+    const targetBank = normalizeForMatch(movementsModal.bank);
+    return bankDashboard.movements.filter((movement) => {
+      if (movement.currency !== movementsModal.currency) return false;
+      const movementBank = normalizeForMatch(movement.bank);
+      return movementBank.includes(targetBank) || targetBank.includes(movementBank);
+    });
+  }, [bankDashboard.movements, movementsModal]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -954,20 +972,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <Card className="p-4 space-y-3">
           <div className="text-sm font-semibold">Dashboard bancario</div>
           <div className="grid md:grid-cols-2 gap-2">
-            <button
-              className={`rounded-xl p-3 text-white bg-gradient-to-r from-cyan-600 to-blue-500 text-left ${movementFilter === 'CLP' ? 'ring-2 ring-offset-2 ring-cyan-400' : ''}`}
-              onClick={() => setMovementFilter('CLP')}
-            >
+            <div className="rounded-xl p-3 text-white bg-gradient-to-r from-cyan-600 to-blue-500 text-left">
               <div className="text-xs opacity-90">Total CLP disponible</div>
               <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankClp, 'CLP')}</div>
-            </button>
-            <button
-              className={`rounded-xl p-3 text-white bg-gradient-to-r from-teal-600 to-sky-500 text-left ${movementFilter === 'USD' ? 'ring-2 ring-offset-2 ring-sky-400' : ''}`}
-              onClick={() => setMovementFilter('USD')}
-            >
+            </div>
+            <div className="rounded-xl p-3 text-white bg-gradient-to-r from-teal-600 to-sky-500 text-left">
               <div className="text-xs opacity-90">Total USD disponible</div>
               <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankUsd, 'USD')}</div>
-            </button>
+            </div>
           </div>
 
           <details open className="rounded-lg border border-slate-200 bg-slate-50 p-2">
@@ -979,26 +991,42 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   <div className="grid md:grid-cols-2 gap-2">
                     {group.items.map((item) => {
                       const existing = recordsForSection.find((r) => r.label === item.label);
+                      const bankMovementsCount = bankDashboard.movements.filter(
+                        (movement) => movement.bank === group.bank && movement.currency === item.currency,
+                      ).length;
                       return (
                         <button
                           key={item.label}
-                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-left hover:bg-slate-100"
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-left hover:bg-slate-100 relative"
                           onClick={() => {
-                            setQuickFill({
-                              id: existing?.id,
-                              block: 'bank',
-                              source: existing?.source || 'Manual bancos',
-                              label: item.label,
-                              amount: existing ? String(existing.amount) : '',
-                              currency: existing?.currency || item.currency,
-                              snapshotDate: existing?.snapshotDate || todayYmd(),
-                            });
-                            setOpenLoadPanel(true);
+                            setMovementsModal({ bank: group.bank, currency: item.currency });
                           }}
                         >
+                          <span
+                            className="absolute right-2 top-2 text-slate-400 hover:text-blue-600"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setQuickFill({
+                                id: existing?.id,
+                                block: 'bank',
+                                source: existing?.source || 'Manual bancos',
+                                label: item.label,
+                                amount: existing ? String(existing.amount) : '',
+                                currency: existing?.currency || item.currency,
+                                snapshotDate: existing?.snapshotDate || todayYmd(),
+                              });
+                              setOpenLoadPanel(true);
+                            }}
+                          >
+                            <Pencil size={14} />
+                          </span>
                           <div className="text-xs font-medium text-slate-700">{item.currency}</div>
                           <div className="text-sm font-semibold text-slate-900 mt-1">
                             {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-1">
+                            {bankMovementsCount ? `${bankMovementsCount} movimientos` : 'Sin movimientos'}
                           </div>
                         </button>
                       );
@@ -1072,37 +1100,58 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </div>
           </details>
 
-          <details open className="rounded-lg border border-slate-200 bg-white p-2">
-            <summary className="cursor-pointer text-sm font-medium">Movimientos recientes (API)</summary>
-            <div className="mt-2 flex items-center gap-2">
-              <Button size="sm" variant={movementFilter === 'ALL' ? 'primary' : 'secondary'} onClick={() => setMovementFilter('ALL')}>
-                Todos
-              </Button>
-              <Button size="sm" variant={movementFilter === 'CLP' ? 'primary' : 'secondary'} onClick={() => setMovementFilter('CLP')}>
-                CLP
-              </Button>
-              <Button size="sm" variant={movementFilter === 'USD' ? 'primary' : 'secondary'} onClick={() => setMovementFilter('USD')}>
-                USD
-              </Button>
-            </div>
-            <div className="mt-2 space-y-1">
-              {!bankDashboard.movements.length && <div className="text-xs text-slate-500">Aún sin movimientos cargados.</div>}
-              {bankDashboard.movements.slice(0, 12).map((mv, idx) => (
-                <div key={`${mv.account}-${idx}`} className="grid grid-cols-[90px_1fr_120px] gap-2 text-xs border-b border-slate-100 py-1">
-                  <div className="text-slate-500">{mv.date || '-'}</div>
-                  <div>
-                    <div className="font-medium text-slate-700">{mv.account}</div>
-                    <div className="text-slate-500">{mv.description}</div>
-                  </div>
-                  <div className={`text-right font-semibold ${mv.amount >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {mv.amount >= 0 ? '+' : ''}
-                    {formatCurrency(mv.amount, mv.currency)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
+          <div className="text-[11px] text-slate-500">
+            Los movimientos se consultan por banco al tocar cada saldo (CLP o USD).
+          </div>
         </Card>
+      )}
+
+      {section === 'bank' && movementsModal && (
+        <>
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40" onClick={() => setMovementsModal(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+            <div className="w-full max-w-2xl" onClick={(event) => event.stopPropagation()}>
+              <Card className="p-4 max-h-[82vh] overflow-y-auto shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">Movimientos {movementsModal.currency}</div>
+                    <div className="text-xs text-slate-500">{movementsModal.bank}</div>
+                  </div>
+                  <button
+                    className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
+                    onClick={() => setMovementsModal(null)}
+                    aria-label="Cerrar movimientos"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="mt-3 space-y-1">
+                  {!modalMovements.length && (
+                    <div className="text-xs text-slate-500">
+                      Sin movimientos detectados para este banco en {movementsModal.currency}.
+                    </div>
+                  )}
+                  {modalMovements.slice(0, 30).map((mv, idx) => (
+                    <div
+                      key={`${mv.bank}-${mv.account}-${idx}`}
+                      className="grid grid-cols-[90px_1fr_130px] gap-2 text-xs border-b border-slate-100 py-1"
+                    >
+                      <div className="text-slate-500">{mv.date || '-'}</div>
+                      <div>
+                        <div className="font-medium text-slate-700">{mv.account}</div>
+                        <div className="text-slate-500">{mv.description}</div>
+                      </div>
+                      <div className={`text-right font-semibold ${mv.amount >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {mv.amount >= 0 ? '+' : ''}
+                        {formatCurrency(mv.amount, mv.currency)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+          </div>
+        </>
       )}
 
       {section !== 'bank' && (
