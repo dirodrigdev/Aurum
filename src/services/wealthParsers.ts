@@ -274,7 +274,7 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
     {
       source: 'BTG Pactual',
       block: 'investment',
-      label: 'BTG total valorización (OCR)',
+      label: 'BTG total valorización',
       amount: total,
       currency: 'CLP',
       confidence: 0.82,

@@ -41,6 +41,15 @@ export interface WealthMonthlyClosure {
   records?: WealthRecord[];
 }
 
+export interface WealthInvestmentInstrument {
+  id: string;
+  label: string;
+  currency: WealthCurrency;
+  createdAt: string;
+  note?: string;
+  excludedMonths?: string[];
+}
+
 export interface MortgageAutoCalcConfig {
   initialDebtUf: number;
   dividendUf: number;
@@ -52,6 +61,7 @@ export interface MortgageAutoCalcConfig {
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
+const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
@@ -173,6 +183,30 @@ const normalizeRecord = (item: any): WealthRecord => ({
   })(),
 });
 
+const normalizeMonthKey = (value: unknown): string | null => {
+  const month = String(value || '').trim();
+  return /^\d{4}-\d{2}$/.test(month) ? month : null;
+};
+
+const normalizeInvestmentInstrument = (item: any): WealthInvestmentInstrument => {
+  const excludedMonths = Array.isArray(item?.excludedMonths)
+    ? item.excludedMonths
+        .map((m: unknown) => normalizeMonthKey(m))
+        .filter((m: string | null): m is string => !!m)
+    : [];
+
+  const base = {
+    id: String(item?.id || crypto.randomUUID()),
+    label: String(item?.label || '').trim(),
+    currency: ((item?.currency || 'CLP') as WealthCurrency),
+    createdAt: String(item?.createdAt || nowIso()),
+  } satisfies Omit<WealthInvestmentInstrument, 'note' | 'excludedMonths'>;
+
+  const note = item?.note ? String(item.note).trim() : '';
+  const withNote = note ? { ...base, note } : base;
+  return excludedMonths.length ? { ...withNote, excludedMonths } : withNote;
+};
+
 const stripUndefinedDeep = (value: any): any => {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -261,6 +295,25 @@ const sameRecords = (a: WealthRecord[], b: WealthRecord[]) => {
   return true;
 };
 
+const serializeInstrument = (item: WealthInvestmentInstrument) => {
+  const excluded = [...(item.excludedMonths || [])].sort().join(',');
+  return `${normalizeText(item.label)}|${item.currency}|${item.note || ''}|${excluded}|${item.createdAt}`;
+};
+
+const sameInvestmentInstruments = (a: WealthInvestmentInstrument[], b: WealthInvestmentInstrument[]) => {
+  if (a.length !== b.length) return false;
+  const sa = [...a]
+    .sort((x, y) => normalizeText(x.label).localeCompare(normalizeText(y.label)))
+    .map(serializeInstrument);
+  const sb = [...b]
+    .sort((x, y) => normalizeText(x.label).localeCompare(normalizeText(y.label)))
+    .map(serializeInstrument);
+  for (let i = 0; i < sa.length; i += 1) {
+    if (sa[i] !== sb[i]) return false;
+  }
+  return true;
+};
+
 export const loadWealthRecords = (): WealthRecord[] => {
   try {
     const raw = localStorage.getItem(RECORDS_KEY);
@@ -275,6 +328,94 @@ export const loadWealthRecords = (): WealthRecord[] => {
   } catch {
     return [];
   }
+};
+
+export const loadInvestmentInstruments = (): WealthInvestmentInstrument[] => {
+  try {
+    const raw = localStorage.getItem(INSTRUMENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item: any) => normalizeInvestmentInstrument(item))
+      .filter((item: WealthInvestmentInstrument) => !!item.label)
+      .sort((a: WealthInvestmentInstrument, b: WealthInvestmentInstrument) =>
+        normalizeText(a.label).localeCompare(normalizeText(b.label)),
+      );
+  } catch {
+    return [];
+  }
+};
+
+export const saveInvestmentInstruments = (items: WealthInvestmentInstrument[], options?: PersistOptions) => {
+  localStorage.setItem(INSTRUMENTS_KEY, JSON.stringify(items));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+};
+
+export const upsertInvestmentInstrument = (input: {
+  id?: string;
+  label: string;
+  currency: WealthCurrency;
+  note?: string;
+}) => {
+  const normalizedLabel = String(input.label || '').trim();
+  if (!normalizedLabel) return null;
+
+  const current = loadInvestmentInstruments();
+  const byId = input.id ? current.find((item) => item.id === input.id) : null;
+  const byLabel = current.find((item) => normalizeText(item.label) === normalizeText(normalizedLabel));
+  const existing = byId || byLabel || null;
+
+  const nextBase = {
+    id: existing?.id || input.id || crypto.randomUUID(),
+    label: normalizedLabel,
+    currency: input.currency,
+    createdAt: existing?.createdAt || nowIso(),
+  } satisfies Omit<WealthInvestmentInstrument, 'note' | 'excludedMonths'>;
+
+  const note = String(input.note || existing?.note || '').trim();
+  const next: WealthInvestmentInstrument = note ? { ...nextBase, note } : nextBase;
+  if (existing?.excludedMonths?.length) next.excludedMonths = [...existing.excludedMonths];
+
+  const merged = existing
+    ? current.map((item) => (item.id === existing.id ? next : item))
+    : [...current, next];
+
+  saveInvestmentInstruments(
+    merged.sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label))),
+  );
+  return next;
+};
+
+export const setInvestmentInstrumentMonthExcluded = (
+  instrumentId: string,
+  monthKey: string,
+  excluded: boolean,
+) => {
+  const normalizedMonth = normalizeMonthKey(monthKey);
+  if (!normalizedMonth) return null;
+
+  const current = loadInvestmentInstruments();
+  const idx = current.findIndex((item) => item.id === instrumentId);
+  if (idx < 0) return null;
+
+  const item = current[idx];
+  const months = new Set(item.excludedMonths || []);
+  if (excluded) months.add(normalizedMonth);
+  else months.delete(normalizedMonth);
+
+  const nextItem: WealthInvestmentInstrument =
+    months.size > 0 ? { ...item, excludedMonths: [...months].sort() } : { ...item };
+  if (months.size === 0 && 'excludedMonths' in nextItem) {
+    delete nextItem.excludedMonths;
+  }
+
+  const next = [...current];
+  next[idx] = nextItem;
+  saveInvestmentInstruments(next);
+  return nextItem;
 };
 
 export const saveWealthRecords = (records: WealthRecord[], options?: PersistOptions) => {
@@ -491,6 +632,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const localRecords = loadWealthRecords();
       const localClosures = loadClosures();
       const localFx = loadFxRates();
+      const localInstruments = loadInvestmentInstruments();
       const localUpdatedAt = readWealthUpdatedAt();
 
       const remoteSnap = await getDoc(ref);
@@ -498,10 +640,12 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
       const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
       const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
+      const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
       const remoteUpdatedAt = String(remoteData.updatedAt || '');
 
       const mergedRecords = mergeRecords(localRecords, remoteRecords);
       const mergedClosures = mergeClosures(localClosures, remoteClosures);
+      const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
       const useLocalFx =
         !remoteUpdatedAt || (!!localUpdatedAt && new Date(localUpdatedAt).getTime() >= new Date(remoteUpdatedAt).getTime());
       const mergedFx = useLocalFx ? localFx : remoteFx;
@@ -515,6 +659,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           fx: mergedFx,
           records: mergedRecords,
           closures: mergedClosures,
+          instruments: mergedInstruments,
         }),
         { merge: true },
       );
@@ -522,11 +667,13 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       if (
         !sameRecords(localRecords, mergedRecords) ||
         !sameClosures(localClosures, mergedClosures) ||
+        !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
         JSON.stringify(localFx) !== JSON.stringify(mergedFx)
       ) {
         saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
         saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
         saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
+        saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
         touchWealthUpdatedAt();
         dispatchWealthDataUpdated();
         if (typeof window !== 'undefined') {
@@ -586,15 +733,18 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localRecords = loadWealthRecords();
     const localClosures = loadClosures();
     const localFx = loadFxRates();
+    const localInstruments = loadInvestmentInstruments();
     const localUpdatedAt = readWealthUpdatedAt();
 
     const remoteUpdatedAt = String(data.updatedAt || '');
     const remoteRecords = normalizeRecordsFromRaw(Array.isArray(data.records) ? data.records : []);
     const remoteClosures = loadClosuresFromRaw(Array.isArray(data.closures) ? data.closures : []);
     const remoteFx = normalizeFxRates(data.fx || defaultFxRates);
+    const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(data.instruments) ? data.instruments : []);
 
     const mergedRecords = mergeRecords(localRecords, remoteRecords);
     const mergedClosures = mergeClosures(localClosures, remoteClosures);
+    const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
 
     const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
     const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
@@ -606,12 +756,14 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localNeedsUpdate =
       !sameRecords(localRecords, mergedRecords) ||
       !sameClosures(localClosures, mergedClosures) ||
+      !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
       JSON.stringify(localFx) !== JSON.stringify(mergedFx);
 
     if (localNeedsUpdate) {
       saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
       saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
       saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
+      saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
       touchWealthUpdatedAt();
       dispatchWealthDataUpdated();
       if (typeof window !== 'undefined') {
@@ -623,6 +775,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       (hasLocalData && !hasRemoteData) ||
       !sameRecords(mergedRecords, remoteRecords) ||
       !sameClosures(mergedClosures, remoteClosures) ||
+      !sameInvestmentInstruments(mergedInstruments, remoteInstruments) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
     if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
@@ -669,6 +822,36 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
       return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
     });
+};
+
+const loadInstrumentsFromRaw = (parsed: any[]): WealthInvestmentInstrument[] => {
+  return parsed
+    .map((item: any) => normalizeInvestmentInstrument(item))
+    .filter((item: WealthInvestmentInstrument) => !!item.label)
+    .sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label)));
+};
+
+const mergeInvestmentInstruments = (
+  localItems: WealthInvestmentInstrument[],
+  remoteItems: WealthInvestmentInstrument[],
+) => {
+  const merged = new Map<string, WealthInvestmentInstrument>();
+  for (const item of [...localItems, ...remoteItems]) {
+    const key = normalizeText(item.label);
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, item);
+      continue;
+    }
+
+    const tPrev = new Date(prev.createdAt).getTime();
+    const tCurr = new Date(item.createdAt).getTime();
+    const newer = tCurr >= tPrev ? item : prev;
+    const excludedMonths = [...new Set([...(prev.excludedMonths || []), ...(item.excludedMonths || [])])].sort();
+    merged.set(key, excludedMonths.length ? { ...newer, excludedMonths } : { ...newer });
+  }
+
+  return [...merged.values()].sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label)));
 };
 
 const mergeClosures = (localClosures: WealthMonthlyClosure[], remoteClosures: WealthMonthlyClosure[]) => {

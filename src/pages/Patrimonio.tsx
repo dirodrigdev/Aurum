@@ -8,7 +8,6 @@ import {
   Home,
   Landmark,
   Pencil,
-  Plus,
   Trash2,
   Wallet,
   X,
@@ -20,6 +19,7 @@ import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse } f
 import {
   WealthBlock,
   WealthCurrency,
+  WealthInvestmentInstrument,
   WealthMonthlyClosure,
   WealthRecord,
   createMonthlyClosure,
@@ -33,9 +33,13 @@ import {
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
+  loadInvestmentInstruments,
   loadWealthRecords,
   removeWealthRecord,
+  saveWealthRecords,
+  setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
+  upsertInvestmentInstrument,
   upsertWealthRecord,
 } from '../services/wealthStorage';
 
@@ -353,12 +357,20 @@ interface SectionScreenProps {
   section: MainSection;
   monthKey: string;
   recordsForSection: WealthRecord[];
+  investmentInstruments: WealthInvestmentInstrument[];
   usdClp: number;
   eurClp: number;
   ufClp: number;
   carryMessage: string;
   onBack: () => void;
   onDataChanged: () => void;
+  onCreateInvestmentInstrument: (input: {
+    label: string;
+    currency: WealthCurrency;
+    amount?: number;
+    note?: string;
+  }) => void;
+  onSetInvestmentExcluded: (instrumentId: string, excluded: boolean) => void;
   onUseMissing: (section: MainSection, itemName?: string) => void;
   onApplyMortgageAuto: () => void;
 }
@@ -370,7 +382,38 @@ interface QuickFillDraft {
   label: string;
   amount: string;
   currency: WealthCurrency;
+  note?: string;
   snapshotDate: string;
+}
+
+interface MultiQuickFillDraft {
+  source: string;
+  snapshotDate: string;
+  entries: Array<{
+    id?: string;
+    label: string;
+    currency: WealthCurrency;
+    amount: string;
+    note?: string;
+  }>;
+}
+
+interface InvestmentSourceContext {
+  title: string;
+  sourceHint: string;
+  source: string;
+  labels: Array<{ label: string; currency: WealthCurrency }>;
+  instrumentId?: string;
+  isCustom?: boolean;
+}
+
+interface ChecklistRow {
+  name: string;
+  status: 'actualizado' | 'mes_anterior' | 'estimado' | 'pendiente' | 'excluido';
+  detail: string;
+  isCustomInstrument?: boolean;
+  instrumentId?: string;
+  context?: InvestmentSourceContext;
 }
 
 interface BankMovementsModalState {
@@ -387,12 +430,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
   recordsForSection,
+  investmentInstruments,
   usdClp,
   eurClp,
   ufClp,
   carryMessage,
   onBack,
   onDataChanged,
+  onCreateInvestmentInstrument,
+  onSetInvestmentExcluded,
   onUseMissing,
   onApplyMortgageAuto,
 }) => {
@@ -403,7 +449,17 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
   const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
+  const [multiQuickFill, setMultiQuickFill] = useState<MultiQuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
+  const [openSourceMenu, setOpenSourceMenu] = useState(false);
+  const [activeSourceContext, setActiveSourceContext] = useState<InvestmentSourceContext | null>(null);
+  const [openCreateInvestmentModal, setOpenCreateInvestmentModal] = useState(false);
+  const [newInvestmentDraft, setNewInvestmentDraft] = useState<{
+    label: string;
+    currency: WealthCurrency;
+    amount: string;
+    note: string;
+  }>({ label: '', currency: 'CLP', amount: '', note: '' });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [fintocStatus, setFintocStatus] = useState('');
   const [fintocDiscovering, setFintocDiscovering] = useState(false);
@@ -502,12 +558,203 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return `-${formatCurrencyNoDecimals(value, currency)}`;
   };
 
+  const buildInvestmentContext = (name: string, instrument?: WealthInvestmentInstrument): InvestmentSourceContext => {
+    if (instrument) {
+      return {
+        title: instrument.label,
+        sourceHint: 'auto',
+        source: 'Instrumento manual',
+        labels: [{ label: instrument.label, currency: instrument.currency }],
+        instrumentId: instrument.id,
+        isCustom: true,
+      };
+    }
+
+    const n = normalizeForMatch(name);
+    if (n.includes('sura')) {
+      return {
+        title: 'SURA',
+        sourceHint: 'sura_resumen',
+        source: 'SURA',
+        labels: [
+          { label: 'SURA inversión financiera', currency: 'CLP' },
+          { label: 'SURA ahorro previsional', currency: 'CLP' },
+        ],
+      };
+    }
+    if (n.includes('planvital')) {
+      return {
+        title: 'PlanVital',
+        sourceHint: 'planvital',
+        source: 'PlanVital',
+        labels: [{ label: 'PlanVital saldo total', currency: 'CLP' }],
+      };
+    }
+    if (n.includes('btg')) {
+      return {
+        title: 'BTG',
+        sourceHint: 'btg',
+        source: 'BTG Pactual',
+        labels: [{ label: 'BTG total valorización', currency: 'CLP' }],
+      };
+    }
+    if (n.includes('global66')) {
+      return {
+        title: 'Global66',
+        sourceHint: 'global66',
+        source: 'Global66',
+        labels: [{ label: 'Global66 Cuenta Vista USD', currency: 'USD' }],
+      };
+    }
+    if (n.includes('wise')) {
+      return {
+        title: 'Wise',
+        sourceHint: 'wise',
+        source: 'Wise',
+        labels: [{ label: 'Wise Cuenta principal USD', currency: 'USD' }],
+      };
+    }
+    return {
+      title: name,
+      sourceHint: 'auto',
+      source: 'Manual',
+      labels: [{ label: name, currency: 'CLP' }],
+    };
+  };
+
+  const findRecordForLabel = (label: string, currency?: WealthCurrency) => {
+    const target = normalizeForMatch(label);
+    return recordsForSection.find((r) => {
+      if (r.block !== 'investment') return false;
+      if (currency && r.currency !== currency) return false;
+      return normalizeForMatch(r.label) === target;
+    });
+  };
+
+  const checklistRows = useMemo<ChecklistRow[]>(() => {
+    const baseRows = sectionChecklist[section].map((name): ChecklistRow => {
+      const match = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
+      if (!match) {
+        return {
+          name,
+          status: 'pendiente',
+          detail: 'Sin base previa',
+          context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+        };
+      }
+      if (isCarriedRecord(match)) {
+        return {
+          name,
+          status: 'mes_anterior',
+          detail: `Mes anterior (${match.snapshotDate})`,
+          context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+        };
+      }
+      if (isEstimatedRecord(match)) {
+        return {
+          name,
+          status: 'estimado',
+          detail: `Estimado (${match.snapshotDate})`,
+          context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+        };
+      }
+      return {
+        name,
+        status: 'actualizado',
+        detail: `Actualizado ${match.snapshotDate}`,
+        context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+      };
+    });
+
+    if (section !== 'investment') return baseRows;
+
+    const customRows: ChecklistRow[] = investmentInstruments.map((instrument) => {
+      const isExcluded = (instrument.excludedMonths || []).includes(monthKey);
+      if (isExcluded) {
+        return {
+          name: instrument.label,
+          status: 'excluido',
+          detail: `Excluido en ${monthLabel(monthKey)}`,
+          isCustomInstrument: true,
+          instrumentId: instrument.id,
+          context: buildInvestmentContext(instrument.label, instrument),
+        };
+      }
+
+      const match = findRecordForLabel(instrument.label, instrument.currency);
+      if (!match) {
+        return {
+          name: instrument.label,
+          status: 'pendiente',
+          detail: 'Sin valor este mes',
+          isCustomInstrument: true,
+          instrumentId: instrument.id,
+          context: buildInvestmentContext(instrument.label, instrument),
+        };
+      }
+      if (isCarriedRecord(match)) {
+        return {
+          name: instrument.label,
+          status: 'mes_anterior',
+          detail: `Mes anterior (${match.snapshotDate})`,
+          isCustomInstrument: true,
+          instrumentId: instrument.id,
+          context: buildInvestmentContext(instrument.label, instrument),
+        };
+      }
+      return {
+        name: instrument.label,
+        status: 'actualizado',
+        detail: `Actualizado ${match.snapshotDate}`,
+        isCustomInstrument: true,
+        instrumentId: instrument.id,
+        context: buildInvestmentContext(instrument.label, instrument),
+      };
+    });
+
+    return [...baseRows, ...customRows];
+  }, [section, recordsForSection, investmentInstruments, monthKey]);
+
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
     return getSectionBlock(section);
   };
   const suggestionKey = (item: Pick<EditableSuggestion, 'block' | 'source' | 'label' | 'currency'>) =>
     `${item.block}::${normalizeForMatch(item.source)}::${normalizeForMatch(item.label)}::${item.currency}`;
+
+  const applyInvestmentContextToParsed = (parsed: EditableSuggestion[]): EditableSuggestion[] => {
+    if (section !== 'investment' || !activeSourceContext) return parsed;
+
+    if (activeSourceContext.labels.length === 1) {
+      const target = activeSourceContext.labels[0];
+      const exact = parsed.find((item) => normalizeForMatch(item.label) === normalizeForMatch(target.label));
+      const fallback = exact || parsed[0] || null;
+      if (!fallback) return [];
+      return [
+        {
+          ...fallback,
+          block: 'investment',
+          source: activeSourceContext.source,
+          label: target.label,
+          currency: target.currency,
+        },
+      ];
+    }
+
+    return activeSourceContext.labels
+      .map((target) => {
+        const exact = parsed.find((item) => normalizeForMatch(item.label) === normalizeForMatch(target.label));
+        if (!exact) return null;
+        return {
+          ...exact,
+          block: 'investment' as WealthBlock,
+          source: activeSourceContext.source,
+          label: target.label,
+          currency: target.currency,
+        };
+      })
+      .filter((item): item is EditableSuggestion => !!item);
+  };
 
   const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -526,6 +773,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         block: normalizeSuggestionBlock(item.block),
         snapshotDate: todayYmd(),
       }));
+      parsed = applyInvestmentContextToParsed(parsed);
 
       // En Bienes raíces el documento de dividendo debe traer ambos valores.
       if (section === 'real_estate' && sourceHint === 'dividendo') {
@@ -541,6 +789,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           return;
         }
         parsed = strictDividendParsed;
+      }
+
+      if (section === 'investment' && activeSourceContext?.labels.length && parsed.length < activeSourceContext.labels.length) {
+        setOcrError(
+          `No pude detectar todos los valores de ${activeSourceContext.title}. Intenta una captura más clara o usa "Ingresar monto".`,
+        );
+        return;
       }
 
       if (!parsed.length) {
@@ -611,6 +866,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     setOpenLoadPanel(false);
     setQuickFill(null);
+    setMultiQuickFill(null);
+    setActiveSourceContext(null);
     onDataChanged();
   };
 
@@ -640,6 +897,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setSuggestions([]);
     setOpenLoadPanel(false);
     setQuickFill(null);
+    setMultiQuickFill(null);
+    setActiveSourceContext(null);
     onDataChanged();
   };
 
@@ -662,31 +921,71 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setEditingId(null);
     setOpenLoadPanel(false);
     setQuickFill(null);
+    setMultiQuickFill(null);
+    setActiveSourceContext(null);
     onDataChanged();
   };
 
-  const checklistStatus = useMemo(() => {
-    return sectionChecklist[section].map((name) => {
-      const match = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
-      if (!match) {
-        return { name, status: 'pendiente' as const, detail: 'Sin base previa' };
-      }
-      if (isCarriedRecord(match)) {
-        return { name, status: 'mes_anterior' as const, detail: `Mes anterior (${match.snapshotDate})` };
-      }
-      if (isEstimatedRecord(match)) {
-        return { name, status: 'estimado' as const, detail: `Estimado (${match.snapshotDate})` };
-      }
-      return { name, status: 'actualizado' as const, detail: `Actualizado ${match.snapshotDate}` };
-    });
-  }, [recordsForSection, section]);
-
   const isSectionComplete = useMemo(() => {
-    return checklistStatus.every((row) => row.status !== 'pendiente');
-  }, [checklistStatus]);
+    return checklistRows.every((row) => row.status !== 'pendiente');
+  }, [checklistRows]);
 
-  const openChecklistItem = (name: string) => {
-    const existing = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
+  const closeLoadPanel = () => {
+    setOpenLoadPanel(false);
+    setQuickFill(null);
+    setMultiQuickFill(null);
+    setSuggestions([]);
+    setOcrError('');
+    setOcrText('');
+    setActiveSourceContext(null);
+  };
+
+  const openQuickFillForContext = (context: InvestmentSourceContext) => {
+    if (context.labels.length > 1) {
+      const entries = context.labels.map((entry) => {
+        const existing = findRecordForLabel(entry.label, entry.currency);
+        return {
+          id: existing?.id,
+          label: entry.label,
+          currency: entry.currency,
+          amount: existing ? String(existing.amount) : '',
+          note: existing?.note || undefined,
+        };
+      });
+      setMultiQuickFill({
+        source: context.source,
+        snapshotDate: `${monthKey}-01`,
+        entries,
+      });
+      setQuickFill(null);
+      setOpenLoadPanel(true);
+      return;
+    }
+
+    const entry = context.labels[0];
+    const existing = findRecordForLabel(entry.label, entry.currency);
+    setQuickFill({
+      id: existing?.id,
+      block: 'investment',
+      source: context.source,
+      label: entry.label,
+      amount: existing ? String(existing.amount) : '',
+      currency: entry.currency,
+      note: existing?.note || '',
+      snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
+    });
+    setMultiQuickFill(null);
+    setOpenLoadPanel(true);
+  };
+
+  const openChecklistItem = (row: ChecklistRow) => {
+    if (section === 'investment' && row.context) {
+      setActiveSourceContext(row.context);
+      setOpenSourceMenu(true);
+      return;
+    }
+
+    const existing = recordsForSection.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(row.name)));
     const debtLabels = [
       'Saldo deuda hipotecaria',
       'Dividendo hipotecario mensual',
@@ -695,7 +994,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       'Amortización hipotecaria mensual',
     ];
     const preferredBlock: WealthBlock =
-      section === 'real_estate' && debtLabels.some((d) => normalizeForMatch(name).includes(normalizeForMatch(d)))
+      section === 'real_estate' && debtLabels.some((d) => normalizeForMatch(row.name).includes(normalizeForMatch(d)))
         ? 'debt'
         : section === 'real_estate'
           ? 'real_estate'
@@ -706,10 +1005,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         id: existing?.id,
         block: preferredBlock,
         source: existing?.source || 'manual',
-        label: existing?.label || name,
+        label: existing?.label || row.name,
         amount: existing ? String(existing.amount) : '',
         currency: existing?.currency || 'UF',
-        snapshotDate: existing?.snapshotDate || todayYmd(),
+        snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
       });
       setOpenLoadPanel(true);
       return;
@@ -731,7 +1030,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setDraft({
         ...buildDraft(section),
         block: preferredBlock,
-        label: name,
+        label: row.name,
         currency: buildDraft(section).currency,
       });
     }
@@ -749,9 +1048,39 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       label: quickFill.label,
       amount,
       currency: quickFill.currency,
+      note: quickFill.note?.trim() || undefined,
       snapshotDate: quickFill.snapshotDate,
     });
     setQuickFill(null);
+    setActiveSourceContext(null);
+    setOpenLoadPanel(false);
+    onDataChanged();
+  };
+
+  const saveMultiQuickFill = () => {
+    if (!multiQuickFill) return;
+    const parsedEntries = multiQuickFill.entries
+      .map((entry) => ({
+        ...entry,
+        amountParsed: Number(String(entry.amount || '').replace(/,/g, '.')),
+      }))
+      .filter((entry) => Number.isFinite(entry.amountParsed) && entry.amountParsed > 0);
+    if (!parsedEntries.length) return;
+
+    parsedEntries.forEach((entry) => {
+      upsertWealthRecord({
+        id: entry.id,
+        block: 'investment',
+        source: multiQuickFill.source,
+        label: entry.label,
+        amount: entry.amountParsed,
+        currency: entry.currency,
+        note: entry.note?.trim() || undefined,
+        snapshotDate: multiQuickFill.snapshotDate,
+      });
+    });
+    setMultiQuickFill(null);
+    setActiveSourceContext(null);
     setOpenLoadPanel(false);
     onDataChanged();
   };
@@ -1014,7 +1343,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                                 label: item.label,
                                 amount: existing ? String(existing.amount) : '',
                                 currency: existing?.currency || item.currency,
-                                snapshotDate: existing?.snapshotDate || todayYmd(),
+                                snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
                               });
                               setOpenLoadPanel(true);
                             }}
@@ -1068,7 +1397,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                               label: item.label,
                               amount: existing ? String(existing.amount) : '',
                               currency: existing?.currency || item.currency,
-                              snapshotDate: existing?.snapshotDate || todayYmd(),
+                              snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
                             });
                             setOpenLoadPanel(true);
                           }}
@@ -1155,6 +1484,27 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <button
                   className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
                   onClick={() => {
+                    if (section === 'investment') {
+                      setActiveSourceContext({
+                        title: item.label,
+                        sourceHint: 'auto',
+                        source: item.source,
+                        labels: [{ label: item.label, currency: item.currency }],
+                      });
+                      setQuickFill({
+                        id: item.id,
+                        block: item.block,
+                        source: item.source,
+                        label: item.label,
+                        amount: String(item.amount),
+                        currency: item.currency,
+                        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+                        snapshotDate: item.snapshotDate,
+                      });
+                      setMultiQuickFill(null);
+                      setOpenLoadPanel(true);
+                      return;
+                    }
                     setEditingId(item.id);
                     setDraft({
                       block: item.block,
@@ -1174,6 +1524,27 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <button
                   className="text-slate-400 hover:text-blue-600"
                   onClick={() => {
+                    if (section === 'investment') {
+                      setActiveSourceContext({
+                        title: item.label,
+                        sourceHint: 'auto',
+                        source: item.source,
+                        labels: [{ label: item.label, currency: item.currency }],
+                      });
+                      setQuickFill({
+                        id: item.id,
+                        block: item.block,
+                        source: item.source,
+                        label: item.label,
+                        amount: String(item.amount),
+                        currency: item.currency,
+                        note: isCarriedRecord(item) || isEstimatedRecord(item) ? '' : item.note || '',
+                        snapshotDate: item.snapshotDate,
+                      });
+                      setMultiQuickFill(null);
+                      setOpenLoadPanel(true);
+                      return;
+                    }
                     setEditingId(item.id);
                     setDraft({
                       block: item.block,
@@ -1233,10 +1604,22 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </Button>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center flex-wrap gap-2">
             {section === 'real_estate' && (
               <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
                 Autocálculo hipotecario
+              </Button>
+            )}
+            {section === 'investment' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setNewInvestmentDraft({ label: '', currency: 'CLP', amount: '', note: '' });
+                  setOpenCreateInvestmentModal(true);
+                }}
+              >
+                Agregar inversión
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
@@ -1255,10 +1638,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             Diagnóstico API disponible (modo técnico oculto en esta vista).
           </div>
         )}
-        {checklistStatus.map((row) => (
-          <div key={row.name} className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50">
+        {checklistRows.map((row) => (
+          <div
+            key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
+            className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50"
+          >
             <div className="flex items-center justify-between gap-2">
-              <button className="text-left flex-1" onClick={() => openChecklistItem(row.name)}>
+              <button className="text-left flex-1" onClick={() => openChecklistItem(row)}>
                 <div>{row.name}</div>
                 <div className="text-[11px] text-slate-500">{row.detail}</div>
               </button>
@@ -1272,6 +1658,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   Usar mes anterior
                 </Button>
               )}
+              {section === 'investment' && row.isCustomInstrument && row.instrumentId && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => onSetInvestmentExcluded(row.instrumentId as string, row.status !== 'excluido')}
+                >
+                  {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
+                </Button>
+              )}
               <span
                 className={
                   row.status === 'actualizado'
@@ -1280,7 +1676,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       ? 'text-amber-700'
                       : row.status === 'estimado'
                         ? 'text-indigo-700'
-                        : 'text-red-700'
+                        : row.status === 'excluido'
+                          ? 'text-slate-500'
+                          : 'text-red-700'
                 }
               >
                 {row.status === 'actualizado'
@@ -1289,33 +1687,171 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     ? 'Mes anterior'
                     : row.status === 'estimado'
                       ? 'Estimado'
-                      : 'Pendiente'}
+                      : row.status === 'excluido'
+                        ? 'Excluido'
+                        : 'Pendiente'}
               </span>
             </div>
           </div>
         ))}
       </Card>
 
-      {openLoadPanel && (
+      {openSourceMenu && activeSourceContext && (
         <>
           <div
             className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
             onClick={() => {
-              setOpenLoadPanel(false);
-              setQuickFill(null);
+              setOpenSourceMenu(false);
+              setActiveSourceContext(null);
             }}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+            <div className="w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+              <Card className="p-4 space-y-3 shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">{activeSourceContext.title}</div>
+                    <div className="text-xs text-slate-500">Selecciona cómo quieres actualizar esta fuente.</div>
+                  </div>
+                  <button
+                    className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
+                    onClick={() => {
+                      setOpenSourceMenu(false);
+                      setActiveSourceContext(null);
+                    }}
+                    aria-label="Cerrar"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <Button
+                  onClick={() => {
+                    setSourceHint(activeSourceContext.sourceHint);
+                    setQuickFill(null);
+                    setMultiQuickFill(null);
+                    setSuggestions([]);
+                    setOcrError('');
+                    setOcrText('');
+                    setOpenSourceMenu(false);
+                    setOpenLoadPanel(true);
+                  }}
+                >
+                  Subir imagen
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOpenSourceMenu(false);
+                    openQuickFillForContext(activeSourceContext);
+                  }}
+                >
+                  Ingresar monto
+                </Button>
+                {activeSourceContext.isCustom && activeSourceContext.instrumentId && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      const row = checklistRows.find((item) => item.instrumentId === activeSourceContext.instrumentId);
+                      onSetInvestmentExcluded(activeSourceContext.instrumentId as string, row?.status !== 'excluido');
+                      setOpenSourceMenu(false);
+                      setActiveSourceContext(null);
+                    }}
+                  >
+                    {(() => {
+                      const row = checklistRows.find((item) => item.instrumentId === activeSourceContext.instrumentId);
+                      return row?.status === 'excluido' ? 'Incluir este mes' : 'Excluir este mes';
+                    })()}
+                  </Button>
+                )}
+              </Card>
+            </div>
+          </div>
+        </>
+      )}
+
+      {openCreateInvestmentModal && section === 'investment' && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
+            onClick={() => setOpenCreateInvestmentModal(false)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
+            <div className="w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+              <Card className="p-4 space-y-3 shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold">Agregar inversión</div>
+                  <button
+                    className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
+                    onClick={() => setOpenCreateInvestmentModal(false)}
+                    aria-label="Cerrar"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <Input
+                  placeholder="Nombre del instrumento"
+                  value={newInvestmentDraft.label}
+                  onChange={(event) => setNewInvestmentDraft((prev) => ({ ...prev, label: event.target.value }))}
+                />
+                <Select
+                  options={currencyOptions.filter((item) => item.value !== 'UF')}
+                  value={newInvestmentDraft.currency}
+                  onChange={(event) =>
+                    setNewInvestmentDraft((prev) => ({ ...prev, currency: event.target.value as WealthCurrency }))
+                  }
+                />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Monto inicial (opcional)"
+                  value={newInvestmentDraft.amount}
+                  onChange={(event) => setNewInvestmentDraft((prev) => ({ ...prev, amount: event.target.value }))}
+                />
+                <Input
+                  placeholder="Nota (opcional)"
+                  value={newInvestmentDraft.note}
+                  onChange={(event) => setNewInvestmentDraft((prev) => ({ ...prev, note: event.target.value }))}
+                />
+                <Button
+                  disabled={!newInvestmentDraft.label.trim()}
+                  onClick={() => {
+                    const amountNum = Number(String(newInvestmentDraft.amount || '').replace(/,/g, '.'));
+                    onCreateInvestmentInstrument({
+                      label: newInvestmentDraft.label,
+                      currency: newInvestmentDraft.currency,
+                      amount:
+                        Number.isFinite(amountNum) && amountNum > 0
+                          ? amountNum
+                          : undefined,
+                      note: newInvestmentDraft.note.trim() || undefined,
+                    });
+                    setOpenCreateInvestmentModal(false);
+                  }}
+                >
+                  Crear instrumento
+                </Button>
+              </Card>
+            </div>
+          </div>
+        </>
+      )}
+
+      {openLoadPanel && (
+        <>
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40"
+            onClick={closeLoadPanel}
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
             <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
               <Card className="p-4 space-y-3 max-h-[84vh] overflow-y-auto shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold">Cargar información</div>
+                  <div className="text-sm font-semibold">
+                    {activeSourceContext ? `Cargar ${activeSourceContext.title}` : 'Cargar información'}
+                  </div>
                   <button
                     className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center"
-                    onClick={() => {
-                      setOpenLoadPanel(false);
-                      setQuickFill(null);
-                    }}
+                    onClick={closeLoadPanel}
                   >
                     <X size={14} />
                   </button>
@@ -1333,7 +1869,37 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       onChange={(e) => setQuickFill({ ...quickFill, amount: e.target.value })}
                     />
                     <div className="text-[11px] text-slate-500">Moneda: {quickFill.currency}</div>
+                    <Input
+                      placeholder="Nota (opcional)"
+                      value={quickFill.note || ''}
+                      onChange={(e) => setQuickFill({ ...quickFill, note: e.target.value })}
+                    />
                     <Button onClick={saveQuickFill}>Guardar</Button>
+                  </div>
+                ) : multiQuickFill ? (
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold">Ingresar valores</div>
+                    <div className="text-xs text-slate-600">{multiQuickFill.source}</div>
+                    <div className="space-y-2">
+                      {multiQuickFill.entries.map((entry, idx) => (
+                        <div key={`${entry.label}-${idx}`} className="rounded-lg border border-slate-200 p-2 space-y-2">
+                          <div className="text-xs font-medium text-slate-700">{entry.label}</div>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="Monto"
+                            value={entry.amount}
+                            onChange={(e) => {
+                              const next = [...multiQuickFill.entries];
+                              next[idx] = { ...next[idx], amount: e.target.value };
+                              setMultiQuickFill({ ...multiQuickFill, entries: next });
+                            }}
+                          />
+                          <div className="text-[11px] text-slate-500">Moneda: {entry.currency}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <Button onClick={saveMultiQuickFill}>Guardar</Button>
                   </div>
                 ) : (
                   <>
@@ -1346,16 +1912,20 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       <input type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
                     </label>
 
-                    <details>
-                      <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
-                      <div className="mt-2 space-y-2">
-                        <Select
-                          options={sourceOptionsBySection[section]}
-                          value={sourceHint}
-                          onChange={(e) => setSourceHint(e.target.value)}
-                        />
-                      </div>
-                    </details>
+                    {activeSourceContext ? (
+                      <div className="text-[11px] text-slate-500">Fuente fija: {activeSourceContext.title}</div>
+                    ) : (
+                      <details>
+                        <summary className="text-xs text-slate-500 cursor-pointer">Opciones avanzadas</summary>
+                        <div className="mt-2 space-y-2">
+                          <Select
+                            options={sourceOptionsBySection[section]}
+                            value={sourceHint}
+                            onChange={(e) => setSourceHint(e.target.value)}
+                          />
+                        </div>
+                      </details>
+                    )}
 
                     {ocrProgress && <div className="text-xs text-slate-500">Leyendo: {ocrProgress.pct}%</div>}
                     {ocrError && <div className="text-xs text-red-600">{ocrError}</div>}
@@ -1432,52 +2002,54 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       </div>
                     )}
 
-                    <details>
-                      <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
-                      <div className="mt-2 space-y-2">
-                    {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
-                    <Input
-                      placeholder="Nombre del activo"
-                      value={draft.label}
-                      onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      {section === 'real_estate' ? (
-                        <Select
-                          options={realEstateBlockOptions}
-                          value={draft.block}
-                          onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
-                        />
-                      ) : (
-                        <Input disabled value={sectionLabel[section]} />
-                      )}
-                      <Select
-                        options={currencyOptions}
-                        value={draft.currency}
-                        onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input
-                        type="number"
-                        placeholder="Monto"
-                        value={draft.amount}
-                        onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
-                      />
-                      <Input
-                        type="date"
-                        value={draft.snapshotDate}
-                        onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
-                      />
-                    </div>
-                    <Input
-                      placeholder="Fuente"
-                      value={draft.source}
-                      onChange={(e) => setDraft({ ...draft, source: e.target.value })}
-                    />
-                        <Button onClick={saveDraft}>Guardar registro</Button>
-                      </div>
-                    </details>
+                    {section !== 'investment' && (
+                      <details>
+                        <summary className="text-sm font-medium cursor-pointer">Carga manual (secundario)</summary>
+                        <div className="mt-2 space-y-2">
+                          {editingId && <div className="text-xs text-blue-700">Editando registro</div>}
+                          <Input
+                            placeholder="Nombre del activo"
+                            value={draft.label}
+                            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            {section === 'real_estate' ? (
+                              <Select
+                                options={realEstateBlockOptions}
+                                value={draft.block}
+                                onChange={(e) => setDraft({ ...draft, block: e.target.value as WealthBlock })}
+                              />
+                            ) : (
+                              <Input disabled value={sectionLabel[section]} />
+                            )}
+                            <Select
+                              options={currencyOptions}
+                              value={draft.currency}
+                              onChange={(e) => setDraft({ ...draft, currency: e.target.value as WealthCurrency })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              type="number"
+                              placeholder="Monto"
+                              value={draft.amount}
+                              onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
+                            />
+                            <Input
+                              type="date"
+                              value={draft.snapshotDate}
+                              onChange={(e) => setDraft({ ...draft, snapshotDate: e.target.value })}
+                            />
+                          </div>
+                          <Input
+                            placeholder="Fuente"
+                            value={draft.source}
+                            onChange={(e) => setDraft({ ...draft, source: e.target.value })}
+                          />
+                          <Button onClick={saveDraft}>Guardar registro</Button>
+                        </div>
+                      </details>
+                    )}
 
                     {!!ocrText && (
                       <details className="text-xs text-slate-500">
@@ -1495,18 +2067,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </>
       )}
 
-      {!openLoadPanel && section !== 'real_estate' && (
-        <button
-          className="fixed right-5 bottom-24 h-14 w-14 rounded-full bg-[#4d5f3b] text-white shadow-lg flex items-center justify-center z-30"
-          onClick={() => {
-            setQuickFill(null);
-            setOpenLoadPanel(true);
-          }}
-          aria-label="Sumar información"
-        >
-          <Plus size={22} />
-        </button>
-      )}
     </div>
   );
 };
@@ -1514,6 +2074,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 export const Patrimonio: React.FC = () => {
   const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => loadClosures());
+  const [investmentInstruments, setInvestmentInstruments] = useState<WealthInvestmentInstrument[]>(() =>
+    loadInvestmentInstruments(),
+  );
   const [fx, setFx] = useState(() => loadFxRates());
   const [hydrationReady, setHydrationReady] = useState(false);
 
@@ -1537,6 +2100,7 @@ export const Patrimonio: React.FC = () => {
       await hydrateWealthFromCloud();
       setRecords(loadWealthRecords());
       setClosures(loadClosures());
+      setInvestmentInstruments(loadInvestmentInstruments());
       refreshFx();
     };
     const onVisibility = () => {
@@ -1575,6 +2139,7 @@ export const Patrimonio: React.FC = () => {
       if (!alive) return;
       setRecords(loadWealthRecords());
       setClosures(loadClosures());
+      setInvestmentInstruments(loadInvestmentInstruments());
       setFx(loadFxRates());
       setHydrationReady(true);
     })();
@@ -1653,6 +2218,7 @@ export const Patrimonio: React.FC = () => {
 
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
+  const refreshInstruments = () => setInvestmentInstruments(loadInvestmentInstruments());
 
   const recordsForSection = useMemo(() => {
     if (!activeSection) return [];
@@ -1671,7 +2237,82 @@ export const Patrimonio: React.FC = () => {
     return monthRecords.filter((r) => r.block === activeSection);
   }, [activeSection, monthRecords]);
 
+  const missingCustomInvestmentLabels = useMemo(() => {
+    return investmentInstruments
+      .filter((instrument) => !(instrument.excludedMonths || []).includes(monthKey))
+      .filter((instrument) => {
+        return !monthRecords.some(
+          (record) =>
+            record.block === 'investment' &&
+            record.currency === instrument.currency &&
+            normalizeForMatch(record.label) === normalizeForMatch(instrument.label),
+        );
+      })
+      .map((instrument) => instrument.label);
+  }, [investmentInstruments, monthKey, monthRecords]);
+
+  const createInvestmentInstrument = (input: {
+    label: string;
+    currency: WealthCurrency;
+    amount?: number;
+    note?: string;
+  }) => {
+    const instrument = upsertInvestmentInstrument({
+      label: input.label,
+      currency: input.currency,
+      note: input.note,
+    });
+    if (!instrument) return;
+
+    if (typeof input.amount === 'number' && Number.isFinite(input.amount) && input.amount > 0) {
+      upsertWealthRecord({
+        block: 'investment',
+        source: 'Instrumento manual',
+        label: instrument.label,
+        amount: input.amount,
+        currency: instrument.currency,
+        note: input.note || undefined,
+        snapshotDate: `${monthKey}-01`,
+      });
+    }
+    refreshRecords();
+    refreshInstruments();
+    setCarryMessage('');
+  };
+
+  const setInvestmentExcluded = (instrumentId: string, excluded: boolean) => {
+    const updated = setInvestmentInstrumentMonthExcluded(instrumentId, monthKey, excluded);
+    if (!updated) return;
+
+    if (excluded) {
+      const next = loadWealthRecords().filter(
+        (record) =>
+          !(
+            record.block === 'investment' &&
+            record.snapshotDate.startsWith(`${monthKey}-`) &&
+            record.currency === updated.currency &&
+            normalizeForMatch(record.label) === normalizeForMatch(updated.label)
+          ),
+      );
+      saveWealthRecords(next);
+    }
+
+    refreshRecords();
+    refreshInstruments();
+    setCarryMessage(
+      excluded
+        ? `"${updated.label}" quedó excluido de ${monthLabel(monthKey).toLowerCase()}.`
+        : `"${updated.label}" volvió a considerarse en ${monthLabel(monthKey).toLowerCase()}.`,
+    );
+  };
+
   const runMonthlyClose = () => {
+    if (missingCustomInvestmentLabels.length) {
+      setCloseError(
+        `No se puede cerrar: faltan instrumentos sin valor (${missingCustomInvestmentLabels.join(', ')}). Cárgalos o exclúyelos este mes.`,
+      );
+      return;
+    }
     const hasCarriedValues = monthRecords.some(
       (r) =>
         isCarriedRecord(r) && (r.block === 'investment' || r.block === 'real_estate' || r.block === 'debt'),
@@ -1790,6 +2431,7 @@ export const Patrimonio: React.FC = () => {
           section={activeSection}
           monthKey={monthKey}
           recordsForSection={recordsForSection}
+          investmentInstruments={investmentInstruments}
           usdClp={fx.usdClp}
           eurClp={fx.eurClp}
           ufClp={fx.ufClp}
@@ -1800,8 +2442,11 @@ export const Patrimonio: React.FC = () => {
           }}
           onDataChanged={() => {
             refreshRecords();
+            refreshInstruments();
             setCarryMessage('');
           }}
+          onCreateInvestmentInstrument={createInvestmentInstrument}
+          onSetInvestmentExcluded={setInvestmentExcluded}
           onUseMissing={useMissingFromPrevious}
           onApplyMortgageAuto={applyMortgageAutoNow}
         />
