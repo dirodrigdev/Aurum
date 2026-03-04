@@ -209,6 +209,38 @@ const isApiSource = (source: string) => {
 const isMortgagePrincipalLabel = (label: string) => {
   return normalizeForMatch(label).includes(normalizeForMatch('saldo deuda hipotecaria'));
 };
+const isManualLikeSource = (source: string) => {
+  const normalized = normalizeForMatch(source);
+  return (
+    normalized.includes('manual') ||
+    normalized.includes('base inicial') ||
+    normalized.includes('instrumento')
+  );
+};
+
+const formatRecordUpdatedStamp = (record: WealthRecord) => {
+  const created = new Date(record.createdAt);
+  if (!Number.isFinite(created.getTime())) return record.snapshotDate;
+
+  const now = new Date();
+  const isToday =
+    created.getFullYear() === now.getFullYear() &&
+    created.getMonth() === now.getMonth() &&
+    created.getDate() === now.getDate();
+  const time = created.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return `hoy ${time}`;
+
+  const dayMonth = created.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' }).replace('.', '');
+  return `${dayMonth} ${time}`;
+};
+
+const displayRecordOrigin = (record: WealthRecord) => {
+  if (isCarriedRecord(record)) return 'Mes anterior';
+  if (isEstimatedRecord(record)) return 'Sistema';
+  if (isApiSource(record.source)) return 'API';
+  if (isManualLikeSource(record.source)) return 'Manual';
+  return 'Imagen';
+};
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 const readPreferredDisplayCurrency = (): WealthCurrency => {
@@ -660,7 +692,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name,
           status: 'pendiente',
-          detail: 'Sin base previa',
+          detail: 'Sin dato este mes',
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
         };
       }
@@ -668,7 +700,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name,
           status: 'mes_anterior',
-          detail: `Mes anterior (${match.snapshotDate})`,
+          detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
         };
       }
@@ -676,14 +708,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name,
           status: 'estimado',
-          detail: `Estimado (${match.snapshotDate})`,
+          detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
         };
       }
       return {
         name,
         status: 'actualizado',
-        detail: `Actualizado ${match.snapshotDate}`,
+        detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
         context: section === 'investment' ? buildInvestmentContext(name) : undefined,
       };
     });
@@ -696,7 +728,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name: instrument.label,
           status: 'excluido',
-          detail: `Excluido en ${monthLabel(monthKey)}`,
+          detail: `No considerado en ${monthLabel(monthKey).toLowerCase()}`,
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
@@ -718,7 +750,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name: instrument.label,
           status: 'mes_anterior',
-          detail: `Mes anterior (${match.snapshotDate})`,
+          detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
@@ -727,7 +759,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return {
         name: instrument.label,
         status: 'actualizado',
-        detail: `Actualizado ${match.snapshotDate}`,
+        detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
         isCustomInstrument: true,
         instrumentId: instrument.id,
         context: buildInvestmentContext(instrument.label, instrument),
@@ -1675,29 +1707,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
                 </Button>
               )}
-              <span
-                className={
-                  row.status === 'actualizado'
-                    ? 'text-emerald-700'
-                    : row.status === 'mes_anterior'
-                      ? 'text-amber-700'
-                      : row.status === 'estimado'
-                        ? 'text-indigo-700'
-                        : row.status === 'excluido'
-                          ? 'text-slate-500'
-                          : 'text-red-700'
-                }
-              >
-                {row.status === 'actualizado'
-                  ? 'Actualizado'
-                  : row.status === 'mes_anterior'
-                    ? 'Mes anterior'
-                    : row.status === 'estimado'
-                      ? 'Estimado'
-                      : row.status === 'excluido'
-                        ? 'Excluido'
-                        : 'Pendiente'}
-              </span>
+              {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
+              {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
             </div>
           </div>
         ))}
