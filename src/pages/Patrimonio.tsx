@@ -1006,8 +1006,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const total = checklistRows.length;
     const pending = checklistRows.filter((row) => row.status === 'pendiente').length;
     const excluded = checklistRows.filter((row) => row.status === 'excluido').length;
-    const updated = total - pending - excluded;
-    return { total, pending, excluded, updated };
+    const notUpdated = checklistRows.filter((row) => row.status === 'mes_anterior' || row.status === 'estimado').length;
+    const updated = checklistRows.filter((row) => row.status === 'actualizado').length;
+    const completed = total - pending - excluded;
+    return { total, pending, excluded, notUpdated, updated, completed };
   }, [checklistRows]);
 
   const closeLoadPanel = () => {
@@ -1640,16 +1642,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       <Card className="p-4 space-y-2 border border-slate-200 bg-slate-50/80">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
-          {checklistSummary.pending === 0 && (
+          {checklistSummary.pending === 0 && checklistSummary.notUpdated === 0 && (
             <div className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-700">
               <CheckCircle2 size={12} />
               Todo cargado
             </div>
           )}
+          {checklistSummary.pending === 0 && checklistSummary.notUpdated > 0 && (
+            <div className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
+              <CheckCircle2 size={12} />
+              Completo con arrastres
+            </div>
+          )}
         </div>
         <div className="text-[11px] text-slate-600">
-          Actualizadas {checklistSummary.updated} de {checklistSummary.total}
+          Completadas {checklistSummary.completed} de {checklistSummary.total}
           {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
+          {checklistSummary.notUpdated ? ` · No actualizadas ${checklistSummary.notUpdated}` : ''}
+          {checklistSummary.updated ? ` · Actualizadas ${checklistSummary.updated}` : ''}
           {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
         </div>
         {section === 'bank' ? (
@@ -2161,6 +2171,10 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
   }, [displayCurrency]);
+
+  useEffect(() => {
+    setCarryMessage('');
+  }, [activeSection]);
 
   useEffect(() => {
     const goPatrimonioHome = () => {
