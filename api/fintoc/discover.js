@@ -150,7 +150,8 @@ export default async function handler(req, res) {
       const movementCount = movementsProbe.items || 0;
       movementTotal += movementCount;
       const movementRows = parseArrayPayload(movementsProbe.response.json);
-      const movementsSample = movementRows.slice(0, 5).map((m) => ({
+      // Mantener una muestra amplia para poder mostrar scroll completo en UI.
+      const movementsSample = movementRows.slice(0, 200).map((m) => ({
         id: String(m?.id || ''),
         description: String(m?.description || m?.memo || m?.name || ''),
         amount: asNumber(m?.amount || m?.amount_in_account_currency || m?.transaction_amount),

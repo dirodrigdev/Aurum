@@ -141,7 +141,8 @@ export default async function handler(req, res) {
         secretKey,
       );
       const movements = movementResponse.ok ? parseMovementsFromPayload(movementResponse.json) : [];
-      const sample = movements.slice(0, 5).map((m) => ({
+      // Mantener una muestra amplia para poder mostrar scroll completo en UI.
+      const sample = movements.slice(0, 200).map((m) => ({
         id: String(m?.id || ''),
         description: String(m?.description || m?.memo || m?.name || ''),
         amount: asNumber(m?.amount || m?.amount_in_account_currency || m?.transaction_amount),

@@ -430,6 +430,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return {
         bankClp: 0,
         bankUsd: 0,
+        cardClp: 0,
+        cardUsd: 0,
         movements: [] as Array<{
           bank: string;
           account: string;
@@ -452,6 +454,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     const bankClp = bankDetails.filter((r) => r.currency === 'CLP').reduce((sum, r) => sum + r.amount, 0);
     const bankUsd = bankDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
+    const cardClp = cardDetails.filter((r) => r.currency === 'CLP').reduce((sum, r) => sum + r.amount, 0);
+    const cardUsd = cardDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
 
     const syncAccounts = fintocLastSync?.assets?.length
       ? fintocLastSync.assets
@@ -467,7 +471,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: (toWealthCurrency(m.currency) || toWealthCurrency(acc.currency) || 'CLP') as WealthCurrency,
       })),
     );
-    return { bankClp, bankUsd, movements: allMovements };
+    return { bankClp, bankUsd, cardClp, cardUsd, movements: allMovements };
   }, [section, recordsForSection, fintocLastSync, fintocDiscovery]);
 
   const modalMovements = useMemo(() => {
@@ -935,6 +939,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankUsd, 'USD')}</div>
             </div>
           </div>
+          <div className="grid md:grid-cols-2 gap-2">
+            <div className="rounded-xl p-2 border border-rose-200 bg-rose-50 text-left">
+              <div className="text-[11px] text-rose-700">Deuda tarjetas CLP</div>
+              <div className="text-lg font-semibold text-rose-700">-{formatCurrency(bankDashboard.cardClp, 'CLP')}</div>
+            </div>
+            <div className="rounded-xl p-2 border border-rose-200 bg-rose-50 text-left">
+              <div className="text-[11px] text-rose-700">Deuda tarjetas USD</div>
+              <div className="text-lg font-semibold text-rose-700">-{formatCurrency(bankDashboard.cardUsd, 'USD')}</div>
+            </div>
+          </div>
 
           <details open className="rounded-lg border border-slate-200 bg-slate-50 p-2">
             <summary className="cursor-pointer text-sm font-medium">Bancos manuales (Chile / Scotia / Santander)</summary>
@@ -957,7 +971,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       return (
                         <button
                           key={item.label}
-                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-left hover:bg-slate-100 relative"
+                          className={`rounded-lg px-2 py-2 text-left relative ${
+                            existing
+                              ? 'border border-slate-700 bg-slate-100/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]'
+                              : 'border border-slate-200 bg-slate-50 hover:bg-slate-100'
+                          }`}
                           onClick={() => {
                             setMovementsModal({ bank: group.bank, currency: item.currency });
                           }}
@@ -1071,13 +1089,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     <X size={14} />
                   </button>
                 </div>
-                <div className="mt-3 space-y-1">
+                <div className="mt-3 space-y-1 max-h-[62vh] overflow-y-auto pr-1">
                   {!modalMovements.length && (
                     <div className="text-xs text-slate-500">
                       Sin movimientos detectados para este banco en {movementsModal.currency}.
                     </div>
                   )}
-                  {modalMovements.slice(0, 30).map((mv, idx) => (
+                  {modalMovements.map((mv, idx) => (
                     <div
                       key={`${mv.bank}-${mv.account}-${idx}`}
                       className="grid grid-cols-[90px_1fr_130px] gap-2 text-xs border-b border-slate-100 py-1"
