@@ -153,6 +153,16 @@ const isSyntheticAggregateLabel = (record: Pick<WealthRecord, 'label' | 'block'>
   return false;
 };
 
+const isMortgageMetaDebtLabel = (labelValue: string) => {
+  const label = normalizeText(labelValue);
+  return (
+    label.includes(normalizeText('dividendo hipotecario')) ||
+    label.includes(normalizeText('amortizacion hipotecaria')) ||
+    label.includes(normalizeText('interes hipotecario')) ||
+    label.includes(normalizeText('seguros hipotecarios'))
+  );
+};
+
 const isDeprecatedSuraTotalRecord = (
   record: Pick<WealthRecord, 'label' | 'source' | 'block'>,
 ) => {
@@ -615,6 +625,7 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
     byBlock[item.block][item.currency] += item.amount;
 
     if (item.block === 'debt') {
+      if (isMortgageMetaDebtLabel(item.label)) continue;
       debtsByCurrency[item.currency] += item.amount;
     } else {
       assetsByCurrency[item.currency] += item.amount;
