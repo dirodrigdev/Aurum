@@ -246,6 +246,14 @@ const formatCurrency = (value: number, currency: WealthCurrency) => {
   return `${sign}${groupWithDots(intPart)},${decimalPart} ${currency}`;
 };
 
+const formatCurrencyNoDecimals = (value: number, currency: WealthCurrency) => {
+  const rounded = Math.round(value);
+  const sign = rounded < 0 ? '-' : '';
+  if (currency === 'CLP') return `${sign}$${groupWithDots(rounded)}`;
+  if (currency === 'UF') return `${sign}${groupWithDots(rounded)} UF`;
+  return `${sign}${groupWithDots(rounded)} ${currency}`;
+};
+
 const toWealthCurrency = (currency: string): WealthCurrency | null => {
   const normalized = String(currency || '').trim().toUpperCase();
   if (normalized === 'CLP' || normalized === 'USD' || normalized === 'EUR' || normalized === 'UF') {
@@ -432,6 +440,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         bankUsd: 0,
         cardClp: 0,
         cardUsd: 0,
+        hasCardClpData: false,
+        hasCardUsdData: false,
         movements: [] as Array<{
           bank: string;
           account: string;
@@ -456,6 +466,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const bankUsd = bankDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
     const cardClp = cardDetails.filter((r) => r.currency === 'CLP').reduce((sum, r) => sum + r.amount, 0);
     const cardUsd = cardDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
+    const hasCardClpData = cardDetails.some((r) => r.currency === 'CLP');
+    const hasCardUsdData = cardDetails.some((r) => r.currency === 'USD');
 
     const syncAccounts = fintocLastSync?.assets?.length
       ? fintocLastSync.assets
@@ -471,7 +483,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: (toWealthCurrency(m.currency) || toWealthCurrency(acc.currency) || 'CLP') as WealthCurrency,
       })),
     );
-    return { bankClp, bankUsd, cardClp, cardUsd, movements: allMovements };
+    return { bankClp, bankUsd, cardClp, cardUsd, hasCardClpData, hasCardUsdData, movements: allMovements };
   }, [section, recordsForSection, fintocLastSync, fintocDiscovery]);
 
   const modalMovements = useMemo(() => {
@@ -483,6 +495,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return movementBank.includes(targetBank) || targetBank.includes(movementBank);
     });
   }, [bankDashboard.movements, movementsModal]);
+
+  const renderCardDebtTotal = (hasData: boolean, value: number, currency: WealthCurrency) => {
+    if (!hasData) return '';
+    if (Math.round(value) === 0) return '';
+    return `-${formatCurrencyNoDecimals(value, currency)}`;
+  };
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
     if (section === 'real_estate') return block === 'debt' ? 'debt' : 'real_estate';
@@ -932,21 +950,25 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           <div className="grid md:grid-cols-2 gap-2">
             <div className="rounded-xl p-3 text-white bg-gradient-to-r from-cyan-600 to-blue-500 text-left">
               <div className="text-xs opacity-90">Total CLP disponible</div>
-              <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankClp, 'CLP')}</div>
+              <div className="text-2xl font-bold">{formatCurrencyNoDecimals(bankDashboard.bankClp, 'CLP')}</div>
             </div>
             <div className="rounded-xl p-3 text-white bg-gradient-to-r from-teal-600 to-sky-500 text-left">
               <div className="text-xs opacity-90">Total USD disponible</div>
-              <div className="text-2xl font-bold">{formatCurrency(bankDashboard.bankUsd, 'USD')}</div>
+              <div className="text-2xl font-bold">{formatCurrencyNoDecimals(bankDashboard.bankUsd, 'USD')}</div>
             </div>
           </div>
           <div className="grid md:grid-cols-2 gap-2">
             <div className="rounded-xl p-2 border border-rose-200 bg-rose-50 text-left">
               <div className="text-[11px] text-rose-700">Deuda tarjetas CLP</div>
-              <div className="text-lg font-semibold text-rose-700">-{formatCurrency(bankDashboard.cardClp, 'CLP')}</div>
+              <div className="text-lg font-semibold text-rose-700">
+                {renderCardDebtTotal(bankDashboard.hasCardClpData, bankDashboard.cardClp, 'CLP')}
+              </div>
             </div>
             <div className="rounded-xl p-2 border border-rose-200 bg-rose-50 text-left">
               <div className="text-[11px] text-rose-700">Deuda tarjetas USD</div>
-              <div className="text-lg font-semibold text-rose-700">-{formatCurrency(bankDashboard.cardUsd, 'USD')}</div>
+              <div className="text-lg font-semibold text-rose-700">
+                {renderCardDebtTotal(bankDashboard.hasCardUsdData, bankDashboard.cardUsd, 'USD')}
+              </div>
             </div>
           </div>
 
