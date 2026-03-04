@@ -16,7 +16,7 @@ import {
 import { Button, Card, Input, Select } from '../components/Components';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
-import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse, syncFintocAccounts } from '../services/bankApi';
+import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse } from '../services/bankApi';
 import {
   WealthBlock,
   WealthCurrency,
@@ -109,10 +109,7 @@ const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
 
 const FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
 const FINTOC_BANK_TOKENS_KEY = 'aurum.fintoc.bank_tokens.v1';
-const FINTOC_SYNC_PREFIX_ACCOUNT = 'Cuenta bancaria:';
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
-const FINTOC_SYNC_PREFIX_BANK_TOTAL = 'Saldo bancos ';
-const FINTOC_SYNC_PREFIX_CARD_TOTAL = 'Deuda tarjetas ';
 const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Banco de Chile CLP', currency: 'CLP' },
   { label: 'Banco de Chile USD', currency: 'USD' },
@@ -373,6 +370,11 @@ interface BankMovementsModalState {
   currency: WealthCurrency;
 }
 
+interface BankMovementMeta {
+  known: boolean;
+  count: number;
+}
+
 const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
@@ -395,7 +397,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [fintocSyncing, setFintocSyncing] = useState(false);
   const [fintocStatus, setFintocStatus] = useState('');
   const [fintocDiscovering, setFintocDiscovering] = useState(false);
   const [fintocDiscovery, setFintocDiscovery] = useState<FintocDiscoverResponse | null>(null);
@@ -405,6 +406,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   } | null>(null);
   const [bankTokens, setBankTokens] = useState<Partial<Record<BankProviderId, string>>>(() => readBankTokens());
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
+  const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
+  const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
 
   useEffect(() => {
     if (section !== 'bank') return;
@@ -757,181 +760,28 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return entered;
   };
 
-  const runFintocSync = async (bankId: BankProviderId) => {
+  const runFintocDiscovery = async (bankId: BankProviderId, options?: { silent?: boolean }) => {
     if (section !== 'bank') return;
-    const bankName = BANK_PROVIDERS.find((bank) => bank.id === bankId)?.label || 'Banco';
-    const linkToken = ensureBankToken(bankId);
-    if (!linkToken) return;
-
-    setFintocSyncing(true);
-    setFintocStatus('');
-
-    try {
-      const result = await syncFintocAccounts(linkToken);
-      if (!result.ok) {
-        setFintocStatus(`Error API: ${result.error || 'No se pudo sincronizar.'}`);
-        return;
-      }
-
-      const snapshotDate = todayYmd();
-      const detectedInstitution = String(result.summary?.institution || bankName).trim() || bankName;
-      const assets = result.accounts.filter((acc) => !isCreditCardAccount(acc)).map((acc) => ({ ...acc, bank: detectedInstitution }));
-      const cards = result.accounts.filter((acc) => isCreditCardAccount(acc)).map((acc) => ({ ...acc, bank: detectedInstitution }));
-      let syncedAssets = assets;
-      let syncedCards = cards;
-      const movementCount = result.accounts.reduce((sum, acc) => sum + (acc.movementCount || 0), 0);
-      if (movementCount === 0) {
-        const discovered = await discoverFintocData(linkToken);
-        if (discovered.ok) {
-          setFintocDiscovery(discovered);
-          const discoveryBank = String(discovered.summary.institution || detectedInstitution).trim() || detectedInstitution;
-          syncedAssets = discovered.accounts
-            .filter((acc) => !isCreditCardAccount(acc))
-            .map((acc) => ({ ...acc, bank: discoveryBank }));
-          syncedCards = discovered.accounts
-            .filter((acc) => isCreditCardAccount(acc))
-            .map((acc) => ({ ...acc, bank: discoveryBank }));
-        }
-      }
-      const bankTag = `[${detectedInstitution}]`;
-      setFintocLastSync((prev) => ({
-        assets: mergeAccounts(prev?.assets || [], syncedAssets),
-        cards: mergeAccounts(prev?.cards || [], syncedCards),
-      }));
-
-      const staleFintocRows = recordsForSection.filter((record) => {
-        const source = normalizeForMatch(record.source);
-        if (!source.includes('fintoc')) return false;
-        const label = record.label || '';
-        return label.includes(bankTag);
-      });
-      staleFintocRows.forEach((row) => removeWealthRecord(row.id));
-
-      const upsertByLabel = (
-        block: WealthBlock,
-        label: string,
-        currency: WealthCurrency,
-        amount: number,
-        note?: string,
-      ) => {
-        const existing = recordsForSection.find(
-          (r) =>
-            normalizeForMatch(r.label) === normalizeForMatch(label) &&
-            r.currency === currency &&
-            r.block === block,
-        );
-        upsertWealthRecord({
-          id: existing?.id,
-          block,
-          source: 'Fintoc API',
-          label,
-          amount: Math.max(0, amount),
-          currency,
-          snapshotDate,
-          note,
-        });
-      };
-
-      syncedAssets.forEach((account) => {
-        const currency = toWealthCurrency(account.currency);
-        if (!currency) return;
-        const label = `${FINTOC_SYNC_PREFIX_ACCOUNT} ${bankTag}: ${account.name}${account.number ? ` · ${account.number}` : ''}`;
-        const note = `Tipo: ${account.type || 'N/D'} · Movimientos: ${account.movementCount || 0}`;
-        upsertByLabel('bank', label, currency, account.balance, note);
-      });
-
-      syncedCards.forEach((card) => {
-        const currency = toWealthCurrency(card.currency);
-        if (!currency) return;
-        const label = `${FINTOC_SYNC_PREFIX_CARD} ${bankTag}: ${card.name}${card.number ? ` · ${card.number}` : ''}`;
-        const note = `Tipo: ${card.type || 'N/D'} · Movimientos: ${card.movementCount || 0}`;
-        upsertByLabel('debt', label, currency, Math.abs(card.balance), note);
-      });
-
-      const providerTotals = syncedAssets.reduce(
-        (acc, account) => {
-          const currency = toWealthCurrency(account.currency);
-          if (!currency) return acc;
-          if (currency === 'CLP') acc.clp += account.balance;
-          if (currency === 'USD') acc.usd += account.balance;
-          return acc;
-        },
-        { clp: 0, usd: 0 },
-      );
-
-      // Rellena automáticamente los bloques manuales por banco (los cuadros de abajo).
-      const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
-      upsertByLabel(
-        'bank',
-        `${manualProviderPrefix} CLP`,
-        'CLP',
-        providerTotals.clp,
-        `API ${detectedInstitution} (${syncedAssets.length} cuentas)`,
-      );
-      upsertByLabel(
-        'bank',
-        `${manualProviderPrefix} USD`,
-        'USD',
-        providerTotals.usd,
-        `API ${detectedInstitution} (${syncedAssets.length} cuentas)`,
-      );
-
-      const refreshedMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthKey);
-      const refreshedBankDetails = refreshedMonthRecords.filter((record) => {
-        if (record.block !== 'bank') return false;
-        return MANUAL_BANK_ITEMS.some((item) => item.label === record.label);
-      });
-      const refreshedCardDetails = refreshedMonthRecords.filter(
-        (record) =>
-          record.block === 'debt' &&
-          (record.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((item) => item.label === record.label)),
-      );
-
-      const totals = {
-        bankClp: refreshedBankDetails.filter((record) => record.currency === 'CLP').reduce((sum, record) => sum + record.amount, 0),
-        bankUsd: refreshedBankDetails.filter((record) => record.currency === 'USD').reduce((sum, record) => sum + record.amount, 0),
-        cardClp: refreshedCardDetails.filter((record) => record.currency === 'CLP').reduce((sum, record) => sum + record.amount, 0),
-        cardUsd: refreshedCardDetails.filter((record) => record.currency === 'USD').reduce((sum, record) => sum + record.amount, 0),
-      };
-
-      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totals.bankClp, 'Calculado desde detalle de cuentas');
-      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totals.bankUsd, 'Calculado desde detalle de cuentas');
-      upsertByLabel('debt', 'Deuda tarjetas CLP', 'CLP', totals.cardClp, 'Calculado desde detalle de tarjetas');
-      upsertByLabel('debt', 'Deuda tarjetas USD', 'USD', totals.cardUsd, 'Calculado desde detalle de tarjetas');
-
-      const detectedMovements = [...syncedAssets, ...syncedCards].reduce(
-        (sum, account) => sum + (account.movementCount || 0),
-        0,
-      );
-      onDataChanged();
-      setFintocStatus(
-        `Sincronizado ${detectedInstitution}: ${syncedAssets.length} cuentas + ${syncedCards.length} tarjetas (${detectedMovements} mov).`,
-      );
-    } catch (error: any) {
-      setFintocStatus(`Error API: ${error?.message || 'No se pudo sincronizar.'}`);
-    } finally {
-      setFintocSyncing(false);
-    }
-  };
-
-  const runFintocDiscovery = async (bankId: BankProviderId) => {
-    if (section !== 'bank') return;
+    const silent = !!options?.silent;
     const bankName = BANK_PROVIDERS.find((bank) => bank.id === bankId)?.label || 'Banco';
     const linkToken = ensureBankToken(bankId);
     if (!linkToken) return;
 
     setFintocDiscovering(true);
-    setFintocStatus('');
-    setFintocDiscovery(null);
+    if (!silent) {
+      setFintocStatus('');
+      setFintocDiscovery(null);
+    }
 
     try {
       const result = await discoverFintocData(linkToken);
       if (!result.ok) {
-        setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
+        if (!silent) setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
+        setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
         return;
       }
       const snapshotDate = todayYmd();
-      setFintocDiscovery(result);
+      if (!silent) setFintocDiscovery(result);
       const discoveryBank = String(result.summary.institution || bankName).trim() || bankName;
       setFintocLastSync((prev) => ({
         assets: mergeAccounts(
@@ -1003,16 +853,54 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const totalUsd = refreshedBankDetails.filter((record) => record.currency === 'USD').reduce((sum, record) => sum + record.amount, 0);
       upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totalClp, 'Calculado desde detalle de cuentas');
       upsertByLabel('bank', 'Saldo bancos USD', 'USD', totalUsd, 'Calculado desde detalle de cuentas');
+      const movementProbes = (result.probes || []).filter((probe) => probe.endpoint.includes('/movements'));
+      const movementKnown = movementProbes.some((probe) => probe.ok);
+      const movementCount = movementKnown
+        ? movementProbes.reduce((sum, probe) => sum + (probe.ok ? probe.items : 0), 0)
+        : 0;
+      setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: movementKnown, count: movementCount } }));
       onDataChanged();
-      setFintocStatus(
-        `Exploración ${discoveryBank}: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos.`,
-      );
+      if (!silent) {
+        setFintocStatus(
+          `Exploración ${discoveryBank}: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos.`,
+        );
+      }
     } catch (error: any) {
-      setFintocStatus(`Error API: ${error?.message || 'No se pudo explorar.'}`);
+      if (!silent) setFintocStatus(`Error API: ${error?.message || 'No se pudo explorar.'}`);
+      setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
     } finally {
       setFintocDiscovering(false);
     }
   };
+
+  const runUpdateAllBanks = async (silent = false) => {
+    if (section !== 'bank') return;
+    const banksWithToken = BANK_PROVIDERS.filter((bank) => {
+      const token = (bankTokens[bank.id] || '').trim();
+      return !!token;
+    });
+    if (!banksWithToken.length) {
+      if (!silent) setFintocStatus('No hay tokens guardados. Carga al menos un token de banco.');
+      return;
+    }
+
+    setUpdatingAllBanks(true);
+    if (!silent) setFintocStatus('');
+    for (const bank of banksWithToken) {
+      // eslint-disable-next-line no-await-in-loop
+      await runFintocDiscovery(bank.id, { silent: true });
+    }
+    setUpdatingAllBanks(false);
+    if (!silent) {
+      setFintocStatus(`Bancos actualizados: ${banksWithToken.map((b) => b.label).join(', ')}.`);
+    }
+  };
+
+  useEffect(() => {
+    if (section !== 'bank') return;
+    void runUpdateAllBanks(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section]);
 
   return (
     <div className="space-y-4 pb-24">
@@ -1057,9 +945,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   <div className="grid md:grid-cols-2 gap-2">
                     {group.items.map((item) => {
                       const existing = recordsForSection.find((r) => r.label === item.label);
-                      const bankMovementsCount = bankDashboard.movements.filter(
-                        (movement) => movement.bank === group.bank && movement.currency === item.currency,
-                      ).length;
+                      const providerId = BANK_PROVIDERS.find((bank) => bank.label === group.bank)?.id;
+                      const movementMeta = providerId ? bankMovementMeta[providerId] : undefined;
+                      const movementLabel = !movementMeta
+                        ? 'S/I movimientos'
+                        : !movementMeta.known
+                          ? 'S/I movimientos'
+                          : movementMeta.count === 0
+                            ? '0 movimientos'
+                            : `${movementMeta.count} movimientos`;
                       return (
                         <button
                           key={item.label}
@@ -1103,9 +997,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                           <div className="text-sm font-semibold text-slate-900 mt-1">
                             {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-1">
-                            {bankMovementsCount ? `${bankMovementsCount} movimientos` : 'Sin movimientos'}
-                          </div>
+                          <div className="text-[11px] text-slate-500 mt-1">{movementLabel}</div>
                         </button>
                       );
                     })}
@@ -1285,17 +1177,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   </div>
                   <div className="mt-2 flex items-center gap-1">
                     <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
-                      Token
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => runFintocDiscovery(bank.id)} disabled={fintocDiscovering}>
-                      {fintocDiscovering ? '...' : 'Explorar'}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => runFintocSync(bank.id)} disabled={fintocSyncing}>
-                      {fintocSyncing ? '...' : 'Sync'}
+                      Cambiar token
                     </Button>
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
+                {updatingAllBanks || fintocDiscovering ? 'Actualizando...' : 'Actualizar bancos'}
+              </Button>
             </div>
             <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
               Completar pendientes con mes anterior
@@ -1319,24 +1210,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             {fintocStatus}
           </div>
         )}
-        {section === 'bank' && fintocDiscovery && (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="text-xs text-slate-600">
-              Última exploración: <span className="font-medium">{fintocDiscovery.summary.institution}</span> ·{' '}
-              {fintocDiscovery.summary.accounts} cuentas · {fintocDiscovery.summary.movements} movimientos
-            </div>
-            {!!fintocDiscovery.probes.length && (
-              <details>
-                <summary className="text-xs text-slate-500 cursor-pointer">Ver endpoints probados</summary>
-                <div className="mt-2 space-y-1">
-                  {fintocDiscovery.probes.map((probe, idx) => (
-                    <div key={`${probe.endpoint}-${idx}`} className="text-[11px] text-slate-600">
-                      [{probe.ok ? 'OK' : 'FAIL'} {probe.status}] {probe.endpoint} · items: {probe.items}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
+        {section === 'bank' && !!fintocDiscovery && (
+          <div className="text-[11px] text-slate-500">
+            Diagnóstico API disponible (modo técnico oculto en esta vista).
           </div>
         )}
         {checklistStatus.map((row) => (
