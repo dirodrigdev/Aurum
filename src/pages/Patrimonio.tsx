@@ -609,6 +609,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return { bankClp, bankUsd, cardClp, cardUsd, hasCardClpData, hasCardUsdData, movements: allMovements };
   }, [section, dedupedSectionRecords, fintocLastSync, fintocDiscovery]);
 
+  const bankApiPresenceByProvider = useMemo(() => {
+    const result: Record<BankProviderId, boolean> = { bchile: false, scotia: false, santander: false };
+    for (const record of dedupedSectionRecords) {
+      if (record.block !== 'bank' || !isApiSource(record.source)) continue;
+      const label = normalizeForMatch(record.label);
+      if (label.includes(normalizeForMatch('Banco de Chile'))) result.bchile = true;
+      if (label.includes(normalizeForMatch('Scotiabank'))) result.scotia = true;
+      if (label.includes(normalizeForMatch('Santander'))) result.santander = true;
+    }
+    return result;
+  }, [dedupedSectionRecords]);
+
   const modalMovements = useMemo(() => {
     if (!movementsModal) return [];
     const targetBank = normalizeForMatch(movementsModal.bank);
@@ -1705,7 +1717,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
                   <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5">
-                    Token: {bankTokens[bank.id] ? 'guardado' : 'pendiente'}
+                    {bankTokens[bank.id]
+                      ? 'Token: guardado'
+                      : bankApiPresenceByProvider[bank.id]
+                        ? 'Token: no guardado en este dispositivo (hay datos API)'
+                        : 'Token: pendiente'}
                   </div>
                   <div className="mt-2 flex items-center gap-1">
                     <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
