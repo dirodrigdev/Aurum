@@ -990,6 +990,25 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return checklistRows.every((row) => row.status !== 'pendiente');
   }, [checklistRows]);
 
+  const sortedChecklistRows = useMemo(() => {
+    const weight = (row: ChecklistRow) => {
+      if (row.status === 'pendiente') return 0;
+      if (row.status === 'mes_anterior') return 1;
+      if (row.status === 'estimado') return 2;
+      if (row.status === 'actualizado') return 3;
+      return 4;
+    };
+    return [...checklistRows].sort((a, b) => weight(a) - weight(b));
+  }, [checklistRows]);
+
+  const checklistSummary = useMemo(() => {
+    const total = checklistRows.length;
+    const pending = checklistRows.filter((row) => row.status === 'pendiente').length;
+    const excluded = checklistRows.filter((row) => row.status === 'excluido').length;
+    const updated = total - pending - excluded;
+    return { total, pending, excluded, updated };
+  }, [checklistRows]);
+
   const closeLoadPanel = () => {
     setOpenLoadPanel(false);
     setQuickFill(null);
@@ -1580,15 +1599,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       )}
 
       {section !== 'bank' && (
-        <Card className="p-4 space-y-2">
-          <div className="text-sm font-semibold">Cómo se compone</div>
+        <Card className="p-4 space-y-2 border border-slate-200 shadow-sm bg-white">
+          <div className="text-sm font-semibold text-slate-900">Cómo se compone</div>
           {recordsForSection.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
           {recordsForSection.map((item) => (
             <div key={item.id} className="flex items-center justify-between text-xs border border-slate-100 rounded-lg px-2 py-1">
               <div>
                 <div className="font-medium text-slate-800">{item.label}</div>
-                <div className="text-slate-500">{item.source} · {item.snapshotDate}</div>
-                {item.note && <div className="text-[11px] text-slate-500">{item.note}</div>}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1619,8 +1636,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </Card>
       )}
 
-      <Card className="p-4 space-y-2">
-        <div className="text-sm font-semibold">Checklist del bloque</div>
+      <Card className="p-4 space-y-2 border border-slate-200 bg-slate-50/80">
+        <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
+        <div className="text-[11px] text-slate-600">
+          Actualizadas {checklistSummary.updated} de {checklistSummary.total}
+          {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
+          {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
+        </div>
         {section === 'bank' ? (
           <div className="space-y-2">
             <div className="grid md:grid-cols-3 gap-2">
@@ -1670,10 +1692,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             Diagnóstico API disponible (modo técnico oculto en esta vista).
           </div>
         )}
-        {checklistRows.map((row) => (
+        {sortedChecklistRows.map((row) => (
           <div
             key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
-            className="w-full text-xs rounded-lg border border-slate-100 px-2 py-1 hover:bg-slate-50 cursor-pointer"
+            className="w-full text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 hover:bg-slate-100/60 cursor-pointer"
             onClick={() => openChecklistItem(row)}
           >
             <div className="flex items-center justify-between gap-2">
