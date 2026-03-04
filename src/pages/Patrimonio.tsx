@@ -45,6 +45,7 @@ import {
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
+const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 
 const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
@@ -1326,7 +1327,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <div className="mt-2 text-lg font-bold text-slate-900">{sectionLabel[section]}</div>
         <div className="text-xs text-slate-600">{monthLabel(monthKey)}</div>
         {section === 'bank' ? (
-          <div className="mt-3 text-sm font-medium text-slate-700">Vista informativa (no consolida patrimonio)</div>
+          <div className="mt-3 text-sm font-medium text-slate-700">Vista operativa (impacta patrimonio neto)</div>
         ) : section === 'real_estate' && !isSectionComplete ? (
           <>
             <div className="mt-3 text-3xl font-semibold text-slate-900">--</div>
@@ -1608,18 +1609,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 Autocálculo hipotecario
               </Button>
             )}
-            {section === 'investment' && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setNewInvestmentDraft({ label: '', currency: 'CLP', amount: '', note: '' });
-                  setOpenCreateInvestmentModal(true);
-                }}
-              >
-                Agregar inversión
-              </Button>
-            )}
             <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
               Completar pendientes con mes anterior
             </Button>
@@ -1699,6 +1688,20 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </div>
           </div>
         ))}
+        {section === 'investment' && (
+          <div className="pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setNewInvestmentDraft({ label: '', currency: 'CLP', amount: '', note: '' });
+                setOpenCreateInvestmentModal(true);
+              }}
+            >
+              Agregar inversión
+            </Button>
+          </div>
+        )}
       </Card>
 
       {openSourceMenu && activeSourceContext && (
@@ -2100,6 +2103,19 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
   }, [displayCurrency]);
+
+  useEffect(() => {
+    const goPatrimonioHome = () => {
+      setActiveSection(null);
+      setCarryMessage('');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    window.addEventListener(NAVIGATE_PATRIMONIO_HOME_EVENT, goPatrimonioHome as EventListener);
+    return () => {
+      window.removeEventListener(NAVIGATE_PATRIMONIO_HOME_EVENT, goPatrimonioHome as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     const refreshFx = () => setFx(loadFxRates());
@@ -2508,6 +2524,9 @@ export const Patrimonio: React.FC = () => {
                       ) : (
                         <span className="inline-block rounded-md bg-white/20 px-2 py-1 blur-[1.4px] select-none">■■■■■■■■</span>
                       )}
+                    </div>
+                    <div className="mt-1 text-[11px] text-orange-100/80">
+                      Incluye inversiones + bienes raíces + bancos - deudas (tarjetas e hipotecarias).
                     </div>
                   </button>
 

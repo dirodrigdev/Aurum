@@ -62,6 +62,7 @@ const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
 const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
+const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
@@ -266,6 +267,20 @@ const normalizeRecordsFromRaw = (raw: any[]): WealthRecord[] =>
     .filter((item: WealthRecord) => Number.isFinite(item.amount))
     .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item));
 
+const normalizeDeletedRecordIds = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set(
+    raw
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  );
+  return [...unique].sort((a, b) => a.localeCompare(b));
+};
+
+const mergeDeletedRecordIds = (localIds: string[], remoteIds: string[]): string[] => {
+  return normalizeDeletedRecordIds([...localIds, ...remoteIds]);
+};
+
 const mergeRecords = (localRecords: WealthRecord[], remoteRecords: WealthRecord[]): WealthRecord[] => {
   const merged = new Map<string, WealthRecord>();
   for (const item of [...localRecords, ...remoteRecords]) {
@@ -314,6 +329,14 @@ const sameInvestmentInstruments = (a: WealthInvestmentInstrument[], b: WealthInv
   return true;
 };
 
+const sameStringList = (a: string[], b: string[]) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};
+
 export const loadWealthRecords = (): WealthRecord[] => {
   try {
     const raw = localStorage.getItem(RECORDS_KEY);
@@ -345,6 +368,23 @@ export const loadInvestmentInstruments = (): WealthInvestmentInstrument[] => {
   } catch {
     return [];
   }
+};
+
+const loadDeletedRecordIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(DELETED_RECORD_IDS_KEY);
+    if (!raw) return [];
+    return normalizeDeletedRecordIds(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+};
+
+const saveDeletedRecordIds = (ids: string[], options?: PersistOptions) => {
+  localStorage.setItem(DELETED_RECORD_IDS_KEY, JSON.stringify(normalizeDeletedRecordIds(ids)));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
 export const saveInvestmentInstruments = (items: WealthInvestmentInstrument[], options?: PersistOptions) => {
@@ -448,12 +488,20 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
   const merged = existing ? current.map((r) => (r.id === id ? next : r)) : [next, ...current];
 
   saveWealthRecords(merged.sort(sortByCreatedDesc));
+  const deletedIds = loadDeletedRecordIds();
+  if (deletedIds.includes(id)) {
+    saveDeletedRecordIds(deletedIds.filter((item) => item !== id));
+  }
   return next;
 };
 
 export const removeWealthRecord = (id: string) => {
   const next = loadWealthRecords().filter((r) => r.id !== id);
   saveWealthRecords(next);
+  const deletedIds = loadDeletedRecordIds();
+  if (!deletedIds.includes(id)) {
+    saveDeletedRecordIds([...deletedIds, id]);
+  }
 };
 
 export const loadFxRates = (): WealthFxRates => {
@@ -633,6 +681,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const localClosures = loadClosures();
       const localFx = loadFxRates();
       const localInstruments = loadInvestmentInstruments();
+      const localDeletedRecordIds = loadDeletedRecordIds();
       const localUpdatedAt = readWealthUpdatedAt();
 
       const remoteSnap = await getDoc(ref);
@@ -641,9 +690,12 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
       const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
       const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
+      const remoteDeletedRecordIds = normalizeDeletedRecordIds(remoteData.deletedRecordIds);
       const remoteUpdatedAt = String(remoteData.updatedAt || '');
 
-      const mergedRecords = mergeRecords(localRecords, remoteRecords);
+      const mergedDeletedRecordIds = mergeDeletedRecordIds(localDeletedRecordIds, remoteDeletedRecordIds);
+      const mergedDeletedSet = new Set(mergedDeletedRecordIds);
+      const mergedRecords = mergeRecords(localRecords, remoteRecords).filter((record) => !mergedDeletedSet.has(record.id));
       const mergedClosures = mergeClosures(localClosures, remoteClosures);
       const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
       const useLocalFx =
@@ -660,6 +712,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           records: mergedRecords,
           closures: mergedClosures,
           instruments: mergedInstruments,
+          deletedRecordIds: mergedDeletedRecordIds,
         }),
         { merge: true },
       );
@@ -668,12 +721,14 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         !sameRecords(localRecords, mergedRecords) ||
         !sameClosures(localClosures, mergedClosures) ||
         !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
+        !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
         JSON.stringify(localFx) !== JSON.stringify(mergedFx)
       ) {
         saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
         saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
         saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
         saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
+        saveDeletedRecordIds(mergedDeletedRecordIds, { skipCloudSync: true, silent: true });
         touchWealthUpdatedAt();
         dispatchWealthDataUpdated();
         if (typeof window !== 'undefined') {
@@ -734,6 +789,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localClosures = loadClosures();
     const localFx = loadFxRates();
     const localInstruments = loadInvestmentInstruments();
+    const localDeletedRecordIds = loadDeletedRecordIds();
     const localUpdatedAt = readWealthUpdatedAt();
 
     const remoteUpdatedAt = String(data.updatedAt || '');
@@ -741,8 +797,11 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const remoteClosures = loadClosuresFromRaw(Array.isArray(data.closures) ? data.closures : []);
     const remoteFx = normalizeFxRates(data.fx || defaultFxRates);
     const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(data.instruments) ? data.instruments : []);
+    const remoteDeletedRecordIds = normalizeDeletedRecordIds(data.deletedRecordIds);
 
-    const mergedRecords = mergeRecords(localRecords, remoteRecords);
+    const mergedDeletedRecordIds = mergeDeletedRecordIds(localDeletedRecordIds, remoteDeletedRecordIds);
+    const mergedDeletedSet = new Set(mergedDeletedRecordIds);
+    const mergedRecords = mergeRecords(localRecords, remoteRecords).filter((record) => !mergedDeletedSet.has(record.id));
     const mergedClosures = mergeClosures(localClosures, remoteClosures);
     const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
 
@@ -757,6 +816,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameRecords(localRecords, mergedRecords) ||
       !sameClosures(localClosures, mergedClosures) ||
       !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
+      !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
       JSON.stringify(localFx) !== JSON.stringify(mergedFx);
 
     if (localNeedsUpdate) {
@@ -764,6 +824,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
       saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
       saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
+      saveDeletedRecordIds(mergedDeletedRecordIds, { skipCloudSync: true, silent: true });
       touchWealthUpdatedAt();
       dispatchWealthDataUpdated();
       if (typeof window !== 'undefined') {
@@ -776,6 +837,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameRecords(mergedRecords, remoteRecords) ||
       !sameClosures(mergedClosures, remoteClosures) ||
       !sameInvestmentInstruments(mergedInstruments, remoteInstruments) ||
+      !sameStringList(mergedDeletedRecordIds, remoteDeletedRecordIds) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
     if (cloudNeedsUpdate) scheduleWealthCloudSync(10);

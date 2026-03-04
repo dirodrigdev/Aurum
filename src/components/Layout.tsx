@@ -3,6 +3,8 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
 import { cn, ConnectionBanner, FirestoreStatusBanner } from './Components';
 
+const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
+
 export const Layout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -62,6 +64,12 @@ export const Layout: React.FC = () => {
               <Link
                 key={item.to}
                 to={item.to}
+                onClick={(event) => {
+                  if (item.to === '/patrimonio' && location.pathname === '/patrimonio') {
+                    event.preventDefault();
+                    window.dispatchEvent(new CustomEvent(NAVIGATE_PATRIMONIO_HOME_EVENT));
+                  }
+                }}
                 className={cn(
                   'flex flex-col items-center gap-0.5 flex-1 text-[11px] touch-manipulation',
                   isActive ? 'text-blue-600' : 'text-slate-400',
