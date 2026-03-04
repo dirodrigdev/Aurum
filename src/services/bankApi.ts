@@ -7,6 +7,7 @@ export interface FintocAccountNormalized {
   number?: string;
   holder?: string;
   movementCount?: number;
+  bank?: string;
   movementsSample?: Array<{
     id: string;
     description: string;
@@ -18,6 +19,9 @@ export interface FintocAccountNormalized {
 
 export interface FintocSyncResponse {
   ok: boolean;
+  summary?: {
+    institution?: string;
+  };
   accounts: FintocAccountNormalized[];
   totals: {
     clp: number;
@@ -88,6 +92,7 @@ export const syncFintocAccounts = async (linkToken: string): Promise<FintocSyncR
 
   return {
     ok: true,
+    summary: payload?.summary,
     accounts,
     totals,
     debug: payload?.debug,

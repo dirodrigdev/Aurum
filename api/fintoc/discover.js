@@ -159,20 +159,27 @@ export default async function handler(req, res) {
         ),
         date: String(m?.post_date || m?.date || m?.transaction_date || ''),
       }));
+      const accountCurrency = normalizeCurrency(account?.currency || account?.balance?.currency);
+      const normalizedSample = movementsSample.map((movement) => {
+        if ((accountCurrency === 'USD' || accountCurrency === 'EUR') && Math.abs(movement.amount) >= 100000) {
+          return { ...movement, amount: movement.amount / 100 };
+        }
+        return movement;
+      });
 
       normalizedAccounts.push({
         id: accountId,
         name: String(account?.name || account?.official_name || account?.holder_name || 'Cuenta'),
-        currency: normalizeCurrency(account?.currency || account?.balance?.currency),
+        currency: accountCurrency,
         balance: maybeRescaleFxBalance(
-          normalizeCurrency(account?.currency || account?.balance?.currency),
+          accountCurrency,
           readBalance(account),
         ),
         type: String(account?.type || account?.subtype || ''),
         number: String(account?.number || account?.masked_number || ''),
         holder: String(account?.holder_name || account?.holder || ''),
         movementCount,
-        movementsSample,
+        movementsSample: normalizedSample,
       });
     }
 

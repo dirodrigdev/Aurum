@@ -53,3 +53,5 @@ Referencia: ver archivo [firebase.env.template](/Users/diegorodriguezpizarro/Doc
 - En módulo Bancos se puede cargar manualmente:
   - Bancos: Banco de Chile, Scotiabank, Santander (CLP/USD)
   - Tarjetas: Visa Banco de Chile, Visa Scotia, Mastercard Scotia, Mastercard Falabella, Mastercard Santander, American Express Santander
+- Tokens `link_token` de Fintoc se guardan en `localStorage` por banco (configuración rápida, editable desde la UI de Bancos).
+- En Bancos, los totales CLP/USD se calculan desde el detalle de cuentas (manual + API), no de valores hardcodeados.

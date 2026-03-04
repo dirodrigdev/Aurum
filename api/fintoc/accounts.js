@@ -42,9 +42,8 @@ const maybeRescaleFxBalance = (account, movements) => {
   if (!account || (account.currency !== 'USD' && account.currency !== 'EUR')) return account;
   const absBalance = Math.abs(asNumber(account.balance));
   if (!absBalance) return account;
-
-  const maxMovement = movements.reduce((max, m) => Math.max(max, Math.abs(asNumber(m?.amount))), 0);
-  const looksLikeCents = Number.isInteger(account.balance) && absBalance >= 100000 && maxMovement > 0 && absBalance > maxMovement * 15;
+  // En varios bancos Fintoc entrega moneda dura en centavos (181890 -> 1,818.90).
+  const looksLikeCents = Number.isInteger(account.balance) && absBalance >= 100000;
   if (!looksLikeCents) return account;
 
   return {
@@ -111,6 +110,10 @@ export default async function handler(req, res) {
   }
 
   try {
+    const byLink = await requestFintoc(`/links/${encodeURIComponent(linkToken)}`, secretKey);
+    const institution =
+      String(byLink.json?.institution?.name || byLink.json?.institution || byLink.json?.holder_name || '').trim() || 'Banco';
+
     // Intento 1: endpoint de cuentas por link_token (más directo para MVP).
     const byQuery = await requestFintoc(`/accounts?link_token=${encodeURIComponent(linkToken)}`, secretKey);
     let accounts = parseAccountsFromPayload(byQuery.json);
@@ -118,7 +121,6 @@ export default async function handler(req, res) {
 
     // Intento 2 (fallback): obtener el link y usar sus cuentas embebidas.
     if (!accounts.length) {
-      const byLink = await requestFintoc(`/links/${encodeURIComponent(linkToken)}`, secretKey);
       const fromLink = byLink.json?.accounts;
       if (Array.isArray(fromLink) && fromLink.length) {
         accounts = fromLink;
@@ -147,8 +149,14 @@ export default async function handler(req, res) {
         date: String(m?.post_date || m?.date || m?.transaction_date || ''),
       }));
       const normalizedAccount = maybeRescaleFxBalance(account, sample);
+      const normalizedSample = sample.map((movement) => {
+        if ((normalizedAccount.currency === 'USD' || normalizedAccount.currency === 'EUR') && Math.abs(movement.amount) >= 100000) {
+          return { ...movement, amount: movement.amount / 100 };
+        }
+        return movement;
+      });
       normalizedAccount.movementCount = movements.length;
-      normalizedAccount.movementsSample = sample;
+      normalizedAccount.movementsSample = normalizedSample;
       normalized[index] = normalizedAccount;
       movementsTotal += movements.length;
     }
@@ -166,6 +174,9 @@ export default async function handler(req, res) {
       ok: true,
       accounts: normalized,
       totals,
+      summary: {
+        institution,
+      },
       debug: { source, count: normalized.length, movements: movementsTotal },
     });
   } catch (error) {
