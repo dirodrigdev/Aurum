@@ -2236,6 +2236,7 @@ export const Patrimonio: React.FC = () => {
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
   const [carryMessage, setCarryMessage] = useState('');
   const [closeError, setCloseError] = useState('');
+  const [pendingCloseCarryItems, setPendingCloseCarryItems] = useState<string[] | null>(null);
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
@@ -2399,6 +2400,12 @@ export const Patrimonio: React.FC = () => {
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
   const refreshInstruments = () => setInvestmentInstruments(loadInvestmentInstruments());
+  const completeMonthlyClose = () => {
+    setCloseError('');
+    setPendingCloseCarryItems(null);
+    createMonthlyClosure(monthRecords, fx, toCloseDateFromMonthKey(monthKey));
+    refreshClosures();
+  };
 
   const recordsForSection = useMemo(() => {
     if (!activeSection) return [];
@@ -2513,17 +2520,27 @@ export const Patrimonio: React.FC = () => {
       );
       return;
     }
-    const hasCarriedValues = monthRecords.some(
-      (r) =>
-        isCarriedRecord(r) && (r.block === 'investment' || r.block === 'real_estate' || r.block === 'debt'),
+    const carriedLabels = Array.from(
+      new Set(
+        monthRecords
+          .filter(
+            (r) =>
+              isCarriedRecord(r) &&
+              (r.block === 'investment' ||
+                r.block === 'real_estate' ||
+                (r.block === 'debt' && isMortgagePrincipalLabel(r.label))),
+          )
+          .map((r) => r.label),
+      ),
     );
-    if (hasCarriedValues) {
-      setCloseError('No se puede cerrar el mes: hay valores en estado "Mes anterior". Actualiza esos pendientes.');
+    if (carriedLabels.length) {
+      setPendingCloseCarryItems(carriedLabels);
+      setCloseError(
+        `Hay ${carriedLabels.length} valor(es) en "Mes anterior". Puedes cerrar igual o actualizar esos ítems antes de cerrar.`,
+      );
       return;
     }
-    setCloseError('');
-    createMonthlyClosure(monthRecords, fx, toCloseDateFromMonthKey(monthKey));
-    refreshClosures();
+    completeMonthlyClose();
   };
 
   const useMissingFromPrevious = (section: MainSection, itemName?: string) => {
@@ -2597,29 +2614,21 @@ export const Patrimonio: React.FC = () => {
     if (autoCarryAppliedRef.current.has(monthKey)) return;
     autoCarryAppliedRef.current.add(monthKey);
 
+    const currentMonthRecordCount = latestRecordsForMonth(loadWealthRecords(), monthKey).length;
+    if (currentMonthRecordCount > 0) return;
+
     const init = ensureInitialMortgageDefaults(monthKey, todayYmd());
-    const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
-    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
     if (init.added > 0) {
       refreshRecords();
       setCarryMessage(`Base hipotecaria inicial aplicada (${init.added} registros).`);
       return;
     }
-    if (result.added > 0) {
-      refreshRecords();
-      const msg = [
-        `Completado automático: ${result.added} pendientes con mes anterior (${result.sourceMonth}).`,
-        auto.changed ? `Autocálculo hipotecario aplicado en ${auto.changed} registros.` : '',
-        'Actualiza lo nuevo del mes.',
-      ]
-        .filter(Boolean)
-        .join(' ');
-      setCarryMessage(msg);
-      return;
-    }
-    if (auto.changed > 0) {
-      refreshRecords();
-      setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros.`);
+
+    const previousMonth = loadClosures().find((item) => item.monthKey < monthKey && (item.records?.length || 0) > 0);
+    if (previousMonth) {
+      setCarryMessage(
+        `Hay valores base disponibles de ${previousMonth.monthKey}. Usa "Completar pendientes con mes anterior" si quieres aplicarlos.`,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthKey, hydrationReady]);
@@ -2807,6 +2816,45 @@ export const Patrimonio: React.FC = () => {
           </div>
         </details>
       </Card>
+
+      {pendingCloseCarryItems && (
+        <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="text-base font-semibold text-slate-900">Valores arrastrados detectados</div>
+            <div className="mt-1 text-sm text-slate-600">
+              Puedes cerrar igual este mes o actualizar ahora los valores arrastrados.
+            </div>
+            <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+              {pendingCloseCarryItems.map((item) => (
+                <div key={item} className="py-0.5">
+                  - {item}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPendingCloseCarryItems(null);
+                  setCloseError('Actualiza los ítems arrastrados y vuelve a intentar el cierre.');
+                }}
+              >
+                Revisar
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPendingCloseCarryItems(null);
+                  setCloseError('');
+                }}
+              >
+                Mantener por ahora
+              </Button>
+              <Button onClick={completeMonthlyClose}>Cerrar igual</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
