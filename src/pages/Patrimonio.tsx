@@ -193,6 +193,10 @@ const isCarriedRecord = (record: WealthRecord) => {
 const isEstimatedRecord = (record: WealthRecord) => {
   return String(record.note || '').toLowerCase().includes('estimado');
 };
+const isApiSource = (source: string) => {
+  const normalized = String(source || '').toLowerCase();
+  return normalized.includes('fintoc') || normalized.includes('api');
+};
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 const readPreferredDisplayCurrency = (): WealthCurrency => {
@@ -926,6 +930,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
         return;
       }
+      const snapshotDate = todayYmd();
       setFintocDiscovery(result);
       const discoveryBank = String(result.summary.institution || bankName).trim() || bankName;
       setFintocLastSync((prev) => ({
@@ -938,6 +943,67 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           result.accounts.filter((acc) => isCreditCardAccount(acc)).map((acc) => ({ ...acc, bank: discoveryBank })),
         ),
       }));
+
+      // También actualiza los cuadros principales del banco para evitar que queden "Pendiente" tras explorar.
+      const discoveryAssets = result.accounts.filter((acc) => !isCreditCardAccount(acc));
+      const providerTotals = discoveryAssets.reduce(
+        (acc, account) => {
+          const currency = toWealthCurrency(account.currency);
+          if (!currency) return acc;
+          if (currency === 'CLP') acc.clp += account.balance;
+          if (currency === 'USD') acc.usd += account.balance;
+          return acc;
+        },
+        { clp: 0, usd: 0 },
+      );
+      const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
+      const upsertByLabel = (
+        block: WealthBlock,
+        label: string,
+        currency: WealthCurrency,
+        amount: number,
+        note?: string,
+      ) => {
+        const existing = recordsForSection.find(
+          (r) =>
+            normalizeForMatch(r.label) === normalizeForMatch(label) &&
+            r.currency === currency &&
+            r.block === block,
+        );
+        upsertWealthRecord({
+          id: existing?.id,
+          block,
+          source: 'Fintoc API',
+          label,
+          amount: Math.max(0, amount),
+          currency,
+          snapshotDate,
+          note,
+        });
+      };
+      upsertByLabel(
+        'bank',
+        `${manualProviderPrefix} CLP`,
+        'CLP',
+        providerTotals.clp,
+        `API ${discoveryBank} (${discoveryAssets.length} cuentas)`,
+      );
+      upsertByLabel(
+        'bank',
+        `${manualProviderPrefix} USD`,
+        'USD',
+        providerTotals.usd,
+        `API ${discoveryBank} (${discoveryAssets.length} cuentas)`,
+      );
+      const refreshedMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthKey);
+      const refreshedBankDetails = refreshedMonthRecords.filter(
+        (record) => record.block === 'bank' && MANUAL_BANK_ITEMS.some((item) => item.label === record.label),
+      );
+      const totalClp = refreshedBankDetails.filter((record) => record.currency === 'CLP').reduce((sum, record) => sum + record.amount, 0);
+      const totalUsd = refreshedBankDetails.filter((record) => record.currency === 'USD').reduce((sum, record) => sum + record.amount, 0);
+      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totalClp, 'Calculado desde detalle de cuentas');
+      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totalUsd, 'Calculado desde detalle de cuentas');
+      onDataChanged();
       setFintocStatus(
         `Exploración ${discoveryBank}: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos.`,
       );
@@ -1010,7 +1076,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                               setQuickFill({
                                 id: existing?.id,
                                 block: 'bank',
-                                source: existing?.source || 'Manual bancos',
+                                source: 'Manual bancos',
                                 label: item.label,
                                 amount: existing ? String(existing.amount) : '',
                                 currency: existing?.currency || item.currency,
@@ -1021,6 +1087,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                           >
                             <Pencil size={14} />
                           </span>
+                          {existing && (
+                            <span
+                              className={`absolute right-8 top-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold ${
+                                isApiSource(existing.source)
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-amber-100 text-amber-700'
+                              }`}
+                              title={isApiSource(existing.source) ? 'Valor API/automático' : 'Valor manual'}
+                            >
+                              {isApiSource(existing.source) ? 'A' : 'M'}
+                            </span>
+                          )}
                           <div className="text-xs font-medium text-slate-700">{item.currency}</div>
                           <div className="text-sm font-semibold text-slate-900 mt-1">
                             {existing ? formatCurrency(existing.amount, existing.currency) : 'Pendiente'}
@@ -1031,30 +1109,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         </button>
                       );
                     })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-
-          <details open className="rounded-lg border border-slate-200 bg-white p-2">
-            <summary className="cursor-pointer text-sm font-medium">Cuentas detectadas por API</summary>
-            <div className="mt-2 space-y-1">
-              {!fintocLastSync?.assets?.length && <div className="text-xs text-slate-500">Aún sin cuentas detectadas por API.</div>}
-              {(fintocLastSync?.assets || []).map((acc) => (
-                <div key={`api-asset-${acc.bank || 'Banco'}-${acc.id}`} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-medium text-slate-800">{acc.bank || 'Banco'} · {acc.name}</div>
-                      <div className="text-slate-500">
-                        {acc.type || 'tipo N/D'}
-                        {acc.number ? ` · ${acc.number}` : ''}
-                        {acc.movementCount ? ` · mov: ${acc.movementCount}` : ''}
-                      </div>
-                    </div>
-                    <div className="font-semibold text-slate-900">
-                      {formatCurrency(acc.balance, (toWealthCurrency(acc.currency) || 'CLP'))}
-                    </div>
                   </div>
                 </div>
               ))}
