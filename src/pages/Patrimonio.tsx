@@ -1754,8 +1754,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 </Button>
               )}
               {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
-              {(row.status === 'mes_anterior' || row.status === 'estimado') && (
-                <span className="text-amber-700">No actualizado</span>
+              {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
+              {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
+              {row.status === 'actualizado' && (
+                <span className="inline-flex items-center gap-1 text-emerald-700">
+                  <CheckCircle2 size={12} />
+                  Actualizado
+                </span>
               )}
               {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
             </div>
