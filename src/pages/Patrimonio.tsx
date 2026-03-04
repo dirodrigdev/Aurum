@@ -36,7 +36,7 @@ import {
   loadFxRates,
   loadInvestmentInstruments,
   loadWealthRecords,
-  removeWealthRecord,
+  removeWealthRecordForMonthAsset,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
@@ -1627,7 +1627,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <button
                   className="text-slate-400 hover:text-red-600"
                   onClick={() => {
-                    removeWealthRecord(item.id);
+                    removeWealthRecordForMonthAsset({
+                      block: item.block,
+                      label: item.label,
+                      currency: item.currency,
+                      monthKey,
+                    });
                     onDataChanged();
                   }}
                 >

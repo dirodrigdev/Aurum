@@ -504,6 +504,36 @@ export const removeWealthRecord = (id: string) => {
   }
 };
 
+export const removeWealthRecordForMonthAsset = (input: {
+  block: WealthBlock;
+  label: string;
+  currency: WealthCurrency;
+  monthKey: string;
+}) => {
+  const monthPrefix = `${input.monthKey}-`;
+  const targetLabel = normalizeText(input.label);
+  const current = loadWealthRecords();
+  const removedIds: string[] = [];
+
+  const next = current.filter((record) => {
+    const shouldRemove =
+      record.block === input.block &&
+      record.currency === input.currency &&
+      record.snapshotDate.startsWith(monthPrefix) &&
+      normalizeText(record.label) === targetLabel;
+    if (shouldRemove) removedIds.push(record.id);
+    return !shouldRemove;
+  });
+
+  if (removedIds.length === 0) return 0;
+
+  saveWealthRecords(next);
+  const deletedIds = loadDeletedRecordIds();
+  const mergedDeleted = normalizeDeletedRecordIds([...deletedIds, ...removedIds]);
+  saveDeletedRecordIds(mergedDeleted);
+  return removedIds.length;
+};
+
 export const loadFxRates = (): WealthFxRates => {
   try {
     const raw = localStorage.getItem(FX_KEY);
