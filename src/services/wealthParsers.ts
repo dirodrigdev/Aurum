@@ -260,13 +260,57 @@ const parseSuraDetalle = (text: string): ParsedWealthSuggestion[] => {
 };
 
 const parseBtg = (text: string): ParsedWealthSuggestion[] => {
-  const matches = [...text.matchAll(/valorizaci[oó]n\s*\$\s*([0-9.]+)/gi)];
-  if (!matches.length) return [];
+  const patrimonioTotal = findAmountNearText(
+    text,
+    /patrimonio[^0-9]{0,40}\$?\s*([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{4,})/i,
+  );
+  if (patrimonioTotal && patrimonioTotal > 10_000_000) {
+    return [
+      {
+        source: 'BTG Pactual',
+        block: 'investment',
+        label: 'BTG total valorización',
+        amount: patrimonioTotal,
+        currency: 'CLP',
+        confidence: 0.96,
+        note: 'Detectado desde pantalla general de Patrimonio BTG.',
+      },
+    ];
+  }
 
-  const total = matches.reduce((sum, m) => {
+  const matches = [...text.matchAll(/valorizaci[oó]n\s*\$\s*([0-9.]+)/gi)];
+  const disponibleClp = findAmountNearText(
+    text,
+    /disponible\s+en\s+clp[^0-9]{0,40}\$?\s*([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{2,})/i,
+  );
+  const fondosMutuos = findAmountNearText(
+    text,
+    /fondos\s+mutuos[^0-9]{0,40}\$?\s*([0-9OoIl|Ss][0-9OoIl|Ss\s.,'`´’]{4,})/i,
+  );
+
+  if (!matches.length) {
+    const fallbackTotal = (fondosMutuos || 0) + (disponibleClp || 0);
+    if (fallbackTotal > 0) {
+      return [
+        {
+          source: 'BTG Pactual',
+          block: 'investment',
+          label: 'BTG total valorización',
+          amount: fallbackTotal,
+          currency: 'CLP',
+          confidence: 0.84,
+          note: 'Detectado por Fondos mutuos + Disponible CLP en pantalla BTG.',
+        },
+      ];
+    }
+    return [];
+  }
+
+  const totalFromValorizaciones = matches.reduce((sum, m) => {
     const amount = parseLocalizedNumber(m[1]) || 0;
     return sum + amount;
   }, 0);
+  const total = totalFromValorizaciones + (disponibleClp || 0);
 
   if (total <= 0) return [];
 
@@ -277,12 +321,12 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
       label: 'BTG total valorización',
       amount: total,
       currency: 'CLP',
-      confidence: 0.82,
+      confidence: disponibleClp ? 0.9 : 0.84,
       note: `Detalle OCR: ${matches
         .map((m) => parseLocalizedNumber(m[1]) || 0)
         .filter((n) => n > 0)
         .map((n) => n.toLocaleString('es-CL'))
-        .join(' + ')}`,
+        .join(' + ')}${disponibleClp ? ` + Disponible CLP ${disponibleClp.toLocaleString('es-CL')}` : ''}`,
     },
   ];
 };

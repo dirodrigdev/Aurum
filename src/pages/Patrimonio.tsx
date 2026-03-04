@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  CheckCircle2,
   ArrowLeft,
   ArrowRight,
   Building2,
@@ -1637,7 +1638,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       )}
 
       <Card className="p-4 space-y-2 border border-slate-200 bg-slate-50/80">
-        <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
+          {checklistSummary.pending === 0 && (
+            <div className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-700">
+              <CheckCircle2 size={12} />
+              Todo cargado
+            </div>
+          )}
+        </div>
         <div className="text-[11px] text-slate-600">
           Actualizadas {checklistSummary.updated} de {checklistSummary.total}
           {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
@@ -1730,6 +1739,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 </Button>
               )}
               {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
+              {(row.status === 'mes_anterior' || row.status === 'estimado') && (
+                <span className="text-amber-700">No actualizado</span>
+              )}
               {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
             </div>
           </div>
