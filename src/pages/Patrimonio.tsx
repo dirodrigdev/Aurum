@@ -206,6 +206,9 @@ const isApiSource = (source: string) => {
   const normalized = String(source || '').toLowerCase();
   return normalized.includes('fintoc') || normalized.includes('api');
 };
+const isMortgagePrincipalLabel = (label: string) => {
+  return normalizeForMatch(label).includes(normalizeForMatch('saldo deuda hipotecaria'));
+};
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 const readPreferredDisplayCurrency = (): WealthCurrency => {
@@ -481,6 +484,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
   const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const sectionTitle = section === 'real_estate' ? 'Bienes raíces (neto)' : sectionLabel[section];
 
   useEffect(() => {
     if (section !== 'bank') return;
@@ -492,11 +496,20 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }, [section, bankTokens]);
 
   const sectionTotalClp = useMemo(() => {
+    if (section === 'real_estate') {
+      const realEstateAssetsClp = recordsForSection
+        .filter((item) => item.block === 'real_estate')
+        .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
+      const mortgageDebtClp = recordsForSection
+        .filter((item) => item.block === 'debt' && isMortgagePrincipalLabel(item.label))
+        .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
+      return realEstateAssetsClp - mortgageDebtClp;
+    }
     return recordsForSection.reduce((sum, item) => {
       const signed = item.block === 'debt' ? -item.amount : item.amount;
       return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
     }, 0);
-  }, [recordsForSection, usdClp, eurClp, ufClp]);
+  }, [section, recordsForSection, usdClp, eurClp, ufClp]);
 
   const bankDashboard = useMemo(() => {
     if (section !== 'bank') {
@@ -1324,7 +1337,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <button className="inline-flex items-center gap-1 text-xs text-slate-600" onClick={onBack}>
           <ArrowLeft size={14} /> Volver
         </button>
-        <div className="mt-2 text-lg font-bold text-slate-900">{sectionLabel[section]}</div>
+        <div className="mt-2 text-lg font-bold text-slate-900">{sectionTitle}</div>
         <div className="text-xs text-slate-600">{monthLabel(monthKey)}</div>
         {section === 'bank' ? (
           <div className="mt-3 text-sm font-medium text-slate-700">Vista operativa (impacta patrimonio neto)</div>
@@ -2204,17 +2217,27 @@ export const Patrimonio: React.FC = () => {
   }, [latestClosure, previousClosure]);
 
   const sectionAmounts = useMemo(() => {
-    const blockToClp = (block: WealthBlock) => {
-      const b = summary.byBlock[block];
-      return b.CLP + b.USD * fx.usdClp + b.EUR * fx.eurClp + b.UF * fx.ufClp;
-    };
+    const toClpFromRecord = (record: WealthRecord) =>
+      toClp(record.amount, record.currency, fx.usdClp, fx.eurClp, fx.ufClp);
+    const investment = monthRecords
+      .filter((record) => record.block === 'investment')
+      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
+    const bank = monthRecords
+      .filter((record) => record.block === 'bank')
+      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
+    const realEstateAssets = monthRecords
+      .filter((record) => record.block === 'real_estate')
+      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
+    const mortgageDebt = monthRecords
+      .filter((record) => record.block === 'debt' && isMortgagePrincipalLabel(record.label))
+      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
 
     return {
-      investment: blockToClp('investment'),
-      bank: blockToClp('bank'),
-      realEstateNet: blockToClp('real_estate') - blockToClp('debt'),
+      investment,
+      bank,
+      realEstateNet: realEstateAssets - mortgageDebt,
     };
-  }, [summary, fx]);
+  }, [monthRecords, fx]);
 
   const metricsDisplay = useMemo(() => {
     const convert = (value: number | null) => {
@@ -2582,7 +2605,7 @@ export const Patrimonio: React.FC = () => {
           onClick={() => setActiveSection('real_estate')}
         >
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
-            <Home size={16} /> Bienes raíces
+            <Home size={16} /> Bienes raíces (neto)
           </div>
           <div className="mt-1 text-xs text-[#275238]">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]">
