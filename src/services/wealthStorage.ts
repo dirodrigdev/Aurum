@@ -1086,9 +1086,13 @@ const getWealthCloudRef = async () => {
 
 let wealthCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let wealthCloudSyncPromise: Promise<boolean> | null = null;
+let wealthCloudSyncRequestedWhileRunning = false;
 
 const syncWealthToCloudNow = async (): Promise<boolean> => {
-  if (wealthCloudSyncPromise) return wealthCloudSyncPromise;
+  if (wealthCloudSyncPromise) {
+    wealthCloudSyncRequestedWhileRunning = true;
+    return wealthCloudSyncPromise;
+  }
 
   wealthCloudSyncPromise = (async () => {
     try {
@@ -1183,6 +1187,10 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       return false;
     } finally {
       wealthCloudSyncPromise = null;
+      if (wealthCloudSyncRequestedWhileRunning) {
+        wealthCloudSyncRequestedWhileRunning = false;
+        scheduleWealthCloudSync(40);
+      }
     }
   })();
 
@@ -1201,6 +1209,10 @@ export const syncWealthNow = async (): Promise<boolean> => {
 
 export const scheduleWealthCloudSync = (delayMs = 700) => {
   if (typeof window === 'undefined') return;
+  if (wealthCloudSyncPromise) {
+    wealthCloudSyncRequestedWhileRunning = true;
+    return;
+  }
   if (wealthCloudSyncTimer) clearTimeout(wealthCloudSyncTimer);
   wealthCloudSyncTimer = setTimeout(() => {
     wealthCloudSyncTimer = null;
