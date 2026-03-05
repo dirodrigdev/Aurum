@@ -727,7 +727,7 @@ const parseFlexibleNumeric = (value: unknown): number => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const fetchJsonWithTimeout = async (url: string, timeoutMs = 15000): Promise<any> => {
+const fetchJsonWithTimeout = async (url: string, timeoutMs = 35000): Promise<any> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     const controller = new AbortController();
@@ -745,8 +745,8 @@ const fetchJsonWithTimeout = async (url: string, timeoutMs = 15000): Promise<any
 };
 
 const fetchJsonWithRetry = async (url: string, options?: { attempts?: number; timeoutMs?: number }) => {
-  const attempts = Math.max(1, options?.attempts || 2);
-  const timeoutMs = options?.timeoutMs || 15000;
+  const attempts = Math.max(1, options?.attempts || 3);
+  const timeoutMs = options?.timeoutMs || 35000;
   let lastError: any = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -754,7 +754,7 @@ const fetchJsonWithRetry = async (url: string, options?: { attempts?: number; ti
       return await fetchJsonWithTimeout(url, timeoutMs);
     } catch (err: any) {
       lastError = err;
-      if (attempt < attempts) await sleep(350 * attempt);
+      if (attempt < attempts) await sleep(600 * attempt);
     }
   }
 
