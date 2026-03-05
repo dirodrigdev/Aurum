@@ -87,6 +87,7 @@ const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
 const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const DELETED_RECORD_ASSET_MONTH_KEYS_KEY = 'wealth_deleted_record_asset_month_keys_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
+const WEALTH_LAST_REMOTE_UPDATED_AT_KEY = 'wealth_last_remote_updated_at_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
@@ -119,8 +120,40 @@ const isFirebaseConfigured = () =>
       import.meta.env.VITE_FIREBASE_APP_ID,
   );
 
+const isoToMs = (value: string) => {
+  const parsed = new Date(String(value || '')).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const readLastRemoteUpdatedAtMs = () => {
+  try {
+    const raw = String(localStorage.getItem(WEALTH_LAST_REMOTE_UPDATED_AT_KEY) || '');
+    const ms = isoToMs(raw);
+    return Number.isFinite(ms) ? ms : NaN;
+  } catch {
+    return NaN;
+  }
+};
+
+const markLastRemoteUpdatedAt = (iso: string) => {
+  const ms = isoToMs(iso);
+  if (!Number.isFinite(ms)) return;
+  try {
+    const currentMs = readLastRemoteUpdatedAtMs();
+    const nextMs = !Number.isFinite(currentMs) ? ms : Math.max(currentMs, ms);
+    localStorage.setItem(WEALTH_LAST_REMOTE_UPDATED_AT_KEY, new Date(nextMs).toISOString());
+  } catch {
+    // ignore
+  }
+};
+
 const touchWealthUpdatedAt = () => {
-  const stamp = nowIso();
+  let nextMs = Date.now();
+  const remoteMs = readLastRemoteUpdatedAtMs();
+  if (Number.isFinite(remoteMs) && nextMs <= remoteMs) {
+    nextMs = remoteMs + 1;
+  }
+  const stamp = new Date(nextMs).toISOString();
   try {
     localStorage.setItem(WEALTH_UPDATED_AT_KEY, stamp);
   } catch {
@@ -533,11 +566,6 @@ const sameStringList = (a: string[], b: string[]) => {
     if (a[i] !== b[i]) return false;
   }
   return true;
-};
-
-const isoToMs = (value: string) => {
-  const parsed = new Date(String(value || '')).getTime();
-  return Number.isFinite(parsed) ? parsed : NaN;
 };
 
 const isLocalStateNewerOrEqual = (localUpdatedAt: string, remoteUpdatedAt: string) => {
@@ -1205,6 +1233,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         remoteData.deletedRecordAssetMonthKeys,
       );
       const remoteUpdatedAt = String(remoteData.updatedAt || '');
+      markLastRemoteUpdatedAt(remoteUpdatedAt);
 
       const merged = mergeWealthState({
         localRecords,
@@ -1298,7 +1327,7 @@ export const syncWealthNow = async (): Promise<boolean> => {
   return false;
 };
 
-export const scheduleWealthCloudSync = (delayMs = 700) => {
+export const scheduleWealthCloudSync = (delayMs = 250) => {
   if (typeof window === 'undefined') return;
   if (wealthCloudSyncPromise) {
     wealthCloudSyncRequestedWhileRunning = true;
@@ -1343,6 +1372,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const remoteDeletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
       data.deletedRecordAssetMonthKeys,
     );
+    markLastRemoteUpdatedAt(remoteUpdatedAt);
 
     const merged = mergeWealthState({
       localRecords,
@@ -1854,6 +1884,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         }
 
         const remote = normalizeCloudWealthState(snap.data() || {});
+        markLastRemoteUpdatedAt(remote.updatedAt);
         const localRecords = loadWealthRecords();
         const localClosures = loadClosures();
         const localInstruments = loadInvestmentInstruments();
