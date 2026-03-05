@@ -147,7 +147,7 @@ const loadDemoSeedMeta = (): WealthDemoSeedMeta | null => {
     const janKey = normalizeMonthKey(parsed?.janKey);
     const febKey = normalizeMonthKey(parsed?.febKey);
     const marKey = normalizeMonthKey(parsed?.marKey);
-    const historyMonthKeys = Array.isArray(parsed?.historyMonthKeys)
+    const historyMonthKeys: string[] = Array.isArray(parsed?.historyMonthKeys)
       ? parsed.historyMonthKeys
           .map((m: unknown) => normalizeMonthKey(m))
           .filter((m: string | null): m is string => !!m)
@@ -158,7 +158,7 @@ const loadDemoSeedMeta = (): WealthDemoSeedMeta | null => {
       janKey,
       febKey,
       marKey,
-      historyMonthKeys: [...new Set(historyMonthKeys)],
+      historyMonthKeys: Array.from(new Set<string>(historyMonthKeys)),
     };
   } catch {
     return null;
