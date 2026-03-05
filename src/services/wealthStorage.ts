@@ -148,11 +148,11 @@ const markLastRemoteUpdatedAt = (iso: string) => {
 };
 
 const nextMonotonicIsoAgainstRemote = () => {
-  let nextMs = Date.now();
+  const localUpdatedMs = isoToMs(readWealthUpdatedAt());
   const remoteMs = readLastRemoteUpdatedAtMs();
-  if (Number.isFinite(remoteMs) && nextMs <= remoteMs) {
-    nextMs = remoteMs + 1;
-  }
+  const safeLocalMs = Number.isFinite(localUpdatedMs) ? localUpdatedMs : 0;
+  const safeRemoteMs = Number.isFinite(remoteMs) ? remoteMs : 0;
+  const nextMs = Math.max(safeLocalMs, safeRemoteMs) + 1;
   return new Date(nextMs).toISOString();
 };
 
@@ -619,20 +619,19 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
     input.remoteDeletedRecordAssetMonthKeys,
   );
 
-  // Si local es más nuevo y ya contiene un registro activo para ese asset/mes,
-  // limpiamos su tombstone remoto para permitir reingresos tras borrado.
-  if (preferLocal) {
-    const localIdSet = new Set(input.localRecords.map((record) => record.id));
-    const localAssetMonthSet = new Set(
-      input.localRecords
-        .map((record) => makeAssetMonthKey(record))
-        .filter((key) => !!key),
-    );
-    deletedRecordIds = normalizeDeletedRecordIds(deletedRecordIds.filter((id) => !localIdSet.has(id)));
-    deletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
-      deletedRecordAssetMonthKeys.filter((key) => !localAssetMonthSet.has(key)),
-    );
-  }
+  // Si el lado preferido ya contiene un registro activo para ese asset/mes,
+  // limpiamos tombstones contrapuestos para permitir reingresos tras borrado.
+  const preferredRecords = preferLocal ? input.localRecords : input.remoteRecords;
+  const preferredIdSet = new Set(preferredRecords.map((record) => record.id));
+  const preferredAssetMonthSet = new Set(
+    preferredRecords
+      .map((record) => makeAssetMonthKey(record))
+      .filter((key) => !!key),
+  );
+  deletedRecordIds = normalizeDeletedRecordIds(deletedRecordIds.filter((id) => !preferredIdSet.has(id)));
+  deletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
+    deletedRecordAssetMonthKeys.filter((key) => !preferredAssetMonthSet.has(key)),
+  );
 
   const deletedSet = new Set(deletedRecordIds);
   const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
