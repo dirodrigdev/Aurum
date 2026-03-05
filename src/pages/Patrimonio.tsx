@@ -2285,10 +2285,26 @@ export const Patrimonio: React.FC = () => {
   }, [activeSection]);
 
   useEffect(() => {
+    let runningRefresh = false;
+    const refreshFromCloudNow = async () => {
+      if (runningRefresh) return;
+      runningRefresh = true;
+      try {
+        await hydrateWealthFromCloud();
+        setRecords(loadWealthRecords());
+        setClosures(loadClosures());
+        setInvestmentInstruments(loadInvestmentInstruments());
+        setFx(loadFxRates());
+      } finally {
+        runningRefresh = false;
+      }
+    };
+
     const goPatrimonioHome = () => {
       setActiveSection(null);
       setCarryMessage('');
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      void refreshFromCloudNow();
     };
 
     window.addEventListener(NAVIGATE_PATRIMONIO_HOME_EVENT, goPatrimonioHome as EventListener);
