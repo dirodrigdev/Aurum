@@ -58,12 +58,21 @@ export interface MortgageAutoCalcConfig {
   lifeInsuranceUf: number;
 }
 
+type WealthDemoSeedMeta = {
+  seededAt: string;
+  janKey: string;
+  febKey: string;
+  marKey: string;
+  historyMonthKeys: string[];
+};
+
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
 const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
 const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
+const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
@@ -130,6 +139,44 @@ export const getLastWealthSyncIssue = () => {
   }
 };
 
+const loadDemoSeedMeta = (): WealthDemoSeedMeta | null => {
+  try {
+    const raw = localStorage.getItem(WEALTH_DEMO_SEED_META_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const janKey = normalizeMonthKey(parsed?.janKey);
+    const febKey = normalizeMonthKey(parsed?.febKey);
+    const marKey = normalizeMonthKey(parsed?.marKey);
+    const historyMonthKeys = Array.isArray(parsed?.historyMonthKeys)
+      ? parsed.historyMonthKeys
+          .map((m: unknown) => normalizeMonthKey(m))
+          .filter((m: string | null): m is string => !!m)
+      : [];
+    if (!janKey || !febKey || !marKey || historyMonthKeys.length === 0) return null;
+    return {
+      seededAt: String(parsed?.seededAt || ''),
+      janKey,
+      febKey,
+      marKey,
+      historyMonthKeys: [...new Set(historyMonthKeys)],
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveDemoSeedMeta = (meta: WealthDemoSeedMeta | null) => {
+  try {
+    if (!meta) {
+      localStorage.removeItem(WEALTH_DEMO_SEED_META_KEY);
+      return;
+    }
+    localStorage.setItem(WEALTH_DEMO_SEED_META_KEY, JSON.stringify(meta));
+  } catch {
+    // ignore
+  }
+};
+
 const toNumber = (v: unknown, fallback = 0): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -167,6 +214,11 @@ const isMortgageMetaDebtLabel = (labelValue: string) => {
     label.includes(normalizeText('interes hipotecario')) ||
     label.includes(normalizeText('seguros hipotecarios'))
   );
+};
+
+const isMortgageDebtLabel = (labelValue: string) => {
+  const label = normalizeText(labelValue);
+  return isMortgageMetaDebtLabel(labelValue) || label.includes(normalizeText('saldo deuda hipotecaria'));
 };
 
 const isDeprecatedSuraTotalRecord = (
@@ -1245,6 +1297,216 @@ export const ensureInitialMortgageDefaults = (
   return { added };
 };
 
+const applyWealthStateLocal = (payload: {
+  records: WealthRecord[];
+  closures: WealthMonthlyClosure[];
+  instruments: WealthInvestmentInstrument[];
+  deletedRecordIds: string[];
+  fx: WealthFxRates;
+}) => {
+  saveWealthRecords(payload.records, { skipCloudSync: true, silent: true });
+  saveClosures(payload.closures, { skipCloudSync: true, silent: true });
+  saveInvestmentInstruments(payload.instruments, { skipCloudSync: true, silent: true });
+  saveDeletedRecordIds(payload.deletedRecordIds, { skipCloudSync: true, silent: true });
+  saveFxRatesInternal(payload.fx, { skipCloudSync: true, silent: true });
+  touchWealthUpdatedAt();
+  setLastWealthSyncIssue('');
+  dispatchWealthDataUpdated();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: payload.fx }));
+  }
+};
+
+const persistWealthStateToCloud = async (payload: {
+  records: WealthRecord[];
+  closures: WealthMonthlyClosure[];
+  instruments: WealthInvestmentInstrument[];
+  deletedRecordIds: string[];
+  fx: WealthFxRates;
+}): Promise<{ cloudCleared: boolean; mode: 'cloud' | 'local' }> => {
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) return { cloudCleared: false, mode: 'local' };
+
+    await setDoc(
+      ref,
+      stripUndefinedDeep({
+        schemaVersion: 1,
+        updatedAt: nowIso(),
+        fx: payload.fx,
+        records: payload.records,
+        closures: payload.closures,
+        instruments: payload.instruments,
+        deletedRecordIds: payload.deletedRecordIds,
+      }),
+      { merge: true },
+    );
+
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+    return { cloudCleared: true, mode: 'cloud' };
+  } catch (err: any) {
+    setLastWealthSyncIssue(`${err?.code || 'sync_error'} ${err?.message || ''}`.trim());
+    setFirestoreStatusFromError(err);
+    return { cloudCleared: false, mode: 'local' };
+  }
+};
+
+const fallbackDemoHistoryMonthKeys = () => {
+  const expected = [monthKeyFromDate(dateFromMonthOffset(-2)), monthKeyFromDate(dateFromMonthOffset(-1))];
+  const closureMonthSet = new Set(loadClosures().map((c) => c.monthKey));
+  return expected.filter((m) => closureMonthSet.has(m));
+};
+
+export const getSimulationHistoryMonthKeys = (): string[] => {
+  const currentMonth = currentMonthKey();
+  const fromMeta = loadDemoSeedMeta()?.historyMonthKeys || [];
+  const picked = fromMeta.length ? fromMeta : fallbackDemoHistoryMonthKeys();
+  return [...new Set(picked)].filter((m) => m !== currentMonth);
+};
+
+export const clearSimulationHistoryData = async (): Promise<{
+  removedRecords: number;
+  removedClosures: number;
+  monthKeys: string[];
+  cloudCleared: boolean;
+  mode: 'cloud' | 'local';
+}> => {
+  const monthKeys = getSimulationHistoryMonthKeys();
+  if (!monthKeys.length) {
+    return { removedRecords: 0, removedClosures: 0, monthKeys: [], cloudCleared: false, mode: 'local' };
+  }
+
+  const records = loadWealthRecords();
+  const instruments = loadInvestmentInstruments();
+  const closures = loadClosures();
+  const fx = loadFxRates();
+
+  const isTargetMonthRecord = (record: WealthRecord) =>
+    monthKeys.some((monthKey) => record.snapshotDate.startsWith(`${monthKey}-`));
+  const removedRecordIds = records.filter(isTargetMonthRecord).map((record) => record.id);
+  const nextRecords = records.filter((record) => !isTargetMonthRecord(record));
+  const nextClosures = closures.filter((closure) => !monthKeys.includes(closure.monthKey));
+  const nextDeletedRecordIds = normalizeDeletedRecordIds([...loadDeletedRecordIds(), ...removedRecordIds]);
+
+  applyWealthStateLocal({
+    records: nextRecords,
+    closures: nextClosures,
+    instruments,
+    deletedRecordIds: nextDeletedRecordIds,
+    fx,
+  });
+
+  const meta = loadDemoSeedMeta();
+  if (meta) {
+    const remainingHistory = meta.historyMonthKeys.filter((month) => !monthKeys.includes(month));
+    if (remainingHistory.length) {
+      saveDemoSeedMeta({ ...meta, historyMonthKeys: remainingHistory });
+    } else {
+      saveDemoSeedMeta(null);
+    }
+  }
+
+  const cloud = await persistWealthStateToCloud({
+    records: nextRecords,
+    closures: nextClosures,
+    instruments,
+    deletedRecordIds: nextDeletedRecordIds,
+    fx,
+  });
+
+  return {
+    removedRecords: removedRecordIds.length,
+    removedClosures: Math.max(0, closures.length - nextClosures.length),
+    monthKeys,
+    cloudCleared: cloud.cloudCleared,
+    mode: cloud.mode,
+  };
+};
+
+export const clearCurrentMonthData = async (options: {
+  clearInvestments?: boolean;
+  clearRealEstate?: boolean;
+}): Promise<{
+  removedRecords: number;
+  removedInvestment: number;
+  removedRealEstate: number;
+  cloudCleared: boolean;
+  mode: 'cloud' | 'local';
+}> => {
+  const clearInvestments = !!options.clearInvestments;
+  const clearRealEstate = !!options.clearRealEstate;
+  if (!clearInvestments && !clearRealEstate) {
+    return {
+      removedRecords: 0,
+      removedInvestment: 0,
+      removedRealEstate: 0,
+      cloudCleared: false,
+      mode: 'local',
+    };
+  }
+
+  const targetMonth = currentMonthKey();
+  const monthPrefix = `${targetMonth}-`;
+  const records = loadWealthRecords();
+  const closures = loadClosures();
+  const instruments = loadInvestmentInstruments();
+  const fx = loadFxRates();
+
+  const shouldRemove = (record: WealthRecord) => {
+    if (!record.snapshotDate.startsWith(monthPrefix)) return false;
+    if (clearInvestments && record.block === 'investment') return true;
+    if (clearRealEstate) {
+      if (record.block === 'real_estate') return true;
+      if (record.block === 'debt' && isMortgageDebtLabel(record.label)) return true;
+    }
+    return false;
+  };
+
+  const removedRecords = records.filter(shouldRemove);
+  if (!removedRecords.length) {
+    return {
+      removedRecords: 0,
+      removedInvestment: 0,
+      removedRealEstate: 0,
+      cloudCleared: false,
+      mode: 'local',
+    };
+  }
+
+  const nextRecords = records.filter((record) => !shouldRemove(record));
+  const nextDeletedRecordIds = normalizeDeletedRecordIds([
+    ...loadDeletedRecordIds(),
+    ...removedRecords.map((record) => record.id),
+  ]);
+  const removedInvestment = removedRecords.filter((record) => record.block === 'investment').length;
+  const removedRealEstate = removedRecords.length - removedInvestment;
+
+  applyWealthStateLocal({
+    records: nextRecords,
+    closures,
+    instruments,
+    deletedRecordIds: nextDeletedRecordIds,
+    fx,
+  });
+
+  const cloud = await persistWealthStateToCloud({
+    records: nextRecords,
+    closures,
+    instruments,
+    deletedRecordIds: nextDeletedRecordIds,
+    fx,
+  });
+
+  return {
+    removedRecords: removedRecords.length,
+    removedInvestment,
+    removedRealEstate,
+    cloudCleared: cloud.cloudCleared,
+    mode: cloud.mode,
+  };
+};
+
 const dateFromMonthOffset = (offset: number) => {
   const d = new Date();
   d.setDate(1);
@@ -1357,6 +1619,13 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
 
   saveWealthRecords([...marRecords, ...febRecords, ...janRecords].sort(sortByCreatedDesc));
   saveClosures(closures);
+  saveDemoSeedMeta({
+    seededAt: nowIso(),
+    janKey,
+    febKey,
+    marKey,
+    historyMonthKeys: [janKey, febKey],
+  });
 
   return { janKey, febKey, marKey };
 };
@@ -1367,44 +1636,20 @@ export const clearWealthDataForFreshStart = async (
   const preserveFx = options?.preserveFx !== false;
   const nextFx = preserveFx ? loadFxRates() : { ...defaultFxRates };
 
-  saveWealthRecords([], { skipCloudSync: true, silent: true });
-  saveClosures([], { skipCloudSync: true, silent: true });
-  saveInvestmentInstruments([], { skipCloudSync: true, silent: true });
-  saveDeletedRecordIds([], { skipCloudSync: true, silent: true });
-  saveFxRatesInternal(nextFx, { skipCloudSync: true, silent: true });
-  touchWealthUpdatedAt();
-  setLastWealthSyncIssue('');
-  dispatchWealthDataUpdated();
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: nextFx }));
-  }
-
-  try {
-    const ref = await getWealthCloudRef();
-    if (!ref) {
-      return { cloudCleared: false, mode: 'local' };
-    }
-
-    await setDoc(
-      ref,
-      stripUndefinedDeep({
-        schemaVersion: 1,
-        updatedAt: nowIso(),
-        fx: nextFx,
-        records: [],
-        closures: [],
-        instruments: [],
-        deletedRecordIds: [],
-      }),
-      { merge: true },
-    );
-
-    setFirestoreOk();
-    setLastWealthSyncIssue('');
-    return { cloudCleared: true, mode: 'cloud' };
-  } catch (err: any) {
-    setLastWealthSyncIssue(`${err?.code || 'clear_error'} ${err?.message || ''}`.trim());
-    setFirestoreStatusFromError(err);
-    return { cloudCleared: false, mode: 'local' };
-  }
+  applyWealthStateLocal({
+    records: [],
+    closures: [],
+    instruments: [],
+    deletedRecordIds: [],
+    fx: nextFx,
+  });
+  saveDemoSeedMeta(null);
+  const cloud = await persistWealthStateToCloud({
+    records: [],
+    closures: [],
+    instruments: [],
+    deletedRecordIds: [],
+    fx: nextFx,
+  });
+  return cloud;
 };

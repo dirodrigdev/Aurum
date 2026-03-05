@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import {
-  clearWealthDataForFreshStart,
+  clearCurrentMonthData,
+  clearSimulationHistoryData,
+  currentMonthKey,
+  getSimulationHistoryMonthKeys,
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
   loadFxRates,
@@ -16,12 +19,22 @@ import { getFirestoreStatus } from '../services/firestoreStatus';
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
   const [seedMessage, setSeedMessage] = useState('');
-  const [clearMessage, setClearMessage] = useState('');
-  const [clearing, setClearing] = useState(false);
+  const [clearSimMessage, setClearSimMessage] = useState('');
+  const [clearMonthMessage, setClearMonthMessage] = useState('');
+  const [clearingSim, setClearingSim] = useState(false);
+  const [clearingMonth, setClearingMonth] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authUid, setAuthUid] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
+
+  const formatMonthLabel = (monthKey: string) => {
+    const [y, m] = monthKey.split('-').map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
+    const dt = new Date(y, m - 1, 1);
+    const label = dt.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  };
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
@@ -132,7 +145,8 @@ export const SettingsAurum: React.FC = () => {
           onClick={() => {
             const timeline = seedDemoWealthTimeline();
             setSeedMessage(`Demo cargada: ${timeline.janKey}, ${timeline.febKey} y ${timeline.marKey}.`);
-            setClearMessage('');
+            setClearSimMessage('');
+            setClearMonthMessage('');
           }}
         >
           Cargar demo Ene-Feb-Mar
@@ -140,35 +154,97 @@ export const SettingsAurum: React.FC = () => {
         {!!seedMessage && <div className="text-xs text-emerald-700">{seedMessage}</div>}
         <div className="pt-2 border-t border-slate-200">
           <div className="text-xs text-slate-600 mb-2">
-            Borra todos los datos patrimoniales (registros, cierres e instrumentos) para empezar desde cero.
+            Limpia solo meses históricos de simulación (no toca automáticamente el mes actual).
           </div>
           <Button
             variant="danger"
-            disabled={clearing}
+            disabled={clearingSim}
             onClick={async () => {
+              const candidates = getSimulationHistoryMonthKeys();
+              const monthText = candidates.length
+                ? candidates.map((m) => formatMonthLabel(m)).join(', ')
+                : 'meses históricos detectados';
               const ok = window.confirm(
-                'Esto eliminará TODA la información patrimonial (local + nube) y dejará la app en blanco. ¿Continuar?',
+                `Se eliminarán datos simulados de: ${monthText}. No se borrará automáticamente el mes actual. ¿Continuar?`,
               );
               if (!ok) return;
-              setClearing(true);
+              setClearingSim(true);
               setSeedMessage('');
               setSyncMessage('');
               setFsDebug('');
+              setClearMonthMessage('');
               try {
-                const result = await clearWealthDataForFreshStart({ preserveFx: true });
-                setClearMessage(
-                  result.cloudCleared
-                    ? 'App en blanco: datos eliminados en este dispositivo y en Firestore.'
-                    : 'App en blanco localmente. Firestore no se pudo limpiar ahora; se reintentará con la siguiente sync.',
-                );
+                const result = await clearSimulationHistoryData();
+                if (!result.monthKeys.length || (result.removedRecords === 0 && result.removedClosures === 0)) {
+                  setClearSimMessage(
+                    'No encontré simulación histórica para eliminar (o ya estaba limpia).',
+                  );
+                } else {
+                  setClearSimMessage(
+                    result.cloudCleared
+                      ? `Simulación histórica eliminada (${result.removedClosures} cierres, ${result.removedRecords} registros).`
+                      : `Simulación eliminada localmente (${result.removedClosures} cierres, ${result.removedRecords} registros). Firestore no se pudo actualizar ahora.`,
+                  );
+                }
               } finally {
-                setClearing(false);
+                setClearingSim(false);
               }
             }}
           >
-            {clearing ? 'Limpiando...' : 'Eliminar simulación y empezar de cero'}
+            {clearingSim ? 'Limpiando...' : 'Eliminar solo simulación histórica'}
           </Button>
-          {!!clearMessage && <div className="mt-2 text-xs text-emerald-700">{clearMessage}</div>}
+          {!!clearSimMessage && <div className="mt-2 text-xs text-emerald-700">{clearSimMessage}</div>}
+        </div>
+
+        <div className="pt-2 border-t border-slate-200">
+          <div className="text-xs text-slate-600 mb-2">
+            Borra datos del mes actual por bloque (Inversiones y/o Bienes raíces), con confirmación.
+          </div>
+          <Button
+            variant="outline"
+            disabled={clearingMonth}
+            onClick={async () => {
+              const month = currentMonthKey();
+              const inv = window.confirm(
+                `¿Quieres borrar Inversiones de ${formatMonthLabel(month)}?`,
+              );
+              const re = window.confirm(
+                `¿Quieres borrar Bienes raíces de ${formatMonthLabel(month)}?`,
+              );
+              if (!inv && !re) {
+                setClearMonthMessage('No se seleccionó ningún bloque para borrar.');
+                return;
+              }
+              const finalOk = window.confirm(
+                `Confirmar borrado del mes actual (${formatMonthLabel(month)}): ${inv ? 'Inversiones' : ''}${
+                  inv && re ? ' + ' : ''
+                }${re ? 'Bienes raíces' : ''}.`,
+              );
+              if (!finalOk) return;
+
+              setClearingMonth(true);
+              setSeedMessage('');
+              setSyncMessage('');
+              setFsDebug('');
+              setClearSimMessage('');
+              try {
+                const result = await clearCurrentMonthData({
+                  clearInvestments: inv,
+                  clearRealEstate: re,
+                });
+                setClearMonthMessage(
+                  result.cloudCleared
+                    ? `Mes actual limpiado: ${result.removedRecords} registros (${result.removedInvestment} inversiones, ${result.removedRealEstate} bienes raíces/deuda hipotecaria).`
+                    : `Mes limpiado localmente: ${result.removedRecords} registros. Firestore no se pudo actualizar ahora.`,
+                );
+              } finally {
+                setClearingMonth(false);
+              }
+            }}
+          >
+            {clearingMonth ? 'Borrando...' : 'Borrar datos del mes actual (por bloque)'}
+          </Button>
+          {!!clearMonthMessage && <div className="mt-2 text-xs text-emerald-700">{clearMonthMessage}</div>}
         </div>
       </Card>
     </div>
