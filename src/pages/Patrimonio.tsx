@@ -761,7 +761,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             name,
             status: 'mes_anterior',
             detail: `Mes anterior · ${formatRecordUpdatedStamp(match)}`,
-            context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+            context: undefined,
           };
         }
         return {
@@ -2254,11 +2254,18 @@ export const Patrimonio: React.FC = () => {
   const [carryMessage, setCarryMessage] = useState('');
   const [closeError, setCloseError] = useState('');
   const [pendingCloseCarryItems, setPendingCloseCarryItems] = useState<string[] | null>(null);
+  const [pendingCloseMonthKey, setPendingCloseMonthKey] = useState<string | null>(null);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
   const autoCarryAppliedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!closeConfirmOpen) setCloseMonthDraft(monthKey);
+  }, [monthKey, closeConfirmOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -2366,6 +2373,19 @@ export const Patrimonio: React.FC = () => {
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
   }, [latestClosure, previousClosure]);
+  const selectedClosureForDraft = useMemo(
+    () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
+    [closures, closeMonthDraft],
+  );
+  const recentCloseWarning = useMemo(() => {
+    if (!latestClosure) return null;
+    const latestTs = new Date(latestClosure.closedAt).getTime();
+    if (!Number.isFinite(latestTs)) return null;
+    const days = (Date.now() - latestTs) / (1000 * 60 * 60 * 24);
+    if (days >= 30) return null;
+    if (latestClosure.monthKey === closeMonthDraft) return null;
+    return `El último cierre fue hace ${Math.max(0, Math.floor(days))} día(s). Confirma que quieres cerrar ${monthLabel(closeMonthDraft).toLowerCase()}.`;
+  }, [latestClosure, closeMonthDraft]);
 
   const sectionAmounts = useMemo(() => {
     const monthRecordsWithoutSynthetic = monthRecords.filter((record) => !isSyntheticAggregateRecord(record));
@@ -2429,10 +2449,13 @@ export const Patrimonio: React.FC = () => {
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
   const refreshInstruments = () => setInvestmentInstruments(loadInvestmentInstruments());
-  const completeMonthlyClose = () => {
+  const completeMonthlyClose = (targetMonthKey: string) => {
+    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     setCloseError('');
     setPendingCloseCarryItems(null);
-    createMonthlyClosure(monthRecords, fx, toCloseDateFromMonthKey(monthKey));
+    setPendingCloseMonthKey(null);
+    setCloseConfirmOpen(false);
+    createMonthlyClosure(targetRecords, fx, toCloseDateFromMonthKey(targetMonthKey));
     refreshClosures();
   };
 
@@ -2471,6 +2494,21 @@ export const Patrimonio: React.FC = () => {
       })
       .map((instrument) => instrument.label);
   }, [investmentInstruments, monthKey, monthRecords]);
+
+  const missingCustomInvestmentLabelsForMonth = (targetMonthKey: string, targetRecords: WealthRecord[]) => {
+    return investmentInstruments
+      .filter((instrument) => !(instrument.excludedMonths || []).includes(targetMonthKey))
+      .filter((instrument) => {
+        const target = normalizeForMatch(instrument.label);
+        return !targetRecords.some(
+          (record) =>
+            record.block === 'investment' &&
+            record.currency === instrument.currency &&
+            normalizeForMatch(record.label) === target,
+        );
+      })
+      .map((instrument) => instrument.label);
+  };
 
   const createInvestmentInstrument = (input: {
     label: string;
@@ -2527,11 +2565,12 @@ export const Patrimonio: React.FC = () => {
     );
   };
 
-  const runMonthlyClose = () => {
+  const attemptMonthlyClose = (targetMonthKey: string) => {
+    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
     const missingRequired = requiredNames.filter((required) => {
       const target = normalizeForMatch(required);
-      return !monthRecords.some((record) => {
+      return !targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
         const label = normalizeForMatch(record.label);
         return label.includes(target) || target.includes(label);
@@ -2543,15 +2582,16 @@ export const Patrimonio: React.FC = () => {
       );
       return;
     }
-    if (missingCustomInvestmentLabels.length) {
+    const missingCustomForMonth = missingCustomInvestmentLabelsForMonth(targetMonthKey, targetRecords);
+    if (missingCustomForMonth.length) {
       setCloseError(
-        `No se puede cerrar: faltan instrumentos sin valor (${missingCustomInvestmentLabels.join(', ')}). Cárgalos o exclúyelos este mes.`,
+        `No se puede cerrar: faltan instrumentos sin valor (${missingCustomForMonth.join(', ')}). Cárgalos o exclúyelos este mes.`,
       );
       return;
     }
     const carriedLabels = Array.from(
       new Set(
-        monthRecords
+        targetRecords
           .filter(
             (r) =>
               isCarriedRecord(r) &&
@@ -2564,12 +2604,20 @@ export const Patrimonio: React.FC = () => {
     );
     if (carriedLabels.length) {
       setPendingCloseCarryItems(carriedLabels);
+      setPendingCloseMonthKey(targetMonthKey);
+      setCloseConfirmOpen(false);
       setCloseError(
         `Hay ${carriedLabels.length} valor(es) en "Mes anterior". Puedes cerrar igual o actualizar esos ítems antes de cerrar.`,
       );
       return;
     }
-    completeMonthlyClose();
+    completeMonthlyClose(targetMonthKey);
+  };
+
+  const runMonthlyClose = () => {
+    setCloseError('');
+    setCloseMonthDraft(monthKey);
+    setCloseConfirmOpen(true);
   };
 
   const useMissingFromPrevious = (section: MainSection, itemName?: string) => {
@@ -2866,6 +2914,56 @@ export const Patrimonio: React.FC = () => {
         </details>
       </Card>
 
+      {closeConfirmOpen && (
+        <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="text-base font-semibold text-slate-900">Confirmar cierre mensual</div>
+            <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar.</div>
+
+            <div className="mt-3">
+              <label className="text-xs text-slate-600">Mes a cerrar</label>
+              <Input
+                type="month"
+                value={closeMonthDraft}
+                onChange={(e) => setCloseMonthDraft(e.target.value || monthKey)}
+              />
+            </div>
+
+            {selectedClosureForDraft && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Este mes ya tiene cierre ({selectedClosureForDraft.monthKey}). Si continúas, se sobrescribirá.
+              </div>
+            )}
+
+            {recentCloseWarning && (
+              <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
+                {recentCloseWarning}
+              </div>
+            )}
+            {!!closeError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {closeError}
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCloseConfirmOpen(false);
+                  setCloseError('');
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button onClick={() => attemptMonthlyClose(closeMonthDraft)}>
+                {selectedClosureForDraft ? 'Sobrescribir cierre' : 'Confirmar cierre'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingCloseCarryItems && (
         <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
@@ -2885,12 +2983,13 @@ export const Patrimonio: React.FC = () => {
                 variant="outline"
                 onClick={() => {
                   setPendingCloseCarryItems(null);
+                  if (pendingCloseMonthKey) setMonthKey(pendingCloseMonthKey);
                   setCloseError('Actualiza los ítems arrastrados y vuelve a intentar el cierre.');
                 }}
               >
                 Revisar
               </Button>
-              <Button onClick={completeMonthlyClose}>Cerrar igual</Button>
+              <Button onClick={() => completeMonthlyClose(pendingCloseMonthKey || monthKey)}>Cerrar igual</Button>
             </div>
           </div>
         </div>
