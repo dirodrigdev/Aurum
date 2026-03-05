@@ -124,6 +124,24 @@ const isSyntheticAggregateRecord = (record: WealthRecord) => {
   return false;
 };
 
+const REQUIRED_INVESTMENT_LABELS = [
+  'SURA inversión financiera',
+  'SURA ahorro previsional',
+  'PlanVital saldo total',
+  'BTG total valorización',
+  'Global66 Cuenta Vista USD',
+  'Wise Cuenta principal USD',
+];
+
+const REQUIRED_REAL_ESTATE_LABELS = [
+  'Valor propiedad',
+  'Saldo deuda hipotecaria',
+  'Dividendo hipotecario mensual',
+  'Interés hipotecario mensual',
+  'Seguros hipotecarios mensuales',
+  'Amortización hipotecaria mensual',
+];
+
 const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown => {
   let investmentClp = 0;
   let realEstateAssetsClp = 0;
@@ -218,7 +236,8 @@ const BreakdownCard: React.FC<{
   compareFx?: WealthFxRates | null;
   currentRecords: WealthRecord[];
   compareRecords?: WealthRecord[] | null;
-}> = ({ title, subtitle, breakdown, currency, fx, compareAgainst, compareFx, currentRecords, compareRecords }) => {
+  showPartialBadge?: boolean;
+}> = ({ title, subtitle, breakdown, currency, fx, compareAgainst, compareFx, currentRecords, compareRecords, showPartialBadge }) => {
   const rows = [
     { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
     {
@@ -270,7 +289,14 @@ const BreakdownCard: React.FC<{
         <div className="text-sm font-semibold">{title}</div>
         <div className="text-xs text-slate-500">{subtitle}</div>
       </div>
-      <div className="text-3xl font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
+      <div className="flex items-center gap-2">
+        <div className="text-3xl font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
+        {showPartialBadge && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+            Parcial
+          </span>
+        )}
+      </div>
       {deltaNet !== null && (
         <div className={`text-sm font-semibold ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
           {deltaNet >= 0 ? '+' : ''}
@@ -481,6 +507,17 @@ export const ClosingAurum: React.FC = () => {
 
   const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
+  const missingCriticalCount = useMemo(() => {
+    const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_LABELS];
+    return required.filter((requiredLabel) => {
+      const target = normalizeForMatch(requiredLabel);
+      return !currentRecords.some((record) => {
+        if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
+        const label = normalizeForMatch(record.label);
+        return label.includes(target) || target.includes(label);
+      });
+    }).length;
+  }, [currentRecords]);
 
   const latestClosureRecords = latestClosure?.records || null;
   const previousClosureRecords = previousClosure?.records || null;
@@ -580,6 +617,7 @@ export const ClosingAurum: React.FC = () => {
           compareFx={compareClosureForHoyFx}
           currentRecords={currentRecords}
           compareRecords={compareClosureForHoyRecords}
+          showPartialBadge={missingCriticalCount > 0}
         />
       )}
 

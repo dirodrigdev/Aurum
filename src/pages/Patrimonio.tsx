@@ -2445,6 +2445,15 @@ export const Patrimonio: React.FC = () => {
       });
     }).length;
   }, [monthRecords]);
+  const hasRealEstatePropertyValue = useMemo(() => {
+    const target = normalizeForMatch('Valor propiedad');
+    return monthRecords.some(
+      (record) =>
+        record.block === 'real_estate' &&
+        !isSyntheticAggregateRecord(record) &&
+        normalizeForMatch(record.label).includes(target),
+    );
+  }, [monthRecords]);
 
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
@@ -2789,7 +2798,7 @@ export const Patrimonio: React.FC = () => {
                     onClick={() => setShowNetWorth((v) => !v)}
                   >
                     <div className="text-orange-100">Patrimonio total neto</div>
-                    <div className="mt-1 text-base font-semibold flex items-center gap-2">
+                    <div className="mt-1 text-5xl font-bold leading-none tracking-tight flex items-center gap-2">
                       {showNetWorth ? (
                         <>
                           <span>{metricsDisplay.netWorth}</span>
@@ -2800,7 +2809,14 @@ export const Patrimonio: React.FC = () => {
                           )}
                         </>
                       ) : (
-                        <span className="inline-block rounded-md bg-white/20 px-2 py-1 blur-[1.4px] select-none">■■■■■■■■</span>
+                        <span className="relative inline-block select-none align-middle">
+                          <span className="absolute inset-0 rounded-md bg-white/20 blur-sm" />
+                          <span className="absolute inset-0 rounded-md bg-white/18 blur-md" />
+                          <span className="absolute inset-0 rounded-md bg-white/14 blur-lg" />
+                          <span className="relative inline-block rounded-md bg-white/10 px-3 py-1.5 text-3xl tracking-[0.2em] blur-[2.6px]">
+                            8.888.888.888
+                          </span>
+                        </span>
                       )}
                     </div>
                     <div className="mt-1 text-[11px] text-orange-100/80">
@@ -2862,7 +2878,15 @@ export const Patrimonio: React.FC = () => {
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
             <Home size={16} /> Bienes raíces (neto)
           </div>
-          <div className="mt-1 text-xs text-[#275238]">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
+          <div className="mt-1 text-xs text-[#275238]">
+            {hasRealEstatePropertyValue ? (
+              formatCurrency(sectionAmounts.realEstateNet, 'CLP')
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-white/45 px-2 py-0.5 text-[11px] font-semibold">
+                Parcial
+              </span>
+            )}
+          </div>
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]">
             Entrar <ArrowRight size={13} />
           </div>
