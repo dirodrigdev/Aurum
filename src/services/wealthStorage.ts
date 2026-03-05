@@ -147,13 +147,17 @@ const markLastRemoteUpdatedAt = (iso: string) => {
   }
 };
 
-const touchWealthUpdatedAt = () => {
+const nextMonotonicIsoAgainstRemote = () => {
   let nextMs = Date.now();
   const remoteMs = readLastRemoteUpdatedAtMs();
   if (Number.isFinite(remoteMs) && nextMs <= remoteMs) {
     nextMs = remoteMs + 1;
   }
-  const stamp = new Date(nextMs).toISOString();
+  return new Date(nextMs).toISOString();
+};
+
+const touchWealthUpdatedAt = () => {
+  const stamp = nextMonotonicIsoAgainstRemote();
   try {
     localStorage.setItem(WEALTH_UPDATED_AT_KEY, stamp);
   } catch {
@@ -522,45 +526,6 @@ const mergeRecords = (localRecords: WealthRecord[], remoteRecords: WealthRecord[
   return [...merged.values()].sort(sortByCreatedDesc);
 };
 
-const latestRecordsByLogicalKey = (records: WealthRecord[]) => {
-  const out = new Map<string, WealthRecord>();
-  for (const record of records) {
-    const key = logicalRecordKey(record);
-    const prev = out.get(key);
-    out.set(key, prev ? pickLatestRecord(prev, record) : record);
-  }
-  return out;
-};
-
-const mergeRecordsByStatePriority = (
-  localRecords: WealthRecord[],
-  remoteRecords: WealthRecord[],
-  preferLocal: boolean,
-) => {
-  const localByKey = latestRecordsByLogicalKey(localRecords);
-  const remoteByKey = latestRecordsByLogicalKey(remoteRecords);
-  const allKeys = new Set([...localByKey.keys(), ...remoteByKey.keys()]);
-  const merged = new Map<string, WealthRecord>();
-
-  for (const key of allKeys) {
-    const localRecord = localByKey.get(key);
-    const remoteRecord = remoteByKey.get(key);
-    if (localRecord && remoteRecord) {
-      merged.set(key, preferLocal ? localRecord : remoteRecord);
-      continue;
-    }
-    if (localRecord) {
-      merged.set(key, localRecord);
-      continue;
-    }
-    if (remoteRecord) {
-      merged.set(key, remoteRecord);
-    }
-  }
-
-  return [...merged.values()].sort(sortByCreatedDesc);
-};
-
 const normalizeFxRates = (raw: any): WealthFxRates => ({
   usdClp: Math.max(1, toNumber(raw?.usdClp, defaultFxRates.usdClp)),
   eurClp: Math.max(1, toNumber(raw?.eurClp, defaultFxRates.eurClp)),
@@ -671,11 +636,7 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
 
   const deletedSet = new Set(deletedRecordIds);
   const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
-  const records = mergeRecordsByStatePriority(
-    input.localRecords,
-    input.remoteRecords,
-    preferLocal,
-  ).filter(
+  const records = mergeRecords(input.localRecords, input.remoteRecords).filter(
     (record) => !deletedSet.has(record.id) && !deletedAssetMonthSet.has(makeAssetMonthKey(record)),
   );
 
@@ -847,7 +808,7 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
     id,
     // En Aurum usamos createdAt como "última actualización efectiva" para resolver
     // cuál registro manda dentro del mismo activo/mes.
-    createdAt: nowIso(),
+    createdAt: nextMonotonicIsoAgainstRemote(),
     block: input.block,
     source: input.source,
     label: input.label,
