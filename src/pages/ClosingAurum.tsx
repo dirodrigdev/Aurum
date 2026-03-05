@@ -124,6 +124,24 @@ const isSyntheticAggregateRecord = (record: WealthRecord) => {
   return false;
 };
 
+const REQUIRED_INVESTMENT_LABELS = [
+  'SURA inversión financiera',
+  'SURA ahorro previsional',
+  'PlanVital saldo total',
+  'BTG total valorización',
+  'Global66 Cuenta Vista USD',
+  'Wise Cuenta principal USD',
+];
+
+const REQUIRED_REAL_ESTATE_LABELS = [
+  'Valor propiedad',
+  'Saldo deuda hipotecaria',
+  'Dividendo hipotecario mensual',
+  'Interés hipotecario mensual',
+  'Seguros hipotecarios mensuales',
+  'Amortización hipotecaria mensual',
+];
+
 const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown => {
   let investmentClp = 0;
   let realEstateAssetsClp = 0;
@@ -481,6 +499,17 @@ export const ClosingAurum: React.FC = () => {
 
   const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
+  const missingCriticalCount = useMemo(() => {
+    const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_LABELS];
+    return required.filter((labelNeed) => {
+      const target = normalizeForMatch(labelNeed);
+      return !currentRecords.some((record) => {
+        if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
+        const label = normalizeForMatch(record.label);
+        return label.includes(target) || target.includes(label);
+      });
+    }).length;
+  }, [currentRecords]);
 
   const latestClosureRecords = latestClosure?.records || null;
   const previousClosureRecords = previousClosure?.records || null;
@@ -566,6 +595,15 @@ export const ClosingAurum: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {missingCriticalCount > 0 && (
+        <Card className="p-3 border border-amber-200 bg-amber-50">
+          <div className="text-xs text-amber-900">
+            Patrimonio parcial en {monthLabel(monthKey).toLowerCase()}: faltan {missingCriticalCount} ítem(s)
+            obligatorios de inversión/bienes raíces.
+          </div>
+        </Card>
+      )}
 
       {tab === 'hoy' && (
         <BreakdownCard

@@ -102,7 +102,14 @@ const sectionChecklist: Record<MainSection, string[]> = {
     'Global66 Cuenta Vista USD',
     'Wise Cuenta principal USD',
   ],
-  real_estate: ['Valor propiedad', 'Saldo deuda hipotecaria', 'Dividendo hipotecario mensual'],
+  real_estate: [
+    'Valor propiedad',
+    'Saldo deuda hipotecaria',
+    'Dividendo hipotecario mensual',
+    'Interés hipotecario mensual',
+    'Seguros hipotecarios mensuales',
+    'Amortización hipotecaria mensual',
+  ],
   bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
 };
 const REAL_ESTATE_DEBT_LABELS = [
@@ -2397,6 +2404,18 @@ export const Patrimonio: React.FC = () => {
     };
   }, [displayCurrency, fx, metrics, summary.netConsolidatedClp]);
 
+  const missingCriticalCount = useMemo(() => {
+    const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
+    return requiredNames.filter((required) => {
+      const target = normalizeForMatch(required);
+      return !monthRecords.some((record) => {
+        if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
+        const label = normalizeForMatch(record.label);
+        return label.includes(target) || target.includes(label);
+      });
+    }).length;
+  }, [monthRecords]);
+
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
   const refreshInstruments = () => setInvestmentInstruments(loadInvestmentInstruments());
@@ -2624,11 +2643,24 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
+    const result = fillMissingWithPreviousClosure(monthKey, todayYmd());
+    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
+    if (result.added > 0 || auto.changed > 0) {
+      refreshRecords();
+      const parts: string[] = [];
+      if (result.added > 0 && result.sourceMonth) {
+        parts.push(`Mes iniciado con ${result.added} arrastres (${result.sourceMonth})`);
+      }
+      if (auto.changed > 0) {
+        parts.push(`Autocálculo hipotecario aplicado en ${auto.changed} registros`);
+      }
+      setCarryMessage(`${parts.join('. ')}.`);
+      return;
+    }
+
     const previousMonth = loadClosures().find((item) => item.monthKey < monthKey && (item.records?.length || 0) > 0);
     if (previousMonth) {
-      setCarryMessage(
-        `Hay valores base disponibles de ${previousMonth.monthKey}. Usa "Completar pendientes con mes anterior" si quieres aplicarlos.`,
-      );
+      setCarryMessage(`No se pudo arrastrar automáticamente desde ${previousMonth.monthKey}. Revisa cierres previos.`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthKey, hydrationReady]);
@@ -2709,6 +2741,11 @@ export const Patrimonio: React.FC = () => {
                     <div className="mt-1 text-[11px] text-orange-100/80">
                       Incluye inversiones + bienes raíces + bancos - deudas (tarjetas e hipotecarias).
                     </div>
+                    {missingCriticalCount > 0 && (
+                      <div className="mt-1 text-[11px] text-amber-100/95">
+                        Patrimonio parcial: faltan {missingCriticalCount} ítem(s) obligatorios de inversión/bienes raíces.
+                      </div>
+                    )}
                   </button>
 
                   <div className="rounded-xl bg-white/12 p-3">
