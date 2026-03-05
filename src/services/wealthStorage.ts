@@ -412,6 +412,12 @@ const sortByCreatedDesc = (a: WealthRecord, b: WealthRecord) => {
   return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 };
 
+const compareClosuresByMonthDesc = (a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
+  const byMonth = b.monthKey.localeCompare(a.monthKey);
+  if (byMonth !== 0) return byMonth;
+  return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
+};
+
 export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency'>) => {
   return `${record.block}::${normalizeText(record.label)}::${record.currency}`;
 };
@@ -985,16 +991,15 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
         };
       })
       .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
-      .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
-        return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
-      });
+      .sort(compareClosuresByMonthDesc);
   } catch {
     return [];
   }
 };
 
 export const saveClosures = (closures: WealthMonthlyClosure[], options?: PersistOptions) => {
-  localStorage.setItem(CLOSURES_KEY, JSON.stringify(closures));
+  const sorted = [...closures].sort(compareClosuresByMonthDesc);
+  localStorage.setItem(CLOSURES_KEY, JSON.stringify(sorted));
   touchWealthUpdatedAt();
   if (!options?.silent) dispatchWealthDataUpdated();
   if (!options?.skipCloudSync) scheduleWealthCloudSync();
@@ -1226,9 +1231,7 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
       };
     })
     .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
-    .sort((a: WealthMonthlyClosure, b: WealthMonthlyClosure) => {
-      return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
-    });
+    .sort(compareClosuresByMonthDesc);
 };
 
 const loadInstrumentsFromRaw = (parsed: any[]): WealthInvestmentInstrument[] => {
@@ -1274,7 +1277,7 @@ const mergeClosures = (localClosures: WealthMonthlyClosure[], remoteClosures: We
     const tCurr = new Date(closure.closedAt).getTime();
     map.set(key, tCurr >= tPrev ? closure : prev);
   }
-  return [...map.values()].sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime());
+  return [...map.values()].sort(compareClosuresByMonthDesc);
 };
 
 const serializeClosure = (c: WealthMonthlyClosure) =>
@@ -1333,9 +1336,7 @@ export const createMonthlyClosure = (
   };
 
   const withoutSameMonth = closures.filter((c) => c.monthKey !== monthKey);
-  const next = [nextClosure, ...withoutSameMonth].sort((a, b) =>
-    new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime(),
-  );
+  const next = [nextClosure, ...withoutSameMonth].sort(compareClosuresByMonthDesc);
 
   saveClosures(next);
   return nextClosure;

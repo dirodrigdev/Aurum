@@ -2591,6 +2591,14 @@ export const Patrimonio: React.FC = () => {
   };
 
   const attemptMonthlyClose = (targetMonthKey: string) => {
+    const realCurrentMonth = currentMonthKey();
+    if (targetMonthKey > realCurrentMonth) {
+      setCloseError(
+        `No se puede cerrar un mes futuro (${monthLabel(targetMonthKey).toLowerCase()}). Mes actual: ${monthLabel(realCurrentMonth).toLowerCase()}.`,
+      );
+      return;
+    }
+
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
     const missingRequired = requiredNames.filter((required) => {
