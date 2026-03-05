@@ -6,6 +6,7 @@ import { Patrimonio } from './pages/Patrimonio';
 import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
+import { refreshFxRatesDailyIfNeeded } from './services/wealthStorage';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,32 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       unsub();
     };
   }, []);
+
+  useEffect(() => {
+    if (!user || user.isAnonymous) return;
+
+    const runDailySync = () => {
+      void refreshFxRatesDailyIfNeeded();
+    };
+
+    runDailySync();
+
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      runDailySync();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      runDailySync();
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [user?.uid, user?.isAnonymous]);
 
   if (loading) {
     return (

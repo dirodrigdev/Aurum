@@ -8,7 +8,10 @@ import {
   getSimulationHistoryMonthKeys,
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
+  importHistoricalClosuresFromCsv,
+  loadFxLiveSyncMeta,
   loadFxRates,
+  refreshFxRatesFromLive,
   saveFxRates,
   seedDemoWealthTimeline,
   syncWealthNow,
@@ -18,6 +21,13 @@ import { getFirestoreStatus } from '../services/firestoreStatus';
 
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
+  const [fxLiveMeta, setFxLiveMeta] = useState(() => loadFxLiveSyncMeta());
+  const [fxLiveMessage, setFxLiveMessage] = useState('');
+  const [syncingLiveFx, setSyncingLiveFx] = useState(false);
+  const [csvDraft, setCsvDraft] = useState('');
+  const [csvImportMessage, setCsvImportMessage] = useState('');
+  const [csvImportWarnings, setCsvImportWarnings] = useState<string[]>([]);
+  const [csvImporting, setCsvImporting] = useState(false);
   const [seedMessage, setSeedMessage] = useState('');
   const [clearSimMessage, setClearSimMessage] = useState('');
   const [clearMonthMessage, setClearMonthMessage] = useState('');
@@ -34,6 +44,19 @@ export const SettingsAurum: React.FC = () => {
     const dt = new Date(y, m - 1, 1);
     const label = dt.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
     return label.charAt(0).toUpperCase() + label.slice(1);
+  };
+
+  const formatDateTime = (iso?: string) => {
+    if (!iso) return 'sin fecha';
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return iso;
+    return d.toLocaleString('es-CL', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   useEffect(() => {
@@ -95,6 +118,60 @@ export const SettingsAurum: React.FC = () => {
 
       <Card className="p-4 space-y-3">
         <div className="text-sm font-semibold">Tipos de cambio (consolidado CLP)</div>
+        <div className="text-xs text-slate-600">
+          Puedes actualizarlos en línea desde Mindicador o ajustar manualmente si necesitas corrección puntual.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            disabled={syncingLiveFx}
+            onClick={async () => {
+              setSyncingLiveFx(true);
+              setFxLiveMessage('');
+              try {
+                const result = await refreshFxRatesFromLive({ force: true });
+                setFx(result.rates);
+                setFxLiveMeta(loadFxLiveSyncMeta());
+                setFxLiveMessage(
+                  `TC/UF online actualizados (${result.source}) ${result.updated ? 'con cambios' : 'sin cambios'}: ${formatDateTime(result.fetchedAt)}.`,
+                );
+              } catch (err: any) {
+                setFxLiveMeta(loadFxLiveSyncMeta());
+                setFxLiveMessage(String(err?.message || 'No pude actualizar TC/UF online.'));
+              } finally {
+                setSyncingLiveFx(false);
+              }
+            }}
+          >
+            {syncingLiveFx ? 'Actualizando TC/UF...' : 'Actualizar TC/UF real ahora'}
+          </Button>
+        </div>
+        {!!fxLiveMeta && (
+          <div
+            className={`rounded-lg border px-3 py-2 text-xs ${
+              fxLiveMeta.status === 'ok'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-amber-200 bg-amber-50 text-amber-700'
+            }`}
+          >
+            <div>
+              Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {fxLiveMeta.source || 'mindicador.cl'}
+            </div>
+            <div className="mt-0.5">Última actualización: {formatDateTime(fxLiveMeta.fetchedAt)}</div>
+            {!!fxLiveMeta.message && <div className="mt-0.5 break-words">{fxLiveMeta.message}</div>}
+          </div>
+        )}
+        {!!fxLiveMessage && (
+          <div
+            className={`text-xs ${
+              fxLiveMessage.toLowerCase().includes('no pude') || fxLiveMessage.toLowerCase().includes('error')
+                ? 'text-amber-700'
+                : 'text-emerald-700'
+            }`}
+          >
+            {fxLiveMessage}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
@@ -133,6 +210,111 @@ export const SettingsAurum: React.FC = () => {
             />
           </div>
         </div>
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Importar historia mensual (CSV)</div>
+        <div className="text-xs text-slate-600">
+          Carga cierres históricos con sus TC/UF congelados por mes. El importador reemplaza el mes si ya existe.
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+          <div className="text-[11px] text-slate-500 mb-1">Columnas mínimas esperadas:</div>
+          <code className="block text-[11px] text-slate-700 break-all">
+            month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
+          </code>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500 mb-1">Cargar archivo CSV</div>
+          <Input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              const text = await file.text();
+              setCsvDraft(text);
+              setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
+              setCsvImportWarnings([]);
+              event.currentTarget.value = '';
+            }}
+          />
+        </div>
+        <div>
+          <div className="text-xs text-slate-500 mb-1">O pega el CSV aquí</div>
+          <textarea
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            rows={8}
+            placeholder="month_key,closed_at,usd_clp,..."
+            value={csvDraft}
+            onChange={(e) => setCsvDraft(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            disabled={csvImporting}
+            onClick={async () => {
+              if (!csvDraft.trim()) {
+                setCsvImportMessage('Pega o carga un CSV antes de importar.');
+                setCsvImportWarnings([]);
+                return;
+              }
+              const ok = window.confirm(
+                'Se importarán/reemplazarán cierres según month_key. ¿Confirmar importación de historial?',
+              );
+              if (!ok) return;
+
+              setCsvImporting(true);
+              setCsvImportMessage('');
+              setCsvImportWarnings([]);
+              try {
+                const result = await importHistoricalClosuresFromCsv(csvDraft);
+                const summary = [
+                  result.importedMonths.length
+                    ? `Importados: ${result.importedMonths.join(', ')}`
+                    : 'Importados: 0',
+                  result.replacedMonths.length
+                    ? `Reemplazados: ${result.replacedMonths.join(', ')}`
+                    : 'Reemplazados: 0',
+                  result.skippedMonths.length
+                    ? `Omitidos: ${result.skippedMonths.join(', ')}`
+                    : 'Omitidos: 0',
+                ].join(' · ');
+                setCsvImportMessage(summary);
+                setCsvImportWarnings(result.warnings);
+              } catch (err: any) {
+                setCsvImportMessage(String(err?.message || 'No pude importar el historial CSV.'));
+                setCsvImportWarnings([]);
+              } finally {
+                setCsvImporting(false);
+              }
+            }}
+          >
+            {csvImporting ? 'Importando historial...' : 'Importar historial CSV'}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={csvImporting}
+            onClick={() => {
+              setCsvDraft('');
+              setCsvImportMessage('');
+              setCsvImportWarnings([]);
+            }}
+          >
+            Limpiar CSV
+          </Button>
+        </div>
+        {!!csvImportMessage && <div className="text-xs text-slate-700">{csvImportMessage}</div>}
+        {!!csvImportWarnings.length && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <div className="font-medium">Advertencias de importación</div>
+            <ul className="mt-1 list-disc pl-4 space-y-0.5">
+              {csvImportWarnings.map((warning, index) => (
+                <li key={`${warning}-${index}`}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Card>
 
       <Card className="p-4 space-y-3">

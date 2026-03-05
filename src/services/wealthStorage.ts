@@ -58,6 +58,20 @@ export interface MortgageAutoCalcConfig {
   lifeInsuranceUf: number;
 }
 
+export type FxLiveSyncMeta = {
+  source: string;
+  fetchedAt: string;
+  status: 'ok' | 'error';
+  message?: string;
+};
+
+export type HistoricalCsvImportResult = {
+  importedMonths: string[];
+  replacedMonths: string[];
+  skippedMonths: string[];
+  warnings: string[];
+};
+
 type WealthDemoSeedMeta = {
   seededAt: string;
   janKey: string;
@@ -73,6 +87,8 @@ const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
 const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
+const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
+const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
@@ -172,6 +188,48 @@ const saveDemoSeedMeta = (meta: WealthDemoSeedMeta | null) => {
       return;
     }
     localStorage.setItem(WEALTH_DEMO_SEED_META_KEY, JSON.stringify(meta));
+  } catch {
+    // ignore
+  }
+};
+
+export const loadFxLiveSyncMeta = (): FxLiveSyncMeta | null => {
+  try {
+    const raw = localStorage.getItem(WEALTH_FX_LIVE_META_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const status = parsed?.status === 'error' ? 'error' : parsed?.status === 'ok' ? 'ok' : null;
+    if (!status) return null;
+    return {
+      source: String(parsed?.source || ''),
+      fetchedAt: String(parsed?.fetchedAt || ''),
+      status,
+      message: parsed?.message ? String(parsed.message) : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveFxLiveSyncMeta = (meta: FxLiveSyncMeta) => {
+  try {
+    localStorage.setItem(WEALTH_FX_LIVE_META_KEY, JSON.stringify(meta));
+  } catch {
+    // ignore
+  }
+};
+
+const readFxLastAutoSyncDay = () => {
+  try {
+    return String(localStorage.getItem(WEALTH_FX_LAST_AUTO_DAY_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
+const writeFxLastAutoSyncDay = (ymd: string) => {
+  try {
+    localStorage.setItem(WEALTH_FX_LAST_AUTO_DAY_KEY, ymd);
   } catch {
     // ignore
   }
@@ -634,6 +692,142 @@ export const loadFxRates = (): WealthFxRates => {
 
 export const saveFxRates = (rates: WealthFxRates) => {
   saveFxRatesInternal(rates);
+};
+
+const normalizeNumericText = (value: string) =>
+  value
+    .replace(/[^\d,.-]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+
+const parseFlexibleNumeric = (value: unknown): number => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+  const normalized = normalizeNumericText(String(value || ''));
+  if (!normalized) return NaN;
+
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+  let prepared = normalized;
+
+  if (hasComma && hasDot) {
+    const lastComma = normalized.lastIndexOf(',');
+    const lastDot = normalized.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      prepared = normalized.replace(/\./g, '').replace(',', '.');
+    } else {
+      prepared = normalized.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    prepared = normalized.replace(',', '.');
+  }
+
+  const parsed = Number(prepared);
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const fetchMindicadorFx = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
+  const endpoints = ['https://mindicador.cl/api', 'https://www.mindicador.cl/api'];
+  let lastError = 'Sin respuesta';
+
+  for (const endpoint of endpoints) {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 9000);
+      const response = await fetch(endpoint, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timeoutId);
+      timeoutId = null;
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+      const data = await response.json();
+      const usd = parseFlexibleNumeric(data?.dolar?.valor);
+      const eur = parseFlexibleNumeric(data?.euro?.valor);
+      const uf = parseFlexibleNumeric(data?.uf?.valor);
+
+      if (![usd, eur, uf].every((v) => Number.isFinite(v) && v > 0)) {
+        lastError = 'Indicadores inválidos en respuesta';
+        continue;
+      }
+
+      return {
+        rates: {
+          usdClp: Math.round(usd),
+          eurClp: Math.round(eur),
+          ufClp: Math.round(uf),
+        },
+        source: endpoint,
+        fetchedAt: nowIso(),
+      };
+    } catch (err: any) {
+      lastError = String(err?.message || err || 'fetch_error');
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  throw new Error(`No pude obtener TC/UF en línea (${lastError}).`);
+};
+
+export const refreshFxRatesFromLive = async (
+  options?: { force?: boolean },
+): Promise<{ updated: boolean; rates: WealthFxRates; source: string; fetchedAt: string; skipped?: boolean }> => {
+  const today = localYmd();
+  const force = !!options?.force;
+  const current = loadFxRates();
+  const previousMeta = loadFxLiveSyncMeta();
+
+  if (!force && readFxLastAutoSyncDay() === today) {
+    return {
+      updated: false,
+      skipped: true,
+      rates: current,
+      source: previousMeta?.source || 'cached',
+      fetchedAt: previousMeta?.fetchedAt || nowIso(),
+    };
+  }
+
+  try {
+    const live = await fetchMindicadorFx();
+    const changed =
+      current.usdClp !== live.rates.usdClp ||
+      current.eurClp !== live.rates.eurClp ||
+      current.ufClp !== live.rates.ufClp;
+
+    saveFxRates(live.rates);
+    writeFxLastAutoSyncDay(today);
+    saveFxLiveSyncMeta({
+      source: live.source,
+      fetchedAt: live.fetchedAt,
+      status: 'ok',
+    });
+
+    return { updated: changed, rates: live.rates, source: live.source, fetchedAt: live.fetchedAt };
+  } catch (err: any) {
+    const message = String(err?.message || 'No pude actualizar TC/UF en línea');
+    saveFxLiveSyncMeta({
+      source: 'mindicador.cl',
+      fetchedAt: nowIso(),
+      status: 'error',
+      message,
+    });
+    throw new Error(message);
+  }
+};
+
+export const refreshFxRatesDailyIfNeeded = async (): Promise<{
+  ok: boolean;
+  updated: boolean;
+  skipped?: boolean;
+  message?: string;
+}> => {
+  try {
+    const result = await refreshFxRatesFromLive();
+    return { ok: true, updated: result.updated, skipped: result.skipped };
+  } catch (err: any) {
+    return { ok: false, updated: false, message: String(err?.message || 'Error actualizando TC/UF') };
+  }
 };
 
 const emptyCurrencyMap = (): Record<WealthCurrency, number> => ({
@@ -1519,6 +1713,231 @@ const monthKeyFromDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() 
 
 const ymdFromDate = (d: Date, day = 15) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+const endOfMonthYmd = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  const end = new Date(year, month, 0);
+  return `${year}-${String(month).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+};
+
+const stripMarkdownCodeFence = (input: string) => {
+  const trimmed = String(input || '').trim();
+  const fence = trimmed.match(/^```(?:csv|text)?\s*([\s\S]*?)\s*```$/i);
+  return fence ? fence[1].trim() : trimmed;
+};
+
+const parseCsvMatrix = (csvRaw: string): string[][] => {
+  const csv = stripMarkdownCodeFence(csvRaw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = csv.split('\n').filter((line) => line.trim().length > 0);
+  if (!lines.length) return [];
+  const first = lines[0] || '';
+  const commaCount = (first.match(/,/g) || []).length;
+  const semicolonCount = (first.match(/;/g) || []).length;
+  const delimiter = semicolonCount > commaCount ? ';' : ',';
+
+  const rows: string[][] = [];
+  for (const line of lines) {
+    const row: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === '"') {
+        const nextChar = line[i + 1];
+        if (inQuotes && nextChar === '"') {
+          current += '"';
+          i += 1;
+          continue;
+        }
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (!inQuotes && char === delimiter) {
+        row.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+    row.push(current.trim());
+    rows.push(row);
+  }
+  return rows;
+};
+
+const findValueByAliases = (row: Record<string, string>, aliases: string[]) => {
+  for (const alias of aliases) {
+    const key = normalizeLabelKey(alias);
+    if (row[key] !== undefined) return row[key];
+  }
+  return '';
+};
+
+const parseCsvNumber = (row: Record<string, string>, aliases: string[]) => {
+  const value = findValueByAliases(row, aliases);
+  if (!String(value || '').trim()) return null;
+  const parsed = parseFlexibleNumeric(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseCsvMonthKey = (row: Record<string, string>) => {
+  const value = findValueByAliases(row, ['month_key', 'month', 'mes', 'monthkey']);
+  return normalizeMonthKey(value);
+};
+
+const parseCsvClosedAt = (row: Record<string, string>, monthKey: string) => {
+  const raw = findValueByAliases(row, ['closed_at', 'fecha_cierre', 'closedat']);
+  const value = String(raw || '').trim();
+  if (value) {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  const fallback = `${endOfMonthYmd(monthKey)}T23:59:59-03:00`;
+  const parsedFallback = new Date(fallback);
+  return Number.isFinite(parsedFallback.getTime()) ? parsedFallback.toISOString() : nowIso();
+};
+
+const buildHistoricalMonthRecords = (
+  monthKey: string,
+  row: Record<string, string>,
+): WealthRecord[] => {
+  const snapshotDate = endOfMonthYmd(monthKey);
+  const entries: Array<{
+    aliases: string[];
+    block: WealthBlock;
+    source: string;
+    label: string;
+    currency: WealthCurrency;
+    decimals?: number;
+  }> = [
+    { aliases: ['sura_fin_clp', 'sura_financiero_clp'], block: 'investment', source: 'SURA', label: 'SURA inversión financiera', currency: 'CLP' },
+    { aliases: ['sura_prev_clp', 'sura_previsional_clp'], block: 'investment', source: 'SURA', label: 'SURA ahorro previsional', currency: 'CLP' },
+    { aliases: ['btg_clp', 'btg_total_clp'], block: 'investment', source: 'BTG Pactual', label: 'BTG total valorización', currency: 'CLP' },
+    { aliases: ['planvital_clp', 'planvital_total_clp'], block: 'investment', source: 'PlanVital', label: 'PlanVital saldo total', currency: 'CLP' },
+    { aliases: ['global66_usd', 'global66_total_usd'], block: 'investment', source: 'Global66', label: 'Global66 Cuenta Vista USD', currency: 'USD', decimals: 2 },
+    { aliases: ['wise_usd', 'wise_total_usd'], block: 'investment', source: 'Wise', label: 'Wise Cuenta principal USD', currency: 'USD', decimals: 2 },
+    { aliases: ['valor_prop_uf', 'valor_propiedad_uf'], block: 'real_estate', source: 'Tasación', label: 'Valor propiedad', currency: 'UF', decimals: 2 },
+    { aliases: ['saldo_deuda_uf', 'saldo_deuda_hipotecaria_uf'], block: 'debt', source: 'Scotiabank', label: 'Saldo deuda hipotecaria', currency: 'UF', decimals: 4 },
+    { aliases: ['dividendo_uf', 'dividendo_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Dividendo hipotecario mensual', currency: 'UF', decimals: 4 },
+    { aliases: ['interes_uf', 'interes_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Interés hipotecario mensual', currency: 'UF', decimals: 4 },
+    { aliases: ['seguros_uf', 'seguros_mensuales_uf'], block: 'debt', source: 'Scotiabank', label: 'Seguros hipotecarios mensuales', currency: 'UF', decimals: 4 },
+    { aliases: ['amortizacion_uf', 'amortizacion_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Amortización hipotecaria mensual', currency: 'UF', decimals: 4 },
+    { aliases: ['bancos_clp'], block: 'bank', source: 'Histórico manual', label: 'Bancos CLP histórico', currency: 'CLP' },
+    { aliases: ['bancos_usd'], block: 'bank', source: 'Histórico manual', label: 'Bancos USD histórico', currency: 'USD', decimals: 2 },
+    { aliases: ['tarjetas_clp'], block: 'debt', source: 'Histórico manual', label: 'Tarjetas CLP histórico', currency: 'CLP' },
+    { aliases: ['tarjetas_usd'], block: 'debt', source: 'Histórico manual', label: 'Tarjetas USD histórico', currency: 'USD', decimals: 2 },
+  ];
+
+  return entries
+    .map((entry) => {
+      const amount = parseCsvNumber(row, entry.aliases);
+      if (amount === null) return null;
+      const rounded =
+        typeof entry.decimals === 'number'
+          ? Number(amount.toFixed(entry.decimals))
+          : Math.round(amount);
+      return {
+        id: crypto.randomUUID(),
+        block: entry.block,
+        source: entry.source,
+        label: entry.label,
+        amount: rounded,
+        currency: entry.currency,
+        snapshotDate,
+        createdAt: nowIso(),
+        note: 'Importado desde historial CSV',
+      } satisfies WealthRecord;
+    })
+    .filter((item): item is WealthRecord => !!item);
+};
+
+export const importHistoricalClosuresFromCsv = async (
+  csvText: string,
+): Promise<HistoricalCsvImportResult> => {
+  const matrix = parseCsvMatrix(csvText);
+  if (matrix.length < 2) {
+    return {
+      importedMonths: [],
+      replacedMonths: [],
+      skippedMonths: [],
+      warnings: ['No encontré filas de datos (revisa el CSV).'],
+    };
+  }
+
+  const headers = matrix[0].map((cell) => normalizeLabelKey(cell));
+  const rows = matrix.slice(1);
+
+  const importedMonths: string[] = [];
+  const replacedMonths: string[] = [];
+  const skippedMonths: string[] = [];
+  const warnings: string[] = [];
+
+  const existingClosures = loadClosures();
+  const closureByMonth = new Map(existingClosures.map((closure) => [closure.monthKey, closure]));
+
+  rows.forEach((cells, idx) => {
+    const rowObj: Record<string, string> = {};
+    headers.forEach((header, i) => {
+      rowObj[header] = String(cells[i] || '').trim();
+    });
+
+    const monthKey = parseCsvMonthKey(rowObj);
+    if (!monthKey) {
+      skippedMonths.push(`fila_${idx + 2}`);
+      warnings.push(`Fila ${idx + 2}: month_key inválido.`);
+      return;
+    }
+
+    const usdClp = parseCsvNumber(rowObj, ['usd_clp']);
+    const eurClp = parseCsvNumber(rowObj, ['eur_clp']);
+    const ufClp = parseCsvNumber(rowObj, ['uf_clp']);
+    if (![usdClp, eurClp, ufClp].every((v) => v !== null && v > 0)) {
+      skippedMonths.push(monthKey);
+      warnings.push(`${monthKey}: faltan USD/CLP, EUR/CLP o UF/CLP.`);
+      return;
+    }
+
+    const records = buildHistoricalMonthRecords(monthKey, rowObj);
+    if (!records.length) {
+      skippedMonths.push(monthKey);
+      warnings.push(`${monthKey}: no trae montos utilizables.`);
+      return;
+    }
+
+    const fx: WealthFxRates = {
+      usdClp: Math.round(Number(usdClp)),
+      eurClp: Math.round(Number(eurClp)),
+      ufClp: Math.round(Number(ufClp)),
+    };
+
+    const summary = summarizeWealth(dedupeLatestByAsset(records), fx);
+    const nextClosure: WealthMonthlyClosure = {
+      id: closureByMonth.get(monthKey)?.id || crypto.randomUUID(),
+      monthKey,
+      closedAt: parseCsvClosedAt(rowObj, monthKey),
+      summary,
+      fxRates: fx,
+      records: dedupeLatestByAsset(records),
+    };
+
+    if (closureByMonth.has(monthKey)) replacedMonths.push(monthKey);
+    else importedMonths.push(monthKey);
+    closureByMonth.set(monthKey, nextClosure);
+  });
+
+  const mergedClosures = [...closureByMonth.values()].sort(
+    (a, b) => b.monthKey.localeCompare(a.monthKey),
+  );
+  saveClosures(mergedClosures);
+  saveDemoSeedMeta(null);
+
+  return {
+    importedMonths: [...new Set(importedMonths)].sort(),
+    replacedMonths: [...new Set(replacedMonths)].sort(),
+    skippedMonths: [...new Set(skippedMonths)].sort(),
+    warnings,
+  };
+};
 
 const makeDemoRecord = (
   block: WealthBlock,
