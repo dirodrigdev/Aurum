@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import {
+  clearWealthDataForFreshStart,
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
   loadFxRates,
@@ -15,6 +16,8 @@ import { getFirestoreStatus } from '../services/firestoreStatus';
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
   const [seedMessage, setSeedMessage] = useState('');
+  const [clearMessage, setClearMessage] = useState('');
+  const [clearing, setClearing] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authUid, setAuthUid] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
@@ -129,11 +132,44 @@ export const SettingsAurum: React.FC = () => {
           onClick={() => {
             const timeline = seedDemoWealthTimeline();
             setSeedMessage(`Demo cargada: ${timeline.janKey}, ${timeline.febKey} y ${timeline.marKey}.`);
+            setClearMessage('');
           }}
         >
           Cargar demo Ene-Feb-Mar
         </Button>
         {!!seedMessage && <div className="text-xs text-emerald-700">{seedMessage}</div>}
+        <div className="pt-2 border-t border-slate-200">
+          <div className="text-xs text-slate-600 mb-2">
+            Borra todos los datos patrimoniales (registros, cierres e instrumentos) para empezar desde cero.
+          </div>
+          <Button
+            variant="danger"
+            disabled={clearing}
+            onClick={async () => {
+              const ok = window.confirm(
+                'Esto eliminará TODA la información patrimonial (local + nube) y dejará la app en blanco. ¿Continuar?',
+              );
+              if (!ok) return;
+              setClearing(true);
+              setSeedMessage('');
+              setSyncMessage('');
+              setFsDebug('');
+              try {
+                const result = await clearWealthDataForFreshStart({ preserveFx: true });
+                setClearMessage(
+                  result.cloudCleared
+                    ? 'App en blanco: datos eliminados en este dispositivo y en Firestore.'
+                    : 'App en blanco localmente. Firestore no se pudo limpiar ahora; se reintentará con la siguiente sync.',
+                );
+              } finally {
+                setClearing(false);
+              }
+            }}
+          >
+            {clearing ? 'Limpiando...' : 'Eliminar simulación y empezar de cero'}
+          </Button>
+          {!!clearMessage && <div className="mt-2 text-xs text-emerald-700">{clearMessage}</div>}
+        </div>
       </Card>
     </div>
   );

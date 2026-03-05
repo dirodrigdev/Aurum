@@ -1360,3 +1360,51 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
 
   return { janKey, febKey, marKey };
 };
+
+export const clearWealthDataForFreshStart = async (
+  options?: { preserveFx?: boolean },
+): Promise<{ cloudCleared: boolean; mode: 'cloud' | 'local' }> => {
+  const preserveFx = options?.preserveFx !== false;
+  const nextFx = preserveFx ? loadFxRates() : { ...defaultFxRates };
+
+  saveWealthRecords([], { skipCloudSync: true, silent: true });
+  saveClosures([], { skipCloudSync: true, silent: true });
+  saveInvestmentInstruments([], { skipCloudSync: true, silent: true });
+  saveDeletedRecordIds([], { skipCloudSync: true, silent: true });
+  saveFxRatesInternal(nextFx, { skipCloudSync: true, silent: true });
+  touchWealthUpdatedAt();
+  setLastWealthSyncIssue('');
+  dispatchWealthDataUpdated();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: nextFx }));
+  }
+
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) {
+      return { cloudCleared: false, mode: 'local' };
+    }
+
+    await setDoc(
+      ref,
+      stripUndefinedDeep({
+        schemaVersion: 1,
+        updatedAt: nowIso(),
+        fx: nextFx,
+        records: [],
+        closures: [],
+        instruments: [],
+        deletedRecordIds: [],
+      }),
+      { merge: true },
+    );
+
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+    return { cloudCleared: true, mode: 'cloud' };
+  } catch (err: any) {
+    setLastWealthSyncIssue(`${err?.code || 'clear_error'} ${err?.message || ''}`.trim());
+    setFirestoreStatusFromError(err);
+    return { cloudCleared: false, mode: 'local' };
+  }
+};
