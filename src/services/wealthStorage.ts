@@ -725,7 +725,9 @@ const parseFlexibleNumeric = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
-const fetchJsonWithTimeout = async (url: string, timeoutMs = 9000): Promise<any> => {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const fetchJsonWithTimeout = async (url: string, timeoutMs = 15000): Promise<any> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     const controller = new AbortController();
@@ -740,6 +742,23 @@ const fetchJsonWithTimeout = async (url: string, timeoutMs = 9000): Promise<any>
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+};
+
+const fetchJsonWithRetry = async (url: string, options?: { attempts?: number; timeoutMs?: number }) => {
+  const attempts = Math.max(1, options?.attempts || 2);
+  const timeoutMs = options?.timeoutMs || 15000;
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchJsonWithTimeout(url, timeoutMs);
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < attempts) await sleep(350 * attempt);
+    }
+  }
+
+  throw lastError || new Error('fetch_error');
 };
 
 const dateToYmd = (value: unknown): string | null => {
@@ -759,7 +778,7 @@ const ymdDiffDays = (a: string, b: string) => {
 };
 
 const fetchFrankfurterPairToClp = async (from: 'USD' | 'EUR'): Promise<{ value: number; date?: string }> => {
-  const data = await fetchJsonWithTimeout(
+  const data = await fetchJsonWithRetry(
     `https://api.frankfurter.app/latest?from=${from}&to=CLP`,
   );
   const value = parseFlexibleNumeric(data?.rates?.CLP);
@@ -773,7 +792,7 @@ const fetchMindicadorUf = async (): Promise<{ value: number; dateYmd: string; so
 
   for (const endpoint of endpoints) {
     try {
-      const data = await fetchJsonWithTimeout(endpoint);
+      const data = await fetchJsonWithRetry(endpoint);
       const first = Array.isArray(data?.serie) ? data.serie[0] : null;
       const uf = parseFlexibleNumeric(first?.valor);
       const dateYmd = dateToYmd(first?.fecha);
@@ -796,7 +815,7 @@ const fetchMindicadorFullFallback = async (): Promise<{ rates: WealthFxRates; so
 
   for (const endpoint of endpoints) {
     try {
-      const data = await fetchJsonWithTimeout(endpoint);
+      const data = await fetchJsonWithRetry(endpoint);
       const usd = parseFlexibleNumeric(data?.dolar?.valor);
       const eur = parseFlexibleNumeric(data?.euro?.valor);
       const uf = parseFlexibleNumeric(data?.uf?.valor);
