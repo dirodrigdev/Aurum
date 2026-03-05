@@ -1931,7 +1931,7 @@ const buildHistoricalMonthRecords = (
         note: 'Importado desde historial CSV',
       } satisfies WealthRecord;
     })
-    .filter((item): item is WealthRecord => !!item);
+    .filter((item): item is NonNullable<typeof item> => !!item);
 };
 
 export const importHistoricalClosuresFromCsv = async (
