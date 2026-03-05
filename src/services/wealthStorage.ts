@@ -843,6 +843,28 @@ const fetchMindicadorFullFallback = async (): Promise<{ rates: WealthFxRates; so
 
 const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
   try {
+    try {
+      const backendResponse = await fetchJsonWithRetry('/api/fx/live');
+      if (backendResponse?.ok && backendResponse?.rates) {
+        const usd = parseFlexibleNumeric(backendResponse.rates.usdClp);
+        const eur = parseFlexibleNumeric(backendResponse.rates.eurClp);
+        const uf = parseFlexibleNumeric(backendResponse.rates.ufClp);
+        if ([usd, eur, uf].every((v) => Number.isFinite(v) && v > 0)) {
+          return {
+            rates: {
+              usdClp: Math.round(usd),
+              eurClp: Math.round(eur),
+              ufClp: Math.round(uf),
+            },
+            source: String(backendResponse?.source || 'vercel-api-fx'),
+            fetchedAt: String(backendResponse?.fetchedAt || nowIso()),
+          };
+        }
+      }
+    } catch {
+      // Sigue al flujo directo si falla el endpoint backend.
+    }
+
     const [usd, eur, uf] = await Promise.all([
       fetchFrankfurterPairToClp('USD'),
       fetchFrankfurterPairToClp('EUR'),

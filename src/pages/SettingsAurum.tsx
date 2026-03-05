@@ -124,7 +124,7 @@ export const SettingsAurum: React.FC = () => {
       <Card className="p-4 space-y-3">
         <div className="text-sm font-semibold">Tipos de cambio (consolidado CLP)</div>
         <div className="text-xs text-slate-600">
-          Puedes actualizarlos en línea desde Mindicador o ajustar manualmente si necesitas corrección puntual.
+          Puedes actualizarlos en línea (fuentes automáticas) o ajustar manualmente si necesitas corrección puntual.
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
