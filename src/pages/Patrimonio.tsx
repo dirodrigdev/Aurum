@@ -32,6 +32,7 @@ import {
   hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
   latestRecordsForMonth,
+  localYmd,
   loadClosures,
   loadFxRates,
   loadInvestmentInstruments,
@@ -252,7 +253,15 @@ const displayRecordOrigin = (record: WealthRecord) => {
   return 'Imagen';
 };
 
-const todayYmd = () => new Date().toISOString().slice(0, 10);
+const labelMatchKey = (value: string) =>
+  normalizeForMatch(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
+
+const todayYmd = () => localYmd();
 const readPreferredDisplayCurrency = (): WealthCurrency => {
   if (typeof window === 'undefined') return 'CLP';
   const stored = window.localStorage.getItem(PREFERRED_DISPLAY_CURRENCY_KEY);
@@ -2437,27 +2446,22 @@ export const Patrimonio: React.FC = () => {
   const missingCriticalCount = useMemo(() => {
     const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
     return requiredNames.filter((required) => {
-      const target = normalizeForMatch(required);
       return !monthRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
-        const label = normalizeForMatch(record.label);
-        return label.includes(target) || target.includes(label);
+        return sameCanonicalLabel(record.label, required);
       });
     }).length;
   }, [monthRecords]);
   const hasRealEstateCoreInputs = useMemo(() => {
-    const propertyTarget = normalizeForMatch('Valor propiedad');
-    const debtTarget = normalizeForMatch('Saldo deuda hipotecaria');
     let hasProperty = false;
     let hasMortgageDebt = false;
 
     monthRecords.forEach((record) => {
       if (isSyntheticAggregateRecord(record)) return;
-      const normalizedLabel = normalizeForMatch(record.label);
-      if (record.block === 'real_estate' && normalizedLabel.includes(propertyTarget)) {
+      if (record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad')) {
         hasProperty = true;
       }
-      if (record.block === 'debt' && normalizedLabel.includes(debtTarget)) {
+      if (record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria')) {
         hasMortgageDebt = true;
       }
     });
@@ -2588,11 +2592,9 @@ export const Patrimonio: React.FC = () => {
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
     const missingRequired = requiredNames.filter((required) => {
-      const target = normalizeForMatch(required);
       return !targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
-        const label = normalizeForMatch(record.label);
-        return label.includes(target) || target.includes(label);
+        return sameCanonicalLabel(record.label, required);
       });
     });
     if (missingRequired.length) {

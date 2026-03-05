@@ -142,6 +142,12 @@ const normalizeText = (value: string) =>
     .toLowerCase()
     .trim();
 
+const normalizeLabelKey = (value: string) =>
+  normalizeText(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const isSyntheticAggregateLabel = (record: Pick<WealthRecord, 'label' | 'block'>) => {
   const label = normalizeText(record.label);
   if (record.block === 'bank') {
@@ -196,7 +202,7 @@ const normalizeRecord = (item: any): WealthRecord => ({
       label: String(item?.label || 'Registro'),
       amount: toNumber(item?.amount),
       currency: (item?.currency || 'CLP') as WealthCurrency,
-      snapshotDate: String(item?.snapshotDate || nowIso().slice(0, 10)),
+      snapshotDate: String(item?.snapshotDate || localYmd()),
       createdAt: String(item?.createdAt || nowIso()),
     } satisfies Omit<WealthRecord, 'note'>;
 
@@ -250,6 +256,10 @@ export const currentMonthKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
+
+export function localYmd(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
 export const defaultFxRates: WealthFxRates = {
   usdClp: 950,
@@ -530,16 +540,13 @@ export const removeWealthRecordForMonthAsset = (input: {
   monthKey: string;
 }) => {
   const monthPrefix = `${input.monthKey}-`;
-  const targetLabel = normalizeText(input.label);
+  const targetLabel = normalizeLabelKey(input.label);
   const current = loadWealthRecords();
   const removedIds: string[] = [];
 
   const next = current.filter((record) => {
-    const recordLabel = normalizeText(record.label);
-    const sameLabel =
-      recordLabel === targetLabel ||
-      recordLabel.includes(targetLabel) ||
-      targetLabel.includes(recordLabel);
+    const recordLabel = normalizeLabelKey(record.label);
+    const sameLabel = recordLabel === targetLabel;
     const shouldRemove =
       record.block === input.block &&
       record.currency === input.currency &&
@@ -1064,6 +1071,7 @@ export const fillMissingWithPreviousClosure = (
 ): { added: number; sourceMonth: string | null } => {
   const records = loadWealthRecords();
   const closures = loadClosures();
+  const instruments = loadInvestmentInstruments();
   const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
 
   if (!previous || !previous.records?.length) {
@@ -1073,15 +1081,22 @@ export const fillMissingWithPreviousClosure = (
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
 
   const toAdd: WealthRecord[] = [];
-  const normalizedFilters = (onlyLabels || []).map((l) => normalizeText(l)).filter(Boolean);
+  const normalizedFilters = (onlyLabels || []).map((l) => normalizeLabelKey(l)).filter(Boolean);
+  const excludedInvestmentKeys = new Set(
+    instruments
+      .filter((instrument) => (instrument.excludedMonths || []).includes(targetMonthKey))
+      .map((instrument) => `${normalizeLabelKey(instrument.label)}::${instrument.currency}`),
+  );
 
   for (const oldRecord of previous.records) {
     if (normalizedFilters.length) {
-      const oldLabel = normalizeText(oldRecord.label);
-      const matchesFilter = normalizedFilters.some(
-        (filter) => oldLabel.includes(filter) || filter.includes(oldLabel),
-      );
+      const oldLabel = normalizeLabelKey(oldRecord.label);
+      const matchesFilter = normalizedFilters.some((filter) => oldLabel === filter);
       if (!matchesFilter) continue;
+    }
+    if (oldRecord.block === 'investment') {
+      const excludedKey = `${normalizeLabelKey(oldRecord.label)}::${oldRecord.currency}`;
+      if (excludedInvestmentKeys.has(excludedKey)) continue;
     }
 
     const key = makeAssetKey(oldRecord);

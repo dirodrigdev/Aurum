@@ -113,6 +113,14 @@ const normalizeForMatch = (value: string) =>
     .toLowerCase()
     .trim();
 
+const labelMatchKey = (value: string) =>
+  normalizeForMatch(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
+
 const isSyntheticAggregateRecord = (record: WealthRecord) => {
   const label = normalizeForMatch(record.label);
   if (record.block === 'bank') {
@@ -510,11 +518,9 @@ export const ClosingAurum: React.FC = () => {
   const missingCriticalCount = useMemo(() => {
     const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_LABELS];
     return required.filter((requiredLabel) => {
-      const target = normalizeForMatch(requiredLabel);
       return !currentRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
-        const label = normalizeForMatch(record.label);
-        return label.includes(target) || target.includes(label);
+        return sameCanonicalLabel(record.label, requiredLabel);
       });
     }).length;
   }, [currentRecords]);
