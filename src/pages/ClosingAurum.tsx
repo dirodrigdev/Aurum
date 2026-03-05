@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card } from '../components/Components';
+import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
   WealthCurrency,
   WealthFxRates,
@@ -465,6 +466,11 @@ export const ClosingAurum: React.FC = () => {
       setMonthKey(currentMonthKey());
       setRevision((v) => v + 1);
     };
+    const onBottomNavRetap = (event: Event) => {
+      const custom = event as CustomEvent<{ to?: string }>;
+      if (custom.detail?.to !== '/closing') return;
+      void refreshAll();
+    };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') void refreshAll();
     };
@@ -481,6 +487,7 @@ export const ClosingAurum: React.FC = () => {
 
     window.addEventListener('focus', onFocus);
     window.addEventListener('storage', onStorage);
+    window.addEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
     document.addEventListener('visibilitychange', onVisibility);
@@ -488,6 +495,7 @@ export const ClosingAurum: React.FC = () => {
     return () => {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
       document.removeEventListener('visibilitychange', onVisibility);

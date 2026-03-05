@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
+import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
   clearCurrentMonthData,
   clearSimulationHistoryData,
@@ -72,6 +73,24 @@ export const SettingsAurum: React.FC = () => {
       setAuthEmail(user?.email || '');
       setAuthUid(user?.uid || '');
     });
+  }, []);
+
+  useEffect(() => {
+    const refreshFromCloudNow = async () => {
+      await hydrateWealthFromCloud();
+      setFx(loadFxRates());
+      setFxLiveMeta(loadFxLiveSyncMeta());
+    };
+    const onBottomNavRetap = (event: Event) => {
+      const custom = event as CustomEvent<{ to?: string }>;
+      if (custom.detail?.to !== '/settings') return;
+      void refreshFromCloudNow();
+    };
+
+    window.addEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
+    return () => {
+      window.removeEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
+    };
   }, []);
 
   return (

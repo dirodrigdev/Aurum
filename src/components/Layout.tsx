@@ -4,6 +4,7 @@ import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react'
 import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
 
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
+export const BOTTOM_NAV_RETAP_EVENT = 'aurum:bottom-nav-retap';
 
 export const Layout: React.FC = () => {
   const location = useLocation();
@@ -66,9 +67,12 @@ export const Layout: React.FC = () => {
                 key={item.to}
                 to={item.to}
                 onClick={(event) => {
-                  if (item.to === '/patrimonio' && location.pathname === '/patrimonio') {
+                  if (location.pathname === item.to) {
                     event.preventDefault();
-                    window.dispatchEvent(new CustomEvent(NAVIGATE_PATRIMONIO_HOME_EVENT));
+                    if (item.to === '/patrimonio') {
+                      window.dispatchEvent(new CustomEvent(NAVIGATE_PATRIMONIO_HOME_EVENT));
+                    }
+                    window.dispatchEvent(new CustomEvent(BOTTOM_NAV_RETAP_EVENT, { detail: { to: item.to } }));
                   }
                 }}
                 className={cn(
