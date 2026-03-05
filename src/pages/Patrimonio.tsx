@@ -244,7 +244,9 @@ const formatRecordUpdatedStamp = (record: WealthRecord) => {
 
 const displayRecordOrigin = (record: WealthRecord) => {
   if (isCarriedRecord(record)) return 'Mes anterior';
-  if (isEstimatedRecord(record)) return 'Sistema';
+  if (isEstimatedRecord(record)) {
+    return isMortgagePrincipalLabel(record.label) ? 'Sistema' : 'Mes anterior';
+  }
   if (isApiSource(record.source)) return 'API';
   if (isManualLikeSource(record.source)) return 'Manual';
   return 'Imagen';
@@ -754,6 +756,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         };
       }
       if (isEstimatedRecord(match)) {
+        if (section === 'real_estate' && !isMortgagePrincipalLabel(match.label)) {
+          return {
+            name,
+            status: 'mes_anterior',
+            detail: `Mes anterior · ${formatRecordUpdatedStamp(match)}`,
+            context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+          };
+        }
         return {
           name,
           status: 'estimado',
@@ -2731,9 +2741,16 @@ export const Patrimonio: React.FC = () => {
                     onClick={() => setShowNetWorth((v) => !v)}
                   >
                     <div className="text-orange-100">Patrimonio total neto</div>
-                    <div className="mt-1 text-base font-semibold">
+                    <div className="mt-1 text-base font-semibold flex items-center gap-2">
                       {showNetWorth ? (
-                        metricsDisplay.netWorth
+                        <>
+                          <span>{metricsDisplay.netWorth}</span>
+                          {missingCriticalCount > 0 && (
+                            <span className="rounded-full border border-amber-200/70 bg-amber-100/30 px-2 py-0.5 text-[10px] font-semibold text-amber-100">
+                              Parcial
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <span className="inline-block rounded-md bg-white/20 px-2 py-1 blur-[1.4px] select-none">■■■■■■■■</span>
                       )}
@@ -2741,11 +2758,6 @@ export const Patrimonio: React.FC = () => {
                     <div className="mt-1 text-[11px] text-orange-100/80">
                       Incluye inversiones + bienes raíces + bancos - deudas (tarjetas e hipotecarias).
                     </div>
-                    {missingCriticalCount > 0 && (
-                      <div className="mt-1 text-[11px] text-amber-100/95">
-                        Patrimonio parcial: faltan {missingCriticalCount} ítem(s) obligatorios de inversión/bienes raíces.
-                      </div>
-                    )}
                   </button>
 
                   <div className="rounded-xl bg-white/12 p-3">
