@@ -2711,6 +2711,8 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     if (!hydrationReady) return;
+    const realCurrentMonth = currentMonthKey();
+    if (monthKey !== realCurrentMonth) return;
     if (autoCarryAppliedRef.current.has(monthKey)) return;
     autoCarryAppliedRef.current.add(monthKey);
 
