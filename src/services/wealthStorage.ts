@@ -522,6 +522,45 @@ const mergeRecords = (localRecords: WealthRecord[], remoteRecords: WealthRecord[
   return [...merged.values()].sort(sortByCreatedDesc);
 };
 
+const latestRecordsByLogicalKey = (records: WealthRecord[]) => {
+  const out = new Map<string, WealthRecord>();
+  for (const record of records) {
+    const key = logicalRecordKey(record);
+    const prev = out.get(key);
+    out.set(key, prev ? pickLatestRecord(prev, record) : record);
+  }
+  return out;
+};
+
+const mergeRecordsByStatePriority = (
+  localRecords: WealthRecord[],
+  remoteRecords: WealthRecord[],
+  preferLocal: boolean,
+) => {
+  const localByKey = latestRecordsByLogicalKey(localRecords);
+  const remoteByKey = latestRecordsByLogicalKey(remoteRecords);
+  const allKeys = new Set([...localByKey.keys(), ...remoteByKey.keys()]);
+  const merged = new Map<string, WealthRecord>();
+
+  for (const key of allKeys) {
+    const localRecord = localByKey.get(key);
+    const remoteRecord = remoteByKey.get(key);
+    if (localRecord && remoteRecord) {
+      merged.set(key, preferLocal ? localRecord : remoteRecord);
+      continue;
+    }
+    if (localRecord) {
+      merged.set(key, localRecord);
+      continue;
+    }
+    if (remoteRecord) {
+      merged.set(key, remoteRecord);
+    }
+  }
+
+  return [...merged.values()].sort(sortByCreatedDesc);
+};
+
 const normalizeFxRates = (raw: any): WealthFxRates => ({
   usdClp: Math.max(1, toNumber(raw?.usdClp, defaultFxRates.usdClp)),
   eurClp: Math.max(1, toNumber(raw?.eurClp, defaultFxRates.eurClp)),
@@ -632,7 +671,11 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
 
   const deletedSet = new Set(deletedRecordIds);
   const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
-  const records = mergeRecords(input.localRecords, input.remoteRecords).filter(
+  const records = mergeRecordsByStatePriority(
+    input.localRecords,
+    input.remoteRecords,
+    preferLocal,
+  ).filter(
     (record) => !deletedSet.has(record.id) && !deletedAssetMonthSet.has(makeAssetMonthKey(record)),
   );
 
@@ -1891,6 +1934,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         const localDeletedRecordIds = loadDeletedRecordIds();
         const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
         const localFx = loadFxRates();
+        const localUpdatedAt = readWealthUpdatedAt();
 
         const merged = mergeWealthState({
           localRecords,
@@ -1905,7 +1949,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           remoteDeletedRecordAssetMonthKeys: remote.deletedRecordAssetMonthKeys,
           localFx,
           remoteFx: remote.fx,
-          localUpdatedAt: readWealthUpdatedAt(),
+          localUpdatedAt,
           remoteUpdatedAt: remote.updatedAt,
         });
 
@@ -1925,7 +1969,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           deletedRecordIds: merged.deletedRecordIds,
           deletedRecordAssetMonthKeys: merged.deletedRecordAssetMonthKeys,
           fx: merged.fx,
-          updatedAt: remote.updatedAt || nowIso(),
+          updatedAt: merged.preferLocal ? localUpdatedAt || nowIso() : remote.updatedAt || nowIso(),
         });
 
         const cloudNeedsUpdate =
