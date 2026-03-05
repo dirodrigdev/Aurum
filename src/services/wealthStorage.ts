@@ -535,6 +535,90 @@ const sameStringList = (a: string[], b: string[]) => {
   return true;
 };
 
+const isoToMs = (value: string) => {
+  const parsed = new Date(String(value || '')).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const isLocalStateNewerOrEqual = (localUpdatedAt: string, remoteUpdatedAt: string) => {
+  if (!remoteUpdatedAt) return true;
+  if (!localUpdatedAt) return false;
+  const localMs = isoToMs(localUpdatedAt);
+  const remoteMs = isoToMs(remoteUpdatedAt);
+  if (!Number.isFinite(localMs) || !Number.isFinite(remoteMs)) {
+    return String(localUpdatedAt) >= String(remoteUpdatedAt);
+  }
+  return localMs >= remoteMs;
+};
+
+type MergeWealthStateInput = {
+  localRecords: WealthRecord[];
+  remoteRecords: WealthRecord[];
+  localClosures: WealthMonthlyClosure[];
+  remoteClosures: WealthMonthlyClosure[];
+  localInstruments: WealthInvestmentInstrument[];
+  remoteInstruments: WealthInvestmentInstrument[];
+  localDeletedRecordIds: string[];
+  remoteDeletedRecordIds: string[];
+  localDeletedRecordAssetMonthKeys: string[];
+  remoteDeletedRecordAssetMonthKeys: string[];
+  localFx: WealthFxRates;
+  remoteFx: WealthFxRates;
+  localUpdatedAt: string;
+  remoteUpdatedAt: string;
+};
+
+type MergedWealthState = {
+  records: WealthRecord[];
+  closures: WealthMonthlyClosure[];
+  instruments: WealthInvestmentInstrument[];
+  deletedRecordIds: string[];
+  deletedRecordAssetMonthKeys: string[];
+  fx: WealthFxRates;
+  preferLocal: boolean;
+};
+
+const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
+  const preferLocal = isLocalStateNewerOrEqual(input.localUpdatedAt, input.remoteUpdatedAt);
+
+  let deletedRecordIds = mergeDeletedRecordIds(input.localDeletedRecordIds, input.remoteDeletedRecordIds);
+  let deletedRecordAssetMonthKeys = mergeDeletedRecordAssetMonthKeys(
+    input.localDeletedRecordAssetMonthKeys,
+    input.remoteDeletedRecordAssetMonthKeys,
+  );
+
+  // Si local es más nuevo y ya contiene un registro activo para ese asset/mes,
+  // limpiamos su tombstone remoto para permitir reingresos tras borrado.
+  if (preferLocal) {
+    const localIdSet = new Set(input.localRecords.map((record) => record.id));
+    const localAssetMonthSet = new Set(
+      input.localRecords
+        .map((record) => makeAssetMonthKey(record))
+        .filter((key) => !!key),
+    );
+    deletedRecordIds = normalizeDeletedRecordIds(deletedRecordIds.filter((id) => !localIdSet.has(id)));
+    deletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
+      deletedRecordAssetMonthKeys.filter((key) => !localAssetMonthSet.has(key)),
+    );
+  }
+
+  const deletedSet = new Set(deletedRecordIds);
+  const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
+  const records = mergeRecords(input.localRecords, input.remoteRecords).filter(
+    (record) => !deletedSet.has(record.id) && !deletedAssetMonthSet.has(makeAssetMonthKey(record)),
+  );
+
+  return {
+    records,
+    closures: mergeClosures(input.localClosures, input.remoteClosures),
+    instruments: mergeInvestmentInstruments(input.localInstruments, input.remoteInstruments),
+    deletedRecordIds,
+    deletedRecordAssetMonthKeys,
+    fx: preferLocal ? input.localFx : input.remoteFx,
+    preferLocal,
+  };
+};
+
 export const loadWealthRecords = (): WealthRecord[] => {
   try {
     const raw = localStorage.getItem(RECORDS_KEY);
@@ -1122,21 +1206,28 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       );
       const remoteUpdatedAt = String(remoteData.updatedAt || '');
 
-      const mergedDeletedRecordIds = mergeDeletedRecordIds(localDeletedRecordIds, remoteDeletedRecordIds);
-      const mergedDeletedRecordAssetMonthKeys = mergeDeletedRecordAssetMonthKeys(
+      const merged = mergeWealthState({
+        localRecords,
+        remoteRecords,
+        localClosures,
+        remoteClosures,
+        localInstruments,
+        remoteInstruments,
+        localDeletedRecordIds,
+        remoteDeletedRecordIds,
         localDeletedRecordAssetMonthKeys,
         remoteDeletedRecordAssetMonthKeys,
-      );
-      const mergedDeletedSet = new Set(mergedDeletedRecordIds);
-      const mergedDeletedAssetMonthSet = new Set(mergedDeletedRecordAssetMonthKeys);
-      const mergedRecords = mergeRecords(localRecords, remoteRecords).filter(
-        (record) => !mergedDeletedSet.has(record.id) && !mergedDeletedAssetMonthSet.has(makeAssetMonthKey(record)),
-      );
-      const mergedClosures = mergeClosures(localClosures, remoteClosures);
-      const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
-      const useLocalFx =
-        !remoteUpdatedAt || (!!localUpdatedAt && new Date(localUpdatedAt).getTime() >= new Date(remoteUpdatedAt).getTime());
-      const mergedFx = useLocalFx ? localFx : remoteFx;
+        localFx,
+        remoteFx,
+        localUpdatedAt,
+        remoteUpdatedAt,
+      });
+      const mergedDeletedRecordIds = merged.deletedRecordIds;
+      const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
+      const mergedRecords = merged.records;
+      const mergedClosures = merged.closures;
+      const mergedInstruments = merged.instruments;
+      const mergedFx = merged.fx;
       const mergedUpdatedAt = nowIso();
 
       await setDoc(
@@ -1253,25 +1344,31 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       data.deletedRecordAssetMonthKeys,
     );
 
-    const mergedDeletedRecordIds = mergeDeletedRecordIds(localDeletedRecordIds, remoteDeletedRecordIds);
-    const mergedDeletedRecordAssetMonthKeys = mergeDeletedRecordAssetMonthKeys(
+    const merged = mergeWealthState({
+      localRecords,
+      remoteRecords,
+      localClosures,
+      remoteClosures,
+      localInstruments,
+      remoteInstruments,
+      localDeletedRecordIds,
+      remoteDeletedRecordIds,
       localDeletedRecordAssetMonthKeys,
       remoteDeletedRecordAssetMonthKeys,
-    );
-    const mergedDeletedSet = new Set(mergedDeletedRecordIds);
-    const mergedDeletedAssetMonthSet = new Set(mergedDeletedRecordAssetMonthKeys);
-    const mergedRecords = mergeRecords(localRecords, remoteRecords).filter(
-      (record) => !mergedDeletedSet.has(record.id) && !mergedDeletedAssetMonthSet.has(makeAssetMonthKey(record)),
-    );
-    const mergedClosures = mergeClosures(localClosures, remoteClosures);
-    const mergedInstruments = mergeInvestmentInstruments(localInstruments, remoteInstruments);
+      localFx,
+      remoteFx,
+      localUpdatedAt,
+      remoteUpdatedAt,
+    });
+    const mergedDeletedRecordIds = merged.deletedRecordIds;
+    const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
+    const mergedRecords = merged.records;
+    const mergedClosures = merged.closures;
+    const mergedInstruments = merged.instruments;
 
     const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
     const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
-
-    const useRemoteFx =
-      !!remoteUpdatedAt && (!localUpdatedAt || new Date(remoteUpdatedAt).getTime() > new Date(localUpdatedAt).getTime());
-    const mergedFx = useRemoteFx ? remoteFx : localFx;
+    const mergedFx = merged.fx;
 
     const localNeedsUpdate =
       !sameRecords(localRecords, mergedRecords) ||
@@ -1764,24 +1861,50 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
         const localFx = loadFxRates();
 
+        const merged = mergeWealthState({
+          localRecords,
+          remoteRecords: remote.records,
+          localClosures,
+          remoteClosures: remote.closures,
+          localInstruments,
+          remoteInstruments: remote.instruments,
+          localDeletedRecordIds,
+          remoteDeletedRecordIds: remote.deletedRecordIds,
+          localDeletedRecordAssetMonthKeys,
+          remoteDeletedRecordAssetMonthKeys: remote.deletedRecordAssetMonthKeys,
+          localFx,
+          remoteFx: remote.fx,
+          localUpdatedAt: readWealthUpdatedAt(),
+          remoteUpdatedAt: remote.updatedAt,
+        });
+
         const sameAsLocal =
-          sameRecords(localRecords, remote.records) &&
-          sameClosures(localClosures, remote.closures) &&
-          sameInvestmentInstruments(localInstruments, remote.instruments) &&
-          sameStringList(localDeletedRecordIds, remote.deletedRecordIds) &&
-          sameStringList(localDeletedRecordAssetMonthKeys, remote.deletedRecordAssetMonthKeys) &&
-          JSON.stringify(localFx) === JSON.stringify(remote.fx);
+          sameRecords(localRecords, merged.records) &&
+          sameClosures(localClosures, merged.closures) &&
+          sameInvestmentInstruments(localInstruments, merged.instruments) &&
+          sameStringList(localDeletedRecordIds, merged.deletedRecordIds) &&
+          sameStringList(localDeletedRecordAssetMonthKeys, merged.deletedRecordAssetMonthKeys) &&
+          JSON.stringify(localFx) === JSON.stringify(merged.fx);
         if (sameAsLocal) return;
 
         applyWealthStateLocal({
-          records: remote.records,
-          closures: remote.closures,
-          instruments: remote.instruments,
-          deletedRecordIds: remote.deletedRecordIds,
-          deletedRecordAssetMonthKeys: remote.deletedRecordAssetMonthKeys,
-          fx: remote.fx,
-          updatedAt: remote.updatedAt,
+          records: merged.records,
+          closures: merged.closures,
+          instruments: merged.instruments,
+          deletedRecordIds: merged.deletedRecordIds,
+          deletedRecordAssetMonthKeys: merged.deletedRecordAssetMonthKeys,
+          fx: merged.fx,
+          updatedAt: remote.updatedAt || nowIso(),
         });
+
+        const cloudNeedsUpdate =
+          !sameRecords(merged.records, remote.records) ||
+          !sameClosures(merged.closures, remote.closures) ||
+          !sameInvestmentInstruments(merged.instruments, remote.instruments) ||
+          !sameStringList(merged.deletedRecordIds, remote.deletedRecordIds) ||
+          !sameStringList(merged.deletedRecordAssetMonthKeys, remote.deletedRecordAssetMonthKeys) ||
+          JSON.stringify(merged.fx) !== JSON.stringify(remote.fx);
+        if (cloudNeedsUpdate) scheduleWealthCloudSync(20);
       },
       (err) => {
         setLastWealthSyncIssue(`${(err as any)?.code || 'snapshot_error'} ${(err as any)?.message || ''}`.trim());
