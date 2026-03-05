@@ -89,7 +89,9 @@ const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
+const WEALTH_FX_LAST_AUTO_ATTEMPT_DAY_KEY = 'wealth_fx_last_auto_attempt_day_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
+export const FX_LIVE_META_UPDATED_EVENT = 'aurum:fx-live-meta-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
@@ -214,6 +216,9 @@ export const loadFxLiveSyncMeta = (): FxLiveSyncMeta | null => {
 const saveFxLiveSyncMeta = (meta: FxLiveSyncMeta) => {
   try {
     localStorage.setItem(WEALTH_FX_LIVE_META_KEY, JSON.stringify(meta));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(FX_LIVE_META_UPDATED_EVENT, { detail: meta }));
+    }
   } catch {
     // ignore
   }
@@ -230,6 +235,22 @@ const readFxLastAutoSyncDay = () => {
 const writeFxLastAutoSyncDay = (ymd: string) => {
   try {
     localStorage.setItem(WEALTH_FX_LAST_AUTO_DAY_KEY, ymd);
+  } catch {
+    // ignore
+  }
+};
+
+const readFxLastAutoAttemptDay = () => {
+  try {
+    return String(localStorage.getItem(WEALTH_FX_LAST_AUTO_ATTEMPT_DAY_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
+const writeFxLastAutoAttemptDay = (ymd: string) => {
+  try {
+    localStorage.setItem(WEALTH_FX_LAST_AUTO_ATTEMPT_DAY_KEY, ymd);
   } catch {
     // ignore
   }
@@ -812,6 +833,21 @@ export const refreshFxRatesDailyIfNeeded = async (): Promise<{
   skipped?: boolean;
   message?: string;
 }> => {
+  const today = localYmd();
+
+  // Ya hubo actualización exitosa hoy.
+  if (readFxLastAutoSyncDay() === today) {
+    writeFxLastAutoAttemptDay(today);
+    return { ok: true, updated: false, skipped: true };
+  }
+
+  // Ya se intentó actualización automática hoy (aunque haya fallado).
+  if (readFxLastAutoAttemptDay() === today) {
+    return { ok: true, updated: false, skipped: true };
+  }
+
+  writeFxLastAutoAttemptDay(today);
+
   try {
     const result = await refreshFxRatesFromLive();
     return { ok: true, updated: result.updated, skipped: result.skipped };

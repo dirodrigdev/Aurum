@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
-import { cn, ConnectionBanner, FirestoreStatusBanner } from './Components';
+import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
 
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 
@@ -31,6 +31,7 @@ export const Layout: React.FC = () => {
       </header>
 
       <main className="flex-1 max-w-xl mx-auto w-full pb-20">
+        <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
         <Outlet />
       </main>
 

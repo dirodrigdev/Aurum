@@ -3,6 +3,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as LucideIcons from 'lucide-react';
 import { subscribeFirestoreStatus, FirestoreStatus } from '../services/firestoreStatus';
+import { FX_LIVE_META_UPDATED_EVENT, loadFxLiveSyncMeta, loadFxRates } from '../services/wealthStorage';
 import { periodInfoForDate } from '../utils/period';
 
 // Utility para unir clases de Tailwind sin conflictos
@@ -254,6 +255,98 @@ export const FirestoreStatusBanner: React.FC<{ onGoSettings?: () => void }> = ({
           Ajustes
         </button>
       )}
+    </div>
+  );
+};
+
+export const FxSyncStatusBanner: React.FC<{ onGoSettings?: () => void }> = ({ onGoSettings }) => {
+  const [meta, setMeta] = useState(() => loadFxLiveSyncMeta());
+  const [rates, setRates] = useState(() => loadFxRates());
+  const [dismissedKey, setDismissedKey] = useState(() => {
+    try {
+      return String(localStorage.getItem('aurum_fx_sync_error_dismissed_key') || '');
+    } catch {
+      return '';
+    }
+  });
+
+  useEffect(() => {
+    const refresh = () => {
+      setMeta(loadFxLiveSyncMeta());
+      setRates(loadFxRates());
+      try {
+        setDismissedKey(String(localStorage.getItem('aurum_fx_sync_error_dismissed_key') || ''));
+      } catch {
+        setDismissedKey('');
+      }
+    };
+
+    const onMetaUpdated = () => refresh();
+    const onFocus = () => refresh();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+
+    window.addEventListener(FX_LIVE_META_UPDATED_EVENT, onMetaUpdated as EventListener);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener(FX_LIVE_META_UPDATED_EVENT, onMetaUpdated as EventListener);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  if (!meta || meta.status !== 'error') return null;
+
+  const errorKey = `${meta.fetchedAt || 's/f'}|${meta.message || 's/m'}`;
+  if (dismissedKey === errorKey) return null;
+
+  const AlertTriangle = (LucideIcons as any).AlertTriangle;
+  const keepSavedValues = () => {
+    try {
+      localStorage.setItem('aurum_fx_sync_error_dismissed_key', errorKey);
+    } catch {
+      // ignore
+    }
+    setDismissedKey(errorKey);
+  };
+
+  return (
+    <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      <div className="flex items-start gap-2">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        <div className="leading-tight">
+          <div className="font-semibold">Actualización financiera pendiente</div>
+          <div className="mt-0.5">
+            No pude actualizar TC/UF automáticamente hoy. Se mantienen los valores guardados:
+            {' '}
+            USD {Math.round(rates.usdClp).toLocaleString('es-CL')}
+            {' · '}
+            EUR {Math.round(rates.eurClp).toLocaleString('es-CL')}
+            {' · '}
+            UF {Math.round(rates.ufClp).toLocaleString('es-CL')}.
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={keepSavedValues}
+              className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
+            >
+              Mantener guardados
+            </button>
+            {onGoSettings && (
+              <button
+                type="button"
+                onClick={onGoSettings}
+                className="rounded-lg bg-amber-700 px-2 py-1 font-semibold text-white hover:bg-amber-800"
+              >
+                Ingresar manual
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

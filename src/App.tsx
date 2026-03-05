@@ -58,12 +58,22 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       if (document.visibilityState !== 'visible') return;
       runDailySync();
     };
+    const onFirstInteraction = () => {
+      if (document.visibilityState !== 'visible') return;
+      runDailySync();
+    };
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pointerdown', onFirstInteraction);
+    window.addEventListener('touchstart', onFirstInteraction);
+    window.addEventListener('keydown', onFirstInteraction);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pointerdown', onFirstInteraction);
+      window.removeEventListener('touchstart', onFirstInteraction);
+      window.removeEventListener('keydown', onFirstInteraction);
     };
   }, [user?.uid, user?.isAnonymous]);
 
