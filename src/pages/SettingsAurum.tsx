@@ -59,6 +59,9 @@ export const SettingsAurum: React.FC = () => {
     });
   };
 
+  const formatFxInteger = (value: number) =>
+    Math.round(Number(value) || 0).toLocaleString('es-CL');
+
   const historicalCsvTemplate = `month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
 2026-01,2026-01-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-02,2026-02-28T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
@@ -142,7 +145,17 @@ export const SettingsAurum: React.FC = () => {
                 );
               } catch (err: any) {
                 setFxLiveMeta(loadFxLiveSyncMeta());
-                setFxLiveMessage(String(err?.message || 'No pude actualizar TC/UF online.'));
+                const currentSaved = loadFxRates();
+                setFx(currentSaved);
+                const savedText = `USD ${formatFxInteger(currentSaved.usdClp)} · EUR ${formatFxInteger(currentSaved.eurClp)} · UF ${formatFxInteger(currentSaved.ufClp)}`;
+                const keep = window.confirm(
+                  `No pude actualizar TC/UF online.\n\nValores guardados actuales:\n${savedText}\n\nAceptar = mantener valores guardados\nCancelar = ingresarlos manualmente ahora`,
+                );
+                setFxLiveMessage(
+                  keep
+                    ? `Manteniendo valores guardados: ${savedText}.`
+                    : `Actualización online no disponible. Ingresa manualmente (valores actuales: ${savedText}).`,
+                );
               } finally {
                 setSyncingLiveFx(false);
               }

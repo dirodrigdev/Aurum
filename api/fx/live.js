@@ -52,12 +52,6 @@ const clampRate = (value, min, max, label) => {
   return n;
 };
 
-const dateToYmd = (value) => {
-  const d = new Date(String(value || '').trim());
-  if (!Number.isFinite(d.getTime())) return '';
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-};
-
 const stripHtml = (html) =>
   String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -121,17 +115,8 @@ const fetchUsdEurFromOpenErApi = async () => {
   };
 };
 
-const fetchUsdEurFromMindicador = async () => {
-  const payload = await withTimeout('https://mindicador.cl/api', 'json');
-  return {
-    usd: clampRate(payload?.dolar?.valor, 500, 2000, 'USD/CLP'),
-    eur: clampRate(payload?.euro?.valor, 600, 2500, 'EUR/CLP'),
-    source: 'mindicador.cl/api',
-  };
-};
-
 const resolveUsdEur = async () => {
-  const strategies = [fetchUsdEurFromFrankfurter, fetchUsdEurFromOpenErApi, fetchUsdEurFromMindicador];
+  const strategies = [fetchUsdEurFromFrankfurter, fetchUsdEurFromOpenErApi];
   const errors = [];
 
   for (const strategy of strategies) {
@@ -143,19 +128,6 @@ const resolveUsdEur = async () => {
   }
 
   throw new Error(`USD/EUR sin respuesta válida (${errors.join(' | ')})`);
-};
-
-const fetchUfFromMindicador = async () => {
-  const payload = await withTimeout('https://mindicador.cl/api/uf', 'json');
-  const first = Array.isArray(payload?.serie) ? payload.serie[0] : null;
-  const uf = clampRate(first?.valor, 20000, 60000, 'UF/CLP');
-  const ufDate = dateToYmd(first?.fecha);
-
-  return {
-    uf,
-    ufDate,
-    source: `mindicador.cl/api/uf${ufDate ? `(${ufDate})` : ''}`,
-  };
 };
 
 const fetchUfFromWebPage = async (url) => {
@@ -172,11 +144,7 @@ const fetchUfFromWebPage = async (url) => {
 };
 
 const resolveUf = async () => {
-  const strategies = [
-    fetchUfFromMindicador,
-    () => fetchUfFromWebPage('https://www.valoruf.cl'),
-    () => fetchUfFromWebPage('https://www.mindicador.cl/'),
-  ];
+  const strategies = [() => fetchUfFromWebPage('https://www.valoruf.cl')];
   const errors = [];
 
   for (const strategy of strategies) {

@@ -6,7 +6,7 @@ import { Patrimonio } from './pages/Patrimonio';
 import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
-import { refreshFxRatesAutoIfNeeded, WEALTH_DATA_UPDATED_EVENT } from './services/wealthStorage';
+import { refreshFxRatesDailyIfNeeded } from './services/wealthStorage';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
@@ -44,32 +44,26 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   useEffect(() => {
     if (!user || user.isAnonymous) return;
 
-    const runAutoSync = () => {
-      void refreshFxRatesAutoIfNeeded({ minIntervalMinutes: 20 });
+    const runDailySync = () => {
+      void refreshFxRatesDailyIfNeeded();
     };
 
-    runAutoSync();
+    runDailySync();
 
     const onFocus = () => {
       if (document.visibilityState !== 'visible') return;
-      runAutoSync();
+      runDailySync();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
-      runAutoSync();
-    };
-    const onWealthChanged = () => {
-      if (document.visibilityState !== 'visible') return;
-      runAutoSync();
+      runDailySync();
     };
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthChanged as EventListener);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthChanged as EventListener);
     };
   }, [user?.uid, user?.isAnonymous]);
 

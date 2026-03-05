@@ -89,7 +89,6 @@ const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
-const WEALTH_FX_LAST_AUTO_ATTEMPT_KEY = 'wealth_fx_last_auto_attempt_v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
@@ -231,24 +230,6 @@ const readFxLastAutoSyncDay = () => {
 const writeFxLastAutoSyncDay = (ymd: string) => {
   try {
     localStorage.setItem(WEALTH_FX_LAST_AUTO_DAY_KEY, ymd);
-  } catch {
-    // ignore
-  }
-};
-
-const readFxLastAutoAttemptAt = () => {
-  try {
-    const raw = String(localStorage.getItem(WEALTH_FX_LAST_AUTO_ATTEMPT_KEY) || '');
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 0;
-  } catch {
-    return 0;
-  }
-};
-
-const writeFxLastAutoAttemptAt = (epochMs: number) => {
-  try {
-    localStorage.setItem(WEALTH_FX_LAST_AUTO_ATTEMPT_KEY, String(epochMs));
   } catch {
     // ignore
   }
@@ -833,27 +814,6 @@ export const refreshFxRatesDailyIfNeeded = async (): Promise<{
 }> => {
   try {
     const result = await refreshFxRatesFromLive();
-    return { ok: true, updated: result.updated, skipped: result.skipped };
-  } catch (err: any) {
-    return { ok: false, updated: false, message: String(err?.message || 'Error actualizando TC/UF') };
-  }
-};
-
-export const refreshFxRatesAutoIfNeeded = async (
-  options?: { minIntervalMinutes?: number },
-): Promise<{ ok: boolean; updated: boolean; skipped?: boolean; message?: string }> => {
-  const minIntervalMinutes = Math.max(1, Number(options?.minIntervalMinutes ?? 20));
-  const now = Date.now();
-  const lastAttemptAt = readFxLastAutoAttemptAt();
-
-  if (lastAttemptAt > 0 && now - lastAttemptAt < minIntervalMinutes * 60_000) {
-    return { ok: true, updated: false, skipped: true };
-  }
-
-  writeFxLastAutoAttemptAt(now);
-
-  try {
-    const result = await refreshFxRatesFromLive({ force: true });
     return { ok: true, updated: result.updated, skipped: result.skipped };
   } catch (err: any) {
     return { ok: false, updated: false, message: String(err?.message || 'Error actualizando TC/UF') };
