@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 
@@ -119,8 +119,18 @@ const isFirebaseConfigured = () =>
   );
 
 const touchWealthUpdatedAt = () => {
+  const stamp = nowIso();
   try {
-    localStorage.setItem(WEALTH_UPDATED_AT_KEY, nowIso());
+    localStorage.setItem(WEALTH_UPDATED_AT_KEY, stamp);
+  } catch {
+    // ignore
+  }
+  return stamp;
+};
+
+const writeWealthUpdatedAt = (iso: string) => {
+  try {
+    localStorage.setItem(WEALTH_UPDATED_AT_KEY, iso || nowIso());
   } catch {
     // ignore
   }
@@ -1523,18 +1533,138 @@ const applyWealthStateLocal = (payload: {
   instruments: WealthInvestmentInstrument[];
   deletedRecordIds: string[];
   fx: WealthFxRates;
+  updatedAt?: string;
 }) => {
   saveWealthRecords(payload.records, { skipCloudSync: true, silent: true });
   saveClosures(payload.closures, { skipCloudSync: true, silent: true });
   saveInvestmentInstruments(payload.instruments, { skipCloudSync: true, silent: true });
   saveDeletedRecordIds(payload.deletedRecordIds, { skipCloudSync: true, silent: true });
   saveFxRatesInternal(payload.fx, { skipCloudSync: true, silent: true });
-  touchWealthUpdatedAt();
+  writeWealthUpdatedAt(payload.updatedAt || nowIso());
   setLastWealthSyncIssue('');
   dispatchWealthDataUpdated();
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: payload.fx }));
   }
+};
+
+type NormalizedCloudWealthState = {
+  updatedAt: string;
+  records: WealthRecord[];
+  closures: WealthMonthlyClosure[];
+  instruments: WealthInvestmentInstrument[];
+  deletedRecordIds: string[];
+  fx: WealthFxRates;
+};
+
+const normalizeCloudWealthState = (raw: any): NormalizedCloudWealthState => ({
+  updatedAt: String(raw?.updatedAt || ''),
+  records: normalizeRecordsFromRaw(Array.isArray(raw?.records) ? raw.records : []),
+  closures: loadClosuresFromRaw(Array.isArray(raw?.closures) ? raw.closures : []),
+  instruments: loadInstrumentsFromRaw(Array.isArray(raw?.instruments) ? raw.instruments : []),
+  deletedRecordIds: normalizeDeletedRecordIds(raw?.deletedRecordIds),
+  fx: normalizeFxRates(raw?.fx || defaultFxRates),
+});
+
+let wealthCloudSubscriptionUnsub: (() => void) | null = null;
+let wealthCloudSubscriptionUid = '';
+let wealthCloudSubscriptionStartPromise: Promise<(() => void)> | null = null;
+
+const stopWealthCloudSubscriptionInternal = () => {
+  if (wealthCloudSubscriptionUnsub) {
+    try {
+      wealthCloudSubscriptionUnsub();
+    } catch {
+      // ignore
+    }
+  }
+  wealthCloudSubscriptionUnsub = null;
+  wealthCloudSubscriptionUid = '';
+  wealthCloudSubscriptionStartPromise = null;
+};
+
+export const unsubscribeWealthCloud = () => {
+  stopWealthCloudSubscriptionInternal();
+};
+
+export const subscribeWealthCloud = async (): Promise<() => void> => {
+  if (!isFirebaseConfigured()) return () => {};
+  await ensureAuthPersistence();
+  const uid = getCurrentUid();
+  if (!uid) return () => {};
+
+  if (wealthCloudSubscriptionUnsub && wealthCloudSubscriptionUid === uid) {
+    return wealthCloudSubscriptionUnsub;
+  }
+  if (wealthCloudSubscriptionStartPromise) {
+    return wealthCloudSubscriptionStartPromise;
+  }
+
+  stopWealthCloudSubscriptionInternal();
+
+  wealthCloudSubscriptionStartPromise = Promise.resolve().then(() => {
+    const ref = doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);
+    setFirestoreChecking();
+
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        setFirestoreOk();
+        if (!snap.exists()) {
+          const hasLocalData =
+            loadWealthRecords().length > 0 ||
+            loadClosures().length > 0 ||
+            loadInvestmentInstruments().length > 0;
+          if (hasLocalData) scheduleWealthCloudSync(20);
+          return;
+        }
+
+        const remote = normalizeCloudWealthState(snap.data() || {});
+        const localRecords = loadWealthRecords();
+        const localClosures = loadClosures();
+        const localInstruments = loadInvestmentInstruments();
+        const localDeletedRecordIds = loadDeletedRecordIds();
+        const localFx = loadFxRates();
+
+        const sameAsLocal =
+          sameRecords(localRecords, remote.records) &&
+          sameClosures(localClosures, remote.closures) &&
+          sameInvestmentInstruments(localInstruments, remote.instruments) &&
+          sameStringList(localDeletedRecordIds, remote.deletedRecordIds) &&
+          JSON.stringify(localFx) === JSON.stringify(remote.fx);
+        if (sameAsLocal) return;
+
+        applyWealthStateLocal({
+          records: remote.records,
+          closures: remote.closures,
+          instruments: remote.instruments,
+          deletedRecordIds: remote.deletedRecordIds,
+          fx: remote.fx,
+          updatedAt: remote.updatedAt,
+        });
+      },
+      (err) => {
+        setLastWealthSyncIssue(`${(err as any)?.code || 'snapshot_error'} ${(err as any)?.message || ''}`.trim());
+        setFirestoreStatusFromError(err);
+      },
+    );
+
+    wealthCloudSubscriptionUid = uid;
+    wealthCloudSubscriptionUnsub = () => {
+      try {
+        unsub();
+      } finally {
+        if (wealthCloudSubscriptionUid === uid) {
+          wealthCloudSubscriptionUid = '';
+          wealthCloudSubscriptionUnsub = null;
+          wealthCloudSubscriptionStartPromise = null;
+        }
+      }
+    };
+    return wealthCloudSubscriptionUnsub;
+  });
+
+  return wealthCloudSubscriptionStartPromise;
 };
 
 const persistWealthStateToCloud = async (payload: {

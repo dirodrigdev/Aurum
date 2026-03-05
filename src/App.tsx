@@ -6,7 +6,12 @@ import { Patrimonio } from './pages/Patrimonio';
 import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
-import { refreshFxRatesDailyIfNeeded } from './services/wealthStorage';
+import {
+  hydrateWealthFromCloud,
+  refreshFxRatesDailyIfNeeded,
+  subscribeWealthCloud,
+  unsubscribeWealthCloud,
+} from './services/wealthStorage';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
@@ -74,6 +79,30 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       window.removeEventListener('pointerdown', onFirstInteraction);
       window.removeEventListener('touchstart', onFirstInteraction);
       window.removeEventListener('keydown', onFirstInteraction);
+    };
+  }, [user?.uid, user?.isAnonymous]);
+
+  useEffect(() => {
+    if (!user || user.isAnonymous) return;
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      await hydrateWealthFromCloud();
+      const unsub = await subscribeWealthCloud();
+      if (cancelled) {
+        unsub();
+        return;
+      }
+      cleanup = unsub;
+    })().catch(() => {
+      // handled by storage/firestore status banners
+    });
+
+    return () => {
+      cancelled = true;
+      if (cleanup) cleanup();
+      else unsubscribeWealthCloud();
     };
   }, [user?.uid, user?.isAnonymous]);
 
