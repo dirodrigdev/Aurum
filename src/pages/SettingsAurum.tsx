@@ -59,6 +59,11 @@ export const SettingsAurum: React.FC = () => {
     });
   };
 
+  const historicalCsvTemplate = `month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
+2026-01,2026-01-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
+2026-02,2026-02-28T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
+2026-03,2026-03-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,`;
+
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
       setAuthEmail(user?.email || '');
@@ -216,6 +221,24 @@ export const SettingsAurum: React.FC = () => {
         <div className="text-sm font-semibold">Importar historia mensual (CSV)</div>
         <div className="text-xs text-slate-600">
           Carga cierres históricos con sus TC/UF congelados por mes. El importador reemplaza el mes si ya existe.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              const blob = new Blob([historicalCsvTemplate], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = 'HISTORIAL_AURUM_TEMPLATE.csv';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Descargar formato para Gemini
+          </Button>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
           <div className="text-[11px] text-slate-500 mb-1">Columnas mínimas esperadas:</div>

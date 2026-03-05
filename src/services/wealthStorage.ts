@@ -725,27 +725,81 @@ const parseFlexibleNumeric = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
-const fetchMindicadorFx = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
+const fetchJsonWithTimeout = async (url: string, timeoutMs = 9000): Promise<any> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const separator = url.includes('?') ? '&' : '?';
+    const response = await fetch(`${url}${separator}_ts=${Date.now()}`, {
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const dateToYmd = (value: unknown): string | null => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const d = new Date(text);
+  if (!Number.isFinite(d.getTime())) return null;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+};
+
+const ymdDiffDays = (a: string, b: string) => {
+  const toMs = (ymd: string) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return Date.UTC(y, m - 1, d, 0, 0, 0, 0);
+  };
+  return Math.floor((toMs(a) - toMs(b)) / 86_400_000);
+};
+
+const fetchFrankfurterPairToClp = async (from: 'USD' | 'EUR'): Promise<{ value: number; date?: string }> => {
+  const data = await fetchJsonWithTimeout(
+    `https://api.frankfurter.app/latest?from=${from}&to=CLP`,
+  );
+  const value = parseFlexibleNumeric(data?.rates?.CLP);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`Frankfurter ${from}/CLP inválido`);
+  return { value, date: String(data?.date || '') };
+};
+
+const fetchMindicadorUf = async (): Promise<{ value: number; dateYmd: string; source: string }> => {
+  const endpoints = ['https://mindicador.cl/api/uf', 'https://www.mindicador.cl/api/uf'];
+  let lastError = 'Sin respuesta';
+
+  for (const endpoint of endpoints) {
+    try {
+      const data = await fetchJsonWithTimeout(endpoint);
+      const first = Array.isArray(data?.serie) ? data.serie[0] : null;
+      const uf = parseFlexibleNumeric(first?.valor);
+      const dateYmd = dateToYmd(first?.fecha);
+      if (!Number.isFinite(uf) || uf <= 0 || !dateYmd) {
+        lastError = 'UF inválida en respuesta';
+        continue;
+      }
+      return { value: uf, dateYmd, source: endpoint };
+    } catch (err: any) {
+      lastError = String(err?.message || err || 'fetch_error');
+    }
+  }
+
+  throw new Error(`No pude obtener UF en línea (${lastError}).`);
+};
+
+const fetchMindicadorFullFallback = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
   const endpoints = ['https://mindicador.cl/api', 'https://www.mindicador.cl/api'];
   let lastError = 'Sin respuesta';
 
   for (const endpoint of endpoints) {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
-      const controller = new AbortController();
-      timeoutId = setTimeout(() => controller.abort(), 9000);
-      const response = await fetch(endpoint, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timeoutId);
-      timeoutId = null;
-      if (!response.ok) {
-        lastError = `HTTP ${response.status}`;
-        continue;
-      }
-      const data = await response.json();
+      const data = await fetchJsonWithTimeout(endpoint);
       const usd = parseFlexibleNumeric(data?.dolar?.valor);
       const eur = parseFlexibleNumeric(data?.euro?.valor);
       const uf = parseFlexibleNumeric(data?.uf?.valor);
-
       if (![usd, eur, uf].every((v) => Number.isFinite(v) && v > 0)) {
         lastError = 'Indicadores inválidos en respuesta';
         continue;
@@ -762,12 +816,41 @@ const fetchMindicadorFx = async (): Promise<{ rates: WealthFxRates; source: stri
       };
     } catch (err: any) {
       lastError = String(err?.message || err || 'fetch_error');
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
   throw new Error(`No pude obtener TC/UF en línea (${lastError}).`);
+};
+
+const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: string; fetchedAt: string }> => {
+  try {
+    const [usd, eur, uf] = await Promise.all([
+      fetchFrankfurterPairToClp('USD'),
+      fetchFrankfurterPairToClp('EUR'),
+      fetchMindicadorUf(),
+    ]);
+
+    const today = localYmd();
+    const ufLagDays = ymdDiffDays(today, uf.dateYmd);
+    if (ufLagDays > 3) {
+      throw new Error(
+        `UF desactualizada (${uf.dateYmd}). Diferencia de ${ufLagDays} días con hoy (${today}).`,
+      );
+    }
+
+    return {
+      rates: {
+        usdClp: Math.round(usd.value),
+        eurClp: Math.round(eur.value),
+        ufClp: Math.round(uf.value),
+      },
+      source: `Frankfurter(USD/EUR)+Mindicador(UF:${uf.dateYmd})`,
+      fetchedAt: nowIso(),
+    };
+  } catch {
+    // Fallback completo para no dejar la app sin actualización si la fuente primaria falla.
+    return fetchMindicadorFullFallback();
+  }
 };
 
 export const refreshFxRatesFromLive = async (
@@ -789,7 +872,7 @@ export const refreshFxRatesFromLive = async (
   }
 
   try {
-    const live = await fetchMindicadorFx();
+    const live = await fetchLiveFxComposite();
     const changed =
       current.usdClp !== live.rates.usdClp ||
       current.eurClp !== live.rates.eurClp ||
