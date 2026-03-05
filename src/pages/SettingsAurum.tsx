@@ -160,7 +160,7 @@ export const SettingsAurum: React.FC = () => {
             }`}
           >
             <div>
-              Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {fxLiveMeta.source || 'mindicador.cl'}
+              Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {fxLiveMeta.source || 'fuentes-automaticas'}
             </div>
             <div className="mt-0.5">Última actualización: {formatDateTime(fxLiveMeta.fetchedAt)}</div>
             {!!fxLiveMeta.message && <div className="mt-0.5 break-words">{fxLiveMeta.message}</div>}
