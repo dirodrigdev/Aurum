@@ -99,15 +99,54 @@ const formatTodayContext = () => {
 };
 
 const parseNumberInput = (raw: string) => {
-  const compact = String(raw || '')
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/\./g, '')
-    .replace(',', '.');
+  const compact = String(raw || '').trim().replace(/\s+/g, '');
   if (!compact) return NaN;
-  const parsed = Number(compact);
+
+  let normalized = compact;
+  const hasComma = compact.includes(',');
+  const hasDot = compact.includes('.');
+
+  if (hasComma && hasDot) {
+    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
+      normalized = compact.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = compact.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    const commaAsThousands = /^\d{1,3}(,\d{3})+$/.test(compact);
+    normalized = commaAsThousands ? compact.replace(/,/g, '') : compact.replace(',', '.');
+  } else if (hasDot) {
+    const dotAsThousands = /^\d{1,3}(\.\d{3})+$/.test(compact);
+    normalized = dotAsThousands ? compact.replace(/\./g, '') : compact;
+  }
+
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : NaN;
 };
+
+const parseRateInput = (raw: string) => {
+  const compact = String(raw || '').trim().replace(/\s+/g, '');
+  if (!compact) return NaN;
+  let normalized = compact;
+  if (compact.includes(',') && compact.includes('.')) {
+    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
+      normalized = compact.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = compact.replace(/,/g, '');
+    }
+  } else if (compact.includes(',')) {
+    normalized = compact.replace(',', '.');
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const formatRateInt = (value: number) => Math.round(value).toLocaleString('es-CL');
+const formatRateDecimal = (value: number, decimals = 4) =>
+  Number(value || 0).toLocaleString('es-CL', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 
 const readPreferredClosingCurrency = (): WealthCurrency => {
   if (typeof window === 'undefined') return 'CLP';
@@ -155,6 +194,132 @@ const REQUIRED_INVESTMENT_LABELS = [
 ];
 
 const REQUIRED_REAL_ESTATE_CORE_FOR_NET = ['Valor propiedad', 'Saldo deuda hipotecaria'];
+const CLOSURES_PER_PAGE = 6;
+
+type EditableFieldKey =
+  | 'suraFin'
+  | 'suraPrev'
+  | 'btg'
+  | 'planvital'
+  | 'global66'
+  | 'wise'
+  | 'valorProp'
+  | 'saldoHipoteca'
+  | 'bancosClp'
+  | 'bancosUsd'
+  | 'tarjetasClp'
+  | 'tarjetasUsd';
+
+interface ClosureEditableField {
+  key: EditableFieldKey;
+  label: string;
+  block: WealthRecord['block'];
+  canonicalLabel: string;
+  currency: WealthCurrency;
+  section: 'inversiones' | 'bienes_raices' | 'bancos' | 'deudas';
+  normalizeAmount?: (value: number) => number;
+}
+
+const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
+  {
+    key: 'suraFin',
+    label: 'SURA inversión financiera',
+    block: 'investment',
+    canonicalLabel: 'sura inversion financiera',
+    currency: 'CLP',
+    section: 'inversiones',
+  },
+  {
+    key: 'suraPrev',
+    label: 'SURA ahorro previsional',
+    block: 'investment',
+    canonicalLabel: 'sura ahorro previsional',
+    currency: 'CLP',
+    section: 'inversiones',
+  },
+  {
+    key: 'btg',
+    label: 'BTG total valorización',
+    block: 'investment',
+    canonicalLabel: 'btg total valorizacion',
+    currency: 'CLP',
+    section: 'inversiones',
+  },
+  {
+    key: 'planvital',
+    label: 'PlanVital saldo total',
+    block: 'investment',
+    canonicalLabel: 'planvital saldo total',
+    currency: 'CLP',
+    section: 'inversiones',
+  },
+  {
+    key: 'global66',
+    label: 'Global66 Cuenta Vista USD',
+    block: 'investment',
+    canonicalLabel: 'global66 cuenta vista usd',
+    currency: 'USD',
+    section: 'inversiones',
+  },
+  {
+    key: 'wise',
+    label: 'Wise Cuenta principal USD',
+    block: 'investment',
+    canonicalLabel: 'wise cuenta principal usd',
+    currency: 'USD',
+    section: 'inversiones',
+  },
+  {
+    key: 'valorProp',
+    label: 'Valor propiedad',
+    block: 'real_estate',
+    canonicalLabel: 'valor propiedad',
+    currency: 'UF',
+    section: 'bienes_raices',
+  },
+  {
+    key: 'saldoHipoteca',
+    label: 'Saldo deuda hipotecaria',
+    block: 'real_estate',
+    canonicalLabel: 'saldo deuda hipotecaria',
+    currency: 'UF',
+    section: 'bienes_raices',
+  },
+  {
+    key: 'bancosClp',
+    label: 'Saldo bancos CLP',
+    block: 'bank',
+    canonicalLabel: 'saldo bancos clp',
+    currency: 'CLP',
+    section: 'bancos',
+  },
+  {
+    key: 'bancosUsd',
+    label: 'Saldo bancos USD',
+    block: 'bank',
+    canonicalLabel: 'saldo bancos usd',
+    currency: 'USD',
+    section: 'bancos',
+  },
+  {
+    key: 'tarjetasClp',
+    label: 'Deuda tarjetas CLP',
+    block: 'debt',
+    canonicalLabel: 'deuda tarjetas clp',
+    currency: 'CLP',
+    section: 'deudas',
+    normalizeAmount: (value) => Math.abs(value),
+  },
+  {
+    key: 'tarjetasUsd',
+    label: 'Deuda tarjetas USD',
+    block: 'debt',
+    canonicalLabel: 'deuda tarjetas usd',
+    currency: 'USD',
+    section: 'deudas',
+    normalizeAmount: (value) => Math.abs(value),
+  },
+];
 
 const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown =>
   buildWealthNetBreakdown(records, fx);
@@ -219,13 +384,6 @@ const buildInvestmentDetails = (
     .sort((a, b) => b.currentClp - a.currentClp);
 };
 
-const CLOSURE_ADJUSTMENT_LABELS = {
-  investment: 'Ajuste cierre: inversiones',
-  realEstate: 'Ajuste cierre: bienes raíces (neto)',
-  bank: 'Ajuste cierre: bancos',
-  debt: 'Ajuste cierre: deudas no hipotecarias',
-} as const;
-
 const dedupeClosureRecords = (records: WealthRecord[]) => {
   const map = new Map<string, WealthRecord>();
   const ordered = [...records].sort(
@@ -238,6 +396,9 @@ const dedupeClosureRecords = (records: WealthRecord[]) => {
   return [...map.values()];
 };
 
+const findRecordByCanonicalLabel = (records: WealthRecord[], canonicalLabel: string) =>
+  records.find((record) => labelMatchKey(record.label) === canonicalLabel) || null;
+
 const BreakdownCard: React.FC<{
   title: string;
   subtitle: string;
@@ -249,7 +410,22 @@ const BreakdownCard: React.FC<{
   currentRecords: WealthRecord[];
   compareRecords?: WealthRecord[] | null;
   showPartialBadge?: boolean;
-}> = ({ title, subtitle, breakdown, currency, fx, compareAgainst, compareFx, currentRecords, compareRecords, showPartialBadge }) => {
+  headerAction?: React.ReactNode;
+  showClosureRates?: boolean;
+}> = ({
+  title,
+  subtitle,
+  breakdown,
+  currency,
+  fx,
+  compareAgainst,
+  compareFx,
+  currentRecords,
+  compareRecords,
+  showPartialBadge,
+  headerAction,
+  showClosureRates,
+}) => {
   const rows = [
     { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
     {
@@ -297,9 +473,12 @@ const BreakdownCard: React.FC<{
 
   return (
     <Card className="p-4 space-y-3">
-      <div>
-        <div className="text-sm font-semibold">{title}</div>
-        <div className="text-xs text-slate-500">{subtitle}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="text-xs text-slate-500">{subtitle}</div>
+        </div>
+        {headerAction}
       </div>
       <div className="flex items-center gap-2">
         <div className="text-3xl font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
@@ -309,6 +488,11 @@ const BreakdownCard: React.FC<{
           </span>
         )}
       </div>
+      {showClosureRates && (
+        <div className="text-[11px] text-slate-500">
+          USD/CLP {formatRateInt(fx.usdClp)} · EUR/USD {formatRateDecimal(fx.eurClp / Math.max(1, fx.usdClp), 4)} · UF/CLP {formatRateInt(fx.ufClp)}
+        </div>
+      )}
       {deltaNet !== null && (
         <div className={`text-sm font-semibold ${deltaNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
           {deltaNet >= 0 ? '+' : ''}
@@ -457,13 +641,20 @@ export const ClosingAurum: React.FC = () => {
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
   const [selectedClosureMonthKey, setSelectedClosureMonthKey] = useState('');
+  const [closurePage, setClosurePage] = useState(0);
   const [closureEditOpen, setClosureEditOpen] = useState(false);
   const [closureEditError, setClosureEditError] = useState('');
-  const [closureEditDraft, setClosureEditDraft] = useState({
-    investment: '',
-    realEstateNet: '',
-    bank: '',
-    debt: '',
+  const [closureEditDraft, setClosureEditDraft] = useState<Record<EditableFieldKey, string>>(
+    () =>
+      CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
+        acc[field.key] = '';
+        return acc;
+      }, {} as Record<EditableFieldKey, string>),
+  );
+  const [closureEditRates, setClosureEditRates] = useState({
+    usdClp: '',
+    eurUsd: '',
+    ufClp: '',
   });
 
   useEffect(() => {
@@ -540,6 +731,7 @@ export const ClosingAurum: React.FC = () => {
   useEffect(() => {
     if (!closures.length) {
       setSelectedClosureMonthKey('');
+      setClosurePage(0);
       return;
     }
     setSelectedClosureMonthKey((prev) => {
@@ -547,6 +739,14 @@ export const ClosingAurum: React.FC = () => {
       return closures[0].monthKey;
     });
   }, [closures]);
+
+  useEffect(() => {
+    if (!closures.length || !selectedClosureMonthKey) return;
+    const idx = closures.findIndex((closure) => closure.monthKey === selectedClosureMonthKey);
+    if (idx < 0) return;
+    const page = Math.floor(idx / CLOSURES_PER_PAGE);
+    setClosurePage(page);
+  }, [closures, selectedClosureMonthKey]);
 
   const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
@@ -572,6 +772,13 @@ export const ClosingAurum: React.FC = () => {
         .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
     );
   }, [closures, selectedClosure]);
+
+  const closureTotalPages = Math.max(1, Math.ceil(closures.length / CLOSURES_PER_PAGE));
+  const safeClosurePage = Math.min(Math.max(closurePage, 0), closureTotalPages - 1);
+  const pagedClosures = closures.slice(
+    safeClosurePage * CLOSURES_PER_PAGE,
+    safeClosurePage * CLOSURES_PER_PAGE + CLOSURES_PER_PAGE,
+  );
 
   const selectedClosureRecords = selectedClosure?.records || null;
   const compareClosureForSelectedRecords = compareClosureForSelected?.records || null;
@@ -638,106 +845,93 @@ export const ClosingAurum: React.FC = () => {
   }, [latestClosure, monthKey]);
 
   const openClosureEditModal = () => {
-    if (!selectedClosureBreakdown || !selectedClosure) return;
-    setClosureEditDraft({
-      investment: String(Math.round(selectedClosureBreakdown.investmentClp)),
-      realEstateNet: String(Math.round(selectedClosureBreakdown.realEstateNetClp)),
-      bank: String(Math.round(selectedClosureBreakdown.bankClp)),
-      debt: String(Math.round(selectedClosureBreakdown.nonMortgageDebtClp)),
+    if (!selectedClosure || !selectedClosureRecords?.length) return;
+    const nextDraft = CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
+      const existing = findRecordByCanonicalLabel(selectedClosureRecords, field.canonicalLabel);
+      acc[field.key] = existing ? String(existing.amount) : '';
+      return acc;
+    }, {} as Record<EditableFieldKey, string>);
+    setClosureEditDraft(nextDraft);
+    setClosureEditRates({
+      usdClp: String(Math.round(selectedClosureFx.usdClp)),
+      eurUsd: String(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp)),
+      ufClp: String(Math.round(selectedClosureFx.ufClp)),
     });
     setClosureEditError('');
     setClosureEditOpen(true);
   };
 
   const applyClosureEdit = () => {
-    if (!selectedClosure || !selectedClosureBreakdown || !selectedClosureRecords?.length) return;
+    if (!selectedClosure || !selectedClosureRecords?.length) return;
 
-    const targetInvestment = parseNumberInput(closureEditDraft.investment);
-    const targetRealEstateNet = parseNumberInput(closureEditDraft.realEstateNet);
-    const targetBank = parseNumberInput(closureEditDraft.bank);
-    const targetDebt = parseNumberInput(closureEditDraft.debt);
-
-    const invalid =
-      [targetInvestment, targetRealEstateNet, targetBank, targetDebt].some((n) => !Number.isFinite(n)) ||
-      targetDebt < 0;
-    if (invalid) {
-      setClosureEditError('Revisa los montos: deben ser números válidos (deuda no hipotecaria >= 0).');
+    const usdClp = parseRateInput(closureEditRates.usdClp);
+    const eurUsd = parseRateInput(closureEditRates.eurUsd);
+    const ufClp = parseRateInput(closureEditRates.ufClp);
+    if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
+      setClosureEditError('Revisa TC/UF: USD/CLP, EUR/USD y UF/CLP deben ser mayores que 0.');
       return;
     }
+    const nextFx: WealthFxRates = {
+      usdClp,
+      eurClp: usdClp * eurUsd,
+      ufClp,
+    };
 
-    const deltaInvestment = Math.round(targetInvestment) - Math.round(selectedClosureBreakdown.investmentClp);
-    const deltaRealEstate = Math.round(targetRealEstateNet) - Math.round(selectedClosureBreakdown.realEstateNetClp);
-    const deltaBank = Math.round(targetBank) - Math.round(selectedClosureBreakdown.bankClp);
-    const deltaDebt = Math.round(targetDebt) - Math.round(selectedClosureBreakdown.nonMortgageDebtClp);
+    const nextRecords = dedupeClosureRecords(
+      selectedClosureRecords.map((record) => ({ ...record })),
+    );
 
-    const adjustmentLabels = new Set(
-      Object.values(CLOSURE_ADJUSTMENT_LABELS).map((label) => labelMatchKey(label)),
-    );
-    const baseRecords = dedupeClosureRecords(selectedClosureRecords).filter(
-      (record) => !(record.currency === 'CLP' && adjustmentLabels.has(labelMatchKey(record.label))),
-    );
     const snapshotDate = `${selectedClosure.monthKey}-01`;
     const createdAt = new Date().toISOString();
-
-    const adjustmentRecords: WealthRecord[] = [];
-    if (Math.abs(deltaInvestment) >= 1) {
-      adjustmentRecords.push({
-        id: crypto.randomUUID(),
-        block: 'investment',
-        source: 'Ajuste cierre',
-        label: CLOSURE_ADJUSTMENT_LABELS.investment,
-        amount: deltaInvestment,
-        currency: 'CLP',
-        snapshotDate,
-        createdAt,
-        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
-      });
-    }
-    if (Math.abs(deltaRealEstate) >= 1) {
-      adjustmentRecords.push({
-        id: crypto.randomUUID(),
-        block: 'real_estate',
-        source: 'Ajuste cierre',
-        label: CLOSURE_ADJUSTMENT_LABELS.realEstate,
-        amount: deltaRealEstate,
-        currency: 'CLP',
-        snapshotDate,
-        createdAt,
-        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
-      });
-    }
-    if (Math.abs(deltaBank) >= 1) {
-      adjustmentRecords.push({
-        id: crypto.randomUUID(),
-        block: 'bank',
-        source: 'Ajuste cierre',
-        label: CLOSURE_ADJUSTMENT_LABELS.bank,
-        amount: deltaBank,
-        currency: 'CLP',
-        snapshotDate,
-        createdAt,
-        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
-      });
-    }
-    if (Math.abs(deltaDebt) >= 1) {
-      adjustmentRecords.push({
-        id: crypto.randomUUID(),
-        block: 'debt',
-        source: 'Ajuste cierre',
-        label: CLOSURE_ADJUSTMENT_LABELS.debt,
-        amount: deltaDebt,
-        currency: 'CLP',
-        snapshotDate,
-        createdAt,
-        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
-      });
+    for (const field of CLOSURE_EDITABLE_FIELDS) {
+      const raw = closureEditDraft[field.key];
+      if (String(raw || '').trim() === '') continue;
+      const parsed = parseNumberInput(raw);
+      if (!Number.isFinite(parsed)) {
+        setClosureEditError(`Monto inválido en "${field.label}".`);
+        return;
+      }
     }
 
-    const nextRecords = dedupeClosureRecords([...adjustmentRecords, ...baseRecords]);
+    CLOSURE_EDITABLE_FIELDS.forEach((field) => {
+      const raw = closureEditDraft[field.key];
+      if (String(raw || '').trim() === '') return;
+      const parsed = parseNumberInput(raw);
+      if (!Number.isFinite(parsed)) return;
+      const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
+      const idx = nextRecords.findIndex(
+        (record) => labelMatchKey(record.label) === field.canonicalLabel,
+      );
+      if (idx >= 0) {
+        const existing = nextRecords[idx];
+        nextRecords[idx] = {
+          ...existing,
+          amount: normalized,
+          currency: field.currency,
+          createdAt,
+          snapshotDate,
+          source: existing.source || 'Edición cierre',
+          note: `Edición manual cierre ${selectedClosure.monthKey}`,
+        };
+        return;
+      }
+      nextRecords.push({
+        id: crypto.randomUUID(),
+        block: field.block,
+        source: 'Edición cierre',
+        label: field.label,
+        amount: normalized,
+        currency: field.currency,
+        createdAt,
+        snapshotDate,
+        note: `Edición manual cierre ${selectedClosure.monthKey}`,
+      });
+    });
+
     upsertMonthlyClosure({
       monthKey: selectedClosure.monthKey,
       records: nextRecords,
-      fxRates: selectedClosureFx,
+      fxRates: nextFx,
       closedAt: new Date().toISOString(),
     });
     setClosureEditOpen(false);
@@ -812,51 +1006,76 @@ export const ClosingAurum: React.FC = () => {
           ) : (
             <>
               <Card className="p-4 border border-slate-200 bg-white">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Cierre seleccionado</div>
-                <div className="mt-1 text-3xl font-bold text-slate-900">{monthLabel(selectedClosure.monthKey)}</div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Cerrado el {formatCloseTimestamp(selectedClosure.closedAt)}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={openClosureEditModal}
-                    disabled={!selectedClosureBreakdown || !selectedClosureRecords?.length}
-                  >
-                    Editar cierre
-                  </Button>
+                <div className="grid gap-4 lg:grid-cols-[1fr,1.1fr]">
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Cierre seleccionado</div>
+                    <div className="mt-1 text-2xl font-bold text-slate-900">{monthLabel(selectedClosure.monthKey)}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Cerrado el {formatCloseTimestamp(selectedClosure.closedAt)}
+                    </div>
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      USD/CLP {formatRateInt(selectedClosureFx.usdClp)} · EUR/USD{' '}
+                      {formatRateDecimal(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp), 4)} · UF/CLP{' '}
+                      {formatRateInt(selectedClosureFx.ufClp)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Historial de cierres</div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={safeClosurePage <= 0}
+                          onClick={() => setClosurePage((prev) => Math.max(0, prev - 1))}
+                        >
+                          ◀
+                        </Button>
+                        <div className="text-[11px] text-slate-500">
+                          {safeClosurePage + 1} / {closureTotalPages}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={safeClosurePage >= closureTotalPages - 1}
+                          onClick={() => setClosurePage((prev) => Math.min(closureTotalPages - 1, prev + 1))}
+                        >
+                          ▶
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {pagedClosures.map((closure) => {
+                        const selected = closure.monthKey === selectedClosureMonthKey;
+                        return (
+                          <button
+                            key={closure.id}
+                            onClick={() => setSelectedClosureMonthKey(closure.monthKey)}
+                            className={`rounded-xl border px-3 py-2 text-left transition ${
+                              selected
+                                ? 'border-[#5c4b2d] bg-[#f5efe2] text-[#4d3f26]'
+                                : 'border-slate-200 bg-white text-slate-700'
+                            }`}
+                          >
+                            <div className="text-[11px] uppercase tracking-wide">{monthLabel(closure.monthKey)}</div>
+                            <div className="mt-1 text-xs font-semibold">
+                              {formatCurrency(
+                                fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
+                                currency,
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
                 {!selectedClosureRecords?.length && (
-                  <div className="mt-2 text-[11px] text-amber-700">
+                  <div className="mt-3 text-[11px] text-amber-700">
                     Este cierre no tiene detalle de registros para edición rápida.
                   </div>
                 )}
-              </Card>
-
-              <Card className="p-3 border border-slate-200 bg-white">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Historial de cierres</div>
-                <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                  {closures.map((closure) => {
-                    const selected = closure.monthKey === selectedClosureMonthKey;
-                    return (
-                      <button
-                        key={closure.id}
-                        onClick={() => setSelectedClosureMonthKey(closure.monthKey)}
-                        className={`min-w-[132px] rounded-xl border px-3 py-2 text-left transition ${
-                          selected
-                            ? 'border-[#5c4b2d] bg-[#f5efe2] text-[#4d3f26]'
-                            : 'border-slate-200 bg-white text-slate-700'
-                        }`}
-                      >
-                        <div className="text-[11px] uppercase tracking-wide">{monthLabel(closure.monthKey)}</div>
-                        <div className="mt-1 text-xs font-semibold">
-                          {formatCurrency(fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx), currency)}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
               </Card>
 
               {!selectedClosureBreakdown ? (
@@ -878,6 +1097,17 @@ export const ClosingAurum: React.FC = () => {
                   compareFx={compareClosureForSelectedFx}
                   currentRecords={selectedClosureRecords || []}
                   compareRecords={compareClosureForSelectedRecords}
+                  showClosureRates
+                  headerAction={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openClosureEditModal}
+                      disabled={!selectedClosureRecords?.length}
+                    >
+                      Editar
+                    </Button>
+                  }
                 />
               )}
 
@@ -898,7 +1128,11 @@ export const ClosingAurum: React.FC = () => {
                           </div>
                         )}
                         <div className="text-[11px]">
-                          Neto: {formatCurrency(fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx), currency)}
+                          Neto:{' '}
+                          {formatCurrency(
+                            fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
+                            currency,
+                          )}
                         </div>
                       </div>
                     ))}
@@ -941,49 +1175,75 @@ export const ClosingAurum: React.FC = () => {
         </>
       )}
 
-      {closureEditOpen && selectedClosure && selectedClosureBreakdown && (
+      {closureEditOpen && selectedClosure && (
         <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+          <div className="w-full max-w-2xl max-h-[88vh] overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
             <div className="text-base font-semibold text-slate-900">
               Editar cierre {monthLabel(selectedClosure.monthKey)}
             </div>
             <div className="mt-1 text-sm text-slate-600">
-              Ajuste rápido en CLP. Al guardar, se sobrescribe este cierre y se conserva la versión anterior.
+              Edita fuentes directas del cierre (no campos calculados). Al guardar, se sobrescribe este cierre y se conserva la versión anterior.
             </div>
 
-            <div className="mt-3 space-y-2">
-              <div>
-                <label className="text-xs text-slate-600">Inversiones (CLP)</label>
-                <Input
-                  value={closureEditDraft.investment}
-                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, investment: e.target.value }))}
-                  inputMode="numeric"
-                />
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+              <div className="text-xs font-semibold text-slate-700">Tipos de cambio usados en el cierre</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-600">USD/CLP</label>
+                  <Input
+                    value={closureEditRates.usdClp}
+                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, usdClp: e.target.value }))}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-slate-600">EUR/USD</label>
+                  <Input
+                    value={closureEditRates.eurUsd}
+                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, eurUsd: e.target.value }))}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-slate-600">UF/CLP</label>
+                  <Input
+                    value={closureEditRates.ufClp}
+                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, ufClp: e.target.value }))}
+                    inputMode="decimal"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-slate-600">Bienes raíces (neto, CLP)</label>
-                <Input
-                  value={closureEditDraft.realEstateNet}
-                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, realEstateNet: e.target.value }))}
-                  inputMode="numeric"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-600">Bancos (CLP)</label>
-                <Input
-                  value={closureEditDraft.bank}
-                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, bank: e.target.value }))}
-                  inputMode="numeric"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-600">Deudas no hipotecarias (CLP, positivo)</label>
-                <Input
-                  value={closureEditDraft.debt}
-                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, debt: e.target.value }))}
-                  inputMode="numeric"
-                />
-              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(['inversiones', 'bienes_raices', 'bancos', 'deudas'] as const).map((section) => {
+                const titleMap: Record<'inversiones' | 'bienes_raices' | 'bancos' | 'deudas', string> = {
+                  inversiones: 'Inversiones',
+                  bienes_raices: 'Bienes raíces',
+                  bancos: 'Bancos',
+                  deudas: 'Deudas no hipotecarias',
+                };
+                const fields = CLOSURE_EDITABLE_FIELDS.filter((f) => f.section === section);
+                return (
+                  <div key={section} className="rounded-xl border border-slate-200 p-3 space-y-2">
+                    <div className="text-xs font-semibold text-slate-700">{titleMap[section]}</div>
+                    {fields.map((field) => (
+                      <div key={field.key}>
+                        <label className="text-[11px] text-slate-600">
+                          {field.label} ({field.currency})
+                        </label>
+                        <Input
+                          value={closureEditDraft[field.key]}
+                          onChange={(e) =>
+                            setClosureEditDraft((prev) => ({ ...prev, [field.key]: e.target.value }))
+                          }
+                          inputMode="decimal"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
 
             {!!closureEditError && (

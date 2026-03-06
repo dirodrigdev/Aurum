@@ -29,6 +29,11 @@ import { getFirestoreStatus } from '../services/firestoreStatus';
 
 export const SettingsAurum: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
+  const [fxDraft, setFxDraft] = useState(() => ({
+    usdClp: String(Math.round(loadFxRates().usdClp)),
+    eurUsd: String(loadFxRates().eurClp / Math.max(1, loadFxRates().usdClp)),
+    ufClp: String(Math.round(loadFxRates().ufClp)),
+  }));
   const [fxLiveMeta, setFxLiveMeta] = useState(() => loadFxLiveSyncMeta());
   const [fxLiveMessage, setFxLiveMessage] = useState('');
   const [syncingLiveFx, setSyncingLiveFx] = useState(false);
@@ -71,6 +76,49 @@ export const SettingsAurum: React.FC = () => {
   const formatFxInteger = (value: number) =>
     Math.round(Number(value) || 0).toLocaleString('es-CL');
 
+  const parseFxInput = (raw: string) => {
+    const compact = String(raw || '').trim().replace(/\s+/g, '');
+    if (!compact) return NaN;
+    let normalized = compact;
+    if (compact.includes(',') && compact.includes('.')) {
+      if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
+        normalized = compact.replace(/\./g, '').replace(',', '.');
+      } else {
+        normalized = compact.replace(/,/g, '');
+      }
+    } else if (compact.includes(',')) {
+      normalized = compact.replace(',', '.');
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+
+  const syncDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
+    setFxDraft({
+      usdClp: String(Math.round(rates.usdClp)),
+      eurUsd: String(rates.eurClp / Math.max(1, rates.usdClp)),
+      ufClp: String(Math.round(rates.ufClp)),
+    });
+  };
+
+  const commitDraftFx = () => {
+    const usdClp = parseFxInput(fxDraft.usdClp);
+    const eurUsd = parseFxInput(fxDraft.eurUsd);
+    const ufClp = parseFxInput(fxDraft.ufClp);
+    if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
+      syncDraftFromFx(fx);
+      return;
+    }
+    const next = {
+      usdClp,
+      eurClp: usdClp * eurUsd,
+      ufClp,
+    };
+    setFx(next);
+    saveFxRates(next);
+    syncDraftFromFx(next);
+  };
+
   const humanizeFxSource = (raw?: string) => {
     const source = String(raw || '').trim();
     const value = source.toLowerCase();
@@ -90,10 +138,8 @@ export const SettingsAurum: React.FC = () => {
 
     const parts: string[] = [];
     const usdMatch = source.match(/USD:([^·]+)/i);
-    const eurMatch = source.match(/EUR:([^·]+)/i);
     const ufMatch = source.match(/UF:([^·]+)/i);
     if (usdMatch?.[1]) parts.push(humanizeSingle(usdMatch[1], 'USD'));
-    if (eurMatch?.[1]) parts.push(humanizeSingle(eurMatch[1], 'EUR'));
     if (ufMatch?.[1]) parts.push(humanizeSingle(ufMatch[1], 'UF'));
     if (parts.length) return parts.join(' · ');
 
@@ -119,6 +165,10 @@ export const SettingsAurum: React.FC = () => {
       setAuthUid(user?.uid || '');
     });
   }, []);
+
+  useEffect(() => {
+    syncDraftFromFx(fx);
+  }, [fx]);
 
   useEffect(() => {
     let runningHydrate = false;
@@ -338,37 +388,40 @@ export const SettingsAurum: React.FC = () => {
           <div>
             <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
             <Input
-              value={fx.usdClp}
-              type="number"
+              value={fxDraft.usdClp}
+              type="text"
+              inputMode="decimal"
               onChange={(e) => {
-                const next = { ...fx, usdClp: Number(e.target.value) || 0 };
-                setFx(next);
-                saveFxRates(next);
+                setFxDraft((prev) => ({ ...prev, usdClp: e.target.value }));
               }}
+              onBlur={commitDraftFx}
             />
           </div>
           <div>
-            <div className="text-xs text-slate-500 mb-1">EUR a CLP</div>
+            <div className="text-xs text-slate-500 mb-1">EUR a USD</div>
             <Input
-              value={fx.eurClp}
-              type="number"
+              value={fxDraft.eurUsd}
+              type="text"
+              inputMode="decimal"
               onChange={(e) => {
-                const next = { ...fx, eurClp: Number(e.target.value) || 0 };
-                setFx(next);
-                saveFxRates(next);
+                setFxDraft((prev) => ({ ...prev, eurUsd: e.target.value }));
               }}
+              onBlur={commitDraftFx}
             />
+            <div className="mt-1 text-[11px] text-slate-500">
+              Referencia: EUR/CLP {formatFxInteger(fx.eurClp)}
+            </div>
           </div>
           <div>
             <div className="text-xs text-slate-500 mb-1">UF a CLP</div>
             <Input
-              value={fx.ufClp}
-              type="number"
+              value={fxDraft.ufClp}
+              type="text"
+              inputMode="decimal"
               onChange={(e) => {
-                const next = { ...fx, ufClp: Number(e.target.value) || 0 };
-                setFx(next);
-                saveFxRates(next);
+                setFxDraft((prev) => ({ ...prev, ufClp: e.target.value }));
               }}
+              onBlur={commitDraftFx}
             />
           </div>
         </div>
