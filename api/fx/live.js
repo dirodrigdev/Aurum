@@ -1,4 +1,5 @@
 const FETCH_TIMEOUT_MS = 5000;
+const BCCH_SERIES_ENDPOINT = 'https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx';
 
 const parseFlexibleNumeric = (value) => {
   const normalized = String(value ?? '')
@@ -52,6 +53,13 @@ const clampRate = (value, min, max, label) => {
   return n;
 };
 
+const formatYmd = (date) => {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const stripHtml = (html) =>
   String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -99,6 +107,8 @@ const fetchUsdEurFromFrankfurter = async () => {
     usd: clampRate(usdPayload?.rates?.CLP, 500, 2000, 'USD/CLP'),
     eur: clampRate(eurPayload?.rates?.CLP, 600, 2500, 'EUR/CLP'),
     source: 'frankfurter.app',
+    usdSource: 'frankfurter.app',
+    eurSource: 'frankfurter.app',
   };
 };
 
@@ -112,12 +122,84 @@ const fetchUsdEurFromOpenErApi = async () => {
     usd: clampRate(usdPayload?.rates?.CLP, 500, 2000, 'USD/CLP'),
     eur: clampRate(eurPayload?.rates?.CLP, 600, 2500, 'EUR/CLP'),
     source: 'open.er-api.com',
+    usdSource: 'open.er-api.com',
+    eurSource: 'open.er-api.com',
+  };
+};
+
+const fetchUsdEurCrossFromOpenErApi = async (usdClpFromBcentral) => {
+  const usdPayload = await withTimeout('https://open.er-api.com/v6/latest/USD', 'json');
+  const eurPerUsd = clampRate(usdPayload?.rates?.EUR, 0.5, 1.5, 'EUR por USD');
+  const eurClp = usdClpFromBcentral / eurPerUsd;
+  return {
+    usd: clampRate(usdClpFromBcentral, 500, 2000, 'USD/CLP'),
+    eur: clampRate(eurClp, 600, 2500, 'EUR/CLP'),
+    source: 'bcentral.cl + open.er-api.com',
+    usdSource: 'bcentral.cl',
+    eurSource: 'open.er-api.com (cross EUR/USD)',
+  };
+};
+
+const fetchUsdFromBcentral = async () => {
+  const user = String(process.env.BCCH_USER || '').trim();
+  const pass = String(process.env.BCCH_PASS || '').trim();
+  const series = String(process.env.BCCH_USD_SERIES || '').trim();
+  if (!user || !pass || !series) {
+    throw new Error('Faltan credenciales/serie BCCh (BCCH_USER, BCCH_PASS, BCCH_USD_SERIES)');
+  }
+
+  const today = new Date();
+  const firstDate = formatYmd(new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000));
+  const lastDate = formatYmd(today);
+  const url =
+    `${BCCH_SERIES_ENDPOINT}?` +
+    `user=${encodeURIComponent(user)}` +
+    `&pass=${encodeURIComponent(pass)}` +
+    `&timeseries=${encodeURIComponent(series)}` +
+    `&function=GetSeries` +
+    `&firstdate=${encodeURIComponent(firstDate)}` +
+    `&lastdate=${encodeURIComponent(lastDate)}`;
+
+  const payload = await withTimeout(url, 'json', 8000);
+  if (!payload || Number(payload?.Codigo) !== 0) {
+    throw new Error(`BCCh sin respuesta válida (${String(payload?.Descripcion || payload?.Codigo || 'sin detalle')})`);
+  }
+
+  const obs = Array.isArray(payload?.Series?.Obs) ? payload.Series.Obs : [];
+  const valid = obs
+    .map((item) => ({
+      value: parseFlexibleNumeric(item?.value),
+      status: String(item?.statusCode || ''),
+      date: String(item?.indexDateString || ''),
+    }))
+    .filter((item) => Number.isFinite(item.value) && item.value > 0 && item.status.toUpperCase() === 'OK');
+
+  if (!valid.length) {
+    throw new Error('BCCh no devolvió observaciones USD válidas');
+  }
+
+  const latest = valid[valid.length - 1];
+  return {
+    usd: clampRate(latest.value, 500, 2000, 'USD/CLP'),
+    date: latest.date || '',
+    source: `bcentral.cl:${series}`,
   };
 };
 
 const resolveUsdEur = async () => {
-  // Priorizamos open.er-api por mejor alineación práctica con valor spot observado.
-  const strategies = [fetchUsdEurFromOpenErApi, fetchUsdEurFromFrankfurter];
+  const strategies = [
+    async () => {
+      const usd = await fetchUsdFromBcentral();
+      const cross = await fetchUsdEurCrossFromOpenErApi(usd.usd);
+      return {
+        ...cross,
+        source: `${cross.source} (USD ${usd.source}${usd.date ? ` ${usd.date}` : ''})`,
+        usdSource: `${usd.source}${usd.date ? ` ${usd.date}` : ''}`,
+      };
+    },
+    fetchUsdEurFromOpenErApi,
+    fetchUsdEurFromFrankfurter,
+  ];
   const errors = [];
 
   for (const strategy of strategies) {
@@ -176,8 +258,8 @@ export default async function handler(req, res) {
       },
       source: `vercel-api: ${fx.source} + ${ufData.source}`,
       sources: {
-        usdClp: fx.source,
-        eurClp: fx.source,
+        usdClp: fx.usdSource || fx.source,
+        eurClp: fx.eurSource || fx.source,
         ufClp: ufData.source,
       },
       fetchedAt: new Date().toISOString(),
