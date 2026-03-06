@@ -1150,6 +1150,35 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
   };
 };
 
+const buildSummaryFromNetClp = (netClp: number): WealthSnapshotSummary => {
+  const roundedNet = Math.round(Number(netClp) || 0);
+  const assetsByCurrency = emptyCurrencyMap();
+  const debtsByCurrency = emptyCurrencyMap();
+  const byBlock = emptyBlockMap();
+
+  if (roundedNet >= 0) {
+    assetsByCurrency.CLP = roundedNet;
+    byBlock.investment.CLP = roundedNet;
+  } else {
+    const debtAbs = Math.abs(roundedNet);
+    debtsByCurrency.CLP = debtAbs;
+    byBlock.debt.CLP = debtAbs;
+  }
+
+  return {
+    netByCurrency: {
+      CLP: roundedNet,
+      USD: 0,
+      EUR: 0,
+      UF: 0,
+    },
+    assetsByCurrency,
+    debtsByCurrency,
+    netConsolidatedClp: roundedNet,
+    byBlock,
+  };
+};
+
 export interface WealthNetBreakdownClp {
   netClp: number;
   investmentClp: number;
@@ -2434,9 +2463,17 @@ export const importHistoricalClosuresFromCsv = async (
     }
 
     const records = buildHistoricalMonthRecords(monthKey, rowObj);
-    if (!records.length) {
+    const netClpSimple = parseCsvNumber(rowObj, [
+      'net_clp',
+      'patrimonio_neto_clp',
+      'patrimonio_neto',
+      'neto_clp',
+      'patrimonio_total_clp',
+      'patrimonio_clp',
+    ]);
+    if (!records.length && netClpSimple === null) {
       skippedMonths.push(monthKey);
-      warnings.push(`${monthKey}: no trae montos utilizables.`);
+      warnings.push(`${monthKey}: no trae montos utilizables (ni detalle ni net_clp).`);
       return;
     }
 
@@ -2446,14 +2483,18 @@ export const importHistoricalClosuresFromCsv = async (
       ufClp: Math.round(Number(ufClp)),
     };
 
-    const summary = summarizeWealth(dedupeLatestByAsset(records), fx);
+    const dedupedRecords = dedupeLatestByAsset(records);
+    const summary =
+      dedupedRecords.length > 0
+        ? summarizeWealth(dedupedRecords, fx)
+        : buildSummaryFromNetClp(Number(netClpSimple || 0));
     const nextClosure: WealthMonthlyClosure = {
       id: closureByMonth.get(monthKey)?.id || crypto.randomUUID(),
       monthKey,
       closedAt: parseCsvClosedAt(rowObj, monthKey),
       summary,
       fxRates: fx,
-      records: dedupeLatestByAsset(records),
+      records: dedupedRecords.length ? dedupedRecords : undefined,
     };
 
     if (closureByMonth.has(monthKey)) replacedMonths.push(monthKey);

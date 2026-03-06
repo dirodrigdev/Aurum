@@ -70,6 +70,10 @@ export const SettingsAurum: React.FC = () => {
 2026-01,2026-01-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-02,2026-02-28T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-03,2026-03-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,`;
+  const historicalSimpleCsvTemplate = `month_key,closed_at,usd_clp,eur_clp,uf_clp,net_clp
+2023-05,2023-05-31T23:59:59-04:00,,,,
+2023-06,2023-06-30T23:59:59-04:00,,,,
+2023-07,2023-07-31T23:59:59-04:00,,,,`;
 
   const csvPreview = useMemo(() => previewHistoricalClosuresCsv(csvDraft), [csvDraft]);
   const csvPreviewMonthLabel =
@@ -339,11 +343,30 @@ export const SettingsAurum: React.FC = () => {
           >
             Descargar formato para Gemini
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const blob = new Blob([historicalSimpleCsvTemplate], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = 'HISTORIAL_AURUM_SIMPLE_TEMPLATE.csv';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Descargar formato simple (solo neto)
+          </Button>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-          <div className="text-[11px] text-slate-500 mb-1">Columnas mínimas esperadas:</div>
+          <div className="text-[11px] text-slate-500 mb-1">Formatos admitidos:</div>
           <code className="block text-[11px] text-slate-700 break-all">
             month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
+          </code>
+          <code className="mt-1 block text-[11px] text-slate-700 break-all">
+            month_key,closed_at,usd_clp,eur_clp,uf_clp,net_clp
           </code>
         </div>
         <div>
