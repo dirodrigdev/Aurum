@@ -2464,6 +2464,8 @@ export const Patrimonio: React.FC = () => {
       investment: breakdown.investmentClp,
       bank: breakdown.bankClp,
       realEstateNet: breakdown.realEstateNetClp,
+      nonMortgageDebt: breakdown.nonMortgageDebtClp,
+      financialNet: breakdown.bankClp - breakdown.nonMortgageDebtClp,
     };
   }, [monthRecords, fx]);
 
@@ -2939,11 +2941,11 @@ export const Patrimonio: React.FC = () => {
               <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
                 <div className="space-y-2">
                   <button
-                    className="w-full rounded-xl bg-[#f6efe3]/10 p-3 text-left min-h-[72px]"
+                    className="w-full rounded-xl bg-[#f6efe3]/10 p-3 text-left min-h-[72px] border border-[#c59a6c]/25"
                     onClick={() => setShowNetWorth((v) => !v)}
                   >
-                    <div className="text-[#e7dcc9]">Patrimonio total neto</div>
-                    <div className="mt-1 text-4xl font-bold leading-none tracking-tight flex items-center gap-2">
+                    <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
+                    <div className="mt-1 text-3xl font-bold leading-none tracking-tight flex items-center gap-2">
                       {showNetWorth ? (
                         <>
                           <span>{metricsDisplay.netWorth}</span>
@@ -2958,30 +2960,28 @@ export const Patrimonio: React.FC = () => {
                           <span className="absolute inset-0 rounded-md bg-[#f3eadb]/18 blur-sm" />
                           <span className="absolute inset-0 rounded-md bg-[#f3eadb]/14 blur-md" />
                           <span className="absolute inset-0 rounded-md bg-[#f3eadb]/10 blur-lg" />
-                          <span className="relative inline-block rounded-md bg-[#f3eadb]/10 px-3 py-1.5 text-2xl tracking-[0.2em] blur-[2.6px]">
+                          <span className="relative inline-block rounded-md bg-[#f3eadb]/10 px-3 py-1.5 text-xl tracking-[0.2em] blur-[2.6px]">
                             8.888.888.888
                           </span>
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 text-[11px] text-[#e0d6c5]">
-                      Incluye inversiones + bienes raíces + bancos - deudas (tarjetas e hipotecarias).
-                    </div>
                   </button>
 
-                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                    <div className="text-[#e7dcc9]">Incremento mensual vs mes anterior</div>
-                    <div className="mt-1 text-base font-semibold">{metricsDisplay.monthIncrease}</div>
+                  <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3">
+                    <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
+                    <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
                   </div>
 
-                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                    <div className="text-[#e7dcc9]">Promedio mensual últimos 12 meses</div>
-                    <div className="mt-1 text-base font-semibold">{metricsDisplay.avg12}</div>
-                  </div>
-
-                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                    <div className="text-[#e7dcc9]">Promedio mensual desde inicio</div>
-                    <div className="mt-1 text-base font-semibold">{metricsDisplay.avgSinceStart}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                      <div className="text-[#e7dcc9] text-[11px]">Promedio 12M</div>
+                      <div className="mt-1 text-sm font-semibold">{metricsDisplay.avg12}</div>
+                    </div>
+                    <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                      <div className="text-[#e7dcc9] text-[11px]">Promedio desde inicio</div>
+                      <div className="mt-1 text-sm font-semibold">{metricsDisplay.avgSinceStart}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -3014,7 +3014,10 @@ export const Patrimonio: React.FC = () => {
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
             <Landmark size={16} /> Inversiones
           </div>
-          <div className="mt-1 text-xs text-[#6b3a1f]">{formatCurrency(sectionAmounts.investment, 'CLP')}</div>
+          <div className="mt-2 text-2xl font-bold leading-tight text-[#5a2f16]">
+            {formatCurrency(sectionAmounts.investment, 'CLP')}
+          </div>
+          <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en CLP</div>
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#6b3a1f]">
             Entrar <ArrowRight size={13} />
           </div>
@@ -3028,7 +3031,12 @@ export const Patrimonio: React.FC = () => {
             <Home size={16} /> Bienes raíces (neto)
           </div>
           {hasRealEstateCoreInputs ? (
-            <div className="mt-1 text-xs text-[#275238]">{formatCurrency(sectionAmounts.realEstateNet, 'CLP')}</div>
+            <>
+              <div className="mt-2 text-2xl font-bold leading-tight text-[#1f3e2d]">
+                {formatCurrency(sectionAmounts.realEstateNet, 'CLP')}
+              </div>
+              <div className="mt-1 text-[11px] text-[#275238]">Consolidado en CLP</div>
+            </>
           ) : null}
           <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]">
             Entrar <ArrowRight size={13} />
@@ -3044,6 +3052,13 @@ export const Patrimonio: React.FC = () => {
           <div>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
+            </div>
+            <div className="mt-1 text-xl font-bold text-sky-900">{formatCurrency(sectionAmounts.bank, 'CLP')}</div>
+            <div className="text-xs text-sky-700">
+              Deudas no hipotecarias: {formatCurrency(-sectionAmounts.nonMortgageDebt, 'CLP')}
+            </div>
+            <div className="text-[11px] text-sky-700/90">
+              Neto financiero: {formatCurrency(sectionAmounts.financialNet, 'CLP')}
             </div>
           </div>
           <Wallet size={18} className="text-sky-700" />
