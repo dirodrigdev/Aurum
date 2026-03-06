@@ -312,7 +312,11 @@ export const SettingsAurum: React.FC = () => {
             )}
           </div>
         )}
-        {!!fxLiveMessage && (
+        {!!fxLiveMessage &&
+          (fxLiveMessage.toLowerCase().includes('no pude') ||
+            fxLiveMessage.toLowerCase().includes('error') ||
+            fxLiveMessage.toLowerCase().includes('manteniendo') ||
+            fxLiveMessage.toLowerCase().includes('ingresa manualmente')) && (
           <div
             className={`text-xs ${
               fxLiveMessage.toLowerCase().includes('no pude') || fxLiveMessage.toLowerCase().includes('error')
@@ -322,7 +326,7 @@ export const SettingsAurum: React.FC = () => {
           >
             {fxLiveMessage}
           </div>
-        )}
+          )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
