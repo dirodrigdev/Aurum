@@ -1379,6 +1379,18 @@ export interface WealthNetBreakdownClp {
   nonMortgageDebtClp: number;
 }
 
+const DETAILED_BANK_LABELS_CLP = new Set([
+  normalizeText('Banco de Chile CLP'),
+  normalizeText('Scotiabank CLP'),
+  normalizeText('Santander CLP'),
+]);
+
+const DETAILED_BANK_LABELS_USD = new Set([
+  normalizeText('Banco de Chile USD'),
+  normalizeText('Scotiabank USD'),
+  normalizeText('Santander USD'),
+]);
+
 export const buildWealthNetBreakdown = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
@@ -1389,6 +1401,13 @@ export const buildWealthNetBreakdown = (
   let bankClp = 0;
   let nonMortgageDebtClp = 0;
 
+  const hasDetailedBankClp = records.some(
+    (record) => record.block === 'bank' && DETAILED_BANK_LABELS_CLP.has(normalizeText(record.label)),
+  );
+  const hasDetailedBankUsd = records.some(
+    (record) => record.block === 'bank' && DETAILED_BANK_LABELS_USD.has(normalizeText(record.label)),
+  );
+
   const toClpWithFx = (amount: number, currency: WealthCurrency) => {
     if (currency === 'CLP') return amount;
     if (currency === 'USD') return amount * fxRates.usdClp;
@@ -1398,6 +1417,11 @@ export const buildWealthNetBreakdown = (
 
   records.forEach((record) => {
     if (isSyntheticAggregateRecord(record)) return;
+    const normalizedLabel = normalizeText(record.label);
+    if (record.block === 'bank') {
+      if (hasDetailedBankClp && normalizedLabel === normalizeText('Bancos CLP histórico')) return;
+      if (hasDetailedBankUsd && normalizedLabel === normalizeText('Bancos USD histórico')) return;
+    }
     const clp = toClpWithFx(record.amount, record.currency);
 
     if (record.block === 'investment') investmentClp += clp;
