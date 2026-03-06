@@ -115,14 +115,7 @@ const REQUIRED_INVESTMENT_LABELS = [
   'Wise Cuenta principal USD',
 ];
 
-const REQUIRED_REAL_ESTATE_LABELS = [
-  'Valor propiedad',
-  'Saldo deuda hipotecaria',
-  'Dividendo hipotecario mensual',
-  'Interés hipotecario mensual',
-  'Seguros hipotecarios mensuales',
-  'Amortización hipotecaria mensual',
-];
+const REQUIRED_REAL_ESTATE_CORE_FOR_NET = ['Valor propiedad', 'Saldo deuda hipotecaria'];
 
 const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown =>
   buildWealthNetBreakdown(records, fx);
@@ -476,7 +469,7 @@ export const ClosingAurum: React.FC = () => {
   const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
   const missingCriticalCount = useMemo(() => {
-    const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_LABELS];
+    const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_CORE_FOR_NET];
     return required.filter((requiredLabel) => {
       return !currentRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;

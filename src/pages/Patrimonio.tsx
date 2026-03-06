@@ -122,6 +122,7 @@ const REAL_ESTATE_DEBT_LABELS = [
   'Seguros hipotecarios mensuales',
   'Amortización hipotecaria mensual',
 ];
+const REAL_ESTATE_CORE_NET_LABELS = ['Valor propiedad', 'Saldo deuda hipotecaria'];
 type BankProviderId = 'bchile' | 'scotia' | 'santander';
 
 const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
@@ -2416,7 +2417,7 @@ export const Patrimonio: React.FC = () => {
   }, [displayCurrency, fx, metrics, summary.netConsolidatedClp]);
 
   const missingCriticalCount = useMemo(() => {
-    const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
+    const requiredNames = [...sectionChecklist.investment, ...REAL_ESTATE_CORE_NET_LABELS];
     return requiredNames.filter((required) => {
       return !monthRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
