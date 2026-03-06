@@ -164,9 +164,10 @@ const markLastRemoteUpdatedAt = (iso: string) => {
 const nextMonotonicIsoAgainstRemote = () => {
   const localUpdatedMs = isoToMs(readWealthUpdatedAt());
   const remoteMs = readLastRemoteUpdatedAtMs();
+  const nowMs = Date.now();
   const safeLocalMs = Number.isFinite(localUpdatedMs) ? localUpdatedMs : 0;
   const safeRemoteMs = Number.isFinite(remoteMs) ? remoteMs : 0;
-  const nextMs = Math.max(safeLocalMs, safeRemoteMs) + 1;
+  const nextMs = Math.max(nowMs, safeLocalMs, safeRemoteMs) + 1;
   return new Date(nextMs).toISOString();
 };
 
