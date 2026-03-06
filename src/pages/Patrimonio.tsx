@@ -37,9 +37,11 @@ import {
   localYmd,
   loadClosures,
   loadFxRates,
+  loadBankTokens,
   loadInvestmentInstruments,
   loadWealthRecords,
   removeWealthRecordForMonthAsset,
+  saveBankTokens,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
@@ -131,8 +133,6 @@ const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
   { id: 'santander', label: 'Santander' },
 ];
 
-const FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
-const FINTOC_BANK_TOKENS_KEY = 'aurum.fintoc.bank_tokens.v1';
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
 const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Banco de Chile CLP', currency: 'CLP' },
@@ -336,24 +336,6 @@ const isCreditCardAccount = (account: Pick<FintocAccountNormalized, 'type' | 'na
   return token.includes('credit') || token.includes('card') || token.includes('tarjeta') || token.includes('tc');
 };
 
-const readBankTokens = (): Partial<Record<BankProviderId, string>> => {
-  if (typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(FINTOC_BANK_TOKENS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
-  } catch {
-    return {};
-  }
-};
-
-const writeBankTokens = (tokens: Partial<Record<BankProviderId, string>>) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(FINTOC_BANK_TOKENS_KEY, JSON.stringify(tokens));
-};
-
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
   if (currency === 'CLP') return amount;
   if (currency === 'USD') return amount * usdClp;
@@ -549,7 +531,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     assets: FintocAccountNormalized[];
     cards: FintocAccountNormalized[];
   } | null>(null);
-  const [bankTokens, setBankTokens] = useState<Partial<Record<BankProviderId, string>>>(() => readBankTokens());
+  const [bankTokens, setBankTokens] = useState<Partial<Record<BankProviderId, string>>>(() => loadBankTokens());
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
@@ -558,12 +540,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   useEffect(() => {
     if (section !== 'bank') return;
-    const legacy = (window.localStorage.getItem(FINTOC_LINK_TOKEN_KEY) || '').trim();
-    if (!legacy || bankTokens.bchile) return;
-    const nextTokens = { ...bankTokens, bchile: legacy };
-    setBankTokens(nextTokens);
-    writeBankTokens(nextTokens);
-  }, [section, bankTokens]);
+    const refreshTokens = () => setBankTokens(loadBankTokens());
+    refreshTokens();
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshTokens as EventListener);
+    return () => {
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshTokens as EventListener);
+    };
+  }, [section]);
 
   const dedupedSectionRecords = useMemo(() => {
     const byLogicalKey = new Map<string, WealthRecord>();
@@ -1242,19 +1225,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const ensureBankToken = (bankId: BankProviderId, forcePrompt = false) => {
-    const fallbackLegacy =
-      bankId === 'bchile' ? (window.localStorage.getItem(FINTOC_LINK_TOKEN_KEY) || '').trim() : '';
-    const existing = (bankTokens[bankId] || fallbackLegacy || '').trim();
+    const existing = String(bankTokens[bankId] || '').trim();
     if (existing && !forcePrompt) return existing;
 
     const bankName = BANK_PROVIDERS.find((bank) => bank.id === bankId)?.label || 'Banco';
     const entered = window.prompt(`Pega link_token de Fintoc para ${bankName}`, existing)?.trim() || '';
     if (!entered) return '';
 
-    const nextTokens = { ...readBankTokens(), ...bankTokens, [bankId]: entered };
+    const nextTokens = { ...loadBankTokens(), ...bankTokens, [bankId]: entered };
     setBankTokens(nextTokens);
-    writeBankTokens(nextTokens);
-    window.localStorage.setItem(FINTOC_LINK_TOKEN_KEY, entered);
+    saveBankTokens(nextTokens);
     return entered;
   };
 
@@ -2850,16 +2830,16 @@ export const Patrimonio: React.FC = () => {
 
   return (
     <div className="p-4 space-y-4">
-      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-orange-800 via-amber-800 to-[#4d5f3b] text-white shadow-[0_16px_36px_rgba(78,61,21,0.50)]">
-        <div className="absolute inset-0 opacity-15 bg-[radial-gradient(circle_at_top_right,_#fdba74_0%,_transparent_45%)]" />
+      <Card className="relative overflow-hidden border-0 p-5 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] text-white shadow-[0_16px_36px_rgba(11,38,34,0.55)]">
+        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#c59a6c_0%,_transparent_46%)]" />
         <div className="relative">
-          <div className="text-xs uppercase tracking-[0.22em] text-orange-100">Aurum Wealth</div>
-          <div className="mt-1 text-sm text-orange-100/90">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
+          <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
+          <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
           {!showSummary ? (
             <div className="mt-6 flex justify-center">
               <button
-                className="px-3 py-1 rounded-full bg-white/12 border border-white/20 text-xs text-orange-100/90 shadow-sm"
+                className="px-3 py-1 rounded-full bg-[#f3eadb]/10 border border-[#c59a6c]/40 text-xs text-[#f1e7d6] shadow-sm"
                 onClick={() => setShowSummary(true)}
               >
                 Resumen oculto
@@ -2868,7 +2848,7 @@ export const Patrimonio: React.FC = () => {
           ) : (
             <>
               <button
-                className="absolute top-0 right-0 text-xs text-orange-100/85"
+                className="absolute top-0 right-0 text-xs text-[#efe4d1]"
                 onClick={() => {
                   setShowSummary(false);
                   setShowNetWorth(false);
@@ -2880,48 +2860,48 @@ export const Patrimonio: React.FC = () => {
               <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
                 <div className="space-y-2">
                   <button
-                    className="w-full rounded-xl bg-white/12 p-3 text-left min-h-[72px]"
+                    className="w-full rounded-xl bg-[#f6efe3]/10 p-3 text-left min-h-[72px]"
                     onClick={() => setShowNetWorth((v) => !v)}
                   >
-                    <div className="text-orange-100">Patrimonio total neto</div>
+                    <div className="text-[#e7dcc9]">Patrimonio total neto</div>
                     <div className="mt-1 text-4xl font-bold leading-none tracking-tight flex items-center gap-2">
                       {showNetWorth ? (
                         <>
                           <span>{metricsDisplay.netWorth}</span>
                           {missingCriticalCount > 0 && (
-                            <span className="rounded-full border border-amber-200/70 bg-amber-100/30 px-2 py-0.5 text-[10px] font-semibold text-amber-100">
+                            <span className="rounded-full border border-[#c59a6c]/70 bg-[#a97747]/20 px-2 py-0.5 text-[10px] font-semibold text-[#f3eadb]">
                               Parcial
                             </span>
                           )}
                         </>
                       ) : (
                         <span className="relative inline-block select-none align-middle">
-                          <span className="absolute inset-0 rounded-md bg-white/20 blur-sm" />
-                          <span className="absolute inset-0 rounded-md bg-white/18 blur-md" />
-                          <span className="absolute inset-0 rounded-md bg-white/14 blur-lg" />
-                          <span className="relative inline-block rounded-md bg-white/10 px-3 py-1.5 text-2xl tracking-[0.2em] blur-[2.6px]">
+                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/18 blur-sm" />
+                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/14 blur-md" />
+                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/10 blur-lg" />
+                          <span className="relative inline-block rounded-md bg-[#f3eadb]/10 px-3 py-1.5 text-2xl tracking-[0.2em] blur-[2.6px]">
                             8.888.888.888
                           </span>
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 text-[11px] text-orange-100/80">
+                    <div className="mt-1 text-[11px] text-[#e0d6c5]">
                       Incluye inversiones + bienes raíces + bancos - deudas (tarjetas e hipotecarias).
                     </div>
                   </button>
 
-                  <div className="rounded-xl bg-white/12 p-3">
-                    <div className="text-orange-100">Incremento mensual vs mes anterior</div>
+                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                    <div className="text-[#e7dcc9]">Incremento mensual vs mes anterior</div>
                     <div className="mt-1 text-base font-semibold">{metricsDisplay.monthIncrease}</div>
                   </div>
 
-                  <div className="rounded-xl bg-white/12 p-3">
-                    <div className="text-orange-100">Promedio mensual últimos 12 meses</div>
+                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                    <div className="text-[#e7dcc9]">Promedio mensual últimos 12 meses</div>
                     <div className="mt-1 text-base font-semibold">{metricsDisplay.avg12}</div>
                   </div>
 
-                  <div className="rounded-xl bg-white/12 p-3">
-                    <div className="text-orange-100">Promedio mensual desde inicio</div>
+                  <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                    <div className="text-[#e7dcc9]">Promedio mensual desde inicio</div>
                     <div className="mt-1 text-base font-semibold">{metricsDisplay.avgSinceStart}</div>
                   </div>
                 </div>
@@ -2930,7 +2910,11 @@ export const Patrimonio: React.FC = () => {
                   {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
                     <button
                       key={curr}
-                      className={`px-3 py-2 rounded-lg border border-white/20 text-xs ${displayCurrency === curr ? 'bg-white text-slate-900' : 'bg-white/8 text-white'}`}
+                      className={`px-3 py-2 rounded-lg border text-xs ${
+                        displayCurrency === curr
+                          ? 'bg-[#f3eadb] text-[#1d3c33] border-[#f3eadb]/70'
+                          : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/45'
+                      }`}
                       onClick={() => setDisplayCurrency(curr)}
                     >
                       {curr}

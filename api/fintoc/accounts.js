@@ -1,3 +1,5 @@
+import { requireFirebaseAuth } from '../_firebaseAuth.js';
+
 const FINTOC_BASE_URL = process.env.FINTOC_BASE_URL || 'https://api.fintoc.com/v1';
 
 const asNumber = (value) => {
@@ -98,6 +100,8 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
+
+  if (!(await requireFirebaseAuth(req, res))) return;
 
   const secretKey = process.env.FINTOC_SECRET_KEY;
   if (!secretKey) {

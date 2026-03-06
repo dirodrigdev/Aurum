@@ -1,3 +1,5 @@
+import { auth } from './firebase';
+
 export interface FintocAccountNormalized {
   id: string;
   name: string;
@@ -64,10 +66,35 @@ export interface FintocDiscoverResponse {
   error?: string;
 }
 
+const getAuthHeaders = async (): Promise<Record<string, string> | null> => {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return null;
+    const idToken = await currentUser.getIdToken();
+    if (!idToken) return null;
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const syncFintocAccounts = async (linkToken: string): Promise<FintocSyncResponse> => {
+  const headers = await getAuthHeaders();
+  if (!headers) {
+    return {
+      ok: false,
+      accounts: [],
+      totals: { clp: 0, usd: 0 },
+      error: 'Debes iniciar sesión nuevamente para consultar bancos.',
+    };
+  }
+
   const response = await fetch('/api/fintoc/accounts', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ link_token: linkToken }),
   });
 
@@ -100,9 +127,20 @@ export const syncFintocAccounts = async (linkToken: string): Promise<FintocSyncR
 };
 
 export const discoverFintocData = async (linkToken: string): Promise<FintocDiscoverResponse> => {
+  const headers = await getAuthHeaders();
+  if (!headers) {
+    return {
+      ok: false,
+      summary: { institution: 'N/D', accounts: 0, clp: 0, usd: 0, movements: 0 },
+      accounts: [],
+      probes: [],
+      error: 'Debes iniciar sesión nuevamente para consultar bancos.',
+    };
+  }
+
   const response = await fetch('/api/fintoc/discover', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ link_token: linkToken }),
   });
 

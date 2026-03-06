@@ -50,6 +50,10 @@ export interface WealthInvestmentInstrument {
   excludedMonths?: string[];
 }
 
+export const FINTOC_BANK_PROVIDER_IDS = ['bchile', 'scotia', 'santander'] as const;
+export type WealthBankProviderId = (typeof FINTOC_BANK_PROVIDER_IDS)[number];
+export type WealthBankTokenMap = Partial<Record<WealthBankProviderId, string>>;
+
 export interface MortgageAutoCalcConfig {
   initialDebtUf: number;
   dividendUf: number;
@@ -90,6 +94,7 @@ type WealthDemoSeedMeta = {
 const RECORDS_KEY = 'wealth_records_v1';
 const CLOSURES_KEY = 'wealth_closures_v1';
 const FX_KEY = 'wealth_fx_v1';
+const BANK_TOKENS_KEY = 'wealth_bank_tokens_v1';
 const INSTRUMENTS_KEY = 'wealth_investment_instruments_v1';
 const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const DELETED_RECORD_ASSET_MONTH_KEYS_KEY = 'wealth_deleted_record_asset_month_keys_v1';
@@ -99,6 +104,8 @@ const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
 const WEALTH_FX_LAST_AUTO_ATTEMPT_DAY_KEY = 'wealth_fx_last_auto_attempt_day_v1';
+const LEGACY_FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
+const LEGACY_FINTOC_BANK_TOKENS_KEY = 'aurum.fintoc.bank_tokens.v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const FX_LIVE_META_UPDATED_EVENT = 'aurum:fx-live-meta-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
@@ -405,6 +412,39 @@ const normalizeMonthKey = (value: unknown): string | null => {
   return /^\d{4}-\d{2}$/.test(month) ? month : null;
 };
 
+const normalizeBankTokensFromRaw = (raw: unknown): WealthBankTokenMap => {
+  if (!raw || typeof raw !== 'object') return {};
+  const parsed = raw as Record<string, unknown>;
+  const normalized: WealthBankTokenMap = {};
+  for (const providerId of FINTOC_BANK_PROVIDER_IDS) {
+    const token = String(parsed[providerId] || '').trim();
+    if (token) normalized[providerId] = token;
+  }
+  return normalized;
+};
+
+const loadBankTokensFromLocalStorageOnly = (): WealthBankTokenMap => {
+  try {
+    const raw = localStorage.getItem(BANK_TOKENS_KEY);
+    if (!raw) return {};
+    return normalizeBankTokensFromRaw(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+};
+
+const loadLegacyBankTokens = (): WealthBankTokenMap => {
+  try {
+    const raw = localStorage.getItem(LEGACY_FINTOC_BANK_TOKENS_KEY);
+    const parsed = raw ? normalizeBankTokensFromRaw(JSON.parse(raw)) : {};
+    const legacyLinkToken = String(localStorage.getItem(LEGACY_FINTOC_LINK_TOKEN_KEY) || '').trim();
+    if (legacyLinkToken && !parsed.bchile) parsed.bchile = legacyLinkToken;
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
 const normalizeInvestmentInstrument = (item: any): WealthInvestmentInstrument => {
   const excludedMonths = Array.isArray(item?.excludedMonths)
     ? item.excludedMonths
@@ -582,6 +622,9 @@ const sameStringList = (a: string[], b: string[]) => {
   return true;
 };
 
+const sameBankTokens = (a: WealthBankTokenMap, b: WealthBankTokenMap) =>
+  FINTOC_BANK_PROVIDER_IDS.every((providerId) => (a[providerId] || '') === (b[providerId] || ''));
+
 const isLocalStateNewerOrEqual = (localUpdatedAt: string, remoteUpdatedAt: string) => {
   if (!remoteUpdatedAt) return true;
   if (!localUpdatedAt) return false;
@@ -600,6 +643,8 @@ type MergeWealthStateInput = {
   remoteClosures: WealthMonthlyClosure[];
   localInstruments: WealthInvestmentInstrument[];
   remoteInstruments: WealthInvestmentInstrument[];
+  localBankTokens: WealthBankTokenMap;
+  remoteBankTokens: WealthBankTokenMap;
   localDeletedRecordIds: string[];
   remoteDeletedRecordIds: string[];
   localDeletedRecordAssetMonthKeys: string[];
@@ -614,6 +659,7 @@ type MergedWealthState = {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
   instruments: WealthInvestmentInstrument[];
+  bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
   deletedRecordAssetMonthKeys: string[];
   fx: WealthFxRates;
@@ -648,11 +694,16 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
   const records = mergeRecords(input.localRecords, input.remoteRecords).filter(
     (record) => !deletedSet.has(record.id) && !deletedAssetMonthSet.has(makeAssetMonthKey(record)),
   );
+  const bankTokens = normalizeBankTokensFromRaw({
+    ...(preferLocal ? input.remoteBankTokens : input.localBankTokens),
+    ...(preferLocal ? input.localBankTokens : input.remoteBankTokens),
+  });
 
   return {
     records,
     closures: mergeClosures(input.localClosures, input.remoteClosures),
     instruments: mergeInvestmentInstruments(input.localInstruments, input.remoteInstruments),
+    bankTokens,
     deletedRecordIds,
     deletedRecordAssetMonthKeys,
     fx: preferLocal ? input.localFx : input.remoteFx,
@@ -674,6 +725,35 @@ export const loadWealthRecords = (): WealthRecord[] => {
   } catch {
     return [];
   }
+};
+
+export const loadBankTokens = (): WealthBankTokenMap => {
+  const current = loadBankTokensFromLocalStorageOnly();
+  const legacy = loadLegacyBankTokens();
+  const merged = normalizeBankTokensFromRaw({ ...legacy, ...current });
+
+  const same =
+    Object.keys(current).length === Object.keys(merged).length &&
+    FINTOC_BANK_PROVIDER_IDS.every((providerId) => (current[providerId] || '') === (merged[providerId] || ''));
+
+  if (!same) {
+    try {
+      localStorage.setItem(BANK_TOKENS_KEY, JSON.stringify(merged));
+      localStorage.removeItem(LEGACY_FINTOC_BANK_TOKENS_KEY);
+      localStorage.removeItem(LEGACY_FINTOC_LINK_TOKEN_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  return merged;
+};
+
+export const saveBankTokens = (tokens: WealthBankTokenMap, options?: PersistOptions) => {
+  localStorage.setItem(BANK_TOKENS_KEY, JSON.stringify(normalizeBankTokensFromRaw(tokens)));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
 export const loadInvestmentInstruments = (): WealthInvestmentInstrument[] => {
@@ -1313,6 +1393,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const localClosures = loadClosures();
       const localFx = loadFxRates();
       const localInstruments = loadInvestmentInstruments();
+      const localBankTokens = loadBankTokens();
       const localDeletedRecordIds = loadDeletedRecordIds();
       const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
       const localUpdatedAt = readWealthUpdatedAt();
@@ -1323,6 +1404,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
       const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
       const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
+      const remoteBankTokens = normalizeBankTokensFromRaw(remoteData.bankTokens);
       const remoteDeletedRecordIds = normalizeDeletedRecordIds(remoteData.deletedRecordIds);
       const remoteDeletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
         remoteData.deletedRecordAssetMonthKeys,
@@ -1337,6 +1419,8 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         remoteClosures,
         localInstruments,
         remoteInstruments,
+        localBankTokens,
+        remoteBankTokens,
         localDeletedRecordIds,
         remoteDeletedRecordIds,
         localDeletedRecordAssetMonthKeys,
@@ -1351,6 +1435,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const mergedRecords = merged.records;
       const mergedClosures = merged.closures;
       const mergedInstruments = merged.instruments;
+      const mergedBankTokens = merged.bankTokens;
       const mergedFx = merged.fx;
       const mergedUpdatedAt = nextMonotonicIsoAgainstRemote();
 
@@ -1360,6 +1445,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           schemaVersion: 1,
           updatedAt: mergedUpdatedAt,
           fx: mergedFx,
+          bankTokens: mergedBankTokens,
           records: mergedRecords,
           closures: mergedClosures,
           instruments: mergedInstruments,
@@ -1374,6 +1460,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         !sameRecords(localRecords, mergedRecords) ||
         !sameClosures(localClosures, mergedClosures) ||
         !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
+        !sameBankTokens(localBankTokens, mergedBankTokens) ||
         !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
         !sameStringList(localDeletedRecordAssetMonthKeys, mergedDeletedRecordAssetMonthKeys) ||
         JSON.stringify(localFx) !== JSON.stringify(mergedFx)
@@ -1382,6 +1469,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
         saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
         saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
+        saveBankTokens(mergedBankTokens, { skipCloudSync: true, silent: true });
         saveDeletedRecordIds(mergedDeletedRecordIds, { skipCloudSync: true, silent: true });
         saveDeletedRecordAssetMonthKeys(mergedDeletedRecordAssetMonthKeys, {
           skipCloudSync: true,
@@ -1455,6 +1543,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localClosures = loadClosures();
     const localFx = loadFxRates();
     const localInstruments = loadInvestmentInstruments();
+    const localBankTokens = loadBankTokens();
     const localDeletedRecordIds = loadDeletedRecordIds();
     const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
     const localUpdatedAt = readWealthUpdatedAt();
@@ -1464,6 +1553,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const remoteClosures = loadClosuresFromRaw(Array.isArray(data.closures) ? data.closures : []);
     const remoteFx = normalizeFxRates(data.fx || defaultFxRates);
     const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(data.instruments) ? data.instruments : []);
+    const remoteBankTokens = normalizeBankTokensFromRaw(data.bankTokens);
     const remoteDeletedRecordIds = normalizeDeletedRecordIds(data.deletedRecordIds);
     const remoteDeletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
       data.deletedRecordAssetMonthKeys,
@@ -1477,6 +1567,8 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       remoteClosures,
       localInstruments,
       remoteInstruments,
+      localBankTokens,
+      remoteBankTokens,
       localDeletedRecordIds,
       remoteDeletedRecordIds,
       localDeletedRecordAssetMonthKeys,
@@ -1491,15 +1583,19 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const mergedRecords = merged.records;
     const mergedClosures = merged.closures;
     const mergedInstruments = merged.instruments;
+    const mergedBankTokens = merged.bankTokens;
 
-    const hasLocalData = localRecords.length > 0 || localClosures.length > 0;
-    const hasRemoteData = remoteRecords.length > 0 || remoteClosures.length > 0;
+    const hasLocalData =
+      localRecords.length > 0 || localClosures.length > 0 || Object.keys(localBankTokens).length > 0;
+    const hasRemoteData =
+      remoteRecords.length > 0 || remoteClosures.length > 0 || Object.keys(remoteBankTokens).length > 0;
     const mergedFx = merged.fx;
 
     const localNeedsUpdate =
       !sameRecords(localRecords, mergedRecords) ||
       !sameClosures(localClosures, mergedClosures) ||
       !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
+      !sameBankTokens(localBankTokens, mergedBankTokens) ||
       !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
       !sameStringList(localDeletedRecordAssetMonthKeys, mergedDeletedRecordAssetMonthKeys) ||
       JSON.stringify(localFx) !== JSON.stringify(mergedFx);
@@ -1509,6 +1605,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
       saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
       saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
+      saveBankTokens(mergedBankTokens, { skipCloudSync: true, silent: true });
       saveDeletedRecordIds(mergedDeletedRecordIds, { skipCloudSync: true, silent: true });
       saveDeletedRecordAssetMonthKeys(mergedDeletedRecordAssetMonthKeys, {
         skipCloudSync: true,
@@ -1526,6 +1623,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameRecords(mergedRecords, remoteRecords) ||
       !sameClosures(mergedClosures, remoteClosures) ||
       !sameInvestmentInstruments(mergedInstruments, remoteInstruments) ||
+      !sameBankTokens(mergedBankTokens, remoteBankTokens) ||
       !sameStringList(mergedDeletedRecordIds, remoteDeletedRecordIds) ||
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
@@ -1872,6 +1970,7 @@ const applyWealthStateLocal = (payload: {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
   instruments: WealthInvestmentInstrument[];
+  bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
   deletedRecordAssetMonthKeys: string[];
   fx: WealthFxRates;
@@ -1880,6 +1979,7 @@ const applyWealthStateLocal = (payload: {
   saveWealthRecords(payload.records, { skipCloudSync: true, silent: true });
   saveClosures(payload.closures, { skipCloudSync: true, silent: true });
   saveInvestmentInstruments(payload.instruments, { skipCloudSync: true, silent: true });
+  saveBankTokens(payload.bankTokens, { skipCloudSync: true, silent: true });
   saveDeletedRecordIds(payload.deletedRecordIds, { skipCloudSync: true, silent: true });
   saveDeletedRecordAssetMonthKeys(payload.deletedRecordAssetMonthKeys, {
     skipCloudSync: true,
@@ -1899,6 +1999,7 @@ type NormalizedCloudWealthState = {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
   instruments: WealthInvestmentInstrument[];
+  bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
   deletedRecordAssetMonthKeys: string[];
   fx: WealthFxRates;
@@ -1919,6 +2020,7 @@ const normalizeCloudWealthState = (raw: any): NormalizedCloudWealthState => ({
       records,
       closures: loadClosuresFromRaw(Array.isArray(raw?.closures) ? raw.closures : []),
       instruments: loadInstrumentsFromRaw(Array.isArray(raw?.instruments) ? raw.instruments : []),
+      bankTokens: normalizeBankTokensFromRaw(raw?.bankTokens),
       deletedRecordIds,
       deletedRecordAssetMonthKeys,
       fx: normalizeFxRates(raw?.fx || defaultFxRates),
@@ -1974,7 +2076,8 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           const hasLocalData =
             loadWealthRecords().length > 0 ||
             loadClosures().length > 0 ||
-            loadInvestmentInstruments().length > 0;
+            loadInvestmentInstruments().length > 0 ||
+            Object.keys(loadBankTokens()).length > 0;
           if (hasLocalData) scheduleWealthCloudSync(20);
           return;
         }
@@ -1984,6 +2087,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         const localRecords = loadWealthRecords();
         const localClosures = loadClosures();
         const localInstruments = loadInvestmentInstruments();
+        const localBankTokens = loadBankTokens();
         const localDeletedRecordIds = loadDeletedRecordIds();
         const localDeletedRecordAssetMonthKeys = loadDeletedRecordAssetMonthKeys();
         const localFx = loadFxRates();
@@ -1996,6 +2100,8 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           remoteClosures: remote.closures,
           localInstruments,
           remoteInstruments: remote.instruments,
+          localBankTokens,
+          remoteBankTokens: remote.bankTokens,
           localDeletedRecordIds,
           remoteDeletedRecordIds: remote.deletedRecordIds,
           localDeletedRecordAssetMonthKeys,
@@ -2010,6 +2116,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           sameRecords(localRecords, merged.records) &&
           sameClosures(localClosures, merged.closures) &&
           sameInvestmentInstruments(localInstruments, merged.instruments) &&
+          sameBankTokens(localBankTokens, merged.bankTokens) &&
           sameStringList(localDeletedRecordIds, merged.deletedRecordIds) &&
           sameStringList(localDeletedRecordAssetMonthKeys, merged.deletedRecordAssetMonthKeys) &&
           JSON.stringify(localFx) === JSON.stringify(merged.fx);
@@ -2019,6 +2126,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           records: merged.records,
           closures: merged.closures,
           instruments: merged.instruments,
+          bankTokens: merged.bankTokens,
           deletedRecordIds: merged.deletedRecordIds,
           deletedRecordAssetMonthKeys: merged.deletedRecordAssetMonthKeys,
           fx: merged.fx,
@@ -2029,6 +2137,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           !sameRecords(merged.records, remote.records) ||
           !sameClosures(merged.closures, remote.closures) ||
           !sameInvestmentInstruments(merged.instruments, remote.instruments) ||
+          !sameBankTokens(merged.bankTokens, remote.bankTokens) ||
           !sameStringList(merged.deletedRecordIds, remote.deletedRecordIds) ||
           !sameStringList(merged.deletedRecordAssetMonthKeys, remote.deletedRecordAssetMonthKeys) ||
           JSON.stringify(merged.fx) !== JSON.stringify(remote.fx);
@@ -2062,6 +2171,7 @@ const persistWealthStateToCloud = async (payload: {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
   instruments: WealthInvestmentInstrument[];
+  bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
   deletedRecordAssetMonthKeys: string[];
   fx: WealthFxRates;
@@ -2077,6 +2187,7 @@ const persistWealthStateToCloud = async (payload: {
         schemaVersion: 1,
         updatedAt: nextUpdatedAt,
         fx: payload.fx,
+        bankTokens: payload.bankTokens,
         records: payload.records,
         closures: payload.closures,
         instruments: payload.instruments,
@@ -2126,6 +2237,7 @@ export const clearSimulationHistoryData = async (): Promise<{
   const instruments = loadInvestmentInstruments();
   const closures = loadClosures();
   const fx = loadFxRates();
+  const bankTokens = loadBankTokens();
 
   const isTargetMonthRecord = (record: WealthRecord) =>
     monthKeys.some((monthKey) => record.snapshotDate.startsWith(`${monthKey}-`));
@@ -2144,6 +2256,7 @@ export const clearSimulationHistoryData = async (): Promise<{
     records: nextRecords,
     closures: nextClosures,
     instruments,
+    bankTokens,
     deletedRecordIds: nextDeletedRecordIds,
     deletedRecordAssetMonthKeys: nextDeletedRecordAssetMonthKeys,
     fx,
@@ -2163,6 +2276,7 @@ export const clearSimulationHistoryData = async (): Promise<{
     records: nextRecords,
     closures: nextClosures,
     instruments,
+    bankTokens,
     deletedRecordIds: nextDeletedRecordIds,
     deletedRecordAssetMonthKeys: nextDeletedRecordAssetMonthKeys,
     fx,
@@ -2205,6 +2319,7 @@ export const clearCurrentMonthData = async (options: {
   const closures = loadClosures();
   const instruments = loadInvestmentInstruments();
   const fx = loadFxRates();
+  const bankTokens = loadBankTokens();
 
   const shouldRemove = (record: WealthRecord) => {
     if (!record.snapshotDate.startsWith(monthPrefix)) return false;
@@ -2243,6 +2358,7 @@ export const clearCurrentMonthData = async (options: {
     records: nextRecords,
     closures,
     instruments,
+    bankTokens,
     deletedRecordIds: nextDeletedRecordIds,
     deletedRecordAssetMonthKeys: nextDeletedRecordAssetMonthKeys,
     fx,
@@ -2252,6 +2368,7 @@ export const clearCurrentMonthData = async (options: {
     records: nextRecords,
     closures,
     instruments,
+    bankTokens,
     deletedRecordIds: nextDeletedRecordIds,
     deletedRecordAssetMonthKeys: nextDeletedRecordAssetMonthKeys,
     fx,
@@ -2675,11 +2792,13 @@ export const clearWealthDataForFreshStart = async (
 ): Promise<{ cloudCleared: boolean; mode: 'cloud' | 'local' }> => {
   const preserveFx = options?.preserveFx !== false;
   const nextFx = preserveFx ? loadFxRates() : { ...defaultFxRates };
+  const bankTokens = loadBankTokens();
 
   applyWealthStateLocal({
     records: [],
     closures: [],
     instruments: [],
+    bankTokens,
     deletedRecordIds: [],
     deletedRecordAssetMonthKeys: [],
     fx: nextFx,
@@ -2689,6 +2808,7 @@ export const clearWealthDataForFreshStart = async (
     records: [],
     closures: [],
     instruments: [],
+    bankTokens,
     deletedRecordIds: [],
     deletedRecordAssetMonthKeys: [],
     fx: nextFx,
