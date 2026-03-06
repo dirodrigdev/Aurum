@@ -71,6 +71,16 @@ export const SettingsAurum: React.FC = () => {
   const formatFxInteger = (value: number) =>
     Math.round(Number(value) || 0).toLocaleString('es-CL');
 
+  const humanizeFxSource = (raw?: string) => {
+    const value = String(raw || '').trim().toLowerCase();
+    if (!value) return 'Automática';
+    if (value.includes('f073.tco.pre.z.d') || value.includes('bcentral.cl')) return 'USD: Banco Central';
+    if (value.includes('valoruf')) return 'UF: valoruf.cl';
+    if (value.includes('open.er-api.com')) return 'Open ER API';
+    if (value.includes('frankfurter.app')) return 'Frankfurter';
+    return String(raw || 'Automática');
+  };
+
   const historicalCsvTemplate = `month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
 2026-01,2026-01-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-02,2026-02-28T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
@@ -263,9 +273,7 @@ export const SettingsAurum: React.FC = () => {
                 const result = await refreshFxRatesFromLive({ force: true });
                 setFx(result.rates);
                 setFxLiveMeta(loadFxLiveSyncMeta());
-                setFxLiveMessage(
-                  `TC/UF online actualizados (${result.source}) ${result.updated ? 'con cambios' : 'sin cambios'}: ${formatDateTime(result.fetchedAt)}.`,
-                );
+                setFxLiveMessage(`TC/UF actualizados correctamente (${formatDateTime(result.fetchedAt)}).`);
               } catch (err: any) {
                 setFxLiveMeta(loadFxLiveSyncMeta());
                 const currentSaved = loadFxRates();
@@ -296,10 +304,12 @@ export const SettingsAurum: React.FC = () => {
             }`}
           >
             <div>
-              Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {fxLiveMeta.source || 'fuentes-automaticas'}
+              Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {humanizeFxSource(fxLiveMeta.source)}
             </div>
             <div className="mt-0.5">Última actualización: {formatDateTime(fxLiveMeta.fetchedAt)}</div>
-            {!!fxLiveMeta.message && <div className="mt-0.5 break-words">{fxLiveMeta.message}</div>}
+            {fxLiveMeta.status === 'error' && !!fxLiveMeta.message && (
+              <div className="mt-0.5 break-words">{fxLiveMeta.message}</div>
+            )}
           </div>
         )}
         {!!fxLiveMessage && (
