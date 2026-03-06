@@ -2,13 +2,16 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
+  buildWealthNetBreakdown,
   WealthCurrency,
   WealthFxRates,
+  WealthNetBreakdownClp,
   WealthRecord,
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
+  isSyntheticAggregateRecord,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -26,13 +29,7 @@ interface EvolutionRow {
   net: number | null;
 }
 
-interface NetBreakdown {
-  netClp: number;
-  investmentClp: number;
-  realEstateNetClp: number;
-  bankClp: number;
-  nonMortgageDebtClp: number;
-}
+type NetBreakdown = WealthNetBreakdownClp;
 
 interface InvestmentDetailRow {
   key: string;
@@ -94,19 +91,6 @@ const fromClp = (amountClp: number, currency: WealthCurrency, fx: WealthFxRates)
   return amountClp / Math.max(1, fx.ufClp);
 };
 
-const isMortgageMeta = (label: string) => {
-  const l = label.toLowerCase();
-  return (
-    l.includes('saldo deuda hipotecaria') ||
-    l.includes('dividendo hipotecario') ||
-    l.includes('interés hipotecario') ||
-    l.includes('interes hipotecario') ||
-    l.includes('seguros hipotecarios') ||
-    l.includes('amortización hipotecaria') ||
-    l.includes('amortizacion hipotecaria')
-  );
-};
-
 const normalizeForMatch = (value: string) =>
   String(value || '')
     .normalize('NFD')
@@ -121,17 +105,6 @@ const labelMatchKey = (value: string) =>
     .trim();
 
 const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
-
-const isSyntheticAggregateRecord = (record: WealthRecord) => {
-  const label = normalizeForMatch(record.label);
-  if (record.block === 'bank') {
-    return label === normalizeForMatch('Saldo bancos CLP') || label === normalizeForMatch('Saldo bancos USD');
-  }
-  if (record.block === 'debt') {
-    return label === normalizeForMatch('Deuda tarjetas CLP') || label === normalizeForMatch('Deuda tarjetas USD');
-  }
-  return false;
-};
 
 const REQUIRED_INVESTMENT_LABELS = [
   'SURA inversión financiera',
@@ -151,29 +124,8 @@ const REQUIRED_REAL_ESTATE_LABELS = [
   'Amortización hipotecaria mensual',
 ];
 
-const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown => {
-  let investmentClp = 0;
-  let realEstateAssetsClp = 0;
-  let mortgageDebtClp = 0;
-  let bankClp = 0;
-  let nonMortgageDebtClp = 0;
-
-  records.forEach((r) => {
-    if (isSyntheticAggregateRecord(r)) return;
-    const clp = toClp(r.amount, r.currency, fx);
-    if (r.block === 'investment') investmentClp += clp;
-    if (r.block === 'real_estate') realEstateAssetsClp += clp;
-    if (r.block === 'bank') bankClp += clp;
-    if (r.block === 'debt') {
-      if (r.label.toLowerCase().includes('saldo deuda hipotecaria')) mortgageDebtClp += clp;
-      else if (!isMortgageMeta(r.label)) nonMortgageDebtClp += clp;
-    }
-  });
-
-  const realEstateNetClp = realEstateAssetsClp - mortgageDebtClp;
-  const netClp = investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
-  return { netClp, investmentClp, realEstateNetClp, bankClp, nonMortgageDebtClp };
-};
+const buildNetBreakdown = (records: WealthRecord[], fx: WealthFxRates): NetBreakdown =>
+  buildWealthNetBreakdown(records, fx);
 
 const pct = (curr: number, prev: number | null) => {
   if (prev === null || prev === 0) return null;

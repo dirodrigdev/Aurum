@@ -26,7 +26,9 @@ import {
   createMonthlyClosure,
   currentMonthKey,
   applyMortgageAutoCalculation,
+  buildWealthNetBreakdown,
   FX_RATES_UPDATED_EVENT,
+  isSyntheticAggregateRecord,
   WEALTH_DATA_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
   hydrateWealthFromCloud,
@@ -288,23 +290,6 @@ const normalizeForMatch = (value: string) => {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
-};
-
-const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
-  const label = normalizeForMatch(record.label);
-  if (record.block === 'bank') {
-    return (
-      label === normalizeForMatch('Saldo bancos CLP') ||
-      label === normalizeForMatch('Saldo bancos USD')
-    );
-  }
-  if (record.block === 'debt') {
-    return (
-      label === normalizeForMatch('Deuda tarjetas CLP') ||
-      label === normalizeForMatch('Deuda tarjetas USD')
-    );
-  }
-  return false;
 };
 
 const formatCurrency = (value: number, currency: WealthCurrency) => {
@@ -2399,26 +2384,11 @@ export const Patrimonio: React.FC = () => {
   }, [latestClosure, closeMonthDraft]);
 
   const sectionAmounts = useMemo(() => {
-    const monthRecordsWithoutSynthetic = monthRecords.filter((record) => !isSyntheticAggregateRecord(record));
-    const toClpFromRecord = (record: WealthRecord) =>
-      toClp(record.amount, record.currency, fx.usdClp, fx.eurClp, fx.ufClp);
-    const investment = monthRecordsWithoutSynthetic
-      .filter((record) => record.block === 'investment')
-      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const bank = monthRecordsWithoutSynthetic
-      .filter((record) => record.block === 'bank')
-      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const realEstateAssets = monthRecordsWithoutSynthetic
-      .filter((record) => record.block === 'real_estate')
-      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-    const mortgageDebt = monthRecordsWithoutSynthetic
-      .filter((record) => record.block === 'debt' && isMortgagePrincipalLabel(record.label))
-      .reduce((sum, record) => sum + toClpFromRecord(record), 0);
-
+    const breakdown = buildWealthNetBreakdown(monthRecords, fx);
     return {
-      investment,
-      bank,
-      realEstateNet: realEstateAssets - mortgageDebt,
+      investment: breakdown.investmentClp,
+      bank: breakdown.bankClp,
+      realEstateNet: breakdown.realEstateNetClp,
     };
   }, [monthRecords, fx]);
 

@@ -322,7 +322,7 @@ const normalizeLabelKey = (value: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
-const isSyntheticAggregateLabel = (record: Pick<WealthRecord, 'label' | 'block'>) => {
+export const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
   const label = normalizeText(record.label);
   if (record.block === 'bank') {
     return label === normalizeText('Saldo bancos CLP') || label === normalizeText('Saldo bancos USD');
@@ -333,7 +333,7 @@ const isSyntheticAggregateLabel = (record: Pick<WealthRecord, 'label' | 'block'>
   return false;
 };
 
-const isMortgageMetaDebtLabel = (labelValue: string) => {
+export const isMortgageMetaDebtLabel = (labelValue: string) => {
   const label = normalizeText(labelValue);
   return (
     label.includes(normalizeText('dividendo hipotecario')) ||
@@ -347,6 +347,9 @@ const isMortgageDebtLabel = (labelValue: string) => {
   const label = normalizeText(labelValue);
   return isMortgageMetaDebtLabel(labelValue) || label.includes(normalizeText('saldo deuda hipotecaria'));
 };
+
+export const isMortgagePrincipalDebtLabel = (labelValue: string) =>
+  normalizeText(labelValue).includes(normalizeText('saldo deuda hipotecaria'));
 
 const isDeprecatedSuraTotalRecord = (
   record: Pick<WealthRecord, 'label' | 'source' | 'block'>,
@@ -1107,7 +1110,7 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
   const byBlock = emptyBlockMap();
 
   for (const item of records) {
-    if (isSyntheticAggregateLabel(item)) continue;
+    if (isSyntheticAggregateRecord(item)) continue;
     byBlock[item.block][item.currency] += item.amount;
 
     if (item.block === 'debt') {
@@ -1137,6 +1140,59 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
     debtsByCurrency,
     netConsolidatedClp,
     byBlock,
+  };
+};
+
+export interface WealthNetBreakdownClp {
+  netClp: number;
+  investmentClp: number;
+  realEstateAssetsClp: number;
+  mortgageDebtClp: number;
+  realEstateNetClp: number;
+  bankClp: number;
+  nonMortgageDebtClp: number;
+}
+
+export const buildWealthNetBreakdown = (
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+): WealthNetBreakdownClp => {
+  let investmentClp = 0;
+  let realEstateAssetsClp = 0;
+  let mortgageDebtClp = 0;
+  let bankClp = 0;
+  let nonMortgageDebtClp = 0;
+
+  const toClpWithFx = (amount: number, currency: WealthCurrency) => {
+    if (currency === 'CLP') return amount;
+    if (currency === 'USD') return amount * fxRates.usdClp;
+    if (currency === 'EUR') return amount * fxRates.eurClp;
+    return amount * fxRates.ufClp;
+  };
+
+  records.forEach((record) => {
+    if (isSyntheticAggregateRecord(record)) return;
+    const clp = toClpWithFx(record.amount, record.currency);
+
+    if (record.block === 'investment') investmentClp += clp;
+    if (record.block === 'real_estate') realEstateAssetsClp += clp;
+    if (record.block === 'bank') bankClp += clp;
+    if (record.block === 'debt') {
+      if (isMortgagePrincipalDebtLabel(record.label)) mortgageDebtClp += clp;
+      else if (!isMortgageMetaDebtLabel(record.label)) nonMortgageDebtClp += clp;
+    }
+  });
+
+  const realEstateNetClp = realEstateAssetsClp - mortgageDebtClp;
+  const netClp = investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
+  return {
+    netClp,
+    investmentClp,
+    realEstateAssetsClp,
+    mortgageDebtClp,
+    realEstateNetClp,
+    bankClp,
+    nonMortgageDebtClp,
   };
 };
 
@@ -1260,7 +1316,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const mergedClosures = merged.closures;
       const mergedInstruments = merged.instruments;
       const mergedFx = merged.fx;
-      const mergedUpdatedAt = nowIso();
+      const mergedUpdatedAt = nextMonotonicIsoAgainstRemote();
 
       await setDoc(
         ref,
@@ -1276,6 +1332,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         }),
         { merge: true },
       );
+      markLastRemoteUpdatedAt(mergedUpdatedAt);
 
       if (
         !sameRecords(localRecords, mergedRecords) ||
@@ -1977,11 +2034,12 @@ const persistWealthStateToCloud = async (payload: {
     const ref = await getWealthCloudRef();
     if (!ref) return { cloudCleared: false, mode: 'local' };
 
+    const nextUpdatedAt = nextMonotonicIsoAgainstRemote();
     await setDoc(
       ref,
       stripUndefinedDeep({
         schemaVersion: 1,
-        updatedAt: nowIso(),
+        updatedAt: nextUpdatedAt,
         fx: payload.fx,
         records: payload.records,
         closures: payload.closures,
@@ -1991,6 +2049,7 @@ const persistWealthStateToCloud = async (payload: {
       }),
       { merge: true },
     );
+    markLastRemoteUpdatedAt(nextUpdatedAt);
 
     setFirestoreOk();
     setLastWealthSyncIssue('');
