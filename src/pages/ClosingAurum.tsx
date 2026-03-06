@@ -404,60 +404,66 @@ export const ClosingAurum: React.FC = () => {
   }, [currency]);
 
   useEffect(() => {
-    const refreshFx = () => setCurrentFx(loadFxRates());
-    const refreshAll = async () => {
-      await hydrateWealthFromCloud();
-      refreshFx();
+    let runningHydrate = false;
+    let lastHydrateAt = 0;
+    const HYDRATE_THROTTLE_MS = 15_000;
+
+    const refreshLocal = () => {
+      setCurrentFx(loadFxRates());
       setMonthKey(currentMonthKey());
       setRevision((v) => v + 1);
     };
+    const refreshFromCloudIfNeeded = async (force = false) => {
+      if (runningHydrate) return;
+      const now = Date.now();
+      if (!force && now - lastHydrateAt < HYDRATE_THROTTLE_MS) {
+        refreshLocal();
+        return;
+      }
+      runningHydrate = true;
+      try {
+        await hydrateWealthFromCloud();
+        lastHydrateAt = Date.now();
+      } finally {
+        runningHydrate = false;
+      }
+      refreshLocal();
+    };
+
     const onBottomNavRetap = (event: Event) => {
       const custom = event as CustomEvent<{ to?: string }>;
       if (custom.detail?.to !== '/closing') return;
-      void refreshAll();
+      void refreshFromCloudIfNeeded();
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') void refreshAll();
+      if (document.visibilityState === 'visible') void refreshFromCloudIfNeeded();
     };
 
     const onFocus = () => {
-      void refreshAll();
+      void refreshFromCloudIfNeeded();
     };
     const onStorage = () => {
-      void refreshAll();
+      refreshLocal();
     };
     const onWealthUpdated = () => {
-      void refreshAll();
+      refreshLocal();
     };
 
     window.addEventListener('focus', onFocus);
     window.addEventListener('storage', onStorage);
     window.addEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
-    window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+    window.addEventListener(FX_RATES_UPDATED_EVENT, refreshLocal as EventListener);
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
     document.addEventListener('visibilitychange', onVisibility);
+    void refreshFromCloudIfNeeded(true);
 
     return () => {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
-      window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
+      window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshLocal as EventListener);
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
       document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      await hydrateWealthFromCloud();
-      if (!alive) return;
-      setCurrentFx(loadFxRates());
-      setMonthKey(currentMonthKey());
-      setRevision((v) => v + 1);
-    })();
-    return () => {
-      alive = false;
     };
   }, []);
 

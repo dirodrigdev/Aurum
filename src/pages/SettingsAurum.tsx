@@ -6,6 +6,7 @@ import {
   clearCurrentMonthData,
   clearSimulationHistoryData,
   currentMonthKey,
+  FX_RATES_UPDATED_EVENT,
   getSimulationHistoryMonthKeys,
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
@@ -13,6 +14,7 @@ import {
   loadFxLiveSyncMeta,
   loadFxRates,
   refreshFxRatesFromLive,
+  WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
   seedDemoWealthTimeline,
   syncWealthNow,
@@ -76,20 +78,57 @@ export const SettingsAurum: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const refreshFromCloudNow = async () => {
-      await hydrateWealthFromCloud();
+    let runningHydrate = false;
+    let lastHydrateAt = 0;
+    const HYDRATE_THROTTLE_MS = 20_000;
+
+    const refreshLocal = () => {
       setFx(loadFxRates());
       setFxLiveMeta(loadFxLiveSyncMeta());
+    };
+    const refreshFromCloudIfNeeded = async (force = false) => {
+      if (runningHydrate) return;
+      const now = Date.now();
+      if (!force && now - lastHydrateAt < HYDRATE_THROTTLE_MS) {
+        refreshLocal();
+        return;
+      }
+      runningHydrate = true;
+      try {
+        await hydrateWealthFromCloud();
+        lastHydrateAt = Date.now();
+      } finally {
+        runningHydrate = false;
+      }
+      refreshLocal();
     };
     const onBottomNavRetap = (event: Event) => {
       const custom = event as CustomEvent<{ to?: string }>;
       if (custom.detail?.to !== '/settings') return;
-      void refreshFromCloudNow();
+      void refreshFromCloudIfNeeded();
     };
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshFromCloudIfNeeded();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshFromCloudIfNeeded();
+    };
+    const onLocalWealthChange = () => refreshLocal();
 
     window.addEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener(FX_RATES_UPDATED_EVENT, onLocalWealthChange as EventListener);
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onLocalWealthChange as EventListener);
+    void refreshFromCloudIfNeeded(true);
     return () => {
       window.removeEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener(FX_RATES_UPDATED_EVENT, onLocalWealthChange as EventListener);
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onLocalWealthChange as EventListener);
     };
   }, []);
 
