@@ -1,6 +1,10 @@
 import { requireFirebaseAuth } from '../_firebaseAuth.js';
 
 const FINTOC_BASE_URL = process.env.FINTOC_BASE_URL || 'https://api.fintoc.com/v1';
+const setSharedHeaders = (res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+};
 
 const asNumber = (value) => {
   const n = Number(value);
@@ -97,7 +101,9 @@ const parseMovementsFromPayload = (payload) => {
 };
 
 export default async function handler(req, res) {
+  setSharedHeaders(res);
   if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
 
@@ -187,7 +193,7 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(500).json({
       ok: false,
-      error: `Error consultando Fintoc: ${error?.message || 'desconocido'}`,
+      error: 'Error consultando Fintoc.',
     });
   }
 }

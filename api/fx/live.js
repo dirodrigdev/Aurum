@@ -1,5 +1,9 @@
 const FETCH_TIMEOUT_MS = 5000;
 const BCCH_SERIES_ENDPOINT = 'https://si3.bcentral.cl/SieteRestWS/SieteRestWS.ashx';
+const setSharedHeaders = (res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+};
 
 const parseFlexibleNumeric = (value) => {
   const normalized = String(value ?? '')
@@ -294,7 +298,9 @@ const resolveUf = async () => {
 };
 
 export default async function handler(req, res) {
+  setSharedHeaders(res);
   if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
 
@@ -321,7 +327,7 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(502).json({
       ok: false,
-      error: `No pude obtener TC/UF online en backend: ${error?.message || 'desconocido'}`,
+      error: 'No pude obtener TC/UF online en backend.',
     });
   }
 }
