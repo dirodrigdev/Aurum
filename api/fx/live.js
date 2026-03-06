@@ -116,7 +116,8 @@ const fetchUsdEurFromOpenErApi = async () => {
 };
 
 const resolveUsdEur = async () => {
-  const strategies = [fetchUsdEurFromFrankfurter, fetchUsdEurFromOpenErApi];
+  // Priorizamos open.er-api por mejor alineación práctica con valor spot observado.
+  const strategies = [fetchUsdEurFromOpenErApi, fetchUsdEurFromFrankfurter];
   const errors = [];
 
   for (const strategy of strategies) {
@@ -174,6 +175,11 @@ export default async function handler(req, res) {
         ufClp: Math.round(ufData.uf),
       },
       source: `vercel-api: ${fx.source} + ${ufData.source}`,
+      sources: {
+        usdClp: fx.source,
+        eurClp: fx.source,
+        ufClp: ufData.source,
+      },
       fetchedAt: new Date().toISOString(),
       ufDate: ufData.ufDate || '',
     });

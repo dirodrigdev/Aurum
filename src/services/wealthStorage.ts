@@ -1063,13 +1063,26 @@ const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: s
     throw new Error('Respuesta inválida de TC/UF desde backend.');
   }
 
+  const perIndicatorSources =
+    payload?.sources && typeof payload.sources === 'object'
+      ? {
+          usd: String(payload.sources.usdClp || '').trim(),
+          eur: String(payload.sources.eurClp || '').trim(),
+          uf: String(payload.sources.ufClp || '').trim(),
+        }
+      : null;
+
+  const sourceText = perIndicatorSources
+    ? `USD:${perIndicatorSources.usd || 'n/d'} · EUR:${perIndicatorSources.eur || 'n/d'} · UF:${perIndicatorSources.uf || 'n/d'}`
+    : String(payload.source || 'backend-fx');
+
   return {
     rates: {
       usdClp: Math.round(usd),
       eurClp: Math.round(eur),
       ufClp: Math.round(uf),
     },
-    source: String(payload.source || 'backend-fx'),
+    source: sourceText,
     fetchedAt: String(payload.fetchedAt || nowIso()),
   };
 };

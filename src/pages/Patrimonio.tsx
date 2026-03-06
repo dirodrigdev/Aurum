@@ -52,11 +52,45 @@ import {
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
+const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
+const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 
 const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
   real_estate: 'Bienes raíces',
   bank: 'Bancos',
+};
+
+const readBanksLastAutoSyncDay = () => {
+  try {
+    return String(window.localStorage.getItem(BANKS_LAST_AUTO_SYNC_DAY_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
+const writeBanksLastAutoSyncDay = (ymd: string) => {
+  try {
+    window.localStorage.setItem(BANKS_LAST_AUTO_SYNC_DAY_KEY, ymd);
+  } catch {
+    // ignore
+  }
+};
+
+const readBanksLastAutoAttemptDay = () => {
+  try {
+    return String(window.localStorage.getItem(BANKS_LAST_AUTO_ATTEMPT_DAY_KEY) || '');
+  } catch {
+    return '';
+  }
+};
+
+const writeBanksLastAutoAttemptDay = (ymd: string) => {
+  try {
+    window.localStorage.setItem(BANKS_LAST_AUTO_ATTEMPT_DAY_KEY, ymd);
+  } catch {
+    // ignore
+  }
 };
 
 const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: string }>> = {
@@ -1429,9 +1463,54 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   useEffect(() => {
     if (section !== 'bank') return;
-    void runUpdateAllBanks(true);
+
+    let running = false;
+    const runDailyIfNeeded = async () => {
+      if (running) return;
+      const today = localYmd();
+      if (readBanksLastAutoSyncDay() === today) return;
+      if (readBanksLastAutoAttemptDay() === today) return;
+      const hasAnyToken = BANK_PROVIDERS.some((bank) => String((bankTokens[bank.id] || '').trim()));
+      if (!hasAnyToken) return;
+
+      running = true;
+      writeBanksLastAutoAttemptDay(today);
+      try {
+        const before = loadWealthRecords();
+        await runUpdateAllBanks(true);
+        const after = loadWealthRecords();
+        if (after.length >= before.length) writeBanksLastAutoSyncDay(today);
+      } finally {
+        running = false;
+      }
+    };
+
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      void runDailyIfNeeded();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      void runDailyIfNeeded();
+    };
+    const onInteraction = () => {
+      void runDailyIfNeeded();
+    };
+
+    void runDailyIfNeeded();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pointerdown', onInteraction);
+    window.addEventListener('keydown', onInteraction);
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pointerdown', onInteraction);
+      window.removeEventListener('keydown', onInteraction);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section]);
+  }, [section, bankTokens]);
 
   return (
     <div className="space-y-4 pb-24">
