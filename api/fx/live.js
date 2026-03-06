@@ -228,25 +228,37 @@ const fetchUsdFromBcentral = async () => {
 
 const resolveUsdEur = async () => {
   const strategies = [
-    async () => {
-      const usd = await fetchUsdFromBcentral();
-      const cross = await fetchUsdEurCrossFromOpenErApi(usd.usd);
-      return {
-        ...cross,
-        source: `${cross.source} (USD ${usd.source}${usd.date ? ` ${usd.date}` : ''})`,
-        usdSource: `${usd.source}${usd.date ? ` ${usd.date}` : ''}`,
-      };
+    {
+      name: 'bcentral+open-er',
+      run: async () => {
+        const usd = await fetchUsdFromBcentral();
+        const cross = await fetchUsdEurCrossFromOpenErApi(usd.usd);
+        return {
+          ...cross,
+          source: `${cross.source} (USD ${usd.source}${usd.date ? ` ${usd.date}` : ''})`,
+          usdSource: `${usd.source}${usd.date ? ` ${usd.date}` : ''}`,
+        };
+      },
     },
-    fetchUsdEurFromOpenErApi,
-    fetchUsdEurFromFrankfurter,
+    { name: 'open-er', run: fetchUsdEurFromOpenErApi },
+    { name: 'frankfurter', run: fetchUsdEurFromFrankfurter },
   ];
   const errors = [];
 
-  for (const strategy of strategies) {
+  for (let i = 0; i < strategies.length; i += 1) {
+    const strategy = strategies[i];
     try {
-      return await strategy();
+      const result = await strategy.run();
+      if (i > 0 && errors.length) {
+        return {
+          ...result,
+          fallbackUsed: true,
+          fallbackReason: errors.join(' | '),
+        };
+      }
+      return result;
     } catch (error) {
-      errors.push(String(error?.message || error || 'error'));
+      errors.push(`${strategy.name}: ${String(error?.message || error || 'error')}`);
     }
   }
 
@@ -296,12 +308,13 @@ export default async function handler(req, res) {
         eurClp: Math.round(fx.eur),
         ufClp: Math.round(ufData.uf),
       },
-      source: `vercel-api: ${fx.source} + ${ufData.source}`,
+      source: `vercel-api: ${fx.source}${fx.fallbackUsed ? ' (fallback)' : ''} + ${ufData.source}`,
       sources: {
         usdClp: fx.usdSource || fx.source,
         eurClp: fx.eurSource || fx.source,
         ufClp: ufData.source,
       },
+      diagnostics: fx.fallbackReason ? { fxFallbackReason: fx.fallbackReason } : undefined,
       fetchedAt: new Date().toISOString(),
       ufDate: ufData.ufDate || '',
     });
