@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card } from '../components/Components';
+import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
   buildWealthNetBreakdown,
@@ -16,6 +16,7 @@ import {
   loadClosures,
   loadFxRates,
   loadWealthRecords,
+  upsertMonthlyClosure,
 } from '../services/wealthStorage';
 
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
@@ -68,6 +69,44 @@ const monthLabel = (monthKey: string) => {
   const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
   const label = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
   return label.charAt(0).toUpperCase() + label.slice(1);
+};
+
+const nextMonthKey = (monthKey: string) => {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
+  d.setMonth(d.getMonth() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const formatCloseTimestamp = (iso?: string) => {
+  if (!iso) return 'sin fecha';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  return d.toLocaleString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatTodayContext = () => {
+  return new Date().toLocaleDateString('es-CL', {
+    day: 'numeric',
+    month: 'long',
+  });
+};
+
+const parseNumberInput = (raw: string) => {
+  const compact = String(raw || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.');
+  if (!compact) return NaN;
+  const parsed = Number(compact);
+  return Number.isFinite(parsed) ? parsed : NaN;
 };
 
 const readPreferredClosingCurrency = (): WealthCurrency => {
@@ -178,6 +217,25 @@ const buildInvestmentDetails = (
       group: current.get(key)?.group || 'otros',
     }))
     .sort((a, b) => b.currentClp - a.currentClp);
+};
+
+const CLOSURE_ADJUSTMENT_LABELS = {
+  investment: 'Ajuste cierre: inversiones',
+  realEstate: 'Ajuste cierre: bienes raíces (neto)',
+  bank: 'Ajuste cierre: bancos',
+  debt: 'Ajuste cierre: deudas no hipotecarias',
+} as const;
+
+const dedupeClosureRecords = (records: WealthRecord[]) => {
+  const map = new Map<string, WealthRecord>();
+  const ordered = [...records].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  ordered.forEach((record) => {
+    const key = `${record.block}::${labelMatchKey(record.label)}::${record.currency}`;
+    if (!map.has(key)) map.set(key, record);
+  });
+  return [...map.values()];
 };
 
 const BreakdownCard: React.FC<{
@@ -398,6 +456,15 @@ export const ClosingAurum: React.FC = () => {
   const [currentFx, setCurrentFx] = useState<WealthFxRates>(() => loadFxRates());
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
+  const [selectedClosureMonthKey, setSelectedClosureMonthKey] = useState('');
+  const [closureEditOpen, setClosureEditOpen] = useState(false);
+  const [closureEditError, setClosureEditError] = useState('');
+  const [closureEditDraft, setClosureEditDraft] = useState({
+    investment: '',
+    realEstateNet: '',
+    bank: '',
+    debt: '',
+  });
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
@@ -468,9 +535,18 @@ export const ClosingAurum: React.FC = () => {
   }, []);
 
   const closures = useMemo(() => loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)), [revision]);
-
   const latestClosure = closures[0] || null;
-  const previousClosure = closures[1] || null;
+
+  useEffect(() => {
+    if (!closures.length) {
+      setSelectedClosureMonthKey('');
+      return;
+    }
+    setSelectedClosureMonthKey((prev) => {
+      if (prev && closures.some((closure) => closure.monthKey === prev)) return prev;
+      return closures[0].monthKey;
+    });
+  }, [closures]);
 
   const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
@@ -484,23 +560,45 @@ export const ClosingAurum: React.FC = () => {
     }).length;
   }, [currentRecords]);
 
-  const latestClosureRecords = latestClosure?.records || null;
-  const previousClosureRecords = previousClosure?.records || null;
-  const latestClosureFx = latestClosure?.fxRates || currentFx;
-  const previousClosureFx = previousClosure?.fxRates || currentFx;
+  const selectedClosure = useMemo(
+    () => closures.find((closure) => closure.monthKey === selectedClosureMonthKey) || null,
+    [closures, selectedClosureMonthKey],
+  );
+  const compareClosureForSelected = useMemo(() => {
+    if (!selectedClosure) return null;
+    return (
+      closures
+        .filter((closure) => closure.monthKey < selectedClosure.monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
+    );
+  }, [closures, selectedClosure]);
 
-  const latestClosureBreakdown = useMemo(() => {
-    if (!latestClosureRecords?.length) return null;
-    return buildNetBreakdown(latestClosureRecords, latestClosureFx);
-  }, [latestClosureRecords, latestClosureFx]);
+  const selectedClosureRecords = selectedClosure?.records || null;
+  const compareClosureForSelectedRecords = compareClosureForSelected?.records || null;
+  const selectedClosureFx = selectedClosure?.fxRates || currentFx;
+  const compareClosureForSelectedFx = compareClosureForSelected?.fxRates || currentFx;
 
-  const previousClosureBreakdown = useMemo(() => {
-    if (!previousClosureRecords?.length) return null;
-    return buildNetBreakdown(previousClosureRecords, previousClosureFx);
-  }, [previousClosureRecords, previousClosureFx]);
+  const selectedClosureBreakdown = useMemo(() => {
+    if (!selectedClosureRecords?.length) return null;
+    return buildNetBreakdown(selectedClosureRecords, selectedClosureFx);
+  }, [selectedClosureRecords, selectedClosureFx]);
+
+  const compareClosureForSelectedBreakdown = useMemo(() => {
+    if (!compareClosureForSelectedRecords?.length) return null;
+    return buildNetBreakdown(compareClosureForSelectedRecords, compareClosureForSelectedFx);
+  }, [compareClosureForSelectedRecords, compareClosureForSelectedFx]);
+
+  const previousClosureForLatest = useMemo(() => {
+    if (!latestClosure) return null;
+    return (
+      closures
+        .filter((closure) => closure.monthKey < latestClosure.monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
+    );
+  }, [closures, latestClosure]);
 
   const compareClosureForHoy =
-    latestClosure && latestClosure.monthKey === monthKey ? previousClosure : latestClosure;
+    latestClosure && latestClosure.monthKey === monthKey ? previousClosureForLatest : latestClosure;
   const compareClosureForHoyRecords = compareClosureForHoy?.records || null;
   const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
   const compareClosureForHoyBreakdown = useMemo(() => {
@@ -532,6 +630,120 @@ export const ClosingAurum: React.FC = () => {
       }),
     [evolutionRows],
   );
+
+  const closureHistoryVersions = selectedClosure?.previousVersions || [];
+  const hoyMonthHeadlineKey = useMemo(() => {
+    if (!latestClosure) return monthKey;
+    return monthKey <= latestClosure.monthKey ? nextMonthKey(latestClosure.monthKey) : monthKey;
+  }, [latestClosure, monthKey]);
+
+  const openClosureEditModal = () => {
+    if (!selectedClosureBreakdown || !selectedClosure) return;
+    setClosureEditDraft({
+      investment: String(Math.round(selectedClosureBreakdown.investmentClp)),
+      realEstateNet: String(Math.round(selectedClosureBreakdown.realEstateNetClp)),
+      bank: String(Math.round(selectedClosureBreakdown.bankClp)),
+      debt: String(Math.round(selectedClosureBreakdown.nonMortgageDebtClp)),
+    });
+    setClosureEditError('');
+    setClosureEditOpen(true);
+  };
+
+  const applyClosureEdit = () => {
+    if (!selectedClosure || !selectedClosureBreakdown || !selectedClosureRecords?.length) return;
+
+    const targetInvestment = parseNumberInput(closureEditDraft.investment);
+    const targetRealEstateNet = parseNumberInput(closureEditDraft.realEstateNet);
+    const targetBank = parseNumberInput(closureEditDraft.bank);
+    const targetDebt = parseNumberInput(closureEditDraft.debt);
+
+    const invalid =
+      [targetInvestment, targetRealEstateNet, targetBank, targetDebt].some((n) => !Number.isFinite(n)) ||
+      targetDebt < 0;
+    if (invalid) {
+      setClosureEditError('Revisa los montos: deben ser números válidos (deuda no hipotecaria >= 0).');
+      return;
+    }
+
+    const deltaInvestment = Math.round(targetInvestment) - Math.round(selectedClosureBreakdown.investmentClp);
+    const deltaRealEstate = Math.round(targetRealEstateNet) - Math.round(selectedClosureBreakdown.realEstateNetClp);
+    const deltaBank = Math.round(targetBank) - Math.round(selectedClosureBreakdown.bankClp);
+    const deltaDebt = Math.round(targetDebt) - Math.round(selectedClosureBreakdown.nonMortgageDebtClp);
+
+    const adjustmentLabels = new Set(
+      Object.values(CLOSURE_ADJUSTMENT_LABELS).map((label) => labelMatchKey(label)),
+    );
+    const baseRecords = dedupeClosureRecords(selectedClosureRecords).filter(
+      (record) => !(record.currency === 'CLP' && adjustmentLabels.has(labelMatchKey(record.label))),
+    );
+    const snapshotDate = `${selectedClosure.monthKey}-01`;
+    const createdAt = new Date().toISOString();
+
+    const adjustmentRecords: WealthRecord[] = [];
+    if (Math.abs(deltaInvestment) >= 1) {
+      adjustmentRecords.push({
+        id: crypto.randomUUID(),
+        block: 'investment',
+        source: 'Ajuste cierre',
+        label: CLOSURE_ADJUSTMENT_LABELS.investment,
+        amount: deltaInvestment,
+        currency: 'CLP',
+        snapshotDate,
+        createdAt,
+        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
+      });
+    }
+    if (Math.abs(deltaRealEstate) >= 1) {
+      adjustmentRecords.push({
+        id: crypto.randomUUID(),
+        block: 'real_estate',
+        source: 'Ajuste cierre',
+        label: CLOSURE_ADJUSTMENT_LABELS.realEstate,
+        amount: deltaRealEstate,
+        currency: 'CLP',
+        snapshotDate,
+        createdAt,
+        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
+      });
+    }
+    if (Math.abs(deltaBank) >= 1) {
+      adjustmentRecords.push({
+        id: crypto.randomUUID(),
+        block: 'bank',
+        source: 'Ajuste cierre',
+        label: CLOSURE_ADJUSTMENT_LABELS.bank,
+        amount: deltaBank,
+        currency: 'CLP',
+        snapshotDate,
+        createdAt,
+        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
+      });
+    }
+    if (Math.abs(deltaDebt) >= 1) {
+      adjustmentRecords.push({
+        id: crypto.randomUUID(),
+        block: 'debt',
+        source: 'Ajuste cierre',
+        label: CLOSURE_ADJUSTMENT_LABELS.debt,
+        amount: deltaDebt,
+        currency: 'CLP',
+        snapshotDate,
+        createdAt,
+        note: `Ajuste manual cierre ${selectedClosure.monthKey}`,
+      });
+    }
+
+    const nextRecords = dedupeClosureRecords([...adjustmentRecords, ...baseRecords]);
+    upsertMonthlyClosure({
+      monthKey: selectedClosure.monthKey,
+      records: nextRecords,
+      fxRates: selectedClosureFx,
+      closedAt: new Date().toISOString(),
+    });
+    setClosureEditOpen(false);
+    setClosureEditError('');
+    setRevision((v) => v + 1);
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -570,38 +782,130 @@ export const ClosingAurum: React.FC = () => {
       </div>
 
       {tab === 'hoy' && (
-        <BreakdownCard
-          title="Patrimonio hoy"
-          subtitle={`${monthLabel(monthKey)} vs ${
-            compareClosureForHoy ? monthLabel(compareClosureForHoy.monthKey) : 'sin cierre previo'
-          }`}
-          breakdown={currentBreakdown}
-          currency={currency}
-          fx={currentFx}
-          compareAgainst={compareClosureForHoyBreakdown}
-          compareFx={compareClosureForHoyFx}
-          currentRecords={currentRecords}
-          compareRecords={compareClosureForHoyRecords}
-          showPartialBadge={missingCriticalCount > 0}
-        />
+        <>
+          <Card className="p-4 border border-slate-200 bg-white">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Mes en curso</div>
+            <div className="mt-1 text-3xl font-bold text-slate-900">{monthLabel(hoyMonthHeadlineKey)}</div>
+            <div className="mt-1 text-xs text-slate-500">al {formatTodayContext()}</div>
+          </Card>
+          <BreakdownCard
+            title="Patrimonio hoy"
+            subtitle={`${monthLabel(monthKey)} vs ${
+              compareClosureForHoy ? monthLabel(compareClosureForHoy.monthKey) : 'sin cierre previo'
+            }`}
+            breakdown={currentBreakdown}
+            currency={currency}
+            fx={currentFx}
+            compareAgainst={compareClosureForHoyBreakdown}
+            compareFx={compareClosureForHoyFx}
+            currentRecords={currentRecords}
+            compareRecords={compareClosureForHoyRecords}
+            showPartialBadge={missingCriticalCount > 0}
+          />
+        </>
       )}
 
       {tab === 'cierre' && (
         <>
-          {!latestClosureBreakdown || !previousClosureBreakdown ? (
-            <Card className="p-4 text-xs text-slate-500">Necesitas al menos dos cierres para comparar.</Card>
+          {!selectedClosure ? (
+            <Card className="p-4 text-xs text-slate-500">Todavía no hay cierres mensuales guardados.</Card>
           ) : (
-            <BreakdownCard
-              title="Patrimonio cierre"
-              subtitle={`${monthLabel(latestClosure!.monthKey)} vs ${monthLabel(previousClosure!.monthKey)}`}
-              breakdown={latestClosureBreakdown}
-              currency={currency}
-              fx={latestClosureFx}
-              compareAgainst={previousClosureBreakdown}
-              compareFx={previousClosureFx}
-              currentRecords={latestClosureRecords!}
-              compareRecords={previousClosureRecords}
-            />
+            <>
+              <Card className="p-4 border border-slate-200 bg-white">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Cierre seleccionado</div>
+                <div className="mt-1 text-3xl font-bold text-slate-900">{monthLabel(selectedClosure.monthKey)}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Cerrado el {formatCloseTimestamp(selectedClosure.closedAt)}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={openClosureEditModal}
+                    disabled={!selectedClosureBreakdown || !selectedClosureRecords?.length}
+                  >
+                    Editar cierre
+                  </Button>
+                </div>
+                {!selectedClosureRecords?.length && (
+                  <div className="mt-2 text-[11px] text-amber-700">
+                    Este cierre no tiene detalle de registros para edición rápida.
+                  </div>
+                )}
+              </Card>
+
+              <Card className="p-3 border border-slate-200 bg-white">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Historial de cierres</div>
+                <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                  {closures.map((closure) => {
+                    const selected = closure.monthKey === selectedClosureMonthKey;
+                    return (
+                      <button
+                        key={closure.id}
+                        onClick={() => setSelectedClosureMonthKey(closure.monthKey)}
+                        className={`min-w-[132px] rounded-xl border px-3 py-2 text-left transition ${
+                          selected
+                            ? 'border-[#5c4b2d] bg-[#f5efe2] text-[#4d3f26]'
+                            : 'border-slate-200 bg-white text-slate-700'
+                        }`}
+                      >
+                        <div className="text-[11px] uppercase tracking-wide">{monthLabel(closure.monthKey)}</div>
+                        <div className="mt-1 text-xs font-semibold">
+                          {formatCurrency(fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx), currency)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+
+              {!selectedClosureBreakdown ? (
+                <Card className="p-4 text-xs text-slate-500">
+                  Este cierre no tiene detalle suficiente para comparación.
+                </Card>
+              ) : (
+                <BreakdownCard
+                  title={monthLabel(selectedClosure.monthKey)}
+                  subtitle={
+                    compareClosureForSelected
+                      ? `vs ${monthLabel(compareClosureForSelected.monthKey)}`
+                      : 'Sin cierre previo para comparar'
+                  }
+                  breakdown={selectedClosureBreakdown}
+                  currency={currency}
+                  fx={selectedClosureFx}
+                  compareAgainst={compareClosureForSelectedBreakdown}
+                  compareFx={compareClosureForSelectedFx}
+                  currentRecords={selectedClosureRecords || []}
+                  compareRecords={compareClosureForSelectedRecords}
+                />
+              )}
+
+              {!!closureHistoryVersions.length && (
+                <details className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                  <summary className="cursor-pointer font-semibold text-slate-700">
+                    Versiones anteriores de este cierre ({closureHistoryVersions.length})
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {closureHistoryVersions.map((version) => (
+                      <div key={`${version.id}-${version.closedAt}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                        <div className="font-medium text-slate-700">
+                          {monthLabel(version.monthKey)} · {formatCloseTimestamp(version.closedAt)}
+                        </div>
+                        {!!version.replacedAt && (
+                          <div className="text-[11px] text-slate-500">
+                            Reemplazado el {formatCloseTimestamp(version.replacedAt)}
+                          </div>
+                        )}
+                        <div className="text-[11px]">
+                          Neto: {formatCurrency(fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx), currency)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
           )}
         </>
       )}
@@ -635,6 +939,83 @@ export const ClosingAurum: React.FC = () => {
             ))}
           </Card>
         </>
+      )}
+
+      {closureEditOpen && selectedClosure && selectedClosureBreakdown && (
+        <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="text-base font-semibold text-slate-900">
+              Editar cierre {monthLabel(selectedClosure.monthKey)}
+            </div>
+            <div className="mt-1 text-sm text-slate-600">
+              Ajuste rápido en CLP. Al guardar, se sobrescribe este cierre y se conserva la versión anterior.
+            </div>
+
+            <div className="mt-3 space-y-2">
+              <div>
+                <label className="text-xs text-slate-600">Inversiones (CLP)</label>
+                <Input
+                  value={closureEditDraft.investment}
+                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, investment: e.target.value }))}
+                  inputMode="numeric"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Bienes raíces (neto, CLP)</label>
+                <Input
+                  value={closureEditDraft.realEstateNet}
+                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, realEstateNet: e.target.value }))}
+                  inputMode="numeric"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Bancos (CLP)</label>
+                <Input
+                  value={closureEditDraft.bank}
+                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, bank: e.target.value }))}
+                  inputMode="numeric"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Deudas no hipotecarias (CLP, positivo)</label>
+                <Input
+                  value={closureEditDraft.debt}
+                  onChange={(e) => setClosureEditDraft((prev) => ({ ...prev, debt: e.target.value }))}
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+
+            {!!closureEditError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {closureEditError}
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setClosureEditOpen(false);
+                  setClosureEditError('');
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  const ok = window.confirm(
+                    `Vas a sobrescribir el cierre de ${monthLabel(selectedClosure.monthKey)}. Se guardará una versión anterior. ¿Confirmas?`,
+                  );
+                  if (!ok) return;
+                  applyClosureEdit();
+                }}
+              >
+                Guardar cambios
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       <Card className="p-3 text-[11px] text-slate-500">

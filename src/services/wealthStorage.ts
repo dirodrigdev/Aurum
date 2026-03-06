@@ -39,6 +39,17 @@ export interface WealthMonthlyClosure {
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
   records?: WealthRecord[];
+  previousVersions?: WealthMonthlyClosureVersion[];
+}
+
+export interface WealthMonthlyClosureVersion {
+  id: string;
+  monthKey: string;
+  closedAt: string;
+  replacedAt?: string;
+  summary: WealthSnapshotSummary;
+  fxRates?: WealthFxRates;
+  records?: WealthRecord[];
 }
 
 export interface WealthInvestmentInstrument {
@@ -505,6 +516,91 @@ const compareClosuresByMonthDesc = (a: WealthMonthlyClosure, b: WealthMonthlyClo
   const byMonth = b.monthKey.localeCompare(a.monthKey);
   if (byMonth !== 0) return byMonth;
   return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
+};
+
+const compareClosureVersionsByClosedAtDesc = (
+  a: WealthMonthlyClosureVersion,
+  b: WealthMonthlyClosureVersion,
+) => {
+  const byMonth = b.monthKey.localeCompare(a.monthKey);
+  if (byMonth !== 0) return byMonth;
+  return new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime();
+};
+
+const normalizeClosureFxRates = (raw: any): WealthFxRates | undefined => {
+  if (!raw) return undefined;
+  return {
+    usdClp: Math.max(1, toNumber(raw?.usdClp, defaultFxRates.usdClp)),
+    eurClp: Math.max(1, toNumber(raw?.eurClp, defaultFxRates.eurClp)),
+    ufClp: Math.max(1, toNumber(raw?.ufClp, defaultFxRates.ufClp)),
+  };
+};
+
+const normalizeClosureRecords = (raw: any): WealthRecord[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .map((r: any) => normalizeRecord(r))
+    .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r));
+};
+
+const toClosureVersion = (
+  closure: WealthMonthlyClosure,
+  replacedAt?: string,
+): WealthMonthlyClosureVersion => ({
+  id: String(closure.id || crypto.randomUUID()),
+  monthKey: String(closure.monthKey || ''),
+  closedAt: String(closure.closedAt || nowIso()),
+  replacedAt: replacedAt ? String(replacedAt) : undefined,
+  summary: closure.summary,
+  fxRates: closure.fxRates ? { ...closure.fxRates } : undefined,
+  records: closure.records ? closure.records.map((record) => ({ ...record })) : undefined,
+});
+
+const normalizeClosureVersion = (
+  raw: any,
+  fallbackMonthKey: string,
+): WealthMonthlyClosureVersion | null => {
+  const monthKey = String(raw?.monthKey || fallbackMonthKey || '');
+  if (!monthKey) return null;
+
+  const fxRates = normalizeClosureFxRates(raw?.fxRates);
+  const records = normalizeClosureRecords(raw?.records);
+  const summary =
+    records && records.length
+      ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+      : raw?.summary;
+  if (!summary) return null;
+
+  return {
+    id: String(raw?.id || crypto.randomUUID()),
+    monthKey,
+    closedAt: String(raw?.closedAt || nowIso()),
+    replacedAt: raw?.replacedAt ? String(raw.replacedAt) : undefined,
+    summary,
+    fxRates,
+    records,
+  };
+};
+
+const mergeClosureVersions = (
+  ...lists: Array<Array<WealthMonthlyClosureVersion> | undefined>
+): WealthMonthlyClosureVersion[] => {
+  const map = new Map<string, WealthMonthlyClosureVersion>();
+  lists.forEach((list) => {
+    (list || []).forEach((item) => {
+      if (!item?.monthKey || !item?.summary) return;
+      const key = `${item.monthKey}::${item.id || ''}::${item.closedAt || ''}`;
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, item);
+        return;
+      }
+      const tPrev = new Date(prev.closedAt).getTime();
+      const tCurr = new Date(item.closedAt).getTime();
+      map.set(key, tCurr >= tPrev ? item : prev);
+    });
+  });
+  return [...map.values()].sort(compareClosureVersionsByClosedAtDesc).slice(0, 36);
 };
 
 export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency'>) => {
@@ -1334,32 +1430,32 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((item: any) => {
-        const fxRates = item?.fxRates
-          ? {
-              usdClp: Math.max(1, toNumber(item.fxRates?.usdClp, defaultFxRates.usdClp)),
-              eurClp: Math.max(1, toNumber(item.fxRates?.eurClp, defaultFxRates.eurClp)),
-              ufClp: Math.max(1, toNumber(item.fxRates?.ufClp, defaultFxRates.ufClp)),
-            }
-          : undefined;
-
-        const records = Array.isArray(item?.records)
-          ? item.records
-              .map((r: any) => normalizeRecord(r))
-              .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r))
-          : undefined;
+        const monthKey = String(item?.monthKey || '');
+        const fxRates = normalizeClosureFxRates(item?.fxRates);
+        const records = normalizeClosureRecords(item?.records);
 
         const summary =
           records && records.length
             ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates)
             : item?.summary;
 
+        const previousVersionsRaw = Array.isArray(item?.previousVersions)
+          ? item.previousVersions
+          : [];
+        const previousVersions = mergeClosureVersions(
+          previousVersionsRaw
+            .map((v: any) => normalizeClosureVersion(v, monthKey))
+            .filter((v: WealthMonthlyClosureVersion | null): v is WealthMonthlyClosureVersion => !!v),
+        );
+
         return {
           id: String(item?.id || crypto.randomUUID()),
-          monthKey: String(item?.monthKey || ''),
+          monthKey,
           closedAt: String(item?.closedAt || nowIso()),
           summary,
           fxRates,
           records,
+          previousVersions: previousVersions.length ? previousVersions : undefined,
         };
       })
       .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
@@ -1656,30 +1752,30 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
 const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
   return parsed
     .map((item: any) => {
-      const fxRates = item?.fxRates
-        ? {
-            usdClp: Math.max(1, toNumber(item.fxRates?.usdClp, defaultFxRates.usdClp)),
-            eurClp: Math.max(1, toNumber(item.fxRates?.eurClp, defaultFxRates.eurClp)),
-            ufClp: Math.max(1, toNumber(item.fxRates?.ufClp, defaultFxRates.ufClp)),
-          }
-        : undefined;
-
-      const records = Array.isArray(item?.records)
-        ? item.records
-            .map((r: any) => normalizeRecord(r))
-            .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r))
-        : undefined;
+      const monthKey = String(item?.monthKey || '');
+      const fxRates = normalizeClosureFxRates(item?.fxRates);
+      const records = normalizeClosureRecords(item?.records);
 
       const summary =
         records && records.length ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates) : item?.summary;
 
+      const previousVersionsRaw = Array.isArray(item?.previousVersions)
+        ? item.previousVersions
+        : [];
+      const previousVersions = mergeClosureVersions(
+        previousVersionsRaw
+          .map((v: any) => normalizeClosureVersion(v, monthKey))
+          .filter((v: WealthMonthlyClosureVersion | null): v is WealthMonthlyClosureVersion => !!v),
+      );
+
       return {
         id: String(item?.id || crypto.randomUUID()),
-        monthKey: String(item?.monthKey || ''),
+        monthKey,
         closedAt: String(item?.closedAt || nowIso()),
         summary,
         fxRates,
         records,
+        previousVersions: previousVersions.length ? previousVersions : undefined,
       };
     })
     .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
@@ -1727,7 +1823,17 @@ const mergeClosures = (localClosures: WealthMonthlyClosure[], remoteClosures: We
     }
     const tPrev = new Date(prev.closedAt).getTime();
     const tCurr = new Date(closure.closedAt).getTime();
-    map.set(key, tCurr >= tPrev ? closure : prev);
+    const newer = tCurr >= tPrev ? closure : prev;
+    const older = tCurr >= tPrev ? prev : closure;
+    const mergedVersions = mergeClosureVersions(
+      newer.previousVersions,
+      older.previousVersions,
+      [toClosureVersion(older, newer.closedAt)],
+    );
+    map.set(
+      key,
+      mergedVersions.length ? { ...newer, previousVersions: mergedVersions } : { ...newer },
+    );
   }
   return [...map.values()].sort(compareClosuresByMonthDesc);
 };
@@ -1739,6 +1845,15 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
     fxRates: c.fxRates || null,
     records: (c.records || []).map(serializeRecord),
     summary: c.summary,
+    previousVersions: (c.previousVersions || []).map((version) => ({
+      id: version.id,
+      monthKey: version.monthKey,
+      closedAt: version.closedAt,
+      replacedAt: version.replacedAt,
+      fxRates: version.fxRates || null,
+      records: (version.records || []).map(serializeRecord),
+      summary: version.summary,
+    })),
   });
 
 const sameClosures = (a: WealthMonthlyClosure[], b: WealthMonthlyClosure[]) => {
@@ -1765,6 +1880,46 @@ const saveFxRatesInternal = (rates: WealthFxRates, options?: PersistOptions) => 
   if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
+export const upsertMonthlyClosure = (input: {
+  monthKey: string;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  closedAt?: string;
+}): WealthMonthlyClosure => {
+  const normalizedMonthKey = normalizeMonthKey(input.monthKey) || currentMonthKey();
+  const closures = loadClosures();
+  const latest = dedupeLatestByAsset(input.records);
+  const summary = summarizeWealth(latest, input.fxRates);
+  const closedAt = String(input.closedAt || nowIso());
+  const existingSameMonth =
+    closures.find((closure) => closure.monthKey === normalizedMonthKey) || null;
+
+  const nextClosure: WealthMonthlyClosure = {
+    id: crypto.randomUUID(),
+    monthKey: normalizedMonthKey,
+    closedAt,
+    summary,
+    fxRates: { ...input.fxRates },
+    records: latest,
+  };
+
+  if (existingSameMonth) {
+    const mergedVersions = mergeClosureVersions(
+      existingSameMonth.previousVersions,
+      [toClosureVersion(existingSameMonth, closedAt)],
+    );
+    if (mergedVersions.length) {
+      nextClosure.previousVersions = mergedVersions;
+    }
+  }
+
+  const withoutSameMonth = closures.filter((c) => c.monthKey !== normalizedMonthKey);
+  const next = [nextClosure, ...withoutSameMonth].sort(compareClosuresByMonthDesc);
+
+  saveClosures(next);
+  return nextClosure;
+};
+
 export const createMonthlyClosure = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
@@ -1774,24 +1929,12 @@ export const createMonthlyClosure = (
   const month = String(closeDate.getMonth() + 1).padStart(2, '0');
   const monthKey = `${year}-${month}`;
 
-  const closures = loadClosures();
-  const latest = dedupeLatestByAsset(records);
-  const summary = summarizeWealth(latest, fxRates);
-
-  const nextClosure: WealthMonthlyClosure = {
-    id: crypto.randomUUID(),
+  return upsertMonthlyClosure({
     monthKey,
+    records,
+    fxRates,
     closedAt: nowIso(),
-    summary,
-    fxRates: { ...fxRates },
-    records: latest,
-  };
-
-  const withoutSameMonth = closures.filter((c) => c.monthKey !== monthKey);
-  const next = [nextClosure, ...withoutSameMonth].sort(compareClosuresByMonthDesc);
-
-  saveClosures(next);
-  return nextClosure;
+  });
 };
 
 const findPreviousClosureWithRecords = (monthKey: string, closures: WealthMonthlyClosure[]) => {
