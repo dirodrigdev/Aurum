@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -11,6 +11,7 @@ import {
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
   importHistoricalClosuresFromCsv,
+  previewHistoricalClosuresCsv,
   loadFxLiveSyncMeta,
   loadFxRates,
   refreshFxRatesFromLive,
@@ -69,6 +70,10 @@ export const SettingsAurum: React.FC = () => {
 2026-01,2026-01-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-02,2026-02-28T23:59:59-03:00,,,,,,,,,,,,,,,,,,,
 2026-03,2026-03-31T23:59:59-03:00,,,,,,,,,,,,,,,,,,,`;
+
+  const csvPreview = useMemo(() => previewHistoricalClosuresCsv(csvDraft), [csvDraft]);
+  const csvPreviewMonthLabel =
+    csvPreview.monthKeys.length === 1 ? formatMonthLabel(csvPreview.monthKeys[0]) : '';
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
@@ -293,6 +298,30 @@ export const SettingsAurum: React.FC = () => {
         <div className="text-xs text-slate-600">
           Carga cierres históricos con sus TC/UF congelados por mes. El importador reemplaza el mes si ya existe.
         </div>
+        {!!csvDraft.trim() && (
+          <div
+            className={`rounded-lg border px-3 py-2 text-xs ${
+              csvPreview.monthKeys.length === 1
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-amber-200 bg-amber-50 text-amber-800'
+            }`}
+          >
+            {csvPreview.monthKeys.length === 1
+              ? `Modo mensual detectado: ${csvPreviewMonthLabel} (${csvPreview.monthKeys[0]}).`
+              : `Meses detectados: ${
+                  csvPreview.monthKeys.length ? csvPreview.monthKeys.join(', ') : 'ninguno válido'
+                } · filas: ${csvPreview.totalRows}.`}
+          </div>
+        )}
+        {!!csvPreview.warnings.length && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <ul className="list-disc pl-4 space-y-0.5">
+              {csvPreview.warnings.map((warning, index) => (
+                <li key={`${warning}-${index}`}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -353,8 +382,17 @@ export const SettingsAurum: React.FC = () => {
                 setCsvImportWarnings([]);
                 return;
               }
+              if (!csvPreview.monthKeys.length) {
+                setCsvImportMessage('No detecté ningún month_key válido en el CSV.');
+                setCsvImportWarnings(csvPreview.warnings);
+                return;
+              }
+              const monthScope =
+                csvPreview.monthKeys.length === 1
+                  ? `mes ${csvPreview.monthKeys[0]}`
+                  : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`;
               const ok = window.confirm(
-                'Se importarán/reemplazarán cierres según month_key. ¿Confirmar importación de historial?',
+                `Se importará/reemplazará ${monthScope} según month_key. ¿Confirmar importación?`,
               );
               if (!ok) return;
 

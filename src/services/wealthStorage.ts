@@ -72,6 +72,13 @@ export type HistoricalCsvImportResult = {
   warnings: string[];
 };
 
+export type HistoricalCsvPreviewResult = {
+  monthKeys: string[];
+  totalRows: number;
+  invalidMonthRows: number[];
+  warnings: string[];
+};
+
 type WealthDemoSeedMeta = {
   seededAt: string;
   janKey: string;
@@ -2464,6 +2471,50 @@ export const importHistoricalClosuresFromCsv = async (
     importedMonths: [...new Set(importedMonths)].sort(),
     replacedMonths: [...new Set(replacedMonths)].sort(),
     skippedMonths: [...new Set(skippedMonths)].sort(),
+    warnings,
+  };
+};
+
+export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPreviewResult => {
+  const matrix = parseCsvMatrix(csvText);
+  if (matrix.length < 2) {
+    return {
+      monthKeys: [],
+      totalRows: Math.max(0, matrix.length - 1),
+      invalidMonthRows: [],
+      warnings: csvText.trim() ? ['No encontré filas de datos (revisa el CSV).'] : [],
+    };
+  }
+
+  const headers = matrix[0].map((cell) => normalizeLabelKey(cell));
+  const rows = matrix.slice(1);
+  const monthSet = new Set<string>();
+  const invalidMonthRows: number[] = [];
+
+  rows.forEach((cells, idx) => {
+    const rowObj: Record<string, string> = {};
+    headers.forEach((header, i) => {
+      rowObj[header] = String(cells[i] || '').trim();
+    });
+    const monthKey = parseCsvMonthKey(rowObj);
+    if (!monthKey) {
+      invalidMonthRows.push(idx + 2);
+      return;
+    }
+    monthSet.add(monthKey);
+  });
+
+  const monthKeys = [...monthSet].sort();
+  const warnings: string[] = [];
+  if (!monthKeys.length) warnings.push('No detecté month_key válidos en el CSV.');
+  if (invalidMonthRows.length) {
+    warnings.push(`Filas con month_key inválido: ${invalidMonthRows.join(', ')}.`);
+  }
+
+  return {
+    monthKeys,
+    totalRows: rows.length,
+    invalidMonthRows,
     warnings,
   };
 };
