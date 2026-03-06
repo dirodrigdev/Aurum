@@ -72,13 +72,32 @@ export const SettingsAurum: React.FC = () => {
     Math.round(Number(value) || 0).toLocaleString('es-CL');
 
   const humanizeFxSource = (raw?: string) => {
-    const value = String(raw || '').trim().toLowerCase();
+    const source = String(raw || '').trim();
+    const value = source.toLowerCase();
     if (!value) return 'Automática';
-    if (value.includes('f073.tco.pre.z.d') || value.includes('bcentral.cl')) return 'USD: Banco Central';
-    if (value.includes('valoruf')) return 'UF: valoruf.cl';
-    if (value.includes('open.er-api.com')) return 'Open ER API';
-    if (value.includes('frankfurter.app')) return 'Frankfurter';
-    return String(raw || 'Automática');
+
+    const humanizeSingle = (item: string, indicator?: 'USD' | 'EUR' | 'UF') => {
+      const v = item.trim().toLowerCase();
+      if (!v) return '';
+      if (v.includes('f073.tco.pre.z.d') || v.includes('bcentral.cl')) {
+        return indicator ? `${indicator}: Banco Central` : 'Banco Central';
+      }
+      if (v.includes('valoruf')) return indicator ? `${indicator}: valoruf.cl` : 'valoruf.cl';
+      if (v.includes('open.er-api.com')) return indicator ? `${indicator}: open.er-api.com` : 'open.er-api.com';
+      if (v.includes('frankfurter.app')) return indicator ? `${indicator}: frankfurter.app` : 'frankfurter.app';
+      return indicator ? `${indicator}: ${item.trim()}` : item.trim();
+    };
+
+    const parts: string[] = [];
+    const usdMatch = source.match(/USD:([^·]+)/i);
+    const eurMatch = source.match(/EUR:([^·]+)/i);
+    const ufMatch = source.match(/UF:([^·]+)/i);
+    if (usdMatch?.[1]) parts.push(humanizeSingle(usdMatch[1], 'USD'));
+    if (eurMatch?.[1]) parts.push(humanizeSingle(eurMatch[1], 'EUR'));
+    if (ufMatch?.[1]) parts.push(humanizeSingle(ufMatch[1], 'UF'));
+    if (parts.length) return parts.join(' · ');
+
+    return humanizeSingle(source);
   };
 
   const historicalCsvTemplate = `month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
@@ -273,7 +292,7 @@ export const SettingsAurum: React.FC = () => {
                 const result = await refreshFxRatesFromLive({ force: true });
                 setFx(result.rates);
                 setFxLiveMeta(loadFxLiveSyncMeta());
-                setFxLiveMessage(`TC/UF actualizados correctamente (${formatDateTime(result.fetchedAt)}).`);
+                setFxLiveMessage('');
               } catch (err: any) {
                 setFxLiveMeta(loadFxLiveSyncMeta());
                 const currentSaved = loadFxRates();
@@ -284,8 +303,8 @@ export const SettingsAurum: React.FC = () => {
                 );
                 setFxLiveMessage(
                   keep
-                    ? `Manteniendo valores guardados: ${savedText}.`
-                    : `Actualización online no disponible. Ingresa manualmente (valores actuales: ${savedText}).`,
+                    ? `Manteniendo valores guardados manualmente: ${savedText}.`
+                    : `Actualización online no disponible. Revisa/ajusta manualmente (actuales: ${savedText}).`,
                 );
               } finally {
                 setSyncingLiveFx(false);
@@ -312,21 +331,9 @@ export const SettingsAurum: React.FC = () => {
             )}
           </div>
         )}
-        {!!fxLiveMessage &&
-          (fxLiveMessage.toLowerCase().includes('no pude') ||
-            fxLiveMessage.toLowerCase().includes('error') ||
-            fxLiveMessage.toLowerCase().includes('manteniendo') ||
-            fxLiveMessage.toLowerCase().includes('ingresa manualmente')) && (
-          <div
-            className={`text-xs ${
-              fxLiveMessage.toLowerCase().includes('no pude') || fxLiveMessage.toLowerCase().includes('error')
-                ? 'text-amber-700'
-                : 'text-emerald-700'
-            }`}
-          >
-            {fxLiveMessage}
-          </div>
-          )}
+        {!!fxLiveMessage && (
+          <div className="text-xs text-slate-600">{fxLiveMessage}</div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
