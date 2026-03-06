@@ -195,6 +195,11 @@ const REQUIRED_INVESTMENT_LABELS = [
   'Global66 Cuenta Vista USD',
   'Wise Cuenta principal USD',
 ];
+const INVESTMENT_TAIL_PRIORITY: Record<string, number> = {
+  'SURA financiero': 1,
+  'SURA previsional': 2,
+  PlanVital: 3,
+};
 
 const REQUIRED_REAL_ESTATE_CORE_FOR_NET = ['Valor propiedad', 'Saldo deuda hipotecaria'];
 const CLOSURES_PER_PAGE = 6;
@@ -384,7 +389,20 @@ const buildInvestmentDetails = (
       compareClp: compare.has(key) ? compare.get(key)! : null,
       group: current.get(key)?.group || 'otros',
     }))
-    .sort((a, b) => b.currentClp - a.currentClp);
+    .sort((a, b) => {
+      const aTail = INVESTMENT_TAIL_PRIORITY[a.label];
+      const bTail = INVESTMENT_TAIL_PRIORITY[b.label];
+      if (aTail && bTail) return aTail - bTail;
+      if (aTail) return 1;
+      if (bTail) return -1;
+      if (a.group !== b.group) {
+        if (a.group === 'financieras') return -1;
+        if (b.group === 'financieras') return 1;
+        if (a.group === 'previsionales') return -1;
+        if (b.group === 'previsionales') return 1;
+      }
+      return b.currentClp - a.currentClp;
+    });
 };
 
 const dedupeClosureRecords = (records: WealthRecord[]) => {
@@ -430,7 +448,6 @@ const BreakdownCard: React.FC<{
   showClosureRates,
 }) => {
   const rows = [
-    { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
     {
       key: 'real_estate',
       label: 'Bienes raíces (neto)',
@@ -444,6 +461,7 @@ const BreakdownCard: React.FC<{
       valueClp: -breakdown.nonMortgageDebtClp,
       prevClp: compareAgainst ? -compareAgainst.nonMortgageDebtClp : null,
     },
+    { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
   ];
 
   const netDisplay = fromClp(breakdown.netClp, currency, fx);
@@ -475,7 +493,7 @@ const BreakdownCard: React.FC<{
     previsionalCompareDisplay !== 0 ? (previsionalDeltaDisplay / previsionalCompareDisplay) * 100 : null;
 
   return (
-    <Card className="p-3 space-y-2 border-[#d9d8d1]">
+    <Card className="p-2.5 space-y-2 border-[#d9d8d1]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[13px] font-semibold text-slate-800">{title}</div>
@@ -484,7 +502,7 @@ const BreakdownCard: React.FC<{
         {headerAction}
       </div>
       <div className="flex items-center gap-2">
-        <div className="text-[30px] leading-none font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
+        <div className="text-[28px] leading-none font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
         {showPartialBadge && (
           <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
             Parcial
@@ -581,8 +599,20 @@ const BreakdownCard: React.FC<{
               const prev = row.compareClp !== null && compareFx ? fromClp(row.compareClp, currency, compareFx) : null;
               const delta = prev !== null ? current - prev : null;
               const p = prev !== null ? pct(current, prev) : null;
+              const rowStyle =
+                row.group === 'previsionales'
+                  ? 'border-emerald-200 bg-emerald-50/30'
+                  : row.group === 'financieras'
+                    ? 'border-[#d8c39d] bg-[#f8efe2]'
+                    : 'border-slate-200 bg-white';
+              const rowLeft =
+                row.group === 'previsionales'
+                  ? 'border-l-4 border-l-emerald-300'
+                  : row.group === 'financieras'
+                    ? 'border-l-4 border-l-[#caa16d]'
+                    : '';
               return (
-                <div key={row.key} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                <div key={row.key} className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft}`}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] text-slate-700">{row.label}</span>
                     <div className="text-right">
@@ -913,7 +943,7 @@ export const ClosingAurum: React.FC = () => {
   };
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="p-4 space-y-2.5">
       <Card className="p-2 border-[#d5d7ce] bg-gradient-to-r from-[#f5f2e8] to-[#edf3ec]">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="grid grid-cols-3 gap-1">
@@ -983,11 +1013,13 @@ export const ClosingAurum: React.FC = () => {
 
       {tab === 'hoy' && (
         <>
-          <Card className="p-3 border border-slate-200 bg-white">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Mes en curso</div>
-            <div className="mt-0.5 text-2xl font-bold text-slate-900">{monthLabel(hoyMonthHeadlineKey)}</div>
-            <div className="text-[11px] text-slate-500">al {formatTodayContext()}</div>
-          </Card>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Mes en curso</div>
+              <div className="text-[11px] text-slate-500">al {formatTodayContext()}</div>
+            </div>
+            <div className="text-xl font-bold text-slate-900">{monthLabel(hoyMonthHeadlineKey)}</div>
+          </div>
           <BreakdownCard
             title="Patrimonio hoy"
             subtitle={`${monthLabel(monthKey)} vs ${
