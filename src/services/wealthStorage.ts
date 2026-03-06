@@ -1073,7 +1073,7 @@ const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: s
       : null;
 
   const sourceText = perIndicatorSources
-    ? `USD:${perIndicatorSources.usd || 'n/d'} · EUR:${perIndicatorSources.eur || 'n/d'} · UF:${perIndicatorSources.uf || 'n/d'}`
+    ? `USD:${perIndicatorSources.usd || 'n/d'} · UF:${perIndicatorSources.uf || 'n/d'}`
     : String(payload.source || 'backend-fx');
 
   return {
