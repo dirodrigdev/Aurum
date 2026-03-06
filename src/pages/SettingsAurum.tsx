@@ -3,6 +3,8 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
+  loadBankTokens,
+  loadClosures,
   clearCurrentMonthData,
   clearSimulationHistoryData,
   currentMonthKey,
@@ -14,6 +16,8 @@ import {
   previewHistoricalClosuresCsv,
   loadFxLiveSyncMeta,
   loadFxRates,
+  loadInvestmentInstruments,
+  loadWealthRecords,
   refreshFxRatesFromLive,
   WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
@@ -41,6 +45,7 @@ export const SettingsAurum: React.FC = () => {
   const [authUid, setAuthUid] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
+  const [backupMessage, setBackupMessage] = useState('');
 
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
@@ -189,6 +194,57 @@ export const SettingsAurum: React.FC = () => {
         <div className="text-[11px] text-slate-500 break-words">
           Proyecto activo (frontend): {import.meta.env.VITE_FIREBASE_PROJECT_ID || 'no definido'}
         </div>
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Respaldo Aurum (JSON)</div>
+        <div className="text-xs text-slate-600">
+          Descarga un respaldo completo antes de cargar historia real (incluye patrimonio, cierres, instrumentos, TC/UF y tokens bancarios guardados).
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              try {
+                const now = new Date();
+                const pad = (v: number) => String(v).padStart(2, '0');
+                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+                const payload = {
+                  exportedAt: now.toISOString(),
+                  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+                  user: {
+                    email: auth.currentUser?.email || '',
+                    uid: auth.currentUser?.uid || '',
+                  },
+                  wealth: {
+                    records: loadWealthRecords(),
+                    closures: loadClosures(),
+                    investmentInstruments: loadInvestmentInstruments(),
+                    fxRates: loadFxRates(),
+                    bankTokens: loadBankTokens(),
+                    fxMeta: loadFxLiveSyncMeta(),
+                  },
+                };
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const filename = `aurum_backup_${stamp}.json`;
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = filename;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+                setBackupMessage(`Respaldo descargado: ${filename}`);
+              } catch (err: any) {
+                setBackupMessage(`No pude generar respaldo: ${String(err?.message || err || 'error')}`);
+              }
+            }}
+          >
+            Descargar respaldo ahora
+          </Button>
+        </div>
+        {!!backupMessage && <div className="text-xs text-slate-600">{backupMessage}</div>}
       </Card>
 
       <Card className="p-4 space-y-3">
