@@ -491,6 +491,22 @@ interface BankMovementMeta {
   count: number;
 }
 
+type CloseValidationIssueType =
+  | 'future_month'
+  | 'missing_required_value'
+  | 'incomplete_new_source'
+  | 'carried_value_unconfirmed';
+
+interface CloseValidationIssue {
+  type: CloseValidationIssueType;
+  level: 'error' | 'warning';
+  label: string;
+  section: MainSection;
+  instrumentId?: string;
+  canResolveWithPrevious?: boolean;
+  canExcludeThisMonth?: boolean;
+}
+
 const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
@@ -2248,8 +2264,7 @@ export const Patrimonio: React.FC = () => {
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
   const [carryMessage, setCarryMessage] = useState('');
   const [closeError, setCloseError] = useState('');
-  const [pendingCloseCarryItems, setPendingCloseCarryItems] = useState<string[] | null>(null);
-  const [pendingCloseMonthKey, setPendingCloseMonthKey] = useState<string | null>(null);
+  const [closeInfo, setCloseInfo] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
 
@@ -2448,8 +2463,7 @@ export const Patrimonio: React.FC = () => {
   const completeMonthlyClose = (targetMonthKey: string) => {
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     setCloseError('');
-    setPendingCloseCarryItems(null);
-    setPendingCloseMonthKey(null);
+    setCloseInfo('');
     setCloseConfirmOpen(false);
     createMonthlyClosure(targetRecords, fx, toCloseDateFromMonthKey(targetMonthKey));
     refreshClosures();
@@ -2476,35 +2490,6 @@ export const Patrimonio: React.FC = () => {
     }
     return monthRecords.filter((r) => r.block === activeSection);
   }, [activeSection, monthRecords]);
-
-  const missingCustomInvestmentLabels = useMemo(() => {
-    return investmentInstruments
-      .filter((instrument) => !(instrument.excludedMonths || []).includes(monthKey))
-      .filter((instrument) => {
-        return !monthRecords.some(
-          (record) =>
-            record.block === 'investment' &&
-            record.currency === instrument.currency &&
-            normalizeForMatch(record.label) === normalizeForMatch(instrument.label),
-        );
-      })
-      .map((instrument) => instrument.label);
-  }, [investmentInstruments, monthKey, monthRecords]);
-
-  const missingCustomInvestmentLabelsForMonth = (targetMonthKey: string, targetRecords: WealthRecord[]) => {
-    return investmentInstruments
-      .filter((instrument) => !(instrument.excludedMonths || []).includes(targetMonthKey))
-      .filter((instrument) => {
-        const target = normalizeForMatch(instrument.label);
-        return !targetRecords.some(
-          (record) =>
-            record.block === 'investment' &&
-            record.currency === instrument.currency &&
-            normalizeForMatch(record.label) === target,
-        );
-      })
-      .map((instrument) => instrument.label);
-  };
 
   const createInvestmentInstrument = (input: {
     label: string;
@@ -2535,8 +2520,8 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage('');
   };
 
-  const setInvestmentExcluded = (instrumentId: string, excluded: boolean) => {
-    const updated = setInvestmentInstrumentMonthExcluded(instrumentId, monthKey, excluded);
+  const setInvestmentExcludedForMonth = (instrumentId: string, targetMonthKey: string, excluded: boolean) => {
+    const updated = setInvestmentInstrumentMonthExcluded(instrumentId, targetMonthKey, excluded);
     if (!updated) return;
 
     if (excluded) {
@@ -2544,7 +2529,7 @@ export const Patrimonio: React.FC = () => {
         (record) =>
           !(
             record.block === 'investment' &&
-            record.snapshotDate.startsWith(`${monthKey}-`) &&
+            record.snapshotDate.startsWith(`${targetMonthKey}-`) &&
             record.currency === updated.currency &&
             normalizeForMatch(record.label) === normalizeForMatch(updated.label)
           ),
@@ -2554,6 +2539,12 @@ export const Patrimonio: React.FC = () => {
 
     refreshRecords();
     refreshInstruments();
+    return updated;
+  };
+
+  const setInvestmentExcluded = (instrumentId: string, excluded: boolean) => {
+    const updated = setInvestmentExcludedForMonth(instrumentId, monthKey, excluded);
+    if (!updated) return;
     setCarryMessage(
       excluded
         ? `"${updated.label}" quedó excluido de ${monthLabel(monthKey).toLowerCase()}.`
@@ -2561,66 +2552,166 @@ export const Patrimonio: React.FC = () => {
     );
   };
 
-  const attemptMonthlyClose = (targetMonthKey: string) => {
+  const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
+    const issues: CloseValidationIssue[] = [];
+    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     const realCurrentMonth = currentMonthKey();
+
     if (targetMonthKey > realCurrentMonth) {
-      setCloseError(
-        `No se puede cerrar un mes futuro (${monthLabel(targetMonthKey).toLowerCase()}). Mes actual: ${monthLabel(realCurrentMonth).toLowerCase()}.`,
-      );
-      return;
+      issues.push({
+        type: 'future_month',
+        level: 'error',
+        label: `No se puede cerrar un mes futuro (${monthLabel(targetMonthKey).toLowerCase()}). Mes actual: ${monthLabel(realCurrentMonth).toLowerCase()}.`,
+        section: 'investment',
+      });
+      return { issues, targetRecords };
     }
 
-    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
+    const requiredInvestment = new Set(sectionChecklist.investment.map((label) => normalizeForMatch(label)));
     const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
-    const missingRequired = requiredNames.filter((required) => {
-      return !targetRecords.some((record) => {
+    requiredNames.forEach((required) => {
+      const exists = targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
         return sameCanonicalLabel(record.label, required);
       });
+      if (exists) return;
+      issues.push({
+        type: 'missing_required_value',
+        level: 'error',
+        label: required,
+        section: requiredInvestment.has(normalizeForMatch(required)) ? 'investment' : 'real_estate',
+        canResolveWithPrevious: true,
+      });
     });
-    if (missingRequired.length) {
-      setCloseError(
-        `No se puede cerrar: faltan obligatorios (${missingRequired.join(', ')}).`,
+
+    investmentInstruments.forEach((instrument) => {
+      if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
+      const exists = targetRecords.some(
+        (record) =>
+          record.block === 'investment' &&
+          record.currency === instrument.currency &&
+          normalizeForMatch(record.label) === normalizeForMatch(instrument.label),
       );
-      return;
-    }
-    const missingCustomForMonth = missingCustomInvestmentLabelsForMonth(targetMonthKey, targetRecords);
-    if (missingCustomForMonth.length) {
-      setCloseError(
-        `No se puede cerrar: faltan instrumentos sin valor (${missingCustomForMonth.join(', ')}). Cárgalos o exclúyelos este mes.`,
-      );
-      return;
-    }
+      if (exists) return;
+      issues.push({
+        type: 'incomplete_new_source',
+        level: 'error',
+        label: instrument.label,
+        section: 'investment',
+        instrumentId: instrument.id,
+        canResolveWithPrevious: true,
+        canExcludeThisMonth: true,
+      });
+    });
+
     const carriedLabels = Array.from(
       new Set(
         targetRecords
           .filter(
-            (r) =>
-              isCarriedRecord(r) &&
-              (r.block === 'investment' ||
-                r.block === 'real_estate' ||
-                (r.block === 'debt' && isMortgagePrincipalLabel(r.label))),
+            (record) =>
+              isCarriedRecord(record) &&
+              (record.block === 'investment' ||
+                record.block === 'real_estate' ||
+                (record.block === 'debt' && isMortgagePrincipalLabel(record.label))),
           )
-          .map((r) => r.label),
+          .map((record) => record.label),
       ),
     );
-    if (carriedLabels.length) {
-      setPendingCloseCarryItems(carriedLabels);
-      setPendingCloseMonthKey(targetMonthKey);
-      setCloseConfirmOpen(false);
-      setCloseError(
-        `Hay ${carriedLabels.length} valor(es) en "Mes anterior". Puedes cerrar igual o actualizar esos ítems antes de cerrar.`,
+
+    carriedLabels.forEach((label) => {
+      const isInvestment = requiredInvestment.has(normalizeForMatch(label)) || !!investmentInstruments.find(
+        (instrument) => normalizeForMatch(instrument.label) === normalizeForMatch(label),
       );
+      issues.push({
+        type: 'carried_value_unconfirmed',
+        level: 'warning',
+        label,
+        section: isInvestment ? 'investment' : 'real_estate',
+      });
+    });
+
+    return { issues, targetRecords };
+  };
+
+  const closeValidationDraft = useMemo(
+    () => evaluateCloseValidation(closeMonthDraft),
+    [closeMonthDraft, records, investmentInstruments],
+  );
+
+  const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
+    if (!issue.canResolveWithPrevious) return;
+    const result = fillMissingWithPreviousClosure(closeMonthDraft, todayYmd(), [issue.label]);
+    refreshRecords();
+    if (result.added > 0) {
+      setCloseError('');
+      setCloseInfo(`Completado con mes anterior: "${issue.label}" (base ${result.sourceMonth || 'sin mes'}).`);
       return;
     }
+    setCloseInfo('');
+    setCloseError(`No pude completar "${issue.label}" con mes anterior (sin base o ya estaba cargado).`);
+  };
+
+  const resolveCloseIssueExclude = (issue: CloseValidationIssue) => {
+    if (!issue.canExcludeThisMonth || !issue.instrumentId) return;
+    const updated = setInvestmentExcludedForMonth(issue.instrumentId, closeMonthDraft, true);
+    if (!updated) {
+      setCloseInfo('');
+      setCloseError(`No pude excluir "${issue.label}" para ${monthLabel(closeMonthDraft).toLowerCase()}.`);
+      return;
+    }
+    setCloseError('');
+    setCloseInfo(`"${issue.label}" quedó excluido en ${monthLabel(closeMonthDraft).toLowerCase()}.`);
+  };
+
+  const reviewCloseIssue = (issue: CloseValidationIssue) => {
+    setCloseConfirmOpen(false);
+    setMonthKey(closeMonthDraft);
+    setActiveSection(issue.section);
+    setCloseInfo('');
+    setCloseError(`Revisa "${issue.label}" en ${sectionLabel[issue.section].toLowerCase()}.`);
+  };
+
+  const attemptMonthlyClose = (targetMonthKey: string) => {
+    const evaluation = evaluateCloseValidation(targetMonthKey);
+    const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
+    const carried = evaluation.issues.filter((issue) => issue.type === 'carried_value_unconfirmed');
+
+    if (blocking.length) {
+      if (blocking[0].type === 'future_month') {
+        setCloseInfo('');
+        setCloseError(blocking[0].label);
+        return;
+      }
+      const preview = blocking.slice(0, 3).map((issue) => issue.label).join(', ');
+      const suffix = blocking.length > 3 ? ` (+${blocking.length - 3})` : '';
+      setCloseInfo('');
+      setCloseError(`No se puede cerrar: faltan ${blocking.length} ítem(s) (${preview}${suffix}).`);
+      return;
+    }
+
     completeMonthlyClose(targetMonthKey);
+    if (carried.length) {
+      setCarryMessage(
+        `Cierre realizado con ${carried.length} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
+      );
+    }
   };
 
   const runMonthlyClose = () => {
     setCloseError('');
+    setCloseInfo('');
     setCloseMonthDraft(monthKey);
     setCloseConfirmOpen(true);
   };
+
+  const closeBlockingIssues = useMemo(
+    () => closeValidationDraft.issues.filter((issue) => issue.level === 'error'),
+    [closeValidationDraft],
+  );
+  const closeWarningIssues = useMemo(
+    () => closeValidationDraft.issues.filter((issue) => issue.level === 'warning'),
+    [closeValidationDraft],
+  );
 
   const useMissingFromPrevious = (section: MainSection, itemName?: string) => {
     const isSingleItem = !!itemName;
@@ -2903,6 +2994,7 @@ export const Patrimonio: React.FC = () => {
             Cerrar mes
           </Button>
         </div>
+        {!!closeInfo && <div className="text-xs text-emerald-700">{closeInfo}</div>}
         {!!closeError && <div className="text-xs text-red-700">{closeError}</div>}
 
         {latestClosure && (
@@ -2931,7 +3023,7 @@ export const Patrimonio: React.FC = () => {
         <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
             <div className="text-base font-semibold text-slate-900">Confirmar cierre mensual</div>
-            <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar.</div>
+            <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar y resuelve bloqueos aquí mismo.</div>
 
             <div className="mt-3">
               <label className="text-xs text-slate-600">Mes a cerrar</label>
@@ -2953,6 +3045,72 @@ export const Patrimonio: React.FC = () => {
                 {recentCloseWarning}
               </div>
             )}
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Bloqueos: {closeBlockingIssues.length} · Advertencias: {closeWarningIssues.length}
+            </div>
+
+            {!!closeBlockingIssues.length && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2">
+                <div className="text-xs font-semibold text-red-800">Debes resolver estos bloqueos antes de cerrar:</div>
+                <div className="mt-2 space-y-2">
+                  {closeBlockingIssues.map((issue, idx) => (
+                    <div key={`close-block-${issue.type}-${issue.label}-${idx}`} className="rounded border border-red-200 bg-white p-2">
+                      <div className="text-xs text-red-700">{issue.label}</div>
+                      {issue.type !== 'future_month' && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {issue.canResolveWithPrevious && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => resolveCloseIssueWithPrevious(issue)}
+                            >
+                              Usar mes anterior
+                            </Button>
+                          )}
+                          {issue.canExcludeThisMonth && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => resolveCloseIssueExclude(issue)}
+                            >
+                              Excluir este mes
+                            </Button>
+                          )}
+                          <Button size="sm" variant="outline" onClick={() => reviewCloseIssue(issue)}>
+                            Revisar bloque
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!!closeWarningIssues.length && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                <div className="text-xs font-semibold text-amber-800">
+                  Advertencia: hay valores arrastrados de mes anterior (puedes cerrar igual)
+                </div>
+                <div className="mt-2 max-h-28 overflow-auto text-xs text-amber-800 space-y-1">
+                  {closeWarningIssues.map((issue, idx) => (
+                    <div key={`close-warn-${issue.type}-${issue.label}-${idx}`} className="flex items-center justify-between gap-2">
+                      <span>{issue.label}</span>
+                      <Button size="sm" variant="outline" onClick={() => reviewCloseIssue(issue)}>
+                        Revisar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!!closeInfo && (
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                {closeInfo}
+              </div>
+            )}
+
             {!!closeError && (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                 {closeError}
@@ -2965,44 +3123,20 @@ export const Patrimonio: React.FC = () => {
                 onClick={() => {
                   setCloseConfirmOpen(false);
                   setCloseError('');
+                  setCloseInfo('');
                 }}
               >
                 Cancelar
               </Button>
-              <Button onClick={() => attemptMonthlyClose(closeMonthDraft)}>
-                {selectedClosureForDraft ? 'Sobrescribir cierre' : 'Confirmar cierre'}
+              <Button onClick={() => attemptMonthlyClose(closeMonthDraft)} disabled={closeBlockingIssues.length > 0}>
+                {selectedClosureForDraft
+                  ? closeWarningIssues.length
+                    ? 'Sobrescribir con arrastres'
+                    : 'Sobrescribir cierre'
+                  : closeWarningIssues.length
+                    ? 'Cerrar con arrastres'
+                    : 'Confirmar cierre'}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {pendingCloseCarryItems && (
-        <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-            <div className="text-base font-semibold text-slate-900">Valores arrastrados detectados</div>
-            <div className="mt-1 text-sm text-slate-600">
-              Puedes cerrar igual este mes o actualizar ahora los valores arrastrados.
-            </div>
-            <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
-              {pendingCloseCarryItems.map((item) => (
-                <div key={item} className="py-0.5">
-                  - {item}
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setPendingCloseCarryItems(null);
-                  if (pendingCloseMonthKey) setMonthKey(pendingCloseMonthKey);
-                  setCloseError('Actualiza los ítems arrastrados y vuelve a intentar el cierre.');
-                }}
-              >
-                Revisar
-              </Button>
-              <Button onClick={() => completeMonthlyClose(pendingCloseMonthKey || monthKey)}>Cerrar igual</Button>
             </div>
           </div>
         </div>
