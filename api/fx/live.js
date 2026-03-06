@@ -160,17 +160,53 @@ const fetchUsdFromBcentral = async () => {
     `&firstdate=${encodeURIComponent(firstDate)}` +
     `&lastdate=${encodeURIComponent(lastDate)}`;
 
-  const payload = await withTimeout(url, 'json', 8000);
-  if (!payload || Number(payload?.Codigo) !== 0) {
-    throw new Error(`BCCh sin respuesta válida (${String(payload?.Descripcion || payload?.Codigo || 'sin detalle')})`);
+  const rawText = await withTimeout(url, 'text', 8000);
+  let payload = null;
+  try {
+    payload = JSON.parse(rawText);
+  } catch {
+    payload = null;
   }
 
-  const obs = Array.isArray(payload?.Series?.Obs) ? payload.Series.Obs : [];
+  // Algunos clientes/ambientes reciben formatos no JSON; hacemos fallback defensivo.
+  if (!payload) {
+    const codeMatch = String(rawText).match(/<Codigo>\s*([0-9-]+)\s*<\/Codigo>/i);
+    const descMatch = String(rawText).match(/<Descripcion>\s*([^<]+)\s*<\/Descripcion>/i);
+    const obsMatches = [...String(rawText).matchAll(/<Obs>[\s\S]*?<indexDateString>\s*([^<]+)\s*<\/indexDateString>[\s\S]*?<value>\s*([^<]+)\s*<\/value>[\s\S]*?<statusCode>\s*([^<]+)\s*<\/statusCode>[\s\S]*?<\/Obs>/gi)];
+    payload = {
+      Codigo: codeMatch ? Number(codeMatch[1]) : NaN,
+      Descripcion: descMatch ? String(descMatch[1]).trim() : '',
+      Series: {
+        Obs: obsMatches.map((m) => ({
+          indexDateString: String(m[1] || '').trim(),
+          value: String(m[2] || '').trim(),
+          statusCode: String(m[3] || '').trim(),
+        })),
+      },
+    };
+  }
+
+  const statusCode = Number(payload?.Codigo ?? payload?.codigo);
+  if (!payload || !Number.isFinite(statusCode) || statusCode !== 0) {
+    throw new Error(
+      `BCCh sin respuesta válida (${String(payload?.Descripcion || payload?.descripcion || payload?.Codigo || 'sin detalle')})`,
+    );
+  }
+
+  const obs = Array.isArray(payload?.Series?.Obs) ? payload.Series.Obs : Array.isArray(payload?.series?.obs) ? payload.series.obs : [];
   const valid = obs
     .map((item) => ({
       value: parseFlexibleNumeric(item?.value),
       status: String(item?.statusCode || ''),
       date: String(item?.indexDateString || ''),
+      dateMs: (() => {
+        const d = String(item?.indexDateString || '').trim();
+        const m = d.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (!m) return Number.NaN;
+        const dt = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        const ms = dt.getTime();
+        return Number.isFinite(ms) ? ms : Number.NaN;
+      })(),
     }))
     .filter((item) => Number.isFinite(item.value) && item.value > 0 && item.status.toUpperCase() === 'OK');
 
@@ -178,7 +214,11 @@ const fetchUsdFromBcentral = async () => {
     throw new Error('BCCh no devolvió observaciones USD válidas');
   }
 
-  const latest = valid[valid.length - 1];
+  const latest = [...valid].sort((a, b) => {
+    const ta = Number.isFinite(a.dateMs) ? a.dateMs : -Infinity;
+    const tb = Number.isFinite(b.dateMs) ? b.dateMs : -Infinity;
+    return tb - ta;
+  })[0];
   return {
     usd: clampRate(latest.value, 500, 2000, 'USD/CLP'),
     date: latest.date || '',
