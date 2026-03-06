@@ -32,7 +32,9 @@ export const Layout: React.FC = () => {
       </header>
 
       <main className="flex-1 max-w-xl mx-auto w-full pb-20">
-        <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
+        {location.pathname.startsWith('/settings') ? (
+          <FxSyncStatusBanner onGoSettings={() => navigate('/settings')} />
+        ) : null}
         <Outlet />
       </main>
 

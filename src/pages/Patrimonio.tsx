@@ -2329,6 +2329,11 @@ export const Patrimonio: React.FC = () => {
 
   const [showSummary, setShowSummary] = useState(false);
   const [showNetWorth, setShowNetWorth] = useState(false);
+  const [visibleMainCards, setVisibleMainCards] = useState<Record<MainSection, boolean>>({
+    investment: false,
+    real_estate: false,
+    bank: false,
+  });
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
   const autoCarryAppliedRef = useRef<Set<string>>(new Set());
 
@@ -2469,6 +2474,17 @@ export const Patrimonio: React.FC = () => {
     };
   }, [monthRecords, fx]);
 
+  const sectionAmountsDisplay = useMemo(() => {
+    const convert = (valueClp: number) => fromClp(valueClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
+    return {
+      investment: convert(sectionAmounts.investment),
+      bank: convert(sectionAmounts.bank),
+      realEstateNet: convert(sectionAmounts.realEstateNet),
+      nonMortgageDebt: convert(sectionAmounts.nonMortgageDebt),
+      financialNet: convert(sectionAmounts.financialNet),
+    };
+  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, sectionAmounts]);
+
   const metricsDisplay = useMemo(() => {
     const convert = (value: number | null) => {
       if (value === null) return null;
@@ -2501,6 +2517,19 @@ export const Patrimonio: React.FC = () => {
       });
     }).length;
   }, [monthRecords]);
+
+  const latestClosureDisplay = useMemo(() => {
+    if (!latestClosure) return null;
+    return fromClp(latestClosure.summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
+  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, latestClosure]);
+
+  const growthVsPrevClosureDisplay = useMemo(() => {
+    if (!growthVsPrevClosure) return null;
+    return {
+      abs: fromClp(growthVsPrevClosure.abs, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp),
+      pct: growthVsPrevClosure.pct,
+    };
+  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, growthVsPrevClosure]);
   const hasRealEstateCoreInputs = useMemo(() => {
     let hasProperty = false;
     let hasMortgageDebt = false;
@@ -2517,6 +2546,25 @@ export const Patrimonio: React.FC = () => {
 
     return hasProperty && hasMortgageDebt;
   }, [monthRecords]);
+
+  const toggleMainCardVisibility = (section: MainSection) => {
+    setVisibleMainCards((prev) => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const hiddenAmountPill = (tone: 'amber' | 'green' | 'sky') => {
+    const toneClass =
+      tone === 'amber'
+        ? 'bg-amber-50/45 text-amber-900'
+        : tone === 'green'
+          ? 'bg-emerald-50/45 text-emerald-900'
+          : 'bg-sky-50/45 text-sky-900';
+    return (
+      <span className={`relative inline-flex items-center rounded-md px-3 py-1.5 ${toneClass}`}>
+        <span className="absolute inset-0 rounded-md bg-white/40 blur-[2px]" />
+        <span className="relative tracking-[0.18em] blur-[1.6px]">8.888.888</span>
+      </span>
+    );
+  };
 
   const refreshRecords = () => setRecords(loadWealthRecords());
   const refreshClosures = () => setClosures(loadClosures());
@@ -2933,6 +2981,11 @@ export const Patrimonio: React.FC = () => {
                 onClick={() => {
                   setShowSummary(false);
                   setShowNetWorth(false);
+                  setVisibleMainCards({
+                    investment: false,
+                    real_estate: false,
+                    bank: false,
+                  });
                 }}
               >
                 Ocultar
@@ -3007,63 +3060,124 @@ export const Patrimonio: React.FC = () => {
       </Card>
 
       <div className="grid grid-cols-2 gap-3">
-        <button
-          className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] hover:shadow-[0_12px_24px_rgba(165,96,42,0.34)] transition"
-          onClick={() => setActiveSection('investment')}
-        >
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
-            <Landmark size={16} /> Inversiones
+        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition">
+          <div className="flex items-start justify-between gap-2">
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
+              <Landmark size={16} /> Inversiones
+            </div>
+            <button
+              className="text-[10px] rounded-md border border-[#7f4927]/25 bg-white/35 px-1.5 py-0.5 text-[#5a2f16]"
+              onClick={() => toggleMainCardVisibility('investment')}
+              type="button"
+            >
+              {visibleMainCards.investment ? 'Ocultar' : 'Ver'}
+            </button>
           </div>
-          <div className="mt-2 text-2xl font-bold leading-tight text-[#5a2f16]">
-            {formatCurrency(sectionAmounts.investment, 'CLP')}
-          </div>
-          <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en CLP</div>
-          <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#6b3a1f]">
+          <button
+            type="button"
+            className="mt-2 w-full text-left text-2xl font-bold leading-tight text-[#5a2f16]"
+            onClick={() => toggleMainCardVisibility('investment')}
+          >
+            {visibleMainCards.investment
+              ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
+              : hiddenAmountPill('amber')}
+          </button>
+          <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en {displayCurrency}</div>
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1 text-xs text-[#6b3a1f]"
+            onClick={() => setActiveSection('investment')}
+          >
             Entrar <ArrowRight size={13} />
-          </div>
-        </button>
+          </button>
+        </div>
 
-        <button
-          className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] hover:shadow-[0_12px_24px_rgba(74,102,64,0.33)] transition"
-          onClick={() => setActiveSection('real_estate')}
-        >
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
-            <Home size={16} /> Bienes raíces (neto)
+        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] transition">
+          <div className="flex items-start justify-between gap-2">
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
+              <Home size={16} /> Bienes raíces (neto)
+            </div>
+            <button
+              className="text-[10px] rounded-md border border-[#2d5a3b]/25 bg-white/35 px-1.5 py-0.5 text-[#1f3e2d]"
+              onClick={() => toggleMainCardVisibility('real_estate')}
+              type="button"
+            >
+              {visibleMainCards.real_estate ? 'Ocultar' : 'Ver'}
+            </button>
           </div>
           {hasRealEstateCoreInputs ? (
             <>
-              <div className="mt-2 text-2xl font-bold leading-tight text-[#1f3e2d]">
-                {formatCurrency(sectionAmounts.realEstateNet, 'CLP')}
-              </div>
-              <div className="mt-1 text-[11px] text-[#275238]">Consolidado en CLP</div>
+              <button
+                type="button"
+                className="mt-2 w-full text-left text-2xl font-bold leading-tight text-[#1f3e2d]"
+                onClick={() => toggleMainCardVisibility('real_estate')}
+              >
+                {visibleMainCards.real_estate
+                  ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
+                  : hiddenAmountPill('green')}
+              </button>
+              <div className="mt-1 text-[11px] text-[#275238]">Consolidado en {displayCurrency}</div>
             </>
-          ) : null}
-          <div className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]">
+          ) : (
+            <div className="mt-2 text-[11px] text-[#275238]">Completa inputs para mostrar total</div>
+          )}
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]"
+            onClick={() => setActiveSection('real_estate')}
+          >
             Entrar <ArrowRight size={13} />
-          </div>
-        </button>
+          </button>
+        </div>
       </div>
 
-      <button
-        className="w-full rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left shadow-sm hover:shadow-md transition"
-        onClick={() => setActiveSection('bank')}
-      >
+      <div className="w-full rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left shadow-sm transition">
         <div className="flex items-center justify-between">
           <div>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
             </div>
-            <div className="mt-1 text-xl font-bold text-sky-900">{formatCurrency(sectionAmounts.bank, 'CLP')}</div>
-            <div className="text-xs text-sky-700">
-              Deudas no hipotecarias: {formatCurrency(-sectionAmounts.nonMortgageDebt, 'CLP')}
-            </div>
-            <div className="text-[11px] text-sky-700/90">
-              Neto financiero: {formatCurrency(sectionAmounts.financialNet, 'CLP')}
-            </div>
+            <button
+              type="button"
+              className="mt-1 text-left text-xl font-bold text-sky-900"
+              onClick={() => toggleMainCardVisibility('bank')}
+            >
+              {visibleMainCards.bank
+                ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency)
+                : hiddenAmountPill('sky')}
+            </button>
+            {visibleMainCards.bank ? (
+              <>
+                <div className="text-xs text-sky-700">
+                  Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
+                </div>
+                <div className="text-[11px] text-sky-700/90">
+                  Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-sky-700/90">Toca el monto para revelar</div>
+            )}
           </div>
-          <Wallet size={18} className="text-sky-700" />
+          <div className="flex flex-col items-end gap-1">
+            <button
+              className="text-[10px] rounded-md border border-sky-300 bg-white/70 px-1.5 py-0.5 text-sky-800"
+              onClick={() => toggleMainCardVisibility('bank')}
+              type="button"
+            >
+              {visibleMainCards.bank ? 'Ocultar' : 'Ver'}
+            </button>
+            <Wallet size={18} className="text-sky-700" />
+          </div>
         </div>
-      </button>
+        <button
+          type="button"
+          className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
+          onClick={() => setActiveSection('bank')}
+        >
+          Entrar <ArrowRight size={13} />
+        </button>
+      </div>
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -3078,12 +3192,15 @@ export const Patrimonio: React.FC = () => {
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
             <div className="font-semibold">Último cierre: {latestClosure.monthKey}</div>
-            <div>Neto consolidado: {formatCurrency(latestClosure.summary.netConsolidatedClp, 'CLP')}</div>
-            {growthVsPrevClosure && (
-              <div className={growthVsPrevClosure.abs >= 0 ? 'text-emerald-700' : 'text-red-700'}>
-                vs cierre anterior: {growthVsPrevClosure.abs >= 0 ? '+' : ''}
-                {formatCurrency(growthVsPrevClosure.abs, 'CLP')}
-                {growthVsPrevClosure.pct !== null ? ` (${growthVsPrevClosure.pct.toFixed(2)}%)` : ''}
+            <div>
+              Neto consolidado:{' '}
+              {formatCurrency(latestClosureDisplay ?? latestClosure.summary.netConsolidatedClp, displayCurrency)}
+            </div>
+            {growthVsPrevClosureDisplay && (
+              <div className={growthVsPrevClosureDisplay.abs >= 0 ? 'text-emerald-700' : 'text-red-700'}>
+                vs cierre anterior: {growthVsPrevClosureDisplay.abs >= 0 ? '+' : ''}
+                {formatCurrency(growthVsPrevClosureDisplay.abs, displayCurrency)}
+                {growthVsPrevClosureDisplay.pct !== null ? ` (${growthVsPrevClosureDisplay.pct.toFixed(2)}%)` : ''}
               </div>
             )}
           </div>
