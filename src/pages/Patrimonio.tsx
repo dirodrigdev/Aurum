@@ -370,6 +370,15 @@ const isCreditCardAccount = (account: Pick<FintocAccountNormalized, 'type' | 'na
   return token.includes('credit') || token.includes('card') || token.includes('tarjeta') || token.includes('tc');
 };
 
+const normalizePotentialMinorUnitAmount = (amount: number, currency: WealthCurrency) => {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return 0;
+  if ((currency === 'USD' || currency === 'EUR') && Number.isInteger(value) && Math.abs(value) >= 100000) {
+    return value / 100;
+  }
+  return value;
+};
+
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
   if (currency === 'CLP') return amount;
   if (currency === 'USD') return amount * usdClp;
@@ -639,10 +648,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
     );
 
-    const bankClp = bankDetails.filter((r) => r.currency === 'CLP').reduce((sum, r) => sum + r.amount, 0);
-    const bankUsd = bankDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
-    const cardClp = cardDetails.filter((r) => r.currency === 'CLP').reduce((sum, r) => sum + r.amount, 0);
-    const cardUsd = cardDetails.filter((r) => r.currency === 'USD').reduce((sum, r) => sum + r.amount, 0);
+    const bankClp = bankDetails
+      .filter((r) => r.currency === 'CLP')
+      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+    const bankUsd = bankDetails
+      .filter((r) => r.currency === 'USD')
+      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+    const cardClp = cardDetails
+      .filter((r) => r.currency === 'CLP')
+      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+    const cardUsd = cardDetails
+      .filter((r) => r.currency === 'USD')
+      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
     const hasCardClpData = cardDetails.some((r) => r.currency === 'CLP');
     const hasCardUsdData = cardDetails.some((r) => r.currency === 'USD');
 
@@ -1312,8 +1329,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         (acc, account) => {
           const currency = toWealthCurrency(account.currency);
           if (!currency) return acc;
-          if (currency === 'CLP') acc.clp += account.balance;
-          if (currency === 'USD') acc.usd += account.balance;
+          const normalizedBalance = normalizePotentialMinorUnitAmount(account.balance, currency);
+          if (currency === 'CLP') acc.clp += normalizedBalance;
+          if (currency === 'USD') acc.usd += normalizedBalance;
           return acc;
         },
         { clp: 0, usd: 0 },
@@ -1361,8 +1379,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const refreshedBankDetails = refreshedMonthRecords.filter(
         (record) => record.block === 'bank' && MANUAL_BANK_ITEMS.some((item) => item.label === record.label),
       );
-      const totalClp = refreshedBankDetails.filter((record) => record.currency === 'CLP').reduce((sum, record) => sum + record.amount, 0);
-      const totalUsd = refreshedBankDetails.filter((record) => record.currency === 'USD').reduce((sum, record) => sum + record.amount, 0);
+      const totalClp = refreshedBankDetails
+        .filter((record) => record.currency === 'CLP')
+        .reduce((sum, record) => sum + normalizePotentialMinorUnitAmount(record.amount, record.currency), 0);
+      const totalUsd = refreshedBankDetails
+        .filter((record) => record.currency === 'USD')
+        .reduce((sum, record) => sum + normalizePotentialMinorUnitAmount(record.amount, record.currency), 0);
       upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totalClp, 'Calculado desde detalle de cuentas');
       upsertByLabel('bank', 'Saldo bancos USD', 'USD', totalUsd, 'Calculado desde detalle de cuentas');
       const movementProbes = (result.probes || []).filter((probe) => probe.endpoint.includes('/movements'));
@@ -2327,12 +2349,12 @@ export const Patrimonio: React.FC = () => {
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
 
-  const [showSummary, setShowSummary] = useState(false);
-  const [showNetWorth, setShowNetWorth] = useState(false);
+  const [showSummary, setShowSummary] = useState(true);
+  const [showNetWorth, setShowNetWorth] = useState(true);
   const [visibleMainCards, setVisibleMainCards] = useState<Record<MainSection, boolean>>({
-    investment: false,
-    real_estate: false,
-    bank: false,
+    investment: true,
+    real_estate: true,
+    bank: true,
   });
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
   const autoCarryAppliedRef = useRef<Set<string>>(new Set());
@@ -2465,12 +2487,54 @@ export const Patrimonio: React.FC = () => {
 
   const sectionAmounts = useMemo(() => {
     const breakdown = buildWealthNetBreakdown(monthRecords, fx);
+
+    const allBankRecords = monthRecords.filter(
+      (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record),
+    );
+    const detailedBankRecords = allBankRecords.filter((record) =>
+      MANUAL_BANK_ITEMS.some(
+        (item) => sameCanonicalLabel(item.label, record.label) && item.currency === record.currency,
+      ),
+    );
+
+    const toCurrencyTotals = (records: WealthRecord[]) =>
+      records.reduce<Record<WealthCurrency, number>>(
+        (acc, record) => {
+          acc[record.currency] += normalizePotentialMinorUnitAmount(record.amount, record.currency);
+          return acc;
+        },
+        { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      );
+
+    const allByCurrency = toCurrencyTotals(allBankRecords);
+    const detailedByCurrency = toCurrencyTotals(detailedBankRecords);
+
+    const hasDetailedByCurrency: Record<WealthCurrency, boolean> = {
+      CLP: detailedBankRecords.some((record) => record.currency === 'CLP'),
+      USD: detailedBankRecords.some((record) => record.currency === 'USD'),
+      EUR: detailedBankRecords.some((record) => record.currency === 'EUR'),
+      UF: detailedBankRecords.some((record) => record.currency === 'UF'),
+    };
+
+    const selectedBankByCurrency: Record<WealthCurrency, number> = {
+      CLP: hasDetailedByCurrency.CLP ? detailedByCurrency.CLP : allByCurrency.CLP,
+      USD: hasDetailedByCurrency.USD ? detailedByCurrency.USD : allByCurrency.USD,
+      EUR: hasDetailedByCurrency.EUR ? detailedByCurrency.EUR : allByCurrency.EUR,
+      UF: hasDetailedByCurrency.UF ? detailedByCurrency.UF : allByCurrency.UF,
+    };
+
+    const bankClp =
+      toClp(selectedBankByCurrency.CLP, 'CLP', fx.usdClp, fx.eurClp, fx.ufClp) +
+      toClp(selectedBankByCurrency.USD, 'USD', fx.usdClp, fx.eurClp, fx.ufClp) +
+      toClp(selectedBankByCurrency.EUR, 'EUR', fx.usdClp, fx.eurClp, fx.ufClp) +
+      toClp(selectedBankByCurrency.UF, 'UF', fx.usdClp, fx.eurClp, fx.ufClp);
+
     return {
       investment: breakdown.investmentClp,
-      bank: breakdown.bankClp,
+      bank: bankClp,
       realEstateNet: breakdown.realEstateNetClp,
       nonMortgageDebt: breakdown.nonMortgageDebtClp,
-      financialNet: breakdown.bankClp - breakdown.nonMortgageDebtClp,
+      financialNet: bankClp - breakdown.nonMortgageDebtClp,
     };
   }, [monthRecords, fx]);
 
@@ -2551,17 +2615,24 @@ export const Patrimonio: React.FC = () => {
     setVisibleMainCards((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  const hiddenAmountPill = (tone: 'amber' | 'green' | 'sky') => {
+  const hiddenAmountBlock = (tone: 'amber' | 'green') => {
     const toneClass =
       tone === 'amber'
-        ? 'bg-amber-50/45 text-amber-900'
-        : tone === 'green'
-          ? 'bg-emerald-50/45 text-emerald-900'
-          : 'bg-sky-50/45 text-sky-900';
+        ? 'border-[#7f4927]/30 bg-[#fff3ea]/28'
+        : 'border-[#2d5a3b]/30 bg-[#ebfff1]/28';
     return (
-      <span className={`relative inline-flex items-center rounded-md px-3 py-1.5 ${toneClass}`}>
-        <span className="absolute inset-0 rounded-md bg-white/40 blur-[2px]" />
-        <span className="relative tracking-[0.18em] blur-[1.6px]">8.888.888</span>
+      <span className={`relative block h-[52px] w-full overflow-hidden rounded-lg border ${toneClass}`}>
+        <span className="absolute inset-0 bg-white/30 backdrop-blur-[7px]" />
+        <span className="absolute inset-x-4 top-1/2 h-6 -translate-y-1/2 rounded-md bg-white/35 blur-md" />
+      </span>
+    );
+  };
+
+  const hiddenNetWorthBlock = () => {
+    return (
+      <span className="relative block h-[62px] w-full overflow-hidden rounded-xl border border-[#c59a6c]/35 bg-[#f6efe3]/18">
+        <span className="absolute inset-0 bg-[#f3eadb]/30 backdrop-blur-[9px]" />
+        <span className="absolute inset-x-5 top-1/2 h-7 -translate-y-1/2 rounded-lg bg-[#f3eadb]/40 blur-lg" />
       </span>
     );
   };
@@ -2980,11 +3051,11 @@ export const Patrimonio: React.FC = () => {
                 className="absolute top-0 right-0 text-xs text-[#efe4d1]"
                 onClick={() => {
                   setShowSummary(false);
-                  setShowNetWorth(false);
+                  setShowNetWorth(true);
                   setVisibleMainCards({
-                    investment: false,
-                    real_estate: false,
-                    bank: false,
+                    investment: true,
+                    real_estate: true,
+                    bank: true,
                   });
                 }}
               >
@@ -3009,14 +3080,7 @@ export const Patrimonio: React.FC = () => {
                           )}
                         </>
                       ) : (
-                        <span className="relative inline-block select-none align-middle">
-                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/18 blur-sm" />
-                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/14 blur-md" />
-                          <span className="absolute inset-0 rounded-md bg-[#f3eadb]/10 blur-lg" />
-                          <span className="relative inline-block rounded-md bg-[#f3eadb]/10 px-3 py-1.5 text-xl tracking-[0.2em] blur-[2.6px]">
-                            8.888.888.888
-                          </span>
-                        </span>
+                        hiddenNetWorthBlock()
                       )}
                     </div>
                   </button>
@@ -3080,7 +3144,7 @@ export const Patrimonio: React.FC = () => {
           >
             {visibleMainCards.investment
               ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
-              : hiddenAmountPill('amber')}
+              : hiddenAmountBlock('amber')}
           </button>
           <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en {displayCurrency}</div>
           <button
@@ -3114,7 +3178,7 @@ export const Patrimonio: React.FC = () => {
               >
                 {visibleMainCards.real_estate
                   ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
-                  : hiddenAmountPill('green')}
+                  : hiddenAmountBlock('green')}
               </button>
               <div className="mt-1 text-[11px] text-[#275238]">Consolidado en {displayCurrency}</div>
             </>
@@ -3133,40 +3197,21 @@ export const Patrimonio: React.FC = () => {
 
       <div className="w-full rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left shadow-sm transition">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="min-w-0">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
             </div>
-            <button
-              type="button"
-              className="mt-1 text-left text-xl font-bold text-sky-900"
-              onClick={() => toggleMainCardVisibility('bank')}
-            >
-              {visibleMainCards.bank
-                ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency)
-                : hiddenAmountPill('sky')}
-            </button>
-            {visibleMainCards.bank ? (
-              <>
-                <div className="text-xs text-sky-700">
-                  Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
-                </div>
-                <div className="text-[11px] text-sky-700/90">
-                  Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
-                </div>
-              </>
-            ) : (
-              <div className="text-xs text-sky-700/90">Toca el monto para revelar</div>
-            )}
+            <div className="mt-2 max-w-full text-left text-[clamp(1.35rem,3.2vw,2rem)] font-bold leading-tight text-sky-900 break-words">
+              {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
+            </div>
+            <div className="text-xs text-sky-700">
+              Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
+            </div>
+            <div className="text-[11px] text-sky-700/90">
+              Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
+            </div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <button
-              className="text-[10px] rounded-md border border-sky-300 bg-white/70 px-1.5 py-0.5 text-sky-800"
-              onClick={() => toggleMainCardVisibility('bank')}
-              type="button"
-            >
-              {visibleMainCards.bank ? 'Ocultar' : 'Ver'}
-            </button>
+          <div className="flex flex-col items-end gap-1 pt-1">
             <Wallet size={18} className="text-sky-700" />
           </div>
         </div>
