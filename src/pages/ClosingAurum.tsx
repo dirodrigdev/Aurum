@@ -396,23 +396,26 @@ const buildInvestmentDetails = (
       isRiskCapital: isRiskCapitalLabel(key),
     }))
     .sort((a, b) => {
-      if (a.isRiskCapital !== b.isRiskCapital) return a.isRiskCapital ? 1 : -1;
-      if (a.isRiskCapital && b.isRiskCapital) {
-        const aUsd = normalizeForMatch(a.label).includes('usd');
-        const bUsd = normalizeForMatch(b.label).includes('usd');
-        if (aUsd !== bUsd) return aUsd ? 1 : -1;
+      const groupRank = (row: InvestmentDetailRow) =>
+        row.group === 'financieras' ? 0 : row.group === 'previsionales' ? 1 : 2;
+      const rankDiff = groupRank(a) - groupRank(b);
+      if (rankDiff !== 0) return rankDiff;
+
+      if (a.group === 'otros' && b.group === 'otros') {
+        if (a.isRiskCapital !== b.isRiskCapital) return a.isRiskCapital ? 1 : -1;
+        if (a.isRiskCapital && b.isRiskCapital) {
+          const aUsd = normalizeForMatch(a.label).includes('usd');
+          const bUsd = normalizeForMatch(b.label).includes('usd');
+          if (aUsd !== bUsd) return aUsd ? 1 : -1;
+        }
+        return a.label.localeCompare(b.label);
       }
+
       const aTail = INVESTMENT_TAIL_PRIORITY[a.label];
       const bTail = INVESTMENT_TAIL_PRIORITY[b.label];
       if (aTail && bTail) return aTail - bTail;
       if (aTail) return 1;
       if (bTail) return -1;
-      if (a.group !== b.group) {
-        if (a.group === 'financieras') return -1;
-        if (b.group === 'financieras') return 1;
-        if (a.group === 'previsionales') return -1;
-        if (b.group === 'previsionales') return 1;
-      }
       return b.currentClp - a.currentClp;
     });
 };
@@ -575,10 +578,10 @@ const BreakdownCard: React.FC<{
         </summary>
         <div className="px-3 pb-3 space-y-2">
           <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-            <div className="min-w-0 rounded-lg border border-[#d8c39d] bg-[#f6ead7] px-2.5 py-2">
+            <div className="min-w-0 overflow-hidden rounded-lg border border-[#d8c39d] bg-[#f6ead7] px-2.5 py-2">
               <div className="text-[11px] font-semibold text-[#7f5528]">Inversiones financieras</div>
               <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
-              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+              <div className="mt-0.5 max-w-full break-all text-[clamp(0.86rem,1.05vw,1.38rem)] leading-tight font-bold tracking-tight tabular-nums">
                 {formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}
               </div>
               {financialHasCompare && (
@@ -591,10 +594,10 @@ const BreakdownCard: React.FC<{
                 </div>
               )}
             </div>
-            <div className="min-w-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
+            <div className="min-w-0 overflow-hidden rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
               <div className="text-[11px] font-semibold text-emerald-800">Inversiones previsionales</div>
               <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
-              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+              <div className="mt-0.5 max-w-full break-all text-[clamp(0.86rem,1.05vw,1.38rem)] leading-tight font-bold tracking-tight tabular-nums">
                 {formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}
               </div>
               {previsionalHasCompare && (
@@ -607,10 +610,10 @@ const BreakdownCard: React.FC<{
                 </div>
               )}
             </div>
-            <div className="min-w-0 rounded-lg border border-slate-300 bg-white px-2.5 py-2">
+            <div className="min-w-0 overflow-hidden rounded-lg border border-[#e8dfcf] bg-[#fcfaf5] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,63,58,0.08)]">
               <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
               <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
-              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+              <div className="mt-0.5 max-w-full break-all text-[clamp(0.86rem,1.05vw,1.38rem)] leading-tight font-bold tracking-tight tabular-nums">
                 {formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}
               </div>
               {othersHasCompare && (
@@ -638,7 +641,7 @@ const BreakdownCard: React.FC<{
                   ? 'border-emerald-200 bg-emerald-50/30'
                   : row.group === 'financieras'
                     ? 'border-[#d8c39d] bg-[#f8efe2]'
-                    : 'border-slate-200 bg-white';
+                    : 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]';
               const rowLeft =
                 row.isRiskCapital
                   ? 'border-l-4 border-l-[#e5dccb]'
@@ -646,7 +649,7 @@ const BreakdownCard: React.FC<{
                   ? 'border-l-4 border-l-emerald-300'
                   : row.group === 'financieras'
                     ? 'border-l-4 border-l-[#caa16d]'
-                    : '';
+                    : 'border-l-4 border-l-[#e5dccb]';
               return (
                 <div key={row.key} className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft}`}>
                   <div className="flex items-center justify-between gap-2">
