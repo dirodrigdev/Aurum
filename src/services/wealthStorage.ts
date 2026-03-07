@@ -52,6 +52,12 @@ export interface WealthMonthlyClosureVersion {
   records?: WealthRecord[];
 }
 
+export interface WealthClosureCompleteness {
+  monthKey: string;
+  missingFieldLabels: string[];
+  missingFx: boolean;
+}
+
 export interface WealthInvestmentInstrument {
   id: string;
   label: string;
@@ -349,6 +355,21 @@ const normalizeLabelKey = (value: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+const CLOSURE_REQUIRED_FIELDS: Array<{ label: string; canonicalLabel: string }> = [
+  { label: 'SURA inversión financiera', canonicalLabel: 'sura inversion financiera' },
+  { label: 'SURA ahorro previsional', canonicalLabel: 'sura ahorro previsional' },
+  { label: 'BTG total valorización', canonicalLabel: 'btg total valorizacion' },
+  { label: 'PlanVital saldo total', canonicalLabel: 'planvital saldo total' },
+  { label: 'Global66 Cuenta Vista USD', canonicalLabel: 'global66 cuenta vista usd' },
+  { label: 'Wise Cuenta principal USD', canonicalLabel: 'wise cuenta principal usd' },
+  { label: 'Valor propiedad', canonicalLabel: 'valor propiedad' },
+  { label: 'Saldo deuda hipotecaria', canonicalLabel: 'saldo deuda hipotecaria' },
+  { label: 'Saldo bancos CLP', canonicalLabel: 'saldo bancos clp' },
+  { label: 'Saldo bancos USD', canonicalLabel: 'saldo bancos usd' },
+  { label: 'Deuda tarjetas CLP', canonicalLabel: 'deuda tarjetas clp' },
+  { label: 'Deuda tarjetas USD', canonicalLabel: 'deuda tarjetas usd' },
+];
 
 export const RISK_CAPITAL_LABEL_CLP = 'Capital de riesgo CLP';
 export const RISK_CAPITAL_LABEL_USD = 'Capital de riesgo USD';
@@ -1547,6 +1568,50 @@ export const saveClosures = (closures: WealthMonthlyClosure[], options?: Persist
   if (!options?.silent) dispatchWealthDataUpdated();
   if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
+
+export const getClosureCompleteness = (closure: WealthMonthlyClosure): WealthClosureCompleteness => {
+  const records = Array.isArray(closure.records) ? closure.records : [];
+  const latestByCanonical = new Map<string, WealthRecord>();
+  records.forEach((record) => {
+    const key = normalizeLabelKey(record.label);
+    const prev = latestByCanonical.get(key);
+    if (!prev) {
+      latestByCanonical.set(key, record);
+      return;
+    }
+    latestByCanonical.set(key, pickLatestRecord(prev, record));
+  });
+
+  const missingFieldLabels = CLOSURE_REQUIRED_FIELDS.filter(({ canonicalLabel }) => {
+    const record = latestByCanonical.get(canonicalLabel);
+    if (!record) return true;
+    return !Number.isFinite(Number(record.amount));
+  }).map(({ label }) => label);
+
+  const fx = closure.fxRates;
+  const missingFx =
+    !fx ||
+    !Number.isFinite(Number(fx.usdClp)) ||
+    !Number.isFinite(Number(fx.eurClp)) ||
+    !Number.isFinite(Number(fx.ufClp)) ||
+    Number(fx.usdClp) <= 0 ||
+    Number(fx.eurClp) <= 0 ||
+    Number(fx.ufClp) <= 0;
+
+  return {
+    monthKey: closure.monthKey,
+    missingFieldLabels,
+    missingFx,
+  };
+};
+
+export const getIncompleteClosures = (
+  closures: WealthMonthlyClosure[] = loadClosures(),
+): WealthClosureCompleteness[] =>
+  [...closures]
+    .sort(compareClosuresByMonthDesc)
+    .map((closure) => getClosureCompleteness(closure))
+    .filter((summary) => summary.missingFx || summary.missingFieldLabels.length > 0);
 
 const getWealthCloudRef = async () => {
   if (!isFirebaseConfigured()) return null;

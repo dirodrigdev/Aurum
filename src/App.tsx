@@ -7,16 +7,30 @@ import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
 import {
+  WEALTH_DATA_UPDATED_EVENT,
+  getIncompleteClosures,
   hydrateWealthFromCloud,
+  localYmd,
+  loadClosures,
   refreshFxRatesDailyIfNeeded,
   subscribeWealthCloud,
   unsubscribeWealthCloud,
 } from './services/wealthStorage';
 
+const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
+const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
+
+type IncompletePrompt = {
+  monthKey: string;
+  missingCount: number;
+  missingFx: boolean;
+};
+
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState('');
+  const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
 
   useEffect(() => {
     void ensureAuthPersistence();
@@ -79,6 +93,37 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       window.removeEventListener('pointerdown', onFirstInteraction);
       window.removeEventListener('touchstart', onFirstInteraction);
       window.removeEventListener('keydown', onFirstInteraction);
+    };
+  }, [user?.uid, user?.isAnonymous]);
+
+  useEffect(() => {
+    if (!user || user.isAnonymous) {
+      setIncompletePrompt(null);
+      return;
+    }
+    const refreshIncompletePrompt = () => {
+      const today = localYmd(new Date());
+      const dismissedDay = String(localStorage.getItem(INCOMPLETE_CLOSURE_PROMPT_DAY_KEY) || '');
+      if (dismissedDay === today) {
+        setIncompletePrompt(null);
+        return;
+      }
+      const incomplete = getIncompleteClosures(loadClosures())[0] || null;
+      if (!incomplete) {
+        setIncompletePrompt(null);
+        return;
+      }
+      setIncompletePrompt({
+        monthKey: incomplete.monthKey,
+        missingCount: incomplete.missingFieldLabels.length,
+        missingFx: incomplete.missingFx,
+      });
+    };
+
+    refreshIncompletePrompt();
+    window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshIncompletePrompt as EventListener);
+    return () => {
+      window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshIncompletePrompt as EventListener);
     };
   }, [user?.uid, user?.isAnonymous]);
 
@@ -149,7 +194,49 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      {!!incompletePrompt && (
+        <div className="fixed inset-0 z-[120] bg-black/45 p-4 flex items-center justify-center">
+          <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl">
+            <div className="text-lg font-semibold text-slate-900">Cierre mensual incompleto</div>
+            <div className="mt-2 text-sm text-slate-600">
+              El cierre de <span className="font-semibold">{incompletePrompt.monthKey}</span> aún no está completo.
+            </div>
+            <div className="mt-2 text-xs text-slate-600">
+              Faltan {incompletePrompt.missingCount} campos
+              {incompletePrompt.missingFx ? ' + TC/UF del cierre' : ''}.
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                onClick={() => {
+                  localStorage.setItem(INCOMPLETE_CLOSURE_PROMPT_DAY_KEY, localYmd(new Date()));
+                  setIncompletePrompt(null);
+                }}
+              >
+                Omitir
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-[#7f5528] bg-[#9c6b36] px-3 py-2 text-sm font-semibold text-[#f6efe2] hover:bg-[#8b5f30]"
+                onClick={() => {
+                  localStorage.setItem(INCOMPLETE_CLOSURE_PROMPT_DAY_KEY, localYmd(new Date()));
+                  localStorage.setItem(CLOSING_FOCUS_MONTH_KEY, incompletePrompt.monthKey);
+                  window.location.hash = '#/closing';
+                  setIncompletePrompt(null);
+                }}
+              >
+                Completar ahora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 };
 
 const App: React.FC = () => {

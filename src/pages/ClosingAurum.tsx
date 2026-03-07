@@ -208,6 +208,7 @@ const INVESTMENT_TAIL_PRIORITY: Record<string, number> = {
 
 const REQUIRED_REAL_ESTATE_CORE_FOR_NET = ['Valor propiedad', 'Saldo deuda hipotecaria'];
 const CLOSURES_PER_PAGE = 6;
+const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 
 type EditableFieldKey =
   | 'suraFin'
@@ -805,6 +806,16 @@ export const ClosingAurum: React.FC = () => {
     const page = Math.floor(idx / CLOSURES_PER_PAGE);
     setClosurePage(page);
   }, [closures, selectedClosureMonthKey]);
+
+  useEffect(() => {
+    if (!closures.length) return;
+    const target = String(window.localStorage.getItem(CLOSING_FOCUS_MONTH_KEY) || '').trim();
+    if (!target) return;
+    if (!closures.some((closure) => closure.monthKey === target)) return;
+    setTab('cierre');
+    setSelectedClosureMonthKey(target);
+    window.localStorage.removeItem(CLOSING_FOCUS_MONTH_KEY);
+  }, [closures]);
 
   const currentRecordsRaw = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentRecords = useMemo(
