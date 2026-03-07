@@ -633,9 +633,7 @@ const BreakdownCard: React.FC<{
               const p = prev !== null ? pct(current, prev) : null;
               const rowStyle =
                 row.isRiskCapital
-                  ? row.label.toLowerCase().includes('usd')
-                    ? 'border-emerald-200 bg-emerald-50/30'
-                    : 'border-[#d8c39d] bg-[#f8efe2]'
+                  ? 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]'
                   : row.group === 'previsionales'
                   ? 'border-emerald-200 bg-emerald-50/30'
                   : row.group === 'financieras'
@@ -643,9 +641,7 @@ const BreakdownCard: React.FC<{
                     : 'border-slate-200 bg-white';
               const rowLeft =
                 row.isRiskCapital
-                  ? row.label.toLowerCase().includes('usd')
-                    ? 'border-l-4 border-l-emerald-300'
-                    : 'border-l-4 border-l-[#caa16d]'
+                  ? 'border-l-4 border-l-[#e5dccb]'
                   : row.group === 'previsionales'
                   ? 'border-l-4 border-l-emerald-300'
                   : row.group === 'financieras'
