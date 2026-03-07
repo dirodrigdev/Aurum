@@ -458,53 +458,23 @@ const computeHomeSectionAmounts = (
   fx: { usdClp: number; eurClp: number; ufClp: number },
 ): HomeSectionAmounts => {
   const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
-
-  const allBankRecords = monthRecordsForTotals.filter(
-    (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record),
+  const hasProperty = monthRecordsForTotals.some(
+    (record) => !isSyntheticAggregateRecord(record) && record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
   );
-  const detailedBankRecords = allBankRecords.filter((record) =>
-    MANUAL_BANK_ITEMS.some((item) => sameCanonicalLabel(item.label, record.label) && item.currency === record.currency),
+  const hasMortgageDebt = monthRecordsForTotals.some(
+    (record) => !isSyntheticAggregateRecord(record) && record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria'),
   );
-
-  const toCurrencyTotals = (records: WealthRecord[]) =>
-    records.reduce<Record<WealthCurrency, number>>(
-      (acc, record) => {
-        acc[record.currency] += normalizePotentialMinorUnitAmount(record.amount, record.currency);
-        return acc;
-      },
-      { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-    );
-
-  const allByCurrency = toCurrencyTotals(allBankRecords);
-  const detailedByCurrency = toCurrencyTotals(detailedBankRecords);
-
-  const hasDetailedByCurrency: Record<WealthCurrency, boolean> = {
-    CLP: detailedBankRecords.some((record) => record.currency === 'CLP'),
-    USD: detailedBankRecords.some((record) => record.currency === 'USD'),
-    EUR: detailedBankRecords.some((record) => record.currency === 'EUR'),
-    UF: detailedBankRecords.some((record) => record.currency === 'UF'),
-  };
-
-  const selectedBankByCurrency: Record<WealthCurrency, number> = {
-    CLP: hasDetailedByCurrency.CLP ? detailedByCurrency.CLP : allByCurrency.CLP,
-    USD: hasDetailedByCurrency.USD ? detailedByCurrency.USD : allByCurrency.USD,
-    EUR: hasDetailedByCurrency.EUR ? detailedByCurrency.EUR : allByCurrency.EUR,
-    UF: hasDetailedByCurrency.UF ? detailedByCurrency.UF : allByCurrency.UF,
-  };
-
-  const bankClp =
-    toClp(selectedBankByCurrency.CLP, 'CLP', fx.usdClp, fx.eurClp, fx.ufClp) +
-    toClp(selectedBankByCurrency.USD, 'USD', fx.usdClp, fx.eurClp, fx.ufClp) +
-    toClp(selectedBankByCurrency.EUR, 'EUR', fx.usdClp, fx.eurClp, fx.ufClp) +
-    toClp(selectedBankByCurrency.UF, 'UF', fx.usdClp, fx.eurClp, fx.ufClp);
+  const realEstateNetClp = hasProperty && hasMortgageDebt ? breakdown.realEstateNetClp : 0;
+  const bankClp = breakdown.bankClp;
+  const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp;
 
   return {
     investment: breakdown.investmentClp,
     bank: bankClp,
-    realEstateNet: breakdown.realEstateNetClp,
+    realEstateNet: realEstateNetClp,
     nonMortgageDebt: breakdown.nonMortgageDebtClp,
     financialNet: bankClp - breakdown.nonMortgageDebtClp,
-    totalNetClp: breakdown.investmentClp + breakdown.realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp,
+    totalNetClp,
   };
 };
 
@@ -547,6 +517,7 @@ interface SectionScreenProps {
   section: MainSection;
   monthKey: string;
   recordsForSection: WealthRecord[];
+  includeRiskCapitalInTotals: boolean;
   investmentInstruments: WealthInvestmentInstrument[];
   usdClp: number;
   eurClp: number;
@@ -637,6 +608,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
   recordsForSection,
+  includeRiskCapitalInTotals,
   investmentInstruments,
   usdClp,
   eurClp,
@@ -705,20 +677,25 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }, [recordsForSection]);
 
   const sectionTotalClp = useMemo(() => {
+    const recordsForTotals =
+      section === 'investment'
+        ? filterRecordsByRiskCapitalPreference(dedupedSectionRecords, includeRiskCapitalInTotals)
+        : dedupedSectionRecords;
+
     if (section === 'real_estate') {
-      const realEstateAssetsClp = dedupedSectionRecords
+      const realEstateAssetsClp = recordsForTotals
         .filter((item) => item.block === 'real_estate')
         .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
-      const mortgageDebtClp = dedupedSectionRecords
+      const mortgageDebtClp = recordsForTotals
         .filter((item) => item.block === 'debt' && isMortgagePrincipalLabel(item.label))
         .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
       return realEstateAssetsClp - mortgageDebtClp;
     }
-    return dedupedSectionRecords.reduce((sum, item) => {
+    return recordsForTotals.reduce((sum, item) => {
       const signed = item.block === 'debt' ? -item.amount : item.amount;
       return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
     }, 0);
-  }, [section, dedupedSectionRecords, usdClp, eurClp, ufClp]);
+  }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
 
   const bankDashboard = useMemo(() => {
     if (section !== 'bank') {
@@ -1210,7 +1187,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveDraft = () => {
     const amount = Number(draft.amount.replace(/,/g, '.'));
-    if (!draft.label.trim() || !Number.isFinite(amount) || amount <= 0) return;
+    if (!draft.label.trim() || !Number.isFinite(amount) || amount < 0) return;
 
     upsertWealthRecord({
       id: editingId || undefined,
@@ -1369,7 +1346,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const saveQuickFill = () => {
     if (!quickFill) return;
     const amount = Number(quickFill.amount.replace(/,/g, '.'));
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!Number.isFinite(amount) || amount < 0) return;
     upsertWealthRecord({
       id: quickFill.id,
       block: quickFill.block,
@@ -1393,7 +1370,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         ...entry,
         amountParsed: Number(String(entry.amount || '').replace(/,/g, '.')),
       }))
-      .filter((entry) => Number.isFinite(entry.amountParsed) && entry.amountParsed > 0);
+      .filter((entry) => Number.isFinite(entry.amountParsed) && entry.amountParsed >= 0);
     if (!parsedEntries.length) return;
 
     parsedEntries.forEach((entry) => {
@@ -3149,6 +3126,7 @@ export const Patrimonio: React.FC = () => {
           section={activeSection}
           monthKey={monthKey}
           recordsForSection={recordsForSection}
+          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           investmentInstruments={investmentInstruments}
           usdClp={fx.usdClp}
           eurClp={fx.eurClp}

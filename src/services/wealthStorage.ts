@@ -698,7 +698,7 @@ const mergeClosureVersions = (
   return [...map.values()].sort(compareClosureVersionsByClosedAtDesc).slice(0, 36);
 };
 
-export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency'>) => {
+export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'currency'>) => {
   return `${record.block}::${normalizeText(record.label)}::${record.currency}`;
 };
 
@@ -1506,14 +1506,21 @@ export const buildWealthNetBreakdown = (
   let nonMortgageDebtClp = 0;
 
   const hasDetailedBankClp = records.some(
-    (record) => record.block === 'bank' && DETAILED_BANK_LABELS_CLP.has(normalizeText(record.label)),
+    (record) =>
+      record.block === 'bank' &&
+      DETAILED_BANK_LABELS_CLP.has(normalizeText(record.label)) &&
+      Math.abs(record.amount) > 0,
   );
   const hasDetailedBankUsd = records.some(
-    (record) => record.block === 'bank' && DETAILED_BANK_LABELS_USD.has(normalizeText(record.label)),
+    (record) =>
+      record.block === 'bank' &&
+      DETAILED_BANK_LABELS_USD.has(normalizeText(record.label)) &&
+      Math.abs(record.amount) > 0,
   );
   const hasDetailedDebtClp = records.some((record) => {
     if (record.block !== 'debt') return false;
     if (record.currency !== 'CLP') return false;
+    if (Math.abs(record.amount) <= 0) return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
@@ -1523,6 +1530,7 @@ export const buildWealthNetBreakdown = (
   const hasDetailedDebtUsd = records.some((record) => {
     if (record.block !== 'debt') return false;
     if (record.currency !== 'USD') return false;
+    if (Math.abs(record.amount) <= 0) return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
