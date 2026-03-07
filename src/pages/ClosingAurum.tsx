@@ -78,12 +78,6 @@ const monthLabel = (monthKey: string) => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 
-const nextMonthKey = (monthKey: string) => {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
-  d.setMonth(d.getMonth() + 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 const formatCloseTimestamp = (iso?: string) => {
   if (!iso) return 'sin fecha';
@@ -981,10 +975,7 @@ export const ClosingAurum: React.FC = () => {
     });
     return map;
   }, [closureHistoryVersions, currentFx, includeRiskCapitalInTotals, currency]);
-  const hoyMonthHeadlineKey = useMemo(() => {
-    if (!latestClosure) return monthKey;
-    return monthKey <= latestClosure.monthKey ? nextMonthKey(latestClosure.monthKey) : monthKey;
-  }, [latestClosure, monthKey]);
+  const hoyMonthHeadlineKey = monthKey;
 
   const openClosureEditModal = () => {
     if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;

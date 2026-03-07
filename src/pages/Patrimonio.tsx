@@ -51,7 +51,6 @@ import {
   saveIncludeRiskCapitalInTotals,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
-  summarizeWealth,
   upsertInvestmentInstrument,
   upsertWealthRecord,
 } from '../services/wealthStorage';
@@ -64,7 +63,8 @@ const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
-  { label: 'Tenencia / CxC', currency: 'CLP' },
+  { label: 'Tenencia / CxC USD', currency: 'USD' },
+  { label: 'Tenencia / CxC EUR', currency: 'EUR' },
 ];
 
 const sectionLabel: Record<MainSection, string> = {
@@ -309,13 +309,18 @@ const labelMatchKey = (value: string) =>
     .trim();
 
 const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
+const TENENCIA_BASE_LABEL = 'Tenencia / CxC';
+const TENENCIA_BASE_KEY = labelMatchKey(TENENCIA_BASE_LABEL);
+const isTenenciaInstrumentLabel = (label: string) => {
+  const key = labelMatchKey(label);
+  return key === TENENCIA_BASE_KEY || key.startsWith(`${TENENCIA_BASE_KEY} `);
+};
 const NON_EXCLUDABLE_INVESTMENT_LABELS = new Set([
   labelMatchKey(RISK_CAPITAL_LABEL_CLP),
   labelMatchKey(RISK_CAPITAL_LABEL_USD),
-  labelMatchKey('Tenencia / CxC'),
 ]);
 const isNonExcludableInvestmentLabel = (label: string) =>
-  NON_EXCLUDABLE_INVESTMENT_LABELS.has(labelMatchKey(label));
+  NON_EXCLUDABLE_INVESTMENT_LABELS.has(labelMatchKey(label)) || isTenenciaInstrumentLabel(label);
 
 const todayYmd = () => localYmd();
 const readPreferredDisplayCurrency = (): WealthCurrency => {
@@ -437,6 +442,70 @@ const closureNetForTotals = (
     return buildWealthNetBreakdown(filtered, closure.fxRates || fallbackFx).netClp;
   }
   return closure.summary.netConsolidatedClp;
+};
+
+type HomeSectionAmounts = {
+  investment: number;
+  bank: number;
+  realEstateNet: number;
+  nonMortgageDebt: number;
+  financialNet: number;
+  totalNetClp: number;
+};
+
+const computeHomeSectionAmounts = (
+  monthRecordsForTotals: WealthRecord[],
+  fx: { usdClp: number; eurClp: number; ufClp: number },
+): HomeSectionAmounts => {
+  const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
+
+  const allBankRecords = monthRecordsForTotals.filter(
+    (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record),
+  );
+  const detailedBankRecords = allBankRecords.filter((record) =>
+    MANUAL_BANK_ITEMS.some((item) => sameCanonicalLabel(item.label, record.label) && item.currency === record.currency),
+  );
+
+  const toCurrencyTotals = (records: WealthRecord[]) =>
+    records.reduce<Record<WealthCurrency, number>>(
+      (acc, record) => {
+        acc[record.currency] += normalizePotentialMinorUnitAmount(record.amount, record.currency);
+        return acc;
+      },
+      { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+    );
+
+  const allByCurrency = toCurrencyTotals(allBankRecords);
+  const detailedByCurrency = toCurrencyTotals(detailedBankRecords);
+
+  const hasDetailedByCurrency: Record<WealthCurrency, boolean> = {
+    CLP: detailedBankRecords.some((record) => record.currency === 'CLP'),
+    USD: detailedBankRecords.some((record) => record.currency === 'USD'),
+    EUR: detailedBankRecords.some((record) => record.currency === 'EUR'),
+    UF: detailedBankRecords.some((record) => record.currency === 'UF'),
+  };
+
+  const selectedBankByCurrency: Record<WealthCurrency, number> = {
+    CLP: hasDetailedByCurrency.CLP ? detailedByCurrency.CLP : allByCurrency.CLP,
+    USD: hasDetailedByCurrency.USD ? detailedByCurrency.USD : allByCurrency.USD,
+    EUR: hasDetailedByCurrency.EUR ? detailedByCurrency.EUR : allByCurrency.EUR,
+    UF: hasDetailedByCurrency.UF ? detailedByCurrency.UF : allByCurrency.UF,
+  };
+
+  const bankClp =
+    toClp(selectedBankByCurrency.CLP, 'CLP', fx.usdClp, fx.eurClp, fx.ufClp) +
+    toClp(selectedBankByCurrency.USD, 'USD', fx.usdClp, fx.eurClp, fx.ufClp) +
+    toClp(selectedBankByCurrency.EUR, 'EUR', fx.usdClp, fx.eurClp, fx.ufClp) +
+    toClp(selectedBankByCurrency.UF, 'UF', fx.usdClp, fx.eurClp, fx.ufClp);
+
+  return {
+    investment: breakdown.investmentClp,
+    bank: bankClp,
+    realEstateNet: breakdown.realEstateNetClp,
+    nonMortgageDebt: breakdown.nonMortgageDebtClp,
+    financialNet: bankClp - breakdown.nonMortgageDebtClp,
+    totalNetClp: breakdown.investmentClp + breakdown.realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp,
+  };
 };
 
 const toCloseDateFromMonthKey = (monthKey: string) => {
@@ -858,7 +927,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     if (section !== 'investment') return baseRows;
 
-    const customRows: ChecklistRow[] = investmentInstruments.map((instrument) => {
+    const tenenciaInstruments = investmentInstruments.filter((instrument) =>
+      isTenenciaInstrumentLabel(instrument.label),
+    );
+    const otherInstruments = investmentInstruments.filter(
+      (instrument) => !isTenenciaInstrumentLabel(instrument.label),
+    );
+
+    const customRows: ChecklistRow[] = otherInstruments.map((instrument) => {
       const isOptional = isRiskCapitalInvestmentLabel(instrument.label);
       const isExcluded = (instrument.excludedMonths || []).includes(monthKey);
       if (isExcluded) {
@@ -906,6 +982,39 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         context: buildInvestmentContext(instrument.label, instrument),
       };
     });
+
+    if (tenenciaInstruments.length > 0) {
+      const tenenciaMatches = tenenciaInstruments
+        .map((instrument) => findRecordForLabel(instrument.label, instrument.currency))
+        .filter((record): record is WealthRecord => !!record);
+      const tenenciaRecent = [...tenenciaMatches].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )[0];
+      const tenenciaAllCarried =
+        tenenciaMatches.length > 0 &&
+        tenenciaMatches.every((record) => isCarriedRecord(record) || isEstimatedRecord(record));
+      const tenenciaContext: InvestmentSourceContext = {
+        title: TENENCIA_BASE_LABEL,
+        sourceHint: 'auto',
+        source: TENENCIA_BASE_LABEL,
+        labels: tenenciaInstruments.map((instrument) => ({
+          label: instrument.label,
+          currency: instrument.currency,
+        })),
+        isCustom: true,
+      };
+      customRows.push({
+        name: TENENCIA_BASE_LABEL,
+        status: tenenciaMatches.length === 0 ? 'pendiente' : tenenciaAllCarried ? 'mes_anterior' : 'actualizado',
+        detail:
+          tenenciaMatches.length === 0
+            ? 'Sin valor este mes'
+            : `${displayRecordOrigin(tenenciaRecent)} · ${formatRecordUpdatedStamp(tenenciaRecent)}`,
+        isOptional: false,
+        isCustomInstrument: true,
+        context: tenenciaContext,
+      });
+    }
 
     return [...baseRows, ...customRows];
   }, [section, dedupedSectionRecords, investmentInstruments, monthKey]);
@@ -2520,8 +2629,6 @@ export const Patrimonio: React.FC = () => {
     () => filterRecordsByRiskCapitalPreference(monthRecords, includeRiskCapitalInTotals),
     [monthRecords, includeRiskCapitalInTotals],
   );
-  const summary = useMemo(() => summarizeWealth(monthRecordsForTotals, fx), [monthRecordsForTotals, fx]);
-
   const closureNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
@@ -2531,6 +2638,7 @@ export const Patrimonio: React.FC = () => {
   }, [closures, includeRiskCapitalInTotals, fx]);
 
   const metrics = useMemo(() => {
+    const totals = computeHomeSectionAmounts(monthRecordsForTotals, fx);
     const points = monthPoints(
       closures.map((closure) => ({
         ...closure,
@@ -2540,7 +2648,7 @@ export const Patrimonio: React.FC = () => {
         },
       })),
       monthKey,
-      summary.netConsolidatedClp,
+      totals.totalNetClp,
     );
     const idx = points.findIndex((p) => p.key === monthKey);
     const prev = idx > 0 ? points[idx - 1] : null;
@@ -2554,7 +2662,7 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, closureNetByMonth, monthKey, summary.netConsolidatedClp]);
+  }, [closures, closureNetByMonth, monthKey, monthRecordsForTotals, fx]);
 
   const latestClosure = closures[0] || null;
   const previousClosure = closures[1] || null;
@@ -2581,58 +2689,7 @@ export const Patrimonio: React.FC = () => {
     return `El último cierre fue hace ${Math.max(0, Math.floor(days))} día(s). Confirma que quieres cerrar ${monthLabel(closeMonthDraft).toLowerCase()}.`;
   }, [latestClosure, closeMonthDraft]);
 
-  const sectionAmounts = useMemo(() => {
-    const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
-
-    const allBankRecords = monthRecordsForTotals.filter(
-      (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record),
-    );
-    const detailedBankRecords = allBankRecords.filter((record) =>
-      MANUAL_BANK_ITEMS.some(
-        (item) => sameCanonicalLabel(item.label, record.label) && item.currency === record.currency,
-      ),
-    );
-
-    const toCurrencyTotals = (records: WealthRecord[]) =>
-      records.reduce<Record<WealthCurrency, number>>(
-        (acc, record) => {
-          acc[record.currency] += normalizePotentialMinorUnitAmount(record.amount, record.currency);
-          return acc;
-        },
-        { CLP: 0, USD: 0, EUR: 0, UF: 0 },
-      );
-
-    const allByCurrency = toCurrencyTotals(allBankRecords);
-    const detailedByCurrency = toCurrencyTotals(detailedBankRecords);
-
-    const hasDetailedByCurrency: Record<WealthCurrency, boolean> = {
-      CLP: detailedBankRecords.some((record) => record.currency === 'CLP'),
-      USD: detailedBankRecords.some((record) => record.currency === 'USD'),
-      EUR: detailedBankRecords.some((record) => record.currency === 'EUR'),
-      UF: detailedBankRecords.some((record) => record.currency === 'UF'),
-    };
-
-    const selectedBankByCurrency: Record<WealthCurrency, number> = {
-      CLP: hasDetailedByCurrency.CLP ? detailedByCurrency.CLP : allByCurrency.CLP,
-      USD: hasDetailedByCurrency.USD ? detailedByCurrency.USD : allByCurrency.USD,
-      EUR: hasDetailedByCurrency.EUR ? detailedByCurrency.EUR : allByCurrency.EUR,
-      UF: hasDetailedByCurrency.UF ? detailedByCurrency.UF : allByCurrency.UF,
-    };
-
-    const bankClp =
-      toClp(selectedBankByCurrency.CLP, 'CLP', fx.usdClp, fx.eurClp, fx.ufClp) +
-      toClp(selectedBankByCurrency.USD, 'USD', fx.usdClp, fx.eurClp, fx.ufClp) +
-      toClp(selectedBankByCurrency.EUR, 'EUR', fx.usdClp, fx.eurClp, fx.ufClp) +
-      toClp(selectedBankByCurrency.UF, 'UF', fx.usdClp, fx.eurClp, fx.ufClp);
-
-    return {
-      investment: breakdown.investmentClp,
-      bank: bankClp,
-      realEstateNet: breakdown.realEstateNetClp,
-      nonMortgageDebt: breakdown.nonMortgageDebtClp,
-      financialNet: bankClp - breakdown.nonMortgageDebtClp,
-    };
-  }, [monthRecordsForTotals, fx]);
+  const sectionAmounts = useMemo(() => computeHomeSectionAmounts(monthRecordsForTotals, fx), [monthRecordsForTotals, fx]);
 
   const sectionAmountsDisplay = useMemo(() => {
     const convert = (valueClp: number) => fromClp(valueClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
@@ -2642,6 +2699,7 @@ export const Patrimonio: React.FC = () => {
       realEstateNet: convert(sectionAmounts.realEstateNet),
       nonMortgageDebt: convert(sectionAmounts.nonMortgageDebt),
       financialNet: convert(sectionAmounts.financialNet),
+      totalNet: convert(sectionAmounts.totalNetClp),
     };
   }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, sectionAmounts]);
 
@@ -2659,14 +2717,14 @@ export const Patrimonio: React.FC = () => {
 
     return {
       netWorth: formatCurrency(
-        fromClp(summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp),
+        sectionAmountsDisplay.totalNet,
         displayCurrency,
       ),
       monthIncrease: formatted(convert(metrics.monthIncrease)),
       avg12: formatted(convert(metrics.avg12)),
       avgSinceStart: formatted(convert(metrics.avgSinceStart)),
     };
-  }, [displayCurrency, fx, metrics, summary.netConsolidatedClp]);
+  }, [displayCurrency, fx, metrics, sectionAmountsDisplay.totalNet]);
 
   const missingCriticalCount = useMemo(() => {
     const requiredNames = [...sectionChecklist.investment, ...REAL_ESTATE_CORE_NET_LABELS];

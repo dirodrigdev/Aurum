@@ -1218,7 +1218,11 @@ const parseFlexibleNumeric = (value: unknown): number => {
       prepared = normalized.replace(/,/g, '');
     }
   } else if (hasComma) {
-    prepared = normalized.replace(',', '.');
+    const commaAsThousands = /^\d{1,3}(,\d{3})+$/.test(normalized);
+    prepared = commaAsThousands ? normalized.replace(/,/g, '') : normalized.replace(',', '.');
+  } else if (hasDot) {
+    const dotAsThousands = /^\d{1,3}(\.\d{3})+$/.test(normalized);
+    prepared = dotAsThousands ? normalized.replace(/\./g, '') : normalized;
   }
 
   const parsed = Number(prepared);
