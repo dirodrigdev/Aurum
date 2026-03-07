@@ -1010,7 +1010,7 @@ export const ClosingAurum: React.FC = () => {
       ufClp,
     };
 
-    const nextRecords = dedupeClosureRecords(
+    let nextRecords = dedupeClosureRecords(
       selectedClosureRecordsRaw.map((record) => ({ ...record })),
     );
 
@@ -1028,26 +1028,13 @@ export const ClosingAurum: React.FC = () => {
 
     CLOSURE_EDITABLE_FIELDS.forEach((field) => {
       const raw = closureEditDraft[field.key];
+      nextRecords = nextRecords.filter(
+        (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
+      );
       if (String(raw || '').trim() === '') return;
       const parsed = parseNumberInput(raw);
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
-      const idx = nextRecords.findIndex(
-        (record) => matchCanonicalWithAliases(record.label, field.canonicalLabel),
-      );
-      if (idx >= 0) {
-        const existing = nextRecords[idx];
-        nextRecords[idx] = {
-          ...existing,
-          amount: normalized,
-          currency: field.currency,
-          createdAt,
-          snapshotDate,
-          source: existing.source || 'Edición cierre',
-          note: `Edición manual cierre ${selectedClosure.monthKey}`,
-        };
-        return;
-      }
       nextRecords.push({
         id: crypto.randomUUID(),
         block: field.block,
