@@ -44,6 +44,7 @@ interface InvestmentDetailRow {
   currentClp: number;
   compareClp: number | null;
   group: 'financieras' | 'previsionales' | 'otros';
+  isRiskCapital: boolean;
 }
 
 const groupWithDots = (value: number) =>
@@ -189,6 +190,7 @@ const labelMatchKey = (value: string) =>
     .trim();
 
 const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
+const isRiskCapitalLabel = (value: string) => /capital( de)? riesgo/.test(labelMatchKey(value));
 
 const REQUIRED_INVESTMENT_LABELS = [
   'SURA inversión financiera',
@@ -391,8 +393,15 @@ const buildInvestmentDetails = (
       currentClp: current.get(key)?.amount || 0,
       compareClp: compare.has(key) ? compare.get(key)! : null,
       group: current.get(key)?.group || 'otros',
+      isRiskCapital: isRiskCapitalLabel(key),
     }))
     .sort((a, b) => {
+      if (a.isRiskCapital !== b.isRiskCapital) return a.isRiskCapital ? 1 : -1;
+      if (a.isRiskCapital && b.isRiskCapital) {
+        const aUsd = normalizeForMatch(a.label).includes('usd');
+        const bUsd = normalizeForMatch(b.label).includes('usd');
+        if (aUsd !== bUsd) return aUsd ? 1 : -1;
+      }
       const aTail = INVESTMENT_TAIL_PRIORITY[a.label];
       const bTail = INVESTMENT_TAIL_PRIORITY[b.label];
       if (aTail && bTail) return aTail - bTail;
@@ -566,65 +575,53 @@ const BreakdownCard: React.FC<{
         </summary>
         <div className="px-3 pb-3 space-y-2">
           <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-            <div className="rounded-lg border border-[#d8c39d] bg-[#f6ead7] px-2.5 py-2">
+            <div className="min-w-0 rounded-lg border border-[#d8c39d] bg-[#f6ead7] px-2.5 py-2">
               <div className="text-[11px] font-semibold text-[#7f5528]">Inversiones financieras</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Subtotal</span>
-                <div className="text-right">
-                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
-                    {formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}
-                  </div>
-                  {financialHasCompare && (
-                    <div className={`text-[10px] ${financialDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {financialDeltaDisplay >= 0 ? '+' : ''}
-                      {formatCurrency(financialDeltaDisplay, currency)}
-                      {financialPctDisplay !== null
-                        ? ` (${financialPctDisplay >= 0 ? '+' : ''}${financialPctDisplay.toFixed(2)}%)`
-                        : ''}
-                    </div>
-                  )}
-                </div>
+              <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
+              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+                {formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}
               </div>
+              {financialHasCompare && (
+                <div className={`mt-1 text-[10px] leading-tight [overflow-wrap:anywhere] ${financialDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {financialDeltaDisplay >= 0 ? '+' : ''}
+                  {formatCurrency(financialDeltaDisplay, currency)}
+                  {financialPctDisplay !== null
+                    ? ` (${financialPctDisplay >= 0 ? '+' : ''}${financialPctDisplay.toFixed(2)}%)`
+                    : ''}
+                </div>
+              )}
             </div>
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
+            <div className="min-w-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
               <div className="text-[11px] font-semibold text-emerald-800">Inversiones previsionales</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Subtotal</span>
-                <div className="text-right">
-                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
-                    {formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}
-                  </div>
-                  {previsionalHasCompare && (
-                    <div className={`text-[10px] ${previsionalDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {previsionalDeltaDisplay >= 0 ? '+' : ''}
-                      {formatCurrency(previsionalDeltaDisplay, currency)}
-                      {previsionalPctDisplay !== null
-                        ? ` (${previsionalPctDisplay >= 0 ? '+' : ''}${previsionalPctDisplay.toFixed(2)}%)`
-                        : ''}
-                    </div>
-                  )}
-                </div>
+              <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
+              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+                {formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}
               </div>
+              {previsionalHasCompare && (
+                <div className={`mt-1 text-[10px] leading-tight [overflow-wrap:anywhere] ${previsionalDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {previsionalDeltaDisplay >= 0 ? '+' : ''}
+                  {formatCurrency(previsionalDeltaDisplay, currency)}
+                  {previsionalPctDisplay !== null
+                    ? ` (${previsionalPctDisplay >= 0 ? '+' : ''}${previsionalPctDisplay.toFixed(2)}%)`
+                    : ''}
+                </div>
+              )}
             </div>
-            <div className="rounded-lg border border-slate-300 bg-white px-2.5 py-2">
+            <div className="min-w-0 rounded-lg border border-slate-300 bg-white px-2.5 py-2">
               <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Subtotal</span>
-                <div className="text-right">
-                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
-                    {formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}
-                  </div>
-                  {othersHasCompare && (
-                    <div className={`text-[10px] ${othersDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {othersDeltaDisplay >= 0 ? '+' : ''}
-                      {formatCurrency(othersDeltaDisplay, currency)}
-                      {othersPctDisplay !== null
-                        ? ` (${othersPctDisplay >= 0 ? '+' : ''}${othersPctDisplay.toFixed(2)}%)`
-                        : ''}
-                    </div>
-                  )}
-                </div>
+              <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
+              <div className="mt-0.5 max-w-full text-[clamp(0.95rem,1.3vw,1.45rem)] leading-tight font-bold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+                {formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}
               </div>
+              {othersHasCompare && (
+                <div className={`mt-1 text-[10px] leading-tight [overflow-wrap:anywhere] ${othersDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {othersDeltaDisplay >= 0 ? '+' : ''}
+                  {formatCurrency(othersDeltaDisplay, currency)}
+                  {othersPctDisplay !== null
+                    ? ` (${othersPctDisplay >= 0 ? '+' : ''}${othersPctDisplay.toFixed(2)}%)`
+                    : ''}
+                </div>
+              )}
             </div>
           </div>
 
@@ -635,13 +632,21 @@ const BreakdownCard: React.FC<{
               const delta = prev !== null ? current - prev : null;
               const p = prev !== null ? pct(current, prev) : null;
               const rowStyle =
-                row.group === 'previsionales'
+                row.isRiskCapital
+                  ? row.label.toLowerCase().includes('usd')
+                    ? 'border-emerald-200 bg-emerald-50/30'
+                    : 'border-[#d8c39d] bg-[#f8efe2]'
+                  : row.group === 'previsionales'
                   ? 'border-emerald-200 bg-emerald-50/30'
                   : row.group === 'financieras'
                     ? 'border-[#d8c39d] bg-[#f8efe2]'
                     : 'border-slate-200 bg-white';
               const rowLeft =
-                row.group === 'previsionales'
+                row.isRiskCapital
+                  ? row.label.toLowerCase().includes('usd')
+                    ? 'border-l-4 border-l-emerald-300'
+                    : 'border-l-4 border-l-[#caa16d]'
+                  : row.group === 'previsionales'
                   ? 'border-l-4 border-l-emerald-300'
                   : row.group === 'financieras'
                     ? 'border-l-4 border-l-[#caa16d]'
