@@ -351,7 +351,7 @@ const investmentBucket = (r: WealthRecord): { label: string; group: 'financieras
     if (label.includes('previsional')) return { label: 'SURA previsional', group: 'previsionales' };
     return { label: 'SURA financiero', group: 'financieras' };
   }
-  return null;
+  return { label: r.label, group: 'otros' };
 };
 
 const buildInvestmentDetails = (

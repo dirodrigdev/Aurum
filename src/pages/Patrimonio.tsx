@@ -61,9 +61,10 @@ const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
-const DEFAULT_OPTIONAL_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
+const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
+  { label: 'Tenencia / CxC', currency: 'CLP' },
 ];
 
 const sectionLabel: Record<MainSection, string> = {
@@ -870,7 +871,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name: instrument.label,
           status: 'pendiente',
-          detail: isOptional ? 'Sin valor este mes (opcional)' : 'Sin valor este mes',
+          detail: 'Sin valor este mes',
           isOptional,
           isCustomInstrument: true,
           instrumentId: instrument.id,
@@ -1932,7 +1933,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <div>{row.name}</div>
                 <div className="text-[11px] text-slate-500">{row.detail}</div>
               </div>
-              {row.status === 'pendiente' && !row.isOptional && (
+              {row.status === 'pendiente' && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1945,7 +1946,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   Usar mes anterior
                 </Button>
               )}
-              {section === 'investment' && row.isCustomInstrument && row.instrumentId && (
+              {section === 'investment' &&
+                row.isCustomInstrument &&
+                row.instrumentId &&
+                !isRiskCapitalInvestmentLabel(row.name) && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1958,8 +1962,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
                 </Button>
               )}
-              {row.status === 'pendiente' && !row.isOptional && <span className="text-red-700">Pendiente</span>}
-              {row.status === 'pendiente' && row.isOptional && <span className="text-slate-500">Opcional</span>}
+              {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
               {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
               {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
               {row.status === 'actualizado' && (
@@ -2039,7 +2042,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 >
                   Ingresar monto
                 </Button>
-                {activeSourceContext.isCustom && activeSourceContext.instrumentId && (
+                {activeSourceContext.isCustom &&
+                  activeSourceContext.instrumentId &&
+                  !activeSourceContext.labels.some((item) => isRiskCapitalInvestmentLabel(item.label)) && (
                   <Button
                     variant="secondary"
                     onClick={() => {
@@ -2489,7 +2494,7 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     if (!hydrationReady) return;
     const existing = new Set(investmentInstruments.map((item) => normalizeForMatch(item.label)));
-    const missingDefaults = DEFAULT_OPTIONAL_INVESTMENT_INSTRUMENTS.filter(
+    const missingDefaults = DEFAULT_BASE_INVESTMENT_INSTRUMENTS.filter(
       (item) => !existing.has(normalizeForMatch(item.label)),
     );
     if (!missingDefaults.length) return;
@@ -2497,7 +2502,7 @@ export const Patrimonio: React.FC = () => {
       upsertInvestmentInstrument({
         label: item.label,
         currency: item.currency,
-        note: 'Opcional: capital de riesgo',
+        note: isRiskCapitalInvestmentLabel(item.label) ? 'Opcional: capital de riesgo' : undefined,
       });
     });
     setInvestmentInstruments(loadInvestmentInstruments());
@@ -2838,8 +2843,8 @@ export const Patrimonio: React.FC = () => {
     });
 
     investmentInstruments.forEach((instrument) => {
-      if (isRiskCapitalInvestmentLabel(instrument.label)) return;
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
+      const isRiskCapital = isRiskCapitalInvestmentLabel(instrument.label);
       const exists = targetRecords.some(
         (record) =>
           record.block === 'investment' &&
@@ -2854,7 +2859,7 @@ export const Patrimonio: React.FC = () => {
         section: 'investment',
         instrumentId: instrument.id,
         canResolveWithPrevious: true,
-        canExcludeThisMonth: true,
+        canExcludeThisMonth: !isRiskCapital,
       });
     });
 
