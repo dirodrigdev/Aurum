@@ -5,6 +5,7 @@ import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
   loadBankTokens,
   loadClosures,
+  saveClosures,
   clearCurrentMonthData,
   clearSimulationHistoryData,
   currentMonthKey,
@@ -51,6 +52,12 @@ export const SettingsAurum: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
   const [backupMessage, setBackupMessage] = useState('');
+  const [availableClosures, setAvailableClosures] = useState(() =>
+    loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
+  );
+  const [selectedClosureToDelete, setSelectedClosureToDelete] = useState('');
+  const [deleteClosureMessage, setDeleteClosureMessage] = useState('');
+  const [deletingClosure, setDeletingClosure] = useState(false);
 
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
@@ -178,6 +185,7 @@ export const SettingsAurum: React.FC = () => {
     const refreshLocal = () => {
       setFx(loadFxRates());
       setFxLiveMeta(loadFxLiveSyncMeta());
+      setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
       if (runningHydrate) return;
@@ -755,6 +763,83 @@ export const SettingsAurum: React.FC = () => {
                 {clearingMonth ? 'Borrando...' : 'Borrar datos del mes actual (por bloque)'}
               </Button>
               {!!clearMonthMessage && <div className="mt-2 text-xs text-emerald-700">{clearMonthMessage}</div>}
+            </div>
+
+            <div className="pt-2 border-t border-slate-200 space-y-2">
+              <div className="text-xs text-slate-600">
+                Gestión de cierres: borra un cierre puntual o limpia todos los cierres guardados.
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                <select
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  value={selectedClosureToDelete}
+                  onChange={(e) => setSelectedClosureToDelete(e.target.value)}
+                >
+                  <option value="">Selecciona mes de cierre para borrar...</option>
+                  {availableClosures.map((closure) => (
+                    <option key={closure.id} value={closure.monthKey}>
+                      {formatMonthLabel(closure.monthKey)} ({closure.monthKey})
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="danger"
+                  disabled={deletingClosure || !selectedClosureToDelete}
+                  onClick={async () => {
+                    if (!selectedClosureToDelete) return;
+                    const label = formatMonthLabel(selectedClosureToDelete);
+                    const ok = window.confirm(
+                      `Vas a borrar el cierre de ${label}. Esta acción no borra registros del mes, solo el cierre. ¿Continuar?`,
+                    );
+                    if (!ok) return;
+                    const second = window.confirm(
+                      `Confirmación final: ¿borrar cierre ${selectedClosureToDelete}?`,
+                    );
+                    if (!second) return;
+                    setDeletingClosure(true);
+                    setDeleteClosureMessage('');
+                    try {
+                      const current = loadClosures();
+                      const next = current.filter((c) => c.monthKey !== selectedClosureToDelete);
+                      saveClosures(next);
+                      setAvailableClosures(next.sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+                      setSelectedClosureToDelete('');
+                      setDeleteClosureMessage(`Cierre ${selectedClosureToDelete} eliminado.`);
+                    } finally {
+                      setDeletingClosure(false);
+                    }
+                  }}
+                >
+                  {deletingClosure ? 'Borrando...' : 'Borrar cierre seleccionado'}
+                </Button>
+              </div>
+              <Button
+                variant="danger"
+                disabled={deletingClosure || !availableClosures.length}
+                onClick={async () => {
+                  const ok = window.confirm(
+                    `Se eliminarán TODOS los cierres (${availableClosures.length}). No borra registros mensuales. ¿Continuar?`,
+                  );
+                  if (!ok) return;
+                  const second = window.confirm('Confirmación final: ¿borrar todos los cierres?');
+                  if (!second) return;
+                  setDeletingClosure(true);
+                  setDeleteClosureMessage('');
+                  try {
+                    saveClosures([]);
+                    setAvailableClosures([]);
+                    setSelectedClosureToDelete('');
+                    setDeleteClosureMessage('Se eliminaron todos los cierres.');
+                  } finally {
+                    setDeletingClosure(false);
+                  }
+                }}
+              >
+                Borrar todos los cierres
+              </Button>
+              {!!deleteClosureMessage && (
+                <div className="text-xs text-emerald-700">{deleteClosureMessage}</div>
+              )}
             </div>
           </div>
         </details>
