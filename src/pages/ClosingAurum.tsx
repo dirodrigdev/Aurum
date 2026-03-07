@@ -191,6 +191,19 @@ const labelMatchKey = (value: string) =>
 
 const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
 const isRiskCapitalLabel = (value: string) => /capital( de)? riesgo/.test(labelMatchKey(value));
+const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
+  'saldo bancos clp': ['bancos clp historico'],
+  'saldo bancos usd': ['bancos usd historico'],
+  'deuda tarjetas clp': ['tarjetas clp historico'],
+  'deuda tarjetas usd': ['tarjetas usd historico'],
+};
+
+const matchCanonicalWithAliases = (label: string, canonicalLabel: string) => {
+  const key = labelMatchKey(label);
+  if (key === canonicalLabel) return true;
+  const aliases = CLOSURE_CANONICAL_ALIASES[canonicalLabel] || [];
+  return aliases.some((alias) => key === labelMatchKey(alias));
+};
 
 const REQUIRED_INVESTMENT_LABELS = [
   'SURA inversión financiera',
@@ -434,7 +447,7 @@ const dedupeClosureRecords = (records: WealthRecord[]) => {
 };
 
 const findRecordByCanonicalLabel = (records: WealthRecord[], canonicalLabel: string) =>
-  records.find((record) => labelMatchKey(record.label) === canonicalLabel) || null;
+  records.find((record) => matchCanonicalWithAliases(record.label, canonicalLabel)) || null;
 
 const BreakdownCard: React.FC<{
   title: string;
@@ -1029,7 +1042,7 @@ export const ClosingAurum: React.FC = () => {
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
       const idx = nextRecords.findIndex(
-        (record) => labelMatchKey(record.label) === field.canonicalLabel,
+        (record) => matchCanonicalWithAliases(record.label, field.canonicalLabel),
       );
       if (idx >= 0) {
         const existing = nextRecords[idx];

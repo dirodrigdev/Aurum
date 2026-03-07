@@ -372,6 +372,12 @@ const CLOSURE_REQUIRED_FIELDS: Array<{ label: string; canonicalLabel: string }> 
   { label: 'Deuda tarjetas CLP', canonicalLabel: 'deuda tarjetas clp' },
   { label: 'Deuda tarjetas USD', canonicalLabel: 'deuda tarjetas usd' },
 ];
+const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
+  'saldo bancos clp': ['bancos clp historico'],
+  'saldo bancos usd': ['bancos usd historico'],
+  'deuda tarjetas clp': ['tarjetas clp historico'],
+  'deuda tarjetas usd': ['tarjetas usd historico'],
+};
 
 export const RISK_CAPITAL_LABEL_CLP = 'Capital de riesgo CLP';
 export const RISK_CAPITAL_LABEL_USD = 'Capital de riesgo USD';
@@ -470,16 +476,19 @@ const remapLegacyInvestmentBanks = (
 
 const normalizeRecord = (item: any): WealthRecord => ({
   ...(() => {
+    const block = remapLegacyInvestmentBanks(
+      (item?.block || 'investment') as WealthBlock,
+      String(item?.source || 'manual'),
+      String(item?.label || 'Registro'),
+    );
+    const rawAmount = toNumber(item?.amount);
+    const normalizedAmount = block === 'debt' ? Math.abs(rawAmount) : rawAmount;
     const base = {
       id: String(item?.id || crypto.randomUUID()),
-      block: remapLegacyInvestmentBanks(
-        (item?.block || 'investment') as WealthBlock,
-        String(item?.source || 'manual'),
-        String(item?.label || 'Registro'),
-      ),
+      block,
       source: String(item?.source || 'manual'),
       label: String(item?.label || 'Registro'),
-      amount: toNumber(item?.amount),
+      amount: normalizedAmount,
       currency: (item?.currency || 'CLP') as WealthCurrency,
       snapshotDate: String(item?.snapshotDate || localYmd()),
       createdAt: String(item?.createdAt || nowIso()),
@@ -1068,6 +1077,8 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
   const current = loadWealthRecords();
   const id = input.id || crypto.randomUUID();
   const existing = current.find((r) => r.id === id);
+  const numericAmount = toNumber(input.amount);
+  const normalizedAmount = input.block === 'debt' ? Math.abs(numericAmount) : numericAmount;
 
   const nextBase = {
     id,
@@ -1077,7 +1088,7 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
     block: input.block,
     source: input.source,
     label: input.label,
-    amount: toNumber(input.amount),
+    amount: normalizedAmount,
     currency: input.currency,
     snapshotDate: input.snapshotDate,
   } satisfies Omit<WealthRecord, 'note'>;
@@ -1504,7 +1515,8 @@ export const buildWealthNetBreakdown = (
       if (hasDetailedBankClp && normalizedLabel === normalizeText('Bancos CLP histórico')) return;
       if (hasDetailedBankUsd && normalizedLabel === normalizeText('Bancos USD histórico')) return;
     }
-    const clp = toClpWithFx(record.amount, record.currency);
+    const normalizedAmount = record.block === 'debt' ? Math.abs(record.amount) : record.amount;
+    const clp = toClpWithFx(normalizedAmount, record.currency);
 
     if (record.block === 'investment') investmentClp += clp;
     if (record.block === 'real_estate') realEstateAssetsClp += clp;
@@ -1600,7 +1612,11 @@ export const getClosureCompleteness = (closure: WealthMonthlyClosure): WealthClo
   });
 
   const missingFieldLabels = CLOSURE_REQUIRED_FIELDS.filter(({ canonicalLabel }) => {
-    const record = latestByCanonical.get(canonicalLabel);
+    const aliases = CLOSURE_CANONICAL_ALIASES[canonicalLabel] || [];
+    const keys = [canonicalLabel, ...aliases].map((label) => normalizeLabelKey(label));
+    const record = keys
+      .map((key) => latestByCanonical.get(key) || null)
+      .find((item): item is WealthRecord => !!item);
     if (!record) return true;
     return !Number.isFinite(Number(record.amount));
   }).map(({ label }) => label);
@@ -2822,10 +2838,10 @@ const buildHistoricalMonthRecords = (
     { aliases: ['interes_uf', 'interes_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Interés hipotecario mensual', currency: 'UF', decimals: 4 },
     { aliases: ['seguros_uf', 'seguros_mensuales_uf'], block: 'debt', source: 'Scotiabank', label: 'Seguros hipotecarios mensuales', currency: 'UF', decimals: 4 },
     { aliases: ['amortizacion_uf', 'amortizacion_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Amortización hipotecaria mensual', currency: 'UF', decimals: 4 },
-    { aliases: ['bancos_clp'], block: 'bank', source: 'Histórico manual', label: 'Bancos CLP histórico', currency: 'CLP' },
-    { aliases: ['bancos_usd'], block: 'bank', source: 'Histórico manual', label: 'Bancos USD histórico', currency: 'USD', decimals: 2 },
-    { aliases: ['tarjetas_clp'], block: 'debt', source: 'Histórico manual', label: 'Tarjetas CLP histórico', currency: 'CLP' },
-    { aliases: ['tarjetas_usd'], block: 'debt', source: 'Histórico manual', label: 'Tarjetas USD histórico', currency: 'USD', decimals: 2 },
+    { aliases: ['bancos_clp'], block: 'bank', source: 'Histórico manual', label: 'Saldo bancos CLP', currency: 'CLP' },
+    { aliases: ['bancos_usd'], block: 'bank', source: 'Histórico manual', label: 'Saldo bancos USD', currency: 'USD', decimals: 2 },
+    { aliases: ['tarjetas_clp'], block: 'debt', source: 'Histórico manual', label: 'Deuda tarjetas CLP', currency: 'CLP' },
+    { aliases: ['tarjetas_usd'], block: 'debt', source: 'Histórico manual', label: 'Deuda tarjetas USD', currency: 'USD', decimals: 2 },
   ];
 
   return entries
@@ -2836,12 +2852,13 @@ const buildHistoricalMonthRecords = (
         typeof entry.decimals === 'number'
           ? Number(amount.toFixed(entry.decimals))
           : Math.round(amount);
+      const normalizedAmount = entry.block === 'debt' ? Math.abs(rounded) : rounded;
       return {
         id: crypto.randomUUID(),
         block: entry.block,
         source: entry.source,
         label: entry.label,
-        amount: rounded,
+        amount: normalizedAmount,
         currency: entry.currency,
         snapshotDate,
         createdAt: nowIso(),
