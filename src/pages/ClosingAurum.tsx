@@ -478,22 +478,30 @@ const BreakdownCard: React.FC<{
   );
   const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
   const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
+  const investmentOthers = investmentDetails.filter((i) => i.group === 'otros');
   const financialCurrentClp = investmentFinancial.reduce((sum, row) => sum + row.currentClp, 0);
   const financialCompareClp = investmentFinancial.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
   const financialHasCompare = investmentFinancial.some((row) => row.compareClp !== null);
   const previsionalCurrentClp = investmentPrevisional.reduce((sum, row) => sum + row.currentClp, 0);
   const previsionalCompareClp = investmentPrevisional.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
   const previsionalHasCompare = investmentPrevisional.some((row) => row.compareClp !== null);
-  const financialCurrentDisplay = fromClp(financialCurrentClp, currency, fx);
-  const financialCompareDisplay = fromClp(financialCompareClp, currency, compareFx || fx);
-  const financialDeltaDisplay = financialCurrentDisplay - financialCompareDisplay;
+  const othersCurrentClp = investmentOthers.reduce((sum, row) => sum + row.currentClp, 0);
+  const othersCompareClp = investmentOthers.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
+  const othersHasCompare = investmentOthers.some((row) => row.compareClp !== null);
+  const financialDeltaDisplay =
+    fromClp(financialCurrentClp, currency, fx) - fromClp(financialCompareClp, currency, compareFx || fx);
   const financialPctDisplay =
-    financialCompareDisplay !== 0 ? (financialDeltaDisplay / financialCompareDisplay) * 100 : null;
-  const previsionalCurrentDisplay = fromClp(previsionalCurrentClp, currency, fx);
-  const previsionalCompareDisplay = fromClp(previsionalCompareClp, currency, compareFx || fx);
-  const previsionalDeltaDisplay = previsionalCurrentDisplay - previsionalCompareDisplay;
+    financialCompareClp !== 0 ? (financialDeltaDisplay / fromClp(financialCompareClp, currency, compareFx || fx)) * 100 : null;
+  const previsionalDeltaDisplay =
+    fromClp(previsionalCurrentClp, currency, fx) - fromClp(previsionalCompareClp, currency, compareFx || fx);
   const previsionalPctDisplay =
-    previsionalCompareDisplay !== 0 ? (previsionalDeltaDisplay / previsionalCompareDisplay) * 100 : null;
+    previsionalCompareClp !== 0
+      ? (previsionalDeltaDisplay / fromClp(previsionalCompareClp, currency, compareFx || fx)) * 100
+      : null;
+  const othersDeltaDisplay =
+    fromClp(othersCurrentClp, currency, fx) - fromClp(othersCompareClp, currency, compareFx || fx);
+  const othersPctDisplay =
+    othersCompareClp !== 0 ? (othersDeltaDisplay / fromClp(othersCompareClp, currency, compareFx || fx)) * 100 : null;
 
   return (
     <Card className="p-2.5 space-y-2 border-[#d9d8d1]">
@@ -557,7 +565,7 @@ const BreakdownCard: React.FC<{
           Ver detalle de inversiones
         </summary>
         <div className="px-3 pb-3 space-y-2">
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
             <div className="rounded-lg border border-[#d8c39d] bg-[#f6ead7] px-2.5 py-2">
               <div className="text-[11px] font-semibold text-[#7f5528]">Inversiones financieras</div>
               <div className="mt-1 flex items-end justify-between gap-2">
@@ -570,6 +578,24 @@ const BreakdownCard: React.FC<{
                       {formatCurrency(financialDeltaDisplay, currency)}
                       {financialPctDisplay !== null
                         ? ` (${financialPctDisplay >= 0 ? '+' : ''}${financialPctDisplay.toFixed(2)}%)`
+                        : ''}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2">
+              <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
+              <div className="mt-1 flex items-end justify-between gap-2">
+                <span className="text-[11px] text-slate-500">Subtotal</span>
+                <div className="text-right">
+                  <div className="text-sm font-bold">{formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}</div>
+                  {othersHasCompare && (
+                    <div className={`text-[10px] ${othersDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {othersDeltaDisplay >= 0 ? '+' : ''}
+                      {formatCurrency(othersDeltaDisplay, currency)}
+                      {othersPctDisplay !== null
+                        ? ` (${othersPctDisplay >= 0 ? '+' : ''}${othersPctDisplay.toFixed(2)}%)`
                         : ''}
                     </div>
                   )}

@@ -309,6 +309,13 @@ const labelMatchKey = (value: string) =>
     .trim();
 
 const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
+const NON_EXCLUDABLE_INVESTMENT_LABELS = new Set([
+  labelMatchKey(RISK_CAPITAL_LABEL_CLP),
+  labelMatchKey(RISK_CAPITAL_LABEL_USD),
+  labelMatchKey('Tenencia / CxC'),
+]);
+const isNonExcludableInvestmentLabel = (label: string) =>
+  NON_EXCLUDABLE_INVESTMENT_LABELS.has(labelMatchKey(label));
 
 const todayYmd = () => localYmd();
 const readPreferredDisplayCurrency = (): WealthCurrency => {
@@ -1949,7 +1956,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               {section === 'investment' &&
                 row.isCustomInstrument &&
                 row.instrumentId &&
-                !isRiskCapitalInvestmentLabel(row.name) && (
+                !isNonExcludableInvestmentLabel(row.name) && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -2044,7 +2051,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 </Button>
                 {activeSourceContext.isCustom &&
                   activeSourceContext.instrumentId &&
-                  !activeSourceContext.labels.some((item) => isRiskCapitalInvestmentLabel(item.label)) && (
+                  !activeSourceContext.labels.some((item) => isNonExcludableInvestmentLabel(item.label)) && (
                   <Button
                     variant="secondary"
                     onClick={() => {
@@ -2844,7 +2851,7 @@ export const Patrimonio: React.FC = () => {
 
     investmentInstruments.forEach((instrument) => {
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
-      const isRiskCapital = isRiskCapitalInvestmentLabel(instrument.label);
+      const isNonExcludable = isNonExcludableInvestmentLabel(instrument.label);
       const exists = targetRecords.some(
         (record) =>
           record.block === 'investment' &&
@@ -2859,7 +2866,7 @@ export const Patrimonio: React.FC = () => {
         section: 'investment',
         instrumentId: instrument.id,
         canResolveWithPrevious: true,
-        canExcludeThisMonth: !isRiskCapital,
+        canExcludeThisMonth: !isNonExcludable,
       });
     });
 
