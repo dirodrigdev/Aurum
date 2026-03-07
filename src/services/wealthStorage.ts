@@ -1540,6 +1540,7 @@ export const buildWealthNetBreakdown = (
   records.forEach((record) => {
     if (isSyntheticAggregateRecord(record)) return;
     const normalizedLabel = normalizeText(record.label);
+    if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) return;
     if (record.block === 'bank') {
       if (hasDetailedBankClp && normalizedLabel === normalizeText('Bancos CLP histórico')) return;
       if (hasDetailedBankUsd && normalizedLabel === normalizeText('Bancos USD histórico')) return;
@@ -1548,15 +1549,20 @@ export const buildWealthNetBreakdown = (
       if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;
       if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) return;
     }
-    const normalizedAmount = record.block === 'debt' ? Math.abs(record.amount) : record.amount;
+    const treatsAsDebt = record.block === 'debt' || isMortgagePrincipalDebtLabel(record.label);
+    const normalizedAmount = treatsAsDebt ? Math.abs(record.amount) : record.amount;
     const clp = toClpWithFx(normalizedAmount, record.currency);
+
+    if (isMortgagePrincipalDebtLabel(record.label)) {
+      mortgageDebtClp += clp;
+      return;
+    }
 
     if (record.block === 'investment') investmentClp += clp;
     if (record.block === 'real_estate') realEstateAssetsClp += clp;
     if (record.block === 'bank') bankClp += clp;
     if (record.block === 'debt') {
-      if (isMortgagePrincipalDebtLabel(record.label)) mortgageDebtClp += clp;
-      else if (!isMortgageMetaDebtLabel(record.label)) nonMortgageDebtClp += clp;
+      nonMortgageDebtClp += clp;
     }
   });
 

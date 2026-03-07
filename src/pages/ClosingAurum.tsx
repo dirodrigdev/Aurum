@@ -301,7 +301,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   {
     key: 'saldoHipoteca',
     label: 'Saldo deuda hipotecaria',
-    block: 'real_estate',
+    block: 'debt',
     canonicalLabel: 'saldo deuda hipotecaria',
     currency: 'UF',
     section: 'bienes_raices',
@@ -324,7 +324,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'tarjetasClp',
-    label: 'Deuda tarjetas CLP',
+    label: 'Tarjetas CLP histórico',
     block: 'debt',
     canonicalLabel: 'deuda tarjetas clp',
     currency: 'CLP',
@@ -333,7 +333,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'tarjetasUsd',
-    label: 'Deuda tarjetas USD',
+    label: 'Tarjetas USD histórico',
     block: 'debt',
     canonicalLabel: 'deuda tarjetas usd',
     currency: 'USD',
