@@ -338,13 +338,13 @@ const groupWithDots = (value: number) => {
     .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 };
 
-const normalizeForMatch = (value: string) => {
+function normalizeForMatch(value: string) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
-};
+}
 
 const formatCurrency = (value: number, currency: WealthCurrency) => {
   const sign = value < 0 ? '-' : '';
