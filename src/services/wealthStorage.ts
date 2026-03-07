@@ -38,6 +38,7 @@ export interface WealthMonthlyClosure {
   closedAt: string;
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
+  fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
   previousVersions?: WealthMonthlyClosureVersion[];
 }
@@ -49,6 +50,7 @@ export interface WealthMonthlyClosureVersion {
   replacedAt?: string;
   summary: WealthSnapshotSummary;
   fxRates?: WealthFxRates;
+  fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
 }
 
@@ -622,6 +624,7 @@ const toClosureVersion = (
   replacedAt: replacedAt ? String(replacedAt) : undefined,
   summary: closure.summary,
   fxRates: closure.fxRates ? { ...closure.fxRates } : undefined,
+  fxMissing: closure.fxMissing ? [...closure.fxMissing] : undefined,
   records: closure.records ? closure.records.map((record) => ({ ...record })) : undefined,
 });
 
@@ -633,6 +636,12 @@ const normalizeClosureVersion = (
   if (!monthKey) return null;
 
   const fxRates = normalizeClosureFxRates(raw?.fxRates);
+  const fxMissingRaw = Array.isArray(raw?.fxMissing) ? raw.fxMissing : [];
+  const fxMissing = fxMissingRaw
+    .map((key: unknown) => String(key || '').trim())
+    .filter((key: string): key is 'usdClp' | 'eurClp' | 'ufClp' =>
+      key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
+    );
   const records = normalizeClosureRecords(raw?.records);
   const summary =
     records && records.length
@@ -647,6 +656,7 @@ const normalizeClosureVersion = (
     replacedAt: raw?.replacedAt ? String(raw.replacedAt) : undefined,
     summary,
     fxRates,
+    fxMissing: fxMissing.length ? fxMissing : undefined,
     records,
   };
 };
@@ -1528,6 +1538,12 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
       .map((item: any) => {
         const monthKey = String(item?.monthKey || '');
         const fxRates = normalizeClosureFxRates(item?.fxRates);
+        const fxMissingRaw = Array.isArray(item?.fxMissing) ? item.fxMissing : [];
+        const fxMissing = fxMissingRaw
+          .map((key: unknown) => String(key || '').trim())
+          .filter((key: string): key is 'usdClp' | 'eurClp' | 'ufClp' =>
+            key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
+          );
         const records = normalizeClosureRecords(item?.records);
 
         const summary =
@@ -1550,6 +1566,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           closedAt: String(item?.closedAt || nowIso()),
           summary,
           fxRates,
+          fxMissing: fxMissing.length ? fxMissing : undefined,
           records,
           previousVersions: previousVersions.length ? previousVersions : undefined,
         };
@@ -1589,7 +1606,9 @@ export const getClosureCompleteness = (closure: WealthMonthlyClosure): WealthClo
   }).map(({ label }) => label);
 
   const fx = closure.fxRates;
+  const hasExplicitMissingFx = Array.isArray(closure.fxMissing) && closure.fxMissing.length > 0;
   const missingFx =
+    hasExplicitMissingFx ||
     !fx ||
     !Number.isFinite(Number(fx.usdClp)) ||
     !Number.isFinite(Number(fx.eurClp)) ||
@@ -1983,6 +2002,7 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
     monthKey: c.monthKey,
     closedAt: c.closedAt,
     fxRates: c.fxRates || null,
+    fxMissing: c.fxMissing || null,
     records: (c.records || []).map(serializeRecord),
     summary: c.summary,
     previousVersions: (c.previousVersions || []).map((version) => ({
@@ -1991,6 +2011,7 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
       closedAt: version.closedAt,
       replacedAt: version.replacedAt,
       fxRates: version.fxRates || null,
+      fxMissing: version.fxMissing || null,
       records: (version.records || []).map(serializeRecord),
       summary: version.summary,
     })),
@@ -2853,6 +2874,13 @@ export const importHistoricalClosuresFromCsv = async (
 
   const existingClosures = loadClosures();
   const closureByMonth = new Map(existingClosures.map((closure) => [closure.monthKey, closure]));
+  const fallbackFx = loadFxRates();
+  const fallbackEurUsd =
+    Number.isFinite(Number(fallbackFx.eurClp)) &&
+    Number.isFinite(Number(fallbackFx.usdClp)) &&
+    Number(fallbackFx.usdClp) > 0
+      ? Number(fallbackFx.eurClp) / Number(fallbackFx.usdClp)
+      : null;
 
   rows.forEach((cells, idx) => {
     const rowObj: Record<string, string> = {};
@@ -2870,17 +2898,60 @@ export const importHistoricalClosuresFromCsv = async (
     const usdClp = parseCsvNumber(rowObj, ['usd_clp', 'usdclp', 'tc_usd', 'dolar_clp']);
     const eurClpDirect = parseCsvNumber(rowObj, ['eur_clp', 'eurclp', 'tc_eur', 'euro_clp']);
     const eurUsd = parseCsvNumber(rowObj, ['eur_usd', 'eurusd', 'eur_usd_rate']);
+    const eurUsdResolved =
+      eurUsd !== null && eurUsd > 0
+        ? eurUsd
+        : fallbackEurUsd !== null && fallbackEurUsd > 0
+          ? fallbackEurUsd
+          : null;
     const eurClp =
       eurClpDirect !== null
         ? eurClpDirect
-        : usdClp !== null && eurUsd !== null && usdClp > 0 && eurUsd > 0
-          ? usdClp * eurUsd
+        : usdClp !== null && eurUsdResolved !== null && usdClp > 0 && eurUsdResolved > 0
+          ? usdClp * eurUsdResolved
           : null;
     const ufClp = parseCsvNumber(rowObj, ['uf_clp', 'ufclp', 'valor_uf']);
-    if (![usdClp, eurClp, ufClp].every((v) => v !== null && v > 0)) {
+    const fxMissing: Array<'usdClp' | 'eurClp' | 'ufClp'> = [];
+    const usdClpResolved =
+      usdClp !== null && usdClp > 0
+        ? usdClp
+        : Number.isFinite(Number(fallbackFx.usdClp)) && Number(fallbackFx.usdClp) > 0
+          ? Number(fallbackFx.usdClp)
+          : null;
+    const ufClpResolved =
+      ufClp !== null && ufClp > 0
+        ? ufClp
+        : Number.isFinite(Number(fallbackFx.ufClp)) && Number(fallbackFx.ufClp) > 0
+          ? Number(fallbackFx.ufClp)
+          : null;
+    const eurClpResolved =
+      eurClp !== null && eurClp > 0
+        ? eurClp
+        : Number.isFinite(Number(fallbackFx.eurClp)) && Number(fallbackFx.eurClp) > 0
+          ? Number(fallbackFx.eurClp)
+          : null;
+
+    if (usdClp === null || usdClp <= 0) fxMissing.push('usdClp');
+    if (ufClp === null || ufClp <= 0) fxMissing.push('ufClp');
+    if (eurClpDirect === null && (eurUsd === null || eurUsd <= 0)) fxMissing.push('eurClp');
+
+    if (![usdClpResolved, ufClpResolved, eurClpResolved].every((v) => v !== null && v > 0)) {
       skippedMonths.push(monthKey);
-      warnings.push(`${monthKey}: faltan USD/CLP, EUR/CLP (o EUR/USD) o UF/CLP.`);
+      warnings.push(
+        `${monthKey}: faltan TC/UF y no hay respaldo válido en ajustes para completar importación.`,
+      );
       return;
+    }
+    if (eurClpDirect === null) {
+      if (eurUsd !== null && eurUsd > 0) {
+        warnings.push(
+          `${monthKey}: EUR/CLP no venía directo, se calculó con EUR/USD del CSV.`,
+        );
+      } else if (eurUsdResolved !== null && eurUsdResolved > 0) {
+        warnings.push(
+          `${monthKey}: EUR/CLP no venía en CSV, se estimó con EUR/USD de respaldo (${eurUsdResolved.toFixed(4)}).`,
+        );
+      }
     }
 
     const records = buildHistoricalMonthRecords(monthKey, rowObj);
@@ -2899,9 +2970,9 @@ export const importHistoricalClosuresFromCsv = async (
     }
 
     const fx: WealthFxRates = {
-      usdClp: Math.round(Number(usdClp)),
-      eurClp: Math.round(Number(eurClp)),
-      ufClp: Math.round(Number(ufClp)),
+      usdClp: Math.round(Number(usdClpResolved)),
+      eurClp: Math.round(Number(eurClpResolved)),
+      ufClp: Math.round(Number(ufClpResolved)),
     };
 
     const dedupedRecords = dedupeLatestByAsset(records);
@@ -2915,6 +2986,7 @@ export const importHistoricalClosuresFromCsv = async (
       closedAt: parseCsvClosedAt(rowObj, monthKey),
       summary,
       fxRates: fx,
+      fxMissing: fxMissing.length ? fxMissing : undefined,
       records: dedupedRecords.length ? dedupedRecords : undefined,
     };
 
