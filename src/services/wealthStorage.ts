@@ -115,11 +115,13 @@ const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
 const WEALTH_FX_LAST_AUTO_ATTEMPT_DAY_KEY = 'wealth_fx_last_auto_attempt_day_v1';
+const WEALTH_INCLUDE_RISK_CAPITAL_KEY = 'wealth_include_risk_capital_totals_v1';
 const LEGACY_FINTOC_LINK_TOKEN_KEY = 'aurum.fintoc.link_token';
 const LEGACY_FINTOC_BANK_TOKENS_KEY = 'aurum.fintoc.bank_tokens.v1';
 export const FX_RATES_UPDATED_EVENT = 'aurum:fx-rates-updated';
 export const FX_LIVE_META_UPDATED_EVENT = 'aurum:fx-live-meta-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
+export const RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT = 'aurum:risk-capital-totals-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 
@@ -347,6 +349,52 @@ const normalizeLabelKey = (value: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+export const RISK_CAPITAL_LABEL_CLP = 'Capital de riesgo CLP';
+export const RISK_CAPITAL_LABEL_USD = 'Capital de riesgo USD';
+export const RISK_CAPITAL_LABELS = [RISK_CAPITAL_LABEL_CLP, RISK_CAPITAL_LABEL_USD] as const;
+const RISK_CAPITAL_LABEL_KEYS = new Set(RISK_CAPITAL_LABELS.map((label) => normalizeLabelKey(label)));
+
+export const isRiskCapitalInvestmentLabel = (label: string) =>
+  RISK_CAPITAL_LABEL_KEYS.has(normalizeLabelKey(label));
+
+export const filterRecordsByRiskCapitalPreference = (
+  records: WealthRecord[],
+  includeRiskCapital: boolean,
+) => {
+  if (includeRiskCapital) return records;
+  return records.filter(
+    (record) =>
+      !(
+        record.block === 'investment' &&
+        isRiskCapitalInvestmentLabel(record.label)
+      ),
+  );
+};
+
+export const loadIncludeRiskCapitalInTotals = () => {
+  try {
+    const raw = String(localStorage.getItem(WEALTH_INCLUDE_RISK_CAPITAL_KEY) || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'on';
+  } catch {
+    return false;
+  }
+};
+
+export const saveIncludeRiskCapitalInTotals = (includeRiskCapital: boolean) => {
+  try {
+    localStorage.setItem(WEALTH_INCLUDE_RISK_CAPITAL_KEY, includeRiskCapital ? '1' : '0');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent(RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT, {
+          detail: { includeRiskCapital },
+        }),
+      );
+    }
+  } catch {
+    // ignore
+  }
+};
 
 export const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
   const label = normalizeText(record.label);

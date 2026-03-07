@@ -3,12 +3,14 @@ import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import {
   buildWealthNetBreakdown,
+  filterRecordsByRiskCapitalPreference,
   WealthCurrency,
   WealthFxRates,
   WealthNetBreakdownClp,
   WealthRecord,
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
+  loadIncludeRiskCapitalInTotals,
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
   isSyntheticAggregateRecord,
@@ -16,6 +18,7 @@ import {
   loadClosures,
   loadFxRates,
   loadWealthRecords,
+  RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
 
@@ -640,6 +643,9 @@ const BreakdownCard: React.FC<{
 export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('hoy');
   const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
+  const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
+    loadIncludeRiskCapitalInTotals(),
+  );
   const [currentFx, setCurrentFx] = useState<WealthFxRates>(() => loadFxRates());
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
@@ -672,6 +678,7 @@ export const ClosingAurum: React.FC = () => {
     const refreshLocal = () => {
       setCurrentFx(loadFxRates());
       setMonthKey(currentMonthKey());
+      setIncludeRiskCapitalInTotals(loadIncludeRiskCapitalInTotals());
       setRevision((v) => v + 1);
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
@@ -709,12 +716,20 @@ export const ClosingAurum: React.FC = () => {
     const onWealthUpdated = () => {
       refreshLocal();
     };
+    const onRiskCapitalPreference = () => {
+      setIncludeRiskCapitalInTotals(loadIncludeRiskCapitalInTotals());
+      setRevision((v) => v + 1);
+    };
 
     window.addEventListener('focus', onFocus);
     window.addEventListener('storage', onStorage);
     window.addEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshLocal as EventListener);
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
+    window.addEventListener(
+      RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+      onRiskCapitalPreference as EventListener,
+    );
     document.addEventListener('visibilitychange', onVisibility);
     void refreshFromCloudIfNeeded(true);
 
@@ -724,6 +739,10 @@ export const ClosingAurum: React.FC = () => {
       window.removeEventListener(BOTTOM_NAV_RETAP_EVENT, onBottomNavRetap as EventListener);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshLocal as EventListener);
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
+      window.removeEventListener(
+        RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+        onRiskCapitalPreference as EventListener,
+      );
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
@@ -751,7 +770,11 @@ export const ClosingAurum: React.FC = () => {
     setClosurePage(page);
   }, [closures, selectedClosureMonthKey]);
 
-  const currentRecords = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
+  const currentRecordsRaw = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
+  const currentRecords = useMemo(
+    () => filterRecordsByRiskCapitalPreference(currentRecordsRaw, includeRiskCapitalInTotals),
+    [currentRecordsRaw, includeRiskCapitalInTotals],
+  );
   const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
   const missingCriticalCount = useMemo(() => {
     const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_CORE_FOR_NET];
@@ -783,8 +806,38 @@ export const ClosingAurum: React.FC = () => {
     safeClosurePage * CLOSURES_PER_PAGE + CLOSURES_PER_PAGE,
   );
 
-  const selectedClosureRecords = selectedClosure?.records || null;
-  const compareClosureForSelectedRecords = compareClosureForSelected?.records || null;
+  const closureDisplayNetByMonth = useMemo(() => {
+    const map = new Map<string, number>();
+    closures.forEach((closure) => {
+      const fx = closure.fxRates || currentFx;
+      const records =
+        closure.records?.length
+          ? filterRecordsByRiskCapitalPreference(closure.records, includeRiskCapitalInTotals)
+          : null;
+      const netClp = records?.length
+        ? buildNetBreakdown(records, fx).netClp
+        : closure.summary.netConsolidatedClp;
+      map.set(closure.monthKey, fromClp(netClp, currency, fx));
+    });
+    return map;
+  }, [closures, currentFx, includeRiskCapitalInTotals, currency]);
+
+  const selectedClosureRecordsRaw = selectedClosure?.records || null;
+  const compareClosureForSelectedRecordsRaw = compareClosureForSelected?.records || null;
+  const selectedClosureRecords = useMemo(
+    () =>
+      selectedClosureRecordsRaw
+        ? filterRecordsByRiskCapitalPreference(selectedClosureRecordsRaw, includeRiskCapitalInTotals)
+        : null,
+    [selectedClosureRecordsRaw, includeRiskCapitalInTotals],
+  );
+  const compareClosureForSelectedRecords = useMemo(
+    () =>
+      compareClosureForSelectedRecordsRaw
+        ? filterRecordsByRiskCapitalPreference(compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals)
+        : null,
+    [compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals],
+  );
   const selectedClosureFx = selectedClosure?.fxRates || currentFx;
   const compareClosureForSelectedFx = compareClosureForSelected?.fxRates || currentFx;
 
@@ -809,7 +862,14 @@ export const ClosingAurum: React.FC = () => {
 
   const compareClosureForHoy =
     latestClosure && latestClosure.monthKey === monthKey ? previousClosureForLatest : latestClosure;
-  const compareClosureForHoyRecords = compareClosureForHoy?.records || null;
+  const compareClosureForHoyRecordsRaw = compareClosureForHoy?.records || null;
+  const compareClosureForHoyRecords = useMemo(
+    () =>
+      compareClosureForHoyRecordsRaw
+        ? filterRecordsByRiskCapitalPreference(compareClosureForHoyRecordsRaw, includeRiskCapitalInTotals)
+        : null,
+    [compareClosureForHoyRecordsRaw, includeRiskCapitalInTotals],
+  );
   const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
   const compareClosureForHoyBreakdown = useMemo(() => {
     if (!compareClosureForHoyRecords?.length) return null;
@@ -822,12 +882,16 @@ export const ClosingAurum: React.FC = () => {
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .map((c) => {
         const fx = c.fxRates || currentFx;
-        const breakdown = c.records?.length ? buildNetBreakdown(c.records, fx) : null;
+        const records =
+          c.records?.length
+            ? filterRecordsByRiskCapitalPreference(c.records, includeRiskCapitalInTotals)
+            : null;
+        const breakdown = records?.length ? buildNetBreakdown(records, fx) : null;
         return { key: c.monthKey, label: monthLabel(c.monthKey), kind: 'cierre', net: breakdown ? fromClp(breakdown.netClp, currency, fx) : null };
       });
     rows.push({ key: monthKey, label: monthLabel(monthKey), kind: 'hoy', net: fromClp(currentBreakdown.netClp, currency, currentFx) });
     return rows.sort((a, b) => a.key.localeCompare(b.key));
-  }, [closures, currency, monthKey, currentBreakdown.netClp, currentFx]);
+  }, [closures, currency, monthKey, currentBreakdown.netClp, currentFx, includeRiskCapitalInTotals]);
 
   const evolutionWithReturns = useMemo(
     () =>
@@ -842,15 +906,30 @@ export const ClosingAurum: React.FC = () => {
   );
 
   const closureHistoryVersions = selectedClosure?.previousVersions || [];
+  const closureVersionNetDisplayById = useMemo(() => {
+    const map = new Map<string, number>();
+    closureHistoryVersions.forEach((version) => {
+      const fx = version.fxRates || currentFx;
+      const records =
+        version.records?.length
+          ? filterRecordsByRiskCapitalPreference(version.records, includeRiskCapitalInTotals)
+          : null;
+      const netClp = records?.length
+        ? buildNetBreakdown(records, fx).netClp
+        : version.summary.netConsolidatedClp;
+      map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, fx));
+    });
+    return map;
+  }, [closureHistoryVersions, currentFx, includeRiskCapitalInTotals, currency]);
   const hoyMonthHeadlineKey = useMemo(() => {
     if (!latestClosure) return monthKey;
     return monthKey <= latestClosure.monthKey ? nextMonthKey(latestClosure.monthKey) : monthKey;
   }, [latestClosure, monthKey]);
 
   const openClosureEditModal = () => {
-    if (!selectedClosure || !selectedClosureRecords?.length) return;
+    if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
     const nextDraft = CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
-      const existing = findRecordByCanonicalLabel(selectedClosureRecords, field.canonicalLabel);
+      const existing = findRecordByCanonicalLabel(selectedClosureRecordsRaw, field.canonicalLabel);
       acc[field.key] = existing ? String(existing.amount) : '';
       return acc;
     }, {} as Record<EditableFieldKey, string>);
@@ -865,7 +944,7 @@ export const ClosingAurum: React.FC = () => {
   };
 
   const applyClosureEdit = () => {
-    if (!selectedClosure || !selectedClosureRecords?.length) return;
+    if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
 
     const usdClp = parseRateInput(closureEditRates.usdClp);
     const eurUsd = parseRateInput(closureEditRates.eurUsd);
@@ -881,7 +960,7 @@ export const ClosingAurum: React.FC = () => {
     };
 
     const nextRecords = dedupeClosureRecords(
-      selectedClosureRecords.map((record) => ({ ...record })),
+      selectedClosureRecordsRaw.map((record) => ({ ...record })),
     );
 
     const snapshotDate = `${selectedClosure.monthKey}-01`;
@@ -1099,7 +1178,8 @@ export const ClosingAurum: React.FC = () => {
                             <div className="text-[10px] uppercase tracking-wide">{monthLabel(closure.monthKey)}</div>
                             <div className="mt-0.5 text-[11px] font-semibold">
                               {formatCurrency(
-                                fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
+                                closureDisplayNetByMonth.get(closure.monthKey) ??
+                                  fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
                                 currency,
                               )}
                             </div>
@@ -1109,7 +1189,7 @@ export const ClosingAurum: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                {!selectedClosureRecords?.length && (
+                {!selectedClosureRecordsRaw?.length && (
                   <div className="mt-3 text-[11px] text-amber-700">
                     Este cierre no tiene detalle de registros para edición rápida.
                   </div>
@@ -1141,7 +1221,7 @@ export const ClosingAurum: React.FC = () => {
                       size="sm"
                       variant="outline"
                       onClick={openClosureEditModal}
-                      disabled={!selectedClosureRecords?.length}
+                      disabled={!selectedClosureRecordsRaw?.length}
                     >
                       Editar
                     </Button>
@@ -1168,7 +1248,8 @@ export const ClosingAurum: React.FC = () => {
                         <div className="text-[11px]">
                           Neto:{' '}
                           {formatCurrency(
-                            fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
+                            closureVersionNetDisplayById.get(`${version.id}-${version.closedAt}`) ??
+                              fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
                             currency,
                           )}
                         </div>

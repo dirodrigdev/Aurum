@@ -31,17 +31,24 @@ import {
   isSyntheticAggregateRecord,
   WEALTH_DATA_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
+  filterRecordsByRiskCapitalPreference,
   hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
+  isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
   localYmd,
   loadClosures,
+  loadIncludeRiskCapitalInTotals,
   loadFxRates,
   loadBankTokens,
   loadInvestmentInstruments,
   loadWealthRecords,
+  RISK_CAPITAL_LABEL_CLP,
+  RISK_CAPITAL_LABEL_USD,
+  RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   removeWealthRecordForMonthAsset,
   saveBankTokens,
+  saveIncludeRiskCapitalInTotals,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
@@ -54,6 +61,10 @@ const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
+const DEFAULT_OPTIONAL_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
+  { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
+  { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
+];
 
 const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
@@ -408,6 +419,18 @@ const monthPoints = (closures: WealthMonthlyClosure[], currentKey: string, curre
     .map(([key, net]) => ({ key, net }));
 };
 
+const closureNetForTotals = (
+  closure: WealthMonthlyClosure,
+  includeRiskCapital: boolean,
+  fallbackFx: { usdClp: number; eurClp: number; ufClp: number },
+) => {
+  if (closure.records?.length) {
+    const filtered = filterRecordsByRiskCapitalPreference(closure.records, includeRiskCapital);
+    return buildWealthNetBreakdown(filtered, closure.fxRates || fallbackFx).netClp;
+  }
+  return closure.summary.netConsolidatedClp;
+};
+
 const toCloseDateFromMonthKey = (monthKey: string) => {
   const [year, month] = monthKey.split('-').map(Number);
   return new Date(year, (month || 1) - 1, 1, 12, 0, 0, 0);
@@ -501,6 +524,7 @@ interface ChecklistRow {
   name: string;
   status: 'actualizado' | 'mes_anterior' | 'estimado' | 'pendiente' | 'excluido';
   detail: string;
+  isOptional?: boolean;
   isCustomInstrument?: boolean;
   instrumentId?: string;
   context?: InvestmentSourceContext;
@@ -827,12 +851,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     if (section !== 'investment') return baseRows;
 
     const customRows: ChecklistRow[] = investmentInstruments.map((instrument) => {
+      const isOptional = isRiskCapitalInvestmentLabel(instrument.label);
       const isExcluded = (instrument.excludedMonths || []).includes(monthKey);
       if (isExcluded) {
         return {
           name: instrument.label,
           status: 'excluido',
           detail: `No considerado en ${monthLabel(monthKey).toLowerCase()}`,
+          isOptional,
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
@@ -844,7 +870,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         return {
           name: instrument.label,
           status: 'pendiente',
-          detail: 'Sin valor este mes',
+          detail: isOptional ? 'Sin valor este mes (opcional)' : 'Sin valor este mes',
+          isOptional,
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
@@ -855,6 +882,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           name: instrument.label,
           status: 'mes_anterior',
           detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
+          isOptional,
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
@@ -864,6 +892,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         name: instrument.label,
         status: 'actualizado',
         detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
+        isOptional,
         isCustomInstrument: true,
         instrumentId: instrument.id,
         context: buildInvestmentContext(instrument.label, instrument),
@@ -1087,7 +1116,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const isSectionComplete = useMemo(() => {
-    return checklistRows.every((row) => row.status !== 'pendiente');
+    return checklistRows.every((row) => row.status !== 'pendiente' || row.isOptional);
   }, [checklistRows]);
 
   const sortedChecklistRows = useMemo(() => {
@@ -1102,18 +1131,20 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }, [checklistRows]);
 
   const missingRowsForCompose = useMemo(
-    () => sortedChecklistRows.filter((row) => row.status === 'pendiente').map((row) => row.name),
+    () => sortedChecklistRows.filter((row) => row.status === 'pendiente' && !row.isOptional).map((row) => row.name),
     [sortedChecklistRows],
   );
 
   const checklistSummary = useMemo(() => {
-    const total = checklistRows.length;
-    const pending = checklistRows.filter((row) => row.status === 'pendiente').length;
-    const excluded = checklistRows.filter((row) => row.status === 'excluido').length;
-    const notUpdated = checklistRows.filter((row) => row.status === 'mes_anterior' || row.status === 'estimado').length;
-    const updated = checklistRows.filter((row) => row.status === 'actualizado').length;
+    const requiredRows = checklistRows.filter((row) => !row.isOptional);
+    const total = requiredRows.length;
+    const pending = requiredRows.filter((row) => row.status === 'pendiente').length;
+    const excluded = requiredRows.filter((row) => row.status === 'excluido').length;
+    const notUpdated = requiredRows.filter((row) => row.status === 'mes_anterior' || row.status === 'estimado').length;
+    const updated = requiredRows.filter((row) => row.status === 'actualizado').length;
     const completed = total - pending - excluded;
-    return { total, pending, excluded, notUpdated, updated, completed };
+    const optionalPending = checklistRows.filter((row) => row.isOptional && row.status === 'pendiente').length;
+    return { total, pending, excluded, notUpdated, updated, completed, optionalPending };
   }, [checklistRows]);
 
   const closeLoadPanel = () => {
@@ -1832,6 +1863,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <div className="text-[11px] text-slate-600">
           Completadas {checklistSummary.completed} de {checklistSummary.total}
           {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
+          {checklistSummary.optionalPending ? ` · Opcionales ${checklistSummary.optionalPending}` : ''}
           {checklistSummary.notUpdated ? ` · No actualizadas ${checklistSummary.notUpdated}` : ''}
           {checklistSummary.updated ? ` · Actualizadas ${checklistSummary.updated}` : ''}
           {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
@@ -1900,7 +1932,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <div>{row.name}</div>
                 <div className="text-[11px] text-slate-500">{row.detail}</div>
               </div>
-              {row.status === 'pendiente' && (
+              {row.status === 'pendiente' && !row.isOptional && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1926,7 +1958,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
                 </Button>
               )}
-              {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
+              {row.status === 'pendiente' && !row.isOptional && <span className="text-red-700">Pendiente</span>}
+              {row.status === 'pendiente' && row.isOptional && <span className="text-slate-500">Opcional</span>}
               {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
               {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
               {row.status === 'actualizado' && (
@@ -2350,6 +2383,9 @@ export const Patrimonio: React.FC = () => {
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
 
   const [showNetWorth, setShowNetWorth] = useState(false);
+  const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
+    loadIncludeRiskCapitalInTotals(),
+  );
   const [visibleMainCards, setVisibleMainCards] = useState<Record<MainSection, boolean>>({
     investment: false,
     real_estate: false,
@@ -2365,6 +2401,10 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
   }, [displayCurrency]);
+
+  useEffect(() => {
+    saveIncludeRiskCapitalInTotals(includeRiskCapitalInTotals);
+  }, [includeRiskCapitalInTotals]);
 
   useEffect(() => {
     setCarryMessage('');
@@ -2411,15 +2451,21 @@ export const Patrimonio: React.FC = () => {
       refreshFromLocal();
     };
     const refreshFx = () => setFx(loadFxRates());
+    const refreshRiskToggle = () => setIncludeRiskCapitalInTotals(loadIncludeRiskCapitalInTotals());
 
     window.addEventListener('storage', onStorage);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
+    window.addEventListener(RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT, refreshRiskToggle as EventListener);
 
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshFx as EventListener);
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
+      window.removeEventListener(
+        RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+        refreshRiskToggle as EventListener,
+      );
     };
   }, []);
 
@@ -2440,11 +2486,50 @@ export const Patrimonio: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!hydrationReady) return;
+    const existing = new Set(investmentInstruments.map((item) => normalizeForMatch(item.label)));
+    const missingDefaults = DEFAULT_OPTIONAL_INVESTMENT_INSTRUMENTS.filter(
+      (item) => !existing.has(normalizeForMatch(item.label)),
+    );
+    if (!missingDefaults.length) return;
+    missingDefaults.forEach((item) => {
+      upsertInvestmentInstrument({
+        label: item.label,
+        currency: item.currency,
+        note: 'Opcional: capital de riesgo',
+      });
+    });
+    setInvestmentInstruments(loadInvestmentInstruments());
+  }, [hydrationReady, investmentInstruments]);
+
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
-  const summary = useMemo(() => summarizeWealth(monthRecords, fx), [monthRecords, fx]);
+  const monthRecordsForTotals = useMemo(
+    () => filterRecordsByRiskCapitalPreference(monthRecords, includeRiskCapitalInTotals),
+    [monthRecords, includeRiskCapitalInTotals],
+  );
+  const summary = useMemo(() => summarizeWealth(monthRecordsForTotals, fx), [monthRecordsForTotals, fx]);
+
+  const closureNetByMonth = useMemo(() => {
+    const map = new Map<string, number>();
+    closures.forEach((closure) => {
+      map.set(closure.monthKey, closureNetForTotals(closure, includeRiskCapitalInTotals, fx));
+    });
+    return map;
+  }, [closures, includeRiskCapitalInTotals, fx]);
 
   const metrics = useMemo(() => {
-    const points = monthPoints(closures, monthKey, summary.netConsolidatedClp);
+    const points = monthPoints(
+      closures.map((closure) => ({
+        ...closure,
+        summary: {
+          ...closure.summary,
+          netConsolidatedClp: closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp,
+        },
+      })),
+      monthKey,
+      summary.netConsolidatedClp,
+    );
     const idx = points.findIndex((p) => p.key === monthKey);
     const prev = idx > 0 ? points[idx - 1] : null;
     const monthIncrease = prev ? points[idx].net - prev.net : null;
@@ -2457,19 +2542,19 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, monthKey, summary.netConsolidatedClp]);
+  }, [closures, closureNetByMonth, monthKey, summary.netConsolidatedClp]);
 
   const latestClosure = closures[0] || null;
   const previousClosure = closures[1] || null;
 
   const growthVsPrevClosure = useMemo(() => {
     if (!latestClosure || !previousClosure) return null;
-    const current = latestClosure.summary.netConsolidatedClp;
-    const prev = previousClosure.summary.netConsolidatedClp;
+    const current = closureNetByMonth.get(latestClosure.monthKey) ?? latestClosure.summary.netConsolidatedClp;
+    const prev = closureNetByMonth.get(previousClosure.monthKey) ?? previousClosure.summary.netConsolidatedClp;
     const abs = current - prev;
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
-  }, [latestClosure, previousClosure]);
+  }, [closureNetByMonth, latestClosure, previousClosure]);
   const selectedClosureForDraft = useMemo(
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
@@ -2485,9 +2570,9 @@ export const Patrimonio: React.FC = () => {
   }, [latestClosure, closeMonthDraft]);
 
   const sectionAmounts = useMemo(() => {
-    const breakdown = buildWealthNetBreakdown(monthRecords, fx);
+    const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
 
-    const allBankRecords = monthRecords.filter(
+    const allBankRecords = monthRecordsForTotals.filter(
       (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record),
     );
     const detailedBankRecords = allBankRecords.filter((record) =>
@@ -2535,7 +2620,7 @@ export const Patrimonio: React.FC = () => {
       nonMortgageDebt: breakdown.nonMortgageDebtClp,
       financialNet: bankClp - breakdown.nonMortgageDebtClp,
     };
-  }, [monthRecords, fx]);
+  }, [monthRecordsForTotals, fx]);
 
   const sectionAmountsDisplay = useMemo(() => {
     const convert = (valueClp: number) => fromClp(valueClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
@@ -2583,8 +2668,9 @@ export const Patrimonio: React.FC = () => {
 
   const latestClosureDisplay = useMemo(() => {
     if (!latestClosure) return null;
-    return fromClp(latestClosure.summary.netConsolidatedClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
-  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, latestClosure]);
+    const net = closureNetByMonth.get(latestClosure.monthKey) ?? latestClosure.summary.netConsolidatedClp;
+    return fromClp(net, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
+  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, latestClosure, closureNetByMonth]);
 
   const growthVsPrevClosureDisplay = useMemo(() => {
     if (!growthVsPrevClosure) return null;
@@ -2752,6 +2838,7 @@ export const Patrimonio: React.FC = () => {
     });
 
     investmentInstruments.forEach((instrument) => {
+      if (isRiskCapitalInvestmentLabel(instrument.label)) return;
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
       const exists = targetRecords.some(
         (record) =>
@@ -3089,6 +3176,18 @@ export const Patrimonio: React.FC = () => {
                   {curr}
                 </button>
               ))}
+              <button
+                type="button"
+                className={`px-2 py-1 rounded-lg border text-[10px] leading-tight ${
+                  includeRiskCapitalInTotals
+                    ? 'bg-[#c59a6c]/25 text-[#f3eadb] border-[#c59a6c]/60'
+                    : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/35'
+                }`}
+                onClick={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+                title="Incluir o excluir capital de riesgo en todos los totales"
+              >
+                Riesgo {includeRiskCapitalInTotals ? 'ON' : 'OFF'}
+              </button>
             </div>
           </div>
         </div>
