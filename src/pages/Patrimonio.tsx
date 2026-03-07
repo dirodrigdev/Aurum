@@ -2614,26 +2614,14 @@ export const Patrimonio: React.FC = () => {
     setVisibleMainCards((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  const hiddenAmountBlock = (tone: 'amber' | 'green') => {
-    const toneClass =
+  const hiddenHint = (tone: 'net' | 'amber' | 'green') => {
+    const color =
       tone === 'amber'
-        ? 'bg-[#fff3ea]/24'
-        : 'bg-[#ebfff1]/24';
-    return (
-      <span className={`relative block h-[52px] w-full overflow-hidden rounded-xl ${toneClass}`}>
-        <span className="absolute inset-0 bg-white/18 backdrop-blur-[10px]" />
-        <span className="absolute inset-x-3 top-1/2 h-7 -translate-y-1/2 rounded-lg bg-white/20 blur-lg" />
-      </span>
-    );
-  };
-
-  const hiddenNetWorthBlock = () => {
-    return (
-      <span className="relative block h-[62px] w-full overflow-hidden rounded-xl bg-[#f6efe3]/16">
-        <span className="absolute inset-0 bg-[#f3eadb]/20 backdrop-blur-[11px]" />
-        <span className="absolute inset-x-4 top-1/2 h-8 -translate-y-1/2 rounded-lg bg-[#f3eadb]/22 blur-xl" />
-      </span>
-    );
+        ? 'text-[#5a2f16]/70'
+        : tone === 'green'
+          ? 'text-[#1f3e2d]/70'
+          : 'text-[#f3eadb]/80';
+    return <span className={`text-sm font-medium ${color}`}>Toca para ver</span>;
   };
 
   const refreshRecords = () => setRecords(loadWealthRecords());
@@ -3051,18 +3039,20 @@ export const Patrimonio: React.FC = () => {
                 type="button"
               >
                 <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
-                <div className="mt-1 text-3xl font-bold leading-none tracking-tight flex items-center gap-2">
+                <div className="mt-1 min-h-[44px] flex items-center">
                   {showNetWorth ? (
-                    <>
+                    <span className="inline-flex items-center gap-2 text-3xl font-bold leading-none tracking-tight transition-all duration-200 ease-out opacity-100 translate-y-0">
                       <span>{metricsDisplay.netWorth}</span>
                       {missingCriticalCount > 0 && (
                         <span className="rounded-full border border-[#c59a6c]/70 bg-[#a97747]/20 px-2 py-0.5 text-[10px] font-semibold text-[#f3eadb]">
                           Parcial
                         </span>
                       )}
-                    </>
+                    </span>
                   ) : (
-                    hiddenNetWorthBlock()
+                    <span className="transition-all duration-200 ease-out opacity-100 translate-y-0">
+                      {hiddenHint('net')}
+                    </span>
                   )}
                 </div>
               </button>
@@ -3104,7 +3094,7 @@ export const Patrimonio: React.FC = () => {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition min-h-[212px]">
           <div className="flex items-start justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
@@ -3120,12 +3110,18 @@ export const Patrimonio: React.FC = () => {
           </div>
           <button
             type="button"
-            className="mt-2 w-full text-left text-2xl font-bold leading-tight text-[#5a2f16]"
+            className="mt-2 w-full min-h-[52px] text-left text-2xl font-bold leading-tight text-[#5a2f16]"
             onClick={() => toggleMainCardVisibility('investment')}
           >
-            {visibleMainCards.investment
-              ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
-              : hiddenAmountBlock('amber')}
+            <span
+              className={`transition-all duration-200 ease-out ${
+                visibleMainCards.investment ? 'opacity-100 translate-y-0' : 'opacity-100 translate-y-0 text-base'
+              }`}
+            >
+              {visibleMainCards.investment
+                ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
+                : hiddenHint('amber')}
+            </span>
           </button>
           <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en {displayCurrency}</div>
           <button
@@ -3154,12 +3150,18 @@ export const Patrimonio: React.FC = () => {
             <>
               <button
                 type="button"
-                className="mt-2 w-full text-left text-2xl font-bold leading-tight text-[#1f3e2d]"
+                className="mt-2 w-full min-h-[52px] text-left text-2xl font-bold leading-tight text-[#1f3e2d]"
                 onClick={() => toggleMainCardVisibility('real_estate')}
               >
-                {visibleMainCards.real_estate
-                  ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
-                  : hiddenAmountBlock('green')}
+                <span
+                  className={`transition-all duration-200 ease-out ${
+                    visibleMainCards.real_estate ? 'opacity-100 translate-y-0' : 'opacity-100 translate-y-0 text-base'
+                  }`}
+                >
+                  {visibleMainCards.real_estate
+                    ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
+                    : hiddenHint('green')}
+                </span>
               </button>
               <div className="mt-1 text-[11px] text-[#275238]">Consolidado en {displayCurrency}</div>
             </>
@@ -3174,31 +3176,31 @@ export const Patrimonio: React.FC = () => {
             Entrar <ArrowRight size={13} />
           </button>
         </div>
+      </div>
 
-        <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-4 text-left shadow-[0_10px_22px_rgba(70,120,170,0.18)] transition min-h-[212px]">
-          <div className="flex items-start justify-between gap-2">
-            <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
-              <Building2 size={16} /> Bancos
-            </div>
-            <Wallet size={18} className="mt-0.5 text-sky-700" />
+      <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-4 text-left shadow-[0_10px_22px_rgba(70,120,170,0.18)] transition">
+        <div className="flex items-start justify-between gap-3">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
+            <Building2 size={16} /> Bancos (liquidez)
           </div>
-          <div className="mt-2 min-w-0 text-left text-2xl font-bold leading-tight text-sky-900 break-words">
-            {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
-          </div>
-          <div className="mt-1 text-[11px] text-sky-700">
-            Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
-          </div>
-          <div className="text-[11px] text-sky-800/90">
-            Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
-          </div>
-          <button
-            type="button"
-            className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
-            onClick={() => setActiveSection('bank')}
-          >
-            Entrar <ArrowRight size={13} />
-          </button>
+          <Wallet size={18} className="mt-0.5 text-sky-700" />
         </div>
+        <div className="mt-2 min-w-0 text-left text-2xl font-bold leading-tight text-sky-900 break-words">
+          {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
+        </div>
+        <div className="mt-1 text-[11px] text-sky-700">
+          Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
+        </div>
+        <div className="text-[11px] text-sky-800/90">
+          Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
+        </div>
+        <button
+          type="button"
+          className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
+          onClick={() => setActiveSection('bank')}
+        >
+          Entrar <ArrowRight size={13} />
+        </button>
       </div>
 
       <Card className="p-4 space-y-3">

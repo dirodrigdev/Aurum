@@ -1184,10 +1184,11 @@ const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: s
 };
 
 export const refreshFxRatesFromLive = async (
-  options?: { force?: boolean },
+  options?: { force?: boolean; recordErrorMeta?: boolean },
 ): Promise<{ updated: boolean; rates: WealthFxRates; source: string; fetchedAt: string; skipped?: boolean }> => {
   const today = localYmd();
   const force = !!options?.force;
+  const recordErrorMeta = options?.recordErrorMeta ?? true;
   const current = loadFxRates();
   const previousMeta = loadFxLiveSyncMeta();
 
@@ -1219,12 +1220,14 @@ export const refreshFxRatesFromLive = async (
     return { updated: changed, rates: live.rates, source: live.source, fetchedAt: live.fetchedAt };
   } catch (err: any) {
     const message = String(err?.message || 'No pude actualizar TC/UF en línea');
-    saveFxLiveSyncMeta({
-      source: 'fuentes-automaticas',
-      fetchedAt: nowIso(),
-      status: 'error',
-      message,
-    });
+    if (recordErrorMeta) {
+      saveFxLiveSyncMeta({
+        source: 'fuentes-automaticas',
+        fetchedAt: nowIso(),
+        status: 'error',
+        message,
+      });
+    }
     throw new Error(message);
   }
 };
@@ -1251,7 +1254,7 @@ export const refreshFxRatesDailyIfNeeded = async (): Promise<{
   writeFxLastAutoAttemptDay(today);
 
   try {
-    const result = await refreshFxRatesFromLive();
+    const result = await refreshFxRatesFromLive({ recordErrorMeta: false });
     return { ok: true, updated: result.updated, skipped: result.skipped };
   } catch (err: any) {
     return { ok: false, updated: false, message: String(err?.message || 'Error actualizando TC/UF') };

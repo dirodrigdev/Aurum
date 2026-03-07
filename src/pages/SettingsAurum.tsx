@@ -235,11 +235,11 @@ export const SettingsAurum: React.FC = () => {
         </div>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+      <div className="space-y-4">
         <Card className="space-y-4 border border-emerald-100 bg-gradient-to-br from-emerald-50/90 to-white p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-900">Sincronización y mercado</div>
+              <div className="text-sm font-semibold text-slate-900 whitespace-nowrap">Sincronización y mercado</div>
               <div className="text-xs text-slate-600">Sesión, nube y tipos de cambio.</div>
             </div>
             <div className="rounded-full border border-emerald-200 bg-emerald-100/70 px-2 py-1 text-[11px] font-medium text-emerald-800">
@@ -389,7 +389,7 @@ export const SettingsAurum: React.FC = () => {
         <Card className="space-y-4 border border-amber-100 bg-gradient-to-br from-amber-50/85 to-white p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-900">Respaldo e historial</div>
+              <div className="text-sm font-semibold text-slate-900 whitespace-nowrap">Respaldo e historial</div>
               <div className="text-xs text-slate-600">Backups e importación de cierres.</div>
             </div>
             <div className="rounded-full border border-amber-200 bg-amber-100/80 px-2 py-1 text-[11px] font-medium text-amber-800">
