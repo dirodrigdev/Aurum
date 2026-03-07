@@ -571,7 +571,9 @@ const BreakdownCard: React.FC<{
               <div className="mt-1 flex items-end justify-between gap-2">
                 <span className="text-[11px] text-slate-500">Subtotal</span>
                 <div className="text-right">
-                  <div className="text-sm font-bold">{formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}</div>
+                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
+                    {formatCurrency(fromClp(financialCurrentClp, currency, fx), currency)}
+                  </div>
                   {financialHasCompare && (
                     <div className={`text-[10px] ${financialDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {financialDeltaDisplay >= 0 ? '+' : ''}
@@ -584,36 +586,40 @@ const BreakdownCard: React.FC<{
                 </div>
               </div>
             </div>
-            <div className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2">
-              <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
-              <div className="mt-1 flex items-end justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Subtotal</span>
-                <div className="text-right">
-                  <div className="text-sm font-bold">{formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}</div>
-                  {othersHasCompare && (
-                    <div className={`text-[10px] ${othersDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {othersDeltaDisplay >= 0 ? '+' : ''}
-                      {formatCurrency(othersDeltaDisplay, currency)}
-                      {othersPctDisplay !== null
-                        ? ` (${othersPctDisplay >= 0 ? '+' : ''}${othersPctDisplay.toFixed(2)}%)`
-                        : ''}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
               <div className="text-[11px] font-semibold text-emerald-800">Inversiones previsionales</div>
               <div className="mt-1 flex items-end justify-between gap-2">
                 <span className="text-[11px] text-slate-500">Subtotal</span>
                 <div className="text-right">
-                  <div className="text-sm font-bold">{formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}</div>
+                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
+                    {formatCurrency(fromClp(previsionalCurrentClp, currency, fx), currency)}
+                  </div>
                   {previsionalHasCompare && (
                     <div className={`text-[10px] ${previsionalDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {previsionalDeltaDisplay >= 0 ? '+' : ''}
                       {formatCurrency(previsionalDeltaDisplay, currency)}
                       {previsionalPctDisplay !== null
                         ? ` (${previsionalPctDisplay >= 0 ? '+' : ''}${previsionalPctDisplay.toFixed(2)}%)`
+                        : ''}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-300 bg-white px-2.5 py-2">
+              <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
+              <div className="mt-1 flex items-end justify-between gap-2">
+                <span className="text-[11px] text-slate-500">Subtotal</span>
+                <div className="text-right">
+                  <div className="text-[clamp(1rem,1.2vw,1.4rem)] leading-tight font-bold tabular-nums">
+                    {formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}
+                  </div>
+                  {othersHasCompare && (
+                    <div className={`text-[10px] ${othersDeltaDisplay >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {othersDeltaDisplay >= 0 ? '+' : ''}
+                      {formatCurrency(othersDeltaDisplay, currency)}
+                      {othersPctDisplay !== null
+                        ? ` (${othersPctDisplay >= 0 ? '+' : ''}${othersPctDisplay.toFixed(2)}%)`
                         : ''}
                     </div>
                   )}
@@ -1135,8 +1141,8 @@ export const ClosingAurum: React.FC = () => {
             fx={currentFx}
             compareAgainst={compareClosureForHoyBreakdown}
             compareFx={compareClosureForHoyFx}
-            currentRecords={currentRecords}
-            compareRecords={compareClosureForHoyRecords}
+            currentRecords={currentRecordsRaw}
+            compareRecords={compareClosureForHoyRecordsRaw}
             showPartialBadge={missingCriticalCount > 0}
           />
         </>
@@ -1239,8 +1245,8 @@ export const ClosingAurum: React.FC = () => {
                   fx={selectedClosureFx}
                   compareAgainst={compareClosureForSelectedBreakdown}
                   compareFx={compareClosureForSelectedFx}
-                  currentRecords={selectedClosureRecords || []}
-                  compareRecords={compareClosureForSelectedRecords}
+                  currentRecords={selectedClosureRecordsRaw || []}
+                  compareRecords={compareClosureForSelectedRecordsRaw}
                   showClosureRates
                   headerAction={
                     <Button
