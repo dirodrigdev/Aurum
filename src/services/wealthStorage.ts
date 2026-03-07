@@ -2802,12 +2802,19 @@ export const importHistoricalClosuresFromCsv = async (
       return;
     }
 
-    const usdClp = parseCsvNumber(rowObj, ['usd_clp']);
-    const eurClp = parseCsvNumber(rowObj, ['eur_clp']);
-    const ufClp = parseCsvNumber(rowObj, ['uf_clp']);
+    const usdClp = parseCsvNumber(rowObj, ['usd_clp', 'usdclp', 'tc_usd', 'dolar_clp']);
+    const eurClpDirect = parseCsvNumber(rowObj, ['eur_clp', 'eurclp', 'tc_eur', 'euro_clp']);
+    const eurUsd = parseCsvNumber(rowObj, ['eur_usd', 'eurusd', 'eur_usd_rate']);
+    const eurClp =
+      eurClpDirect !== null
+        ? eurClpDirect
+        : usdClp !== null && eurUsd !== null && usdClp > 0 && eurUsd > 0
+          ? usdClp * eurUsd
+          : null;
+    const ufClp = parseCsvNumber(rowObj, ['uf_clp', 'ufclp', 'valor_uf']);
     if (![usdClp, eurClp, ufClp].every((v) => v !== null && v > 0)) {
       skippedMonths.push(monthKey);
-      warnings.push(`${monthKey}: faltan USD/CLP, EUR/CLP o UF/CLP.`);
+      warnings.push(`${monthKey}: faltan USD/CLP, EUR/CLP (o EUR/USD) o UF/CLP.`);
       return;
     }
 

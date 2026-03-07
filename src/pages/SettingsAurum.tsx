@@ -527,6 +527,9 @@ export const SettingsAurum: React.FC = () => {
                 <code className="block text-[11px] text-slate-700 break-all">
                   month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
                 </code>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Nota: si no tienes <code>eur_clp</code>, puedes enviar <code>eur_usd</code> y se calculará con <code>usd_clp</code>.
+                </div>
                 <code className="mt-1 block text-[11px] text-slate-700 break-all">
                   month_key,closed_at,usd_clp,eur_clp,uf_clp,net_clp
                 </code>
