@@ -2349,11 +2349,10 @@ export const Patrimonio: React.FC = () => {
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
 
-  const [showSummary, setShowSummary] = useState(true);
-  const [showNetWorth, setShowNetWorth] = useState(true);
+  const [showNetWorth, setShowNetWorth] = useState(false);
   const [visibleMainCards, setVisibleMainCards] = useState<Record<MainSection, boolean>>({
-    investment: true,
-    real_estate: true,
+    investment: false,
+    real_estate: false,
     bank: true,
   });
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
@@ -2618,21 +2617,21 @@ export const Patrimonio: React.FC = () => {
   const hiddenAmountBlock = (tone: 'amber' | 'green') => {
     const toneClass =
       tone === 'amber'
-        ? 'border-[#7f4927]/30 bg-[#fff3ea]/28'
-        : 'border-[#2d5a3b]/30 bg-[#ebfff1]/28';
+        ? 'bg-[#fff3ea]/24'
+        : 'bg-[#ebfff1]/24';
     return (
-      <span className={`relative block h-[52px] w-full overflow-hidden rounded-lg border ${toneClass}`}>
-        <span className="absolute inset-0 bg-white/30 backdrop-blur-[7px]" />
-        <span className="absolute inset-x-4 top-1/2 h-6 -translate-y-1/2 rounded-md bg-white/35 blur-md" />
+      <span className={`relative block h-[52px] w-full overflow-hidden rounded-xl ${toneClass}`}>
+        <span className="absolute inset-0 bg-white/18 backdrop-blur-[10px]" />
+        <span className="absolute inset-x-3 top-1/2 h-7 -translate-y-1/2 rounded-lg bg-white/20 blur-lg" />
       </span>
     );
   };
 
   const hiddenNetWorthBlock = () => {
     return (
-      <span className="relative block h-[62px] w-full overflow-hidden rounded-xl border border-[#c59a6c]/35 bg-[#f6efe3]/18">
-        <span className="absolute inset-0 bg-[#f3eadb]/30 backdrop-blur-[9px]" />
-        <span className="absolute inset-x-5 top-1/2 h-7 -translate-y-1/2 rounded-lg bg-[#f3eadb]/40 blur-lg" />
+      <span className="relative block h-[62px] w-full overflow-hidden rounded-xl bg-[#f6efe3]/16">
+        <span className="absolute inset-0 bg-[#f3eadb]/20 backdrop-blur-[11px]" />
+        <span className="absolute inset-x-4 top-1/2 h-8 -translate-y-1/2 rounded-lg bg-[#f3eadb]/22 blur-xl" />
       </span>
     );
   };
@@ -3036,95 +3035,77 @@ export const Patrimonio: React.FC = () => {
           <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
-          {!showSummary ? (
-            <div className="mt-6 flex justify-center">
-              <button
-                className="px-3 py-1 rounded-full bg-[#f3eadb]/10 border border-[#c59a6c]/40 text-xs text-[#f1e7d6] shadow-sm"
-                onClick={() => setShowSummary(true)}
-              >
-                Resumen oculto
-              </button>
-            </div>
-          ) : (
-            <>
-              <button
-                className="absolute top-0 right-0 text-xs text-[#efe4d1]"
-                onClick={() => {
-                  setShowSummary(false);
-                  setShowNetWorth(true);
-                  setVisibleMainCards({
-                    investment: true,
-                    real_estate: true,
-                    bank: true,
-                  });
-                }}
-              >
-                Ocultar
-              </button>
+          <button
+            className="absolute top-0 right-0 text-xs text-[#efe4d1]"
+            onClick={() => setShowNetWorth((v) => !v)}
+            type="button"
+          >
+            {showNetWorth ? 'Ocultar' : 'Ver'}
+          </button>
 
-              <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
-                <div className="space-y-2">
-                  <button
-                    className="w-full rounded-xl bg-[#f6efe3]/10 p-3 text-left min-h-[72px] border border-[#c59a6c]/25"
-                    onClick={() => setShowNetWorth((v) => !v)}
-                  >
-                    <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
-                    <div className="mt-1 text-3xl font-bold leading-none tracking-tight flex items-center gap-2">
-                      {showNetWorth ? (
-                        <>
-                          <span>{metricsDisplay.netWorth}</span>
-                          {missingCriticalCount > 0 && (
-                            <span className="rounded-full border border-[#c59a6c]/70 bg-[#a97747]/20 px-2 py-0.5 text-[10px] font-semibold text-[#f3eadb]">
-                              Parcial
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        hiddenNetWorthBlock()
+          <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
+            <div className="space-y-2">
+              <button
+                className="w-full rounded-xl bg-[#f6efe3]/10 p-3 text-left min-h-[72px] border border-[#c59a6c]/25"
+                onClick={() => setShowNetWorth((v) => !v)}
+                type="button"
+              >
+                <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
+                <div className="mt-1 text-3xl font-bold leading-none tracking-tight flex items-center gap-2">
+                  {showNetWorth ? (
+                    <>
+                      <span>{metricsDisplay.netWorth}</span>
+                      {missingCriticalCount > 0 && (
+                        <span className="rounded-full border border-[#c59a6c]/70 bg-[#a97747]/20 px-2 py-0.5 text-[10px] font-semibold text-[#f3eadb]">
+                          Parcial
+                        </span>
                       )}
-                    </div>
-                  </button>
-
-                  <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3">
-                    <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
-                    <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                      <div className="text-[#e7dcc9] text-[11px]">Promedio 12M</div>
-                      <div className="mt-1 text-sm font-semibold">{metricsDisplay.avg12}</div>
-                    </div>
-                    <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                      <div className="text-[#e7dcc9] text-[11px]">Promedio desde inicio</div>
-                      <div className="mt-1 text-sm font-semibold">{metricsDisplay.avgSinceStart}</div>
-                    </div>
-                  </div>
+                    </>
+                  ) : (
+                    hiddenNetWorthBlock()
+                  )}
                 </div>
+              </button>
 
-                <div className="flex flex-col gap-2">
-                  {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
-                    <button
-                      key={curr}
-                      className={`px-3 py-2 rounded-lg border text-xs ${
-                        displayCurrency === curr
-                          ? 'bg-[#f3eadb] text-[#1d3c33] border-[#f3eadb]/70'
-                          : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/45'
-                      }`}
-                      onClick={() => setDisplayCurrency(curr)}
-                    >
-                      {curr}
-                    </button>
-                  ))}
+              <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3">
+                <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
+                <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                  <div className="text-[#e7dcc9] text-[11px]">Promedio 12M</div>
+                  <div className="mt-1 text-sm font-semibold">{metricsDisplay.avg12}</div>
+                </div>
+                <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                  <div className="text-[#e7dcc9] text-[11px]">Promedio desde inicio</div>
+                  <div className="mt-1 text-sm font-semibold">{metricsDisplay.avgSinceStart}</div>
                 </div>
               </div>
-            </>
-          )}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+                <button
+                  key={curr}
+                  className={`px-3 py-2 rounded-lg border text-xs ${
+                    displayCurrency === curr
+                      ? 'bg-[#f3eadb] text-[#1d3c33] border-[#f3eadb]/70'
+                      : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/45'
+                  }`}
+                  onClick={() => setDisplayCurrency(curr)}
+                  type="button"
+                >
+                  {curr}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition min-h-[212px]">
           <div className="flex items-start justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
               <Landmark size={16} /> Inversiones
@@ -3156,7 +3137,7 @@ export const Patrimonio: React.FC = () => {
           </button>
         </div>
 
-        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] transition">
+        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] transition min-h-[212px]">
           <div className="flex items-start justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
               <Home size={16} /> Bienes raíces (neto)
@@ -3193,35 +3174,31 @@ export const Patrimonio: React.FC = () => {
             Entrar <ArrowRight size={13} />
           </button>
         </div>
-      </div>
 
-      <div className="w-full rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left shadow-sm transition">
-        <div className="flex items-center justify-between">
-          <div className="min-w-0">
+        <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-4 text-left shadow-[0_10px_22px_rgba(70,120,170,0.18)] transition min-h-[212px]">
+          <div className="flex items-start justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
               <Building2 size={16} /> Bancos
             </div>
-            <div className="mt-2 max-w-full text-left text-[clamp(1.35rem,3.2vw,2rem)] font-bold leading-tight text-sky-900 break-words">
-              {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
-            </div>
-            <div className="text-xs text-sky-700">
-              Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
-            </div>
-            <div className="text-[11px] text-sky-700/90">
-              Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
-            </div>
+            <Wallet size={18} className="mt-0.5 text-sky-700" />
           </div>
-          <div className="flex flex-col items-end gap-1 pt-1">
-            <Wallet size={18} className="text-sky-700" />
+          <div className="mt-2 min-w-0 text-left text-2xl font-bold leading-tight text-sky-900 break-words">
+            {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
           </div>
+          <div className="mt-1 text-[11px] text-sky-700">
+            Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
+          </div>
+          <div className="text-[11px] text-sky-800/90">
+            Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
+          </div>
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
+            onClick={() => setActiveSection('bank')}
+          >
+            Entrar <ArrowRight size={13} />
+          </button>
         </div>
-        <button
-          type="button"
-          className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
-          onClick={() => setActiveSection('bank')}
-        >
-          Entrar <ArrowRight size={13} />
-        </button>
       </div>
 
       <Card className="p-4 space-y-3">
