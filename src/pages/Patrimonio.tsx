@@ -620,7 +620,8 @@ const computeHomeSectionAmounts = (
   );
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
   const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
-  const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp;
+  const nonMortgageDebtClp = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
+  const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
   const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
   const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
 
@@ -628,8 +629,8 @@ const computeHomeSectionAmounts = (
     investment: breakdown.investmentClp,
     bank: bankClp,
     realEstateNet: realEstateNetClp,
-    nonMortgageDebt: breakdown.nonMortgageDebtClp,
-    financialNet: bankClp - breakdown.nonMortgageDebtClp,
+    nonMortgageDebt: nonMortgageDebtClp,
+    financialNet: bankClp - nonMortgageDebtClp,
     totalNetClp,
     hasInvestmentData,
     hasBankData,
