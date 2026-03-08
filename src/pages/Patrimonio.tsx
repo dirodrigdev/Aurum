@@ -470,7 +470,7 @@ const computeHomeSectionAmounts = (
   const hasMortgageDebt = monthRecordsForTotals.some(
     (record) => !isSyntheticAggregateRecord(record) && record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria'),
   );
-  const realEstateNetClp = hasProperty && hasMortgageDebt ? breakdown.realEstateNetClp : 0;
+  const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
   const bankClp = breakdown.bankClp;
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp;
 
@@ -698,7 +698,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const hasMortgageDebt = recordsForTotals.some(
       (item) => !isSyntheticAggregateRecord(item) && item.block === 'debt' && sameCanonicalLabel(item.label, 'Saldo deuda hipotecaria'),
     );
-    return hasProperty && hasMortgageDebt ? breakdown.realEstateNetClp : 0;
+    return hasProperty ? breakdown.realEstateNetClp : 0;
   }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
 
   const bankDashboard = useMemo(() => {
@@ -2669,7 +2669,10 @@ export const Patrimonio: React.FC = () => {
     const monthIncrease = prev ? points[idx].net - prev.net : null;
 
     const deltas: number[] = [];
-    for (let i = 1; i < points.length; i += 1) deltas.push(points[i].net - points[i - 1].net);
+    for (let i = 1; i < points.length; i += 1) {
+      if (points[i].key === monthKey || points[i - 1].key === monthKey) continue;
+      deltas.push(points[i].net - points[i - 1].net);
+    }
 
     return {
       monthIncrease,
@@ -2905,7 +2908,7 @@ export const Patrimonio: React.FC = () => {
     }
 
     const requiredInvestment = new Set(sectionChecklist.investment.map((label) => normalizeForMatch(label)));
-    const requiredNames = [...sectionChecklist.investment, ...sectionChecklist.real_estate];
+    const requiredNames = [...sectionChecklist.investment, ...REAL_ESTATE_CORE_NET_LABELS];
     requiredNames.forEach((required) => {
       const exists = targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;

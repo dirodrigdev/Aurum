@@ -1556,11 +1556,17 @@ export const buildWealthNetBreakdown = (
     return !isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label);
   });
 
+  const safeFx = {
+    usdClp: Number(fxRates?.usdClp) > 0 ? Number(fxRates.usdClp) : defaultFxRates.usdClp,
+    eurClp: Number(fxRates?.eurClp) > 0 ? Number(fxRates.eurClp) : defaultFxRates.eurClp,
+    ufClp: Number(fxRates?.ufClp) > 0 ? Number(fxRates.ufClp) : defaultFxRates.ufClp,
+  };
+
   const toClpWithFx = (amount: number, currency: WealthCurrency) => {
     if (currency === 'CLP') return amount;
-    if (currency === 'USD') return amount * fxRates.usdClp;
-    if (currency === 'EUR') return amount * fxRates.eurClp;
-    return amount * fxRates.ufClp;
+    if (currency === 'USD') return amount * safeFx.usdClp;
+    if (currency === 'EUR') return amount * safeFx.eurClp;
+    return amount * safeFx.ufClp;
   };
 
   records.forEach((record) => {
