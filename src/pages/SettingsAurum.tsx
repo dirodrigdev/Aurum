@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -29,12 +29,14 @@ import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
 
 export const SettingsAurum: React.FC = () => {
+  const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => ({
+    usdClp: String(Math.round(rates.usdClp)),
+    eurUsd: String(rates.eurClp / Math.max(1, rates.usdClp)),
+    ufClp: String(Math.round(rates.ufClp)),
+  });
+
   const [fx, setFx] = useState(() => loadFxRates());
-  const [fxDraft, setFxDraft] = useState(() => ({
-    usdClp: String(Math.round(loadFxRates().usdClp)),
-    eurUsd: String(loadFxRates().eurClp / Math.max(1, loadFxRates().usdClp)),
-    ufClp: String(Math.round(loadFxRates().ufClp)),
-  }));
+  const [fxDraft, setFxDraft] = useState(() => buildDraftFromFx(fx));
   const [fxLiveMeta, setFxLiveMeta] = useState(() => loadFxLiveSyncMeta());
   const [fxLiveMessage, setFxLiveMessage] = useState('');
   const [syncingLiveFx, setSyncingLiveFx] = useState(false);
@@ -51,6 +53,7 @@ export const SettingsAurum: React.FC = () => {
   const [authUid, setAuthUid] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
+  const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
   const [backupMessage, setBackupMessage] = useState('');
   const [availableClosures, setAvailableClosures] = useState(() =>
     loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
@@ -93,6 +96,8 @@ export const SettingsAurum: React.FC = () => {
       } else {
         normalized = compact.replace(/,/g, '');
       }
+    } else if (/^\d{1,3}(\.\d{3})+$/.test(compact)) {
+      normalized = compact.replace(/\./g, '');
     } else if (compact.includes(',')) {
       normalized = compact.replace(',', '.');
     }
@@ -101,11 +106,19 @@ export const SettingsAurum: React.FC = () => {
   };
 
   const syncDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
-    setFxDraft({
-      usdClp: String(Math.round(rates.usdClp)),
-      eurUsd: String(rates.eurClp / Math.max(1, rates.usdClp)),
-      ufClp: String(Math.round(rates.ufClp)),
-    });
+    setFxDraft(buildDraftFromFx(rates));
+  };
+
+  const downloadTextFile = (content: string, filename: string, mimeType = 'text/plain;charset=utf-8;') => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const commitDraftFx = () => {
@@ -114,6 +127,7 @@ export const SettingsAurum: React.FC = () => {
     const ufClp = parseFxInput(fxDraft.ufClp);
     if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
       syncDraftFromFx(fx);
+      setFxLiveMessage('No pude guardar: revisa que USD/CLP, EUR/USD y UF/CLP sean mayores a 0.');
       return;
     }
     const next = {
@@ -124,6 +138,7 @@ export const SettingsAurum: React.FC = () => {
     setFx(next);
     saveFxRates(next);
     syncDraftFromFx(next);
+    setFxLiveMessage('Tipos de cambio guardados manualmente.');
   };
 
   const humanizeFxSource = (raw?: string) => {
@@ -162,7 +177,8 @@ export const SettingsAurum: React.FC = () => {
 2023-06,2023-06-30T23:59:59-04:00,,,,
 2023-07,2023-07-31T23:59:59-04:00,,,,`;
 
-  const csvPreview = useMemo(() => previewHistoricalClosuresCsv(csvDraft), [csvDraft]);
+  const deferredCsvDraft = useDeferredValue(csvDraft);
+  const csvPreview = useMemo(() => previewHistoricalClosuresCsv(deferredCsvDraft), [deferredCsvDraft]);
   const csvPreviewMonthLabel =
     csvPreview.monthKeys.length === 1 ? formatMonthLabel(csvPreview.monthKeys[0]) : '';
 
@@ -186,6 +202,7 @@ export const SettingsAurum: React.FC = () => {
       setFx(loadFxRates());
       setFxLiveMeta(loadFxLiveSyncMeta());
       setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+      setFsStatus(getFirestoreStatus());
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
       if (runningHydrate) return;
@@ -250,8 +267,14 @@ export const SettingsAurum: React.FC = () => {
               <div className="text-sm font-semibold text-slate-900 whitespace-nowrap">Sincronización y mercado</div>
               <div className="text-xs text-slate-600">Sesión, nube y tipos de cambio.</div>
             </div>
-            <div className="rounded-full border border-emerald-200 bg-emerald-100/70 px-2 py-1 text-[11px] font-medium text-emerald-800">
-              Activo
+            <div
+              className={`rounded-full border px-2 py-1 text-[11px] font-medium ${
+                fsStatus.state === 'ok'
+                  ? 'border-emerald-200 bg-emerald-100/70 text-emerald-800'
+                  : 'border-amber-200 bg-amber-100/70 text-amber-800'
+              }`}
+            >
+              {fsStatus.state === 'ok' ? 'Firestore OK' : 'Firestore con error'}
             </div>
           </div>
 
@@ -269,9 +292,20 @@ export const SettingsAurum: React.FC = () => {
               <Button
                 variant="secondary"
                 onClick={async () => {
-                  const pushed = await syncWealthNow();
-                  const hydrated = await hydrateWealthFromCloud();
+                  let pushed = false;
+                  let hydrated: 'none' | 'local' | 'remote' = 'none';
+                  try {
+                    pushed = await syncWealthNow();
+                  } catch {
+                    pushed = false;
+                  }
+                  try {
+                    hydrated = await hydrateWealthFromCloud();
+                  } catch {
+                    hydrated = 'none';
+                  }
                   const fs = getFirestoreStatus();
+                  setFsStatus(fs);
                   const detail = `${fs.state}${fs.code ? `/${fs.code}` : ''}`;
                   setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}, firestore=${detail}.`);
                   setFsDebug(getLastWealthSyncIssue() || fs.message || '');
@@ -391,6 +425,11 @@ export const SettingsAurum: React.FC = () => {
                 />
               </div>
             </div>
+            <div className="flex justify-start">
+              <Button variant="outline" onClick={commitDraftFx}>
+                Guardar TC manual
+              </Button>
+            </div>
           </div>
         </Card>
 
@@ -433,16 +472,8 @@ export const SettingsAurum: React.FC = () => {
                       fxMeta: loadFxLiveSyncMeta(),
                     },
                   };
-                  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
                   const filename = `aurum_backup_${stamp}.json`;
-                  const url = URL.createObjectURL(blob);
-                  const anchor = document.createElement('a');
-                  anchor.href = url;
-                  anchor.download = filename;
-                  document.body.appendChild(anchor);
-                  anchor.click();
-                  anchor.remove();
-                  URL.revokeObjectURL(url);
+                  downloadTextFile(JSON.stringify(payload, null, 2), filename, 'application/json');
                   setBackupMessage(`Respaldo descargado: ${filename}`);
                 } catch (err: any) {
                   setBackupMessage(`No pude generar respaldo: ${String(err?.message || err || 'error')}`);
@@ -491,31 +522,19 @@ export const SettingsAurum: React.FC = () => {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    const blob = new Blob([historicalCsvTemplate], { type: 'text/csv;charset=utf-8;' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = 'HISTORIAL_AURUM_TEMPLATE.csv';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
+                    downloadTextFile(historicalCsvTemplate, 'HISTORIAL_AURUM_TEMPLATE.csv', 'text/csv;charset=utf-8;');
                   }}
                 >
-                  Descargar formato para Gemini
+                  Descargar formato completo (detalle)
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => {
-                    const blob = new Blob([historicalSimpleCsvTemplate], { type: 'text/csv;charset=utf-8;' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = 'HISTORIAL_AURUM_SIMPLE_TEMPLATE.csv';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
+                    downloadTextFile(
+                      historicalSimpleCsvTemplate,
+                      'HISTORIAL_AURUM_SIMPLE_TEMPLATE.csv',
+                      'text/csv;charset=utf-8;',
+                    );
                   }}
                 >
                   Descargar formato simple (solo neto)
@@ -605,6 +624,8 @@ export const SettingsAurum: React.FC = () => {
                       ].join(' · ');
                       setCsvImportMessage(summary);
                       setCsvImportWarnings(result.warnings);
+                      setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+                      setFsStatus(getFirestoreStatus());
                     } catch (err: any) {
                       setCsvImportMessage(String(err?.message || 'No pude importar el historial CSV.'));
                       setCsvImportWarnings([]);
@@ -805,9 +826,17 @@ export const SettingsAurum: React.FC = () => {
                       const current = loadClosures();
                       const next = current.filter((c) => c.monthKey !== selectedClosureToDelete);
                       saveClosures(next);
-                      setAvailableClosures(next.sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+                      const pushed = await syncWealthNow();
+                      const hydrated = await hydrateWealthFromCloud();
+                      const refreshed = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+                      setAvailableClosures(refreshed);
                       setSelectedClosureToDelete('');
-                      setDeleteClosureMessage(`Cierre ${selectedClosureToDelete} eliminado.`);
+                      setFsStatus(getFirestoreStatus());
+                      setDeleteClosureMessage(
+                        pushed
+                          ? `Cierre ${selectedClosureToDelete} eliminado y sincronizado (${hydrated}).`
+                          : `Cierre ${selectedClosureToDelete} eliminado localmente. No se pudo sincronizar ahora.`,
+                      );
                     } finally {
                       setDeletingClosure(false);
                     }
@@ -830,9 +859,17 @@ export const SettingsAurum: React.FC = () => {
                   setDeleteClosureMessage('');
                   try {
                     saveClosures([]);
-                    setAvailableClosures([]);
+                    const pushed = await syncWealthNow();
+                    const hydrated = await hydrateWealthFromCloud();
+                    const refreshed = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+                    setAvailableClosures(refreshed);
                     setSelectedClosureToDelete('');
-                    setDeleteClosureMessage('Se eliminaron todos los cierres.');
+                    setFsStatus(getFirestoreStatus());
+                    setDeleteClosureMessage(
+                      pushed
+                        ? `Se eliminaron todos los cierres y se sincronizó (${hydrated}).`
+                        : 'Se eliminaron cierres localmente. No se pudo sincronizar ahora.',
+                    );
                   } finally {
                     setDeletingClosure(false);
                   }
