@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
+import { parseStrictNumber } from '../utils/numberUtils';
 import {
   buildWealthNetBreakdown,
   filterRecordsByRiskCapitalPreference,
@@ -98,49 +99,6 @@ const formatTodayContext = () => {
     day: 'numeric',
     month: 'long',
   });
-};
-
-const parseNumberInput = (raw: string) => {
-  const compact = String(raw || '').trim().replace(/\s+/g, '');
-  if (!compact) return NaN;
-
-  let normalized = compact;
-  const hasComma = compact.includes(',');
-  const hasDot = compact.includes('.');
-
-  if (hasComma && hasDot) {
-    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
-      normalized = compact.replace(/\./g, '').replace(',', '.');
-    } else {
-      normalized = compact.replace(/,/g, '');
-    }
-  } else if (hasComma) {
-    const commaAsThousands = /^\d{1,3}(,\d{3})+$/.test(compact);
-    normalized = commaAsThousands ? compact.replace(/,/g, '') : compact.replace(',', '.');
-  } else if (hasDot) {
-    const dotAsThousands = /^\d{1,3}(\.\d{3})+$/.test(compact);
-    normalized = dotAsThousands ? compact.replace(/\./g, '') : compact;
-  }
-
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : NaN;
-};
-
-const parseRateInput = (raw: string) => {
-  const compact = String(raw || '').trim().replace(/\s+/g, '');
-  if (!compact) return NaN;
-  let normalized = compact;
-  if (compact.includes(',') && compact.includes('.')) {
-    if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
-      normalized = compact.replace(/\./g, '').replace(',', '.');
-    } else {
-      normalized = compact.replace(/,/g, '');
-    }
-  } else if (compact.includes(',')) {
-    normalized = compact.replace(',', '.');
-  }
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : NaN;
 };
 
 const formatRateInt = (value: number) => Math.round(value).toLocaleString('es-CL');
@@ -1003,9 +961,9 @@ export const ClosingAurum: React.FC = () => {
   const applyClosureEdit = () => {
     if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
 
-    const usdClp = parseRateInput(closureEditRates.usdClp);
-    const eurUsd = parseRateInput(closureEditRates.eurUsd);
-    const ufClp = parseRateInput(closureEditRates.ufClp);
+    const usdClp = parseStrictNumber(closureEditRates.usdClp);
+    const eurUsd = parseStrictNumber(closureEditRates.eurUsd);
+    const ufClp = parseStrictNumber(closureEditRates.ufClp);
     if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
       setClosureEditError('Revisa TC/UF: USD/CLP, EUR/USD y UF/CLP deben ser mayores que 0.');
       return;
@@ -1025,7 +983,7 @@ export const ClosingAurum: React.FC = () => {
     for (const field of CLOSURE_EDITABLE_FIELDS) {
       const raw = closureEditDraft[field.key];
       if (String(raw || '').trim() === '') continue;
-      const parsed = parseNumberInput(raw);
+      const parsed = parseStrictNumber(raw);
       if (!Number.isFinite(parsed)) {
         setClosureEditError(`Monto inválido en "${field.label}".`);
         return;
@@ -1038,7 +996,7 @@ export const ClosingAurum: React.FC = () => {
         (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
       );
       if (String(raw || '').trim() === '') return;
-      const parsed = parseNumberInput(raw);
+      const parsed = parseStrictNumber(raw);
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
       nextRecords.push({

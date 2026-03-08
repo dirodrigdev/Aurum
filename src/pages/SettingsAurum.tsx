@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
+import { parseStrictNumber } from '../utils/numberUtils';
 import {
   loadBankTokens,
   loadClosures,
@@ -86,25 +87,6 @@ export const SettingsAurum: React.FC = () => {
   const formatFxInteger = (value: number) =>
     Math.round(Number(value) || 0).toLocaleString('es-CL');
 
-  const parseFxInput = (raw: string) => {
-    const compact = String(raw || '').trim().replace(/\s+/g, '');
-    if (!compact) return NaN;
-    let normalized = compact;
-    if (compact.includes(',') && compact.includes('.')) {
-      if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
-        normalized = compact.replace(/\./g, '').replace(',', '.');
-      } else {
-        normalized = compact.replace(/,/g, '');
-      }
-    } else if (/^\d{1,3}(\.\d{3})+$/.test(compact)) {
-      normalized = compact.replace(/\./g, '');
-    } else if (compact.includes(',')) {
-      normalized = compact.replace(',', '.');
-    }
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : NaN;
-  };
-
   const syncDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
     setFxDraft(buildDraftFromFx(rates));
   };
@@ -122,9 +104,9 @@ export const SettingsAurum: React.FC = () => {
   };
 
   const commitDraftFx = () => {
-    const usdClp = parseFxInput(fxDraft.usdClp);
-    const eurUsd = parseFxInput(fxDraft.eurUsd);
-    const ufClp = parseFxInput(fxDraft.ufClp);
+    const usdClp = parseStrictNumber(fxDraft.usdClp);
+    const eurUsd = parseStrictNumber(fxDraft.eurUsd);
+    const ufClp = parseStrictNumber(fxDraft.ufClp);
     if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
       syncDraftFromFx(fx);
       setFxLiveMessage('No pude guardar: revisa que USD/CLP, EUR/USD y UF/CLP sean mayores a 0.');
