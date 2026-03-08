@@ -293,7 +293,7 @@ export const SettingsAurum: React.FC = () => {
                 variant="secondary"
                 onClick={async () => {
                   let pushed = false;
-                  let hydrated: 'none' | 'local' | 'remote' = 'none';
+                  let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
                   try {
                     pushed = await syncWealthNow();
                   } catch {
