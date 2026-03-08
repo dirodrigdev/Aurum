@@ -1663,21 +1663,21 @@ export const buildWealthNetBreakdown = (
     }
     if (treatsAsNonMortgageDebt) {
       if (record.currency === 'CLP') {
-        if (hasAggregateDebtClp) {
+        if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) {
+          return;
+        } else if (hasAggregateDebtClp) {
           if (!AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;
           if (aggregateDebtClpCounted) return;
           aggregateDebtClpCounted = true;
-        } else if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) {
-          return;
         }
       }
       if (record.currency === 'USD') {
-        if (hasAggregateDebtUsd) {
+        if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
+          return;
+        } else if (hasAggregateDebtUsd) {
           if (!AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) return;
           if (aggregateDebtUsdCounted) return;
           aggregateDebtUsdCounted = true;
-        } else if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
-          return;
         }
       }
     }

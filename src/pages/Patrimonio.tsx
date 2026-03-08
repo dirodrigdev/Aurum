@@ -566,12 +566,12 @@ const computeBankLiquiditySnapshot = (records: WealthRecord[]): BankLiquiditySna
   const cardDetails = allDebtRecords.filter((record) => {
     const normalizedLabel = normalizeForMatch(record.label);
     if (record.currency === 'CLP') {
-      if (hasAggregateDebtClp) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
       if (hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (hasAggregateDebtClp) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
     }
     if (record.currency === 'USD') {
-      if (hasAggregateDebtUsd) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
       if (hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (hasAggregateDebtUsd) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
     }
     return true;
   });
