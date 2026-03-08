@@ -469,19 +469,125 @@ type HomeSectionAmounts = {
   totalNetClp: number;
 };
 
+type BankLiquiditySnapshot = {
+  bankClp: number;
+  bankUsd: number;
+  cardClp: number;
+  cardUsd: number;
+  hasCardClpData: boolean;
+  hasCardUsdData: boolean;
+};
+
+const emptyBankLiquiditySnapshot = (): BankLiquiditySnapshot => ({
+  bankClp: 0,
+  bankUsd: 0,
+  cardClp: 0,
+  cardUsd: 0,
+  hasCardClpData: false,
+  hasCardUsdData: false,
+});
+
+const computeBankLiquiditySnapshot = (records: WealthRecord[]): BankLiquiditySnapshot => {
+  const allBankRecords = records.filter((r) => r.block === 'bank' && !isSyntheticAggregateRecord(r));
+  const hasProviderBankClp = allBankRecords.some(
+    (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeForMatch(r.label)),
+  );
+  const hasProviderBankUsd = allBankRecords.some(
+    (r) => r.currency === 'USD' && PROVIDER_BANK_LABELS_USD.has(normalizeForMatch(r.label)),
+  );
+  const hasDetailedBankClp = allBankRecords.some((r) => {
+    if (r.currency !== 'CLP') return false;
+    const label = normalizeForMatch(r.label);
+    return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_CLP.has(label);
+  });
+  const hasDetailedBankUsd = allBankRecords.some((r) => {
+    if (r.currency !== 'USD') return false;
+    const label = normalizeForMatch(r.label);
+    return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_USD.has(label);
+  });
+
+  const bankDetails = allBankRecords.filter((record) => {
+    const label = normalizeForMatch(record.label);
+    if (record.currency === 'CLP' && hasDetailedBankClp) {
+      if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
+      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
+    }
+    if (record.currency === 'USD' && hasDetailedBankUsd) {
+      if (hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
+      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
+    }
+    if (record.currency === 'CLP' && hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
+    if (record.currency === 'USD' && hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
+    return true;
+  });
+
+  const allDebtRecords = records.filter((r) => {
+    if (r.block !== 'debt') return false;
+    const normalizedLabel = normalizeForMatch(r.label);
+    const isMortgageMeta = REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizedLabel);
+    if (isMortgageMeta) return false;
+    return !isMortgagePrincipalLabel(r.label);
+  });
+  const hasDetailedDebtClp = allDebtRecords.some(
+    (r) => r.currency === 'CLP' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+  );
+  const hasDetailedDebtUsd = allDebtRecords.some(
+    (r) => r.currency === 'USD' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+  );
+  const hasAggregateDebtClp = allDebtRecords.some(
+    (r) => r.currency === 'CLP' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+  );
+  const hasAggregateDebtUsd = allDebtRecords.some(
+    (r) => r.currency === 'USD' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+  );
+  const cardDetails = allDebtRecords.filter((record) => {
+    const normalizedLabel = normalizeForMatch(record.label);
+    if (record.currency === 'CLP') {
+      if (hasAggregateDebtClp) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+    }
+    if (record.currency === 'USD') {
+      if (hasAggregateDebtUsd) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+    }
+    return true;
+  });
+
+  const bankClp = bankDetails
+    .filter((r) => r.currency === 'CLP')
+    .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+  const bankUsd = bankDetails
+    .filter((r) => r.currency === 'USD')
+    .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+  const cardClp = cardDetails
+    .filter((r) => r.currency === 'CLP')
+    .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+  const cardUsd = cardDetails
+    .filter((r) => r.currency === 'USD')
+    .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
+
+  return {
+    bankClp,
+    bankUsd,
+    cardClp,
+    cardUsd,
+    hasCardClpData: cardDetails.some((r) => r.currency === 'CLP'),
+    hasCardUsdData: cardDetails.some((r) => r.currency === 'USD'),
+  };
+};
+
 const computeHomeSectionAmounts = (
   monthRecordsForTotals: WealthRecord[],
   fx: { usdClp: number; eurClp: number; ufClp: number },
 ): HomeSectionAmounts => {
   const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
+  const bankSnapshot = computeBankLiquiditySnapshot(monthRecordsForTotals);
+  const safeUsd = Number.isFinite(fx.usdClp) && fx.usdClp > 0 ? fx.usdClp : defaultFxRates.usdClp;
   const hasProperty = monthRecordsForTotals.some(
     (record) => !isSyntheticAggregateRecord(record) && record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
   );
-  const hasMortgageDebt = monthRecordsForTotals.some(
-    (record) => !isSyntheticAggregateRecord(record) && record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria'),
-  );
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
-  const bankClp = breakdown.bankClp;
+  const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp;
 
   return {
@@ -698,9 +804,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         ? filterRecordsByRiskCapitalPreference(dedupedSectionRecords, includeRiskCapitalInTotals)
         : dedupedSectionRecords;
     const breakdown = buildWealthNetBreakdown(recordsForTotals, { usdClp, eurClp, ufClp });
+    const bankSnapshot = computeBankLiquiditySnapshot(recordsForTotals);
+    const safeUsd = Number.isFinite(usdClp) && usdClp > 0 ? usdClp : defaultFxRates.usdClp;
 
     if (section === 'investment') return breakdown.investmentClp;
-    if (section === 'bank') return breakdown.bankClp - breakdown.nonMortgageDebtClp;
+    if (section === 'bank') {
+      const bankLiquidity = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
+      const nonMortgageDebt = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
+      return bankLiquidity - nonMortgageDebt;
+    }
 
     const hasProperty = recordsForTotals.some(
       (item) => !isSyntheticAggregateRecord(item) && item.block === 'real_estate' && sameCanonicalLabel(item.label, 'Valor propiedad'),
@@ -714,12 +826,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const bankDashboard = useMemo(() => {
     if (section !== 'bank') {
       return {
-        bankClp: 0,
-        bankUsd: 0,
-        cardClp: 0,
-        cardUsd: 0,
-        hasCardClpData: false,
-        hasCardUsdData: false,
+        ...emptyBankLiquiditySnapshot(),
         movements: [] as Array<{
           bank: string;
           account: string;
@@ -731,84 +838,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       };
     }
 
-    const allBankRecords = dedupedSectionRecords.filter((r) => r.block === 'bank' && !isSyntheticAggregateRecord(r));
-    const hasProviderBankClp = allBankRecords.some(
-      (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeForMatch(r.label)),
-    );
-    const hasProviderBankUsd = allBankRecords.some(
-      (r) => r.currency === 'USD' && PROVIDER_BANK_LABELS_USD.has(normalizeForMatch(r.label)),
-    );
-    const hasDetailedBankClp = allBankRecords.some((r) => {
-      if (r.currency !== 'CLP') return false;
-      const label = normalizeForMatch(r.label);
-      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_CLP.has(label);
-    });
-    const hasDetailedBankUsd = allBankRecords.some((r) => {
-      if (r.currency !== 'USD') return false;
-      const label = normalizeForMatch(r.label);
-      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_USD.has(label);
-    });
-    const bankDetails = allBankRecords.filter((record) => {
-      const label = normalizeForMatch(record.label);
-      if (record.currency === 'CLP' && hasDetailedBankClp) {
-        if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
-        return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
-      }
-      if (record.currency === 'USD' && hasDetailedBankUsd) {
-        if (hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
-        return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
-      }
-      if (record.currency === 'CLP' && hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
-      if (record.currency === 'USD' && hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
-      return true;
-    });
-
-    const allDebtRecords = dedupedSectionRecords.filter((r) => {
-      if (r.block !== 'debt') return false;
-      const normalizedLabel = normalizeForMatch(r.label);
-      const isMortgageMeta = REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizedLabel);
-      if (isMortgageMeta) return false;
-      return !isMortgagePrincipalLabel(r.label);
-    });
-    const hasDetailedDebtClp = allDebtRecords.some(
-      (r) => r.currency === 'CLP' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
-    );
-    const hasDetailedDebtUsd = allDebtRecords.some(
-      (r) => r.currency === 'USD' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
-    );
-    const hasAggregateDebtClp = allDebtRecords.some(
-      (r) => r.currency === 'CLP' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
-    );
-    const hasAggregateDebtUsd = allDebtRecords.some(
-      (r) => r.currency === 'USD' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
-    );
-    const cardDetails = allDebtRecords.filter((record) => {
-      const normalizedLabel = normalizeForMatch(record.label);
-      if (record.currency === 'CLP') {
-        if (hasAggregateDebtClp) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
-        if (hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
-      }
-      if (record.currency === 'USD') {
-        if (hasAggregateDebtUsd) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
-        if (hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
-      }
-      return true;
-    });
-
-    const bankClp = bankDetails
-      .filter((r) => r.currency === 'CLP')
-      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
-    const bankUsd = bankDetails
-      .filter((r) => r.currency === 'USD')
-      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
-    const cardClp = cardDetails
-      .filter((r) => r.currency === 'CLP')
-      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
-    const cardUsd = cardDetails
-      .filter((r) => r.currency === 'USD')
-      .reduce((sum, r) => sum + normalizePotentialMinorUnitAmount(r.amount, r.currency), 0);
-    const hasCardClpData = cardDetails.some((r) => r.currency === 'CLP');
-    const hasCardUsdData = cardDetails.some((r) => r.currency === 'USD');
+    const snapshot = computeBankLiquiditySnapshot(dedupedSectionRecords);
 
     const syncAccounts = fintocLastSync?.assets?.length
       ? fintocLastSync.assets
@@ -824,7 +854,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: (toWealthCurrency(m.currency) || toWealthCurrency(acc.currency) || 'CLP') as WealthCurrency,
       })),
     );
-    return { bankClp, bankUsd, cardClp, cardUsd, hasCardClpData, hasCardUsdData, movements: allMovements };
+    return { ...snapshot, movements: allMovements };
   }, [section, dedupedSectionRecords, fintocLastSync, fintocDiscovery]);
 
   const bankApiPresenceByProvider = useMemo(() => {
@@ -1314,6 +1344,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setOpenLoadPanel(false);
     setQuickFill(null);
     setMultiQuickFill(null);
+    setEditingId(null);
     setSuggestions([]);
     setOcrError('');
     setOcrText('');
