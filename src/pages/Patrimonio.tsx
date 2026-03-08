@@ -741,8 +741,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     const allDebtRecords = dedupedSectionRecords.filter((r) => {
       if (r.block !== 'debt') return false;
-      if (isMortgageMetaDebtLabel(r.label)) return false;
-      return !isMortgagePrincipalDebtLabel(r.label);
+      const normalizedLabel = normalizeForMatch(r.label);
+      const isMortgageMeta = REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizedLabel);
+      if (isMortgageMeta) return false;
+      return !isMortgagePrincipalLabel(r.label);
     });
     const hasDetailedDebtClp = allDebtRecords.some(
       (r) =>
