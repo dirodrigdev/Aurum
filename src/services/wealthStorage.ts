@@ -1412,13 +1412,14 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
 
   for (const item of records) {
     if (isSyntheticAggregateRecord(item)) continue;
-    byBlock[item.block][item.currency] += item.amount;
+    const normalizedAmount = maybeNormalizeMinorUnitAmount(item, item.amount);
+    byBlock[item.block][item.currency] += normalizedAmount;
 
     if (item.block === 'debt') {
       if (isMortgageMetaDebtLabel(item.label)) continue;
-      debtsByCurrency[item.currency] += item.amount;
+      debtsByCurrency[item.currency] += normalizedAmount;
     } else {
-      assetsByCurrency[item.currency] += item.amount;
+      assetsByCurrency[item.currency] += normalizedAmount;
     }
   }
 
@@ -1495,6 +1496,30 @@ const DETAILED_BANK_LABELS_USD = new Set([
   normalizeText('Santander USD'),
 ]);
 
+const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return 0;
+  if ((record.currency !== 'USD' && record.currency !== 'EUR') || !Number.isInteger(value) || Math.abs(value) < 100000) {
+    return value;
+  }
+
+  if (record.block === 'bank') return value / 100;
+
+  if (record.block === 'debt') {
+    const normalizedSource = normalizeText(record.source || '');
+    const normalizedLabel = normalizeText(record.label || '');
+    if (
+      normalizedSource.includes('fintoc') ||
+      normalizedSource.includes('api') ||
+      normalizedLabel.startsWith(normalizeText('Tarjeta crédito'))
+    ) {
+      return value / 100;
+    }
+  }
+
+  return value;
+};
+
 export const buildWealthNetBreakdown = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
@@ -1558,7 +1583,8 @@ export const buildWealthNetBreakdown = (
       if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) return;
     }
     const treatsAsDebt = record.block === 'debt' || isMortgagePrincipalDebtLabel(record.label);
-    const normalizedAmount = treatsAsDebt ? Math.abs(record.amount) : record.amount;
+    const normalizedSourceAmount = maybeNormalizeMinorUnitAmount(record, record.amount);
+    const normalizedAmount = treatsAsDebt ? Math.abs(normalizedSourceAmount) : normalizedSourceAmount;
     const clp = toClpWithFx(normalizedAmount, record.currency);
 
     if (isMortgagePrincipalDebtLabel(record.label)) {
