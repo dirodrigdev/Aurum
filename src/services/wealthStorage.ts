@@ -1484,17 +1484,12 @@ export interface WealthNetBreakdownClp {
   nonMortgageDebtClp: number;
 }
 
-const DETAILED_BANK_LABELS_CLP = new Set([
-  normalizeText('Banco de Chile CLP'),
-  normalizeText('Scotiabank CLP'),
-  normalizeText('Santander CLP'),
-]);
-
-const DETAILED_BANK_LABELS_USD = new Set([
-  normalizeText('Banco de Chile USD'),
-  normalizeText('Scotiabank USD'),
-  normalizeText('Santander USD'),
-]);
+const AGGREGATE_BANK_LABELS_CLP = new Set(
+  [normalizeText('Bancos CLP histórico'), normalizeText('Saldo bancos CLP')],
+);
+const AGGREGATE_BANK_LABELS_USD = new Set(
+  [normalizeText('Bancos USD histórico'), normalizeText('Saldo bancos USD')],
+);
 
 const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
   const value = Number(amount);
@@ -1530,22 +1525,21 @@ export const buildWealthNetBreakdown = (
   let bankClp = 0;
   let nonMortgageDebtClp = 0;
 
-  const hasDetailedBankClp = records.some(
-    (record) =>
-      record.block === 'bank' &&
-      DETAILED_BANK_LABELS_CLP.has(normalizeText(record.label)) &&
-      Math.abs(record.amount) > 0,
-  );
-  const hasDetailedBankUsd = records.some(
-    (record) =>
-      record.block === 'bank' &&
-      DETAILED_BANK_LABELS_USD.has(normalizeText(record.label)) &&
-      Math.abs(record.amount) > 0,
-  );
+  const hasDetailedBankClp = records.some((record) => {
+    if (record.block !== 'bank') return false;
+    if (record.currency !== 'CLP') return false;
+    if (isSyntheticAggregateRecord(record)) return false;
+    return !AGGREGATE_BANK_LABELS_CLP.has(normalizeText(record.label));
+  });
+  const hasDetailedBankUsd = records.some((record) => {
+    if (record.block !== 'bank') return false;
+    if (record.currency !== 'USD') return false;
+    if (isSyntheticAggregateRecord(record)) return false;
+    return !AGGREGATE_BANK_LABELS_USD.has(normalizeText(record.label));
+  });
   const hasDetailedDebtClp = records.some((record) => {
     if (record.block !== 'debt') return false;
     if (record.currency !== 'CLP') return false;
-    if (Math.abs(record.amount) <= 0) return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
@@ -1555,7 +1549,6 @@ export const buildWealthNetBreakdown = (
   const hasDetailedDebtUsd = records.some((record) => {
     if (record.block !== 'debt') return false;
     if (record.currency !== 'USD') return false;
-    if (Math.abs(record.amount) <= 0) return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
@@ -1575,8 +1568,8 @@ export const buildWealthNetBreakdown = (
     const normalizedLabel = normalizeText(record.label);
     if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) return;
     if (record.block === 'bank') {
-      if (hasDetailedBankClp && normalizedLabel === normalizeText('Bancos CLP histórico')) return;
-      if (hasDetailedBankUsd && normalizedLabel === normalizeText('Bancos USD histórico')) return;
+      if (record.currency === 'CLP' && hasDetailedBankClp && AGGREGATE_BANK_LABELS_CLP.has(normalizedLabel)) return;
+      if (record.currency === 'USD' && hasDetailedBankUsd && AGGREGATE_BANK_LABELS_USD.has(normalizedLabel)) return;
     }
     if (record.block === 'debt') {
       if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;

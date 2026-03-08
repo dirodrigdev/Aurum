@@ -180,6 +180,12 @@ const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
 ];
 
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
+const BANK_HISTORICAL_AGGREGATE_LABELS = new Set(
+  ['Bancos CLP histórico', 'Bancos USD histórico', 'Saldo bancos CLP', 'Saldo bancos USD'].map(normalizeForMatch),
+);
+const DEBT_AGGREGATE_LABELS = new Set(
+  ['Deuda tarjetas CLP', 'Deuda tarjetas USD', 'Tarjetas CLP histórico', 'Tarjetas USD histórico'].map(normalizeForMatch),
+);
 const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Banco de Chile CLP', currency: 'CLP' },
   { label: 'Banco de Chile USD', currency: 'USD' },
@@ -681,20 +687,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       section === 'investment'
         ? filterRecordsByRiskCapitalPreference(dedupedSectionRecords, includeRiskCapitalInTotals)
         : dedupedSectionRecords;
+    const breakdown = buildWealthNetBreakdown(recordsForTotals, { usdClp, eurClp, ufClp });
 
-    if (section === 'real_estate') {
-      const realEstateAssetsClp = recordsForTotals
-        .filter((item) => item.block === 'real_estate')
-        .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
-      const mortgageDebtClp = recordsForTotals
-        .filter((item) => item.block === 'debt' && isMortgagePrincipalLabel(item.label))
-        .reduce((sum, item) => sum + toClp(item.amount, item.currency, usdClp, eurClp, ufClp), 0);
-      return realEstateAssetsClp - mortgageDebtClp;
-    }
-    return recordsForTotals.reduce((sum, item) => {
-      const signed = item.block === 'debt' ? -item.amount : item.amount;
-      return sum + toClp(signed, item.currency, usdClp, eurClp, ufClp);
-    }, 0);
+    if (section === 'investment') return breakdown.investmentClp;
+    if (section === 'bank') return breakdown.bankClp - breakdown.nonMortgageDebtClp;
+
+    const hasProperty = recordsForTotals.some(
+      (item) => !isSyntheticAggregateRecord(item) && item.block === 'real_estate' && sameCanonicalLabel(item.label, 'Valor propiedad'),
+    );
+    const hasMortgageDebt = recordsForTotals.some(
+      (item) => !isSyntheticAggregateRecord(item) && item.block === 'debt' && sameCanonicalLabel(item.label, 'Saldo deuda hipotecaria'),
+    );
+    return hasProperty && hasMortgageDebt ? breakdown.realEstateNetClp : 0;
   }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
 
   const bankDashboard = useMemo(() => {
@@ -717,14 +721,45 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       };
     }
 
-    const bankDetails = dedupedSectionRecords.filter(
-      (r) => r.block === 'bank' && MANUAL_BANK_ITEMS.some((i) => i.label === r.label),
+    const allBankRecords = dedupedSectionRecords.filter((r) => r.block === 'bank' && !isSyntheticAggregateRecord(r));
+    const hasDetailedBankClp = allBankRecords.some(
+      (r) => r.currency === 'CLP' && !BANK_HISTORICAL_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
     );
-    const cardDetails = dedupedSectionRecords.filter(
+    const hasDetailedBankUsd = allBankRecords.some(
+      (r) => r.currency === 'USD' && !BANK_HISTORICAL_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+    );
+    const bankDetails = allBankRecords.filter((record) => {
+      const label = normalizeForMatch(record.label);
+      if (record.currency === 'CLP' && hasDetailedBankClp) {
+        return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
+      }
+      if (record.currency === 'USD' && hasDetailedBankUsd) {
+        return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
+      }
+      return true;
+    });
+
+    const allDebtRecords = dedupedSectionRecords.filter((r) => {
+      if (r.block !== 'debt') return false;
+      if (isMortgageMetaDebtLabel(r.label)) return false;
+      return !isMortgagePrincipalDebtLabel(r.label);
+    });
+    const hasDetailedDebtClp = allDebtRecords.some(
       (r) =>
-        r.block === 'debt' &&
+        r.currency === 'CLP' &&
         (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
     );
+    const hasDetailedDebtUsd = allDebtRecords.some(
+      (r) =>
+        r.currency === 'USD' &&
+        (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
+    );
+    const cardDetails = allDebtRecords.filter((record) => {
+      const normalizedLabel = normalizeForMatch(record.label);
+      if (record.currency === 'CLP' && hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (record.currency === 'USD' && hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      return true;
+    });
 
     const bankClp = bankDetails
       .filter((r) => r.currency === 'CLP')
