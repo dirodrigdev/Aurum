@@ -25,6 +25,7 @@ import {
   WealthRecord,
   createMonthlyClosure,
   currentMonthKey,
+  defaultFxRates,
   applyMortgageAutoCalculation,
   buildWealthNetBreakdown,
   FX_RATES_UPDATED_EVENT,
@@ -194,6 +195,12 @@ const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Santander CLP', currency: 'CLP' },
   { label: 'Santander USD', currency: 'USD' },
 ];
+const PROVIDER_BANK_LABELS_CLP = new Set(
+  MANUAL_BANK_ITEMS.filter((item) => item.currency === 'CLP').map((item) => normalizeForMatch(item.label)),
+);
+const PROVIDER_BANK_LABELS_USD = new Set(
+  MANUAL_BANK_ITEMS.filter((item) => item.currency === 'USD').map((item) => normalizeForMatch(item.label)),
+);
 const MANUAL_CARD_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Visa Banco de Chile', currency: 'CLP' },
   { label: 'Visa Scotia', currency: 'CLP' },
@@ -410,10 +417,13 @@ const normalizePotentialMinorUnitAmount = (amount: number, currency: WealthCurre
 };
 
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
+  const safeUsd = Number.isFinite(usdClp) && usdClp > 0 ? usdClp : defaultFxRates.usdClp;
+  const safeEur = Number.isFinite(eurClp) && eurClp > 0 ? eurClp : defaultFxRates.eurClp;
+  const safeUf = Number.isFinite(ufClp) && ufClp > 0 ? ufClp : defaultFxRates.ufClp;
   if (currency === 'CLP') return amount;
-  if (currency === 'USD') return amount * usdClp;
-  if (currency === 'UF') return amount * ufClp;
-  return amount * eurClp;
+  if (currency === 'USD') return amount * safeUsd;
+  if (currency === 'UF') return amount * safeUf;
+  return amount * safeEur;
 };
 
 const fromClp = (amountClp: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
@@ -722,20 +732,34 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     const allBankRecords = dedupedSectionRecords.filter((r) => r.block === 'bank' && !isSyntheticAggregateRecord(r));
-    const hasDetailedBankClp = allBankRecords.some(
-      (r) => r.currency === 'CLP' && !BANK_HISTORICAL_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+    const hasProviderBankClp = allBankRecords.some(
+      (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeForMatch(r.label)),
     );
-    const hasDetailedBankUsd = allBankRecords.some(
-      (r) => r.currency === 'USD' && !BANK_HISTORICAL_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+    const hasProviderBankUsd = allBankRecords.some(
+      (r) => r.currency === 'USD' && PROVIDER_BANK_LABELS_USD.has(normalizeForMatch(r.label)),
     );
+    const hasDetailedBankClp = allBankRecords.some((r) => {
+      if (r.currency !== 'CLP') return false;
+      const label = normalizeForMatch(r.label);
+      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_CLP.has(label);
+    });
+    const hasDetailedBankUsd = allBankRecords.some((r) => {
+      if (r.currency !== 'USD') return false;
+      const label = normalizeForMatch(r.label);
+      return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label) && !PROVIDER_BANK_LABELS_USD.has(label);
+    });
     const bankDetails = allBankRecords.filter((record) => {
       const label = normalizeForMatch(record.label);
       if (record.currency === 'CLP' && hasDetailedBankClp) {
+        if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
         return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
       }
       if (record.currency === 'USD' && hasDetailedBankUsd) {
+        if (hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
         return !BANK_HISTORICAL_AGGREGATE_LABELS.has(label);
       }
+      if (record.currency === 'CLP' && hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
+      if (record.currency === 'USD' && hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
       return true;
     });
 
@@ -747,19 +771,27 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return !isMortgagePrincipalLabel(r.label);
     });
     const hasDetailedDebtClp = allDebtRecords.some(
-      (r) =>
-        r.currency === 'CLP' &&
-        (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
+      (r) => r.currency === 'CLP' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
     );
     const hasDetailedDebtUsd = allDebtRecords.some(
-      (r) =>
-        r.currency === 'USD' &&
-        (r.label.startsWith(FINTOC_SYNC_PREFIX_CARD) || MANUAL_CARD_ITEMS.some((i) => i.label === r.label)),
+      (r) => r.currency === 'USD' && !DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+    );
+    const hasAggregateDebtClp = allDebtRecords.some(
+      (r) => r.currency === 'CLP' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
+    );
+    const hasAggregateDebtUsd = allDebtRecords.some(
+      (r) => r.currency === 'USD' && DEBT_AGGREGATE_LABELS.has(normalizeForMatch(r.label)),
     );
     const cardDetails = allDebtRecords.filter((record) => {
       const normalizedLabel = normalizeForMatch(record.label);
-      if (record.currency === 'CLP' && hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
-      if (record.currency === 'USD' && hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      if (record.currency === 'CLP') {
+        if (hasAggregateDebtClp) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+        if (hasDetailedDebtClp) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      }
+      if (record.currency === 'USD') {
+        if (hasAggregateDebtUsd) return DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+        if (hasDetailedDebtUsd) return !DEBT_AGGREGATE_LABELS.has(normalizedLabel);
+      }
       return true;
     });
 

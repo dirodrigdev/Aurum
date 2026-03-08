@@ -14,6 +14,7 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
   isSyntheticAggregateRecord,
+  defaultFxRates,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -157,10 +158,13 @@ const readPreferredClosingCurrency = (): WealthCurrency => {
 };
 
 const toClp = (amount: number, currency: WealthCurrency, fx: WealthFxRates) => {
+  const safeUsd = Number.isFinite(fx?.usdClp) && fx.usdClp > 0 ? fx.usdClp : defaultFxRates.usdClp;
+  const safeEur = Number.isFinite(fx?.eurClp) && fx.eurClp > 0 ? fx.eurClp : defaultFxRates.eurClp;
+  const safeUf = Number.isFinite(fx?.ufClp) && fx.ufClp > 0 ? fx.ufClp : defaultFxRates.ufClp;
   if (currency === 'CLP') return amount;
-  if (currency === 'USD') return amount * fx.usdClp;
-  if (currency === 'EUR') return amount * fx.eurClp;
-  return amount * fx.ufClp;
+  if (currency === 'USD') return amount * safeUsd;
+  if (currency === 'EUR') return amount * safeEur;
+  return amount * safeUf;
 };
 
 const fromClp = (amountClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
@@ -871,7 +875,8 @@ export const ClosingAurum: React.FC = () => {
       const netClp = records?.length
         ? buildNetBreakdown(records, fx).netClp
         : closure.summary.netConsolidatedClp;
-      map.set(closure.monthKey, fromClp(netClp, currency, fx));
+      // Para comparar meses en la misma unidad, convertimos al tipo de cambio de visualización vigente.
+      map.set(closure.monthKey, fromClp(netClp, currency, currentFx));
     });
     return map;
   }, [closures, currentFx, includeRiskCapitalInTotals, currency]);
@@ -905,17 +910,13 @@ export const ClosingAurum: React.FC = () => {
     return buildNetBreakdown(compareClosureForSelectedRecords, compareClosureForSelectedFx);
   }, [compareClosureForSelectedRecords, compareClosureForSelectedFx]);
 
-  const previousClosureForLatest = useMemo(() => {
-    if (!latestClosure) return null;
-    return (
+  const compareClosureForHoy = useMemo(
+    () =>
       closures
-        .filter((closure) => closure.monthKey < latestClosure.monthKey)
-        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
-    );
-  }, [closures, latestClosure]);
-
-  const compareClosureForHoy =
-    latestClosure && latestClosure.monthKey === monthKey ? previousClosureForLatest : latestClosure;
+        .filter((closure) => closure.monthKey < monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null,
+    [closures, monthKey],
+  );
   const compareClosureForHoyRecordsRaw = compareClosureForHoy?.records || null;
   const compareClosureForHoyRecords = useMemo(
     () =>
@@ -941,7 +942,12 @@ export const ClosingAurum: React.FC = () => {
             ? filterRecordsByRiskCapitalPreference(c.records, includeRiskCapitalInTotals)
             : null;
         const breakdown = records?.length ? buildNetBreakdown(records, fx) : null;
-        return { key: c.monthKey, label: monthLabel(c.monthKey), kind: 'cierre', net: breakdown ? fromClp(breakdown.netClp, currency, fx) : null };
+        return {
+          key: c.monthKey,
+          label: monthLabel(c.monthKey),
+          kind: 'cierre',
+          net: breakdown ? fromClp(breakdown.netClp, currency, currentFx) : null,
+        };
       });
     rows.push({ key: monthKey, label: monthLabel(monthKey), kind: 'hoy', net: fromClp(currentBreakdown.netClp, currency, currentFx) });
     return rows.sort((a, b) => a.key.localeCompare(b.key));
@@ -971,7 +977,7 @@ export const ClosingAurum: React.FC = () => {
       const netClp = records?.length
         ? buildNetBreakdown(records, fx).netClp
         : version.summary.netConsolidatedClp;
-      map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, fx));
+      map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, currentFx));
     });
     return map;
   }, [closureHistoryVersions, currentFx, includeRiskCapitalInTotals, currency]);
