@@ -484,6 +484,10 @@ type HomeSectionAmounts = {
   nonMortgageDebt: number;
   financialNet: number;
   totalNetClp: number;
+  hasInvestmentData: boolean;
+  hasBankData: boolean;
+  hasRealEstateCoreData: boolean;
+  hasAllCoreSubtotalsData: boolean;
 };
 
 type BankLiquiditySnapshot = {
@@ -605,9 +609,20 @@ const computeHomeSectionAmounts = (
   const hasProperty = monthRecordsForTotals.some(
     (record) => !isSyntheticAggregateRecord(record) && record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
   );
+  const hasMortgageDebt = monthRecordsForTotals.some(
+    (record) => !isSyntheticAggregateRecord(record) && isMortgagePrincipalLabel(record.label),
+  );
+  const hasInvestmentData = monthRecordsForTotals.some(
+    (record) => !isSyntheticAggregateRecord(record) && record.block === 'investment',
+  );
+  const hasBankData = monthRecordsForTotals.some(
+    (record) => record.block === 'bank' && !isPotentialNonMortgageDebtRecord(record),
+  );
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
   const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - breakdown.nonMortgageDebtClp;
+  const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
+  const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
 
   return {
     investment: breakdown.investmentClp,
@@ -616,6 +631,10 @@ const computeHomeSectionAmounts = (
     nonMortgageDebt: breakdown.nonMortgageDebtClp,
     financialNet: bankClp - breakdown.nonMortgageDebtClp,
     totalNetClp,
+    hasInvestmentData,
+    hasBankData,
+    hasRealEstateCoreData,
+    hasAllCoreSubtotalsData,
   };
 };
 
@@ -3297,7 +3316,7 @@ export const Patrimonio: React.FC = () => {
               >
                 <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
                 <div className="mt-1 min-h-[44px] flex items-center">
-                  {showNetWorth ? (
+                  {showNetWorth && sectionAmounts.hasAllCoreSubtotalsData ? (
                     <span className="inline-flex items-center gap-2 text-3xl font-bold leading-none tracking-tight transition-all duration-200 ease-out opacity-100 translate-y-0">
                       <span>{metricsDisplay.netWorth}</span>
                       {missingCriticalCount > 0 && (
@@ -3305,6 +3324,10 @@ export const Patrimonio: React.FC = () => {
                           Parcial
                         </span>
                       )}
+                    </span>
+                  ) : showNetWorth ? (
+                    <span className="text-sm font-medium text-[#f3eadb]/85">
+                      Completa Inversiones + Bancos + Bienes raíces para mostrar total
                     </span>
                   ) : (
                     <span className="transition-all duration-200 ease-out opacity-100 translate-y-0">
