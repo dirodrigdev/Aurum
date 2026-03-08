@@ -443,6 +443,44 @@ const AGGREGATE_DEBT_LABELS_USD = new Set([
   normalizeText('Tarjetas USD histórico'),
 ]);
 
+const MANUAL_CARD_LABEL_KEYS = new Set(
+  [
+    'Visa Banco de Chile',
+    'Visa Scotia',
+    'Mastercard Scotia',
+    'Mastercard Falabella',
+    'Mastercard Santander',
+    'American Express Santander',
+  ].map(normalizeText),
+);
+
+const NON_MORTGAGE_DEBT_LABEL_HINTS = [
+  'tarjeta',
+  'mastercard',
+  'visa',
+  'american express',
+  'amex',
+  'deuda no hipotecaria',
+];
+
+const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'label' | 'source'>) => {
+  if (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)) return false;
+
+  const label = normalizeText(record.label);
+  const source = normalizeText(record.source);
+
+  if (record.block === 'debt') return true;
+  if (record.block !== 'bank') return false;
+
+  if (AGGREGATE_DEBT_LABELS_CLP.has(label) || AGGREGATE_DEBT_LABELS_USD.has(label)) return true;
+  if (MANUAL_CARD_LABEL_KEYS.has(label)) return true;
+  if (label.startsWith(normalizeText('Tarjeta crédito:'))) return true;
+  if (NON_MORTGAGE_DEBT_LABEL_HINTS.some((hint) => label.includes(hint))) return true;
+  if (source.includes('tarjetas')) return true;
+
+  return false;
+};
+
 export const isMortgageMetaDebtLabel = (labelValue: string) => {
   const label = normalizeText(labelValue);
   return (
@@ -1547,44 +1585,43 @@ export const buildWealthNetBreakdown = (
   });
   const hasProviderBankClp = records.some((record) => {
     if (record.block !== 'bank') return false;
+    if (isNonMortgageDebtRecord(record)) return false;
     if (record.currency !== 'CLP') return false;
     if (isSyntheticAggregateRecord(record)) return false;
     return PROVIDER_BANK_LABELS_CLP.has(normalizeText(record.label));
   });
   const hasProviderBankUsd = records.some((record) => {
     if (record.block !== 'bank') return false;
+    if (isNonMortgageDebtRecord(record)) return false;
     if (record.currency !== 'USD') return false;
     if (isSyntheticAggregateRecord(record)) return false;
     return PROVIDER_BANK_LABELS_USD.has(normalizeText(record.label));
   });
-  const hasDetailedDebtClp = records.some((record) => {
-    if (record.block !== 'debt') return false;
+  const nonMortgageDebtCandidates = records.filter(
+    (record) => !isSyntheticAggregateRecord(record) && isNonMortgageDebtRecord(record),
+  );
+  const hasDetailedDebtClp = nonMortgageDebtCandidates.some((record) => {
     if (record.currency !== 'CLP') return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
     }
-    return !isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label);
+    return true;
   });
-  const hasDetailedDebtUsd = records.some((record) => {
-    if (record.block !== 'debt') return false;
+  const hasDetailedDebtUsd = nonMortgageDebtCandidates.some((record) => {
     if (record.currency !== 'USD') return false;
     const normalizedLabel = normalizeText(record.label);
     if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel) || AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
       return false;
     }
-    return !isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label);
+    return true;
   });
-  const hasAggregateDebtClp = records.some((record) => {
-    if (record.block !== 'debt') return false;
+  const hasAggregateDebtClp = nonMortgageDebtCandidates.some((record) => {
     if (record.currency !== 'CLP') return false;
-    if (isMortgagePrincipalDebtLabel(record.label)) return false;
     return AGGREGATE_DEBT_LABELS_CLP.has(normalizeText(record.label));
   });
-  const hasAggregateDebtUsd = records.some((record) => {
-    if (record.block !== 'debt') return false;
+  const hasAggregateDebtUsd = nonMortgageDebtCandidates.some((record) => {
     if (record.currency !== 'USD') return false;
-    if (isMortgagePrincipalDebtLabel(record.label)) return false;
     return AGGREGATE_DEBT_LABELS_USD.has(normalizeText(record.label));
   });
   let aggregateDebtClpCounted = false;
@@ -1607,7 +1644,8 @@ export const buildWealthNetBreakdown = (
     if (isSyntheticAggregateRecord(record)) return;
     const normalizedLabel = normalizeText(record.label);
     if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) return;
-    if (record.block === 'bank') {
+    const treatsAsNonMortgageDebt = isNonMortgageDebtRecord(record);
+    if (record.block === 'bank' && !treatsAsNonMortgageDebt) {
       if (record.currency === 'CLP') {
         if (hasProviderBankClp) {
           if (!PROVIDER_BANK_LABELS_CLP.has(normalizedLabel)) return;
@@ -1623,7 +1661,7 @@ export const buildWealthNetBreakdown = (
         }
       }
     }
-    if (record.block === 'debt' && !isMortgagePrincipalDebtLabel(record.label)) {
+    if (treatsAsNonMortgageDebt) {
       if (record.currency === 'CLP') {
         if (hasAggregateDebtClp) {
           if (!AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;
@@ -1643,7 +1681,7 @@ export const buildWealthNetBreakdown = (
         }
       }
     }
-    const treatsAsDebt = record.block === 'debt' || isMortgagePrincipalDebtLabel(record.label);
+    const treatsAsDebt = treatsAsNonMortgageDebt || isMortgagePrincipalDebtLabel(record.label);
     const normalizedSourceAmount = maybeNormalizeMinorUnitAmount(record, record.amount);
     const normalizedAmount = treatsAsDebt ? Math.abs(normalizedSourceAmount) : normalizedSourceAmount;
     const clp = toClpWithFx(normalizedAmount, record.currency);
@@ -1655,8 +1693,8 @@ export const buildWealthNetBreakdown = (
 
     if (record.block === 'investment') investmentClp += clp;
     if (record.block === 'real_estate') realEstateAssetsClp += clp;
-    if (record.block === 'bank') bankClp += clp;
-    if (record.block === 'debt') {
+    if (record.block === 'bank' && !treatsAsNonMortgageDebt) bankClp += clp;
+    if (treatsAsNonMortgageDebt) {
       nonMortgageDebtClp += clp;
     }
   });

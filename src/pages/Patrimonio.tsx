@@ -280,6 +280,23 @@ const isApiSource = (source: string) => {
 const isMortgagePrincipalLabel = (label: string) => {
   return normalizeForMatch(label).includes(normalizeForMatch('saldo deuda hipotecaria'));
 };
+
+const MANUAL_CARD_LABEL_KEYS = new Set(MANUAL_CARD_ITEMS.map((item) => normalizeForMatch(item.label)));
+const NON_MORTGAGE_DEBT_HINTS = ['tarjeta', 'mastercard', 'visa', 'american express', 'amex', 'deuda no hipotecaria'];
+const isPotentialNonMortgageDebtRecord = (record: WealthRecord) => {
+  if (isMortgagePrincipalLabel(record.label)) return false;
+  const label = normalizeForMatch(record.label);
+  const source = normalizeForMatch(record.source);
+  if (record.block === 'debt') return true;
+  if (record.block !== 'bank') return false;
+  if (DEBT_AGGREGATE_LABELS.has(label)) return true;
+  if (MANUAL_CARD_LABEL_KEYS.has(label)) return true;
+  if (label.startsWith(normalizeForMatch('Tarjeta crédito:'))) return true;
+  if (NON_MORTGAGE_DEBT_HINTS.some((hint) => label.includes(hint))) return true;
+  if (source.includes('tarjetas')) return true;
+  return false;
+};
+
 const isManualLikeSource = (source: string) => {
   const normalized = normalizeForMatch(source);
   return (
@@ -488,7 +505,9 @@ const emptyBankLiquiditySnapshot = (): BankLiquiditySnapshot => ({
 });
 
 const computeBankLiquiditySnapshot = (records: WealthRecord[]): BankLiquiditySnapshot => {
-  const allBankRecords = records.filter((r) => r.block === 'bank' && !isSyntheticAggregateRecord(r));
+  const allBankRecords = records.filter(
+    (r) => r.block === 'bank' && !isSyntheticAggregateRecord(r) && !isPotentialNonMortgageDebtRecord(r),
+  );
   const hasProviderBankClp = allBankRecords.some(
     (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeForMatch(r.label)),
   );
@@ -522,7 +541,7 @@ const computeBankLiquiditySnapshot = (records: WealthRecord[]): BankLiquiditySna
   });
 
   const allDebtRecords = records.filter((r) => {
-    if (r.block !== 'debt') return false;
+    if (!isPotentialNonMortgageDebtRecord(r)) return false;
     const normalizedLabel = normalizeForMatch(r.label);
     const isMortgageMeta = REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizedLabel);
     if (isMortgageMeta) return false;
