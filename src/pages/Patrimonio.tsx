@@ -29,6 +29,7 @@ import {
   applyMortgageAutoCalculation,
   buildWealthNetBreakdown,
   computeWealthBankLiquiditySnapshot,
+  computeWealthHomeSectionAmounts,
   FX_RATES_UPDATED_EVENT,
   isSyntheticAggregateRecord,
   WEALTH_DATA_UPDATED_EVENT,
@@ -56,6 +57,7 @@ import {
   upsertInvestmentInstrument,
   upsertWealthRecord,
 } from '../services/wealthStorage';
+import { parseStrictNumber } from '../utils/numberUtils';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -182,12 +184,6 @@ const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
 ];
 
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
-const BANK_HISTORICAL_AGGREGATE_LABELS = new Set(
-  ['Bancos CLP histórico', 'Bancos USD histórico', 'Saldo bancos CLP', 'Saldo bancos USD'].map(normalizeForMatch),
-);
-const DEBT_AGGREGATE_LABELS = new Set(
-  ['Deuda tarjetas CLP', 'Deuda tarjetas USD', 'Tarjetas CLP histórico', 'Tarjetas USD histórico'].map(normalizeForMatch),
-);
 const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Banco de Chile CLP', currency: 'CLP' },
   { label: 'Banco de Chile USD', currency: 'USD' },
@@ -196,12 +192,6 @@ const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Santander CLP', currency: 'CLP' },
   { label: 'Santander USD', currency: 'USD' },
 ];
-const PROVIDER_BANK_LABELS_CLP = new Set(
-  MANUAL_BANK_ITEMS.filter((item) => item.currency === 'CLP').map((item) => normalizeForMatch(item.label)),
-);
-const PROVIDER_BANK_LABELS_USD = new Set(
-  MANUAL_BANK_ITEMS.filter((item) => item.currency === 'USD').map((item) => normalizeForMatch(item.label)),
-);
 const MANUAL_CARD_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: 'Visa Banco de Chile', currency: 'CLP' },
   { label: 'Visa Scotia', currency: 'CLP' },
@@ -280,22 +270,6 @@ const isApiSource = (source: string) => {
 };
 const isMortgagePrincipalLabel = (label: string) => {
   return normalizeForMatch(label).includes(normalizeForMatch('saldo deuda hipotecaria'));
-};
-
-const MANUAL_CARD_LABEL_KEYS = new Set(MANUAL_CARD_ITEMS.map((item) => normalizeForMatch(item.label)));
-const NON_MORTGAGE_DEBT_HINTS = ['tarjeta', 'mastercard', 'visa', 'american express', 'amex', 'deuda no hipotecaria'];
-const isPotentialNonMortgageDebtRecord = (record: WealthRecord) => {
-  if (isMortgagePrincipalLabel(record.label)) return false;
-  const label = normalizeForMatch(record.label);
-  const source = normalizeForMatch(record.source);
-  if (record.block === 'debt') return true;
-  if (record.block !== 'bank') return false;
-  if (DEBT_AGGREGATE_LABELS.has(label)) return true;
-  if (MANUAL_CARD_LABEL_KEYS.has(label)) return true;
-  if (label.startsWith(normalizeForMatch('Tarjeta crédito:'))) return true;
-  if (NON_MORTGAGE_DEBT_HINTS.some((hint) => label.includes(hint))) return true;
-  if (source.includes('tarjetas')) return true;
-  return false;
 };
 
 const isManualLikeSource = (source: string) => {
@@ -425,15 +399,6 @@ const isCreditCardAccount = (account: Pick<FintocAccountNormalized, 'type' | 'na
   return token.includes('credit') || token.includes('card') || token.includes('tarjeta') || token.includes('tc');
 };
 
-const normalizePotentialMinorUnitAmount = (amount: number, currency: WealthCurrency) => {
-  const value = Number(amount);
-  if (!Number.isFinite(value)) return 0;
-  if ((currency === 'USD' || currency === 'EUR') && Number.isInteger(value) && Math.abs(value) >= 100000) {
-    return value / 100;
-  }
-  return value;
-};
-
 const toClp = (amount: number, currency: WealthCurrency, usdClp: number, eurClp: number, ufClp: number) => {
   const safeUsd = Number.isFinite(usdClp) && usdClp > 0 ? usdClp : defaultFxRates.usdClp;
   const safeEur = Number.isFinite(eurClp) && eurClp > 0 ? eurClp : defaultFxRates.eurClp;
@@ -478,19 +443,6 @@ const closureNetForTotals = (
   return closure.summary.netConsolidatedClp;
 };
 
-type HomeSectionAmounts = {
-  investment: number;
-  bank: number;
-  realEstateNet: number;
-  nonMortgageDebt: number;
-  financialNet: number;
-  totalNetClp: number;
-  hasInvestmentData: boolean;
-  hasBankData: boolean;
-  hasRealEstateCoreData: boolean;
-  hasAllCoreSubtotalsData: boolean;
-};
-
 const emptyBankLiquiditySnapshot = () => ({
   bankClp: 0,
   bankUsd: 0,
@@ -499,46 +451,6 @@ const emptyBankLiquiditySnapshot = () => ({
   hasCardClpData: false,
   hasCardUsdData: false,
 });
-
-const computeHomeSectionAmounts = (
-  monthRecordsForTotals: WealthRecord[],
-  fx: { usdClp: number; eurClp: number; ufClp: number },
-): HomeSectionAmounts => {
-  const breakdown = buildWealthNetBreakdown(monthRecordsForTotals, fx);
-  const bankSnapshot = computeWealthBankLiquiditySnapshot(monthRecordsForTotals);
-  const safeUsd = Number.isFinite(fx.usdClp) && fx.usdClp > 0 ? fx.usdClp : defaultFxRates.usdClp;
-  const hasProperty = monthRecordsForTotals.some(
-    (record) => !isSyntheticAggregateRecord(record) && record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
-  );
-  const hasMortgageDebt = monthRecordsForTotals.some(
-    (record) => !isSyntheticAggregateRecord(record) && isMortgagePrincipalLabel(record.label),
-  );
-  const hasInvestmentData = monthRecordsForTotals.some(
-    (record) => !isSyntheticAggregateRecord(record) && record.block === 'investment',
-  );
-  const hasBankData = monthRecordsForTotals.some(
-    (record) => record.block === 'bank' && !isPotentialNonMortgageDebtRecord(record),
-  );
-  const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
-  const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
-  const nonMortgageDebtClp = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
-  const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
-  const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
-  const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
-
-  return {
-    investment: breakdown.investmentClp,
-    bank: bankClp,
-    realEstateNet: realEstateNetClp,
-    nonMortgageDebt: nonMortgageDebtClp,
-    financialNet: bankClp - nonMortgageDebtClp,
-    totalNetClp,
-    hasInvestmentData,
-    hasBankData,
-    hasRealEstateCoreData,
-    hasAllCoreSubtotalsData,
-  };
-};
 
 const toCloseDateFromMonthKey = (monthKey: string) => {
   const [year, month] = monthKey.split('-').map(Number);
@@ -757,9 +669,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const hasProperty = recordsForTotals.some(
       (item) => !isSyntheticAggregateRecord(item) && item.block === 'real_estate' && sameCanonicalLabel(item.label, 'Valor propiedad'),
     );
-    const hasMortgageDebt = recordsForTotals.some(
-      (item) => !isSyntheticAggregateRecord(item) && item.block === 'debt' && sameCanonicalLabel(item.label, 'Saldo deuda hipotecaria'),
-    );
     return hasProperty ? breakdown.realEstateNetClp : 0;
   }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
 
@@ -900,7 +809,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const checklistRows = useMemo<ChecklistRow[]>(() => {
     const baseRows = sectionChecklist[section].map((name): ChecklistRow => {
-      const match = dedupedSectionRecords.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(name)));
+      const match = dedupedSectionRecords.find((r) => sameCanonicalLabel(r.label, name));
       if (!match) {
         return {
           name,
@@ -1225,7 +1134,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveDraft = () => {
-    const amount = Number(draft.amount.replace(/,/g, '.'));
+    const amount = parseStrictNumber(draft.amount);
     if (!draft.label.trim() || !Number.isFinite(amount) || amount < 0) return;
 
     upsertWealthRecord({
@@ -1494,9 +1403,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         (acc, account) => {
           const currency = toWealthCurrency(account.currency);
           if (!currency) return acc;
-          const normalizedBalance = normalizePotentialMinorUnitAmount(account.balance, currency);
-          if (currency === 'CLP') acc.clp += normalizedBalance;
-          if (currency === 'USD') acc.usd += normalizedBalance;
+          if (currency === 'CLP') acc.clp += account.balance;
+          if (currency === 'USD') acc.usd += account.balance;
           return acc;
         },
         { clp: 0, usd: 0 },
@@ -1546,10 +1454,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       );
       const totalClp = refreshedBankDetails
         .filter((record) => record.currency === 'CLP')
-        .reduce((sum, record) => sum + normalizePotentialMinorUnitAmount(record.amount, record.currency), 0);
+        .reduce((sum, record) => sum + record.amount, 0);
       const totalUsd = refreshedBankDetails
         .filter((record) => record.currency === 'USD')
-        .reduce((sum, record) => sum + normalizePotentialMinorUnitAmount(record.amount, record.currency), 0);
+        .reduce((sum, record) => sum + record.amount, 0);
       upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totalClp, 'Calculado desde detalle de cuentas');
       upsertByLabel('bank', 'Saldo bancos USD', 'USD', totalUsd, 'Calculado desde detalle de cuentas');
       const movementProbes = (result.probes || []).filter((probe) => probe.endpoint.includes('/movements'));
@@ -2654,8 +2562,12 @@ export const Patrimonio: React.FC = () => {
     return map;
   }, [closures, includeRiskCapitalInTotals, fx]);
 
+  const sectionAmounts = useMemo(
+    () => computeWealthHomeSectionAmounts(monthRecordsForTotals, fx),
+    [monthRecordsForTotals, fx],
+  );
+
   const metrics = useMemo(() => {
-    const totals = computeHomeSectionAmounts(monthRecordsForTotals, fx);
     const points = monthPoints(
       closures.map((closure) => ({
         ...closure,
@@ -2665,7 +2577,7 @@ export const Patrimonio: React.FC = () => {
         },
       })),
       monthKey,
-      totals.totalNetClp,
+      sectionAmounts.totalNetClp,
     );
     const idx = points.findIndex((p) => p.key === monthKey);
     const prev = idx > 0 ? points[idx - 1] : null;
@@ -2682,19 +2594,27 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, closureNetByMonth, monthKey, monthRecordsForTotals, fx]);
+  }, [closures, closureNetByMonth, monthKey, sectionAmounts.totalNetClp]);
 
   const latestClosure = closures[0] || null;
-  const previousClosure = closures[1] || null;
 
   const growthVsPrevClosure = useMemo(() => {
-    if (!latestClosure || !previousClosure) return null;
-    const current = closureNetByMonth.get(latestClosure.monthKey) ?? latestClosure.summary.netConsolidatedClp;
+    const currentClosure = closures.find((closure) => closure.monthKey === monthKey) || null;
+    const current = currentClosure
+      ? closureNetByMonth.get(currentClosure.monthKey) ?? currentClosure.summary.netConsolidatedClp
+      : sectionAmounts.totalNetClp;
+
+    const previousClosure =
+      closures
+        .filter((closure) => closure.monthKey < monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
+    if (!previousClosure) return null;
+
     const prev = closureNetByMonth.get(previousClosure.monthKey) ?? previousClosure.summary.netConsolidatedClp;
     const abs = current - prev;
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
-  }, [closureNetByMonth, latestClosure, previousClosure]);
+  }, [closures, monthKey, closureNetByMonth, sectionAmounts.totalNetClp]);
   const selectedClosureForDraft = useMemo(
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
@@ -2708,8 +2628,6 @@ export const Patrimonio: React.FC = () => {
     if (latestClosure.monthKey === closeMonthDraft) return null;
     return `El último cierre fue hace ${Math.max(0, Math.floor(days))} día(s). Confirma que quieres cerrar ${monthLabel(closeMonthDraft).toLowerCase()}.`;
   }, [latestClosure, closeMonthDraft]);
-
-  const sectionAmounts = useMemo(() => computeHomeSectionAmounts(monthRecordsForTotals, fx), [monthRecordsForTotals, fx]);
 
   const sectionAmountsDisplay = useMemo(() => {
     const convert = (valueClp: number) => fromClp(valueClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
@@ -2831,8 +2749,14 @@ export const Patrimonio: React.FC = () => {
         return source.includes('fintoc') || label.includes('tarjeta') || MANUAL_CARD_ITEMS.some((item) => normalizeForMatch(item.label) === label);
       });
     }
+    if (activeSection === 'investment') {
+      return filterRecordsByRiskCapitalPreference(
+        monthRecords.filter((r) => r.block === 'investment'),
+        includeRiskCapitalInTotals,
+      );
+    }
     return monthRecords.filter((r) => r.block === activeSection);
-  }, [activeSection, monthRecords]);
+  }, [activeSection, includeRiskCapitalInTotals, monthRecords]);
 
   const createInvestmentInstrument = (input: {
     label: string;

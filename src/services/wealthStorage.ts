@@ -519,30 +519,39 @@ const remapLegacyInvestmentBanks = (
   return block;
 };
 
-const normalizeRecord = (item: any): WealthRecord => ({
-  ...(() => {
-    const block = remapLegacyInvestmentBanks(
-      (item?.block || 'investment') as WealthBlock,
-      String(item?.source || 'manual'),
-      String(item?.label || 'Registro'),
-    );
-    const rawAmount = toNumber(item?.amount);
-    const normalizedAmount = block === 'debt' ? Math.abs(rawAmount) : rawAmount;
-    const base = {
-      id: String(item?.id || crypto.randomUUID()),
-      block,
-      source: String(item?.source || 'manual'),
-      label: String(item?.label || 'Registro'),
-      amount: normalizedAmount,
-      currency: (item?.currency || 'CLP') as WealthCurrency,
-      snapshotDate: String(item?.snapshotDate || localYmd()),
-      createdAt: String(item?.createdAt || nowIso()),
-    } satisfies Omit<WealthRecord, 'note'>;
+const toWealthBlock = (raw: unknown): WealthBlock | null => {
+  const block = String(raw || '').trim();
+  if (block === 'investment' || block === 'real_estate' || block === 'bank' || block === 'debt') {
+    return block;
+  }
+  return null;
+};
 
-    const note = item?.note ? String(item.note) : '';
-    return note ? { ...base, note } : base;
-  })(),
-});
+const normalizeRecord = (item: any): WealthRecord | null => {
+  const rawBlock = toWealthBlock(item?.block);
+  if (!rawBlock) return null;
+
+  const block = remapLegacyInvestmentBanks(
+    rawBlock,
+    String(item?.source || 'manual'),
+    String(item?.label || 'Registro'),
+  );
+  const rawAmount = toNumber(item?.amount);
+  const normalizedAmount = block === 'debt' ? Math.abs(rawAmount) : rawAmount;
+  const base = {
+    id: String(item?.id || crypto.randomUUID()),
+    block,
+    source: String(item?.source || 'manual'),
+    label: String(item?.label || 'Registro'),
+    amount: normalizedAmount,
+    currency: (item?.currency || 'CLP') as WealthCurrency,
+    snapshotDate: String(item?.snapshotDate || localYmd()),
+    createdAt: String(item?.createdAt || nowIso()),
+  } satisfies Omit<WealthRecord, 'note'>;
+
+  const note = item?.note ? String(item.note) : '';
+  return note ? { ...base, note } : base;
+};
 
 const normalizeMonthKey = (value: unknown): string | null => {
   const month = String(value || '').trim();
@@ -665,7 +674,17 @@ const normalizeClosureRecords = (raw: any): WealthRecord[] | undefined => {
   if (!Array.isArray(raw)) return undefined;
   return raw
     .map((r: any) => normalizeRecord(r))
+    .filter((r: WealthRecord | null): r is WealthRecord => !!r)
     .filter((r: WealthRecord) => !isDeprecatedSuraTotalRecord(r));
+};
+
+const normalizeFxMissingKeys = (raw: unknown): Array<'usdClp' | 'eurClp' | 'ufClp'> => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((key: unknown) => String(key || '').trim())
+    .filter((key: string): key is 'usdClp' | 'eurClp' | 'ufClp' =>
+      key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
+    );
 };
 
 const toClosureVersion = (
@@ -690,12 +709,7 @@ const normalizeClosureVersion = (
   if (!monthKey) return null;
 
   const fxRates = normalizeClosureFxRates(raw?.fxRates);
-  const fxMissingRaw = Array.isArray(raw?.fxMissing) ? raw.fxMissing : [];
-  const fxMissing = fxMissingRaw
-    .map((key: unknown) => String(key || '').trim())
-    .filter((key: string): key is 'usdClp' | 'eurClp' | 'ufClp' =>
-      key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
-    );
+  const fxMissing = normalizeFxMissingKeys(raw?.fxMissing);
   const records = normalizeClosureRecords(raw?.records);
   const summary =
     records && records.length
@@ -765,6 +779,7 @@ const pickLatestRecord = (a: WealthRecord, b: WealthRecord): WealthRecord => {
 const normalizeRecordsFromRaw = (raw: any[]): WealthRecord[] =>
   raw
     .map((item: any) => normalizeRecord(item))
+    .filter((item: WealthRecord | null): item is WealthRecord => !!item)
     .filter((item: WealthRecord) => Number.isFinite(item.amount))
     .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item));
 
@@ -949,6 +964,7 @@ export const loadWealthRecords = (): WealthRecord[] => {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((item: any) => normalizeRecord(item))
+      .filter((item: WealthRecord | null): item is WealthRecord => !!item)
       .filter((item: WealthRecord) => Number.isFinite(item.amount))
       .filter((item: WealthRecord) => !isDeprecatedSuraTotalRecord(item))
       .sort(sortByCreatedDesc);
@@ -1531,6 +1547,19 @@ export interface WealthBankLiquiditySnapshot {
   hasCardUsdData: boolean;
 }
 
+export interface WealthHomeSectionAmounts {
+  investment: number;
+  bank: number;
+  realEstateNet: number;
+  nonMortgageDebt: number;
+  financialNet: number;
+  totalNetClp: number;
+  hasInvestmentData: boolean;
+  hasBankData: boolean;
+  hasRealEstateCoreData: boolean;
+  hasAllCoreSubtotalsData: boolean;
+}
+
 const AGGREGATE_BANK_LABELS_CLP = new Set(
   [normalizeText('Bancos CLP histórico'), normalizeText('Saldo bancos CLP')],
 );
@@ -1568,57 +1597,44 @@ const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): nu
   return value;
 };
 
-const AGGREGATE_BANK_LABELS_CLP_LOCAL = new Set(
-  [normalizeText('Bancos CLP histórico'), normalizeText('Saldo bancos CLP')],
-);
-const AGGREGATE_BANK_LABELS_USD_LOCAL = new Set(
-  [normalizeText('Bancos USD histórico'), normalizeText('Saldo bancos USD')],
-);
-const PROVIDER_BANK_LABELS_CLP_LOCAL = new Set(
-  [normalizeText('Banco de Chile CLP'), normalizeText('Scotiabank CLP'), normalizeText('Santander CLP')],
-);
-const PROVIDER_BANK_LABELS_USD_LOCAL = new Set(
-  [normalizeText('Banco de Chile USD'), normalizeText('Scotiabank USD'), normalizeText('Santander USD')],
-);
-
 export const computeWealthBankLiquiditySnapshot = (
   records: WealthRecord[],
 ): WealthBankLiquiditySnapshot => {
-  const nonSynthetic = records.filter((r) => !isSyntheticAggregateRecord(r));
+  const nonSynthetic = dedupeLatestByAsset(records).filter((r) => !isSyntheticAggregateRecord(r));
 
   const bankCandidates = nonSynthetic.filter(
     (r) => r.block === 'bank' && !isNonMortgageDebtRecord(r),
   );
 
   const hasProviderBankClp = bankCandidates.some(
-    (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP_LOCAL.has(normalizeText(r.label)),
+    (r) => r.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeText(r.label)),
   );
   const hasProviderBankUsd = bankCandidates.some(
-    (r) => r.currency === 'USD' && PROVIDER_BANK_LABELS_USD_LOCAL.has(normalizeText(r.label)),
+    (r) => r.currency === 'USD' && PROVIDER_BANK_LABELS_USD.has(normalizeText(r.label)),
   );
   const hasDetailedBankClp = bankCandidates.some((r) => {
     if (r.currency !== 'CLP') return false;
     const label = normalizeText(r.label);
-    return !AGGREGATE_BANK_LABELS_CLP_LOCAL.has(label) && !PROVIDER_BANK_LABELS_CLP_LOCAL.has(label);
+    return !AGGREGATE_BANK_LABELS_CLP.has(label) && !PROVIDER_BANK_LABELS_CLP.has(label);
   });
   const hasDetailedBankUsd = bankCandidates.some((r) => {
     if (r.currency !== 'USD') return false;
     const label = normalizeText(r.label);
-    return !AGGREGATE_BANK_LABELS_USD_LOCAL.has(label) && !PROVIDER_BANK_LABELS_USD_LOCAL.has(label);
+    return !AGGREGATE_BANK_LABELS_USD.has(label) && !PROVIDER_BANK_LABELS_USD.has(label);
   });
 
   const bankDetails = bankCandidates.filter((record) => {
     const label = normalizeText(record.label);
     if (record.currency === 'CLP' && hasDetailedBankClp) {
-      if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP_LOCAL.has(label);
-      return !AGGREGATE_BANK_LABELS_CLP_LOCAL.has(label);
+      if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
+      return !AGGREGATE_BANK_LABELS_CLP.has(label);
     }
     if (record.currency === 'USD' && hasDetailedBankUsd) {
-      if (hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD_LOCAL.has(label);
-      return !AGGREGATE_BANK_LABELS_USD_LOCAL.has(label);
+      if (hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
+      return !AGGREGATE_BANK_LABELS_USD.has(label);
     }
-    if (record.currency === 'CLP' && hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP_LOCAL.has(label);
-    if (record.currency === 'USD' && hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD_LOCAL.has(label);
+    if (record.currency === 'CLP' && hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
+    if (record.currency === 'USD' && hasProviderBankUsd) return PROVIDER_BANK_LABELS_USD.has(label);
     return true;
   });
 
@@ -1671,6 +1687,52 @@ export const computeWealthBankLiquiditySnapshot = (
     cardUsd,
     hasCardClpData: cardDetails.some((r) => r.currency === 'CLP'),
     hasCardUsdData: cardDetails.some((r) => r.currency === 'USD'),
+  };
+};
+
+export const computeWealthHomeSectionAmounts = (
+  monthRecordsForTotals: WealthRecord[],
+  fx: WealthFxRates,
+): WealthHomeSectionAmounts => {
+  const dedupedMonthRecords = dedupeLatestByAsset(monthRecordsForTotals);
+  const breakdown = buildWealthNetBreakdown(dedupedMonthRecords, fx);
+  const bankSnapshot = computeWealthBankLiquiditySnapshot(dedupedMonthRecords);
+  const safeUsd = Number.isFinite(fx.usdClp) && fx.usdClp > 0 ? fx.usdClp : defaultFxRates.usdClp;
+
+  const hasProperty = dedupedMonthRecords.some(
+    (record) =>
+      !isSyntheticAggregateRecord(record) &&
+      record.block === 'real_estate' &&
+      normalizeText(record.label) === normalizeText('Valor propiedad'),
+  );
+  const hasMortgageDebt = dedupedMonthRecords.some(
+    (record) => !isSyntheticAggregateRecord(record) && isMortgagePrincipalDebtLabel(record.label),
+  );
+  const hasInvestmentData = dedupedMonthRecords.some(
+    (record) => !isSyntheticAggregateRecord(record) && record.block === 'investment',
+  );
+  const hasBankData = dedupedMonthRecords.some(
+    (record) => !isSyntheticAggregateRecord(record) && record.block === 'bank' && !isNonMortgageDebtRecord(record),
+  );
+
+  const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
+  const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
+  const nonMortgageDebtClp = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
+  const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
+  const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
+  const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
+
+  return {
+    investment: breakdown.investmentClp,
+    bank: bankClp,
+    realEstateNet: realEstateNetClp,
+    nonMortgageDebt: nonMortgageDebtClp,
+    financialNet: bankClp - nonMortgageDebtClp,
+    totalNetClp,
+    hasInvestmentData,
+    hasBankData,
+    hasRealEstateCoreData,
+    hasAllCoreSubtotalsData,
   };
 };
 
@@ -2216,6 +2278,7 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     .map((item: any) => {
       const monthKey = String(item?.monthKey || '');
       const fxRates = normalizeClosureFxRates(item?.fxRates);
+      const fxMissing = normalizeFxMissingKeys(item?.fxMissing);
       const records = normalizeClosureRecords(item?.records);
 
       const summary =
@@ -2236,6 +2299,7 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
         closedAt: String(item?.closedAt || nowIso()),
         summary,
         fxRates,
+        fxMissing: fxMissing.length ? fxMissing : undefined,
         records,
         previousVersions: previousVersions.length ? previousVersions : undefined,
       };
@@ -2487,12 +2551,9 @@ export const applyMortgageAutoCalculation = (
   const sourceRecords = previous?.records?.length ? dedupeLatestByAsset(previous.records) : monthRecords;
   const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial inferida)`;
 
-  const prevDebtCandidates = sourceRecords
-    .filter((r) => r.block === 'debt')
-    .sort((a, b) => b.amount - a.amount);
-  const prevDebt =
-    prevDebtCandidates.find((r) => r.label.toLowerCase().includes('saldo deuda hipotecaria')) ||
-    prevDebtCandidates[0];
+  const prevDebt = sourceRecords.find(
+    (r) => r.block === 'debt' && normalizeText(r.label).includes(normalizeText('saldo deuda hipotecaria')),
+  );
   if (!prevDebt) return { changed: 0, sourceMonth, skipped: true, reason: 'missing_base_debt' };
 
   const findByLabel = (label: string) =>
