@@ -1,4 +1,4 @@
-// Period utilities — single source of truth for GastApp.
+// Period utilities — single source of truth for Aurum period windows.
 //
 // Goals:
 // - Stable across DST: always construct boundaries at local NOON.

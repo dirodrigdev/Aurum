@@ -8,7 +8,7 @@ import App from './App';
 const APP_BUILD = '2025-12-17-01';
 
 // Key persistente en localStorage
-const BUILD_KEY = 'gastapp_app_build_v1';
+const BUILD_KEY = 'aurum_app_build_v1';
 
 const addOrUpdateQueryParam = (urlStr: string, key: string, value: string) => {
   try {
