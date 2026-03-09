@@ -1,5 +1,5 @@
 {
-  "name": "GastApp",
-  "description": "Gestión de gastos compartida para Diego y Gastón. Minimalista, rápida y mobile-first.",
+  "name": "Aurum",
+  "description": "Gestor de patrimonio neto. Mobile-first, con cierre mensual, OCR y sincronización.",
   "requestFramePermissions": []
 }
