@@ -34,7 +34,7 @@ import {
   isSyntheticAggregateRecord,
   WEALTH_DATA_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
-  filterRecordsByRiskCapitalPreference,
+  resolveRiskCapitalRecordsForTotals,
   hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
   isRiskCapitalInvestmentLabel,
@@ -437,8 +437,8 @@ const closureNetForTotals = (
   fallbackFx: { usdClp: number; eurClp: number; ufClp: number },
 ) => {
   if (closure.records?.length) {
-    const filtered = filterRecordsByRiskCapitalPreference(closure.records, includeRiskCapital);
-    return buildWealthNetBreakdown(filtered, closure.fxRates || fallbackFx).netClp;
+    const resolved = resolveRiskCapitalRecordsForTotals(closure.records, includeRiskCapital);
+    return buildWealthNetBreakdown(resolved.recordsForTotals, closure.fxRates || fallbackFx).netClp;
   }
   return closure.summary.netConsolidatedClp;
 };
@@ -646,7 +646,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const sectionTotalClp = useMemo(() => {
     const recordsForTotals =
       section === 'investment'
-        ? filterRecordsByRiskCapitalPreference(dedupedSectionRecords, includeRiskCapitalInTotals)
+        ? resolveRiskCapitalRecordsForTotals(dedupedSectionRecords, includeRiskCapitalInTotals).recordsForTotals
         : dedupedSectionRecords;
     const breakdown = buildWealthNetBreakdown(recordsForTotals, { usdClp, eurClp, ufClp });
     const bankSnapshot = computeWealthBankLiquiditySnapshot(recordsForTotals);
@@ -2545,10 +2545,13 @@ export const Patrimonio: React.FC = () => {
   }, [hydrationReady, investmentInstruments]);
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
-  const monthRecordsForTotals = useMemo(
-    () => filterRecordsByRiskCapitalPreference(monthRecords, includeRiskCapitalInTotals),
+  const monthRiskResolution = useMemo(
+    () => resolveRiskCapitalRecordsForTotals(monthRecords, includeRiskCapitalInTotals),
     [monthRecords, includeRiskCapitalInTotals],
   );
+  // [PRODUCT RULE] Si el filtro de riesgo deja vacío, usamos base sin filtrar para evitar total 0 artificial.
+  const monthRecordsForTotals = monthRiskResolution.recordsForTotals;
+  const riskToggleApplies = monthRiskResolution.toggleApplies;
   const closureNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
@@ -2745,10 +2748,10 @@ export const Patrimonio: React.FC = () => {
       });
     }
     if (activeSection === 'investment') {
-      return filterRecordsByRiskCapitalPreference(
+      return resolveRiskCapitalRecordsForTotals(
         monthRecords.filter((r) => r.block === 'investment'),
         includeRiskCapitalInTotals,
-      );
+      ).recordsForTotals;
     }
     return monthRecords.filter((r) => r.block === activeSection);
   }, [activeSection, includeRiskCapitalInTotals, monthRecords]);
@@ -3200,10 +3203,18 @@ export const Patrimonio: React.FC = () => {
                     ? 'bg-[#c59a6c]/25 text-[#f3eadb] border-[#c59a6c]/60'
                     : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/35'
                 }`}
-                onClick={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-                title="Incluir o excluir capital de riesgo en todos los totales"
+                disabled={!riskToggleApplies}
+                onClick={() => {
+                  if (!riskToggleApplies) return;
+                  setIncludeRiskCapitalInTotals((prev) => !prev);
+                }}
+                title={
+                  riskToggleApplies
+                    ? 'Incluir o excluir capital de riesgo en todos los totales'
+                    : 'No aplica: no hay base comparable sin capital de riesgo'
+                }
               >
-                Riesgo {includeRiskCapitalInTotals ? 'ON' : 'OFF'}
+                Riesgo {riskToggleApplies ? (includeRiskCapitalInTotals ? 'ON' : 'OFF') : 'N/A'}
               </button>
             </div>
           </div>

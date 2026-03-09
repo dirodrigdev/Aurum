@@ -4,7 +4,8 @@ import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
 import {
   buildWealthNetBreakdown,
-  filterRecordsByRiskCapitalPreference,
+  computeWealthHomeSectionAmounts,
+  resolveRiskCapitalRecordsForTotals,
   WealthCurrency,
   WealthFxRates,
   WealthNetBreakdownClp,
@@ -405,6 +406,80 @@ const dedupeClosureRecords = (records: WealthRecord[]) => {
 const findRecordByCanonicalLabel = (records: WealthRecord[], canonicalLabel: string) =>
   records.find((record) => matchCanonicalWithAliases(record.label, canonicalLabel)) || null;
 
+interface ComparableVersionFields {
+  bankClp: number | null;
+  investmentClp: number | null;
+  realEstateNetClp: number | null;
+  nonMortgageDebtClp: number | null;
+  netClp: number;
+}
+
+const buildComparableVersionFields = (
+  records: WealthRecord[] | undefined,
+  summaryNetClp: number,
+  fx: WealthFxRates,
+  includeRiskCapitalInTotals: boolean,
+): ComparableVersionFields => {
+  if (Array.isArray(records) && records.length > 0) {
+    const resolved = resolveRiskCapitalRecordsForTotals(records, includeRiskCapitalInTotals);
+    const breakdown = buildNetBreakdown(resolved.recordsForTotals, fx);
+    return {
+      bankClp: breakdown.bankClp,
+      investmentClp: breakdown.investmentClp,
+      realEstateNetClp: breakdown.realEstateNetClp,
+      nonMortgageDebtClp: breakdown.nonMortgageDebtClp,
+      netClp: breakdown.netClp,
+    };
+  }
+
+  return {
+    bankClp: null,
+    investmentClp: null,
+    realEstateNetClp: null,
+    nonMortgageDebtClp: null,
+    netClp: Number(summaryNetClp || 0),
+  };
+};
+
+const getChangedFieldLabels = (
+  older: ComparableVersionFields,
+  newer: ComparableVersionFields,
+) => {
+  const changed: string[] = [];
+  if (
+    older.bankClp !== null &&
+    newer.bankClp !== null &&
+    Math.round(older.bankClp) !== Math.round(newer.bankClp)
+  ) {
+    changed.push('Bancos');
+  }
+  if (
+    older.investmentClp !== null &&
+    newer.investmentClp !== null &&
+    Math.round(older.investmentClp) !== Math.round(newer.investmentClp)
+  ) {
+    changed.push('Inversiones');
+  }
+  if (
+    older.realEstateNetClp !== null &&
+    newer.realEstateNetClp !== null &&
+    Math.round(older.realEstateNetClp) !== Math.round(newer.realEstateNetClp)
+  ) {
+    changed.push('Bienes raíces');
+  }
+  if (
+    older.nonMortgageDebtClp !== null &&
+    newer.nonMortgageDebtClp !== null &&
+    Math.round(older.nonMortgageDebtClp) !== Math.round(newer.nonMortgageDebtClp)
+  ) {
+    changed.push('Deuda');
+  }
+  if (Math.round(older.netClp) !== Math.round(newer.netClp)) {
+    changed.push('Patrimonio total');
+  }
+  return changed;
+};
+
 const BreakdownCard: React.FC<{
   title: string;
   subtitle: string;
@@ -797,10 +872,28 @@ export const ClosingAurum: React.FC = () => {
 
   const currentRecordsRaw = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentRecords = useMemo(
-    () => filterRecordsByRiskCapitalPreference(currentRecordsRaw, includeRiskCapitalInTotals),
+    // [PRODUCT RULE] Si excluir capital de riesgo vacía el set, se usa base sin filtrar.
+    () => resolveRiskCapitalRecordsForTotals(currentRecordsRaw, includeRiskCapitalInTotals).recordsForTotals,
     [currentRecordsRaw, includeRiskCapitalInTotals],
   );
-  const currentBreakdown = useMemo(() => buildNetBreakdown(currentRecords, currentFx), [currentRecords, currentFx]);
+  const currentHomeSectionAmounts = useMemo(
+    () => computeWealthHomeSectionAmounts(currentRecords, currentFx),
+    [currentRecords, currentFx],
+  );
+
+  const currentBreakdown = useMemo<NetBreakdown>(
+    () => ({
+      netClp: currentHomeSectionAmounts.totalNetClp,
+      investmentClp: currentHomeSectionAmounts.investment,
+      realEstateNetClp: currentHomeSectionAmounts.realEstateNet,
+      bankClp: currentHomeSectionAmounts.bank,
+      nonMortgageDebtClp: currentHomeSectionAmounts.nonMortgageDebt,
+      // requeridos por tipo, no usados por BreakdownCard en esta vista:
+      realEstateAssetsClp: 0,
+      mortgageDebtClp: 0,
+    }),
+    [currentHomeSectionAmounts],
+  );
   const missingCriticalCount = useMemo(() => {
     const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_CORE_FOR_NET];
     return required.filter((requiredLabel) => {
@@ -835,15 +928,15 @@ export const ClosingAurum: React.FC = () => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
       const fx = closure.fxRates || currentFx;
-      const records =
-        closure.records?.length
-          ? filterRecordsByRiskCapitalPreference(closure.records, includeRiskCapitalInTotals)
-          : null;
-      const netClp = records?.length
-        ? buildNetBreakdown(records, fx).netClp
+      const hasClosureRecords = Array.isArray(closure.records) && closure.records.length > 0;
+      const records = hasClosureRecords
+        ? resolveRiskCapitalRecordsForTotals(closure.records, includeRiskCapitalInTotals).recordsForTotals
+        : null;
+      const netClp = hasClosureRecords
+        ? buildNetBreakdown(records || [], fx).netClp
         : closure.summary.netConsolidatedClp;
-      // Para comparar meses en la misma unidad, convertimos al tipo de cambio de visualización vigente.
-      map.set(closure.monthKey, fromClp(netClp, currency, currentFx));
+      // [PRODUCT RULE] Cada período histórico usa su propio FX del momento del cierre.
+      map.set(closure.monthKey, fromClp(netClp, currency, fx));
     });
     return map;
   }, [closures, currentFx, includeRiskCapitalInTotals, currency]);
@@ -853,14 +946,14 @@ export const ClosingAurum: React.FC = () => {
   const selectedClosureRecords = useMemo(
     () =>
       selectedClosureRecordsRaw
-        ? filterRecordsByRiskCapitalPreference(selectedClosureRecordsRaw, includeRiskCapitalInTotals)
+        ? resolveRiskCapitalRecordsForTotals(selectedClosureRecordsRaw, includeRiskCapitalInTotals).recordsForTotals
         : null,
     [selectedClosureRecordsRaw, includeRiskCapitalInTotals],
   );
   const compareClosureForSelectedRecords = useMemo(
     () =>
       compareClosureForSelectedRecordsRaw
-        ? filterRecordsByRiskCapitalPreference(compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals)
+        ? resolveRiskCapitalRecordsForTotals(compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals).recordsForTotals
         : null,
     [compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals],
   );
@@ -888,14 +981,27 @@ export const ClosingAurum: React.FC = () => {
   const compareClosureForHoyRecords = useMemo(
     () =>
       compareClosureForHoyRecordsRaw
-        ? filterRecordsByRiskCapitalPreference(compareClosureForHoyRecordsRaw, includeRiskCapitalInTotals)
+        ? resolveRiskCapitalRecordsForTotals(compareClosureForHoyRecordsRaw, includeRiskCapitalInTotals).recordsForTotals
         : null,
     [compareClosureForHoyRecordsRaw, includeRiskCapitalInTotals],
   );
   const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
-  const compareClosureForHoyBreakdown = useMemo(() => {
+  const compareClosureForHoyBreakdown = useMemo<NetBreakdown | null>(() => {
     if (!compareClosureForHoyRecords?.length) return null;
-    return buildNetBreakdown(compareClosureForHoyRecords, compareClosureForHoyFx);
+    const compareHomeSectionAmounts = computeWealthHomeSectionAmounts(
+      compareClosureForHoyRecords,
+      compareClosureForHoyFx,
+    );
+    return {
+      netClp: compareHomeSectionAmounts.totalNetClp,
+      investmentClp: compareHomeSectionAmounts.investment,
+      realEstateNetClp: compareHomeSectionAmounts.realEstateNet,
+      bankClp: compareHomeSectionAmounts.bank,
+      nonMortgageDebtClp: compareHomeSectionAmounts.nonMortgageDebt,
+      // requeridos por tipo, no usados por BreakdownCard en esta vista:
+      realEstateAssetsClp: 0,
+      mortgageDebtClp: 0,
+    };
   }, [compareClosureForHoyRecords, compareClosureForHoyFx]);
 
   const evolutionRows = useMemo(() => {
@@ -904,16 +1010,18 @@ export const ClosingAurum: React.FC = () => {
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .map((c) => {
         const fx = c.fxRates || currentFx;
-        const records =
-          c.records?.length
-            ? filterRecordsByRiskCapitalPreference(c.records, includeRiskCapitalInTotals)
-            : null;
-        const netClp = records?.length ? buildNetBreakdown(records, fx).netClp : c.summary.netConsolidatedClp;
+        const hasClosureRecords = Array.isArray(c.records) && c.records.length > 0;
+        const records = hasClosureRecords
+          ? resolveRiskCapitalRecordsForTotals(c.records, includeRiskCapitalInTotals).recordsForTotals
+          : null;
+        const netClp = hasClosureRecords
+          ? buildNetBreakdown(records || [], fx).netClp
+          : c.summary.netConsolidatedClp;
         return {
           key: c.monthKey,
           label: monthLabel(c.monthKey),
           kind: 'cierre',
-          net: fromClp(netClp, currency, currentFx),
+          net: fromClp(netClp, currency, fx),
         };
       });
     rows.push({ key: monthKey, label: monthLabel(monthKey), kind: 'hoy', net: fromClp(currentBreakdown.netClp, currency, currentFx) });
@@ -933,18 +1041,47 @@ export const ClosingAurum: React.FC = () => {
   );
 
   const closureHistoryVersions = selectedClosure?.previousVersions || [];
+  const closureVersionChangesById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!selectedClosure || closureHistoryVersions.length <= 1) return map;
+
+    const chain = [selectedClosure, ...closureHistoryVersions];
+    const comparable = chain.map((item) => {
+      const fx = item.fxRates || currentFx;
+      return buildComparableVersionFields(
+        item.records,
+        Number(item.summary?.netConsolidatedClp || 0),
+        fx,
+        includeRiskCapitalInTotals,
+      );
+    });
+
+    for (let i = 1; i < chain.length; i += 1) {
+      const older = chain[i];
+      const olderFields = comparable[i];
+      const newerFields = comparable[i - 1];
+      const changed = getChangedFieldLabels(olderFields, newerFields);
+      map.set(
+        `${older.id}-${older.closedAt}`,
+        changed.length ? `Cambió: ${changed.join(', ')}` : 'Sin cambios numéricos',
+      );
+    }
+
+    return map;
+  }, [selectedClosure, closureHistoryVersions, currentFx, includeRiskCapitalInTotals]);
   const closureVersionNetDisplayById = useMemo(() => {
     const map = new Map<string, number>();
     closureHistoryVersions.forEach((version) => {
       const fx = version.fxRates || currentFx;
-      const records =
-        version.records?.length
-          ? filterRecordsByRiskCapitalPreference(version.records, includeRiskCapitalInTotals)
-          : null;
-      const netClp = records?.length
-        ? buildNetBreakdown(records, fx).netClp
+      const hasVersionRecords = Array.isArray(version.records) && version.records.length > 0;
+      const records = hasVersionRecords
+        ? resolveRiskCapitalRecordsForTotals(version.records, includeRiskCapitalInTotals).recordsForTotals
+        : null;
+      const netClp = hasVersionRecords
+        ? buildNetBreakdown(records || [], fx).netClp
         : version.summary.netConsolidatedClp;
-      map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, currentFx));
+      // [PRODUCT RULE] Cada versión histórica se muestra con su FX guardado en ese momento.
+      map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, fx));
     });
     return map;
   }, [closureHistoryVersions, currentFx, includeRiskCapitalInTotals, currency]);
@@ -1197,7 +1334,7 @@ export const ClosingAurum: React.FC = () => {
                             <div className="mt-0.5 text-[11px] font-semibold">
                               {formatCurrency(
                                 closureDisplayNetByMonth.get(closure.monthKey) ??
-                                  fromClp(closure.summary.netConsolidatedClp, currency, currentFx),
+                                  fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
                                 currency,
                               )}
                             </div>
@@ -1267,10 +1404,16 @@ export const ClosingAurum: React.FC = () => {
                           Neto:{' '}
                           {formatCurrency(
                             closureVersionNetDisplayById.get(`${version.id}-${version.closedAt}`) ??
-                              fromClp(version.summary.netConsolidatedClp, currency, currentFx),
+                              fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
                             currency,
                           )}
                         </div>
+                        {closureHistoryVersions.length > 1 && (
+                          <div className="text-[11px] text-slate-500">
+                            {closureVersionChangesById.get(`${version.id}-${version.closedAt}`) ||
+                              'Sin cambios numéricos'}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

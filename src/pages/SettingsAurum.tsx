@@ -51,6 +51,7 @@ export const SettingsAurum: React.FC = () => {
   const [csvImportMessage, setCsvImportMessage] = useState('');
   const [csvImportWarnings, setCsvImportWarnings] = useState<string[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
+  const [csvImportedResultVisible, setCsvImportedResultVisible] = useState(false);
   const [seedMessage, setSeedMessage] = useState('');
   const [clearSimMessage, setClearSimMessage] = useState('');
   const [clearMonthMessage, setClearMonthMessage] = useState('');
@@ -94,6 +95,24 @@ export const SettingsAurum: React.FC = () => {
 
   const formatFxInteger = (value: number) =>
     Math.round(Number(value) || 0).toLocaleString('es-CL');
+
+  const describeManualSync = (
+    pushed: boolean,
+    hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none',
+  ) => {
+    if (hydrated === 'unavailable') return 'Sin conexión con la nube';
+    if (pushed && (hydrated === 'cloud' || hydrated === 'local')) return 'Sincronizado';
+    return 'Error al sincronizar';
+  };
+
+  const describeLocalThenCloudSync = (
+    pushed: boolean,
+    hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none',
+  ) => {
+    if (pushed && (hydrated === 'cloud' || hydrated === 'local')) return 'Sincronizado';
+    if (hydrated === 'unavailable') return 'Guardado localmente · Sin conexión con la nube';
+    return 'Guardado localmente · Error al sincronizar';
+  };
 
   const syncDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
     setFxDraft(buildDraftFromFx(rates));
@@ -300,8 +319,7 @@ export const SettingsAurum: React.FC = () => {
                   }
                   const fs = getFirestoreStatus();
                   setFsStatus(fs);
-                  const detail = `${fs.state}${fs.code ? `/${fs.code}` : ''}`;
-                  setSyncMessage(`Sync manual: push=${pushed ? 'ok' : 'fail'}, pull=${hydrated}, firestore=${detail}.`);
+                  setSyncMessage(describeManualSync(pushed, hydrated));
                   setFsDebug(getLastWealthSyncIssue() || fs.message || '');
                 }}
               >
@@ -316,7 +334,17 @@ export const SettingsAurum: React.FC = () => {
                 Cerrar sesión
               </Button>
             </div>
-            {!!syncMessage && <div className="text-xs text-emerald-700">{syncMessage}</div>}
+            {!!syncMessage && (
+              <div
+                className={`text-xs ${
+                  syncMessage.includes('Error') || syncMessage.includes('Sin conexión')
+                    ? 'text-amber-700'
+                    : 'text-emerald-700'
+                }`}
+              >
+                {syncMessage}
+              </div>
+            )}
             {!!fsDebug && <div className="text-xs text-slate-500 break-words">Detalle Firestore: {fsDebug}</div>}
             <div className="text-[11px] text-slate-500 break-words">
               Proyecto activo (frontend): {import.meta.env.VITE_FIREBASE_PROJECT_ID || 'no definido'}
@@ -371,12 +399,13 @@ export const SettingsAurum: React.FC = () => {
                   Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {humanizeFxSource(fxLiveMeta.source)}
                 </div>
                 <div className="mt-0.5">Última actualización: {formatDateTime(fxLiveMeta.fetchedAt)}</div>
-                {fxLiveMeta.status === 'error' && !!fxLiveMeta.message && (
-                  <div className="mt-0.5 break-words">{fxLiveMeta.message}</div>
+                {!!(fxLiveMessage || (fxLiveMeta.status === 'error' ? fxLiveMeta.message : '')) && (
+                  <div className="mt-0.5 break-words">
+                    {fxLiveMessage || fxLiveMeta.message}
+                  </div>
                 )}
               </div>
             )}
-            {!!fxLiveMessage && <div className="text-xs text-slate-600">{fxLiveMessage}</div>}
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
@@ -502,7 +531,7 @@ export const SettingsAurum: React.FC = () => {
                       } · filas: ${csvPreview.totalRows}.`}
                 </div>
               )}
-              {!!csvPreview.warnings.length && (
+              {!!csvPreview.warnings.length && !csvImportedResultVisible && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                   <ul className="list-disc pl-4 space-y-0.5">
                     {csvPreview.warnings.map((warning, index) => (
@@ -559,9 +588,11 @@ export const SettingsAurum: React.FC = () => {
                     try {
                       const text = await file.text();
                       setCsvDraft(text);
+                      setCsvImportedResultVisible(false);
                       setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
                       setCsvImportWarnings([]);
                     } catch (err: any) {
+                      setCsvImportedResultVisible(false);
                       setCsvImportMessage(`No pude leer archivo CSV: ${String(err?.message || err || 'error')}`);
                       setCsvImportWarnings([]);
                     }
@@ -577,7 +608,10 @@ export const SettingsAurum: React.FC = () => {
                   rows={8}
                   placeholder="month_key,closed_at,usd_clp,..."
                   value={csvDraft}
-                  onChange={(e) => setCsvDraft(e.target.value)}
+                  onChange={(e) => {
+                    setCsvImportedResultVisible(false);
+                    setCsvDraft(e.target.value);
+                  }}
                 />
               </div>
 
@@ -606,6 +640,7 @@ export const SettingsAurum: React.FC = () => {
                     if (!ok) return;
 
                     setCsvImporting(true);
+                    setCsvImportedResultVisible(false);
                     setCsvImportMessage('');
                     setCsvImportWarnings([]);
                     try {
@@ -623,11 +658,13 @@ export const SettingsAurum: React.FC = () => {
                       ].join(' · ');
                       setCsvImportMessage(summary);
                       setCsvImportWarnings(result.warnings);
+                      setCsvImportedResultVisible(true);
                       setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
                       setFsStatus(getFirestoreStatus());
                     } catch (err: any) {
                       setCsvImportMessage(String(err?.message || 'No pude importar el historial CSV.'));
                       setCsvImportWarnings([]);
+                      setCsvImportedResultVisible(true);
                     } finally {
                       setCsvImporting(false);
                     }
@@ -640,6 +677,7 @@ export const SettingsAurum: React.FC = () => {
                   disabled={csvImporting}
                   onClick={() => {
                     setCsvDraft('');
+                    setCsvImportedResultVisible(false);
                     setCsvImportMessage('');
                     setCsvImportWarnings([]);
                   }}
@@ -649,7 +687,7 @@ export const SettingsAurum: React.FC = () => {
               </div>
 
               {!!csvImportMessage && <div className="text-xs text-slate-700">{csvImportMessage}</div>}
-              {!!csvImportWarnings.length && (
+              {!!csvImportWarnings.length && csvImportedResultVisible && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                   <div className="font-medium">Advertencias de importación</div>
                   <ul className="mt-1 list-disc pl-4 space-y-0.5">
@@ -842,9 +880,7 @@ export const SettingsAurum: React.FC = () => {
                       setSelectedClosureToDelete('');
                       setFsStatus(getFirestoreStatus());
                       setDeleteClosureMessage(
-                        pushed
-                          ? `Cierre ${selectedClosureToDelete} eliminado y sincronizado (${hydrated}).`
-                          : `Cierre ${selectedClosureToDelete} eliminado localmente. No se pudo sincronizar ahora.`,
+                        `Cierre ${selectedClosureToDelete} eliminado. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
                       );
                     } finally {
                       setDeletingClosure(false);
@@ -885,9 +921,7 @@ export const SettingsAurum: React.FC = () => {
                     setSelectedClosureToDelete('');
                     setFsStatus(getFirestoreStatus());
                     setDeleteClosureMessage(
-                      pushed
-                        ? `Se eliminaron todos los cierres y se sincronizó (${hydrated}).`
-                        : 'Se eliminaron cierres localmente. No se pudo sincronizar ahora.',
+                      `Se eliminaron todos los cierres. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
                     );
                   } finally {
                     setDeletingClosure(false);
@@ -897,7 +931,15 @@ export const SettingsAurum: React.FC = () => {
                 Borrar todos los cierres
               </Button>
               {!!deleteClosureMessage && (
-                <div className="text-xs text-emerald-700">{deleteClosureMessage}</div>
+                <div
+                  className={`text-xs ${
+                    deleteClosureMessage.includes('Error') || deleteClosureMessage.includes('Sin conexión')
+                      ? 'text-amber-700'
+                      : 'text-emerald-700'
+                  }`}
+                >
+                  {deleteClosureMessage}
+                </div>
               )}
             </div>
           </div>

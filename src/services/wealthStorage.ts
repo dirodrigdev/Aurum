@@ -401,6 +401,32 @@ export const filterRecordsByRiskCapitalPreference = (
   );
 };
 
+export interface RiskCapitalRecordsResolution {
+  recordsForTotals: WealthRecord[];
+  hasRiskCapital: boolean;
+  toggleApplies: boolean;
+}
+
+export const resolveRiskCapitalRecordsForTotals = (
+  records: WealthRecord[],
+  includeRiskCapital: boolean,
+): RiskCapitalRecordsResolution => {
+  const withoutRiskCapital = filterRecordsByRiskCapitalPreference(records, false);
+  const hasRiskCapital = withoutRiskCapital.length !== records.length;
+  const hasNonRiskRecords = withoutRiskCapital.length > 0;
+  const toggleApplies = hasRiskCapital && hasNonRiskRecords;
+  if (!toggleApplies) {
+    // [PRODUCT RULE] Si no hay capital de riesgo o al excluirlo el conjunto queda vacío,
+    // se mantiene la base original para evitar patrimonios en 0 por filtro.
+    return { recordsForTotals: records, hasRiskCapital, toggleApplies: false };
+  }
+  return {
+    recordsForTotals: includeRiskCapital ? records : withoutRiskCapital,
+    hasRiskCapital,
+    toggleApplies: true,
+  };
+};
+
 export const loadIncludeRiskCapitalInTotals = () => {
   try {
     const raw = String(localStorage.getItem(WEALTH_INCLUDE_RISK_CAPITAL_KEY) || '').trim().toLowerCase();
@@ -1717,8 +1743,6 @@ export const computeWealthHomeSectionAmounts = (
 ): WealthHomeSectionAmounts => {
   const dedupedMonthRecords = dedupeLatestByAsset(monthRecordsForTotals);
   const breakdown = buildWealthNetBreakdown(dedupedMonthRecords, fx);
-  const bankSnapshot = computeWealthBankLiquiditySnapshot(dedupedMonthRecords);
-  const safeUsd = Number.isFinite(fx.usdClp) && fx.usdClp > 0 ? fx.usdClp : defaultFxRates.usdClp;
 
   const hasProperty = dedupedMonthRecords.some(
     (record) =>
@@ -1737,8 +1761,8 @@ export const computeWealthHomeSectionAmounts = (
   );
 
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
-  const bankClp = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
-  const nonMortgageDebtClp = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
+  const bankClp = breakdown.bankClp;
+  const nonMortgageDebtClp = breakdown.nonMortgageDebtClp;
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
   const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
   const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
@@ -1766,6 +1790,8 @@ export const buildWealthNetBreakdown = (
   let mortgageDebtClp = 0;
   let bankClp = 0;
   let nonMortgageDebtClp = 0;
+  let hasPropertyRecord = false;
+  const propertyLabelKey = normalizeText('Valor propiedad');
 
   const hasDetailedBankClp = records.some((record) => {
     if (record.block !== 'bank') return false;
@@ -1890,14 +1916,19 @@ export const buildWealthNetBreakdown = (
     }
 
     if (record.block === 'investment') investmentClp += clp;
-    if (record.block === 'real_estate') realEstateAssetsClp += clp;
+    if (record.block === 'real_estate') {
+      realEstateAssetsClp += clp;
+      if (normalizedLabel === propertyLabelKey) hasPropertyRecord = true;
+    }
     if (record.block === 'bank' && !treatsAsNonMortgageDebt) bankClp += clp;
     if (treatsAsNonMortgageDebt) {
       nonMortgageDebtClp += clp;
     }
   });
 
-  const realEstateNetClp = realEstateAssetsClp - mortgageDebtClp;
+  // [PRODUCT RULE] Si no existe "Valor propiedad" en el mes, real estate no impacta patrimonio:
+  // se ignoran tanto el activo inmobiliario como la deuda hipotecaria en el neto consolidado.
+  const realEstateNetClp = hasPropertyRecord ? realEstateAssetsClp - mortgageDebtClp : 0;
   const netClp = investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
   return {
     netClp,
@@ -3270,6 +3301,16 @@ export const importHistoricalClosuresFromCsv = async (
     Number(fallbackFx.usdClp) > 0
       ? Number(fallbackFx.eurClp) / Number(fallbackFx.usdClp)
       : null;
+  const monthCounts = new Map<string, number>();
+  rows.forEach((cells) => {
+    const rowObj: Record<string, string> = {};
+    headers.forEach((header, i) => {
+      rowObj[header] = String(cells[i] || '').trim();
+    });
+    const mk = parseCsvMonthKey(rowObj);
+    if (!mk) return;
+    monthCounts.set(mk, (monthCounts.get(mk) || 0) + 1);
+  });
 
   rows.forEach((cells, idx) => {
     const rowObj: Record<string, string> = {};
@@ -3383,6 +3424,12 @@ export const importHistoricalClosuresFromCsv = async (
     else importedMonths.push(monthKey);
     closureByMonth.set(monthKey, nextClosure);
   });
+  [...monthCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([month, count]) => {
+      warnings.push(`Mes ${month} aparece ${count} veces, se tomó la última fila.`);
+    });
 
   const mergedClosures = [...closureByMonth.values()].sort(
     (a, b) => b.monthKey.localeCompare(a.monthKey),
@@ -3413,6 +3460,7 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
   const rows = matrix.slice(1);
   const monthSet = new Set<string>();
   const invalidMonthRows: number[] = [];
+  const monthCounts = new Map<string, number>();
 
   rows.forEach((cells, idx) => {
     const rowObj: Record<string, string> = {};
@@ -3425,6 +3473,7 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
       return;
     }
     monthSet.add(monthKey);
+    monthCounts.set(monthKey, (monthCounts.get(monthKey) || 0) + 1);
   });
 
   const monthKeys = [...monthSet].sort();
@@ -3433,6 +3482,12 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
   if (invalidMonthRows.length) {
     warnings.push(`Filas con month_key inválido: ${invalidMonthRows.join(', ')}.`);
   }
+  [...monthCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([month, count]) => {
+      warnings.push(`Mes ${month} aparece ${count} veces, se tomó la última fila.`);
+    });
 
   return {
     monthKeys,
