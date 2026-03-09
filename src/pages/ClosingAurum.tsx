@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -456,7 +456,16 @@ const BreakdownCard: React.FC<{
 
   const investmentDetails = useMemo(
     () => buildInvestmentDetails(currentRecords, fx, compareRecords || null, compareFx || null),
-    [currentRecords, fx, compareRecords, compareFx],
+    [
+      currentRecords,
+      compareRecords,
+      fx.usdClp,
+      fx.eurClp,
+      fx.ufClp,
+      compareFx?.usdClp,
+      compareFx?.eurClp,
+      compareFx?.ufClp,
+    ],
   );
   const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
   const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
@@ -671,14 +680,14 @@ export const ClosingAurum: React.FC = () => {
     eurUsd: '',
     ufClp: '',
   });
+  const hydrationRunningRef = useRef(false);
+  const lastHydrateAtRef = useRef(0);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
   }, [currency]);
 
   useEffect(() => {
-    let runningHydrate = false;
-    let lastHydrateAt = 0;
     const HYDRATE_THROTTLE_MS = 15_000;
 
     const refreshLocal = () => {
@@ -688,18 +697,18 @@ export const ClosingAurum: React.FC = () => {
       setRevision((v) => v + 1);
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
-      if (runningHydrate) return;
+      if (hydrationRunningRef.current) return;
       const now = Date.now();
-      if (!force && now - lastHydrateAt < HYDRATE_THROTTLE_MS) {
+      if (!force && now - lastHydrateAtRef.current < HYDRATE_THROTTLE_MS) {
         refreshLocal();
         return;
       }
-      runningHydrate = true;
+      hydrationRunningRef.current = true;
       try {
         await hydrateWealthFromCloud();
-        lastHydrateAt = Date.now();
+        lastHydrateAtRef.current = Date.now();
       } finally {
-        runningHydrate = false;
+        hydrationRunningRef.current = false;
       }
       refreshLocal();
     };
@@ -899,12 +908,12 @@ export const ClosingAurum: React.FC = () => {
           c.records?.length
             ? filterRecordsByRiskCapitalPreference(c.records, includeRiskCapitalInTotals)
             : null;
-        const breakdown = records?.length ? buildNetBreakdown(records, fx) : null;
+        const netClp = records?.length ? buildNetBreakdown(records, fx).netClp : c.summary.netConsolidatedClp;
         return {
           key: c.monthKey,
           label: monthLabel(c.monthKey),
           kind: 'cierre',
-          net: breakdown ? fromClp(breakdown.netClp, currency, currentFx) : null,
+          net: fromClp(netClp, currency, currentFx),
         };
       });
     rows.push({ key: monthKey, label: monthLabel(monthKey), kind: 'hoy', net: fromClp(currentBreakdown.netClp, currency, currentFx) });
@@ -968,11 +977,15 @@ export const ClosingAurum: React.FC = () => {
       setClosureEditError('Revisa TC/UF: USD/CLP, EUR/USD y UF/CLP deben ser mayores que 0.');
       return;
     }
-    const nextFx: WealthFxRates = {
-      usdClp,
-      eurClp: usdClp * eurUsd,
-      ufClp,
-    };
+    const eurClpCandidate = usdClp * eurUsd;
+    const eurClp =
+      Number.isFinite(selectedClosureFx.eurClp) &&
+      selectedClosureFx.eurClp > 0 &&
+      Math.abs(eurClpCandidate - selectedClosureFx.eurClp) <
+        1e-9 * Math.max(1, Math.abs(selectedClosureFx.eurClp))
+        ? selectedClosureFx.eurClp
+        : eurClpCandidate;
+    const nextFx: WealthFxRates = { usdClp, eurClp, ufClp };
 
     let nextRecords = dedupeClosureRecords(
       selectedClosureRecordsRaw.map((record) => ({ ...record })),
@@ -992,15 +1005,18 @@ export const ClosingAurum: React.FC = () => {
 
     CLOSURE_EDITABLE_FIELDS.forEach((field) => {
       const raw = closureEditDraft[field.key];
+      const existing = findRecordByCanonicalLabel(nextRecords, field.canonicalLabel);
+      if (String(raw || '').trim() === '') {
+        return;
+      }
       nextRecords = nextRecords.filter(
         (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
       );
-      if (String(raw || '').trim() === '') return;
       const parsed = parseStrictNumber(raw);
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
       nextRecords.push({
-        id: crypto.randomUUID(),
+        id: existing?.id || crypto.randomUUID(),
         block: field.block,
         source: 'Edición cierre',
         label: field.label,
@@ -1181,7 +1197,7 @@ export const ClosingAurum: React.FC = () => {
                             <div className="mt-0.5 text-[11px] font-semibold">
                               {formatCurrency(
                                 closureDisplayNetByMonth.get(closure.monthKey) ??
-                                  fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
+                                  fromClp(closure.summary.netConsolidatedClp, currency, currentFx),
                                 currency,
                               )}
                             </div>
@@ -1251,7 +1267,7 @@ export const ClosingAurum: React.FC = () => {
                           Neto:{' '}
                           {formatCurrency(
                             closureVersionNetDisplayById.get(`${version.id}-${version.closedAt}`) ??
-                              fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
+                              fromClp(version.summary.netConsolidatedClp, currency, currentFx),
                             currency,
                           )}
                         </div>

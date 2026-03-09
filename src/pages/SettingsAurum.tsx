@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
@@ -18,6 +18,7 @@ import {
   previewHistoricalClosuresCsv,
   loadFxLiveSyncMeta,
   loadFxRates,
+  defaultFxRates,
   loadInvestmentInstruments,
   loadWealthRecords,
   refreshFxRatesFromLive,
@@ -30,11 +31,16 @@ import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
 
 export const SettingsAurum: React.FC = () => {
-  const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => ({
-    usdClp: String(Math.round(rates.usdClp)),
-    eurUsd: String(rates.eurClp / Math.max(1, rates.usdClp)),
-    ufClp: String(Math.round(rates.ufClp)),
-  });
+  const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
+    const safeUsd = Number.isFinite(rates.usdClp) && rates.usdClp > 0 ? rates.usdClp : defaultFxRates.usdClp;
+    const safeEur = Number.isFinite(rates.eurClp) && rates.eurClp > 0 ? rates.eurClp : defaultFxRates.eurClp;
+    const safeUf = Number.isFinite(rates.ufClp) && rates.ufClp > 0 ? rates.ufClp : defaultFxRates.ufClp;
+    return {
+      usdClp: String(Math.round(safeUsd)),
+      eurUsd: String(safeEur / safeUsd),
+      ufClp: String(Math.round(safeUf)),
+    };
+  };
 
   const [fx, setFx] = useState(() => loadFxRates());
   const [fxDraft, setFxDraft] = useState(() => buildDraftFromFx(fx));
@@ -62,6 +68,8 @@ export const SettingsAurum: React.FC = () => {
   const [selectedClosureToDelete, setSelectedClosureToDelete] = useState('');
   const [deleteClosureMessage, setDeleteClosureMessage] = useState('');
   const [deletingClosure, setDeletingClosure] = useState(false);
+  const hydrationRunningRef = useRef(false);
+  const lastHydrateAtRef = useRef(0);
 
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
@@ -95,12 +103,15 @@ export const SettingsAurum: React.FC = () => {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      if (document.body.contains(link)) document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const commitDraftFx = () => {
@@ -112,11 +123,14 @@ export const SettingsAurum: React.FC = () => {
       setFxLiveMessage('No pude guardar: revisa que USD/CLP, EUR/USD y UF/CLP sean mayores a 0.');
       return;
     }
-    const next = {
-      usdClp,
-      eurClp: usdClp * eurUsd,
-      ufClp,
-    };
+    const eurClpCandidate = usdClp * eurUsd;
+    const eurClp =
+      Number.isFinite(fx.eurClp) &&
+      fx.eurClp > 0 &&
+      Math.abs(eurClpCandidate - fx.eurClp) < 1e-9 * Math.max(1, Math.abs(fx.eurClp))
+        ? fx.eurClp
+        : eurClpCandidate;
+    const next = { usdClp, eurClp, ufClp };
     setFx(next);
     saveFxRates(next);
     syncDraftFromFx(next);
@@ -176,8 +190,6 @@ export const SettingsAurum: React.FC = () => {
   }, [fx]);
 
   useEffect(() => {
-    let runningHydrate = false;
-    let lastHydrateAt = 0;
     const HYDRATE_THROTTLE_MS = 20_000;
 
     const refreshLocal = () => {
@@ -187,18 +199,18 @@ export const SettingsAurum: React.FC = () => {
       setFsStatus(getFirestoreStatus());
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
-      if (runningHydrate) return;
+      if (hydrationRunningRef.current) return;
       const now = Date.now();
-      if (!force && now - lastHydrateAt < HYDRATE_THROTTLE_MS) {
+      if (!force && now - lastHydrateAtRef.current < HYDRATE_THROTTLE_MS) {
         refreshLocal();
         return;
       }
-      runningHydrate = true;
+      hydrationRunningRef.current = true;
       try {
         await hydrateWealthFromCloud();
-        lastHydrateAt = Date.now();
+        lastHydrateAtRef.current = Date.now();
       } finally {
-        runningHydrate = false;
+        hydrationRunningRef.current = false;
       }
       refreshLocal();
     };
@@ -544,10 +556,15 @@ export const SettingsAurum: React.FC = () => {
                   onChange={async (event) => {
                     const file = event.target.files?.[0];
                     if (!file) return;
-                    const text = await file.text();
-                    setCsvDraft(text);
-                    setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
-                    setCsvImportWarnings([]);
+                    try {
+                      const text = await file.text();
+                      setCsvDraft(text);
+                      setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
+                      setCsvImportWarnings([]);
+                    } catch (err: any) {
+                      setCsvImportMessage(`No pude leer archivo CSV: ${String(err?.message || err || 'error')}`);
+                      setCsvImportWarnings([]);
+                    }
                     event.currentTarget.value = '';
                   }}
                 />
@@ -808,8 +825,18 @@ export const SettingsAurum: React.FC = () => {
                       const current = loadClosures();
                       const next = current.filter((c) => c.monthKey !== selectedClosureToDelete);
                       saveClosures(next);
-                      const pushed = await syncWealthNow();
-                      const hydrated = await hydrateWealthFromCloud();
+                      let pushed = false;
+                      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
+                      try {
+                        pushed = await syncWealthNow();
+                      } catch {
+                        pushed = false;
+                      }
+                      try {
+                        hydrated = await hydrateWealthFromCloud();
+                      } catch {
+                        hydrated = 'none';
+                      }
                       const refreshed = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
                       setAvailableClosures(refreshed);
                       setSelectedClosureToDelete('');
@@ -841,8 +868,18 @@ export const SettingsAurum: React.FC = () => {
                   setDeleteClosureMessage('');
                   try {
                     saveClosures([]);
-                    const pushed = await syncWealthNow();
-                    const hydrated = await hydrateWealthFromCloud();
+                    let pushed = false;
+                    let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
+                    try {
+                      pushed = await syncWealthNow();
+                    } catch {
+                      pushed = false;
+                    }
+                    try {
+                      hydrated = await hydrateWealthFromCloud();
+                    } catch {
+                      hydrated = 'none';
+                    }
                     const refreshed = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
                     setAvailableClosures(refreshed);
                     setSelectedClosureToDelete('');

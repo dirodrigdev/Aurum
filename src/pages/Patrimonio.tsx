@@ -638,17 +638,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     };
   }, [section]);
 
-  const dedupedSectionRecords = useMemo(() => {
-    const byLogicalKey = new Map<string, WealthRecord>();
-    const ordered = [...recordsForSection].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
-    for (const item of ordered) {
-      const key = `${item.block}::${normalizeForMatch(item.label)}::${item.currency}`;
-      if (!byLogicalKey.has(key)) byLogicalKey.set(key, item);
-    }
-    return [...byLogicalKey.values()];
-  }, [recordsForSection]);
+  const dedupedSectionRecords = useMemo(
+    () => latestRecordsForMonth(recordsForSection, monthKey),
+    [recordsForSection, monthKey],
+  );
 
   const sectionTotalClp = useMemo(() => {
     const recordsForTotals =
@@ -799,11 +792,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const findRecordForLabel = (label: string, currency?: WealthCurrency) => {
-    const target = normalizeForMatch(label);
     return dedupedSectionRecords.find((r) => {
       if (r.block !== 'investment') return false;
       if (currency && r.currency !== currency) return false;
-      return normalizeForMatch(r.label) === target;
+      return sameCanonicalLabel(r.label, label);
     });
   };
 
@@ -941,7 +933,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       });
     }
 
-    return [...baseRows, ...customRows];
+    const uniqueCustomRows = customRows.filter(
+      (customRow) => !baseRows.some((baseRow) => sameCanonicalLabel(baseRow.name, customRow.name)),
+    );
+    return [...baseRows, ...uniqueCustomRows];
   }, [section, dedupedSectionRecords, investmentInstruments, monthKey]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
@@ -1245,10 +1240,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       return;
     }
 
-    const existing = dedupedSectionRecords.find((r) => normalizeForMatch(r.label).includes(normalizeForMatch(row.name)));
+    const existing = dedupedSectionRecords.find((r) => sameCanonicalLabel(r.label, row.name));
     const preferredBlock: WealthBlock =
       section === 'real_estate' &&
-      REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(row.name).includes(normalizeForMatch(item)))
+      REAL_ESTATE_DEBT_LABELS.some((item) => sameCanonicalLabel(row.name, item))
         ? 'debt'
         : section === 'real_estate'
           ? 'real_estate'
@@ -1294,7 +1289,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveQuickFill = () => {
     if (!quickFill) return;
-    const amount = Number(quickFill.amount.replace(/,/g, '.'));
+    const amount = parseStrictNumber(quickFill.amount);
     if (!Number.isFinite(amount) || amount < 0) return;
     upsertWealthRecord({
       id: quickFill.id,
@@ -1317,7 +1312,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const parsedEntries = multiQuickFill.entries
       .map((entry) => ({
         ...entry,
-        amountParsed: Number(String(entry.amount || '').replace(/,/g, '.')),
+        amountParsed: parseStrictNumber(String(entry.amount || '')),
       }))
       .filter((entry) => Number.isFinite(entry.amountParsed) && entry.amountParsed >= 0);
     if (!parsedEntries.length) return;
@@ -3079,7 +3074,10 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
-    const previousMonth = loadClosures().find((item) => item.monthKey < monthKey && (item.records?.length || 0) > 0);
+    const previousMonth =
+      loadClosures()
+        .filter((item) => item.monthKey < monthKey && (item.records?.length || 0) > 0)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
     if (previousMonth) {
       setCarryMessage(`No se pudo arrastrar automáticamente desde ${previousMonth.monthKey}. Revisa cierres previos.`);
     }

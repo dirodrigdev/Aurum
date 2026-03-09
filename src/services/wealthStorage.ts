@@ -687,6 +687,24 @@ const normalizeFxMissingKeys = (raw: unknown): Array<'usdClp' | 'eurClp' | 'ufCl
     );
 };
 
+const inferFxMissingFromRawFx = (rawFx: unknown): Array<'usdClp' | 'eurClp' | 'ufClp'> => {
+  const parsed = (rawFx && typeof rawFx === 'object') ? (rawFx as Record<string, unknown>) : {};
+  const missing: Array<'usdClp' | 'eurClp' | 'ufClp'> = [];
+  const usd = Number(parsed.usdClp);
+  const eur = Number(parsed.eurClp);
+  const uf = Number(parsed.ufClp);
+  if (!Number.isFinite(usd) || usd <= 0) missing.push('usdClp');
+  if (!Number.isFinite(eur) || eur <= 0) missing.push('eurClp');
+  if (!Number.isFinite(uf) || uf <= 0) missing.push('ufClp');
+  return missing;
+};
+
+const mergeFxMissingKeys = (
+  explicit: Array<'usdClp' | 'eurClp' | 'ufClp'>,
+  inferred: Array<'usdClp' | 'eurClp' | 'ufClp'>,
+): Array<'usdClp' | 'eurClp' | 'ufClp'> =>
+  Array.from(new Set([...explicit, ...inferred]));
+
 const toClosureVersion = (
   closure: WealthMonthlyClosure,
   replacedAt?: string,
@@ -709,7 +727,10 @@ const normalizeClosureVersion = (
   if (!monthKey) return null;
 
   const fxRates = normalizeClosureFxRates(raw?.fxRates);
-  const fxMissing = normalizeFxMissingKeys(raw?.fxMissing);
+  const fxMissing = mergeFxMissingKeys(
+    normalizeFxMissingKeys(raw?.fxMissing),
+    inferFxMissingFromRawFx(raw?.fxRates),
+  );
   const records = normalizeClosureRecords(raw?.records);
   const summary =
     records && records.length
@@ -1899,12 +1920,10 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
       .map((item: any) => {
         const monthKey = String(item?.monthKey || '');
         const fxRates = normalizeClosureFxRates(item?.fxRates);
-        const fxMissingRaw = Array.isArray(item?.fxMissing) ? item.fxMissing : [];
-        const fxMissing = fxMissingRaw
-          .map((key: unknown) => String(key || '').trim())
-          .filter((key: string): key is 'usdClp' | 'eurClp' | 'ufClp' =>
-            key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
-          );
+        const fxMissing = mergeFxMissingKeys(
+          normalizeFxMissingKeys(item?.fxMissing),
+          inferFxMissingFromRawFx(item?.fxRates),
+        );
         const records = normalizeClosureRecords(item?.records);
 
         const summary =
@@ -2278,7 +2297,10 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
     .map((item: any) => {
       const monthKey = String(item?.monthKey || '');
       const fxRates = normalizeClosureFxRates(item?.fxRates);
-      const fxMissing = normalizeFxMissingKeys(item?.fxMissing);
+      const fxMissing = mergeFxMissingKeys(
+        normalizeFxMissingKeys(item?.fxMissing),
+        inferFxMissingFromRawFx(item?.fxRates),
+      );
       const records = normalizeClosureRecords(item?.records);
 
       const summary =
@@ -2552,15 +2574,17 @@ export const applyMortgageAutoCalculation = (
   const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial inferida)`;
 
   const prevDebt = sourceRecords.find(
-    (r) => r.block === 'debt' && normalizeText(r.label).includes(normalizeText('saldo deuda hipotecaria')),
+    (r) => r.block === 'debt' && isMortgagePrincipalDebtLabel(r.label),
   );
   if (!prevDebt) return { changed: 0, sourceMonth, skipped: true, reason: 'missing_base_debt' };
 
   const findByLabel = (label: string) =>
     monthRecords.find((r) => r.block === 'debt' && r.label.toLowerCase() === label.toLowerCase());
 
-  const readPrevDebtValue = (labelPart: string) =>
-    sourceRecords.find((r) => r.block === 'debt' && r.label.toLowerCase().includes(labelPart.toLowerCase()))?.amount;
+  const readPrevDebtValue = (label: string) =>
+    sourceRecords.find(
+      (r) => r.block === 'debt' && normalizeLabelKey(r.label) === normalizeLabelKey(label),
+    )?.amount;
 
   const dividendUf = readPrevDebtValue('Dividendo hipotecario mensual') ?? config.dividendUf;
   const interestUf = readPrevDebtValue('Interés hipotecario mensual') ?? config.interestUf;
