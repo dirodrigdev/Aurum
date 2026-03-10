@@ -3,6 +3,11 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
 import { ClosingConfigRowView, ClosingConfigSection } from '../components/settings/ClosingConfigSection';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
+import {
+  ClosureReviewModal,
+  ClosureReviewModalResult,
+  ClosureReviewSource,
+} from '../components/settings/ClosureReviewModal';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -40,11 +45,21 @@ import {
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
   syncWealthNow,
+  WealthMonthlyClosure,
 } from '../services/wealthStorage';
 import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
+const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
+
+interface ClosureReviewPendingEntry {
+  status: 'complete' | 'pending';
+  source: ClosureReviewSource;
+  reviewedAt: string;
+}
+
+type ClosureReviewPendingMap = Record<string, ClosureReviewPendingEntry>;
 
 type ClosingStaticFieldKey =
   | 'investments_value'
@@ -105,6 +120,26 @@ const saveClosingConfig = (state: ClosingConfigState) => {
   }
 };
 
+const readClosureReviewPending = (): ClosureReviewPendingMap => {
+  try {
+    const raw = localStorage.getItem(CLOSURE_REVIEW_PENDING_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as ClosureReviewPendingMap;
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const saveClosureReviewPending = (state: ClosureReviewPendingMap) => {
+  try {
+    localStorage.setItem(CLOSURE_REVIEW_PENDING_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
+
 const toRuleKeyFromInvestmentId = (investmentId: string) => `investment:${investmentId}`;
 
 const toDefaultRule = (enabled: boolean, maxAgeDays: number | null): ClosingRuleConfig => ({
@@ -143,6 +178,13 @@ export const SettingsAurum: React.FC = () => {
   const [csvImportWarnings, setCsvImportWarnings] = useState<string[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvImportedResultVisible, setCsvImportedResultVisible] = useState(false);
+  const [closureReviewOpen, setClosureReviewOpen] = useState(false);
+  const [closureReviewQueue, setClosureReviewQueue] = useState<WealthMonthlyClosure[]>([]);
+  const [closureReviewSource, setClosureReviewSource] = useState<ClosureReviewSource>('csv');
+  const [closureReviewMessage, setClosureReviewMessage] = useState('');
+  const [closureReviewPending, setClosureReviewPending] = useState<ClosureReviewPendingMap>(() =>
+    readClosureReviewPending(),
+  );
   const [deleteBlocksMessage, setDeleteBlocksMessage] = useState('');
   const [deletingBlocks, setDeletingBlocks] = useState(false);
   const [deleteBlocksDraft, setDeleteBlocksDraft] = useState({
@@ -286,6 +328,31 @@ export const SettingsAurum: React.FC = () => {
   const csvPreview = useMemo(() => previewHistoricalClosuresCsv(deferredCsvDraft), [deferredCsvDraft]);
   const csvPreviewMonthLabel =
     csvPreview.monthKeys.length === 1 ? formatMonthLabel(csvPreview.monthKeys[0]) : '';
+  const closureHasMissingFx = (closure: WealthMonthlyClosure) => {
+    const fxRates = closure.fxRates;
+    if (!fxRates) return true;
+    if (Array.isArray(closure.fxMissing) && closure.fxMissing.length > 0) return true;
+    return !(fxRates.usdClp > 0 && fxRates.eurClp > 0 && fxRates.ufClp > 0);
+  };
+  const closureDataPendingMonthKeys = useMemo(
+    () =>
+      availableClosures
+        .filter((closure) => closureHasMissingFx(closure) || !(closure.records && closure.records.length > 0))
+        .map((closure) => closure.monthKey),
+    [availableClosures],
+  );
+  const closureReviewPendingMonthKeys = useMemo(
+    () =>
+      Object.entries(closureReviewPending)
+        .filter(([, entry]) => entry.status === 'pending')
+        .map(([monthKey]) => monthKey)
+        .filter((monthKey) => availableClosures.some((closure) => closure.monthKey === monthKey)),
+    [closureReviewPending, availableClosures],
+  );
+  const historicalPendingMonthKeys = useMemo(
+    () => Array.from(new Set([...closureDataPendingMonthKeys, ...closureReviewPendingMonthKeys])).sort(),
+    [closureDataPendingMonthKeys, closureReviewPendingMonthKeys],
+  );
   const monthKey = useMemo(() => currentMonthKey(), []);
   const monthRecords = useMemo(
     () => allRecords.filter((record) => String(record.snapshotDate || '').startsWith(`${monthKey}-`)),
@@ -294,17 +361,15 @@ export const SettingsAurum: React.FC = () => {
   const historicalStatus = useMemo(() => {
     const count = availableClosures.length;
     if (!count) return { icon: '❌', tone: 'error' as const, text: 'Sin cierres guardados' };
-    const hasInvalidFx = availableClosures.some((closure) => {
-      const fxRates = closure.fxRates;
-      if (!fxRates) return true;
-      if (Array.isArray(closure.fxMissing) && closure.fxMissing.length > 0) return true;
-      return !(fxRates.usdClp > 0 && fxRates.eurClp > 0 && fxRates.ufClp > 0);
-    });
-    if (hasInvalidFx) {
-      return { icon: '⚠️', tone: 'warn' as const, text: 'Hay cierres con TC/UF incompleto' };
+    if (historicalPendingMonthKeys.length > 0) {
+      return {
+        icon: '⚠️',
+        tone: 'warn' as const,
+        text: `Hay ${historicalPendingMonthKeys.length} cierre(s) pendiente(s) de revisión`,
+      };
     }
     return { icon: '✅', tone: 'ok' as const, text: 'Cierres históricos completos' };
-  }, [availableClosures]);
+  }, [availableClosures, historicalPendingMonthKeys]);
   const monthChecklist = useMemo(
     () => [
       {
@@ -358,6 +423,11 @@ export const SettingsAurum: React.FC = () => {
     setFsStatus(getFirestoreStatus());
   };
 
+  const persistClosureReviewPendingState = (next: ClosureReviewPendingMap) => {
+    setClosureReviewPending(next);
+    saveClosureReviewPending(next);
+  };
+
   useEffect(() => {
     const HYDRATE_THROTTLE_MS = 20_000;
     const refreshFromCloudIfNeeded = async (force = false) => {
@@ -406,6 +476,20 @@ export const SettingsAurum: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const existingMonthKeys = new Set(availableClosures.map((closure) => closure.monthKey));
+    let changed = false;
+    const next: ClosureReviewPendingMap = {};
+    Object.entries(closureReviewPending).forEach(([monthKey, entry]) => {
+      if (!existingMonthKeys.has(monthKey)) {
+        changed = true;
+        return;
+      }
+      next[monthKey] = entry;
+    });
+    if (changed) persistClosureReviewPendingState(next);
+  }, [availableClosures, closureReviewPending]);
+
   const scrollToSettingsElement = (element: HTMLElement | null) => {
     if (!element) return;
     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -420,6 +504,55 @@ export const SettingsAurum: React.FC = () => {
 
   const goToFxSection = () => {
     scrollToSettingsElement(syncSectionRef.current);
+  };
+
+  const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
+    const targetMonthKeys = Array.from(new Set(monthKeys.filter(Boolean)));
+    if (!targetMonthKeys.length) return;
+    const monthSet = new Set(targetMonthKeys);
+    const closures = loadClosures()
+      .filter((closure) => monthSet.has(closure.monthKey))
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+    if (!closures.length) return;
+    setClosureReviewSource(source);
+    setClosureReviewQueue(closures);
+    setClosureReviewOpen(true);
+  };
+
+  const openManualClosureReview = () => {
+    if (historicalPendingMonthKeys.length > 0) {
+      openClosureReview(historicalPendingMonthKeys, 'manual');
+      return;
+    }
+    if (!availableClosures.length) return;
+    openClosureReview([availableClosures[0].monthKey], 'manual');
+  };
+
+  const onClosureReviewFinish = (result: ClosureReviewModalResult) => {
+    const updatedById = new Map(result.updatedClosures.map((closure) => [closure.id, closure]));
+    const currentClosures = loadClosures();
+    const mergedClosures = currentClosures.map((closure) => updatedById.get(closure.id) || closure);
+    saveClosures(mergedClosures);
+
+    const nextPending: ClosureReviewPendingMap = { ...closureReviewPending };
+    const pendingSet = new Set(result.pendingMonthKeys);
+    result.reviewedMonthKeys.forEach((monthKey) => {
+      nextPending[monthKey] = {
+        status: pendingSet.has(monthKey) ? 'pending' : 'complete',
+        source: closureReviewSource,
+        reviewedAt: new Date().toISOString(),
+      };
+    });
+    persistClosureReviewPendingState(nextPending);
+
+    const completeCount = result.completeMonthKeys.length;
+    const pendingCount = result.pendingMonthKeys.length;
+    setClosureReviewMessage(
+      `Revisión guardada (${closureReviewSource === 'csv' ? 'importación CSV' : 'manual'}): ${completeCount} completos · ${pendingCount} pendientes.`,
+    );
+    setClosureReviewOpen(false);
+    setClosureReviewQueue([]);
+    refreshLocalState();
   };
 
   const navigateToPatrimonioAndScroll = (candidates: string[]) => {
@@ -760,6 +893,7 @@ export const SettingsAurum: React.FC = () => {
     setCsvConfirmOpen(false);
     setCsvImporting(true);
     setCsvImportedResultVisible(false);
+    setClosureReviewMessage('');
     setCsvImportMessage('');
     setCsvImportWarnings([]);
     try {
@@ -773,6 +907,10 @@ export const SettingsAurum: React.FC = () => {
       setCsvImportWarnings(result.warnings);
       setCsvImportedResultVisible(true);
       refreshLocalState();
+      const reviewMonths = Array.from(new Set([...result.importedMonths, ...result.replacedMonths]));
+      if (reviewMonths.length) {
+        openClosureReview(reviewMonths, 'csv');
+      }
     } catch (err: any) {
       setCsvImportMessage(String(err?.message || 'No pude importar el historial CSV.'));
       setCsvImportWarnings([]);
@@ -931,9 +1069,21 @@ export const SettingsAurum: React.FC = () => {
           >
             Cierres guardados: <span className="font-semibold">{availableClosures.length}</span> · {historicalStatus.text}
           </div>
-          <Button variant="outline" size="sm" onClick={goToCsvImportSection}>
-            Ir a importar historial CSV
-          </Button>
+          {!!historicalPendingMonthKeys.length && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Pendientes: {historicalPendingMonthKeys.join(', ')}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={goToCsvImportSection}>
+              Ir a importar historial CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={openManualClosureReview} disabled={!availableClosures.length}>
+              {historicalPendingMonthKeys.length
+                ? `Revisar pendientes (${historicalPendingMonthKeys.length})`
+                : 'Revisar último cierre'}
+            </Button>
+          </div>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white/90 p-3 space-y-3">
@@ -982,6 +1132,11 @@ export const SettingsAurum: React.FC = () => {
         {!!resetAllMessage && (
           <div className="rounded-lg border border-slate-200 bg-white/85 px-3 py-2 text-xs text-slate-700">
             {resetAllMessage}
+          </div>
+        )}
+        {!!closureReviewMessage && (
+          <div className="rounded-lg border border-slate-200 bg-white/85 px-3 py-2 text-xs text-slate-700">
+            {closureReviewMessage}
           </div>
         )}
       </Card>
@@ -1526,6 +1681,17 @@ export const SettingsAurum: React.FC = () => {
         </div>
       </Card>
 
+      <ClosureReviewModal
+        open={closureReviewOpen}
+        source={closureReviewSource}
+        closures={closureReviewQueue}
+        onCancel={() => {
+          setClosureReviewOpen(false);
+          setClosureReviewQueue([]);
+        }}
+        onFinish={onClosureReviewFinish}
+      />
+
       <ConfirmActionModal
         open={resetAllOpen}
         tone="danger"
@@ -1569,6 +1735,8 @@ export const SettingsAurum: React.FC = () => {
             setCsvImportMessage('');
             setCsvImportWarnings([]);
             setCsvImportedResultVisible(false);
+            setClosureReviewMessage('');
+            persistClosureReviewPendingState({});
             setDeleteBlocksMessage('');
             setSyncMessage('');
             setFsDebug('');
