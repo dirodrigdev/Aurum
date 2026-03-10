@@ -598,13 +598,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         ? resolveRiskCapitalRecordsForTotals(dedupedSectionRecords, includeRiskCapitalInTotals).recordsForTotals
         : dedupedSectionRecords;
     const breakdown = buildWealthNetBreakdown(recordsForTotals, { usdClp, eurClp, ufClp });
-    const bankSnapshot = computeWealthBankLiquiditySnapshot(recordsForTotals);
-    const safeUsd = Number.isFinite(usdClp) && usdClp > 0 ? usdClp : defaultFxRates.usdClp;
 
     if (section === 'investment') return breakdown.investmentClp;
     if (section === 'bank') {
-      const bankLiquidity = bankSnapshot.bankClp + bankSnapshot.bankUsd * safeUsd;
-      const nonMortgageDebt = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
+      const bankLiquidity = breakdown.bankClp;
+      const nonMortgageDebt = breakdown.nonMortgageDebtClp;
       return bankLiquidity - nonMortgageDebt;
     }
 
