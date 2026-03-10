@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button, Card, Input, Select } from '../components/Components';
+import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
 import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse } from '../services/bankApi';
@@ -58,6 +59,12 @@ import {
   upsertWealthRecord,
 } from '../services/wealthStorage';
 import { parseStrictNumber } from '../utils/numberUtils';
+import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
+import {
+  formatCurrency,
+  formatCurrencyNoDecimals,
+  formatMonthLabel as monthLabel,
+} from '../utils/wealthFormat';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -307,13 +314,6 @@ const displayRecordOrigin = (record: WealthRecord) => {
   return 'Imagen';
 };
 
-const labelMatchKey = (value: string) =>
-  normalizeForMatch(value)
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const sameCanonicalLabel = (a: string, b: string) => labelMatchKey(a) === labelMatchKey(b);
 const TENENCIA_BASE_LABEL = 'Tenencia / CxC';
 const TENENCIA_BASE_KEY = labelMatchKey(TENENCIA_BASE_LABEL);
 const isTenenciaInstrumentLabel = (label: string) => {
@@ -333,57 +333,6 @@ const readPreferredDisplayCurrency = (): WealthCurrency => {
   const stored = window.localStorage.getItem(PREFERRED_DISPLAY_CURRENCY_KEY);
   if (stored === 'CLP' || stored === 'USD' || stored === 'EUR') return stored;
   return 'CLP';
-};
-
-const monthLabel = (monthKey: string) => {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, (m || 1) - 1, 1, 12, 0, 0, 0);
-  const label = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
-  return label.charAt(0).toUpperCase() + label.slice(1);
-};
-
-const groupWithDots = (value: number) => {
-  return Math.abs(Math.trunc(value))
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-};
-
-function normalizeForMatch(value: string) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-const formatCurrency = (value: number, currency: WealthCurrency) => {
-  const sign = value < 0 ? '-' : '';
-  if (currency === 'UF') {
-    const abs = Math.abs(value);
-    const intPart = Math.trunc(abs);
-    const decimalPart = Math.round((abs - intPart) * 100)
-      .toString()
-      .padStart(2, '0');
-    return `${sign}${groupWithDots(intPart)},${decimalPart} UF`;
-  }
-  if (currency === 'CLP') {
-    return `${sign}$${groupWithDots(value)}`;
-  }
-
-  const abs = Math.abs(value);
-  const intPart = Math.trunc(abs);
-  const decimalPart = Math.round((abs - intPart) * 100)
-    .toString()
-    .padStart(2, '0');
-  return `${sign}${groupWithDots(intPart)},${decimalPart} ${currency}`;
-};
-
-const formatCurrencyNoDecimals = (value: number, currency: WealthCurrency) => {
-  const rounded = Math.round(value);
-  const sign = rounded < 0 ? '-' : '';
-  if (currency === 'CLP') return `${sign}$${groupWithDots(rounded)}`;
-  if (currency === 'UF') return `${sign}${groupWithDots(rounded)} UF`;
-  return `${sign}${groupWithDots(rounded)} ${currency}`;
 };
 
 const toWealthCurrency = (currency: string): WealthCurrency | null => {
@@ -3365,128 +3314,28 @@ export const Patrimonio: React.FC = () => {
         </details>
       </Card>
 
-      {closeConfirmOpen && (
-        <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-            <div className="text-base font-semibold text-slate-900">Confirmar cierre mensual</div>
-            <div className="mt-1 text-sm text-slate-600">Selecciona el mes que quieres cerrar y resuelve bloqueos aquí mismo.</div>
-
-            <div className="mt-3">
-              <label className="text-xs text-slate-600">Mes a cerrar</label>
-              <Input
-                type="month"
-                value={closeMonthDraft}
-                onChange={(e) => setCloseMonthDraft(e.target.value || monthKey)}
-              />
-            </div>
-
-            {selectedClosureForDraft && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                Este mes ya tiene cierre ({selectedClosureForDraft.monthKey}). Si continúas, se sobrescribirá.
-              </div>
-            )}
-
-            {recentCloseWarning && (
-              <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
-                {recentCloseWarning}
-              </div>
-            )}
-            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Bloqueos: {closeBlockingIssues.length} · Advertencias: {closeWarningIssues.length}
-            </div>
-
-            {!!closeBlockingIssues.length && (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2">
-                <div className="text-xs font-semibold text-red-800">Debes resolver estos bloqueos antes de cerrar:</div>
-                <div className="mt-2 space-y-2">
-                  {closeBlockingIssues.map((issue, idx) => (
-                    <div key={`close-block-${issue.type}-${issue.label}-${idx}`} className="rounded border border-red-200 bg-white p-2">
-                      <div className="text-xs text-red-700">{issue.label}</div>
-                      {issue.type !== 'future_month' && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {issue.canResolveWithPrevious && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => resolveCloseIssueWithPrevious(issue)}
-                            >
-                              Usar mes anterior
-                            </Button>
-                          )}
-                          {issue.canExcludeThisMonth && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => resolveCloseIssueExclude(issue)}
-                            >
-                              Excluir este mes
-                            </Button>
-                          )}
-                          <Button size="sm" variant="outline" onClick={() => reviewCloseIssue(issue)}>
-                            Revisar bloque
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!!closeWarningIssues.length && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2">
-                <div className="text-xs font-semibold text-amber-800">
-                  Advertencia: hay valores arrastrados de mes anterior (puedes cerrar igual)
-                </div>
-                <div className="mt-2 max-h-28 overflow-auto text-xs text-amber-800 space-y-1">
-                  {closeWarningIssues.map((issue, idx) => (
-                    <div key={`close-warn-${issue.type}-${issue.label}-${idx}`} className="flex items-center justify-between gap-2">
-                      <span>{issue.label}</span>
-                      <Button size="sm" variant="outline" onClick={() => reviewCloseIssue(issue)}>
-                        Revisar
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!!closeInfo && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                {closeInfo}
-              </div>
-            )}
-
-            {!!closeError && (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {closeError}
-              </div>
-            )}
-
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setCloseConfirmOpen(false);
-                  setCloseError('');
-                  setCloseInfo('');
-                }}
-              >
-                Cancelar
-              </Button>
-              <Button onClick={() => attemptMonthlyClose(closeMonthDraft)} disabled={closeBlockingIssues.length > 0}>
-                {selectedClosureForDraft
-                  ? closeWarningIssues.length
-                    ? 'Sobrescribir con arrastres'
-                    : 'Sobrescribir cierre'
-                  : closeWarningIssues.length
-                    ? 'Cerrar con arrastres'
-                    : 'Confirmar cierre'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CloseConfirmModal
+        open={closeConfirmOpen}
+        closeMonthDraft={closeMonthDraft}
+        monthKey={monthKey}
+        selectedClosureMonthKey={selectedClosureForDraft?.monthKey}
+        recentCloseWarning={recentCloseWarning}
+        closeBlockingIssues={closeBlockingIssues}
+        closeWarningIssues={closeWarningIssues}
+        closeInfo={closeInfo}
+        closeError={closeError}
+        monthLabel={monthLabel}
+        onCloseMonthDraftChange={setCloseMonthDraft}
+        onResolveWithPrevious={resolveCloseIssueWithPrevious}
+        onResolveExclude={resolveCloseIssueExclude}
+        onReview={reviewCloseIssue}
+        onCancel={() => {
+          setCloseConfirmOpen(false);
+          setCloseError('');
+          setCloseInfo('');
+        }}
+        onAttemptClose={attemptMonthlyClose}
+      />
     </div>
   );
 };

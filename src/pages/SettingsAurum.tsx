@@ -4,6 +4,11 @@ import { Button, Card, Input } from '../components/Components';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
 import {
+  formatIsoDateTime as formatDateTime,
+  formatMonthLabel,
+  formatRateInt as formatFxInteger,
+} from '../utils/wealthFormat';
+import {
   loadBankTokens,
   loadClosures,
   saveClosures,
@@ -71,30 +76,6 @@ export const SettingsAurum: React.FC = () => {
   const [deletingClosure, setDeletingClosure] = useState(false);
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
-
-  const formatMonthLabel = (monthKey: string) => {
-    const [y, m] = monthKey.split('-').map(Number);
-    if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
-    const dt = new Date(y, m - 1, 1);
-    const label = dt.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
-    return label.charAt(0).toUpperCase() + label.slice(1);
-  };
-
-  const formatDateTime = (iso?: string) => {
-    if (!iso) return 'sin fecha';
-    const d = new Date(iso);
-    if (!Number.isFinite(d.getTime())) return iso;
-    return d.toLocaleString('es-CL', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatFxInteger = (value: number) =>
-    Math.round(Number(value) || 0).toLocaleString('es-CL');
 
   const describeManualSync = (
     pushed: boolean,
