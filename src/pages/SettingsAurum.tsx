@@ -1,11 +1,12 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Button, Card, Input } from '../components/Components';
+import { ClosingConfigRowView, ClosingConfigSection } from '../components/settings/ClosingConfigSection';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
-import { sameCanonicalLabel } from '../utils/wealthLabels';
+import { normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
 import {
   formatIsoDateTime as formatDateTime,
   formatMonthLabel,
@@ -26,17 +27,99 @@ import {
   loadFxRates,
   defaultFxRates,
   clearWealthDataForFreshStart,
+  isMortgageMetaDebtLabel,
   isRiskCapitalInvestmentLabel,
   loadInvestmentInstruments,
   loadWealthRecords,
   removeWealthRecord,
   refreshFxRatesFromLive,
+  saveInvestmentInstruments,
   WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
+  saveWealthRecords,
+  setInvestmentInstrumentMonthExcluded,
+  summarizeWealth,
   syncWealthNow,
 } from '../services/wealthStorage';
 import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
+
+const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
+
+type ClosingStaticFieldKey =
+  | 'investments_value'
+  | 'risk_capital'
+  | 'banks_fintoc'
+  | 'tenencia'
+  | 'cards_used'
+  | 'property_value'
+  | 'mortgage_balance'
+  | 'mortgage_amortization';
+
+interface ClosingRuleConfig {
+  enabled: boolean;
+  maxAgeDays: number | null;
+}
+
+interface ClosingConfigState {
+  rules: Record<string, ClosingRuleConfig>;
+}
+
+const STATIC_CLOSING_FIELDS: Array<{
+  key: ClosingStaticFieldKey;
+  label: string;
+  defaultEnabled: boolean;
+  defaultMaxAgeDays: number | null;
+}> = [
+  { key: 'investments_value', label: 'Inversiones (valor)', defaultEnabled: true, defaultMaxAgeDays: 3 },
+  { key: 'risk_capital', label: 'Capital de riesgo', defaultEnabled: true, defaultMaxAgeDays: 3 },
+  { key: 'banks_fintoc', label: 'Bancos (Fintoc)', defaultEnabled: true, defaultMaxAgeDays: 3 },
+  { key: 'tenencia', label: 'Tenencia', defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'cards_used', label: 'Cupos tarjetas', defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'property_value', label: 'Valor propiedad', defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'mortgage_balance', label: 'Saldo deuda hipotecaria', defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'mortgage_amortization', label: 'Amortización mensual', defaultEnabled: false, defaultMaxAgeDays: null },
+];
+
+const STATIC_CLOSING_FIELDS_MAP = new Map(
+  STATIC_CLOSING_FIELDS.map((field) => [field.key, field] as const),
+);
+
+const readClosingConfig = (): ClosingConfigState => {
+  try {
+    const raw = localStorage.getItem(CLOSING_CONFIG_STORAGE_KEY);
+    if (!raw) return { rules: {} };
+    const parsed = JSON.parse(raw) as ClosingConfigState;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.rules !== 'object') return { rules: {} };
+    return { rules: parsed.rules || {} };
+  } catch {
+    return { rules: {} };
+  }
+};
+
+const saveClosingConfig = (state: ClosingConfigState) => {
+  try {
+    localStorage.setItem(CLOSING_CONFIG_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
+
+const toRuleKeyFromInvestmentId = (investmentId: string) => `investment:${investmentId}`;
+
+const toDefaultRule = (enabled: boolean, maxAgeDays: number | null): ClosingRuleConfig => ({
+  enabled,
+  maxAgeDays,
+});
+
+const isTenenciaLabel = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('Tenencia / CxC'));
+
+const daysSinceIso = (iso?: string) => {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
+};
 
 export const SettingsAurum: React.FC = () => {
   const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
@@ -81,6 +164,12 @@ export const SettingsAurum: React.FC = () => {
   const [deleteClosureMessage, setDeleteClosureMessage] = useState('');
   const [deletingClosure, setDeletingClosure] = useState(false);
   const [allRecords, setAllRecords] = useState(() => loadWealthRecords());
+  const [investmentInstruments, setInvestmentInstruments] = useState(() => loadInvestmentInstruments());
+  const [closingConfig, setClosingConfig] = useState<ClosingConfigState>(() => readClosingConfig());
+  const [closingConfigMessage, setClosingConfigMessage] = useState('');
+  const [closingInvestmentCloseTargetId, setClosingInvestmentCloseTargetId] = useState<string | null>(null);
+  const [closingInvestmentDeleteTargetId, setClosingInvestmentDeleteTargetId] = useState<string | null>(null);
+  const [closingInvestmentActionBusy, setClosingInvestmentActionBusy] = useState(false);
   const [resetAllOpen, setResetAllOpen] = useState(false);
   const [resettingAll, setResettingAll] = useState(false);
   const [resetStepTwoOpen, setResetStepTwoOpen] = useState(false);
@@ -265,6 +354,7 @@ export const SettingsAurum: React.FC = () => {
     setFxLiveMeta(loadFxLiveSyncMeta());
     setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
     setAllRecords(loadWealthRecords());
+    setInvestmentInstruments(loadInvestmentInstruments());
     setFsStatus(getFirestoreStatus());
   };
 
@@ -359,6 +449,312 @@ export const SettingsAurum: React.FC = () => {
     () => Object.values(deleteBlocksDraft).filter(Boolean).length,
     [deleteBlocksDraft],
   );
+
+  const toSafeFxRates = (input?: { usdClp: number; eurClp: number; ufClp: number }) => ({
+    usdClp: Number.isFinite(input?.usdClp) && (input?.usdClp || 0) > 0 ? (input?.usdClp as number) : defaultFxRates.usdClp,
+    eurClp: Number.isFinite(input?.eurClp) && (input?.eurClp || 0) > 0 ? (input?.eurClp as number) : defaultFxRates.eurClp,
+    ufClp: Number.isFinite(input?.ufClp) && (input?.ufClp || 0) > 0 ? (input?.ufClp as number) : defaultFxRates.ufClp,
+  });
+
+  const resolveRuleConfig = (key: string): ClosingRuleConfig => {
+    const fromState = closingConfig.rules[key];
+    if (fromState) return fromState;
+    if (key.startsWith('investment:')) return toDefaultRule(true, 3);
+    const staticField = STATIC_CLOSING_FIELDS_MAP.get(key as ClosingStaticFieldKey);
+    return toDefaultRule(staticField?.defaultEnabled ?? false, staticField?.defaultMaxAgeDays ?? null);
+  };
+
+  const persistClosingConfig = (next: ClosingConfigState) => {
+    setClosingConfig(next);
+    saveClosingConfig(next);
+  };
+
+  const updateClosingRule = (key: string, next: ClosingRuleConfig) => {
+    persistClosingConfig({
+      rules: {
+        ...closingConfig.rules,
+        [key]: next,
+      },
+    });
+  };
+
+  const getLatestDays = (matcher: (label: string) => boolean, block?: 'bank' | 'investment' | 'real_estate' | 'debt') => {
+    const matching = monthRecords.filter((record) => {
+      if (block && record.block !== block) return false;
+      return matcher(record.label);
+    });
+    if (!matching.length) return null;
+    const latestIso = matching
+      .map((record) => record.createdAt || record.snapshotDate)
+      .filter(Boolean)
+      .sort((a, b) => String(b).localeCompare(String(a)))[0];
+    return daysSinceIso(latestIso);
+  };
+
+  const staticClosingRows = useMemo<ClosingConfigRowView[]>(() => {
+    return STATIC_CLOSING_FIELDS.map((field) => {
+      const rule = resolveRuleConfig(field.key);
+      let lastUpdatedDays: number | null = null;
+      if (field.key === 'investments_value') {
+        lastUpdatedDays = monthRecords.some(
+          (record) => record.block === 'investment' && !isRiskCapitalInvestmentLabel(record.label),
+        )
+          ? getLatestDays(
+              (label) => !isRiskCapitalInvestmentLabel(label) && !isTenenciaLabel(label),
+              'investment',
+            )
+          : null;
+      } else if (field.key === 'risk_capital') {
+        lastUpdatedDays = getLatestDays((label) => isRiskCapitalInvestmentLabel(label), 'investment');
+      } else if (field.key === 'banks_fintoc') {
+        lastUpdatedDays = getLatestDays(() => true, 'bank');
+      } else if (field.key === 'tenencia') {
+        lastUpdatedDays = getLatestDays((label) => isTenenciaLabel(label), 'investment');
+      } else if (field.key === 'cards_used') {
+        lastUpdatedDays = getLatestDays(
+          (label) => !sameCanonicalLabel(label, 'Saldo deuda hipotecaria') && !isMortgageMetaDebtLabel(label),
+          'debt',
+        );
+      } else if (field.key === 'property_value') {
+        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, 'Valor propiedad'), 'real_estate');
+      } else if (field.key === 'mortgage_balance') {
+        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, 'Saldo deuda hipotecaria'), 'debt');
+      } else if (field.key === 'mortgage_amortization') {
+        lastUpdatedDays = getLatestDays(
+          (label) => sameCanonicalLabel(label, 'Amortización hipotecaria mensual'),
+          'debt',
+        );
+      }
+      return {
+        key: field.key,
+        label: field.label,
+        enabled: rule.enabled,
+        maxAgeDays: rule.maxAgeDays,
+        supportsMaxAge: field.defaultMaxAgeDays !== null,
+        lastUpdatedDays,
+      };
+    });
+  }, [closingConfig.rules, monthRecords]);
+
+  const investmentClosingRows = useMemo<ClosingConfigRowView[]>(() => {
+    const sortedInstruments = [...investmentInstruments].sort((a, b) =>
+      normalizeForMatch(a.label).localeCompare(normalizeForMatch(b.label)),
+    );
+    return sortedInstruments.map((instrument) => {
+      const key = toRuleKeyFromInvestmentId(instrument.id);
+      const rule = resolveRuleConfig(key);
+      return {
+        key,
+        label: `${instrument.label} (${instrument.currency})`,
+        enabled: rule.enabled,
+        maxAgeDays: rule.maxAgeDays,
+        supportsMaxAge: true,
+        lastUpdatedDays: getLatestDays((label) => sameCanonicalLabel(label, instrument.label), 'investment'),
+        investmentId: instrument.id,
+      };
+    });
+  }, [closingConfig.rules, investmentInstruments, monthRecords]);
+
+  const closingConfigRows = useMemo<ClosingConfigRowView[]>(
+    () => [...staticClosingRows, ...investmentClosingRows],
+    [staticClosingRows, investmentClosingRows],
+  );
+
+  useEffect(() => {
+    const nextRules = { ...closingConfig.rules };
+    let changed = false;
+
+    STATIC_CLOSING_FIELDS.forEach((field) => {
+      if (!nextRules[field.key]) {
+        nextRules[field.key] = toDefaultRule(field.defaultEnabled, field.defaultMaxAgeDays);
+        changed = true;
+      }
+    });
+
+    investmentInstruments.forEach((instrument) => {
+      const key = toRuleKeyFromInvestmentId(instrument.id);
+      if (!nextRules[key]) {
+        nextRules[key] = toDefaultRule(true, 3);
+        changed = true;
+      }
+    });
+
+    Object.keys(nextRules).forEach((key) => {
+      if (!key.startsWith('investment:')) return;
+      const investmentId = key.replace('investment:', '');
+      if (!investmentInstruments.some((instrument) => instrument.id === investmentId)) {
+        delete nextRules[key];
+        changed = true;
+      }
+    });
+
+    if (changed) persistClosingConfig({ rules: nextRules });
+  }, [investmentInstruments, closingConfig.rules]);
+
+  const onToggleClosingRule = (key: string, enabled: boolean) => {
+    const currentRule = resolveRuleConfig(key);
+    const defaultMax = key.startsWith('investment:')
+      ? 3
+      : (STATIC_CLOSING_FIELDS_MAP.get(key as ClosingStaticFieldKey)?.defaultMaxAgeDays ?? null);
+    updateClosingRule(key, {
+      enabled,
+      maxAgeDays: enabled ? currentRule.maxAgeDays ?? defaultMax : currentRule.maxAgeDays,
+    });
+  };
+
+  const onMaxAgeClosingRuleChange = (key: string, rawValue: string) => {
+    const currentRule = resolveRuleConfig(key);
+    const parsed = parseInt(rawValue, 10);
+    const safeValue = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    updateClosingRule(key, {
+      ...currentRule,
+      maxAgeDays: safeValue,
+    });
+  };
+
+  const applyRecordRemovalToClosures = (
+    matcher: (label: string) => boolean,
+    monthFilter: ((monthKey: string) => boolean) | null,
+  ) => {
+    const closures = loadClosures();
+    let changed = false;
+    const nextClosures = closures.map((closure) => {
+      const shouldChangeCurrent = !monthFilter || monthFilter(closure.monthKey);
+      const currentRecords = closure.records || [];
+      let nextClosure = closure;
+      if (shouldChangeCurrent && currentRecords.length) {
+        const filtered = currentRecords.filter(
+          (record) => !(record.block === 'investment' && matcher(record.label)),
+        );
+        if (filtered.length !== currentRecords.length) {
+          changed = true;
+          nextClosure = {
+            ...nextClosure,
+            records: filtered,
+            summary: summarizeWealth(filtered, toSafeFxRates(nextClosure.fxRates)),
+          };
+        }
+      }
+
+      if (nextClosure.previousVersions?.length) {
+        const nextVersions = nextClosure.previousVersions.map((version) => {
+          if (!shouldChangeCurrent || !version.records?.length) return version;
+          const filteredVersionRecords = version.records.filter(
+            (record) => !(record.block === 'investment' && matcher(record.label)),
+          );
+          if (filteredVersionRecords.length === version.records.length) return version;
+          changed = true;
+          return {
+            ...version,
+            records: filteredVersionRecords,
+            summary: summarizeWealth(filteredVersionRecords, toSafeFxRates(version.fxRates)),
+          };
+        });
+        nextClosure = { ...nextClosure, previousVersions: nextVersions };
+      }
+
+      return nextClosure;
+    });
+
+    if (changed) saveClosures(nextClosures);
+    return changed;
+  };
+
+  const closeInvestmentFromCurrentMonthNow = async () => {
+    const targetId = closingInvestmentCloseTargetId;
+    if (!targetId) return;
+    const targetInstrument = investmentInstruments.find((item) => item.id === targetId);
+    if (!targetInstrument) return;
+
+    setClosingInvestmentActionBusy(true);
+    setClosingConfigMessage('');
+    try {
+      setInvestmentInstrumentMonthExcluded(targetId, monthKey, true);
+      const records = loadWealthRecords();
+      const monthPrefix = `${monthKey}-`;
+      const nextRecords = records.filter(
+        (record) =>
+          !(
+            record.block === 'investment' &&
+            record.snapshotDate.startsWith(monthPrefix) &&
+            sameCanonicalLabel(record.label, targetInstrument.label)
+          ),
+      );
+      if (nextRecords.length !== records.length) {
+        saveWealthRecords(nextRecords);
+      }
+      applyRecordRemovalToClosures((label) => sameCanonicalLabel(label, targetInstrument.label), (closureMonth) =>
+        closureMonth >= monthKey,
+      );
+
+      let pushed = false;
+      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
+      try {
+        pushed = await syncWealthNow();
+      } catch {
+        pushed = false;
+      }
+      try {
+        hydrated = await hydrateWealthFromCloud();
+      } catch {
+        hydrated = 'none';
+      }
+      refreshLocalState();
+      setClosingConfigMessage(
+        `Instrumento "${targetInstrument.label}" cerrado desde ${formatMonthLabel(monthKey)}. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
+      );
+    } finally {
+      setClosingInvestmentActionBusy(false);
+      setClosingInvestmentCloseTargetId(null);
+    }
+  };
+
+  const deleteInvestmentCompletelyNow = async () => {
+    const targetId = closingInvestmentDeleteTargetId;
+    if (!targetId) return;
+    const targetInstrument = investmentInstruments.find((item) => item.id === targetId);
+    if (!targetInstrument) return;
+
+    setClosingInvestmentActionBusy(true);
+    setClosingConfigMessage('');
+    try {
+      const nextInstruments = loadInvestmentInstruments().filter((item) => item.id !== targetId);
+      saveInvestmentInstruments(nextInstruments);
+
+      const records = loadWealthRecords();
+      const nextRecords = records.filter(
+        (record) => !(record.block === 'investment' && sameCanonicalLabel(record.label, targetInstrument.label)),
+      );
+      if (nextRecords.length !== records.length) {
+        saveWealthRecords(nextRecords);
+      }
+      applyRecordRemovalToClosures((label) => sameCanonicalLabel(label, targetInstrument.label), null);
+
+      const nextRules = { ...closingConfig.rules };
+      delete nextRules[toRuleKeyFromInvestmentId(targetId)];
+      persistClosingConfig({ rules: nextRules });
+
+      let pushed = false;
+      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
+      try {
+        pushed = await syncWealthNow();
+      } catch {
+        pushed = false;
+      }
+      try {
+        hydrated = await hydrateWealthFromCloud();
+      } catch {
+        hydrated = 'none';
+      }
+      refreshLocalState();
+      setClosingConfigMessage(
+        `Instrumento "${targetInstrument.label}" eliminado completamente de registros y cierres con detalle. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
+      );
+    } finally {
+      setClosingInvestmentActionBusy(false);
+      setClosingInvestmentDeleteTargetId(null);
+    }
+  };
 
   const importCsvNow = async () => {
     setCsvConfirmOpen(false);
@@ -586,6 +982,21 @@ export const SettingsAurum: React.FC = () => {
         {!!resetAllMessage && (
           <div className="rounded-lg border border-slate-200 bg-white/85 px-3 py-2 text-xs text-slate-700">
             {resetAllMessage}
+          </div>
+        )}
+      </Card>
+
+      <Card className="space-y-4 border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
+        <ClosingConfigSection
+          rows={closingConfigRows}
+          onToggle={onToggleClosingRule}
+          onMaxAgeDaysChange={onMaxAgeClosingRuleChange}
+          onCloseInvestmentFromCurrentMonth={(investmentId) => setClosingInvestmentCloseTargetId(investmentId)}
+          onDeleteInvestmentCompletely={(investmentId) => setClosingInvestmentDeleteTargetId(investmentId)}
+        />
+        {!!closingConfigMessage && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            {closingConfigMessage}
           </div>
         )}
       </Card>
@@ -1250,6 +1661,47 @@ export const SettingsAurum: React.FC = () => {
         onCancel={() => setDeleteBlocksConfirmOpen(false)}
         onConfirm={() => {
           void deleteSelectedBlocksNow();
+        }}
+      />
+
+      <ConfirmActionModal
+        open={!!closingInvestmentCloseTargetId}
+        busy={closingInvestmentActionBusy}
+        title="Cerrar inversión desde este mes"
+        message={
+          closingInvestmentCloseTargetId
+            ? 'Esta inversión dejará de exigirse y de arrastrarse desde el mes actual, pero se conserva completa en el historial anterior.'
+            : ''
+        }
+        confirmText="Cerrar desde este mes"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (closingInvestmentActionBusy) return;
+          setClosingInvestmentCloseTargetId(null);
+        }}
+        onConfirm={() => {
+          void closeInvestmentFromCurrentMonthNow();
+        }}
+      />
+
+      <ConfirmActionModal
+        open={!!closingInvestmentDeleteTargetId}
+        busy={closingInvestmentActionBusy}
+        tone="danger"
+        title="Eliminar inversión completamente"
+        message={
+          closingInvestmentDeleteTargetId
+            ? 'Se eliminará esta inversión de registros e historial de cierres con detalle. Esta acción impacta períodos anteriores y no se puede deshacer.'
+            : ''
+        }
+        confirmText="Eliminar completamente"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (closingInvestmentActionBusy) return;
+          setClosingInvestmentDeleteTargetId(null);
+        }}
+        onConfirm={() => {
+          void deleteInvestmentCompletelyNow();
         }}
       />
     </div>

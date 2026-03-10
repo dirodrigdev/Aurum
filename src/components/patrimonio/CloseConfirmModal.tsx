@@ -95,7 +95,9 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
 
         {!!closeBlockingIssues.length && (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2">
-            <div className="text-xs font-semibold text-red-800">Debes resolver estos bloqueos antes de cerrar:</div>
+            <div className="text-xs font-semibold text-red-800">
+              Debes resolver estos bloqueos antes de cerrar:
+            </div>
             <div className="mt-2 space-y-2">
               {closeBlockingIssues.map((issue, idx) => (
                 <div key={`close-block-${issue.type}-${issue.label}-${idx}`} className="rounded border border-red-200 bg-white p-2">
@@ -134,7 +136,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
         {!!closeWarningIssues.length && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2">
             <div className="text-xs font-semibold text-amber-800">
-              Advertencia: hay valores arrastrados de mes anterior (puedes cerrar igual)
+              Advertencias (puedes cerrar igual)
             </div>
             <div className="mt-2 max-h-28 overflow-auto text-xs text-amber-800 space-y-1">
               {closeWarningIssues.map((issue, idx) => (

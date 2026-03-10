@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
 import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
+import { WealthDeltaToast } from './ui/WealthDeltaToast';
+import { useWealthDelta } from '../hooks/useWealthDelta';
 
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 export const BOTTOM_NAV_RETAP_EVENT = 'aurum:bottom-nav-retap';
@@ -9,6 +11,7 @@ export const BOTTOM_NAV_RETAP_EVENT = 'aurum:bottom-nav-retap';
 export const Layout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const wealthDelta = useWealthDelta();
 
   const navItems = useMemo(
     () => [
@@ -89,6 +92,7 @@ export const Layout: React.FC = () => {
           })}
         </div>
       </nav>
+      <WealthDeltaToast visible={wealthDelta.visible} delta={wealthDelta.delta} reason={wealthDelta.reason} />
     </div>
   );
 };

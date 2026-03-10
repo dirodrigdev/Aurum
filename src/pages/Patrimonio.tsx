@@ -71,6 +71,7 @@ const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
+const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
@@ -135,6 +136,45 @@ const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: 
     { value: 'banco_clp', label: 'Banco Chile/Scotia/Santander (CLP)' },
     { value: 'banco_usd', label: 'Banco Chile/Scotia/Santander (USD)' },
   ],
+};
+
+type ClosingConfigRule = {
+  enabled: boolean;
+  maxAgeDays: number | null;
+};
+
+type ClosingConfigState = {
+  rules: Record<string, ClosingConfigRule>;
+};
+
+const readClosingConfig = (): ClosingConfigState => {
+  try {
+    const raw = localStorage.getItem(CLOSING_CONFIG_STORAGE_KEY);
+    if (!raw) return { rules: {} };
+    const parsed = JSON.parse(raw) as ClosingConfigState;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.rules !== 'object') return { rules: {} };
+    return { rules: parsed.rules || {} };
+  } catch {
+    return { rules: {} };
+  }
+};
+
+const resolveClosingConfigRule = (
+  config: ClosingConfigState,
+  key: string,
+  fallbackEnabled: boolean,
+  fallbackMaxAgeDays: number | null,
+): ClosingConfigRule => {
+  const fromConfig = config.rules[key];
+  if (fromConfig) return fromConfig;
+  return { enabled: fallbackEnabled, maxAgeDays: fallbackMaxAgeDays };
+};
+
+const daysSinceIso = (iso?: string) => {
+  if (!iso) return null;
+  const time = new Date(iso).getTime();
+  if (!Number.isFinite(time)) return null;
+  return Math.max(0, Math.floor((Date.now() - time) / (1000 * 60 * 60 * 24)));
 };
 
 const currencyOptions = [
@@ -515,7 +555,9 @@ type CloseValidationIssueType =
   | 'future_month'
   | 'missing_required_value'
   | 'incomplete_new_source'
-  | 'carried_value_unconfirmed';
+  | 'carried_value_unconfirmed'
+  | 'config_update_required'
+  | 'config_update_warning';
 
 interface CloseValidationIssue {
   type: CloseValidationIssueType;
@@ -2369,6 +2411,7 @@ export const Patrimonio: React.FC = () => {
   const [closeInfo, setCloseInfo] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
+  const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
 
   const [showNetWorth, setShowNetWorth] = useState(false);
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
@@ -2385,6 +2428,11 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     if (!closeConfirmOpen) setCloseMonthDraft(monthKey);
   }, [monthKey, closeConfirmOpen]);
+
+  useEffect(() => {
+    if (!closeConfirmOpen) return;
+    setCloseConfigSnapshot(readClosingConfig());
+  }, [closeConfirmOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -2780,18 +2828,30 @@ export const Patrimonio: React.FC = () => {
     }
 
     const requiredInvestment = new Set(sectionChecklist.investment.map((label) => normalizeForMatch(label)));
-    const requiredNames = [...sectionChecklist.investment, ...REAL_ESTATE_CORE_NET_LABELS];
+    const investmentsValueRule = resolveClosingConfigRule(closeConfigSnapshot, 'investments_value', true, 3);
+    const propertyValueRule = resolveClosingConfigRule(closeConfigSnapshot, 'property_value', false, null);
+    const mortgageBalanceRule = resolveClosingConfigRule(closeConfigSnapshot, 'mortgage_balance', false, null);
+    const requiredNames: Array<{ label: string; section: MainSection }> = [];
+    if (investmentsValueRule.enabled) {
+      sectionChecklist.investment.forEach((label) => requiredNames.push({ label, section: 'investment' }));
+    }
+    if (propertyValueRule.enabled) {
+      requiredNames.push({ label: 'Valor propiedad', section: 'real_estate' });
+    }
+    if (mortgageBalanceRule.enabled) {
+      requiredNames.push({ label: 'Saldo deuda hipotecaria', section: 'real_estate' });
+    }
     requiredNames.forEach((required) => {
       const exists = targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
-        return sameCanonicalLabel(record.label, required);
+        return sameCanonicalLabel(record.label, required.label);
       });
       if (exists) return;
       issues.push({
         type: 'missing_required_value',
         level: 'error',
-        label: required,
-        section: requiredInvestment.has(normalizeForMatch(required)) ? 'investment' : 'real_estate',
+        label: required.label,
+        section: required.section,
         canResolveWithPrevious: true,
       });
     });
@@ -2799,6 +2859,12 @@ export const Patrimonio: React.FC = () => {
     investmentInstruments.forEach((instrument) => {
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
       const isNonExcludable = isNonExcludableInvestmentLabel(instrument.label);
+      const instrumentRule = resolveClosingConfigRule(
+        closeConfigSnapshot,
+        `investment:${instrument.id}`,
+        true,
+        3,
+      );
       const exists = targetRecords.some(
         (record) =>
           record.block === 'investment' &&
@@ -2806,6 +2872,16 @@ export const Patrimonio: React.FC = () => {
           normalizeForMatch(record.label) === normalizeForMatch(instrument.label),
       );
       if (exists) return;
+      if (!instrumentRule.enabled) {
+        issues.push({
+          type: 'config_update_warning',
+          level: 'warning',
+          label: `Configuración de cierre · ${instrument.label}: sin dato este mes (toggle OFF, no bloquea).`,
+          section: 'investment',
+          instrumentId: instrument.id,
+        });
+        return;
+      }
       issues.push({
         type: 'incomplete_new_source',
         level: 'error',
@@ -2814,6 +2890,164 @@ export const Patrimonio: React.FC = () => {
         instrumentId: instrument.id,
         canResolveWithPrevious: true,
         canExcludeThisMonth: !isNonExcludable,
+      });
+    });
+
+    type ConfigFieldCheck = {
+      key: string;
+      label: string;
+      section: MainSection;
+      rule: ClosingConfigRule;
+      records: WealthRecord[];
+    };
+
+    const isTenencia = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('tenencia / cxc'));
+    const isMortgageDebtLabel = (label: string) =>
+      REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizeForMatch(label));
+
+    const configChecks: ConfigFieldCheck[] = [
+      {
+        key: 'investments_value',
+        label: 'Inversiones (valor)',
+        section: 'investment',
+        rule: investmentsValueRule,
+        records: targetRecords.filter(
+          (record) =>
+            record.block === 'investment' &&
+            !isRiskCapitalInvestmentLabel(record.label) &&
+            !isTenencia(record.label),
+        ),
+      },
+      {
+        key: 'risk_capital',
+        label: 'Capital de riesgo',
+        section: 'investment',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, 'risk_capital', true, 3),
+        records: targetRecords.filter(
+          (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+        ),
+      },
+      {
+        key: 'banks_fintoc',
+        label: 'Bancos (Fintoc)',
+        section: 'bank',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, 'banks_fintoc', true, 3),
+        records: targetRecords.filter((record) => record.block === 'bank'),
+      },
+      {
+        key: 'tenencia',
+        label: 'Tenencia',
+        section: 'investment',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, 'tenencia', false, null),
+        records: targetRecords.filter((record) => record.block === 'investment' && isTenencia(record.label)),
+      },
+      {
+        key: 'cards_used',
+        label: 'Cupos tarjetas',
+        section: 'bank',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, 'cards_used', false, null),
+        records: targetRecords.filter((record) => record.block === 'debt' && !isMortgageDebtLabel(record.label)),
+      },
+      {
+        key: 'property_value',
+        label: 'Valor propiedad',
+        section: 'real_estate',
+        rule: propertyValueRule,
+        records: targetRecords.filter(
+          (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
+        ),
+      },
+      {
+        key: 'mortgage_balance',
+        label: 'Saldo deuda hipotecaria',
+        section: 'real_estate',
+        rule: mortgageBalanceRule,
+        records: targetRecords.filter(
+          (record) => record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria'),
+        ),
+      },
+      {
+        key: 'mortgage_amortization',
+        label: 'Amortización mensual',
+        section: 'real_estate',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, 'mortgage_amortization', false, null),
+        records: targetRecords.filter(
+          (record) =>
+            record.block === 'debt' && sameCanonicalLabel(record.label, 'Amortización hipotecaria mensual'),
+        ),
+      },
+    ];
+
+    investmentInstruments.forEach((instrument) => {
+      if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
+      configChecks.push({
+        key: `investment:${instrument.id}`,
+        label: instrument.label,
+        section: 'investment',
+        rule: resolveClosingConfigRule(closeConfigSnapshot, `investment:${instrument.id}`, true, 3),
+        records: targetRecords.filter(
+          (record) =>
+            record.block === 'investment' &&
+            record.currency === instrument.currency &&
+            sameCanonicalLabel(record.label, instrument.label),
+        ),
+      });
+    });
+
+    configChecks.forEach((check) => {
+      const isInstrumentSpecificRule = check.key.startsWith('investment:');
+      const latestStamp = check.records
+        .map((record) => record.createdAt || `${record.snapshotDate}T00:00:00`)
+        .filter(Boolean)
+        .sort((a, b) => String(b).localeCompare(String(a)))[0];
+      const ageDays = daysSinceIso(latestStamp);
+      const allCarried = check.records.length > 0 && check.records.every((record) => isCarriedRecord(record));
+      const staleByAge =
+        check.rule.maxAgeDays !== null &&
+        ageDays !== null &&
+        Number.isFinite(check.rule.maxAgeDays) &&
+        ageDays > check.rule.maxAgeDays;
+
+      if (check.rule.enabled) {
+        if (!check.records.length) {
+          if (isInstrumentSpecificRule) return;
+          issues.push({
+            type: 'config_update_required',
+            level: 'error',
+            label: `Configuración de cierre · ${check.label}: sin dato cargado para ${monthLabel(targetMonthKey).toLowerCase()}.`,
+            section: check.section,
+          });
+          return;
+        }
+        if (allCarried) {
+          issues.push({
+            type: 'config_update_required',
+            level: 'error',
+            label: `Configuración de cierre · ${check.label}: valor arrastrado (requiere actualización real).`,
+            section: check.section,
+          });
+        }
+        if (staleByAge) {
+          issues.push({
+            type: 'config_update_required',
+            level: 'error',
+            label: `Configuración de cierre · ${check.label}: última actualización ${ageDays} días atrás (máximo ${check.rule.maxAgeDays}).`,
+            section: check.section,
+          });
+        }
+        return;
+      }
+
+      if (!check.records.length) return;
+      const notices: string[] = [];
+      if (allCarried) notices.push('valor arrastrado');
+      if (staleByAge) notices.push(`última actualización ${ageDays} días atrás (máximo ${check.rule.maxAgeDays})`);
+      if (!notices.length) return;
+      issues.push({
+        type: 'config_update_warning',
+        level: 'warning',
+        label: `Configuración de cierre · ${check.label}: ${notices.join(' · ')} (toggle OFF, no bloquea).`,
+        section: check.section,
       });
     });
 
@@ -2848,7 +3082,7 @@ export const Patrimonio: React.FC = () => {
 
   const closeValidationDraft = useMemo(
     () => evaluateCloseValidation(closeMonthDraft),
-    [closeMonthDraft, records, investmentInstruments],
+    [closeMonthDraft, records, investmentInstruments, closeConfigSnapshot],
   );
   const closePreview = useMemo(() => {
     const targetRecords = closeValidationDraft.targetRecords;
