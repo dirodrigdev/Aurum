@@ -472,16 +472,6 @@ const average = (arr: number[]) => {
   return arr.reduce((sum, n) => sum + n, 0) / arr.length;
 };
 
-const monthPoints = (closures: WealthMonthlyClosure[], currentKey: string, currentNet: number) => {
-  const map = new Map<string, number>();
-  for (const c of closures) map.set(c.monthKey, c.summary.netConsolidatedClp);
-  map.set(currentKey, currentNet);
-
-  return [...map.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, net]) => ({ key, net }));
-};
-
 const closureNetForTotals = (
   closure: WealthMonthlyClosure,
   includeRiskCapital: boolean,
@@ -2508,11 +2498,6 @@ export const Patrimonio: React.FC = () => {
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
     loadIncludeRiskCapitalInTotals(),
   );
-  const [visibleMainCards, setVisibleMainCards] = useState<Record<MainSection, boolean>>({
-    investment: false,
-    real_estate: false,
-    bank: true,
-  });
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
 
   useEffect(() => {
@@ -2636,7 +2621,6 @@ export const Patrimonio: React.FC = () => {
   );
   // [PRODUCT RULE] Si el filtro de riesgo deja vacío, usamos base sin filtrar para evitar total 0 artificial.
   const monthRecordsForTotals = monthRiskResolution.recordsForTotals;
-  const riskToggleApplies = monthRiskResolution.toggleApplies;
   const closureNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
@@ -2651,25 +2635,18 @@ export const Patrimonio: React.FC = () => {
   );
 
   const metrics = useMemo(() => {
-    const points = monthPoints(
-      closures.map((closure) => ({
-        ...closure,
-        summary: {
-          ...closure.summary,
-          netConsolidatedClp: closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp,
-        },
-      })),
-      monthKey,
-      sectionAmounts.totalNetClp,
-    );
-    const idx = points.findIndex((p) => p.key === monthKey);
-    const prev = idx > 0 ? points[idx - 1] : null;
-    const monthIncrease = prev ? points[idx].net - prev.net : null;
-
+    const closedPoints = closures
+      .map((closure) => ({
+        key: closure.monthKey,
+        net: closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    const last = closedPoints.length > 0 ? closedPoints[closedPoints.length - 1] : null;
+    const prev = closedPoints.length > 1 ? closedPoints[closedPoints.length - 2] : null;
+    const monthIncrease = last && prev ? last.net - prev.net : null;
     const deltas: number[] = [];
-    for (let i = 1; i < points.length; i += 1) {
-      if (points[i].key === monthKey || points[i - 1].key === monthKey) continue;
-      deltas.push(points[i].net - points[i - 1].net);
+    for (let i = 1; i < closedPoints.length; i += 1) {
+      deltas.push(closedPoints[i].net - closedPoints[i - 1].net);
     }
 
     return {
@@ -2677,27 +2654,20 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, closureNetByMonth, monthKey, sectionAmounts.totalNetClp]);
+  }, [closures, closureNetByMonth]);
 
   const latestClosure = closures[0] || null;
 
   const growthVsPrevClosure = useMemo(() => {
-    const currentClosure = closures.find((closure) => closure.monthKey === monthKey) || null;
-    const current = currentClosure
-      ? closureNetByMonth.get(currentClosure.monthKey) ?? currentClosure.summary.netConsolidatedClp
-      : sectionAmounts.totalNetClp;
-
-    const previousClosure =
-      closures
-        .filter((closure) => closure.monthKey < monthKey)
-        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
-    if (!previousClosure) return null;
-
+    if (closures.length < 2) return null;
+    const currentClosure = closures[0];
+    const previousClosure = closures[1];
+    const current = closureNetByMonth.get(currentClosure.monthKey) ?? currentClosure.summary.netConsolidatedClp;
     const prev = closureNetByMonth.get(previousClosure.monthKey) ?? previousClosure.summary.netConsolidatedClp;
     const abs = current - prev;
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
-  }, [closures, monthKey, closureNetByMonth, sectionAmounts.totalNetClp]);
+  }, [closures, closureNetByMonth]);
   const selectedClosureForDraft = useMemo(
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
@@ -2787,16 +2757,14 @@ export const Patrimonio: React.FC = () => {
     return hasProperty && hasMortgageDebt;
   }, [monthRecords]);
 
-  const toggleMainCardVisibility = (section: MainSection) => {
-    setVisibleMainCards((prev) => ({ ...prev, [section]: !prev[section] }));
-  };
-
-  const hiddenHint = (tone: 'net' | 'amber' | 'green') => {
+  const hiddenHint = (tone: 'net' | 'amber' | 'green' | 'blue') => {
     const color =
       tone === 'amber'
         ? 'text-[#5a2f16]/70'
         : tone === 'green'
           ? 'text-[#1f3e2d]/70'
+          : tone === 'blue'
+            ? 'text-sky-800/80'
           : 'text-[#f3eadb]/80';
     return <span className={`text-sm font-medium ${color}`}>Pulsa para ver</span>;
   };
@@ -3519,13 +3487,29 @@ export const Patrimonio: React.FC = () => {
           <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
-          <button
-            className="absolute top-0 right-0 z-20 text-xs text-[#efe4d1]"
-            onClick={() => setShowNetWorth((v) => !v)}
-            type="button"
-          >
-            {showNetWorth ? 'Ocultar' : 'Ver'}
-          </button>
+          <div className="absolute top-0 right-0 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+              className={cn(
+                'inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
+                includeRiskCapitalInTotals
+                  ? 'border-amber-300 bg-amber-50 text-amber-600'
+                  : 'border-slate-300 bg-white/70 text-slate-400',
+              )}
+              title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+              aria-label="Alternar capital de riesgo"
+            >
+              <Zap size={18} />
+            </button>
+            <button
+              className="text-xs text-[#efe4d1]"
+              onClick={() => setShowNetWorth((v) => !v)}
+              type="button"
+            >
+              {showNetWorth ? 'Ocultar' : 'Ver'}
+            </button>
+          </div>
 
           <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
             <div className="space-y-2">
@@ -3539,9 +3523,9 @@ export const Patrimonio: React.FC = () => {
                   {showNetWorth && sectionAmounts.hasAllCoreSubtotalsData ? (
                     <span className="inline-flex items-center gap-2 text-3xl font-bold leading-none tracking-tight transition-all duration-200 ease-out opacity-100 translate-y-0">
                       <span>{metricsDisplay.netWorth}</span>
-                      {includeRiskCapitalInTotals && monthRiskResolution.hasRiskCapital && (
+                      {includeRiskCapitalInTotals && (
                         <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                          +CapRiesgo
+                          +CapRiesgo {monthRiskResolution.hasRiskCapital ? '' : 'Sin datos'}
                         </span>
                       )}
                       {missingCriticalCount > 0 && (
@@ -3562,21 +3546,35 @@ export const Patrimonio: React.FC = () => {
                 </div>
               </button>
 
-              <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3">
-                <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
-                <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
-              </div>
+              {showNetWorth ? (
+                sectionAmounts.hasAllCoreSubtotalsData ? (
+                  <>
+                    <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3">
+                      <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Incremento mensual</div>
+                      <div className="mt-1 text-xl font-semibold">{metricsDisplay.monthIncrease}</div>
+                    </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                  <div className="text-[#e7dcc9] text-[11px]">Promedio 12M</div>
-                  <div className="mt-1 text-sm font-semibold">{metricsDisplay.avg12}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                        <div className="text-[#e7dcc9] text-[11px]">Promedio 12M</div>
+                        <div className="mt-1 text-sm font-semibold">{metricsDisplay.avg12}</div>
+                      </div>
+                      <div className="rounded-xl bg-[#f6efe3]/10 p-3">
+                        <div className="text-[#e7dcc9] text-[11px]">Promedio desde inicio</div>
+                        <div className="mt-1 text-sm font-semibold">{metricsDisplay.avgSinceStart}</div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3 text-sm text-[#f3eadb]/90">
+                    Completa los datos del mes para ver la evolución
+                  </div>
+                )
+              ) : (
+                <div className="rounded-xl border border-[#c59a6c]/30 bg-[#f6efe3]/12 p-3 text-sm text-[#f3eadb]/90">
+                  {hiddenHint('net')}
                 </div>
-                <div className="rounded-xl bg-[#f6efe3]/10 p-3">
-                  <div className="text-[#e7dcc9] text-[11px]">Promedio desde inicio</div>
-                  <div className="mt-1 text-sm font-semibold">{metricsDisplay.avgSinceStart}</div>
-                </div>
-              </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -3597,124 +3595,112 @@ export const Patrimonio: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              if (!riskToggleApplies) return;
-              setIncludeRiskCapitalInTotals((prev) => !prev);
-            }}
-            disabled={!riskToggleApplies}
-            className={cn(
-              'absolute bottom-3 right-3 z-30 inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
-              includeRiskCapitalInTotals
-                ? 'border-amber-300 bg-amber-50 text-amber-600'
-                : 'border-slate-300 bg-white/70 text-slate-400',
-              !riskToggleApplies && 'cursor-not-allowed opacity-60',
-            )}
-            title={
-              riskToggleApplies
-                ? includeRiskCapitalInTotals
-                  ? 'Vista con capital de riesgo'
-                  : 'Vista de patrimonio puro'
-                : 'No aplica: no hay capital de riesgo en este mes'
-            }
-            aria-label="Alternar capital de riesgo"
-          >
-            <Zap size={18} />
-          </button>
         </div>
       </Card>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition min-h-[212px]">
+        <div
+          role="button"
+          tabIndex={0}
+          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-4 text-left shadow-[0_10px_22px_rgba(165,96,42,0.28)] transition min-h-[212px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5a2f16]/45"
+          onClick={() => setActiveSection('investment')}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setActiveSection('investment');
+            }
+          }}
+          aria-label="Entrar a Inversiones"
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
               <Landmark size={16} /> Inversiones
             </div>
             <button
-              className="text-[10px] rounded-md border border-[#7f4927]/25 bg-white/35 px-1.5 py-0.5 text-[#5a2f16]"
-              onClick={() => toggleMainCardVisibility('investment')}
               type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIncludeRiskCapitalInTotals((prev) => !prev);
+              }}
+              className={cn(
+                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition',
+                includeRiskCapitalInTotals
+                  ? 'border-[#7f4927]/55 bg-white/70 text-[#7f4927]'
+                  : 'border-[#7f4927]/35 bg-white/45 text-[#7f4927]/70',
+              )}
+              title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+              aria-label="Alternar capital de riesgo"
             >
-              {visibleMainCards.investment ? 'Ocultar' : 'Ver'}
+              <Zap size={15} />
             </button>
           </div>
-          <button
-            type="button"
-            className="mt-2 w-full min-h-[52px] text-left text-2xl font-bold leading-tight text-[#5a2f16]"
-            onClick={() => toggleMainCardVisibility('investment')}
-          >
-            <span
-              className={`transition-all duration-200 ease-out ${
-                visibleMainCards.investment ? 'opacity-100 translate-y-0' : 'opacity-100 translate-y-0 text-base'
-              }`}
-            >
-              {visibleMainCards.investment
+          <div className="mt-2 min-h-[52px] text-left text-2xl font-bold leading-tight text-[#5a2f16]">
+            <span className="transition-all duration-200 ease-out opacity-100 translate-y-0">
+              {showNetWorth
                 ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
                 : hiddenHint('amber')}
             </span>
-            {visibleMainCards.investment && includeRiskCapitalInTotals && monthRiskResolution.hasRiskCapital && (
+            {showNetWorth && includeRiskCapitalInTotals && (
               <span className="ml-2 inline-flex rounded-full border border-[#7f4927]/35 bg-white/50 px-2 py-0.5 text-[10px] font-semibold text-[#5a2f16]">
-                +CapRiesgo
+                +CapRiesgo {monthRiskResolution.hasRiskCapital ? '' : 'Sin datos'}
               </span>
             )}
-          </button>
+          </div>
           <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en {displayCurrency}</div>
-          <button
-            type="button"
-            className="mt-3 inline-flex items-center gap-1 text-xs text-[#6b3a1f]"
-            onClick={() => setActiveSection('investment')}
-          >
-            Entrar <ArrowRight size={13} />
-          </button>
+          <div className="pointer-events-none absolute bottom-3 right-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#7f4927]/30 bg-white/35 text-[#7f4927]/75">
+            <ArrowRight size={13} />
+          </div>
         </div>
 
-        <div className="rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] transition min-h-[212px]">
-          <div className="flex items-start justify-between gap-2">
-            <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
-              <Home size={16} /> Bienes raíces (neto)
-            </div>
-            <button
-              className="text-[10px] rounded-md border border-[#2d5a3b]/25 bg-white/35 px-1.5 py-0.5 text-[#1f3e2d]"
-              onClick={() => toggleMainCardVisibility('real_estate')}
-              type="button"
-            >
-              {visibleMainCards.real_estate ? 'Ocultar' : 'Ver'}
-            </button>
+        <div
+          role="button"
+          tabIndex={0}
+          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-4 text-left shadow-[0_10px_22px_rgba(74,102,64,0.26)] transition min-h-[212px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f3e2d]/40"
+          onClick={() => setActiveSection('real_estate')}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setActiveSection('real_estate');
+            }
+          }}
+          aria-label="Entrar a Bienes raíces"
+        >
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f3e2d]">
+            <Home size={16} /> Bienes raíces (neto)
           </div>
           {hasRealEstateCoreInputs ? (
             <>
-              <button
-                type="button"
-                className="mt-2 w-full min-h-[52px] text-left text-2xl font-bold leading-tight text-[#1f3e2d]"
-                onClick={() => toggleMainCardVisibility('real_estate')}
-              >
-                <span
-                  className={`transition-all duration-200 ease-out ${
-                    visibleMainCards.real_estate ? 'opacity-100 translate-y-0' : 'opacity-100 translate-y-0 text-base'
-                  }`}
-                >
-                  {visibleMainCards.real_estate
+              <div className="mt-2 min-h-[52px] text-left text-2xl font-bold leading-tight text-[#1f3e2d]">
+                <span className="transition-all duration-200 ease-out opacity-100 translate-y-0">
+                  {showNetWorth
                     ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
                     : hiddenHint('green')}
                 </span>
-              </button>
+              </div>
               <div className="mt-1 text-[11px] text-[#275238]">Consolidado en {displayCurrency}</div>
             </>
           ) : (
             <div className="mt-2 text-[11px] text-[#275238]">Completa inputs para mostrar total</div>
           )}
-          <button
-            type="button"
-            className="mt-3 inline-flex items-center gap-1 text-xs text-[#275238]"
-            onClick={() => setActiveSection('real_estate')}
-          >
-            Entrar <ArrowRight size={13} />
-          </button>
+          <div className="pointer-events-none absolute bottom-3 right-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#2d5a3b]/30 bg-white/35 text-[#2d5a3b]/80">
+            <ArrowRight size={13} />
+          </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-4 text-left shadow-[0_10px_22px_rgba(70,120,170,0.18)] transition">
+      <div
+        role="button"
+        tabIndex={0}
+        className="relative rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-4 text-left shadow-[0_10px_22px_rgba(70,120,170,0.18)] transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45"
+        onClick={() => setActiveSection('bank')}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setActiveSection('bank');
+          }
+        }}
+        aria-label="Entrar a Bancos"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="inline-flex items-center gap-2 text-sm font-semibold text-sky-900">
             <Building2 size={16} /> Bancos (liquidez)
@@ -3722,21 +3708,19 @@ export const Patrimonio: React.FC = () => {
           <Wallet size={18} className="mt-0.5 text-sky-700" />
         </div>
         <div className="mt-2 min-w-0 text-left text-2xl font-bold leading-tight text-sky-900 break-words">
-          {formatCurrency(sectionAmountsDisplay.bank, displayCurrency)}
+          {showNetWorth ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency) : hiddenHint('blue')}
         </div>
         <div className="mt-1 text-[11px] text-sky-700">
-          Deudas no hipotecarias: {formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}
+          Deudas no hipotecarias:{' '}
+          {showNetWorth ? formatCurrency(-sectionAmountsDisplay.nonMortgageDebt, displayCurrency) : hiddenHint('blue')}
         </div>
         <div className="text-[11px] text-sky-800/90">
-          Neto financiero: {formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency)}
+          Neto financiero:{' '}
+          {showNetWorth ? formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency) : hiddenHint('blue')}
         </div>
-        <button
-          type="button"
-          className="mt-3 inline-flex items-center gap-1 text-xs text-sky-800"
-          onClick={() => setActiveSection('bank')}
-        >
-          Entrar <ArrowRight size={13} />
-        </button>
+        <div className="pointer-events-none absolute bottom-3 right-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-sky-300 bg-white/35 text-sky-700/80">
+          <ArrowRight size={13} />
+        </div>
       </div>
 
       <Card className="p-4 space-y-3">
