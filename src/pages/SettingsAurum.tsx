@@ -18,6 +18,10 @@ import {
   formatRateInt as formatFxInteger,
 } from '../utils/wealthFormat';
 import {
+  TENENCIA_CXC_PREFIX_LABEL,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  MORTGAGE_AMORTIZATION_LABEL,
   loadBankTokens,
   loadClosures,
   saveClosures,
@@ -89,8 +93,8 @@ const STATIC_CLOSING_FIELDS: Array<{
   { key: 'banks_fintoc', label: 'Bancos (Fintoc)', defaultEnabled: true, defaultMaxAgeDays: 3 },
   { key: 'tenencia', label: 'Tenencia', defaultEnabled: false, defaultMaxAgeDays: null },
   { key: 'cards_used', label: 'Cupos tarjetas', defaultEnabled: false, defaultMaxAgeDays: null },
-  { key: 'property_value', label: 'Valor propiedad', defaultEnabled: false, defaultMaxAgeDays: null },
-  { key: 'mortgage_balance', label: 'Saldo deuda hipotecaria', defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'property_value', label: REAL_ESTATE_PROPERTY_VALUE_LABEL, defaultEnabled: false, defaultMaxAgeDays: null },
+  { key: 'mortgage_balance', label: MORTGAGE_DEBT_BALANCE_LABEL, defaultEnabled: false, defaultMaxAgeDays: null },
   { key: 'mortgage_amortization', label: 'Amortización mensual', defaultEnabled: false, defaultMaxAgeDays: null },
 ];
 
@@ -145,7 +149,8 @@ const toDefaultRule = (enabled: boolean, maxAgeDays: number | null): ClosingRule
   maxAgeDays,
 });
 
-const isTenenciaLabel = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('Tenencia / CxC'));
+const isTenenciaLabel = (label: string) =>
+  normalizeForMatch(label).includes(normalizeForMatch(TENENCIA_CXC_PREFIX_LABEL));
 const isTenenciaInstrument = (instrumentLabel: string) => isTenenciaLabel(instrumentLabel);
 
 const daysSinceIso = (iso?: string) => {
@@ -427,7 +432,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       {
         key: 'real-estate',
         label: 'Propiedad + hipoteca',
-        ok: monthRecords.some((record) => sameCanonicalLabel(record.label, 'Valor propiedad')),
+        ok: monthRecords.some((record) => sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL)),
       },
       {
         key: 'fx',
@@ -700,16 +705,16 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         lastUpdatedDays = getLatestDays((label) => isTenenciaLabel(label), 'investment');
       } else if (field.key === 'cards_used') {
         lastUpdatedDays = getLatestDays(
-          (label) => !sameCanonicalLabel(label, 'Saldo deuda hipotecaria') && !isMortgageMetaDebtLabel(label),
+          (label) => !sameCanonicalLabel(label, MORTGAGE_DEBT_BALANCE_LABEL) && !isMortgageMetaDebtLabel(label),
           'debt',
         );
       } else if (field.key === 'property_value') {
-        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, 'Valor propiedad'), 'real_estate');
+        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, REAL_ESTATE_PROPERTY_VALUE_LABEL), 'real_estate');
       } else if (field.key === 'mortgage_balance') {
-        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, 'Saldo deuda hipotecaria'), 'debt');
+        lastUpdatedDays = getLatestDays((label) => sameCanonicalLabel(label, MORTGAGE_DEBT_BALANCE_LABEL), 'debt');
       } else if (field.key === 'mortgage_amortization') {
         lastUpdatedDays = getLatestDays(
-          (label) => sameCanonicalLabel(label, 'Amortización hipotecaria mensual'),
+          (label) => sameCanonicalLabel(label, MORTGAGE_AMORTIZATION_LABEL),
           'debt',
         );
       }

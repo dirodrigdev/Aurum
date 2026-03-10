@@ -59,6 +59,36 @@ import {
   setInvestmentInstrumentMonthExcluded,
   upsertInvestmentInstrument,
   upsertWealthRecord,
+  BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_USD_LABEL,
+  BANK_BCHILE_CLP_LABEL,
+  BANK_BCHILE_USD_LABEL,
+  BANK_SANTANDER_CLP_LABEL,
+  BANK_SANTANDER_USD_LABEL,
+  BANK_SCOTIA_CLP_LABEL,
+  BANK_SCOTIA_USD_LABEL,
+  CARD_AMEX_SANTANDER_LABEL,
+  CARD_MASTERCARD_FALABELLA_LABEL,
+  CARD_MASTERCARD_SANTANDER_LABEL,
+  CARD_MASTERCARD_SCOTIA_LABEL,
+  CARD_VISA_BCHILE_LABEL,
+  CARD_VISA_SCOTIA_LABEL,
+  DEBT_CARD_CLP_LABEL,
+  DEBT_CARD_USD_LABEL,
+  INVESTMENT_BTG_LABEL,
+  INVESTMENT_GLOBAL66_USD_LABEL,
+  INVESTMENT_PLANVITAL_LABEL,
+  INVESTMENT_SURA_FIN_LABEL,
+  INVESTMENT_SURA_PREV_LABEL,
+  INVESTMENT_WISE_USD_LABEL,
+  MANUAL_CARD_LABELS,
+  MORTGAGE_AMORTIZATION_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  MORTGAGE_DIVIDEND_LABEL,
+  MORTGAGE_INSURANCE_LABEL,
+  MORTGAGE_INTEREST_LABEL,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  TENENCIA_CXC_PREFIX_LABEL,
 } from '../services/wealthStorage';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -78,8 +108,8 @@ const MONTH_STARTED_FLAG_PREFIX = 'aurum.month.started.';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
-  { label: 'Tenencia / CxC USD', currency: 'USD' },
-  { label: 'Tenencia / CxC EUR', currency: 'EUR' },
+  { label: `${TENENCIA_CXC_PREFIX_LABEL} USD`, currency: 'USD' },
+  { label: `${TENENCIA_CXC_PREFIX_LABEL} EUR`, currency: 'EUR' },
 ];
 
 const sectionLabel: Record<MainSection, string> = {
@@ -228,31 +258,31 @@ const sectionTheme: Record<MainSection, string> = {
 
 const sectionChecklist: Record<MainSection, string[]> = {
   investment: [
-    'SURA inversión financiera',
-    'SURA ahorro previsional',
-    'PlanVital saldo total',
-    'BTG total valorización',
-    'Global66 Cuenta Vista USD',
-    'Wise Cuenta principal USD',
+    INVESTMENT_SURA_FIN_LABEL,
+    INVESTMENT_SURA_PREV_LABEL,
+    INVESTMENT_PLANVITAL_LABEL,
+    INVESTMENT_BTG_LABEL,
+    INVESTMENT_GLOBAL66_USD_LABEL,
+    INVESTMENT_WISE_USD_LABEL,
   ],
   real_estate: [
-    'Valor propiedad',
-    'Saldo deuda hipotecaria',
-    'Dividendo hipotecario mensual',
-    'Interés hipotecario mensual',
-    'Seguros hipotecarios mensuales',
-    'Amortización hipotecaria mensual',
+    REAL_ESTATE_PROPERTY_VALUE_LABEL,
+    MORTGAGE_DEBT_BALANCE_LABEL,
+    MORTGAGE_DIVIDEND_LABEL,
+    MORTGAGE_INTEREST_LABEL,
+    MORTGAGE_INSURANCE_LABEL,
+    MORTGAGE_AMORTIZATION_LABEL,
   ],
-  bank: ['Saldo bancos CLP', 'Saldo bancos USD'],
+  bank: [BANK_BALANCE_CLP_LABEL, BANK_BALANCE_USD_LABEL],
 };
 const REAL_ESTATE_DEBT_LABELS = [
-  'Saldo deuda hipotecaria',
-  'Dividendo hipotecario mensual',
-  'Interés hipotecario mensual',
-  'Seguros hipotecarios mensuales',
-  'Amortización hipotecaria mensual',
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  MORTGAGE_DIVIDEND_LABEL,
+  MORTGAGE_INTEREST_LABEL,
+  MORTGAGE_INSURANCE_LABEL,
+  MORTGAGE_AMORTIZATION_LABEL,
 ];
-const REAL_ESTATE_CORE_NET_LABELS = ['Valor propiedad', 'Saldo deuda hipotecaria'];
+const REAL_ESTATE_CORE_NET_LABELS = [REAL_ESTATE_PROPERTY_VALUE_LABEL, MORTGAGE_DEBT_BALANCE_LABEL];
 type BankProviderId = 'bchile' | 'scotia' | 'santander';
 
 const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
@@ -263,41 +293,41 @@ const BANK_PROVIDERS: Array<{ id: BankProviderId; label: string }> = [
 
 const FINTOC_SYNC_PREFIX_CARD = 'Tarjeta crédito:';
 const MANUAL_BANK_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
-  { label: 'Banco de Chile CLP', currency: 'CLP' },
-  { label: 'Banco de Chile USD', currency: 'USD' },
-  { label: 'Scotiabank CLP', currency: 'CLP' },
-  { label: 'Scotiabank USD', currency: 'USD' },
-  { label: 'Santander CLP', currency: 'CLP' },
-  { label: 'Santander USD', currency: 'USD' },
+  { label: BANK_BCHILE_CLP_LABEL, currency: 'CLP' },
+  { label: BANK_BCHILE_USD_LABEL, currency: 'USD' },
+  { label: BANK_SCOTIA_CLP_LABEL, currency: 'CLP' },
+  { label: BANK_SCOTIA_USD_LABEL, currency: 'USD' },
+  { label: BANK_SANTANDER_CLP_LABEL, currency: 'CLP' },
+  { label: BANK_SANTANDER_USD_LABEL, currency: 'USD' },
 ];
 const MANUAL_CARD_ITEMS: Array<{ label: string; currency: WealthCurrency }> = [
-  { label: 'Visa Banco de Chile', currency: 'CLP' },
-  { label: 'Visa Scotia', currency: 'CLP' },
-  { label: 'Mastercard Scotia', currency: 'CLP' },
-  { label: 'Mastercard Falabella', currency: 'CLP' },
-  { label: 'Mastercard Santander', currency: 'CLP' },
-  { label: 'American Express Santander', currency: 'CLP' },
+  { label: CARD_VISA_BCHILE_LABEL, currency: 'CLP' },
+  { label: CARD_VISA_SCOTIA_LABEL, currency: 'CLP' },
+  { label: CARD_MASTERCARD_SCOTIA_LABEL, currency: 'CLP' },
+  { label: CARD_MASTERCARD_FALABELLA_LABEL, currency: 'CLP' },
+  { label: CARD_MASTERCARD_SANTANDER_LABEL, currency: 'CLP' },
+  { label: CARD_AMEX_SANTANDER_LABEL, currency: 'CLP' },
 ];
 const MANUAL_BANK_GROUPS: Array<{ bank: string; items: Array<{ label: string; currency: WealthCurrency }> }> = [
   {
     bank: 'Banco de Chile',
     items: [
-      { label: 'Banco de Chile CLP', currency: 'CLP' },
-      { label: 'Banco de Chile USD', currency: 'USD' },
+      { label: BANK_BCHILE_CLP_LABEL, currency: 'CLP' },
+      { label: BANK_BCHILE_USD_LABEL, currency: 'USD' },
     ],
   },
   {
     bank: 'Scotiabank',
     items: [
-      { label: 'Scotiabank CLP', currency: 'CLP' },
-      { label: 'Scotiabank USD', currency: 'USD' },
+      { label: BANK_SCOTIA_CLP_LABEL, currency: 'CLP' },
+      { label: BANK_SCOTIA_USD_LABEL, currency: 'USD' },
     ],
   },
   {
     bank: 'Santander',
     items: [
-      { label: 'Santander CLP', currency: 'CLP' },
-      { label: 'Santander USD', currency: 'USD' },
+      { label: BANK_SANTANDER_CLP_LABEL, currency: 'CLP' },
+      { label: BANK_SANTANDER_USD_LABEL, currency: 'USD' },
     ],
   },
 ];
@@ -309,28 +339,28 @@ const MANUAL_CARD_GROUPS: Array<{
   {
     bank: 'Banco de Chile',
     className: 'border-blue-200 bg-blue-50/40',
-    items: [{ label: 'Visa Banco de Chile', currency: 'CLP' }],
+    items: [{ label: CARD_VISA_BCHILE_LABEL, currency: 'CLP' }],
   },
   {
     bank: 'Scotiabank',
     className: 'border-slate-300 bg-slate-100/70',
     items: [
-      { label: 'Visa Scotia', currency: 'CLP' },
-      { label: 'Mastercard Scotia', currency: 'CLP' },
+      { label: CARD_VISA_SCOTIA_LABEL, currency: 'CLP' },
+      { label: CARD_MASTERCARD_SCOTIA_LABEL, currency: 'CLP' },
     ],
   },
   {
     bank: 'Santander',
     className: 'border-red-200 bg-red-50/40',
     items: [
-      { label: 'Mastercard Santander', currency: 'CLP' },
-      { label: 'American Express Santander', currency: 'CLP' },
+      { label: CARD_MASTERCARD_SANTANDER_LABEL, currency: 'CLP' },
+      { label: CARD_AMEX_SANTANDER_LABEL, currency: 'CLP' },
     ],
   },
   {
     bank: 'Falabella',
     className: 'border-emerald-200 bg-emerald-50/40',
-    items: [{ label: 'Mastercard Falabella', currency: 'CLP' }],
+    items: [{ label: CARD_MASTERCARD_FALABELLA_LABEL, currency: 'CLP' }],
   },
 ];
 
@@ -347,7 +377,7 @@ const isApiSource = (source: string) => {
   return normalized.includes('fintoc') || normalized.includes('api');
 };
 const isMortgagePrincipalLabel = (label: string) => {
-  return normalizeForMatch(label).includes(normalizeForMatch('saldo deuda hipotecaria'));
+  return normalizeForMatch(label).includes(normalizeForMatch(MORTGAGE_DEBT_BALANCE_LABEL));
 };
 
 const isManualLikeSource = (source: string) => {
@@ -385,7 +415,7 @@ const displayRecordOrigin = (record: WealthRecord) => {
   return 'Imagen';
 };
 
-const TENENCIA_BASE_LABEL = 'Tenencia / CxC';
+const TENENCIA_BASE_LABEL = TENENCIA_CXC_PREFIX_LABEL;
 const TENENCIA_BASE_KEY = labelMatchKey(TENENCIA_BASE_LABEL);
 const isTenenciaInstrumentLabel = (label: string) => {
   const key = labelMatchKey(label);
@@ -680,7 +710,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     const hasProperty = recordsForTotals.some(
-      (item) => !isSyntheticAggregateRecord(item) && item.block === 'real_estate' && sameCanonicalLabel(item.label, 'Valor propiedad'),
+      (item) =>
+        !isSyntheticAggregateRecord(item) &&
+        item.block === 'real_estate' &&
+        sameCanonicalLabel(item.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
     );
     return hasProperty ? breakdown.realEstateNetClp : 0;
   }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
@@ -766,8 +799,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         sourceHint: 'sura_resumen',
         source: 'SURA',
         labels: [
-          { label: 'SURA inversión financiera', currency: 'CLP' },
-          { label: 'SURA ahorro previsional', currency: 'CLP' },
+          { label: INVESTMENT_SURA_FIN_LABEL, currency: 'CLP' },
+          { label: INVESTMENT_SURA_PREV_LABEL, currency: 'CLP' },
         ],
       };
     }
@@ -776,7 +809,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         title: 'PlanVital',
         sourceHint: 'planvital',
         source: 'PlanVital',
-        labels: [{ label: 'PlanVital saldo total', currency: 'CLP' }],
+        labels: [{ label: INVESTMENT_PLANVITAL_LABEL, currency: 'CLP' }],
       };
     }
     if (n.includes('btg')) {
@@ -784,7 +817,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         title: 'BTG',
         sourceHint: 'btg',
         source: 'BTG Pactual',
-        labels: [{ label: 'BTG total valorización', currency: 'CLP' }],
+        labels: [{ label: INVESTMENT_BTG_LABEL, currency: 'CLP' }],
       };
     }
     if (n.includes('global66')) {
@@ -792,7 +825,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         title: 'Global66',
         sourceHint: 'global66',
         source: 'Global66',
-        labels: [{ label: 'Global66 Cuenta Vista USD', currency: 'USD' }],
+        labels: [{ label: INVESTMENT_GLOBAL66_USD_LABEL, currency: 'USD' }],
       };
     }
     if (n.includes('wise')) {
@@ -800,7 +833,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         title: 'Wise',
         sourceHint: 'wise',
         source: 'Wise',
-        labels: [{ label: 'Wise Cuenta principal USD', currency: 'USD' }],
+        labels: [{ label: INVESTMENT_WISE_USD_LABEL, currency: 'USD' }],
       };
     }
     return {
@@ -1032,8 +1065,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           block: normalizeSuggestionBlock(item.block),
           snapshotDate: todayYmd(),
         }));
-        const hasDividend = strictDividendParsed.some((i) => i.label === 'Dividendo hipotecario mensual');
-        const hasDebt = strictDividendParsed.some((i) => i.label === 'Saldo deuda hipotecaria');
+        const hasDividend = strictDividendParsed.some((i) => i.label === MORTGAGE_DIVIDEND_LABEL);
+        const hasDebt = strictDividendParsed.some((i) => i.label === MORTGAGE_DEBT_BALANCE_LABEL);
         if (!hasDividend || !hasDebt) {
           setOcrError('Para este documento deben detectarse ambos valores: dividendo y saldo deuda después del pago.');
           return;
@@ -1473,8 +1506,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const totalUsd = refreshedBankDetails
         .filter((record) => record.currency === 'USD')
         .reduce((sum, record) => sum + record.amount, 0);
-      upsertByLabel('bank', 'Saldo bancos CLP', 'CLP', totalClp, 'Calculado desde detalle de cuentas');
-      upsertByLabel('bank', 'Saldo bancos USD', 'USD', totalUsd, 'Calculado desde detalle de cuentas');
+      upsertByLabel('bank', BANK_BALANCE_CLP_LABEL, 'CLP', totalClp, 'Calculado desde detalle de cuentas');
+      upsertByLabel('bank', BANK_BALANCE_USD_LABEL, 'USD', totalUsd, 'Calculado desde detalle de cuentas');
       const movementProbes = (result.probes || []).filter((probe) => probe.endpoint.includes('/movements'));
       const movementKnown = movementProbes.some((probe) => probe.ok);
       const movementCount = movementKnown
@@ -2723,10 +2756,10 @@ export const Patrimonio: React.FC = () => {
 
     monthRecords.forEach((record) => {
       if (isSyntheticAggregateRecord(record)) return;
-      if (record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad')) {
+      if (record.block === 'real_estate' && sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL)) {
         hasProperty = true;
       }
-      if (record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria')) {
+      if (record.block === 'debt' && sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL)) {
         hasMortgageDebt = true;
       }
     });
@@ -3003,12 +3036,13 @@ export const Patrimonio: React.FC = () => {
       sectionChecklist.investment.forEach((label) => requiredNames.push({ label, section: 'investment' }));
     }
     if (propertyValueRule.enabled) {
-      requiredNames.push({ label: 'Valor propiedad', section: 'real_estate' });
+      requiredNames.push({ label: REAL_ESTATE_PROPERTY_VALUE_LABEL, section: 'real_estate' });
     }
     if (mortgageBalanceRule.enabled) {
-      requiredNames.push({ label: 'Saldo deuda hipotecaria', section: 'real_estate' });
+      requiredNames.push({ label: MORTGAGE_DEBT_BALANCE_LABEL, section: 'real_estate' });
     }
-    const isTenencia = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('tenencia / cxc'));
+    const isTenencia = (label: string) =>
+      normalizeForMatch(label).includes(normalizeForMatch(TENENCIA_CXC_PREFIX_LABEL));
     requiredNames.forEach((required) => {
       const exists = targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
@@ -3109,20 +3143,22 @@ export const Patrimonio: React.FC = () => {
       },
       {
         key: 'property_value',
-        label: 'Valor propiedad',
+        label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
         section: 'real_estate',
         rule: propertyValueRule,
         records: targetRecords.filter(
-          (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
+          (record) =>
+            record.block === 'real_estate' &&
+            sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
         ),
       },
       {
         key: 'mortgage_balance',
-        label: 'Saldo deuda hipotecaria',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
         section: 'real_estate',
         rule: mortgageBalanceRule,
         records: targetRecords.filter(
-          (record) => record.block === 'debt' && sameCanonicalLabel(record.label, 'Saldo deuda hipotecaria'),
+          (record) => record.block === 'debt' && sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL),
         ),
       },
       {
@@ -3132,7 +3168,7 @@ export const Patrimonio: React.FC = () => {
         rule: resolveClosingConfigRule(closeConfigSnapshot, 'mortgage_amortization', false, null),
         records: targetRecords.filter(
           (record) =>
-            record.block === 'debt' && sameCanonicalLabel(record.label, 'Amortización hipotecaria mensual'),
+            record.block === 'debt' && sameCanonicalLabel(record.label, MORTGAGE_AMORTIZATION_LABEL),
         ),
       },
     ];
@@ -3256,7 +3292,9 @@ export const Patrimonio: React.FC = () => {
       0,
     );
     const hasProperty = targetRecords.some(
-      (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
+      (record) =>
+        record.block === 'real_estate' &&
+        sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
     );
 
     return {

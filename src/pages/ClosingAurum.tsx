@@ -14,8 +14,24 @@ import {
   formatTodayContext,
 } from '../utils/wealthFormat';
 import {
+  BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_CLP_LEGACY_LABEL,
+  BANK_BALANCE_USD_LABEL,
+  BANK_BALANCE_USD_LEGACY_LABEL,
   buildWealthNetBreakdown,
   computeWealthHomeSectionAmounts,
+  DEBT_CARD_CLP_LABEL,
+  DEBT_CARD_CLP_LEGACY_LABEL,
+  DEBT_CARD_USD_LABEL,
+  DEBT_CARD_USD_LEGACY_LABEL,
+  INVESTMENT_BTG_LABEL,
+  INVESTMENT_GLOBAL66_USD_LABEL,
+  INVESTMENT_PLANVITAL_LABEL,
+  INVESTMENT_SURA_FIN_LABEL,
+  INVESTMENT_SURA_PREV_LABEL,
+  INVESTMENT_WISE_USD_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
   resolveRiskCapitalRecordsForTotals,
   WealthCurrency,
   WealthFxRates,
@@ -76,10 +92,10 @@ const fromClp = (amountClp: number, currency: WealthCurrency, fx: WealthFxRates)
 };
 
 const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
-  'saldo bancos clp': ['bancos clp historico'],
-  'saldo bancos usd': ['bancos usd historico'],
-  'deuda tarjetas clp': ['tarjetas clp historico'],
-  'deuda tarjetas usd': ['tarjetas usd historico'],
+  'saldo bancos clp': [BANK_BALANCE_CLP_LEGACY_LABEL],
+  'saldo bancos usd': [BANK_BALANCE_USD_LEGACY_LABEL],
+  'deuda tarjetas clp': [DEBT_CARD_CLP_LEGACY_LABEL],
+  'deuda tarjetas usd': [DEBT_CARD_USD_LEGACY_LABEL],
 };
 
 const matchCanonicalWithAliases = (label: string, canonicalLabel: string) => {
@@ -90,15 +106,15 @@ const matchCanonicalWithAliases = (label: string, canonicalLabel: string) => {
 };
 
 const REQUIRED_INVESTMENT_LABELS = [
-  'SURA inversión financiera',
-  'SURA ahorro previsional',
-  'PlanVital saldo total',
-  'BTG total valorización',
-  'Global66 Cuenta Vista USD',
-  'Wise Cuenta principal USD',
+  INVESTMENT_SURA_FIN_LABEL,
+  INVESTMENT_SURA_PREV_LABEL,
+  INVESTMENT_PLANVITAL_LABEL,
+  INVESTMENT_BTG_LABEL,
+  INVESTMENT_GLOBAL66_USD_LABEL,
+  INVESTMENT_WISE_USD_LABEL,
 ];
 
-const REQUIRED_REAL_ESTATE_CORE_FOR_NET = ['Valor propiedad', 'Saldo deuda hipotecaria'];
+const REQUIRED_REAL_ESTATE_CORE_FOR_NET = [REAL_ESTATE_PROPERTY_VALUE_LABEL, MORTGAGE_DEBT_BALANCE_LABEL];
 const CLOSURES_PER_PAGE = 6;
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 
@@ -129,7 +145,7 @@ interface ClosureEditableField {
 const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   {
     key: 'suraFin',
-    label: 'SURA inversión financiera',
+    label: INVESTMENT_SURA_FIN_LABEL,
     block: 'investment',
     canonicalLabel: 'sura inversion financiera',
     currency: 'CLP',
@@ -137,7 +153,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'suraPrev',
-    label: 'SURA ahorro previsional',
+    label: INVESTMENT_SURA_PREV_LABEL,
     block: 'investment',
     canonicalLabel: 'sura ahorro previsional',
     currency: 'CLP',
@@ -145,7 +161,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'btg',
-    label: 'BTG total valorización',
+    label: INVESTMENT_BTG_LABEL,
     block: 'investment',
     canonicalLabel: 'btg total valorizacion',
     currency: 'CLP',
@@ -153,7 +169,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'planvital',
-    label: 'PlanVital saldo total',
+    label: INVESTMENT_PLANVITAL_LABEL,
     block: 'investment',
     canonicalLabel: 'planvital saldo total',
     currency: 'CLP',
@@ -161,7 +177,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'global66',
-    label: 'Global66 Cuenta Vista USD',
+    label: INVESTMENT_GLOBAL66_USD_LABEL,
     block: 'investment',
     canonicalLabel: 'global66 cuenta vista usd',
     currency: 'USD',
@@ -169,7 +185,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'wise',
-    label: 'Wise Cuenta principal USD',
+    label: INVESTMENT_WISE_USD_LABEL,
     block: 'investment',
     canonicalLabel: 'wise cuenta principal usd',
     currency: 'USD',
@@ -177,7 +193,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'valorProp',
-    label: 'Valor propiedad',
+    label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
     block: 'real_estate',
     canonicalLabel: 'valor propiedad',
     currency: 'UF',
@@ -185,7 +201,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'saldoHipoteca',
-    label: 'Saldo deuda hipotecaria',
+    label: MORTGAGE_DEBT_BALANCE_LABEL,
     block: 'debt',
     canonicalLabel: 'saldo deuda hipotecaria',
     currency: 'UF',
@@ -193,7 +209,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'bancosClp',
-    label: 'Saldo bancos CLP',
+    label: BANK_BALANCE_CLP_LABEL,
     block: 'bank',
     canonicalLabel: 'saldo bancos clp',
     currency: 'CLP',
@@ -201,7 +217,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'bancosUsd',
-    label: 'Saldo bancos USD',
+    label: BANK_BALANCE_USD_LABEL,
     block: 'bank',
     canonicalLabel: 'saldo bancos usd',
     currency: 'USD',
@@ -209,7 +225,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'tarjetasClp',
-    label: 'Tarjetas CLP histórico',
+    label: DEBT_CARD_CLP_LABEL,
     block: 'debt',
     canonicalLabel: 'deuda tarjetas clp',
     currency: 'CLP',
@@ -218,7 +234,7 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
   },
   {
     key: 'tarjetasUsd',
-    label: 'Tarjetas USD histórico',
+    label: DEBT_CARD_USD_LABEL,
     block: 'debt',
     canonicalLabel: 'deuda tarjetas usd',
     currency: 'USD',

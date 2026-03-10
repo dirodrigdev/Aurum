@@ -5,6 +5,7 @@ import { formatCurrency, formatMonthLabel, formatRateInt } from '../../utils/wea
 import {
   computeWealthHomeSectionAmounts,
   defaultFxRates,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
   WealthFxRates,
   WealthMonthlyClosure,
   WealthRecord,
@@ -62,7 +63,9 @@ const hasMissingFx = (closure: WealthMonthlyClosure) => {
 };
 
 const containsPropertyRecord = (records: WealthRecord[]) =>
-  records.some((record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'));
+  records.some(
+    (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
+  );
 
 const computeClosureSummary = (closure: WealthMonthlyClosure): ClosureComputedSummary => {
   const fx = ensureFx(closure.fxRates);

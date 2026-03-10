@@ -30,6 +30,11 @@ export interface WealthSnapshotSummary {
   debtsByCurrency: Record<WealthCurrency, number>;
   netConsolidatedClp: number;
   byBlock: Record<WealthBlock, Record<WealthCurrency, number>>;
+  investmentClp?: number;
+  riskCapitalClp?: number;
+  investmentClpWithRisk?: number;
+  netClp?: number;
+  netClpWithRisk?: number;
 }
 
 export interface WealthMonthlyClosure {
@@ -132,6 +137,16 @@ export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 export const RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT = 'aurum:risk-capital-totals-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
+const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
+const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
+
+export type WealthSyncUiStatus = 'dirty' | 'syncing' | 'synced' | 'error';
+export type WealthSyncUiState = {
+  status: WealthSyncUiStatus;
+  at: string;
+  message?: string;
+};
+export const WEALTH_SYNC_STATUS_UPDATED_EVENT = 'aurum:wealth-sync-status-updated';
 
 type PersistOptions = {
   skipCloudSync?: boolean;
@@ -238,6 +253,39 @@ export const getLastWealthSyncIssue = () => {
     return String(window.localStorage.getItem(WEALTH_SYNC_ISSUE_KEY) || '');
   } catch {
     return '';
+  }
+};
+
+const readWealthSyncUiStateFromStorage = (): WealthSyncUiState => {
+  try {
+    const raw = localStorage.getItem(WEALTH_SYNC_STATUS_KEY);
+    if (!raw) return { status: 'synced', at: nowIso() };
+    const parsed = JSON.parse(raw) as WealthSyncUiState;
+    if (!parsed || typeof parsed !== 'object') return { status: 'synced', at: nowIso() };
+    const status = String(parsed.status || '');
+    if (status !== 'dirty' && status !== 'syncing' && status !== 'synced' && status !== 'error') {
+      return { status: 'synced', at: nowIso() };
+    }
+    return {
+      status,
+      at: String(parsed.at || nowIso()),
+      message: parsed.message ? String(parsed.message) : undefined,
+    } as WealthSyncUiState;
+  } catch {
+    return { status: 'synced', at: nowIso() };
+  }
+};
+
+export const loadWealthSyncUiState = (): WealthSyncUiState => readWealthSyncUiStateFromStorage();
+
+const saveWealthSyncUiState = (state: WealthSyncUiState) => {
+  try {
+    localStorage.setItem(WEALTH_SYNC_STATUS_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(WEALTH_SYNC_STATUS_UPDATED_EVENT, { detail: state }));
   }
 };
 
@@ -358,30 +406,123 @@ const normalizeLabelKey = (value: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
-const CLOSURE_REQUIRED_FIELDS: Array<{ label: string; canonicalLabel: string }> = [
-  { label: 'SURA inversión financiera', canonicalLabel: 'sura inversion financiera' },
-  { label: 'SURA ahorro previsional', canonicalLabel: 'sura ahorro previsional' },
-  { label: 'BTG total valorización', canonicalLabel: 'btg total valorizacion' },
-  { label: 'PlanVital saldo total', canonicalLabel: 'planvital saldo total' },
-  { label: 'Global66 Cuenta Vista USD', canonicalLabel: 'global66 cuenta vista usd' },
-  { label: 'Wise Cuenta principal USD', canonicalLabel: 'wise cuenta principal usd' },
-  { label: 'Valor propiedad', canonicalLabel: 'valor propiedad' },
-  { label: 'Saldo deuda hipotecaria', canonicalLabel: 'saldo deuda hipotecaria' },
-  { label: 'Saldo bancos CLP', canonicalLabel: 'saldo bancos clp' },
-  { label: 'Saldo bancos USD', canonicalLabel: 'saldo bancos usd' },
-  { label: 'Deuda tarjetas CLP', canonicalLabel: 'deuda tarjetas clp' },
-  { label: 'Deuda tarjetas USD', canonicalLabel: 'deuda tarjetas usd' },
-];
-const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
-  'saldo bancos clp': ['bancos clp historico'],
-  'saldo bancos usd': ['bancos usd historico'],
-  'deuda tarjetas clp': ['tarjetas clp historico'],
-  'deuda tarjetas usd': ['tarjetas usd historico'],
-};
+export const MORTGAGE_DEBT_BALANCE_LABEL = 'Saldo deuda hipotecaria';
+export const MORTGAGE_DIVIDEND_LABEL = 'Dividendo hipotecario mensual';
+export const MORTGAGE_INTEREST_LABEL = 'Interés hipotecario mensual';
+export const MORTGAGE_INSURANCE_LABEL = 'Seguros hipotecarios mensuales';
+export const MORTGAGE_AMORTIZATION_LABEL = 'Amortización hipotecaria mensual';
 
+export const DEBT_CARD_CLP_LABEL = 'Deuda tarjetas CLP';
+export const DEBT_CARD_USD_LABEL = 'Deuda tarjetas USD';
+export const DEBT_CARD_CLP_LEGACY_LABEL = 'Tarjetas CLP histórico';
+export const DEBT_CARD_USD_LEGACY_LABEL = 'Tarjetas USD histórico';
+
+export const CARD_VISA_BCHILE_LABEL = 'Visa Banco de Chile';
+export const CARD_VISA_SCOTIA_LABEL = 'Visa Scotia';
+export const CARD_MASTERCARD_SCOTIA_LABEL = 'Mastercard Scotia';
+export const CARD_MASTERCARD_FALABELLA_LABEL = 'Mastercard Falabella';
+export const CARD_MASTERCARD_SANTANDER_LABEL = 'Mastercard Santander';
+export const CARD_AMEX_SANTANDER_LABEL = 'American Express Santander';
+
+export const BANK_BALANCE_CLP_LABEL = 'Saldo bancos CLP';
+export const BANK_BALANCE_USD_LABEL = 'Saldo bancos USD';
+export const BANK_BALANCE_CLP_LEGACY_LABEL = 'Bancos CLP histórico';
+export const BANK_BALANCE_USD_LEGACY_LABEL = 'Bancos USD histórico';
+export const BANK_BCHILE_CLP_LABEL = 'Banco de Chile CLP';
+export const BANK_BCHILE_USD_LABEL = 'Banco de Chile USD';
+export const BANK_SCOTIA_CLP_LABEL = 'Scotiabank CLP';
+export const BANK_SCOTIA_USD_LABEL = 'Scotiabank USD';
+export const BANK_SANTANDER_CLP_LABEL = 'Santander CLP';
+export const BANK_SANTANDER_USD_LABEL = 'Santander USD';
+
+export const INVESTMENT_SURA_FIN_LABEL = 'SURA inversión financiera';
+export const INVESTMENT_SURA_PREV_LABEL = 'SURA ahorro previsional';
+export const INVESTMENT_BTG_LABEL = 'BTG total valorización';
+export const INVESTMENT_PLANVITAL_LABEL = 'PlanVital saldo total';
+export const INVESTMENT_GLOBAL66_USD_LABEL = 'Global66 Cuenta Vista USD';
+export const INVESTMENT_WISE_USD_LABEL = 'Wise Cuenta principal USD';
 export const RISK_CAPITAL_LABEL_CLP = 'Capital de riesgo CLP';
 export const RISK_CAPITAL_LABEL_USD = 'Capital de riesgo USD';
+export const TENENCIA_CXC_PREFIX_LABEL = 'Tenencia / CxC';
+
+export const REAL_ESTATE_PROPERTY_VALUE_LABEL = 'Valor propiedad';
+
+export const BANK_PROVIDER_CLP_LABELS = [
+  BANK_BCHILE_CLP_LABEL,
+  BANK_SCOTIA_CLP_LABEL,
+  BANK_SANTANDER_CLP_LABEL,
+] as const;
+export const BANK_PROVIDER_USD_LABELS = [
+  BANK_BCHILE_USD_LABEL,
+  BANK_SCOTIA_USD_LABEL,
+  BANK_SANTANDER_USD_LABEL,
+] as const;
+export const MANUAL_CARD_LABELS = [
+  CARD_VISA_BCHILE_LABEL,
+  CARD_VISA_SCOTIA_LABEL,
+  CARD_MASTERCARD_SCOTIA_LABEL,
+  CARD_MASTERCARD_FALABELLA_LABEL,
+  CARD_MASTERCARD_SANTANDER_LABEL,
+  CARD_AMEX_SANTANDER_LABEL,
+] as const;
 export const RISK_CAPITAL_LABELS = [RISK_CAPITAL_LABEL_CLP, RISK_CAPITAL_LABEL_USD] as const;
+
+export const WEALTH_LABEL_CATALOG = {
+  debt: {
+    mortgage: [
+      MORTGAGE_DEBT_BALANCE_LABEL,
+      MORTGAGE_DIVIDEND_LABEL,
+      MORTGAGE_INTEREST_LABEL,
+      MORTGAGE_INSURANCE_LABEL,
+      MORTGAGE_AMORTIZATION_LABEL,
+    ] as const,
+    cards: [DEBT_CARD_CLP_LABEL, DEBT_CARD_USD_LABEL] as const,
+    cardsLegacyAliases: [DEBT_CARD_CLP_LEGACY_LABEL, DEBT_CARD_USD_LEGACY_LABEL] as const,
+    cardsManual: MANUAL_CARD_LABELS,
+  },
+  bank: {
+    aggregate: [BANK_BALANCE_CLP_LABEL, BANK_BALANCE_USD_LABEL] as const,
+    aggregateLegacyAliases: [BANK_BALANCE_CLP_LEGACY_LABEL, BANK_BALANCE_USD_LEGACY_LABEL] as const,
+    providersClp: BANK_PROVIDER_CLP_LABELS,
+    providersUsd: BANK_PROVIDER_USD_LABELS,
+  },
+  investment: {
+    canonical: [
+      INVESTMENT_SURA_FIN_LABEL,
+      INVESTMENT_SURA_PREV_LABEL,
+      INVESTMENT_BTG_LABEL,
+      INVESTMENT_PLANVITAL_LABEL,
+      INVESTMENT_GLOBAL66_USD_LABEL,
+      INVESTMENT_WISE_USD_LABEL,
+    ] as const,
+    riskCapital: RISK_CAPITAL_LABELS,
+    tenenciaPrefix: TENENCIA_CXC_PREFIX_LABEL,
+  },
+  realEstate: {
+    propertyValue: REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  },
+} as const;
+
+const CLOSURE_REQUIRED_FIELDS: Array<{ label: string; canonicalLabel: string }> = [
+  { label: INVESTMENT_SURA_FIN_LABEL, canonicalLabel: 'sura inversion financiera' },
+  { label: INVESTMENT_SURA_PREV_LABEL, canonicalLabel: 'sura ahorro previsional' },
+  { label: INVESTMENT_BTG_LABEL, canonicalLabel: 'btg total valorizacion' },
+  { label: INVESTMENT_PLANVITAL_LABEL, canonicalLabel: 'planvital saldo total' },
+  { label: INVESTMENT_GLOBAL66_USD_LABEL, canonicalLabel: 'global66 cuenta vista usd' },
+  { label: INVESTMENT_WISE_USD_LABEL, canonicalLabel: 'wise cuenta principal usd' },
+  { label: REAL_ESTATE_PROPERTY_VALUE_LABEL, canonicalLabel: 'valor propiedad' },
+  { label: MORTGAGE_DEBT_BALANCE_LABEL, canonicalLabel: 'saldo deuda hipotecaria' },
+  { label: BANK_BALANCE_CLP_LABEL, canonicalLabel: 'saldo bancos clp' },
+  { label: BANK_BALANCE_USD_LABEL, canonicalLabel: 'saldo bancos usd' },
+  { label: DEBT_CARD_CLP_LABEL, canonicalLabel: 'deuda tarjetas clp' },
+  { label: DEBT_CARD_USD_LABEL, canonicalLabel: 'deuda tarjetas usd' },
+];
+const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
+  'saldo bancos clp': [BANK_BALANCE_CLP_LEGACY_LABEL],
+  'saldo bancos usd': [BANK_BALANCE_USD_LEGACY_LABEL],
+  'deuda tarjetas clp': [DEBT_CARD_CLP_LEGACY_LABEL],
+  'deuda tarjetas usd': [DEBT_CARD_USD_LEGACY_LABEL],
+};
 const RISK_CAPITAL_LABEL_KEYS = new Set(RISK_CAPITAL_LABELS.map((label) => normalizeLabelKey(label)));
 
 export const isRiskCapitalInvestmentLabel = (label: string) =>
@@ -454,30 +595,23 @@ export const saveIncludeRiskCapitalInTotals = (includeRiskCapital: boolean) => {
 export const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
   const label = normalizeText(record.label);
   if (record.block === 'bank') {
-    return label === normalizeText('Saldo bancos CLP') || label === normalizeText('Saldo bancos USD');
+    return label === normalizeText(BANK_BALANCE_CLP_LABEL) || label === normalizeText(BANK_BALANCE_USD_LABEL);
   }
   return false;
 };
 
 const AGGREGATE_DEBT_LABELS_CLP = new Set([
-  normalizeText('Deuda tarjetas CLP'),
-  normalizeText('Tarjetas CLP histórico'),
+  normalizeText(DEBT_CARD_CLP_LABEL),
+  normalizeText(DEBT_CARD_CLP_LEGACY_LABEL),
 ]);
 
 const AGGREGATE_DEBT_LABELS_USD = new Set([
-  normalizeText('Deuda tarjetas USD'),
-  normalizeText('Tarjetas USD histórico'),
+  normalizeText(DEBT_CARD_USD_LABEL),
+  normalizeText(DEBT_CARD_USD_LEGACY_LABEL),
 ]);
 
 const MANUAL_CARD_LABEL_KEYS = new Set(
-  [
-    'Visa Banco de Chile',
-    'Visa Scotia',
-    'Mastercard Scotia',
-    'Mastercard Falabella',
-    'Mastercard Santander',
-    'American Express Santander',
-  ].map(normalizeText),
+  MANUAL_CARD_LABELS.map(normalizeText),
 );
 
 const NON_MORTGAGE_DEBT_LABEL_HINTS = [
@@ -1142,6 +1276,7 @@ export const upsertInvestmentInstrument = (input: {
   saveInvestmentInstruments(
     merged.sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label))),
   );
+  requestImmediateWealthSync();
   return next;
 };
 
@@ -1171,6 +1306,7 @@ export const setInvestmentInstrumentMonthExcluded = (
   const next = [...current];
   next[idx] = nextItem;
   saveInvestmentInstruments(next);
+  requestImmediateWealthSync();
   return nextItem;
 };
 
@@ -1240,6 +1376,7 @@ export const removeWealthRecord = (id: string) => {
       }
     }
   }
+  requestImmediateWealthSync();
 };
 
 export const removeWealthRecordForMonthAsset = (input: {
@@ -1280,6 +1417,7 @@ export const removeWealthRecordForMonthAsset = (input: {
     ...removedRecords.map((record) => makeAssetMonthKey(record)),
   ]);
   saveDeletedRecordAssetMonthKeys(mergedDeletedAssetMonthKeys);
+  requestImmediateWealthSync();
   return removedRecords.length;
 };
 
@@ -1537,12 +1675,23 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
     netByCurrency.EUR * fxRates.eurClp +
     netByCurrency.UF * fxRates.ufClp;
 
+  const deduped = dedupeLatestByAsset(records);
+  const withRiskBreakdown = buildWealthNetBreakdown(deduped, fxRates);
+  const withoutRiskRecords = filterRecordsByRiskCapitalPreference(deduped, false);
+  const withoutRiskBreakdown = buildWealthNetBreakdown(withoutRiskRecords, fxRates);
+  const riskCapitalClp = Math.max(0, withRiskBreakdown.investmentClp - withoutRiskBreakdown.investmentClp);
+
   return {
     netByCurrency,
     assetsByCurrency,
     debtsByCurrency,
     netConsolidatedClp,
     byBlock,
+    investmentClp: withoutRiskBreakdown.investmentClp,
+    riskCapitalClp,
+    investmentClpWithRisk: withRiskBreakdown.investmentClp,
+    netClp: withoutRiskBreakdown.netClp,
+    netClpWithRisk: withRiskBreakdown.netClp,
   };
 };
 
@@ -1572,6 +1721,11 @@ const buildSummaryFromNetClp = (netClp: number): WealthSnapshotSummary => {
     debtsByCurrency,
     netConsolidatedClp: roundedNet,
     byBlock,
+    investmentClp: roundedNet > 0 ? roundedNet : 0,
+    riskCapitalClp: 0,
+    investmentClpWithRisk: roundedNet > 0 ? roundedNet : 0,
+    netClp: roundedNet,
+    netClpWithRisk: roundedNet,
   };
 };
 
@@ -1608,16 +1762,16 @@ export interface WealthHomeSectionAmounts {
 }
 
 const AGGREGATE_BANK_LABELS_CLP = new Set(
-  [normalizeText('Bancos CLP histórico'), normalizeText('Saldo bancos CLP')],
+  [normalizeText(BANK_BALANCE_CLP_LEGACY_LABEL), normalizeText(BANK_BALANCE_CLP_LABEL)],
 );
 const AGGREGATE_BANK_LABELS_USD = new Set(
-  [normalizeText('Bancos USD histórico'), normalizeText('Saldo bancos USD')],
+  [normalizeText(BANK_BALANCE_USD_LEGACY_LABEL), normalizeText(BANK_BALANCE_USD_LABEL)],
 );
 const PROVIDER_BANK_LABELS_CLP = new Set(
-  [normalizeText('Banco de Chile CLP'), normalizeText('Scotiabank CLP'), normalizeText('Santander CLP')],
+  BANK_PROVIDER_CLP_LABELS.map(normalizeText),
 );
 const PROVIDER_BANK_LABELS_USD = new Set(
-  [normalizeText('Banco de Chile USD'), normalizeText('Scotiabank USD'), normalizeText('Santander USD')],
+  BANK_PROVIDER_USD_LABELS.map(normalizeText),
 );
 
 const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
@@ -1748,7 +1902,7 @@ export const computeWealthHomeSectionAmounts = (
     (record) =>
       !isSyntheticAggregateRecord(record) &&
       record.block === 'real_estate' &&
-      normalizeText(record.label) === normalizeText('Valor propiedad'),
+      normalizeText(record.label) === normalizeText(REAL_ESTATE_PROPERTY_VALUE_LABEL),
   );
   const hasMortgageDebt = dedupedMonthRecords.some(
     (record) => !isSyntheticAggregateRecord(record) && isMortgagePrincipalDebtLabel(record.label),
@@ -1791,7 +1945,7 @@ export const buildWealthNetBreakdown = (
   let bankClp = 0;
   let nonMortgageDebtClp = 0;
   let hasPropertyRecord = false;
-  const propertyLabelKey = normalizeText('Valor propiedad');
+  const propertyLabelKey = normalizeText(REAL_ESTATE_PROPERTY_VALUE_LABEL);
 
   const hasDetailedBankClp = records.some((record) => {
     if (record.block !== 'bank') return false;
@@ -2065,11 +2219,17 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
     return wealthCloudSyncPromise;
   }
 
+  saveWealthSyncUiState({ status: 'syncing', at: nowIso() });
   wealthCloudSyncPromise = (async () => {
     try {
       const ref = await getWealthCloudRef();
       if (!ref) {
         setLastWealthSyncIssue('no_uid_or_firebase_config');
+        saveWealthSyncUiState({
+          status: 'error',
+          at: nowIso(),
+          message: 'Sin conexión con la nube',
+        });
         return false;
       }
       setFirestoreChecking();
@@ -2168,10 +2328,16 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
 
       setLastWealthSyncIssue('');
       setFirestoreOk();
+      saveWealthSyncUiState({ status: 'synced', at: nowIso() });
       return true;
     } catch (err: any) {
       setLastWealthSyncIssue(`${err?.code || 'sync_error'} ${err?.message || ''}`.trim());
       setFirestoreStatusFromError(err);
+      saveWealthSyncUiState({
+        status: 'error',
+        at: nowIso(),
+        message: String(err?.message || 'Error al guardar'),
+      });
       return false;
     } finally {
       wealthCloudSyncPromise = null;
@@ -2195,8 +2361,16 @@ export const syncWealthNow = async (): Promise<boolean> => {
   return false;
 };
 
-export const scheduleWealthCloudSync = (delayMs = 250) => {
+export const requestImmediateWealthSync = () => {
+  saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
+  void syncWealthToCloudNow();
+};
+
+export const scheduleWealthCloudSync = (delayMs = WEALTH_SYNC_BATCH_INTERVAL_MS) => {
   if (typeof window === 'undefined') return;
+  if (!wealthCloudSyncPromise) {
+    saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
+  }
   if (wealthCloudSyncPromise) {
     wealthCloudSyncRequestedWhileRunning = true;
     return;
@@ -2498,6 +2672,7 @@ export const upsertMonthlyClosure = (input: {
   const next = [nextClosure, ...withoutSameMonth].sort(compareClosuresByMonthDesc);
 
   saveClosures(next);
+  requestImmediateWealthSync();
   return nextClosure;
 };
 
@@ -2617,12 +2792,12 @@ export const applyMortgageAutoCalculation = (
       (r) => r.block === 'debt' && normalizeLabelKey(r.label) === normalizeLabelKey(label),
     )?.amount;
 
-  const dividendUf = readPrevDebtValue('Dividendo hipotecario mensual') ?? config.dividendUf;
-  const interestUf = readPrevDebtValue('Interés hipotecario mensual') ?? config.interestUf;
+  const dividendUf = readPrevDebtValue(MORTGAGE_DIVIDEND_LABEL) ?? config.dividendUf;
+  const interestUf = readPrevDebtValue(MORTGAGE_INTEREST_LABEL) ?? config.interestUf;
   const insuranceUf =
-    readPrevDebtValue('Seguros hipotecarios mensuales') ?? config.fireInsuranceUf + config.lifeInsuranceUf;
+    readPrevDebtValue(MORTGAGE_INSURANCE_LABEL) ?? config.fireInsuranceUf + config.lifeInsuranceUf;
   const amortizationUf =
-    readPrevDebtValue('Amortización hipotecaria mensual') ?? (dividendUf - interestUf - insuranceUf);
+    readPrevDebtValue(MORTGAGE_AMORTIZATION_LABEL) ?? (dividendUf - interestUf - insuranceUf);
   const hasPreviousClosure = !!previous?.records?.length;
   const newDebtUf = hasPreviousClosure ? Math.max(0, prevDebt.amount - amortizationUf) : prevDebt.amount;
   const inferredPreviousDebtUf = hasPreviousClosure ? null : prevDebt.amount + amortizationUf;
@@ -2651,11 +2826,11 @@ export const applyMortgageAutoCalculation = (
   };
 
   let changed = 0;
-  if (upsertIfMissingOrAutofill('Dividendo hipotecario mensual', dividendUf)) changed += 1;
-  if (upsertIfMissingOrAutofill('Interés hipotecario mensual', interestUf)) changed += 1;
-  if (upsertIfMissingOrAutofill('Seguros hipotecarios mensuales', insuranceUf)) changed += 1;
-  if (upsertIfMissingOrAutofill('Amortización hipotecaria mensual', amortizationUf)) changed += 1;
-  if (upsertIfMissingOrAutofill('Saldo deuda hipotecaria', newDebtUf)) changed += 1;
+  if (upsertIfMissingOrAutofill(MORTGAGE_DIVIDEND_LABEL, dividendUf)) changed += 1;
+  if (upsertIfMissingOrAutofill(MORTGAGE_INTEREST_LABEL, interestUf)) changed += 1;
+  if (upsertIfMissingOrAutofill(MORTGAGE_INSURANCE_LABEL, insuranceUf)) changed += 1;
+  if (upsertIfMissingOrAutofill(MORTGAGE_AMORTIZATION_LABEL, amortizationUf)) changed += 1;
+  if (upsertIfMissingOrAutofill(MORTGAGE_DEBT_BALANCE_LABEL, newDebtUf)) changed += 1;
 
   if (changed === 0) {
     return { changed: 0, sourceMonth, skipped: false, reason: 'no_change' };
@@ -2678,11 +2853,11 @@ export const ensureInitialMortgageDefaults = (
   const amortizationUf = config.dividendUf - config.interestUf - insuranceUf;
 
   const defaults: Array<{ label: string; amount: number }> = [
-    { label: 'Saldo deuda hipotecaria', amount: config.initialDebtUf },
-    { label: 'Dividendo hipotecario mensual', amount: config.dividendUf },
-    { label: 'Interés hipotecario mensual', amount: config.interestUf },
-    { label: 'Seguros hipotecarios mensuales', amount: insuranceUf },
-    { label: 'Amortización hipotecaria mensual', amount: amortizationUf },
+    { label: MORTGAGE_DEBT_BALANCE_LABEL, amount: config.initialDebtUf },
+    { label: MORTGAGE_DIVIDEND_LABEL, amount: config.dividendUf },
+    { label: MORTGAGE_INTEREST_LABEL, amount: config.interestUf },
+    { label: MORTGAGE_INSURANCE_LABEL, amount: insuranceUf },
+    { label: MORTGAGE_AMORTIZATION_LABEL, amount: amortizationUf },
   ];
 
   let added = 0;
@@ -3229,22 +3404,22 @@ const buildHistoricalMonthRecords = (
     currency: WealthCurrency;
     decimals?: number;
   }> = [
-    { aliases: ['sura_fin_clp', 'sura_financiero_clp'], block: 'investment', source: 'SURA', label: 'SURA inversión financiera', currency: 'CLP' },
-    { aliases: ['sura_prev_clp', 'sura_previsional_clp'], block: 'investment', source: 'SURA', label: 'SURA ahorro previsional', currency: 'CLP' },
-    { aliases: ['btg_clp', 'btg_total_clp'], block: 'investment', source: 'BTG Pactual', label: 'BTG total valorización', currency: 'CLP' },
-    { aliases: ['planvital_clp', 'planvital_total_clp'], block: 'investment', source: 'PlanVital', label: 'PlanVital saldo total', currency: 'CLP' },
-    { aliases: ['global66_usd', 'global66_total_usd'], block: 'investment', source: 'Global66', label: 'Global66 Cuenta Vista USD', currency: 'USD', decimals: 2 },
-    { aliases: ['wise_usd', 'wise_total_usd'], block: 'investment', source: 'Wise', label: 'Wise Cuenta principal USD', currency: 'USD', decimals: 2 },
-    { aliases: ['valor_prop_uf', 'valor_propiedad_uf'], block: 'real_estate', source: 'Tasación', label: 'Valor propiedad', currency: 'UF', decimals: 2 },
-    { aliases: ['saldo_deuda_uf', 'saldo_deuda_hipotecaria_uf'], block: 'debt', source: 'Scotiabank', label: 'Saldo deuda hipotecaria', currency: 'UF', decimals: 4 },
-    { aliases: ['dividendo_uf', 'dividendo_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Dividendo hipotecario mensual', currency: 'UF', decimals: 4 },
-    { aliases: ['interes_uf', 'interes_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Interés hipotecario mensual', currency: 'UF', decimals: 4 },
-    { aliases: ['seguros_uf', 'seguros_mensuales_uf'], block: 'debt', source: 'Scotiabank', label: 'Seguros hipotecarios mensuales', currency: 'UF', decimals: 4 },
-    { aliases: ['amortizacion_uf', 'amortizacion_mensual_uf'], block: 'debt', source: 'Scotiabank', label: 'Amortización hipotecaria mensual', currency: 'UF', decimals: 4 },
-    { aliases: ['bancos_clp'], block: 'bank', source: 'Histórico manual', label: 'Saldo bancos CLP', currency: 'CLP' },
-    { aliases: ['bancos_usd'], block: 'bank', source: 'Histórico manual', label: 'Saldo bancos USD', currency: 'USD', decimals: 2 },
-    { aliases: ['tarjetas_clp'], block: 'debt', source: 'Histórico manual', label: 'Deuda tarjetas CLP', currency: 'CLP' },
-    { aliases: ['tarjetas_usd'], block: 'debt', source: 'Histórico manual', label: 'Deuda tarjetas USD', currency: 'USD', decimals: 2 },
+    { aliases: ['sura_fin_clp', 'sura_financiero_clp'], block: 'investment', source: 'SURA', label: INVESTMENT_SURA_FIN_LABEL, currency: 'CLP' },
+    { aliases: ['sura_prev_clp', 'sura_previsional_clp'], block: 'investment', source: 'SURA', label: INVESTMENT_SURA_PREV_LABEL, currency: 'CLP' },
+    { aliases: ['btg_clp', 'btg_total_clp'], block: 'investment', source: 'BTG Pactual', label: INVESTMENT_BTG_LABEL, currency: 'CLP' },
+    { aliases: ['planvital_clp', 'planvital_total_clp'], block: 'investment', source: 'PlanVital', label: INVESTMENT_PLANVITAL_LABEL, currency: 'CLP' },
+    { aliases: ['global66_usd', 'global66_total_usd'], block: 'investment', source: 'Global66', label: INVESTMENT_GLOBAL66_USD_LABEL, currency: 'USD', decimals: 2 },
+    { aliases: ['wise_usd', 'wise_total_usd'], block: 'investment', source: 'Wise', label: INVESTMENT_WISE_USD_LABEL, currency: 'USD', decimals: 2 },
+    { aliases: ['valor_prop_uf', 'valor_propiedad_uf'], block: 'real_estate', source: 'Tasación', label: REAL_ESTATE_PROPERTY_VALUE_LABEL, currency: 'UF', decimals: 2 },
+    { aliases: ['saldo_deuda_uf', 'saldo_deuda_hipotecaria_uf'], block: 'debt', source: 'Scotiabank', label: MORTGAGE_DEBT_BALANCE_LABEL, currency: 'UF', decimals: 4 },
+    { aliases: ['dividendo_uf', 'dividendo_mensual_uf'], block: 'debt', source: 'Scotiabank', label: MORTGAGE_DIVIDEND_LABEL, currency: 'UF', decimals: 4 },
+    { aliases: ['interes_uf', 'interes_mensual_uf'], block: 'debt', source: 'Scotiabank', label: MORTGAGE_INTEREST_LABEL, currency: 'UF', decimals: 4 },
+    { aliases: ['seguros_uf', 'seguros_mensuales_uf'], block: 'debt', source: 'Scotiabank', label: MORTGAGE_INSURANCE_LABEL, currency: 'UF', decimals: 4 },
+    { aliases: ['amortizacion_uf', 'amortizacion_mensual_uf'], block: 'debt', source: 'Scotiabank', label: MORTGAGE_AMORTIZATION_LABEL, currency: 'UF', decimals: 4 },
+    { aliases: ['bancos_clp'], block: 'bank', source: 'Histórico manual', label: BANK_BALANCE_CLP_LABEL, currency: 'CLP' },
+    { aliases: ['bancos_usd'], block: 'bank', source: 'Histórico manual', label: BANK_BALANCE_USD_LABEL, currency: 'USD', decimals: 2 },
+    { aliases: ['tarjetas_clp'], block: 'debt', source: 'Histórico manual', label: DEBT_CARD_CLP_LABEL, currency: 'CLP' },
+    { aliases: ['tarjetas_usd'], block: 'debt', source: 'Histórico manual', label: DEBT_CARD_USD_LABEL, currency: 'USD', decimals: 2 },
   ];
 
   return entries
@@ -3528,48 +3703,48 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const marKey = monthKeyFromDate(marDate);
 
   const janRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 607_392_657, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 287_631_202, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 67_098.43, 'USD', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_812.81, 'USD', ymdFromDate(janDate, 30)),
-    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_350, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_859.30, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 607_392_657, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 287_631_202, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 67_098.43, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_812.81, 'USD', ymdFromDate(janDate, 30)),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_350, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_859.30, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(janDate, 30)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(janDate, 30)),
   ];
 
   const febRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 618_690_210, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_702_447, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 68_210.12, 'USD', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_470.60, 'USD', ymdFromDate(febDate, 28)),
-    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_420, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_831.54, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 618_690_210, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 288_702_447, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 68_210.12, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_470.60, 'USD', ymdFromDate(febDate, 28)),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_420, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_831.54, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(febDate, 28)),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(febDate, 28)),
   ];
 
   const marRecords = [
-    makeDemoRecord('investment', 'SURA', 'SURA inversión financiera', 623_940_180, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'SURA', 'SURA ahorro previsional', 288_800_030, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'BTG Pactual', 'BTG total valorización', 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'PlanVital', 'PlanVital saldo total', 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
-    makeDemoRecord('investment', 'Global66', 'Global66 Cuenta Vista USD', 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'Wise', 'Wise Cuenta principal USD', 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('real_estate', 'Tasación', 'Valor propiedad', 12_430, 'UF', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
-    makeDemoRecord('debt', 'Scotiabank', 'Saldo deuda hipotecaria', 8_803.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', 'Dividendo hipotecario mensual', 53.24, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', 'Interés hipotecario mensual', 21.34, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', 'Seguros hipotecarios mensuales', 4.14, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', 'Amortización hipotecaria mensual', 27.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 623_940_180, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 288_800_030, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_430, 'UF', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_803.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
+    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
   ];
 
   const janSummary = summarizeWealth(dedupeLatestByAsset(janRecords), fx);

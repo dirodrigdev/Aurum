@@ -1,4 +1,15 @@
-import { WealthBlock, WealthCurrency } from './wealthStorage';
+import {
+  INVESTMENT_BTG_LABEL,
+  INVESTMENT_GLOBAL66_USD_LABEL,
+  INVESTMENT_PLANVITAL_LABEL,
+  INVESTMENT_SURA_FIN_LABEL,
+  INVESTMENT_SURA_PREV_LABEL,
+  INVESTMENT_WISE_USD_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  MORTGAGE_DIVIDEND_LABEL,
+  WealthBlock,
+  WealthCurrency,
+} from './wealthStorage';
 
 export interface ParsedWealthSuggestion {
   source: string;
@@ -101,7 +112,7 @@ const parseWise = (text: string): ParsedWealthSuggestion[] => {
   return [{
     source: 'Wise',
     block: 'investment',
-    label: 'Wise Cuenta principal USD',
+    label: INVESTMENT_WISE_USD_LABEL,
     amount,
     currency: 'USD',
     confidence: 0.95,
@@ -143,7 +154,7 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
       return [{
         source: 'Global66',
         block: 'investment',
-        label: 'Global66 Cuenta Vista USD',
+        label: INVESTMENT_GLOBAL66_USD_LABEL,
         amount: headerAmount,
         currency: 'USD',
         confidence: 0.99,
@@ -201,7 +212,7 @@ const parseGlobal66 = (text: string): ParsedWealthSuggestion[] => {
   return [{
     source: 'Global66',
     block: 'investment',
-    label: 'Global66 Cuenta Vista USD',
+    label: INVESTMENT_GLOBAL66_USD_LABEL,
     amount,
     currency: 'USD',
     confidence: 0.93,
@@ -216,7 +227,7 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
       ? {
           source: 'SURA',
           block: 'investment',
-          label: 'SURA inversión financiera',
+          label: INVESTMENT_SURA_FIN_LABEL,
           amount: inversion,
           currency: 'CLP',
           confidence: 0.9,
@@ -226,7 +237,7 @@ const parseSuraResumen = (text: string): ParsedWealthSuggestion[] => {
       ? {
           source: 'SURA',
           block: 'investment',
-          label: 'SURA ahorro previsional',
+          label: INVESTMENT_SURA_PREV_LABEL,
           amount: previsional,
           currency: 'CLP',
           confidence: 0.9,
@@ -246,7 +257,7 @@ const parseSuraDetalle = (text: string): ParsedWealthSuggestion[] => {
       ? {
           source: 'SURA',
           block: 'investment',
-          label: 'SURA inversión financiera',
+          label: INVESTMENT_SURA_FIN_LABEL,
           amount: financialTotal,
           currency: 'CLP',
           confidence: saldo ? 0.9 : 0.86,
@@ -269,7 +280,7 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
       {
         source: 'BTG Pactual',
         block: 'investment',
-        label: 'BTG total valorización',
+        label: INVESTMENT_BTG_LABEL,
         amount: patrimonioTotal,
         currency: 'CLP',
         confidence: 0.96,
@@ -295,7 +306,7 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
         {
           source: 'BTG Pactual',
           block: 'investment',
-          label: 'BTG total valorización',
+          label: INVESTMENT_BTG_LABEL,
           amount: fallbackTotal,
           currency: 'CLP',
           confidence: 0.84,
@@ -318,7 +329,7 @@ const parseBtg = (text: string): ParsedWealthSuggestion[] => {
     {
       source: 'BTG Pactual',
       block: 'investment',
-      label: 'BTG total valorización',
+      label: INVESTMENT_BTG_LABEL,
       amount: total,
       currency: 'CLP',
       confidence: disponibleClp ? 0.9 : 0.84,
@@ -354,7 +365,7 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
     {
       source: 'PlanVital',
       block: 'investment',
-      label: 'PlanVital saldo total',
+      label: INVESTMENT_PLANVITAL_LABEL,
       amount,
       currency: 'CLP',
       confidence: totalFromBlock || nearLabelA || nearLabelB ? 0.94 : 0.78,
@@ -414,7 +425,7 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
       ? {
           source: 'Scotiabank dividendo',
           block: 'debt',
-          label: 'Dividendo hipotecario mensual',
+          label: MORTGAGE_DIVIDEND_LABEL,
           amount: effectiveDividend,
           currency: 'UF',
           confidence: 0.9,
@@ -425,7 +436,7 @@ const parseDividend = (text: string): ParsedWealthSuggestion[] => {
       ? {
           source: 'Scotiabank dividendo',
           block: 'debt',
-          label: 'Saldo deuda hipotecaria',
+          label: MORTGAGE_DEBT_BALANCE_LABEL,
           amount: effectiveDebt,
           currency: 'UF',
           confidence: 0.9,
