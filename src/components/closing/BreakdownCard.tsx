@@ -133,6 +133,8 @@ interface BreakdownCardProps {
   showPartialBadge?: boolean;
   headerAction?: React.ReactNode;
   showClosureRates?: boolean;
+  showRiskCapitalBadge?: boolean;
+  riskModeOn?: boolean;
 }
 
 export const BreakdownCard: React.FC<BreakdownCardProps> = ({
@@ -148,6 +150,8 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
   showPartialBadge,
   headerAction,
   showClosureRates,
+  showRiskCapitalBadge = false,
+  riskModeOn = false,
 }) => {
   const rows = [
     {
@@ -222,6 +226,11 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
       </div>
       <div className="flex items-center gap-2">
         <div className="text-[28px] leading-none font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
+        {showRiskCapitalBadge && (
+          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+            +CapRiesgo
+          </span>
+        )}
         {showPartialBadge && (
           <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
             Parcial
@@ -251,7 +260,14 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
           return (
             <div key={row.key} className="rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-slate-700">{row.label}</span>
+                <span className="text-[13px] font-medium text-slate-700">
+                  {row.label}
+                  {row.key === 'investment' && showRiskCapitalBadge && (
+                    <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      +CapRiesgo
+                    </span>
+                  )}
+                </span>
                 <div className="text-right">
                   <div className="text-sm font-bold text-slate-900">{formatCurrency(current, currency)}</div>
                   {delta !== null && (
@@ -307,7 +323,14 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
               )}
             </div>
             <div className="min-w-0 overflow-hidden rounded-lg border border-[#e8dfcf] bg-[#fcfaf5] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,63,58,0.08)]">
-              <div className="text-[11px] font-semibold text-slate-700">Otras inversiones</div>
+              <div className="text-[11px] font-semibold text-slate-700">
+                Otras inversiones
+                {showRiskCapitalBadge && (
+                  <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                    +CapRiesgo
+                  </span>
+                )}
+              </div>
               <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
               <div className="mt-0.5 max-w-full break-all text-[clamp(0.86rem,1.05vw,1.38rem)] leading-tight font-bold tracking-tight tabular-nums">
                 {formatCurrency(fromClp(othersCurrentClp, currency, fx), currency)}
@@ -347,7 +370,12 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
                       ? 'border-l-4 border-l-[#caa16d]'
                       : 'border-l-4 border-l-[#e5dccb]';
               return (
-                <div key={row.key} className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft}`}>
+                <div
+                  key={row.key}
+                  className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft} ${
+                    row.isRiskCapital && !riskModeOn ? 'opacity-35' : ''
+                  }`}
+                >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] text-slate-700">{row.label}</span>
                     <div className="text-right">
@@ -371,4 +399,3 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
     </Card>
   );
 };
-

@@ -43,6 +43,7 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
   isSyntheticAggregateRecord,
+  isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -63,6 +64,7 @@ interface EvolutionRow {
   label: string;
   kind: EvolutionKind;
   net: number | null;
+  hasRiskCapital: boolean;
 }
 
 type NetBreakdown = WealthNetBreakdownClp;
@@ -482,6 +484,13 @@ export const ClosingAurum: React.FC = () => {
     () => resolveRiskCapitalRecordsForTotals(currentRecordsRaw, includeRiskCapitalInTotals).recordsForTotals,
     [currentRecordsRaw, includeRiskCapitalInTotals],
   );
+  const currentHasRiskCapital = useMemo(
+    () =>
+      currentRecordsRaw.some(
+        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+      ),
+    [currentRecordsRaw],
+  );
   const currentHomeSectionAmounts = useMemo(
     () => computeWealthHomeSectionAmounts(currentRecords, currentFx),
     [currentRecords, currentFx],
@@ -548,6 +557,15 @@ export const ClosingAurum: React.FC = () => {
   }, [closures, currentFx, includeRiskCapitalInTotals, currency]);
 
   const selectedClosureRecordsRaw = selectedClosure?.records || null;
+  const selectedClosureHasRiskCapital = useMemo(() => {
+    if (!selectedClosure) return false;
+    if (Array.isArray(selectedClosure.records) && selectedClosure.records.length > 0) {
+      return selectedClosure.records.some(
+        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+      );
+    }
+    return Number(selectedClosure.summary?.riskCapitalClp || 0) > 0;
+  }, [selectedClosure]);
   const compareClosureForSelectedRecordsRaw = compareClosureForSelected?.records || null;
   const selectedClosureRecords = useMemo(
     () =>
@@ -584,6 +602,15 @@ export const ClosingAurum: React.FC = () => {
     [closures, monthKey],
   );
   const compareClosureForHoyRecordsRaw = compareClosureForHoy?.records || null;
+  const compareClosureForHoyHasRiskCapital = useMemo(() => {
+    if (!compareClosureForHoy) return false;
+    if (Array.isArray(compareClosureForHoy.records) && compareClosureForHoy.records.length > 0) {
+      return compareClosureForHoy.records.some(
+        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+      );
+    }
+    return Number(compareClosureForHoy.summary?.riskCapitalClp || 0) > 0;
+  }, [compareClosureForHoy]);
   const compareClosureForHoyRecords = useMemo(
     () =>
       compareClosureForHoyRecordsRaw
@@ -623,16 +650,36 @@ export const ClosingAurum: React.FC = () => {
         const netClp = hasClosureRecords
           ? buildNetBreakdown(records || [], fx).netClp
           : c.summary.netConsolidatedClp;
+        const hasRiskCapital = hasClosureRecords
+          ? (c.records || []).some(
+              (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+            )
+          : Number(c.summary?.riskCapitalClp || 0) > 0;
         return {
           key: c.monthKey,
           label: monthLabel(c.monthKey),
           kind: 'cierre',
           net: fromClp(netClp, currency, fx),
+          hasRiskCapital,
         };
       });
-    rows.push({ key: monthKey, label: monthLabel(monthKey), kind: 'hoy', net: fromClp(currentBreakdown.netClp, currency, currentFx) });
+    rows.push({
+      key: monthKey,
+      label: monthLabel(monthKey),
+      kind: 'hoy',
+      net: fromClp(currentBreakdown.netClp, currency, currentFx),
+      hasRiskCapital: currentHasRiskCapital,
+    });
     return rows.sort((a, b) => a.key.localeCompare(b.key));
-  }, [closures, currency, monthKey, currentBreakdown.netClp, currentFx, includeRiskCapitalInTotals]);
+  }, [
+    closures,
+    currency,
+    monthKey,
+    currentBreakdown.netClp,
+    currentFx,
+    includeRiskCapitalInTotals,
+    currentHasRiskCapital,
+  ]);
 
   const evolutionWithReturns = useMemo(
     () =>
@@ -873,6 +920,8 @@ export const ClosingAurum: React.FC = () => {
             currentRecords={currentRecordsRaw}
             compareRecords={compareClosureForHoyRecordsRaw}
             showPartialBadge={missingCriticalCount > 0}
+            showRiskCapitalBadge={includeRiskCapitalInTotals && (currentHasRiskCapital || compareClosureForHoyHasRiskCapital)}
+            riskModeOn={includeRiskCapitalInTotals}
           />
         </>
       )}
@@ -977,6 +1026,8 @@ export const ClosingAurum: React.FC = () => {
                   currentRecords={selectedClosureRecordsRaw || []}
                   compareRecords={compareClosureForSelectedRecordsRaw}
                   showClosureRates
+                  showRiskCapitalBadge={includeRiskCapitalInTotals && selectedClosureHasRiskCapital}
+                  riskModeOn={includeRiskCapitalInTotals}
                   headerAction={
                     <Button
                       size="sm"
@@ -1039,7 +1090,14 @@ export const ClosingAurum: React.FC = () => {
                 <span>
                   {row.label} {row.kind === 'hoy' ? '(hoy)' : '(cierre)'}
                 </span>
-                <span className="font-semibold">{row.net === null ? '—' : formatCurrency(row.net, currency)}</span>
+                <span className="inline-flex items-center gap-2 font-semibold">
+                  {row.net === null ? '—' : formatCurrency(row.net, currency)}
+                  {includeRiskCapitalInTotals && row.hasRiskCapital && (
+                    <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      +CapRiesgo
+                    </span>
+                  )}
+                </span>
               </div>
             ))}
           </Card>
@@ -1051,9 +1109,16 @@ export const ClosingAurum: React.FC = () => {
                   {row.label} {row.kind === 'hoy' ? '(hoy)' : '(cierre)'}
                 </span>
                 <span className={row.delta === null ? 'text-slate-500' : row.delta >= 0 ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>
-                  {row.delta === null
-                    ? 'Base'
-                    : `${row.delta >= 0 ? '+' : ''}${formatCurrency(row.delta, currency)}${row.pct !== null ? ` (${row.pct >= 0 ? '+' : ''}${row.pct.toFixed(2)}%)` : ''}`}
+                  <span>
+                    {row.delta === null
+                      ? 'Base'
+                      : `${row.delta >= 0 ? '+' : ''}${formatCurrency(row.delta, currency)}${row.pct !== null ? ` (${row.pct >= 0 ? '+' : ''}${row.pct.toFixed(2)}%)` : ''}`}
+                  </span>
+                  {includeRiskCapitalInTotals && row.hasRiskCapital && (
+                    <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      +CapRiesgo
+                    </span>
+                  )}
                 </span>
               </div>
             ))}

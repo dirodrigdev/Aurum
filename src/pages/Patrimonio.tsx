@@ -12,8 +12,9 @@ import {
   Trash2,
   Wallet,
   X,
+  Zap,
 } from 'lucide-react';
-import { Button, Card, Input, Select } from '../components/Components';
+import { Button, Card, cn, Input, Select } from '../components/Components';
 import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
 import { StartMonthModal, StartMonthStepView } from '../components/patrimonio/StartMonthModal';
 import { runOcrFromFile } from '../services/ocr';
@@ -717,6 +718,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     );
     return hasProperty ? breakdown.realEstateNetClp : 0;
   }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
+
+  const sectionHasRiskCapital = useMemo(
+    () =>
+      section === 'investment' &&
+      dedupedSectionRecords.some(
+        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+      ),
+    [section, dedupedSectionRecords],
+  );
 
   const bankDashboard = useMemo(() => {
     if (section !== 'bank') {
@@ -1673,7 +1683,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             <div className="text-xs text-slate-700">Completa Valor propiedad, Saldo deuda y Dividendo para ver total</div>
           </>
         ) : (
-          <div className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+          <div className="mt-3 flex items-center gap-2">
+            <div className="text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+            {section === 'investment' && includeRiskCapitalInTotals && sectionHasRiskCapital && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                +CapRiesgo
+              </span>
+            )}
+          </div>
         )}
       </Card>
 
@@ -2014,7 +2031,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {sortedChecklistRows.map((row) => (
           <div
             key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
-            className="w-full text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 hover:bg-slate-100/60 cursor-pointer"
+            className={cn(
+              'w-full text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 hover:bg-slate-100/60 cursor-pointer',
+              section === 'investment' && row.isOptional && !includeRiskCapitalInTotals && 'opacity-35',
+            )}
             onClick={() => openChecklistItem(row)}
           >
             <div className="flex items-center justify-between gap-2">
@@ -2943,10 +2963,7 @@ export const Patrimonio: React.FC = () => {
       });
     }
     if (activeSection === 'investment') {
-      return resolveRiskCapitalRecordsForTotals(
-        monthRecords.filter((r) => r.block === 'investment'),
-        includeRiskCapitalInTotals,
-      ).recordsForTotals;
+      return monthRecords.filter((r) => r.block === 'investment');
     }
     return monthRecords.filter((r) => r.block === activeSection);
   }, [activeSection, includeRiskCapitalInTotals, monthRecords]);
@@ -3502,13 +3519,39 @@ export const Patrimonio: React.FC = () => {
           <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
-          <button
-            className="absolute top-0 right-0 text-xs text-[#efe4d1]"
-            onClick={() => setShowNetWorth((v) => !v)}
-            type="button"
-          >
-            {showNetWorth ? 'Ocultar' : 'Ver'}
-          </button>
+          <div className="absolute top-0 right-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!riskToggleApplies) return;
+                setIncludeRiskCapitalInTotals((prev) => !prev);
+              }}
+              disabled={!riskToggleApplies}
+              className={cn(
+                'inline-flex h-8 w-8 items-center justify-center rounded-full border transition',
+                includeRiskCapitalInTotals
+                  ? 'border-amber-300 bg-amber-50 text-amber-600'
+                  : 'border-slate-300 bg-white/70 text-slate-400',
+                !riskToggleApplies && 'cursor-not-allowed opacity-60',
+              )}
+              title={
+                riskToggleApplies
+                  ? includeRiskCapitalInTotals
+                    ? 'Vista con capital de riesgo'
+                    : 'Vista de patrimonio puro'
+                  : 'No aplica: no hay capital de riesgo en este mes'
+              }
+            >
+              <Zap size={14} />
+            </button>
+            <button
+              className="text-xs text-[#efe4d1]"
+              onClick={() => setShowNetWorth((v) => !v)}
+              type="button"
+            >
+              {showNetWorth ? 'Ocultar' : 'Ver'}
+            </button>
+          </div>
 
           <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
             <div className="space-y-2">
@@ -3522,6 +3565,11 @@ export const Patrimonio: React.FC = () => {
                   {showNetWorth && sectionAmounts.hasAllCoreSubtotalsData ? (
                     <span className="inline-flex items-center gap-2 text-3xl font-bold leading-none tracking-tight transition-all duration-200 ease-out opacity-100 translate-y-0">
                       <span>{metricsDisplay.netWorth}</span>
+                      {includeRiskCapitalInTotals && monthRiskResolution.hasRiskCapital && (
+                        <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                          +CapRiesgo
+                        </span>
+                      )}
                       {missingCriticalCount > 0 && (
                         <span className="rounded-full border border-[#c59a6c]/70 bg-[#a97747]/20 px-2 py-0.5 text-[10px] font-semibold text-[#f3eadb]">
                           Parcial
@@ -3572,26 +3620,6 @@ export const Patrimonio: React.FC = () => {
                   {curr}
                 </button>
               ))}
-              <button
-                type="button"
-                className={`px-2 py-1 rounded-lg border text-[10px] leading-tight ${
-                  includeRiskCapitalInTotals
-                    ? 'bg-[#c59a6c]/25 text-[#f3eadb] border-[#c59a6c]/60'
-                    : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/35'
-                }`}
-                disabled={!riskToggleApplies}
-                onClick={() => {
-                  if (!riskToggleApplies) return;
-                  setIncludeRiskCapitalInTotals((prev) => !prev);
-                }}
-                title={
-                  riskToggleApplies
-                    ? 'Incluir o excluir capital de riesgo en todos los totales'
-                    : 'No aplica: no hay base comparable sin capital de riesgo'
-                }
-              >
-                Riesgo {riskToggleApplies ? (includeRiskCapitalInTotals ? 'ON' : 'OFF') : 'N/A'}
-              </button>
             </div>
           </div>
         </div>
@@ -3625,6 +3653,11 @@ export const Patrimonio: React.FC = () => {
                 ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency)
                 : hiddenHint('amber')}
             </span>
+            {visibleMainCards.investment && includeRiskCapitalInTotals && monthRiskResolution.hasRiskCapital && (
+              <span className="ml-2 inline-flex rounded-full border border-[#7f4927]/35 bg-white/50 px-2 py-0.5 text-[10px] font-semibold text-[#5a2f16]">
+                +CapRiesgo
+              </span>
+            )}
           </button>
           <div className="mt-1 text-[11px] text-[#6b3a1f]">Consolidado en {displayCurrency}</div>
           <button

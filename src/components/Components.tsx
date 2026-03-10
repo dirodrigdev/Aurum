@@ -1,9 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as LucideIcons from 'lucide-react';
 import { subscribeFirestoreStatus, FirestoreStatus } from '../services/firestoreStatus';
-import { FX_LIVE_META_UPDATED_EVENT, loadFxLiveSyncMeta, loadFxRates } from '../services/wealthStorage';
+import {
+  FX_LIVE_META_UPDATED_EVENT,
+  loadFxLiveSyncMeta,
+  loadFxRates,
+  loadWealthSyncUiState,
+  syncWealthNow,
+  WEALTH_SYNC_STATUS_UPDATED_EVENT,
+  WealthSyncUiState,
+} from '../services/wealthStorage';
 import { periodInfoForDate } from '../utils/period';
 
 // Utility para unir clases de Tailwind sin conflictos
@@ -83,17 +91,93 @@ Button.displayName = 'Button';
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
->(({ className, type, ...props }, ref) => {
+>(({ className, type, onChange, onFocus, onBlur, ...props }, ref) => {
+  const [syncState, setSyncState] = useState<WealthSyncUiState>(() => loadWealthSyncUiState());
+  const [isFocused, setIsFocused] = useState(false);
+  const [recentlyModifiedAt, setRecentlyModifiedAt] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const refresh = () => setSyncState(loadWealthSyncUiState());
+    const onSyncStateUpdated = () => refresh();
+    const onStorage = () => refresh();
+    window.addEventListener(WEALTH_SYNC_STATUS_UPDATED_EVENT, onSyncStateUpdated as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(WEALTH_SYNC_STATUS_UPDATED_EVENT, onSyncStateUpdated as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!recentlyModifiedAt) return;
+    const timer = window.setInterval(() => setNowTs(Date.now()), 300);
+    return () => window.clearInterval(timer);
+  }, [recentlyModifiedAt]);
+
+  const showSyncHint = useMemo(() => {
+    if (syncState.status === 'synced') return false;
+    if (isFocused) return true;
+    if (!recentlyModifiedAt) return false;
+    return nowTs - recentlyModifiedAt <= 6000;
+  }, [syncState.status, isFocused, recentlyModifiedAt, nowTs]);
+
+  const syncHint = useMemo(() => {
+    if (syncState.status === 'dirty') return { icon: '🟡', text: 'Sin guardar', retry: false };
+    if (syncState.status === 'syncing') return { icon: '🔄', text: 'Guardando', retry: false };
+    if (syncState.status === 'error') return { icon: '🔴', text: 'Error (reintentar)', retry: true };
+    return { icon: '', text: '', retry: false };
+  }, [syncState.status]);
+
+  const wrapperWidthClass = useMemo(() => {
+    const raw = String(className || '');
+    if (raw.includes('w-full')) return 'w-full';
+    if (/\bw-(?!full)[^\s]*/.test(raw)) return 'w-fit';
+    return 'w-full';
+  }, [className]);
+
   return (
-    <input
-      type={type}
-      className={cn(
-        'flex h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50',
-        className,
+    <div className={cn('relative', wrapperWidthClass)}>
+      <input
+        type={type}
+        className={cn(
+          'flex h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50',
+          className,
+        )}
+        ref={ref}
+        onFocus={(event) => {
+          setIsFocused(true);
+          onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setIsFocused(false);
+          onBlur?.(event);
+        }}
+        onChange={(event) => {
+          setRecentlyModifiedAt(Date.now());
+          onChange?.(event);
+        }}
+        {...props}
+      />
+      {showSyncHint && (
+        <button
+          type="button"
+          onClick={() => {
+            if (!syncHint.retry) return;
+            void syncWealthNow();
+          }}
+          className={cn(
+            'absolute -bottom-5 right-0 rounded-full border px-2 py-0.5 text-[10px] leading-none',
+            syncHint.retry
+              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              : 'border-slate-200 bg-white text-slate-500',
+          )}
+          tabIndex={syncHint.retry ? 0 : -1}
+        >
+          {syncHint.icon} {syncHint.text}
+        </button>
       )}
-      ref={ref}
-      {...props}
-    />
+    </div>
   );
 });
 Input.displayName = 'Input';
