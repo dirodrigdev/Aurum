@@ -1748,7 +1748,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           </details>
 
           <details open className="rounded-lg border border-rose-200 bg-rose-50/40 p-2">
-            <summary className="cursor-pointer text-sm font-medium text-rose-700">Tarjetas (cupo usado manual)</summary>
+            <summary className="cursor-pointer text-sm font-medium text-rose-700">Tarjetas (cupo utilizado manualmente)</summary>
             <div className="mt-2 space-y-2">
               {MANUAL_CARD_GROUPS.map((group) => (
                 <div key={group.bank} className={`rounded-lg border p-2 ${group.className}`}>
@@ -2745,7 +2745,7 @@ export const Patrimonio: React.FC = () => {
         : tone === 'green'
           ? 'text-[#1f3e2d]/70'
           : 'text-[#f3eadb]/80';
-    return <span className={`text-sm font-medium ${color}`}>Toca para ver</span>;
+    return <span className={`text-sm font-medium ${color}`}>Pulsa para ver</span>;
   };
 
   const refreshRecords = () => setRecords(loadWealthRecords());
@@ -3008,6 +3008,7 @@ export const Patrimonio: React.FC = () => {
     if (mortgageBalanceRule.enabled) {
       requiredNames.push({ label: 'Saldo deuda hipotecaria', section: 'real_estate' });
     }
+    const isTenencia = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('tenencia / cxc'));
     requiredNames.forEach((required) => {
       const exists = targetRecords.some((record) => {
         if (record.block === 'bank' || isSyntheticAggregateRecord(record)) return false;
@@ -3025,6 +3026,7 @@ export const Patrimonio: React.FC = () => {
 
     investmentInstruments.forEach((instrument) => {
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
+      if (isTenencia(instrument.label)) return;
       const isNonExcludable = isNonExcludableInvestmentLabel(instrument.label);
       const instrumentRule = resolveClosingConfigRule(
         closeConfigSnapshot,
@@ -3068,7 +3070,6 @@ export const Patrimonio: React.FC = () => {
       records: WealthRecord[];
     };
 
-    const isTenencia = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('tenencia / cxc'));
     const isMortgageDebtLabel = (label: string) =>
       REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizeForMatch(label));
 
@@ -3083,15 +3084,6 @@ export const Patrimonio: React.FC = () => {
             record.block === 'investment' &&
             !isRiskCapitalInvestmentLabel(record.label) &&
             !isTenencia(record.label),
-        ),
-      },
-      {
-        key: 'risk_capital',
-        label: 'Capital de riesgo',
-        section: 'investment',
-        rule: resolveClosingConfigRule(closeConfigSnapshot, 'risk_capital', true, 3),
-        records: targetRecords.filter(
-          (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
         ),
       },
       {
@@ -3147,6 +3139,7 @@ export const Patrimonio: React.FC = () => {
 
     investmentInstruments.forEach((instrument) => {
       if ((instrument.excludedMonths || []).includes(targetMonthKey)) return;
+      if (isTenencia(instrument.label)) return;
       configChecks.push({
         key: `investment:${instrument.id}`,
         label: instrument.label,

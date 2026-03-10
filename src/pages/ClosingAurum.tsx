@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Input } from '../components/Components';
 import { BreakdownCard } from '../components/closing/BreakdownCard';
+import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -331,6 +332,7 @@ export const ClosingAurum: React.FC = () => {
   const [selectedClosureMonthKey, setSelectedClosureMonthKey] = useState('');
   const [closurePage, setClosurePage] = useState(0);
   const [closureEditOpen, setClosureEditOpen] = useState(false);
+  const [closureEditConfirmOpen, setClosureEditConfirmOpen] = useState(false);
   const [closureEditError, setClosureEditError] = useState('');
   const [closureEditDraft, setClosureEditDraft] = useState<Record<EditableFieldKey, string>>(
     () =>
@@ -1124,6 +1126,7 @@ export const ClosingAurum: React.FC = () => {
               <Button
                 variant="outline"
                 onClick={() => {
+                  setClosureEditConfirmOpen(false);
                   setClosureEditOpen(false);
                   setClosureEditError('');
                 }}
@@ -1132,11 +1135,7 @@ export const ClosingAurum: React.FC = () => {
               </Button>
               <Button
                 onClick={() => {
-                  const ok = window.confirm(
-                    `Vas a sobrescribir el cierre de ${monthLabel(selectedClosure.monthKey)}. Se guardará una versión anterior. ¿Confirmas?`,
-                  );
-                  if (!ok) return;
-                  applyClosureEdit();
+                  setClosureEditConfirmOpen(true);
                 }}
               >
                 Guardar cambios
@@ -1145,6 +1144,23 @@ export const ClosingAurum: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ConfirmActionModal
+        open={closureEditConfirmOpen}
+        title="Confirmar guardado de edición"
+        message={
+          selectedClosure
+            ? `Vas a sobrescribir el cierre de ${monthLabel(selectedClosure.monthKey)}. Se guardará una versión anterior.`
+            : 'Vas a sobrescribir este cierre y se guardará una versión anterior.'
+        }
+        confirmText="Confirmar guardado"
+        cancelText="Cancelar"
+        onCancel={() => setClosureEditConfirmOpen(false)}
+        onConfirm={() => {
+          setClosureEditConfirmOpen(false);
+          applyClosureEdit();
+        }}
+      />
 
       <Card className="p-3 text-[11px] text-slate-500">
         Cada cierre usa su propio TC/UF guardado del mes. Los valores de demo usan TC/UF aproximados.

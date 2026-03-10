@@ -21,7 +21,7 @@ interface ClosingConfigSectionProps {
 
 const renderAgeBadge = (days: number | null) => {
   if (days === null) return <span className="text-xs text-slate-500">Sin dato este mes</span>;
-  if (days <= 1) return <span className="text-xs text-emerald-700">Actualizado hoy/ayer</span>;
+  if (days <= 1) return <span className="text-xs text-emerald-700">Actualizado hoy o ayer</span>;
   return <span className="text-xs text-slate-600">Última actualización: {days} día(s)</span>;
 };
 

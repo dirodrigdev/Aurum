@@ -63,7 +63,6 @@ type ClosureReviewPendingMap = Record<string, ClosureReviewPendingEntry>;
 
 type ClosingStaticFieldKey =
   | 'investments_value'
-  | 'risk_capital'
   | 'banks_fintoc'
   | 'tenencia'
   | 'cards_used'
@@ -87,7 +86,6 @@ const STATIC_CLOSING_FIELDS: Array<{
   defaultMaxAgeDays: number | null;
 }> = [
   { key: 'investments_value', label: 'Inversiones (valor)', defaultEnabled: true, defaultMaxAgeDays: 3 },
-  { key: 'risk_capital', label: 'Capital de riesgo', defaultEnabled: true, defaultMaxAgeDays: 3 },
   { key: 'banks_fintoc', label: 'Bancos (Fintoc)', defaultEnabled: true, defaultMaxAgeDays: 3 },
   { key: 'tenencia', label: 'Tenencia', defaultEnabled: false, defaultMaxAgeDays: null },
   { key: 'cards_used', label: 'Cupos tarjetas', defaultEnabled: false, defaultMaxAgeDays: null },
@@ -148,6 +146,7 @@ const toDefaultRule = (enabled: boolean, maxAgeDays: number | null): ClosingRule
 });
 
 const isTenenciaLabel = (label: string) => normalizeForMatch(label).includes(normalizeForMatch('Tenencia / CxC'));
+const isTenenciaInstrument = (instrumentLabel: string) => isTenenciaLabel(instrumentLabel);
 
 const daysSinceIso = (iso?: string) => {
   if (!iso) return null;
@@ -177,6 +176,7 @@ export const SettingsAurum: React.FC = () => {
   const [csvImportMessage, setCsvImportMessage] = useState('');
   const [csvImportWarnings, setCsvImportWarnings] = useState<string[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
+  const [csvTemplateCopyMessage, setCsvTemplateCopyMessage] = useState('');
   const [csvImportedResultVisible, setCsvImportedResultVisible] = useState(false);
   const [closureReviewOpen, setClosureReviewOpen] = useState(false);
   const [closureReviewQueue, setClosureReviewQueue] = useState<WealthMonthlyClosure[]>([]);
@@ -323,6 +323,41 @@ export const SettingsAurum: React.FC = () => {
 2023-05,2023-05-31T23:59:59-04:00,,,,
 2023-06,2023-06-30T23:59:59-04:00,,,,
 2023-07,2023-07-31T23:59:59-04:00,,,,`;
+  const historicalCsvAiFormat = `FORMATO CSV AURUM (copiar y completar):
+
+Objetivo:
+- Una fila por mes (month_key = YYYY-MM).
+- closed_at en ISO con zona horaria (ej: 2026-02-28T23:59:59-03:00).
+- Usa punto decimal. Si un valor no existe, déjalo vacío.
+- Monedas: *_clp en CLP, *_usd en USD, *_uf en UF.
+
+Columnas:
+- month_key: mes del cierre (YYYY-MM). Ej: 2026-02
+- closed_at: fecha/hora de cierre. Ej: 2026-02-28T23:59:59-03:00
+- usd_clp: tipo de cambio USD/CLP. Ej: 857.56
+- eur_clp: tipo de cambio EUR/CLP (opcional si tienes eur_usd en otro flujo).
+- uf_clp: valor UF/CLP. Ej: 39762.28
+- sura_fin_clp: saldo SURA inversión financiera (CLP)
+- sura_prev_clp: saldo SURA previsional (CLP)
+- btg_clp: total BTG (CLP)
+- planvital_clp: total PlanVital (CLP)
+- global66_usd: saldo Global66 (USD)
+- wise_usd: saldo Wise (USD)
+- valor_prop_uf: valor propiedad (UF)
+- saldo_deuda_uf: saldo deuda hipotecaria (UF)
+- dividendo_uf: dividendo hipotecario mensual (UF)
+- interes_uf: interés hipotecario mensual (UF)
+- seguros_uf: seguros hipotecarios mensuales (UF)
+- amortizacion_uf: amortización hipotecaria mensual (UF)
+- bancos_clp: saldo bancos en CLP
+- bancos_usd: saldo bancos en USD
+- tarjetas_clp: deuda tarjetas en CLP
+- tarjetas_usd: deuda tarjetas en USD
+
+Plantilla:
+month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
+2026-01,2026-01-31T23:59:59-03:00,869.12,944.43,39711.00,601583627,282697790,261428257,244443361,66767.40,4039.66,14500,8887.0006,53.2454,21.4029,4.1431,27.6994,5374622,2800,112400000,0
+2026-02,2026-02-28T23:59:59-03:00,857.56,930.25,39762.28,607337347,286420525,264741547,249092726,67098.43,4048.23,14500,8859.3012,53.2454,21.4029,4.1431,27.6994,5400000,1800,112400000,0`;
 
   const deferredCsvDraft = useDeferredValue(csvDraft);
   const csvPreview = useMemo(() => previewHistoricalClosuresCsv(deferredCsvDraft), [deferredCsvDraft]);
@@ -421,6 +456,28 @@ export const SettingsAurum: React.FC = () => {
     setAllRecords(loadWealthRecords());
     setInvestmentInstruments(loadInvestmentInstruments());
     setFsStatus(getFirestoreStatus());
+  };
+
+  const copyCsvFormatToClipboard = async () => {
+    const text = historicalCsvAiFormat;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+      setCsvTemplateCopyMessage('Formato copiado al portapapeles.');
+    } catch {
+      setCsvTemplateCopyMessage('No pude copiar automáticamente. Usa la descarga de formato.');
+    }
   };
 
   const persistClosureReviewPendingState = (next: ClosureReviewPendingMap) => {
@@ -637,8 +694,6 @@ export const SettingsAurum: React.FC = () => {
               'investment',
             )
           : null;
-      } else if (field.key === 'risk_capital') {
-        lastUpdatedDays = getLatestDays((label) => isRiskCapitalInvestmentLabel(label), 'investment');
       } else if (field.key === 'banks_fintoc') {
         lastUpdatedDays = getLatestDays(() => true, 'bank');
       } else if (field.key === 'tenencia') {
@@ -670,9 +725,9 @@ export const SettingsAurum: React.FC = () => {
   }, [closingConfig.rules, monthRecords]);
 
   const investmentClosingRows = useMemo<ClosingConfigRowView[]>(() => {
-    const sortedInstruments = [...investmentInstruments].sort((a, b) =>
-      normalizeForMatch(a.label).localeCompare(normalizeForMatch(b.label)),
-    );
+    const sortedInstruments = [...investmentInstruments]
+      .filter((instrument) => !isTenenciaInstrument(instrument.label))
+      .sort((a, b) => normalizeForMatch(a.label).localeCompare(normalizeForMatch(b.label)));
     return sortedInstruments.map((instrument) => {
       const key = toRuleKeyFromInvestmentId(instrument.id);
       const rule = resolveRuleConfig(key);
@@ -697,6 +752,11 @@ export const SettingsAurum: React.FC = () => {
     const nextRules = { ...closingConfig.rules };
     let changed = false;
 
+    if (nextRules.risk_capital) {
+      delete nextRules.risk_capital;
+      changed = true;
+    }
+
     STATIC_CLOSING_FIELDS.forEach((field) => {
       if (!nextRules[field.key]) {
         nextRules[field.key] = toDefaultRule(field.defaultEnabled, field.defaultMaxAgeDays);
@@ -705,6 +765,7 @@ export const SettingsAurum: React.FC = () => {
     });
 
     investmentInstruments.forEach((instrument) => {
+      if (isTenenciaInstrument(instrument.label)) return;
       const key = toRuleKeyFromInvestmentId(instrument.id);
       if (!nextRules[key]) {
         nextRules[key] = toDefaultRule(true, 3);
@@ -715,7 +776,11 @@ export const SettingsAurum: React.FC = () => {
     Object.keys(nextRules).forEach((key) => {
       if (!key.startsWith('investment:')) return;
       const investmentId = key.replace('investment:', '');
-      if (!investmentInstruments.some((instrument) => instrument.id === investmentId)) {
+      if (
+        !investmentInstruments.some(
+          (instrument) => instrument.id === investmentId && !isTenenciaInstrument(instrument.label),
+        )
+      ) {
         delete nextRules[key];
         changed = true;
       }
@@ -1400,7 +1465,7 @@ export const SettingsAurum: React.FC = () => {
             className="rounded-xl border border-slate-200 bg-white/85 p-3"
           >
             <summary className="cursor-pointer list-none text-sm font-semibold text-slate-800">
-              Importar historia mensual (CSV)
+              Importar historial mensual (CSV)
             </summary>
             <div className="mt-3 space-y-3">
               <div className="text-xs text-slate-600">
@@ -1433,6 +1498,14 @@ export const SettingsAurum: React.FC = () => {
 
               <div className="flex flex-wrap gap-2">
                 <Button
+                  variant="secondary"
+                  onClick={() => {
+                    void copyCsvFormatToClipboard();
+                  }}
+                >
+                  Copiar formato
+                </Button>
+                <Button
                   variant="outline"
                   onClick={() => {
                     downloadTextFile(historicalCsvTemplate, 'HISTORIAL_AURUM_TEMPLATE.csv', 'text/csv;charset=utf-8;');
@@ -1453,6 +1526,7 @@ export const SettingsAurum: React.FC = () => {
                   Descargar formato simple (solo neto)
                 </Button>
               </div>
+              {!!csvTemplateCopyMessage && <div className="text-xs text-slate-600">{csvTemplateCopyMessage}</div>}
 
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
                 <div className="text-[11px] text-slate-500 mb-1">Formatos admitidos:</div>
