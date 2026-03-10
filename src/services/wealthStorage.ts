@@ -3693,84 +3693,113 @@ const makeDemoRecord = (
 });
 
 export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marKey: string } => {
-  const fx = loadFxRates();
-  const janDate = dateFromMonthOffset(-2);
-  const febDate = dateFromMonthOffset(-1);
-  const marDate = dateFromMonthOffset(0);
+  const janKey = '2025-01';
+  const febKey = '2025-02';
+  const marKey = '2025-03';
+  const janSnapshot = '2025-01-31';
+  const febSnapshot = '2025-02-28';
+  const marSnapshot = '2025-03-31';
 
-  const janKey = monthKeyFromDate(janDate);
-  const febKey = monthKeyFromDate(febDate);
-  const marKey = monthKeyFromDate(marDate);
+  const currentFx = loadFxRates();
+  const eurUsdRatio =
+    Number.isFinite(currentFx.eurClp) && Number.isFinite(currentFx.usdClp) && currentFx.usdClp > 0
+      ? currentFx.eurClp / currentFx.usdClp
+      : defaultFxRates.eurClp / defaultFxRates.usdClp;
+  const buildFx = (usdClp: number, ufClp: number): WealthFxRates => ({
+    usdClp,
+    ufClp,
+    eurClp: Math.round(usdClp * eurUsdRatio),
+  });
 
-  const janRecords = [
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 607_392_657, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 287_631_202, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 259_489_302, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 249_335_715, 'CLP', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 67_098.43, 'USD', ymdFromDate(janDate, 30)),
-    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_812.81, 'USD', ymdFromDate(janDate, 30)),
-    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_350, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_859.30, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(janDate, 30)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(janDate, 30)),
-  ];
+  const janFx = buildFx(950, 37_500);
+  const febFx = buildFx(960, 37_800);
+  const marFx = buildFx(965, 38_100);
 
-  const febRecords = [
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 618_690_210, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 288_702_447, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 264_741_547, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 251_125_440, 'CLP', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 68_210.12, 'USD', ymdFromDate(febDate, 28)),
-    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_470.60, 'USD', ymdFromDate(febDate, 28)),
-    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_420, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_831.54, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(febDate, 28)),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(febDate, 28)),
-  ];
+  const janRecords = dedupeLatestByAsset([
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 45_000_000, 'CLP', janSnapshot),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 28_000_000, 'CLP', janSnapshot),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 32_000_000, 'CLP', janSnapshot),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_000_000, 'CLP', janSnapshot),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_500, 'USD', janSnapshot),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_200, 'USD', janSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_000_000, 'CLP', janSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_000, 'USD', janSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 3_200_000, 'CLP', janSnapshot),
+    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 1_800_000, 'CLP', janSnapshot),
+    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 900_000, 'CLP', janSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 500, 'USD', janSnapshot),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', janSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_800, 'UF', janSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', janSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 450_000, 'CLP', janSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 280_000, 'CLP', janSnapshot),
+  ]);
 
-  const marRecords = [
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 623_940_180, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 288_800_030, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 269_102_980, 'CLP', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 252_480_900, 'CLP', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
-    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 67_902.54, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 3_398.20, 'USD', ymdFromDate(marDate, 2), 'Actualizado parcial'),
-    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 12_430, 'UF', ymdFromDate(marDate, 2), 'Arrastrado desde cierre anterior'),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DEBT_BALANCE_LABEL, 8_803.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_DIVIDEND_LABEL, 53.24, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INTEREST_LABEL, 21.34, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_INSURANCE_LABEL, 4.14, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-    makeDemoRecord('debt', 'Scotiabank', MORTGAGE_AMORTIZATION_LABEL, 27.77, 'UF', ymdFromDate(marDate, 2), 'Estimado automático'),
-  ];
+  const febRecords = dedupeLatestByAsset([
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 46_200_000, 'CLP', febSnapshot),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 28_400_000, 'CLP', febSnapshot),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 33_500_000, 'CLP', febSnapshot),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_300_000, 'CLP', febSnapshot),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_650, 'USD', febSnapshot),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_200, 'USD', febSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_400_000, 'CLP', febSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_200, 'USD', febSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 2_900_000, 'CLP', febSnapshot),
+    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 2_100_000, 'CLP', febSnapshot),
+    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 750_000, 'CLP', febSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 500, 'USD', febSnapshot),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', febSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_792, 'UF', febSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', febSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 380_000, 'CLP', febSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 310_000, 'CLP', febSnapshot),
+  ]);
 
-  const janSummary = summarizeWealth(dedupeLatestByAsset(janRecords), fx);
-  const febSummary = summarizeWealth(dedupeLatestByAsset(febRecords), fx);
+  const marRecords = dedupeLatestByAsset([
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 47_100_000, 'CLP', marSnapshot),
+    makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_PREV_LABEL, 28_700_000, 'CLP', marSnapshot),
+    makeDemoRecord('investment', 'BTG Pactual', INVESTMENT_BTG_LABEL, 34_200_000, 'CLP', marSnapshot),
+    makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_500_000, 'CLP', marSnapshot),
+    makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_700, 'USD', marSnapshot),
+    makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_500, 'USD', marSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_600_000, 'CLP', marSnapshot),
+    makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_400, 'USD', marSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 4_100_000, 'CLP', marSnapshot),
+    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 1_600_000, 'CLP', marSnapshot),
+    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 1_200_000, 'CLP', marSnapshot),
+    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 800, 'USD', marSnapshot),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', marSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_784, 'UF', marSnapshot),
+    makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', marSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 520_000, 'CLP', marSnapshot),
+    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 190_000, 'CLP', marSnapshot),
+  ]);
+
+  const janSummary = summarizeWealth(janRecords, janFx);
+  const febSummary = summarizeWealth(febRecords, febFx);
 
   const closures: WealthMonthlyClosure[] = [
     {
       id: crypto.randomUUID(),
       monthKey: febKey,
-      closedAt: new Date(febDate.getFullYear(), febDate.getMonth(), 28, 18, 0, 0, 0).toISOString(),
+      closedAt: new Date('2025-02-28T23:59:59-03:00').toISOString(),
       summary: febSummary,
-      fxRates: { ...fx },
-      records: dedupeLatestByAsset(febRecords),
+      fxRates: febFx,
+      records: febRecords,
     },
     {
       id: crypto.randomUUID(),
       monthKey: janKey,
-      closedAt: new Date(janDate.getFullYear(), janDate.getMonth(), 31, 18, 0, 0, 0).toISOString(),
+      closedAt: new Date('2025-01-31T23:59:59-03:00').toISOString(),
       summary: janSummary,
-      fxRates: { ...fx },
-      records: dedupeLatestByAsset(janRecords),
+      fxRates: janFx,
+      records: janRecords,
     },
   ];
 
   saveWealthRecords([...marRecords, ...febRecords, ...janRecords].sort(sortByCreatedDesc));
   saveClosures(closures);
+  saveFxRates(marFx);
   saveDemoSeedMeta({
     seededAt: nowIso(),
     janKey,

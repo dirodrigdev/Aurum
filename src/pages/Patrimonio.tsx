@@ -533,6 +533,7 @@ interface SectionScreenProps {
   monthKey: string;
   recordsForSection: WealthRecord[];
   includeRiskCapitalInTotals: boolean;
+  onToggleRiskCapitalView: () => void;
   investmentInstruments: WealthInvestmentInstrument[];
   usdClp: number;
   eurClp: number;
@@ -626,6 +627,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   monthKey,
   recordsForSection,
   includeRiskCapitalInTotals,
+  onToggleRiskCapitalView,
   investmentInstruments,
   usdClp,
   eurClp,
@@ -1659,7 +1661,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     <div className="space-y-4 pb-24">
       <input ref={hiddenUploadInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
 
-      <Card className={`p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
+      <Card className={`relative p-4 border-0 bg-gradient-to-br ${sectionTheme[section]} shadow-[0_12px_24px_rgba(15,23,42,0.18)]`}>
         <button className="inline-flex items-center gap-1 text-xs text-slate-600" onClick={onBack}>
           <ArrowLeft size={14} /> Volver
         </button>
@@ -1681,6 +1683,22 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               </span>
             )}
           </div>
+        )}
+        {section === 'investment' && (
+          <button
+            type="button"
+            onClick={onToggleRiskCapitalView}
+            className={cn(
+              'absolute bottom-3 right-3 inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-300 bg-white/70 text-slate-400',
+            )}
+            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={18} />
+          </button>
         )}
       </Card>
 
@@ -3456,6 +3474,7 @@ export const Patrimonio: React.FC = () => {
           monthKey={monthKey}
           recordsForSection={recordsForSection}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+          onToggleRiskCapitalView={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           investmentInstruments={investmentInstruments}
           usdClp={fx.usdClp}
           eurClp={fx.eurClp}
@@ -3488,20 +3507,6 @@ export const Patrimonio: React.FC = () => {
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
           <div className="absolute top-0 right-0 z-20 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-              className={cn(
-                'inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
-                includeRiskCapitalInTotals
-                  ? 'border-amber-300 bg-amber-50 text-amber-600'
-                  : 'border-slate-300 bg-white/70 text-slate-400',
-              )}
-              title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-              aria-label="Alternar capital de riesgo"
-            >
-              <Zap size={18} />
-            </button>
             <button
               className="text-xs text-[#efe4d1]"
               onClick={() => setShowNetWorth((v) => !v)}
@@ -3577,21 +3582,37 @@ export const Patrimonio: React.FC = () => {
               )}
             </div>
 
-            <div className="flex flex-col gap-2">
-              {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
-                <button
-                  key={curr}
-                  className={`px-3 py-2 rounded-lg border text-xs ${
-                    displayCurrency === curr
-                      ? 'bg-[#f3eadb] text-[#1d3c33] border-[#f3eadb]/70'
-                      : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/45'
-                  }`}
-                  onClick={() => setDisplayCurrency(curr)}
-                  type="button"
-                >
-                  {curr}
-                </button>
-              ))}
+            <div className="flex flex-col items-end gap-4 self-end">
+              <div className="flex flex-col gap-2">
+                {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+                  <button
+                    key={curr}
+                    className={`px-3 py-2 rounded-lg border text-xs ${
+                      displayCurrency === curr
+                        ? 'bg-[#f3eadb] text-[#1d3c33] border-[#f3eadb]/70'
+                        : 'bg-[#f3eadb]/10 text-[#f3eadb] border-[#c59a6c]/45'
+                    }`}
+                    onClick={() => setDisplayCurrency(curr)}
+                    type="button"
+                  >
+                    {curr}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+                className={cn(
+                  'inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
+                  includeRiskCapitalInTotals
+                    ? 'border-amber-300 bg-amber-50 text-amber-600'
+                    : 'border-slate-300 bg-white/70 text-slate-400',
+                )}
+                title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+                aria-label="Alternar capital de riesgo"
+              >
+                <Zap size={18} />
+              </button>
             </div>
           </div>
 
@@ -3616,23 +3637,6 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#5a2f16]">
               <Landmark size={16} /> Inversiones
             </div>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setIncludeRiskCapitalInTotals((prev) => !prev);
-              }}
-              className={cn(
-                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition',
-                includeRiskCapitalInTotals
-                  ? 'border-[#7f4927]/55 bg-white/70 text-[#7f4927]'
-                  : 'border-[#7f4927]/35 bg-white/45 text-[#7f4927]/70',
-              )}
-              title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-              aria-label="Alternar capital de riesgo"
-            >
-              <Zap size={15} />
-            </button>
           </div>
           <div className="mt-2 min-h-[52px] text-left text-2xl font-bold leading-tight text-[#5a2f16]">
             <span className="transition-all duration-200 ease-out opacity-100 translate-y-0">
