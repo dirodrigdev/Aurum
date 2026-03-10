@@ -3519,39 +3519,13 @@ export const Patrimonio: React.FC = () => {
           <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
 
-          <div className="absolute top-0 right-0 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (!riskToggleApplies) return;
-                setIncludeRiskCapitalInTotals((prev) => !prev);
-              }}
-              disabled={!riskToggleApplies}
-              className={cn(
-                'inline-flex h-8 w-8 items-center justify-center rounded-full border transition',
-                includeRiskCapitalInTotals
-                  ? 'border-amber-300 bg-amber-50 text-amber-600'
-                  : 'border-slate-300 bg-white/70 text-slate-400',
-                !riskToggleApplies && 'cursor-not-allowed opacity-60',
-              )}
-              title={
-                riskToggleApplies
-                  ? includeRiskCapitalInTotals
-                    ? 'Vista con capital de riesgo'
-                    : 'Vista de patrimonio puro'
-                  : 'No aplica: no hay capital de riesgo en este mes'
-              }
-            >
-              <Zap size={14} />
-            </button>
-            <button
-              className="text-xs text-[#efe4d1]"
-              onClick={() => setShowNetWorth((v) => !v)}
-              type="button"
-            >
-              {showNetWorth ? 'Ocultar' : 'Ver'}
-            </button>
-          </div>
+          <button
+            className="absolute top-0 right-0 z-20 text-xs text-[#efe4d1]"
+            onClick={() => setShowNetWorth((v) => !v)}
+            type="button"
+          >
+            {showNetWorth ? 'Ocultar' : 'Ver'}
+          </button>
 
           <div className="mt-4 grid grid-cols-[1fr_auto] gap-3 text-xs">
             <div className="space-y-2">
@@ -3622,6 +3596,32 @@ export const Patrimonio: React.FC = () => {
               ))}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!riskToggleApplies) return;
+              setIncludeRiskCapitalInTotals((prev) => !prev);
+            }}
+            disabled={!riskToggleApplies}
+            className={cn(
+              'absolute bottom-3 right-3 z-30 inline-flex h-11 w-11 items-center justify-center rounded-full border transition',
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-300 bg-white/70 text-slate-400',
+              !riskToggleApplies && 'cursor-not-allowed opacity-60',
+            )}
+            title={
+              riskToggleApplies
+                ? includeRiskCapitalInTotals
+                  ? 'Vista con capital de riesgo'
+                  : 'Vista de patrimonio puro'
+                : 'No aplica: no hay capital de riesgo en este mes'
+            }
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={18} />
+          </button>
         </div>
       </Card>
 
