@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button, Input } from '../Components';
+import { formatCurrency } from '../../utils/wealthFormat';
 
 interface CloseValidationIssueView {
   type: string;
@@ -18,6 +19,19 @@ interface CloseConfirmModalProps {
   closeWarningIssues: CloseValidationIssueView[];
   closeInfo: string;
   closeError: string;
+  closeFxReady: boolean;
+  closePreview: {
+    banks: number;
+    investments: number;
+    riskClp: number;
+    hasRisk: boolean;
+    propertyNet: number;
+    hasProperty: boolean;
+    nonMortgageDebt: number;
+    usdClp: number;
+    ufClp: number;
+    totalNetClp: number;
+  };
   monthLabel: (monthKey: string) => string;
   onCloseMonthDraftChange: (nextMonth: string) => void;
   onResolveWithPrevious: (issue: CloseValidationIssueView) => void;
@@ -37,6 +51,8 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   closeWarningIssues,
   closeInfo,
   closeError,
+  closeFxReady,
+  closePreview,
   monthLabel,
   onCloseMonthDraftChange,
   onResolveWithPrevious,
@@ -145,11 +161,55 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
           </div>
         )}
 
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-800">Preview numérico del cierre</div>
+          <div className="mt-2 space-y-1 text-xs text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <span>Bancos</span>
+              <span className="font-medium">{formatCurrency(closePreview.banks, 'CLP')}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Inversiones</span>
+              <span className="font-medium">{formatCurrency(closePreview.investments, 'CLP')}</span>
+            </div>
+            {closePreview.hasRisk && (
+              <div className="flex items-center justify-between gap-2">
+                <span>Capital de riesgo</span>
+                <span className="font-medium">{formatCurrency(closePreview.riskClp, 'CLP')}</span>
+              </div>
+            )}
+            {closePreview.hasProperty && (
+              <div className="flex items-center justify-between gap-2">
+                <span>Propiedad neta</span>
+                <span className="font-medium">{formatCurrency(closePreview.propertyNet, 'CLP')}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span>Deuda no hipotecaria</span>
+              <span className="font-medium">-{formatCurrency(closePreview.nonMortgageDebt, 'CLP')}</span>
+            </div>
+            <div className="pt-1 text-[11px] text-slate-500">
+              TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · UF/CLP{' '}
+              {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
+              <span className="text-slate-900 font-semibold">Patrimonio total</span>
+              <span className="text-slate-900 font-semibold">{formatCurrency(closePreview.totalNetClp, 'CLP')}</span>
+            </div>
+          </div>
+        </div>
+
+        {!closeFxReady && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Completá los tipos de cambio antes de cerrar el mes.
+          </div>
+        )}
+
         <div className="mt-4 grid grid-cols-2 gap-2">
           <Button variant="outline" onClick={onCancel}>
             Cancelar
           </Button>
-          <Button onClick={() => onAttemptClose(closeMonthDraft)} disabled={closeBlockingIssues.length > 0}>
+          <Button onClick={() => onAttemptClose(closeMonthDraft)} disabled={closeBlockingIssues.length > 0 || !closeFxReady}>
             {selectedClosureMonthKey
               ? closeWarningIssues.length
                 ? 'Sobrescribir con arrastres'
@@ -163,4 +223,3 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
     </div>
   );
 };
-

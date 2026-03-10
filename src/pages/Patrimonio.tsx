@@ -2850,6 +2850,35 @@ export const Patrimonio: React.FC = () => {
     () => evaluateCloseValidation(closeMonthDraft),
     [closeMonthDraft, records, investmentInstruments],
   );
+  const closePreview = useMemo(() => {
+    const targetRecords = closeValidationDraft.targetRecords;
+    const resolved = resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals);
+    const amounts = computeWealthHomeSectionAmounts(resolved.recordsForTotals, fx);
+    const riskRecords = targetRecords.filter(
+      (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+    );
+    const riskClp = riskRecords.reduce(
+      (sum, record) => sum + toClp(record.amount, record.currency, fx.usdClp, fx.eurClp, fx.ufClp),
+      0,
+    );
+    const hasProperty = targetRecords.some(
+      (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, 'Valor propiedad'),
+    );
+
+    return {
+      banks: amounts.bank,
+      investments: amounts.investment,
+      riskClp,
+      hasRisk: riskRecords.length > 0,
+      propertyNet: amounts.realEstateNet,
+      hasProperty,
+      nonMortgageDebt: amounts.nonMortgageDebt,
+      usdClp: fx.usdClp,
+      ufClp: fx.ufClp,
+      totalNetClp: amounts.totalNetClp,
+    };
+  }, [closeValidationDraft.targetRecords, includeRiskCapitalInTotals, fx]);
+  const closeFxReady = Number.isFinite(fx.usdClp) && fx.usdClp > 0 && Number.isFinite(fx.ufClp) && fx.ufClp > 0;
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
@@ -3322,6 +3351,8 @@ export const Patrimonio: React.FC = () => {
         closeWarningIssues={closeWarningIssues}
         closeInfo={closeInfo}
         closeError={closeError}
+        closeFxReady={closeFxReady}
+        closePreview={closePreview}
         monthLabel={monthLabel}
         onCloseMonthDraftChange={setCloseMonthDraft}
         onResolveWithPrevious={resolveCloseIssueWithPrevious}
