@@ -466,9 +466,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setFsStatus(getFirestoreStatus());
   };
 
-  const canShowDemoSeedButton =
-    import.meta.env.DEV || String(import.meta.env.VITE_ENABLE_DEMO_SEED || '').toLowerCase() === 'true';
-
   const copyCsvFormatToClipboard = async () => {
     const text = historicalCsvAiFormat;
     try {
@@ -1787,20 +1784,18 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           )}
         </div>
 
-        {canShowDemoSeedButton && (
-          <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3">
-            <div className="text-xs uppercase tracking-wide text-indigo-800 font-semibold">
-              Desarrollo — Datos de prueba
-            </div>
-            <div className="text-xs text-indigo-700">
-              Carga ene/feb 2025 cerrados y mar 2025 en curso para validar cálculos y flujos.
-            </div>
-            <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
-              {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
-            </Button>
-            {!!seedDemoMessage && <div className="text-xs text-indigo-800">{seedDemoMessage}</div>}
+        <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3">
+          <div className="text-xs uppercase tracking-wide text-indigo-800 font-semibold">
+            Datos de prueba
           </div>
-        )}
+          <div className="text-xs text-indigo-700">
+            Carga ene/feb 2025 cerrados y mar 2025 en curso para validar cálculos y flujos.
+          </div>
+          <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
+            {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
+          </Button>
+          {!!seedDemoMessage && <div className="text-xs text-indigo-800">{seedDemoMessage}</div>}
+        </div>
       </Card>
 
       <ClosureReviewModal
