@@ -2656,11 +2656,21 @@ export const Patrimonio: React.FC = () => {
     [monthRecordsForTotals, fx],
   );
 
+  const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
+    if (includeRiskCapitalInTotals && Number.isFinite(closure.summary.netClpWithRisk)) {
+      return Number(closure.summary.netClpWithRisk);
+    }
+    if (!includeRiskCapitalInTotals && Number.isFinite(closure.summary.netClp)) {
+      return Number(closure.summary.netClp);
+    }
+    return closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp;
+  };
+
   const metrics = useMemo(() => {
     const closedPoints = closures
       .map((closure) => ({
         key: closure.monthKey,
-        net: closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp,
+        net: closureSummaryNetForMode(closure),
       }))
       .sort((a, b) => a.key.localeCompare(b.key));
     const last = closedPoints.length > 0 ? closedPoints[closedPoints.length - 1] : null;
@@ -2676,7 +2686,7 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, closureNetByMonth]);
+  }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
 
   const latestClosure = closures[0] || null;
 
@@ -2684,12 +2694,33 @@ export const Patrimonio: React.FC = () => {
     if (closures.length < 2) return null;
     const currentClosure = closures[0];
     const previousClosure = closures[1];
-    const current = closureNetByMonth.get(currentClosure.monthKey) ?? currentClosure.summary.netConsolidatedClp;
-    const prev = closureNetByMonth.get(previousClosure.monthKey) ?? previousClosure.summary.netConsolidatedClp;
+    const current = closureSummaryNetForMode(currentClosure);
+    const prev = closureSummaryNetForMode(previousClosure);
     const abs = current - prev;
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
-  }, [closures, closureNetByMonth]);
+  }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (closures.length < 2) return;
+    const currentClosure = closures[0];
+    const previousClosure = closures[1];
+    const currentNet = closureSummaryNetForMode(currentClosure);
+    const previousNet = closureSummaryNetForMode(previousClosure);
+    console.debug('[Patrimonio] Variación mensual', {
+      includeRiskCapitalInTotals,
+      currentClosure: currentClosure.monthKey,
+      previousClosure: previousClosure.monthKey,
+      currentNet,
+      previousNet,
+      monthIncrease: currentNet - previousNet,
+      currentSummaryNet: currentClosure.summary.netClp,
+      currentSummaryNetWithRisk: currentClosure.summary.netClpWithRisk,
+      previousSummaryNet: previousClosure.summary.netClp,
+      previousSummaryNetWithRisk: previousClosure.summary.netClpWithRisk,
+    });
+  }, [closures, closureNetByMonth, includeRiskCapitalInTotals]);
   const selectedClosureForDraft = useMemo(
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
@@ -3612,11 +3643,11 @@ export const Patrimonio: React.FC = () => {
         </div>
       </Card>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="space-y-2">
         <div
           role="button"
           tabIndex={0}
-          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] p-3 text-left shadow-[0_10px_22px_rgba(165,96,42,0.22)] transition min-h-[104px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5a2f16]/45"
+          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#f3b179] to-[#d87d3f] px-3 py-2 text-left shadow-[0_8px_18px_rgba(165,96,42,0.2)] transition min-h-[72px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5a2f16]/45"
           onClick={() => setActiveSection('investment')}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -3626,11 +3657,13 @@ export const Patrimonio: React.FC = () => {
           }}
           aria-label="Entrar a Inversiones"
         >
-          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5a2f16]">
-            <Landmark size={14} /> Inversiones
-          </div>
-          <div className="mt-2 text-left text-lg font-bold leading-tight text-[#5a2f16] break-words">
-            {showNetWorth ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency) : '••••'}
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#5a2f16]">
+              <Landmark size={15} /> Inversiones
+            </div>
+            <div className="pr-6 text-right text-base font-bold leading-tight text-[#5a2f16] break-words">
+              {showNetWorth ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency) : '••••'}
+            </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#7f4927]/30 bg-white/35 text-[#7f4927]/75">
             <ArrowRight size={11} />
@@ -3640,7 +3673,7 @@ export const Patrimonio: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] p-3 text-left shadow-[0_10px_22px_rgba(74,102,64,0.2)] transition min-h-[104px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f3e2d]/40"
+          className="relative rounded-2xl border-0 bg-gradient-to-br from-[#b6cf9f] to-[#6f8f5d] px-3 py-2 text-left shadow-[0_8px_18px_rgba(74,102,64,0.2)] transition min-h-[72px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f3e2d]/40"
           onClick={() => setActiveSection('real_estate')}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -3650,15 +3683,17 @@ export const Patrimonio: React.FC = () => {
           }}
           aria-label="Entrar a Bienes raíces"
         >
-          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#1f3e2d]">
-            <Home size={14} /> Bienes raíces
-          </div>
-          <div className="mt-2 text-left text-lg font-bold leading-tight text-[#1f3e2d] break-words">
-            {showNetWorth
-              ? hasRealEstateCoreInputs
-                ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
-                : 'Sin datos'
-              : '••••'}
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1f3e2d]">
+              <Home size={15} /> Bienes raíces
+            </div>
+            <div className="pr-6 text-right text-base font-bold leading-tight text-[#1f3e2d] break-words">
+              {showNetWorth
+                ? hasRealEstateCoreInputs
+                  ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
+                  : 'Sin datos'
+                : '••••'}
+            </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#2d5a3b]/30 bg-white/35 text-[#2d5a3b]/80">
             <ArrowRight size={11} />
@@ -3667,7 +3702,7 @@ export const Patrimonio: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className="relative rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] p-3 text-left shadow-[0_10px_22px_rgba(70,120,170,0.16)] transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 min-h-[104px]"
+          className="relative rounded-2xl border border-sky-200 bg-gradient-to-br from-[#e7f3ff] to-[#cfe5f8] px-3 py-2 text-left shadow-[0_8px_18px_rgba(70,120,170,0.16)] transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45 min-h-[72px]"
           onClick={() => setActiveSection('bank')}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -3677,11 +3712,13 @@ export const Patrimonio: React.FC = () => {
           }}
           aria-label="Entrar a Bancos"
         >
-          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sky-900">
-            <Building2 size={14} /> Bancos
-          </div>
-          <div className="mt-2 text-left text-lg font-bold leading-tight text-sky-900 break-words">
-            {showNetWorth ? formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency) : '••••'}
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-900">
+              <Building2 size={15} /> Bancos
+            </div>
+            <div className="pr-6 text-right text-base font-bold leading-tight text-sky-900 break-words">
+              {showNetWorth ? formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency) : '••••'}
+            </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300 bg-white/35 text-sky-700/80">
             <ArrowRight size={11} />

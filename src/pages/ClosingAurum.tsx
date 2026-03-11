@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
 import { BreakdownCard } from '../components/closing/BreakdownCard';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
@@ -49,6 +50,7 @@ import {
   loadFxRates,
   loadWealthRecords,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+  saveIncludeRiskCapitalInTotals,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
 
@@ -370,6 +372,14 @@ export const ClosingAurum: React.FC = () => {
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
   }, [currency]);
+
+  const toggleRiskCapitalView = () => {
+    setIncludeRiskCapitalInTotals((prev) => {
+      const next = !prev;
+      saveIncludeRiskCapitalInTotals(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const HYDRATE_THROTTLE_MS = 15_000;
@@ -899,7 +909,7 @@ export const ClosingAurum: React.FC = () => {
       </Card>
 
       {tab === 'hoy' && (
-        <>
+        <div className="relative space-y-2.5 pb-12">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="flex items-baseline justify-between gap-2">
               <div className="text-[11px] uppercase tracking-wide text-slate-500">Mes en curso</div>
@@ -923,11 +933,24 @@ export const ClosingAurum: React.FC = () => {
             showRiskCapitalBadge={includeRiskCapitalInTotals && (currentHasRiskCapital || compareClosureForHoyHasRiskCapital)}
             riskModeOn={includeRiskCapitalInTotals}
           />
-        </>
+          <button
+            type="button"
+            onClick={toggleRiskCapitalView}
+            className={`absolute bottom-2 right-2 inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-300 bg-white/90 text-slate-400'
+            }`}
+            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={18} />
+          </button>
+        </div>
       )}
 
       {tab === 'cierre' && (
-        <>
+        <div className="relative space-y-2.5 pb-12">
           {!selectedClosure ? (
             <Card className="p-4 text-xs text-slate-500">Todavía no hay cierres mensuales guardados.</Card>
           ) : (
@@ -1078,11 +1101,24 @@ export const ClosingAurum: React.FC = () => {
               )}
             </>
           )}
-        </>
+          <button
+            type="button"
+            onClick={toggleRiskCapitalView}
+            className={`absolute bottom-2 right-2 inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-300 bg-white/90 text-slate-400'
+            }`}
+            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={18} />
+          </button>
+        </div>
       )}
 
       {tab === 'evolucion' && (
-        <>
+        <div className="relative space-y-2.5 pb-12">
           <Card className="p-4 space-y-2">
             <div className="text-sm font-semibold">Evolución del patrimonio</div>
             {evolutionWithReturns.map((row) => (
@@ -1123,7 +1159,20 @@ export const ClosingAurum: React.FC = () => {
               </div>
             ))}
           </Card>
-        </>
+          <button
+            type="button"
+            onClick={toggleRiskCapitalView}
+            className={`absolute bottom-2 right-2 inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-300 bg-white/90 text-slate-400'
+            }`}
+            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={18} />
+          </button>
+        </div>
       )}
 
       {closureEditOpen && selectedClosure && (
