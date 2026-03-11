@@ -1,5 +1,6 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
+import { ChevronDown } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
 import { ClosingConfigRowView, ClosingConfigSection } from '../components/settings/ClosingConfigSection';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
@@ -65,6 +66,15 @@ interface ClosureReviewPendingEntry {
 }
 
 type ClosureReviewPendingMap = Record<string, ClosureReviewPendingEntry>;
+type SettingsSectionKey =
+  | 'quick'
+  | 'fx'
+  | 'rules'
+  | 'instruments'
+  | 'sync'
+  | 'backup'
+  | 'danger'
+  | 'lab';
 
 type ClosingStaticFieldKey =
   | 'investments_value'
@@ -224,15 +234,15 @@ export const SettingsAurum: React.FC = () => {
   const [resetAllMessage, setResetAllMessage] = useState('');
   const [seedDemoMessage, setSeedDemoMessage] = useState('');
   const [seedingDemo, setSeedingDemo] = useState(false);
-  const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [csvConfirmOpen, setCsvConfirmOpen] = useState(false);
   const [deleteClosureConfirmOpen, setDeleteClosureConfirmOpen] = useState(false);
   const [deleteAllClosuresConfirmOpen, setDeleteAllClosuresConfirmOpen] = useState(false);
   const [deleteBlocksConfirmOpen, setDeleteBlocksConfirmOpen] = useState(false);
   const [fxFallbackDecisionOpen, setFxFallbackDecisionOpen] = useState(false);
   const [fxFallbackSavedText, setFxFallbackSavedText] = useState('');
+  const [openSection, setOpenSection] = useState<SettingsSectionKey>('quick');
   const syncSectionRef = useRef<HTMLDivElement | null>(null);
-  const csvImportSectionRef = useRef<HTMLDetailsElement | null>(null);
+  const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
 
@@ -561,13 +571,14 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   const goToCsvImportSection = () => {
-    setCsvImportOpen(true);
+    setOpenSection('backup');
     window.setTimeout(() => {
       scrollToSettingsElement(csvImportSectionRef.current);
     }, 120);
   };
 
   const goToFxSection = () => {
+    setOpenSection('fx');
     scrollToSettingsElement(syncSectionRef.current);
   };
 
@@ -1202,156 +1213,207 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   return (
-    <div className="p-4 space-y-4">
-      <Card className="space-y-4 border border-[#d9c8ae] bg-gradient-to-br from-[#f6efe2] via-[#fbf7ef] to-white p-4">
-        <div>
-          <div className="text-lg font-semibold text-slate-900">Estado de tu patrimonio</div>
-          <div className="text-xs text-slate-600">
-            Checklist rápido para validar histórico, mes actual y datos base.
-          </div>
-        </div>
+    <div className="p-4 space-y-2">
+      {(!!resetAllMessage || !!closureReviewMessage || !!closingConfigMessage) && (
+        <Card className="border border-slate-200 bg-white p-2.5 space-y-1">
+          {!!resetAllMessage && <div className="text-xs text-slate-700">{resetAllMessage}</div>}
+          {!!closureReviewMessage && <div className="text-xs text-slate-700">{closureReviewMessage}</div>}
+          {!!closingConfigMessage && <div className="text-xs text-slate-700">{closingConfigMessage}</div>}
+        </Card>
+      )}
 
-        <div className="rounded-xl border border-slate-200 bg-white/90 p-3 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">Historial</div>
-              <div className="text-xs text-slate-600">Estado de cierres históricos y calidad de TC/UF.</div>
-            </div>
-            <div className="text-lg leading-none">{historicalStatus.icon}</div>
-          </div>
-          <div
-            className={`rounded-lg border px-3 py-2 text-xs ${
-              historicalStatus.tone === 'ok'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                : historicalStatus.tone === 'warn'
-                  ? 'border-amber-200 bg-amber-50 text-amber-700'
-                  : 'border-red-200 bg-red-50 text-red-700'
-            }`}
-          >
-            Cierres guardados: <span className="font-semibold">{availableClosures.length}</span> · {historicalStatus.text}
-          </div>
-          {!!historicalPendingMonthKeys.length && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Pendientes: {historicalPendingMonthKeys.join(', ')}
-            </div>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={goToCsvImportSection}>
-              Ir a importar historial CSV
-            </Button>
-            <Button variant="outline" size="sm" onClick={openManualClosureReview} disabled={!availableClosures.length}>
-              {historicalPendingMonthKeys.length
-                ? `Revisar pendientes (${historicalPendingMonthKeys.length})`
-                : 'Revisar último cierre'}
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white/90 p-3 space-y-3">
+      <Card className="border border-slate-200 bg-white p-3">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between text-left"
+          onClick={() => setOpenSection('quick')}
+        >
           <div>
-            <div className="text-sm font-semibold text-slate-900">Mes actual</div>
-            <div className="text-xs text-slate-600">{formatMonthLabel(monthKey)} · estado por módulo</div>
+            <div className="text-sm font-semibold text-slate-900">Estado rápido</div>
+            <div className="text-[11px] text-slate-500">Historial y mes actual</div>
           </div>
-          <div className="space-y-2">
-            {monthChecklist.map((item) => (
-              <div
-                key={item.key}
-                className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 flex flex-wrap items-center justify-between gap-2"
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'quick' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'quick' && (
+          <div className="mt-3 space-y-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">Historial</span>
+                <span>{historicalStatus.icon}</span>
+              </div>
+              <div className="mt-1">Cierres: <span className="font-semibold">{availableClosures.length}</span> · {historicalStatus.text}</div>
+              {!!historicalPendingMonthKeys.length && (
+                <div className="mt-1 text-amber-700">Pendientes: {historicalPendingMonthKeys.join(', ')}</div>
+              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={goToCsvImportSection}>Ir a importación</Button>
+                <Button variant="outline" size="sm" onClick={openManualClosureReview} disabled={!availableClosures.length}>
+                  {historicalPendingMonthKeys.length ? `Revisar pendientes (${historicalPendingMonthKeys.length})` : 'Revisar cierre'}
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+              <div className="text-xs text-slate-600 mb-2">{formatMonthLabel(monthKey)} · estado por módulo</div>
+              <div className="space-y-1.5">
+                {monthChecklist.map((item) => (
+                  <div key={item.key} className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2"><span>{item.ok ? '✅' : '❌'}</span><span>{item.label}</span></div>
+                    {item.key === 'fx' ? (
+                      <Button variant="outline" size="sm" onClick={goToFxSection}>Ir a TC</Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigateToPatrimonioAndScroll(
+                            item.key === 'bank'
+                              ? ['bancos', 'liquidez']
+                              : item.key === 'investment'
+                                ? ['inversiones']
+                                : item.key === 'risk'
+                                  ? ['riesgo on', 'riesgo off', 'capital de riesgo']
+                                  : ['bienes raíces', 'valor propiedad'],
+                          )
+                        }
+                      >
+                        Ir a...
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card className="border border-slate-200 bg-white p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('fx')}>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Tipos de cambio</div>
+            <div className="text-[11px] text-slate-500">TC/UF online y manual</div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'fx' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'fx' && (
+          <div ref={syncSectionRef} className="mt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                disabled={syncingLiveFx}
+                onClick={async () => {
+                  setSyncingLiveFx(true);
+                  setFxLiveMessage('');
+                  try {
+                    const result = await refreshFxRatesFromLive({ force: true });
+                    setFx(result.rates);
+                    setFxLiveMeta(loadFxLiveSyncMeta());
+                    setFxLiveMessage('');
+                  } catch {
+                    setFxLiveMeta(loadFxLiveSyncMeta());
+                    const currentSaved = loadFxRates();
+                    setFx(currentSaved);
+                    const savedText = `USD ${formatFxInteger(currentSaved.usdClp)} · EUR ${formatFxInteger(currentSaved.eurClp)} · UF ${formatFxInteger(currentSaved.ufClp)}`;
+                    setFxFallbackSavedText(savedText);
+                    setFxFallbackDecisionOpen(true);
+                  } finally {
+                    setSyncingLiveFx(false);
+                  }
+                }}
               >
-                <div className="flex items-center gap-2 text-sm text-slate-800">
-                  <span className="text-base leading-none">{item.ok ? '✅' : '❌'}</span>
-                  <span>{item.label}</span>
-                </div>
-                {item.key === 'fx' ? (
-                  <Button variant="outline" size="sm" onClick={goToFxSection}>
-                    Ir a TC
-                  </Button>
+                {syncingLiveFx ? 'Actualizando...' : 'Actualizar TC/UF'}
+              </Button>
+            </div>
+            {!!fxLiveMeta && (
+              <div className={`rounded-lg border px-2.5 py-2 text-xs ${fxLiveMeta.status === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · {humanizeFxSource(fxLiveMeta.source)} · {formatDateTime(fxLiveMeta.fetchedAt)}
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Input value={fxDraft.usdClp} type="text" inputMode="decimal" onChange={(e) => setFxDraft((prev) => ({ ...prev, usdClp: e.target.value }))} onBlur={commitDraftFx} placeholder="USD/CLP" />
+              <Input value={fxDraft.eurUsd} type="text" inputMode="decimal" onChange={(e) => setFxDraft((prev) => ({ ...prev, eurUsd: e.target.value }))} onBlur={commitDraftFx} placeholder="EUR/USD" />
+              <Input value={fxDraft.ufClp} type="text" inputMode="decimal" onChange={(e) => setFxDraft((prev) => ({ ...prev, ufClp: e.target.value }))} onBlur={commitDraftFx} placeholder="UF/CLP" />
+            </div>
+            <Button variant="outline" onClick={commitDraftFx}>Guardar TC manual</Button>
+            {!!fxLiveMessage && <div className="text-xs text-slate-600">{fxLiveMessage}</div>}
+          </div>
+        )}
+      </Card>
+
+      <Card className="border border-slate-200 bg-white p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('rules')}>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Reglas de cierre</div>
+            <div className="text-[11px] text-slate-500">Campo · ON/OFF · días</div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'rules' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'rules' && (
+          <div className="mt-3 space-y-1.5">
+            {closingConfigRows.map((row) => (
+              <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <div className="truncate">{row.label}</div>
+                <label className="inline-flex items-center gap-1">
+                  <span>{row.enabled ? 'ON' : 'OFF'}</span>
+                  <input type="checkbox" checked={row.enabled} onChange={(event) => onToggleClosingRule(row.key, event.target.checked)} />
+                </label>
+                {row.supportsMaxAge && row.enabled ? (
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    className="h-7 w-16"
+                    value={row.maxAgeDays === null ? '' : String(row.maxAgeDays)}
+                    onChange={(event) => onMaxAgeClosingRuleChange(row.key, event.target.value)}
+                  />
                 ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      navigateToPatrimonioAndScroll(
-                        item.key === 'bank'
-                          ? ['bancos', 'liquidez']
-                          : item.key === 'investment'
-                            ? ['inversiones']
-                            : item.key === 'risk'
-                              ? ['riesgo on', 'riesgo off', 'capital de riesgo']
-                              : ['bienes raíces', 'valor propiedad'],
-                      )
-                    }
-                  >
-                    Ir a sección
-                  </Button>
+                  <span className="text-slate-500">—</span>
                 )}
               </div>
             ))}
           </div>
-        </div>
-
-        {!!resetAllMessage && (
-          <div className="rounded-lg border border-slate-200 bg-white/85 px-3 py-2 text-xs text-slate-700">
-            {resetAllMessage}
-          </div>
-        )}
-        {!!closureReviewMessage && (
-          <div className="rounded-lg border border-slate-200 bg-white/85 px-3 py-2 text-xs text-slate-700">
-            {closureReviewMessage}
-          </div>
         )}
       </Card>
 
-      <Card className="space-y-4 border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
-        <ClosingConfigSection
-          rows={closingConfigRows}
-          onToggle={onToggleClosingRule}
-          onMaxAgeDaysChange={onMaxAgeClosingRuleChange}
-          onCloseInvestmentFromCurrentMonth={(investmentId) => setClosingInvestmentCloseTargetId(investmentId)}
-          onDeleteInvestmentCompletely={(investmentId) => setClosingInvestmentDeleteTargetId(investmentId)}
-        />
-        {!!closingConfigMessage && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            {closingConfigMessage}
+      <Card className="border border-amber-200 bg-amber-50/40 p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('instruments')}>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-slate-900">Gestionar instrumentos</div>
+            <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">⚠️</span>
           </div>
-        )}
-      </Card>
-
-      <Card className="border-0 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] p-5 text-[#f3eadb] shadow-[0_14px_30px_rgba(11,38,34,0.42)]">
-        <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]/90">Aurum Wealth</div>
-        <div className="mt-1 text-2xl font-semibold">Ajustes</div>
-        <div className="mt-1 text-sm text-[#e7dcc9]/95">
-          Centro de configuración, respaldo y control de datos.
-        </div>
-      </Card>
-
-      <div className="space-y-4">
-        <Card ref={syncSectionRef} className="space-y-4 border border-emerald-100 bg-gradient-to-br from-emerald-50/90 to-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 whitespace-nowrap">Sincronización y mercado</div>
-              <div className="text-xs text-slate-600">Sesión, nube y tipos de cambio.</div>
-            </div>
-            <div
-              className={`rounded-full border px-2 py-1 text-[11px] font-medium ${
-                fsStatus.state === 'ok'
-                  ? 'border-emerald-200 bg-emerald-100/70 text-emerald-800'
-                  : 'border-amber-200 bg-amber-100/70 text-amber-800'
-              }`}
-            >
-              {fsStatus.state === 'ok' ? 'Firestore OK' : 'Firestore con error'}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white/85 p-3 space-y-3">
-            <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Sesión activa</div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
-              <div>
-                <span className="text-slate-500">Correo:</span> {authEmail || 'Sin correo (sesión no lista)'}
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'instruments' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'instruments' && (
+          <div className="mt-3 space-y-1.5">
+            {investmentClosingRows.map((row) => (
+              <div key={row.key} className="rounded-lg border border-amber-200 bg-white px-2 py-2 text-xs space-y-2">
+                <div className="truncate font-medium">{row.label}</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => row.investmentId && setClosingInvestmentCloseTargetId(row.investmentId)}>
+                    Cerrar desde este mes
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => row.investmentId && setClosingInvestmentDeleteTargetId(row.investmentId)}>
+                    Eliminar completamente
+                  </Button>
+                </div>
               </div>
-              <div className="mt-1 break-all">
-                <span className="text-slate-500">UID:</span> {authUid || 'Sin UID'}
-              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="border border-slate-200 bg-white p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('sync')}>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Sincronización</div>
+            <div className="text-[11px] text-slate-500">Estado Firestore y sesión</div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'sync' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'sync' && (
+          <div className="mt-3 space-y-2 text-xs">
+            <div className={`rounded-lg border px-2.5 py-2 ${fsStatus.state === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+              {fsStatus.state === 'ok' ? 'Firestore OK' : 'Firestore con error'} · UID: {authUid || 'Sin UID'}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -1377,491 +1439,210 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
               >
                 Sincronizar ahora
               </Button>
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  await signOutUser();
-                }}
-              >
+              <Button variant="secondary" onClick={async () => { await signOutUser(); }}>
                 Cerrar sesión
               </Button>
             </div>
-            {!!syncMessage && (
-              <div
-                className={`text-xs ${
-                  syncMessage.includes('Error') || syncMessage.includes('Sin conexión')
-                    ? 'text-amber-700'
-                    : 'text-emerald-700'
-                }`}
-              >
-                {syncMessage}
-              </div>
-            )}
-            {!!fsDebug && <div className="text-xs text-slate-500 break-words">Detalle Firestore: {fsDebug}</div>}
-            <div className="text-[11px] text-slate-500 break-words">
-              Proyecto activo (frontend): {import.meta.env.VITE_FIREBASE_PROJECT_ID || 'no definido'}
-            </div>
+            {!!syncMessage && <div className="text-xs text-slate-600">{syncMessage}</div>}
+            {!!fsDebug && <div className="text-xs text-slate-500 break-words">{fsDebug}</div>}
           </div>
+        )}
+      </Card>
 
-          <div className="rounded-xl border border-slate-200 bg-white/85 p-3 space-y-3">
-            <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Tipos de cambio (CLP)</div>
+      <Card className="border border-slate-200 bg-white p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('backup')}>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Respaldo e importación</div>
+            <div className="text-[11px] text-slate-500">JSON + CSV</div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'backup' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'backup' && (
+          <div ref={csvImportSectionRef} className="mt-3 space-y-2 text-xs">
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
-                disabled={syncingLiveFx}
-                onClick={async () => {
-                  setSyncingLiveFx(true);
-                  setFxLiveMessage('');
+                onClick={() => {
                   try {
-                    const result = await refreshFxRatesFromLive({ force: true });
-                    setFx(result.rates);
-                    setFxLiveMeta(loadFxLiveSyncMeta());
-                    setFxLiveMessage('');
+                    const now = new Date();
+                    const pad = (v: number) => String(v).padStart(2, '0');
+                    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+                    const payload = {
+                      exportedAt: now.toISOString(),
+                      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+                      user: { email: auth.currentUser?.email || '', uid: auth.currentUser?.uid || '' },
+                      wealth: {
+                        records: loadWealthRecords(),
+                        closures: loadClosures(),
+                        investmentInstruments: loadInvestmentInstruments(),
+                        fxRates: loadFxRates(),
+                        bankTokens: loadBankTokens(),
+                        fxMeta: loadFxLiveSyncMeta(),
+                      },
+                    };
+                    const filename = `aurum_backup_${stamp}.json`;
+                    downloadTextFile(JSON.stringify(payload, null, 2), filename, 'application/json');
+                    setBackupMessage(`Respaldo descargado: ${filename}`);
                   } catch (err: any) {
-                    setFxLiveMeta(loadFxLiveSyncMeta());
-                    const currentSaved = loadFxRates();
-                    setFx(currentSaved);
-                    const savedText = `USD ${formatFxInteger(currentSaved.usdClp)} · EUR ${formatFxInteger(currentSaved.eurClp)} · UF ${formatFxInteger(currentSaved.ufClp)}`;
-                    setFxFallbackSavedText(savedText);
-                    setFxFallbackDecisionOpen(true);
-                  } finally {
-                    setSyncingLiveFx(false);
+                    setBackupMessage(`No pude generar respaldo: ${String(err?.message || err || 'error')}`);
                   }
                 }}
               >
-                {syncingLiveFx ? 'Actualizando TC/UF...' : 'Actualizar TC/UF real ahora'}
+                Descargar respaldo JSON
+              </Button>
+              <Button variant="secondary" onClick={() => { void copyCsvFormatToClipboard(); }}>
+                Copiar formato CSV
               </Button>
             </div>
-
-            {!!fxLiveMeta && (
-              <div
-                className={`rounded-lg border px-3 py-2 text-xs ${
-                  fxLiveMeta.status === 'ok'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-amber-200 bg-amber-50 text-amber-700'
-                }`}
+            {!!backupMessage && <div className="text-slate-600">{backupMessage}</div>}
+            {!!csvTemplateCopyMessage && <div className="text-slate-600">{csvTemplateCopyMessage}</div>}
+            <Input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  setCsvDraft(text);
+                  setCsvImportedResultVisible(false);
+                  setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
+                  setCsvImportWarnings([]);
+                } catch (err: any) {
+                  setCsvImportedResultVisible(false);
+                  setCsvImportMessage(`No pude leer archivo CSV: ${String(err?.message || err || 'error')}`);
+                  setCsvImportWarnings([]);
+                }
+                event.currentTarget.value = '';
+              }}
+            />
+            <textarea
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              rows={6}
+              placeholder="Pega aquí tu CSV histórico..."
+              value={csvDraft}
+              onChange={(e) => {
+                setCsvImportedResultVisible(false);
+                setCsvDraft(e.target.value);
+              }}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                disabled={csvImporting}
+                onClick={async () => {
+                  if (!csvDraft.trim()) {
+                    setCsvImportMessage('Pega o carga un CSV antes de importar.');
+                    setCsvImportWarnings([]);
+                    return;
+                  }
+                  if (!csvPreview.monthKeys.length) {
+                    setCsvImportMessage('No detecté ningún month_key válido en el CSV.');
+                    setCsvImportWarnings(csvPreview.warnings);
+                    return;
+                  }
+                  setCsvConfirmOpen(true);
+                }}
               >
-                <div>
-                  Estado: {fxLiveMeta.status === 'ok' ? 'OK' : 'Error'} · Fuente: {humanizeFxSource(fxLiveMeta.source)}
-                </div>
-                <div className="mt-0.5">Última actualización: {formatDateTime(fxLiveMeta.fetchedAt)}</div>
-                {!!(fxLiveMessage || (fxLiveMeta.status === 'error' ? fxLiveMeta.message : '')) && (
-                  <div className="mt-0.5 break-words">
-                    {fxLiveMessage || fxLiveMeta.message}
-                  </div>
-                )}
+                {csvImporting ? 'Importando...' : 'Importar CSV'}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={csvImporting}
+                onClick={() => {
+                  setCsvDraft('');
+                  setCsvImportedResultVisible(false);
+                  setCsvImportMessage('');
+                  setCsvImportWarnings([]);
+                }}
+              >
+                Limpiar
+              </Button>
+            </div>
+            {!!csvImportMessage && <div className="text-slate-700">{csvImportMessage}</div>}
+            {!!csvImportWarnings.length && csvImportedResultVisible && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">
+                <div className="font-medium">Advertencias</div>
+                <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                  {csvImportWarnings.map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
               </div>
             )}
+          </div>
+        )}
+      </Card>
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div>
-                <div className="text-xs text-slate-500 mb-1">USD a CLP</div>
-                <Input
-                  value={fxDraft.usdClp}
-                  type="text"
-                  inputMode="decimal"
-                  onChange={(e) => {
-                    setFxDraft((prev) => ({ ...prev, usdClp: e.target.value }));
-                  }}
-                  onBlur={commitDraftFx}
-                />
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 mb-1">EUR a USD</div>
-                <Input
-                  value={fxDraft.eurUsd}
-                  type="text"
-                  inputMode="decimal"
-                  onChange={(e) => {
-                    setFxDraft((prev) => ({ ...prev, eurUsd: e.target.value }));
-                  }}
-                  onBlur={commitDraftFx}
-                />
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Referencia: EUR/CLP {formatFxInteger(fx.eurClp)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 mb-1">UF a CLP</div>
-                <Input
-                  value={fxDraft.ufClp}
-                  type="text"
-                  inputMode="decimal"
-                  onChange={(e) => {
-                    setFxDraft((prev) => ({ ...prev, ufClp: e.target.value }));
-                  }}
-                  onBlur={commitDraftFx}
-                />
-              </div>
+      <Card className="border border-red-200 bg-red-50/40 p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('danger')}>
+          <div>
+            <div className="text-sm font-semibold text-red-900">Zona de peligro 🔴</div>
+            <div className="text-[11px] text-red-700">Acciones destructivas</div>
+          </div>
+          <ChevronDown className={`h-4 w-4 text-red-500 transition-transform ${openSection === 'danger' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'danger' && (
+          <div className="mt-3 space-y-3 text-xs">
+            <div className="rounded-lg border border-red-200 bg-white px-2.5 py-2 space-y-2">
+              <div className="font-medium text-red-800">Reset total</div>
+              <Button variant="danger" onClick={() => setResetAllOpen(true)} disabled={resettingAll}>Resetear todos los datos</Button>
             </div>
-            <div className="flex justify-start">
-              <Button variant="outline" onClick={commitDraftFx}>
-                Guardar TC manual
+            <div className="rounded-lg border border-amber-200 bg-white px-2.5 py-2 space-y-2">
+              <div className="font-medium text-amber-800">Borrar cierre específico</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                <select
+                  className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  value={selectedClosureToDelete}
+                  onChange={(event) => setSelectedClosureToDelete(event.target.value)}
+                >
+                  <option value="">Selecciona mes...</option>
+                  {availableClosures.map((closure) => (
+                    <option key={closure.id} value={closure.monthKey}>{formatMonthLabel(closure.monthKey)} ({closure.monthKey})</option>
+                  ))}
+                </select>
+                <Button variant="danger" disabled={deletingClosure || !selectedClosureToDelete} onClick={() => setDeleteClosureConfirmOpen(true)}>
+                  {deletingClosure ? 'Borrando...' : 'Borrar cierre'}
+                </Button>
+              </div>
+              <Button variant="outline" disabled={deletingClosure || !availableClosures.length} onClick={() => setDeleteAllClosuresConfirmOpen(true)}>
+                Borrar todos los cierres
               </Button>
+              {!!deleteClosureMessage && <div className="text-slate-700">{deleteClosureMessage}</div>}
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 space-y-2">
+              <div className="font-medium text-slate-800">Borrar bloques del mes actual</div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <label className="flex items-center gap-2"><input type="checkbox" checked={deleteBlocksDraft.bank} onChange={(event) => setDeleteBlocksDraft((prev) => ({ ...prev, bank: event.target.checked }))} />Bancos</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={deleteBlocksDraft.investment} onChange={(event) => setDeleteBlocksDraft((prev) => ({ ...prev, investment: event.target.checked }))} />Inversiones</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={deleteBlocksDraft.risk} onChange={(event) => setDeleteBlocksDraft((prev) => ({ ...prev, risk: event.target.checked }))} />Capital de riesgo</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={deleteBlocksDraft.realEstate} onChange={(event) => setDeleteBlocksDraft((prev) => ({ ...prev, realEstate: event.target.checked }))} />Propiedad + hipoteca</label>
+              </div>
+              <Button variant="danger" disabled={deletingBlocks || selectedDeleteBlocks === 0} onClick={() => setDeleteBlocksConfirmOpen(true)}>
+                {deletingBlocks ? 'Borrando...' : 'Borrar bloques seleccionados'}
+              </Button>
+              {!!deleteBlocksMessage && <div className="text-slate-700">{deleteBlocksMessage}</div>}
             </div>
           </div>
-        </Card>
+        )}
+      </Card>
 
-        <Card className="space-y-4 border border-amber-100 bg-gradient-to-br from-amber-50/85 to-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 whitespace-nowrap">Respaldo e historial</div>
-              <div className="text-xs text-slate-600">Backups e importación de cierres.</div>
-            </div>
-            <div className="rounded-full border border-amber-200 bg-amber-100/80 px-2 py-1 text-[11px] font-medium text-amber-800">
-              Datos
-            </div>
+      <Card className="border border-indigo-200 bg-indigo-50/40 p-3">
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('lab')}>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Laboratorio</div>
+            <div className="text-[11px] text-slate-500">Herramientas de prueba</div>
           </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white/85 p-3 space-y-3">
-            <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Respaldo Aurum (JSON)</div>
-            <div className="text-xs text-slate-600">
-              Incluye patrimonio, cierres, instrumentos, TC/UF y tokens bancarios guardados.
-            </div>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                try {
-                  const now = new Date();
-                  const pad = (v: number) => String(v).padStart(2, '0');
-                  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
-                  const payload = {
-                    exportedAt: now.toISOString(),
-                    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
-                    user: {
-                      email: auth.currentUser?.email || '',
-                      uid: auth.currentUser?.uid || '',
-                    },
-                    wealth: {
-                      records: loadWealthRecords(),
-                      closures: loadClosures(),
-                      investmentInstruments: loadInvestmentInstruments(),
-                      fxRates: loadFxRates(),
-                      bankTokens: loadBankTokens(),
-                      fxMeta: loadFxLiveSyncMeta(),
-                    },
-                  };
-                  const filename = `aurum_backup_${stamp}.json`;
-                  downloadTextFile(JSON.stringify(payload, null, 2), filename, 'application/json');
-                  setBackupMessage(`Respaldo descargado: ${filename}`);
-                } catch (err: any) {
-                  setBackupMessage(`No pude generar respaldo: ${String(err?.message || err || 'error')}`);
-                }
-              }}
-            >
-              Descargar respaldo ahora
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'lab' ? 'rotate-180' : ''}`} />
+        </button>
+        {openSection === 'lab' && (
+          <div className="mt-3 space-y-2 text-xs">
+            <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
+              {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
             </Button>
-            {!!backupMessage && <div className="text-xs text-slate-600">{backupMessage}</div>}
+            {!!seedDemoMessage && <div className="text-indigo-800">{seedDemoMessage}</div>}
           </div>
-
-          <details
-            ref={csvImportSectionRef}
-            open={csvImportOpen}
-            onToggle={(event) => setCsvImportOpen((event.currentTarget as HTMLDetailsElement).open)}
-            className="rounded-xl border border-slate-200 bg-white/85 p-3"
-          >
-            <summary className="cursor-pointer list-none text-sm font-semibold text-slate-800">
-              Importar historial mensual (CSV)
-            </summary>
-            <div className="mt-3 space-y-3">
-              <div className="text-xs text-slate-600">
-                El importador reemplaza el mes si ya existe (según <code>month_key</code>).
-              </div>
-              {!!csvDraft.trim() && (
-                <div
-                  className={`rounded-lg border px-3 py-2 text-xs ${
-                    csvPreview.monthKeys.length === 1
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : 'border-amber-200 bg-amber-50 text-amber-800'
-                  }`}
-                >
-                  {csvPreview.monthKeys.length === 1
-                    ? `Modo mensual detectado: ${csvPreviewMonthLabel} (${csvPreview.monthKeys[0]}).`
-                    : `Meses detectados: ${
-                        csvPreview.monthKeys.length ? csvPreview.monthKeys.join(', ') : 'ninguno válido'
-                      } · filas: ${csvPreview.totalRows}.`}
-                </div>
-              )}
-              {!!csvPreview.warnings.length && !csvImportedResultVisible && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  <ul className="list-disc pl-4 space-y-0.5">
-                    {csvPreview.warnings.map((warning, index) => (
-                      <li key={`${warning}-${index}`}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    void copyCsvFormatToClipboard();
-                  }}
-                >
-                  Copiar formato
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    downloadTextFile(historicalCsvTemplate, 'HISTORIAL_AURUM_TEMPLATE.csv', 'text/csv;charset=utf-8;');
-                  }}
-                >
-                  Descargar formato completo (detalle)
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    downloadTextFile(
-                      historicalSimpleCsvTemplate,
-                      'HISTORIAL_AURUM_SIMPLE_TEMPLATE.csv',
-                      'text/csv;charset=utf-8;',
-                    );
-                  }}
-                >
-                  Descargar formato simple (solo neto)
-                </Button>
-              </div>
-              {!!csvTemplateCopyMessage && <div className="text-xs text-slate-600">{csvTemplateCopyMessage}</div>}
-
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                <div className="text-[11px] text-slate-500 mb-1">Formatos admitidos:</div>
-                <code className="block text-[11px] text-slate-700 break-all">
-                  month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
-                </code>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Nota: si no tienes <code>eur_clp</code>, puedes enviar <code>eur_usd</code> y se calculará con <code>usd_clp</code>.
-                </div>
-                <code className="mt-1 block text-[11px] text-slate-700 break-all">
-                  month_key,closed_at,usd_clp,eur_clp,uf_clp,net_clp
-                </code>
-              </div>
-
-              <div>
-                <div className="text-xs text-slate-500 mb-1">Cargar archivo CSV</div>
-                <Input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    try {
-                      const text = await file.text();
-                      setCsvDraft(text);
-                      setCsvImportedResultVisible(false);
-                      setCsvImportMessage(`Archivo cargado: ${file.name} (${Math.round(text.length / 1024)} KB).`);
-                      setCsvImportWarnings([]);
-                    } catch (err: any) {
-                      setCsvImportedResultVisible(false);
-                      setCsvImportMessage(`No pude leer archivo CSV: ${String(err?.message || err || 'error')}`);
-                      setCsvImportWarnings([]);
-                    }
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </div>
-
-              <div>
-                <div className="text-xs text-slate-500 mb-1">O pega el CSV aquí</div>
-                <textarea
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  rows={8}
-                  placeholder="month_key,closed_at,usd_clp,..."
-                  value={csvDraft}
-                  onChange={(e) => {
-                    setCsvImportedResultVisible(false);
-                    setCsvDraft(e.target.value);
-                  }}
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={csvImporting}
-                  onClick={async () => {
-                    if (!csvDraft.trim()) {
-                      setCsvImportMessage('Pega o carga un CSV antes de importar.');
-                      setCsvImportWarnings([]);
-                      return;
-                    }
-                    if (!csvPreview.monthKeys.length) {
-                      setCsvImportMessage('No detecté ningún month_key válido en el CSV.');
-                      setCsvImportWarnings(csvPreview.warnings);
-                      return;
-                    }
-                    setCsvConfirmOpen(true);
-                  }}
-                >
-                  {csvImporting ? 'Importando historial...' : 'Importar historial CSV'}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={csvImporting}
-                  onClick={() => {
-                    setCsvDraft('');
-                    setCsvImportedResultVisible(false);
-                    setCsvImportMessage('');
-                    setCsvImportWarnings([]);
-                  }}
-                >
-                  Limpiar CSV
-                </Button>
-              </div>
-
-              {!!csvImportMessage && <div className="text-xs text-slate-700">{csvImportMessage}</div>}
-              {!!csvImportWarnings.length && csvImportedResultVisible && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  <div className="font-medium">Advertencias de importación</div>
-                  <ul className="mt-1 list-disc pl-4 space-y-0.5">
-                    {csvImportWarnings.map((warning, index) => (
-                      <li key={`${warning}-${index}`}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </details>
-        </Card>
-      </div>
-
-      <Card className="space-y-4 border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
-        <div>
-          <div className="text-sm font-semibold text-slate-900">Laboratorio y limpieza</div>
-          <div className="text-xs text-slate-600">Tres niveles de borrado con confirmación guiada.</div>
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-red-200 bg-red-50/70 p-3">
-          <div className="text-xs uppercase tracking-wide text-red-800 font-semibold">Nivel 1 — Reset total</div>
-          <div className="text-xs text-red-700">
-            Borra todos los datos de la app en local y nube. Acción de máximo impacto.
-          </div>
-          <Button variant="danger" onClick={() => setResetAllOpen(true)} disabled={resettingAll}>
-            Resetear todos los datos
-          </Button>
-          {!!resetAllMessage && <div className="text-xs text-red-800">{resetAllMessage}</div>}
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
-          <div className="text-xs uppercase tracking-wide text-amber-800 font-semibold">
-            Nivel 2 — Borrar un cierre específico
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
-            <select
-              className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              value={selectedClosureToDelete}
-              onChange={(event) => setSelectedClosureToDelete(event.target.value)}
-            >
-              <option value="">Selecciona mes de cierre para borrar...</option>
-              {availableClosures.map((closure) => (
-                <option key={closure.id} value={closure.monthKey}>
-                  {formatMonthLabel(closure.monthKey)} ({closure.monthKey})
-                </option>
-              ))}
-            </select>
-            <Button
-              variant="danger"
-              disabled={deletingClosure || !selectedClosureToDelete}
-              onClick={() => setDeleteClosureConfirmOpen(true)}
-            >
-              {deletingClosure ? 'Borrando...' : 'Borrar cierre seleccionado'}
-            </Button>
-          </div>
-          {!!deleteClosureMessage && (
-            <div
-              className={`text-xs ${
-                deleteClosureMessage.includes('Error') || deleteClosureMessage.includes('Sin conexión')
-                  ? 'text-amber-800'
-                  : 'text-emerald-700'
-              }`}
-            >
-              {deleteClosureMessage}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
-          <div className="text-xs uppercase tracking-wide text-slate-800 font-semibold">
-            Nivel 3 — Borrar bloque del mes actual
-          </div>
-          <div className="text-xs text-slate-600">
-            Mes objetivo: <span className="font-medium">{formatMonthLabel(currentMonthKey())}</span>
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={deleteBlocksDraft.bank}
-                onChange={(event) =>
-                  setDeleteBlocksDraft((prev) => ({ ...prev, bank: event.target.checked }))
-                }
-              />
-              Bancos
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={deleteBlocksDraft.investment}
-                onChange={(event) =>
-                  setDeleteBlocksDraft((prev) => ({ ...prev, investment: event.target.checked }))
-                }
-              />
-              Inversiones
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={deleteBlocksDraft.risk}
-                onChange={(event) =>
-                  setDeleteBlocksDraft((prev) => ({ ...prev, risk: event.target.checked }))
-                }
-              />
-              Capital de riesgo
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={deleteBlocksDraft.realEstate}
-                onChange={(event) =>
-                  setDeleteBlocksDraft((prev) => ({ ...prev, realEstate: event.target.checked }))
-                }
-              />
-              Propiedad + hipoteca
-            </label>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="danger"
-              disabled={deletingBlocks || selectedDeleteBlocks === 0}
-              onClick={() => setDeleteBlocksConfirmOpen(true)}
-            >
-              {deletingBlocks ? 'Borrando...' : 'Borrar bloques seleccionados'}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={deletingClosure || !availableClosures.length}
-              onClick={() => setDeleteAllClosuresConfirmOpen(true)}
-            >
-              Borrar todos los cierres
-            </Button>
-          </div>
-          {!!deleteBlocksMessage && (
-            <div className="text-xs text-slate-700">{deleteBlocksMessage}</div>
-          )}
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3">
-          <div className="text-xs uppercase tracking-wide text-indigo-800 font-semibold">
-            Datos de prueba
-          </div>
-          <div className="text-xs text-indigo-700">
-            Carga ene/feb 2026 cerrados y mar 2026 en curso para validar cálculos y flujos.
-          </div>
-          <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
-            {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
-          </Button>
-          {!!seedDemoMessage && <div className="text-xs text-indigo-800">{seedDemoMessage}</div>}
-        </div>
+        )}
       </Card>
 
       <ClosureReviewModal
