@@ -240,7 +240,7 @@ export const SettingsAurum: React.FC = () => {
   const [deleteBlocksConfirmOpen, setDeleteBlocksConfirmOpen] = useState(false);
   const [fxFallbackDecisionOpen, setFxFallbackDecisionOpen] = useState(false);
   const [fxFallbackSavedText, setFxFallbackSavedText] = useState('');
-  const [openSection, setOpenSection] = useState<SettingsSectionKey>('quick');
+  const [openSection, setOpenSection] = useState<SettingsSectionKey | null>('quick');
   const syncSectionRef = useRef<HTMLDivElement | null>(null);
   const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
   const hydrationRunningRef = useRef(false);
@@ -580,6 +580,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   const goToFxSection = () => {
     setOpenSection('fx');
     scrollToSettingsElement(syncSectionRef.current);
+  };
+
+  const toggleSection = (key: SettingsSectionKey) => {
+    setOpenSection((prev) => (prev === key ? null : key));
   };
 
   const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
@@ -1213,7 +1217,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   return (
-    <div className="p-4 space-y-2">
+    <div className="p-4 pb-32 space-y-2">
       {(!!resetAllMessage || !!closureReviewMessage || !!closingConfigMessage) && (
         <Card className="border border-slate-200 bg-white p-2.5 space-y-1">
           {!!resetAllMessage && <div className="text-xs text-slate-700">{resetAllMessage}</div>}
@@ -1226,7 +1230,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         <button
           type="button"
           className="w-full flex items-center justify-between text-left"
-          onClick={() => setOpenSection('quick')}
+          onClick={() => toggleSection('quick')}
         >
           <div>
             <div className="text-sm font-semibold text-slate-900">Estado rápido</div>
@@ -1288,7 +1292,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-slate-200 bg-white p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('fx')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('fx')}>
           <div>
             <div className="text-sm font-semibold text-slate-900">Tipos de cambio</div>
             <div className="text-[11px] text-slate-500">TC/UF online y manual</div>
@@ -1341,7 +1345,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-slate-200 bg-white p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('rules')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('rules')}>
           <div>
             <div className="text-sm font-semibold text-slate-900">Reglas de cierre</div>
             <div className="text-[11px] text-slate-500">Campo · ON/OFF · días</div>
@@ -1376,7 +1380,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-amber-200 bg-amber-50/40 p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('instruments')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('instruments')}>
           <div className="flex items-center gap-2">
             <div className="text-sm font-semibold text-slate-900">Gestionar instrumentos</div>
             <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">⚠️</span>
@@ -1403,7 +1407,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-slate-200 bg-white p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('sync')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('sync')}>
           <div>
             <div className="text-sm font-semibold text-slate-900">Sincronización</div>
             <div className="text-[11px] text-slate-500">Estado Firestore y sesión</div>
@@ -1450,7 +1454,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-slate-200 bg-white p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('backup')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('backup')}>
           <div>
             <div className="text-sm font-semibold text-slate-900">Respaldo e importación</div>
             <div className="text-[11px] text-slate-500">JSON + CSV</div>
@@ -1575,7 +1579,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-red-200 bg-red-50/40 p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('danger')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('danger')}>
           <div>
             <div className="text-sm font-semibold text-red-900">Zona de peligro 🔴</div>
             <div className="text-[11px] text-red-700">Acciones destructivas</div>
@@ -1628,7 +1632,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       </Card>
 
       <Card className="border border-indigo-200 bg-indigo-50/40 p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpenSection('lab')}>
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('lab')}>
           <div>
             <div className="text-sm font-semibold text-slate-900">Laboratorio</div>
             <div className="text-[11px] text-slate-500">Herramientas de prueba</div>
