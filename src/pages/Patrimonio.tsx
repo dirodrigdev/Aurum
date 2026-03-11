@@ -2657,13 +2657,26 @@ export const Patrimonio: React.FC = () => {
   );
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
-    if (includeRiskCapitalInTotals && Number.isFinite(closure.summary.netClpWithRisk)) {
-      return Number(closure.summary.netClpWithRisk);
+    const hasRiskRecord = Array.isArray(closure.records)
+      ? closure.records.some(
+          (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+        )
+      : false;
+    const hasRecords = Array.isArray(closure.records) && closure.records.length > 0;
+    const summaryNet = Number(closure.summary.netClp);
+    const summaryNetWithRisk = Number(closure.summary.netClpWithRisk);
+
+    if (includeRiskCapitalInTotals) {
+      if (Number.isFinite(summaryNetWithRisk) && (!hasRiskRecord || summaryNetWithRisk !== summaryNet)) {
+        return summaryNetWithRisk;
+      }
+      if (hasRecords) return closureNetForTotals(closure, true, fx);
+      if (Number.isFinite(summaryNetWithRisk)) return summaryNetWithRisk;
+    } else {
+      if (Number.isFinite(summaryNet)) return summaryNet;
+      if (hasRecords) return closureNetForTotals(closure, false, fx);
     }
-    if (!includeRiskCapitalInTotals && Number.isFinite(closure.summary.netClp)) {
-      return Number(closure.summary.netClp);
-    }
-    return closureNetByMonth.get(closure.monthKey) ?? closure.summary.netConsolidatedClp;
+    return closure.summary.netConsolidatedClp;
   };
 
   const metrics = useMemo(() => {
@@ -2702,7 +2715,6 @@ export const Patrimonio: React.FC = () => {
   }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
     if (closures.length < 2) return;
     const currentClosure = closures[0];
     const previousClosure = closures[1];
