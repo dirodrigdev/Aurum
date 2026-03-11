@@ -242,15 +242,6 @@ const daysSinceIso = (iso?: string) => {
   return Math.max(0, Math.floor((Date.now() - time) / (1000 * 60 * 60 * 24)));
 };
 
-const firstDayOfMonthTs = (monthKey: string): number | null => {
-  const match = String(monthKey || '').trim().match(/^(\d{4})-(\d{2})$/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
-  return new Date(year, month - 1, 1).getTime();
-};
-
 const buildStartMonthSteps = (): StartMonthStepView[] => [
   { key: 'carry', title: 'Aplicando datos del mes anterior...', status: 'pending', deltaClp: 0 },
   { key: 'mortgage', title: 'Actualizando saldo hipotecario...', status: 'pending', deltaClp: 0 },
@@ -2809,11 +2800,20 @@ export const Patrimonio: React.FC = () => {
     () => computeWealthHomeSectionAmounts(monthRecordsForTotals, fx),
     [monthRecordsForTotals, fx],
   );
-  const calendarMonthKey = currentMonthKey();
+  const calendarMonthKey = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
   const realCurrentMonthKey = useMemo(
     () => deriveOperationalMonthKeyFromClosures(closures, calendarMonthKey),
     [closures, calendarMonthKey],
   );
+  const selectableLoadMonthKeys = useMemo(() => {
+    const nextCalendarMonth = monthAfterKey(calendarMonthKey);
+    const unique = new Set<string>([realCurrentMonthKey, calendarMonthKey]);
+    if (nextCalendarMonth) unique.add(nextCalendarMonth);
+    return Array.from(unique).sort();
+  }, [calendarMonthKey, realCurrentMonthKey]);
   const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
@@ -3016,6 +3016,15 @@ export const Patrimonio: React.FC = () => {
     setCloseMonthDraft(correctedMonth);
   }, [hydrationReady, closures, monthKey, closeMonthDraft, realCurrentMonthKey]);
 
+  useEffect(() => {
+    if (selectableLoadMonthKeys.includes(monthKey)) return;
+    const fallbackMonth = selectableLoadMonthKeys.includes(realCurrentMonthKey)
+      ? realCurrentMonthKey
+      : selectableLoadMonthKeys[0] || realCurrentMonthKey;
+    setMonthKey(fallbackMonth);
+    setCarryMessage(`Mes de carga ajustado a ${monthLabel(fallbackMonth).toLowerCase()} (mes permitido).`);
+  }, [monthKey, selectableLoadMonthKeys, realCurrentMonthKey]);
+
   const previousClosureForMonthStart = useMemo(
     () =>
       closures
@@ -3026,12 +3035,9 @@ export const Patrimonio: React.FC = () => {
 
   const pendingCloseAlert = useMemo(() => {
     if (!latestClosure) return null;
-    const monthStartTs = firstDayOfMonthTs(realCurrentMonthKey);
-    if (!Number.isFinite(monthStartTs)) return null;
-    const days = Math.floor((Date.now() - Number(monthStartTs)) / (1000 * 60 * 60 * 24));
-    if (!Number.isFinite(days) || days <= 5) return null;
+    if (calendarMonthKey <= realCurrentMonthKey) return null;
     return `Tienes el cierre de ${monthLabel(realCurrentMonthKey).toLowerCase()} pendiente`;
-  }, [latestClosure, realCurrentMonthKey]);
+  }, [latestClosure, realCurrentMonthKey, calendarMonthKey]);
 
   const computeMonthNetSnapshot = (targetMonthKey: string, fxOverride?: { usdClp: number; eurClp: number; ufClp: number }) => {
     const sourceRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
@@ -3998,29 +4004,6 @@ export const Patrimonio: React.FC = () => {
         </Card>
       )}
 
-      <Card
-        className={cn(
-          'p-3',
-          monthKey !== realCurrentMonthKey
-            ? 'border border-amber-300 bg-amber-50'
-            : 'border border-slate-200 bg-slate-50',
-        )}
-      >
-        <div className="text-sm font-semibold text-slate-900">Mes de carga</div>
-        <div className="mt-1 text-xs text-slate-600">
-          {monthKey !== realCurrentMonthKey
-            ? `Modo histórico activo: estás cargando ${monthLabel(monthKey).toLowerCase()}.`
-            : `Mes en curso activo: ${monthLabel(monthKey).toLowerCase()}.`}
-        </div>
-        <div className="mt-2">
-          <Input
-            type="month"
-            value={monthKey}
-            onChange={(e) => setMonthKey(e.target.value || realCurrentMonthKey)}
-          />
-        </div>
-      </Card>
-
       <div className="space-y-2">
         <div
           role="button"
@@ -4103,6 +4086,45 @@ export const Patrimonio: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <Card
+        className={cn(
+          'p-3',
+          monthKey !== realCurrentMonthKey
+            ? 'border border-amber-300 bg-amber-50'
+            : 'border border-slate-200 bg-slate-50',
+        )}
+      >
+        <div className="text-sm font-semibold text-slate-900">Mes de carga</div>
+        <div className="mt-1 text-xs text-slate-600">
+          {monthKey !== realCurrentMonthKey
+            ? `Modo histórico activo: estás cargando ${monthLabel(monthKey).toLowerCase()}.`
+            : `Mes en curso activo: ${monthLabel(monthKey).toLowerCase()}.`}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">
+          Meses permitidos: operativo, calendario actual y siguiente calendario.
+        </div>
+        <div className="mt-2">
+          <select
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            value={monthKey}
+            onChange={(e) => {
+              const nextMonth = String(e.target.value || '');
+              if (!selectableLoadMonthKeys.includes(nextMonth)) {
+                setCarryMessage('Ese mes no está habilitado para carga.');
+                return;
+              }
+              setMonthKey(nextMonth);
+            }}
+          >
+            {selectableLoadMonthKeys.map((key) => (
+              <option key={key} value={key}>
+                {monthLabel(key)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Card>
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
