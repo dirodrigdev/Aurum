@@ -3901,7 +3901,13 @@ export const clearWealthDataForFreshStart = async (
 
   const ref = await getWealthCloudRef();
   if (!ref) {
-    throw new Error('No hay sesión autenticada para borrar datos en la nube.');
+    setLastWealthSyncIssue('no_uid_or_firebase_config');
+    saveWealthSyncUiState({
+      status: 'error',
+      at: nowIso(),
+      message: 'Sin conexión con la nube',
+    });
+    return { cloudCleared: false, mode: 'local' };
   }
   try {
     await deleteDoc(ref);
@@ -3910,7 +3916,12 @@ export const clearWealthDataForFreshStart = async (
   } catch (err: any) {
     setLastWealthSyncIssue(`${err?.code || 'delete_error'} ${err?.message || ''}`.trim());
     setFirestoreStatusFromError(err);
-    throw new Error(`No se pudo borrar en la nube: ${String(err?.message || err || 'error')}`);
+    saveWealthSyncUiState({
+      status: 'error',
+      at: nowIso(),
+      message: 'Sin conexión con la nube',
+    });
+    return { cloudCleared: false, mode: 'local' };
   }
 
   return { cloudCleared: true, mode: 'cloud' };

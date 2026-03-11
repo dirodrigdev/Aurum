@@ -1137,13 +1137,20 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       });
       seedDemoWealthTimeline();
 
-      const pushed = await syncWealthNow();
-      if (!pushed) {
-        throw new Error('No se pudo sincronizar de inmediato con Firestore después del seed.');
-      }
-      const hydrated = await hydrateWealthFromCloud();
-      if (hydrated === 'unavailable') {
-        throw new Error('No se pudo confirmar en Firestore (sin sesión o nube no disponible).');
+      const hasAuth = Boolean(auth.currentUser?.uid);
+      let pushed = false;
+      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
+      if (hasAuth) {
+        try {
+          pushed = await syncWealthNow();
+        } catch {
+          pushed = false;
+        }
+        try {
+          hydrated = pushed ? await hydrateWealthFromCloud() : 'none';
+        } catch {
+          hydrated = 'none';
+        }
       }
 
       const closuresAfterSeed = loadClosures().map((closure) => closure.monthKey).sort();
@@ -1175,10 +1182,16 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         hydratedFromCloud: hydrated,
       });
       refreshLocalState();
+      if (!hasAuth) {
+        setSeedDemoMessage('Debes estar autenticado para realizar esta operación en la nube. Datos cargados solo en local.');
+        return;
+      }
+      if (!pushed || hydrated === 'unavailable' || hydrated === 'none') {
+        setSeedDemoMessage('Datos de prueba cargados en local. No se pudo confirmar sincronización en la nube.');
+        return;
+      }
       setSeedDemoMessage('Datos de prueba cargados y sincronizados. Recargando...');
-      window.setTimeout(() => {
-        window.location.reload();
-      }, 180);
+      window.setTimeout(() => window.location.reload(), 180);
     } catch (err: any) {
       setSeedDemoMessage(`No pude cargar datos de prueba: ${String(err?.message || err || 'error')}`);
     } finally {
@@ -1909,11 +1922,15 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
             setSyncMessage('');
             setFsDebug('');
             setBackupMessage('');
-            setResetAllMessage(
-              result.cloudCleared
-                ? 'Reset completado. Datos limpiados en local y nube.'
-                : 'Reset completado solo en local. Sin conexión con la nube por ahora.',
-            );
+            if (result.cloudCleared) {
+              setResetAllMessage('Reset completado. Datos limpiados en local y nube.');
+            } else if (!auth.currentUser?.uid) {
+              setResetAllMessage('Debes estar autenticado para realizar esta operación en la nube. Reset aplicado solo en local.');
+            } else {
+              const issue = getLastWealthSyncIssue();
+              const detail = issue ? ` (${issue})` : '';
+              setResetAllMessage(`Reset aplicado solo en local. No se pudo limpiar la nube${detail}.`);
+            }
             setResetStepTwoOpen(false);
           } catch (err: any) {
             setResetAllMessage(`Error en reset total: ${String(err?.message || err || 'error')}`);
