@@ -1117,6 +1117,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedingDemo(true);
     setSeedDemoMessage('');
     try {
+      await clearWealthDataForFreshStart({ preserveFx: false });
       seedDemoWealthTimeline();
       let pushed = false;
       try {

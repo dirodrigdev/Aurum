@@ -3693,12 +3693,12 @@ const makeDemoRecord = (
 });
 
 export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marKey: string } => {
-  const janKey = '2025-01';
-  const febKey = '2025-02';
-  const marKey = '2025-03';
-  const janSnapshot = '2025-01-31';
-  const febSnapshot = '2025-02-28';
-  const marSnapshot = '2025-03-31';
+  const janKey = '2026-01';
+  const febKey = '2026-02';
+  const marKey = '2026-03';
+  const janSnapshot = '2026-01-31';
+  const febSnapshot = '2026-02-28';
+  const marSnapshot = '2026-03-31';
 
   const currentFx = loadFxRates();
   const eurUsdRatio =
@@ -3782,7 +3782,7 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     {
       id: crypto.randomUUID(),
       monthKey: febKey,
-      closedAt: new Date('2025-02-28T23:59:59-03:00').toISOString(),
+      closedAt: new Date('2026-02-28T23:59:59-03:00').toISOString(),
       summary: febSummary,
       fxRates: febFx,
       records: febRecords,
@@ -3790,7 +3790,7 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     {
       id: crypto.randomUUID(),
       monthKey: janKey,
-      closedAt: new Date('2025-01-31T23:59:59-03:00').toISOString(),
+      closedAt: new Date('2026-01-31T23:59:59-03:00').toISOString(),
       summary: janSummary,
       fxRates: janFx,
       records: janRecords,
