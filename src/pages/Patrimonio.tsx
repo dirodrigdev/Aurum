@@ -565,6 +565,11 @@ const buildDraft = (section: MainSection, monthKey: string): DraftRecord => ({
   snapshotDate: visualMonthSnapshotDate(monthKey),
 });
 
+const buildCloseFxDraft = (rates: { usdClp: number; ufClp: number }) => ({
+  usdClp: String(Math.round(Number(rates.usdClp) || 0)),
+  ufClp: String(Math.round(Number(rates.ufClp) || 0)),
+});
+
 interface EditableSuggestion extends ParsedWealthSuggestion {
   snapshotDate: string;
 }
@@ -2604,6 +2609,7 @@ export const Patrimonio: React.FC = () => {
   const [closeInfo, setCloseInfo] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
+  const [closeFxDraft, setCloseFxDraft] = useState(() => buildCloseFxDraft(loadFxRates()));
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [startMonthModalOpen, setStartMonthModalOpen] = useState(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
@@ -2630,6 +2636,13 @@ export const Patrimonio: React.FC = () => {
     if (!closeConfirmOpen) return;
     setCloseConfigSnapshot(readClosingConfig());
   }, [closeConfirmOpen]);
+
+  useEffect(() => {
+    if (!closeConfirmOpen) return;
+    const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
+    const sourceFx = closureForDraft?.fxRates || fx;
+    setCloseFxDraft(buildCloseFxDraft(sourceFx));
+  }, [closeConfirmOpen, closeMonthDraft, closures, fx]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -2774,6 +2787,7 @@ export const Patrimonio: React.FC = () => {
     [monthRecordsForTotals, fx],
   );
   const realCurrentMonthKey = currentMonthKey();
+  const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
     const hasRiskRecord = Array.isArray(closure.records)
@@ -3106,19 +3120,38 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} completado.`);
   };
 
-  const completeMonthlyClose = (targetMonthKey: string) => {
+  const completeMonthlyClose = (
+    targetMonthKey: string,
+    fxForClose: { usdClp: number; eurClp: number; ufClp: number },
+  ) => {
     const before = {
       visualMonthBefore: monthKey,
       targetMonthKey,
       realCurrentMonthBefore: realCurrentMonthKey,
+      fxForClose,
     };
     console.info('[Patrimonio][close-before]', before);
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
-    createMonthlyClosure(targetRecords, fx, toCloseDateFromMonthKey(targetMonthKey));
+    createMonthlyClosure(targetRecords, fxForClose, toCloseDateFromMonthKey(targetMonthKey));
     refreshClosures();
+    const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || null;
+    const persistedFx = persistedClosure?.fxRates || null;
+    const fxMatches =
+      !!persistedFx &&
+      Math.abs((persistedFx.usdClp || 0) - fxForClose.usdClp) < 1e-6 &&
+      Math.abs((persistedFx.ufClp || 0) - fxForClose.ufClp) < 1e-6;
+    console.info('[Patrimonio][close-after-fx-check]', {
+      targetMonthKey,
+      expectedFx: fxForClose,
+      persistedFx,
+      fxMatches,
+    });
+    if (!fxMatches) {
+      setCloseError('El cierre se guardó, pero no pude confirmar TC/UF persistidos.');
+    }
     const nextVisualMonth = monthAfterKey(targetMonthKey) || currentMonthKey();
     const realCurrentMonthAfter = currentMonthKey();
     setMonthKey(nextVisualMonth);
@@ -3508,15 +3541,25 @@ export const Patrimonio: React.FC = () => {
     () => evaluateCloseValidation(closeMonthDraft),
     [closeMonthDraft, records, investmentInstruments, closeConfigSnapshot],
   );
+  const closeFxValues = useMemo(() => {
+    const parsedUsd = parseStrictNumber(closeFxDraft.usdClp);
+    const parsedUf = parseStrictNumber(closeFxDraft.ufClp);
+    return {
+      usdClp: Number.isFinite(parsedUsd) && parsedUsd > 0 ? parsedUsd : 0,
+      ufClp: Number.isFinite(parsedUf) && parsedUf > 0 ? parsedUf : 0,
+      eurClp: Number.isFinite(fx.eurClp) && fx.eurClp > 0 ? fx.eurClp : defaultFxRates.eurClp,
+    };
+  }, [closeFxDraft, fx.eurClp]);
+  const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
     const targetRecords = closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals);
-    const amounts = computeWealthHomeSectionAmounts(resolved.recordsForTotals, fx);
+    const amounts = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
     const riskRecords = targetRecords.filter(
       (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
     );
     const riskClp = riskRecords.reduce(
-      (sum, record) => sum + toClp(record.amount, record.currency, fx.usdClp, fx.eurClp, fx.ufClp),
+      (sum, record) => sum + toClp(record.amount, record.currency, closeFxValues.usdClp, closeFxValues.eurClp, closeFxValues.ufClp),
       0,
     );
     const hasProperty = targetRecords.some(
@@ -3533,12 +3576,11 @@ export const Patrimonio: React.FC = () => {
       propertyNet: amounts.realEstateNet,
       hasProperty,
       nonMortgageDebt: amounts.nonMortgageDebt,
-      usdClp: fx.usdClp,
-      ufClp: fx.ufClp,
+      usdClp: closeFxValues.usdClp,
+      ufClp: closeFxValues.ufClp,
       totalNetClp: amounts.totalNetClp,
     };
-  }, [closeValidationDraft.targetRecords, includeRiskCapitalInTotals, fx]);
-  const closeFxReady = Number.isFinite(fx.usdClp) && fx.usdClp > 0 && Number.isFinite(fx.ufClp) && fx.ufClp > 0;
+  }, [closeValidationDraft.targetRecords, includeRiskCapitalInTotals, closeFxValues]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
@@ -3595,7 +3637,22 @@ export const Patrimonio: React.FC = () => {
       return;
     }
 
-    completeMonthlyClose(targetMonthKey);
+    const fxForClose = {
+      usdClp: closeFxValues.usdClp,
+      eurClp: Number.isFinite(fx.eurClp) && fx.eurClp > 0 ? fx.eurClp : defaultFxRates.eurClp,
+      ufClp: closeFxValues.ufClp,
+    };
+    console.info('[Patrimonio][close-before-fx-input]', {
+      targetMonthKey,
+      fxForClose,
+      isHistoricalClose: targetMonthKey !== realCurrentMonthKey,
+    });
+    if (!(fxForClose.usdClp > 0 && fxForClose.ufClp > 0)) {
+      setCloseInfo('');
+      setCloseError('Completá TC/UF válidos para confirmar este cierre.');
+      return;
+    }
+    completeMonthlyClose(targetMonthKey, fxForClose);
     if (carried.length) {
       setCarryMessage(
         `Cierre realizado con ${carried.length} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
@@ -3735,6 +3792,14 @@ export const Patrimonio: React.FC = () => {
         <div className="relative">
           <div className="text-xs uppercase tracking-[0.22em] text-[#f3eadb]">Aurum Wealth</div>
           <div className="mt-1 text-sm text-[#e0d6c5]">Resumen estratégico {monthLabel(monthKey).toLowerCase()}</div>
+          {isFirstUseOnboarding && (
+            <div className="mt-3 rounded-xl border border-[#c59a6c]/35 bg-[#f6efe3]/12 p-3 text-xs text-[#f3eadb]">
+              <div className="font-semibold">Primer uso: cómo empezar</div>
+              <div className="mt-1">1. Primero ingresa tus cierres históricos desde Settings → Importar CSV.</div>
+              <div className="mt-1">2. O ingresa manualmente desde aquí cambiando el mes.</div>
+              <div className="mt-1">3. Luego ingresa los datos del mes actual.</div>
+            </div>
+          )}
 
           <div className="absolute top-0 right-0 z-20 flex items-center gap-2">
             <button
@@ -3858,6 +3923,29 @@ export const Patrimonio: React.FC = () => {
         </Card>
       )}
 
+      <Card
+        className={cn(
+          'p-3',
+          monthKey !== realCurrentMonthKey
+            ? 'border border-amber-300 bg-amber-50'
+            : 'border border-slate-200 bg-slate-50',
+        )}
+      >
+        <div className="text-sm font-semibold text-slate-900">Mes de carga</div>
+        <div className="mt-1 text-xs text-slate-600">
+          {monthKey !== realCurrentMonthKey
+            ? `Modo histórico activo: estás cargando ${monthLabel(monthKey).toLowerCase()}.`
+            : `Mes en curso activo: ${monthLabel(monthKey).toLowerCase()}.`}
+        </div>
+        <div className="mt-2">
+          <Input
+            type="month"
+            value={monthKey}
+            onChange={(e) => setMonthKey(e.target.value || realCurrentMonthKey)}
+          />
+        </div>
+      </Card>
+
       <div className="space-y-2">
         <div
           role="button"
@@ -3968,18 +4056,13 @@ export const Patrimonio: React.FC = () => {
           </div>
         )}
 
-        <details>
-          <summary className="text-xs text-slate-500 cursor-pointer">Cambiar mes de visualización</summary>
-          <div className="mt-2">
-            <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value || realCurrentMonthKey)} />
-          </div>
-        </details>
       </Card>
 
       <CloseConfirmModal
         open={closeConfirmOpen}
         closeMonthDraft={closeMonthDraft}
         monthKey={monthKey}
+        realCurrentMonthKey={realCurrentMonthKey}
         selectedClosureMonthKey={selectedClosureForDraft?.monthKey}
         recentCloseWarning={recentCloseWarning}
         closeBlockingIssues={closeBlockingIssues}
@@ -3988,8 +4071,15 @@ export const Patrimonio: React.FC = () => {
         closeError={closeError}
         closeFxReady={closeFxReady}
         closePreview={closePreview}
+        closeFxDraft={closeFxDraft}
         monthLabel={monthLabel}
         onCloseMonthDraftChange={setCloseMonthDraft}
+        onCloseFxDraftChange={(next) =>
+          setCloseFxDraft((prev) => ({
+            usdClp: next.usdClp ?? prev.usdClp,
+            ufClp: next.ufClp ?? prev.ufClp,
+          }))
+        }
         onResolveWithPrevious={resolveCloseIssueWithPrevious}
         onResolveExclude={resolveCloseIssueExclude}
         onReview={reviewCloseIssue}

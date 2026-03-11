@@ -232,6 +232,7 @@ export const SettingsAurum: React.FC = () => {
   const [deleteClosureMessage, setDeleteClosureMessage] = useState('');
   const [deletingClosure, setDeletingClosure] = useState(false);
   const [allRecords, setAllRecords] = useState(() => loadWealthRecords());
+  const [checklistMonthKey, setChecklistMonthKey] = useState(() => currentMonthKey());
   const [investmentInstruments, setInvestmentInstruments] = useState(() => loadInvestmentInstruments());
   const [closingConfig, setClosingConfig] = useState<ClosingConfigState>(() => readClosingConfig());
   const [closingConfigMessage, setClosingConfigMessage] = useState('');
@@ -419,10 +420,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     () => Array.from(new Set([...closureDataPendingMonthKeys, ...closureReviewPendingMonthKeys])).sort(),
     [closureDataPendingMonthKeys, closureReviewPendingMonthKeys],
   );
-  const monthKey = useMemo(() => currentMonthKey(), []);
   const monthRecords = useMemo(
-    () => allRecords.filter((record) => String(record.snapshotDate || '').startsWith(`${monthKey}-`)),
-    [allRecords, monthKey],
+    () => allRecords.filter((record) => String(record.snapshotDate || '').startsWith(`${checklistMonthKey}-`)),
+    [allRecords, checklistMonthKey],
   );
   const historicalStatus = useMemo(() => {
     const count = availableClosures.length;
@@ -481,6 +481,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   }, [fx]);
 
   const refreshLocalState = () => {
+    setChecklistMonthKey(currentMonthKey());
     setFx(loadFxRates());
     setFxLiveMeta(loadFxLiveSyncMeta());
     setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
@@ -909,6 +910,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     if (!targetId) return;
     const targetInstrument = investmentInstruments.find((item) => item.id === targetId);
     if (!targetInstrument) return;
+    const monthKey = currentMonthKey();
 
     setClosingInvestmentActionBusy(true);
     setClosingConfigMessage('');
@@ -1280,7 +1282,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
               </div>
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
-              <div className="text-xs text-slate-600 mb-2">{formatMonthLabel(monthKey)} · estado por módulo</div>
+              <div className="text-xs text-slate-600 mb-2">{formatMonthLabel(checklistMonthKey)} · estado por módulo</div>
               <div className="space-y-1.5">
                 {monthChecklist.map((item) => (
                   <div key={item.key} className="flex items-center justify-between gap-2 text-xs">

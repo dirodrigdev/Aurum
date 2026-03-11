@@ -13,6 +13,7 @@ interface CloseConfirmModalProps {
   open: boolean;
   closeMonthDraft: string;
   monthKey: string;
+  realCurrentMonthKey: string;
   selectedClosureMonthKey?: string | null;
   recentCloseWarning: string;
   closeBlockingIssues: CloseValidationIssueView[];
@@ -32,8 +33,13 @@ interface CloseConfirmModalProps {
     ufClp: number;
     totalNetClp: number;
   };
+  closeFxDraft: {
+    usdClp: string;
+    ufClp: string;
+  };
   monthLabel: (monthKey: string) => string;
   onCloseMonthDraftChange: (nextMonth: string) => void;
+  onCloseFxDraftChange: (next: { usdClp?: string; ufClp?: string }) => void;
   onResolveWithPrevious: (issue: CloseValidationIssueView) => void;
   onResolveExclude: (issue: CloseValidationIssueView) => void;
   onReview: (issue: CloseValidationIssueView) => void;
@@ -45,6 +51,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   open,
   closeMonthDraft,
   monthKey,
+  realCurrentMonthKey,
   selectedClosureMonthKey,
   recentCloseWarning,
   closeBlockingIssues,
@@ -53,8 +60,10 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   closeError,
   closeFxReady,
   closePreview,
+  closeFxDraft,
   monthLabel,
   onCloseMonthDraftChange,
+  onCloseFxDraftChange,
   onResolveWithPrevious,
   onResolveExclude,
   onReview,
@@ -62,6 +71,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   onAttemptClose,
 }) => {
   if (!open) return null;
+  const isHistoricalClose = closeMonthDraft !== realCurrentMonthKey;
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
@@ -190,10 +200,40 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
               <span>Deuda no hipotecaria</span>
               <span className="font-medium">-{formatCurrency(closePreview.nonMortgageDebt, 'CLP')}</span>
             </div>
-            <div className="pt-1 text-[11px] text-slate-500">
-              TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · UF/CLP{' '}
-              {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
-            </div>
+            {isHistoricalClose ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2">
+                <div className="text-[11px] font-semibold text-amber-800">
+                  Cierre histórico: ingresa TC/UF del momento ({monthLabel(closeMonthDraft).toLowerCase()})
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-[11px] text-amber-800">USD/CLP</div>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={closeFxDraft.usdClp}
+                      onChange={(e) => onCloseFxDraftChange({ usdClp: e.target.value })}
+                      placeholder="USD/CLP"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-amber-800">UF/CLP</div>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={closeFxDraft.ufClp}
+                      onChange={(e) => onCloseFxDraftChange({ ufClp: e.target.value })}
+                      placeholder="UF/CLP"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="pt-1 text-[11px] text-slate-500">
+                TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · UF/CLP{' '}
+                {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
+              </div>
+            )}
             <div className="mt-1 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
               <span className="text-slate-900 font-semibold">Patrimonio total</span>
               <span className="text-slate-900 font-semibold">{formatCurrency(closePreview.totalNetClp, 'CLP')}</span>
