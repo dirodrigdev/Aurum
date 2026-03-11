@@ -443,8 +443,7 @@ Columnas:
 
 Plantilla:
 month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,planvital_clp,global66_usd,wise_usd,valor_prop_uf,saldo_deuda_uf,dividendo_uf,interes_uf,seguros_uf,amortizacion_uf,bancos_clp,bancos_usd,tarjetas_clp,tarjetas_usd
-2026-01,2026-01-31T23:59:59-03:00,869.12,944.43,39711.00,601583627,282697790,261428257,244443361,66767.40,4039.66,14500,8887.0006,53.2454,21.4029,4.1431,27.6994,5374622,2800,112400000,0
-2026-02,2026-02-28T23:59:59-03:00,857.56,930.25,39762.28,607337347,286420525,264741547,249092726,67098.43,4048.23,14500,8859.3012,53.2454,21.4029,4.1431,27.6994,5400000,1800,112400000,0`;
+2026-01,2026-01-31T23:59:59-03:00,857.56,930.25,39762.28,,,,,,,,,,,,,,,,,`;
 
   const deferredCsvDraft = useDeferredValue(csvDraft);
   const csvPreview = useMemo(() => previewHistoricalClosuresCsv(deferredCsvDraft), [deferredCsvDraft]);
