@@ -241,10 +241,16 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="pt-1 text-[11px] text-slate-500">
-                TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · EUR/CLP{' '}
-                {Math.round(closePreview.eurClp).toLocaleString('es-CL')} · UF/CLP{' '}
-                {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
+              <div className="space-y-1 pt-1 text-[11px] text-slate-500">
+                <div>
+                  TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · EUR/CLP{' '}
+                  {Math.round(closePreview.eurClp).toLocaleString('es-CL')} · UF/CLP{' '}
+                  {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
+                </div>
+                <div>
+                  Los tipos de cambio solo son editables al cerrar meses históricos. Para el mes actual se usan
+                  los TC configurados en Ajustes.
+                </div>
               </div>
             )}
             <div className="mt-1 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
