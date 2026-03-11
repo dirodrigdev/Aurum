@@ -521,6 +521,24 @@ const toCloseDateFromMonthKey = (monthKey: string) => {
   return new Date(year, (month || 1) - 1, 1, 12, 0, 0, 0);
 };
 
+const monthAfterKey = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+};
+
+const visualMonthSnapshotDate = (monthKey: string, mode: 'start' | 'end' = 'end') => {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return todayYmd();
+  }
+  if (mode === 'start') return `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+};
+
 const getSectionBlock = (section: MainSection): WealthBlock => {
   if (section === 'investment') return 'investment';
   if (section === 'bank') return 'bank';
@@ -537,14 +555,14 @@ interface DraftRecord {
   snapshotDate: string;
 }
 
-const buildDraft = (section: MainSection): DraftRecord => ({
+const buildDraft = (section: MainSection, monthKey: string): DraftRecord => ({
   block: section === 'investment' ? 'investment' : section === 'real_estate' ? 'real_estate' : 'bank',
   source: 'manual',
   label: '',
   amount: '',
   currency: section === 'real_estate' ? 'UF' : 'CLP',
   note: '',
-  snapshotDate: todayYmd(),
+  snapshotDate: visualMonthSnapshotDate(monthKey),
 });
 
 interface EditableSuggestion extends ParsedWealthSuggestion {
@@ -668,7 +686,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [ocrError, setOcrError] = useState('');
   const [ocrText, setOcrText] = useState('');
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
-  const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section));
+  const [draft, setDraft] = useState<DraftRecord>(() => buildDraft(section, monthKey));
   const [quickFill, setQuickFill] = useState<QuickFillDraft | null>(null);
   const [multiQuickFill, setMultiQuickFill] = useState<MultiQuickFillDraft | null>(null);
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
@@ -695,6 +713,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
   const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
   const sectionTitle = section === 'real_estate' ? 'Bienes raíces (neto)' : sectionLabel[section];
+  const expectedMonthPrefix = `${monthKey}-`;
+  const visualSnapshotDate = useMemo(() => visualMonthSnapshotDate(monthKey), [monthKey]);
+
+  useEffect(() => {
+    setDraft((prev) =>
+      prev.snapshotDate.startsWith(expectedMonthPrefix)
+        ? prev
+        : { ...prev, snapshotDate: visualSnapshotDate },
+    );
+  }, [expectedMonthPrefix, visualSnapshotDate]);
 
   useEffect(() => {
     if (section !== 'bank') return;
@@ -1024,6 +1052,45 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const suggestionKey = (item: Pick<EditableSuggestion, 'block' | 'source' | 'label' | 'currency'>) =>
     `${item.block}::${normalizeForMatch(item.source)}::${normalizeForMatch(item.label)}::${item.currency}`;
 
+  const normalizeSnapshotDateForVisualMonth = (snapshotDate?: string) => {
+    const candidate = String(snapshotDate || '').trim();
+    if (candidate.startsWith(expectedMonthPrefix)) return candidate;
+    return visualSnapshotDate;
+  };
+
+  const upsertRecordForVisualMonth = (
+    payload: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string },
+    operation: string,
+  ) => {
+    const snapshotDate = normalizeSnapshotDateForVisualMonth(payload.snapshotDate);
+    const before = {
+      operation,
+      monthKey,
+      id: payload.id || null,
+      requestedSnapshotDate: payload.snapshotDate,
+      normalizedSnapshotDate: snapshotDate,
+    };
+    console.info('[Patrimonio][save-before]', before);
+    const saved = upsertWealthRecord({ ...payload, snapshotDate });
+    const persisted = loadWealthRecords().find((record) => record.id === saved.id) || saved;
+    const inExpectedMonth = String(persisted.snapshotDate || '').startsWith(expectedMonthPrefix);
+    const after = {
+      operation,
+      monthKey,
+      id: persisted.id,
+      persistedSnapshotDate: persisted.snapshotDate,
+      inExpectedMonth,
+    };
+    console.info('[Patrimonio][save-after]', after);
+    if (!inExpectedMonth) {
+      const visibleError = `No pude guardar "${payload.label}" en ${monthLabel(monthKey).toLowerCase()}. Reintenta.`;
+      if (section === 'bank') setFintocStatus(visibleError);
+      else setOcrError(visibleError);
+      return null;
+    }
+    return persisted;
+  };
+
   const openImagePicker = () => {
     if (!hiddenUploadInputRef.current) return;
     hiddenUploadInputRef.current.click();
@@ -1079,7 +1146,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       let parsed = rawParsed.map((item) => ({
         ...item,
         block: normalizeSuggestionBlock(item.block),
-        snapshotDate: todayYmd(),
+        snapshotDate: visualSnapshotDate,
       }));
       parsed = applyInvestmentContextToParsed(parsed);
 
@@ -1088,7 +1155,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         const strictDividendParsed = parseWealthFromOcrText(text, 'dividendo').map((item) => ({
           ...item,
           block: normalizeSuggestionBlock(item.block),
-          snapshotDate: todayYmd(),
+          snapshotDate: visualSnapshotDate,
         }));
         const hasDividend = strictDividendParsed.some((i) => i.label === MORTGAGE_DIVIDEND_LABEL);
         const hasDebt = strictDividendParsed.some((i) => i.label === MORTGAGE_DEBT_BALANCE_LABEL);
@@ -1155,7 +1222,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         normalizeForMatch(r.label) === itemLabel,
     );
 
-    upsertWealthRecord({
+    const saved = upsertRecordForVisualMonth({
       id: existing?.id,
       block: item.block,
       source: item.source,
@@ -1164,7 +1231,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       currency: item.currency,
       note: item.note,
       snapshotDate: item.snapshotDate,
-    });
+    }, 'saveSuggestion');
+    if (!saved) return;
 
     if (typeof idx === 'number') {
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
@@ -1178,7 +1246,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveAllSuggestions = () => {
-    suggestions.forEach((item) => {
+    let failed = false;
+    for (const item of suggestions) {
       const itemLabel = normalizeForMatch(item.label);
       const existing = dedupedSectionRecords.find(
         (r) =>
@@ -1187,7 +1256,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           normalizeForMatch(r.label) === itemLabel,
       );
 
-      upsertWealthRecord({
+      const saved = upsertRecordForVisualMonth({
         id: existing?.id,
         block: item.block,
         source: item.source,
@@ -1196,8 +1265,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: item.currency,
         note: item.note,
         snapshotDate: item.snapshotDate,
-      });
-    });
+      }, 'saveAllSuggestions');
+      if (!saved) {
+        failed = true;
+        break;
+      }
+    }
+    if (failed) return;
     setSuggestions([]);
     setOpenLoadPanel(false);
     setQuickFill(null);
@@ -1210,7 +1284,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const amount = parseStrictNumber(draft.amount);
     if (!draft.label.trim() || !Number.isFinite(amount) || amount < 0) return;
 
-    upsertWealthRecord({
+    const saved = upsertRecordForVisualMonth({
       id: editingId || undefined,
       block: draft.block,
       source: draft.source || 'manual',
@@ -1219,9 +1293,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       currency: draft.currency,
       note: draft.note.trim() || undefined,
       snapshotDate: draft.snapshotDate,
-    });
+    }, 'saveDraft');
+    if (!saved) return;
 
-    setDraft(buildDraft(section));
+    setDraft(buildDraft(section, monthKey));
     setEditingId(null);
     setOpenLoadPanel(false);
     setQuickFill(null);
@@ -1287,7 +1362,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       });
       setMultiQuickFill({
         source: context.source,
-        snapshotDate: `${monthKey}-01`,
+        snapshotDate: visualSnapshotDate,
         entries,
       });
       setQuickFill(null);
@@ -1305,7 +1380,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       amount: existing ? String(existing.amount) : '',
       currency: entry.currency,
       note: existing?.note || '',
-      snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
+      snapshotDate: existing?.snapshotDate || visualSnapshotDate,
     });
     setMultiQuickFill(null);
     setOpenLoadPanel(true);
@@ -1336,7 +1411,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         label: existing?.label || row.name,
         amount: existing ? String(existing.amount) : '',
         currency: existing?.currency || 'UF',
-        snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
+        snapshotDate: existing?.snapshotDate || visualSnapshotDate,
       });
       setOpenLoadPanel(true);
       return;
@@ -1356,10 +1431,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     } else {
       setEditingId(null);
       setDraft({
-        ...buildDraft(section),
+        ...buildDraft(section, monthKey),
         block: preferredBlock,
         label: row.name,
-        currency: buildDraft(section).currency,
+        currency: buildDraft(section, monthKey).currency,
       });
     }
     setOpenLoadPanel(true);
@@ -1369,7 +1444,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     if (!quickFill) return;
     const amount = parseStrictNumber(quickFill.amount);
     if (!Number.isFinite(amount) || amount < 0) return;
-    upsertWealthRecord({
+    const saved = upsertRecordForVisualMonth({
       id: quickFill.id,
       block: quickFill.block,
       source: quickFill.source,
@@ -1378,7 +1453,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       currency: quickFill.currency,
       note: quickFill.note?.trim() || undefined,
       snapshotDate: quickFill.snapshotDate,
-    });
+    }, 'saveQuickFill');
+    if (!saved) return;
     setQuickFill(null);
     setActiveSourceContext(null);
     setOpenLoadPanel(false);
@@ -1395,8 +1471,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       .filter((entry) => Number.isFinite(entry.amountParsed) && entry.amountParsed >= 0);
     if (!parsedEntries.length) return;
 
-    parsedEntries.forEach((entry) => {
-      upsertWealthRecord({
+    for (const entry of parsedEntries) {
+      const saved = upsertRecordForVisualMonth({
         id: entry.id,
         block: 'investment',
         source: multiQuickFill.source,
@@ -1405,8 +1481,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         currency: entry.currency,
         note: entry.note?.trim() || undefined,
         snapshotDate: multiQuickFill.snapshotDate,
-      });
-    });
+      }, 'saveMultiQuickFill');
+      if (!saved) return;
+    }
     setMultiQuickFill(null);
     setActiveSourceContext(null);
     setOpenLoadPanel(false);
@@ -1456,7 +1533,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
         return;
       }
-      const snapshotDate = todayYmd();
+      const snapshotDate = visualSnapshotDate;
       if (!silent) setFintocDiscovery(result);
       const discoveryBank = String(result.summary.institution || bankName).trim() || bankName;
       setFintocLastSync((prev) => ({
@@ -1496,7 +1573,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             r.currency === currency &&
             r.block === block,
         );
-        upsertWealthRecord({
+        const saved = upsertRecordForVisualMonth({
           id: existing?.id,
           block,
           source: 'Fintoc API',
@@ -1505,7 +1582,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           currency,
           snapshotDate,
           note,
-        });
+        }, `runFintocDiscovery:${label}`);
+        if (!saved) throw new Error(`No pude guardar ${label} en ${monthLabel(monthKey).toLowerCase()}.`);
       };
       upsertByLabel(
         'bank',
@@ -1795,7 +1873,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                                 label: item.label,
                                 amount: existing ? String(existing.amount) : '',
                                 currency: existing?.currency || item.currency,
-                                snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
+                                snapshotDate: existing?.snapshotDate || visualSnapshotDate,
                               });
                               setOpenLoadPanel(true);
                             }}
@@ -1849,7 +1927,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                               label: item.label,
                               amount: existing ? String(existing.amount) : '',
                               currency: existing?.currency || item.currency,
-                              snapshotDate: existing?.snapshotDate || `${monthKey}-01`,
+                              snapshotDate: existing?.snapshotDate || visualSnapshotDate,
                             });
                             setOpenLoadPanel(true);
                           }}
@@ -2992,14 +3070,14 @@ export const Patrimonio: React.FC = () => {
     };
 
     await runStep('carry', async () => {
-      const result = fillMissingWithPreviousClosure(monthToStart, todayYmd());
+      const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
       return {
         message: result.added > 0 ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}).` : 'Sin cambios de arrastre.',
       };
     });
 
     await runStep('mortgage', async () => {
-      const auto = applyMortgageAutoCalculation(monthToStart, todayYmd());
+      const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
       if (auto.changed > 0) {
         return { message: `Autocálculo aplicado en ${auto.changed} registros (${auto.sourceMonth || 'sin base'}).` };
       }
@@ -3029,12 +3107,32 @@ export const Patrimonio: React.FC = () => {
   };
 
   const completeMonthlyClose = (targetMonthKey: string) => {
+    const before = {
+      visualMonthBefore: monthKey,
+      targetMonthKey,
+      realCurrentMonthBefore: realCurrentMonthKey,
+    };
+    console.info('[Patrimonio][close-before]', before);
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
     createMonthlyClosure(targetRecords, fx, toCloseDateFromMonthKey(targetMonthKey));
     refreshClosures();
+    const nextVisualMonth = monthAfterKey(targetMonthKey) || currentMonthKey();
+    const realCurrentMonthAfter = currentMonthKey();
+    setMonthKey(nextVisualMonth);
+    setCloseMonthDraft(nextVisualMonth);
+    const advanced = nextVisualMonth !== targetMonthKey;
+    console.info('[Patrimonio][close-after]', {
+      visualMonthAfter: nextVisualMonth,
+      targetMonthKey,
+      realCurrentMonthAfter,
+      advanced,
+    });
+    if (!advanced) {
+      setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
+    }
   };
 
   const recordsForSection = useMemo(() => {
@@ -3076,15 +3174,34 @@ export const Patrimonio: React.FC = () => {
     if (!instrument) return;
 
     if (typeof input.amount === 'number' && Number.isFinite(input.amount) && input.amount > 0) {
-      upsertWealthRecord({
+      const expectedSnapshotDate = visualMonthSnapshotDate(monthKey);
+      console.info('[Patrimonio][save-before]', {
+        operation: 'createInvestmentInstrument',
+        monthKey,
+        label: instrument.label,
+        requestedSnapshotDate: expectedSnapshotDate,
+      });
+      const saved = upsertWealthRecord({
         block: 'investment',
         source: 'Instrumento manual',
         label: instrument.label,
         amount: input.amount,
         currency: instrument.currency,
         note: input.note || undefined,
-        snapshotDate: `${monthKey}-01`,
+        snapshotDate: expectedSnapshotDate,
       });
+      const persisted = loadWealthRecords().find((record) => record.id === saved.id) || saved;
+      const inExpectedMonth = String(persisted.snapshotDate || '').startsWith(`${monthKey}-`);
+      console.info('[Patrimonio][save-after]', {
+        operation: 'createInvestmentInstrument',
+        monthKey,
+        label: instrument.label,
+        persistedSnapshotDate: persisted.snapshotDate,
+        inExpectedMonth,
+      });
+      if (!inExpectedMonth) {
+        setCloseError(`No pude guardar "${instrument.label}" en ${monthLabel(monthKey).toLowerCase()}.`);
+      }
     }
     refreshRecords();
     refreshInstruments();
@@ -3425,7 +3542,11 @@ export const Patrimonio: React.FC = () => {
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
-    const result = fillMissingWithPreviousClosure(closeMonthDraft, todayYmd(), [issue.label]);
+    const result = fillMissingWithPreviousClosure(
+      closeMonthDraft,
+      visualMonthSnapshotDate(closeMonthDraft),
+      [issue.label],
+    );
     refreshRecords();
     if (result.added > 0) {
       setCloseError('');
@@ -3501,10 +3622,11 @@ export const Patrimonio: React.FC = () => {
   const useMissingFromPrevious = (section: MainSection, itemName?: string) => {
     const isSingleItem = !!itemName;
     const isRealEstate = section === 'real_estate';
-    const init = isRealEstate && !isSingleItem ? ensureInitialMortgageDefaults(monthKey, todayYmd()) : { added: 0 };
-    const result = fillMissingWithPreviousClosure(monthKey, todayYmd(), itemName ? [itemName] : undefined);
+    const targetSnapshotDate = visualMonthSnapshotDate(monthKey);
+    const init = isRealEstate && !isSingleItem ? ensureInitialMortgageDefaults(monthKey, targetSnapshotDate) : { added: 0 };
+    const result = fillMissingWithPreviousClosure(monthKey, targetSnapshotDate, itemName ? [itemName] : undefined);
     const auto = isRealEstate && !isSingleItem
-      ? applyMortgageAutoCalculation(monthKey, todayYmd())
+      ? applyMortgageAutoCalculation(monthKey, targetSnapshotDate)
       : { changed: 0, sourceMonth: null, reason: null };
     refreshRecords();
 
@@ -3547,7 +3669,7 @@ export const Patrimonio: React.FC = () => {
   };
 
   const applyMortgageAutoNow = () => {
-    const auto = applyMortgageAutoCalculation(monthKey, todayYmd());
+    const auto = applyMortgageAutoCalculation(monthKey, visualMonthSnapshotDate(monthKey));
     refreshRecords();
     if (auto.changed > 0) {
       setCarryMessage(`Autocálculo hipotecario aplicado en ${auto.changed} registros (base ${auto.sourceMonth}).`);
