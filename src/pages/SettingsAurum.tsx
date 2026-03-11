@@ -1118,6 +1118,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedDemoMessage('');
     try {
       await clearWealthDataForFreshStart({ preserveFx: false });
+      // Limpieza local explícita previa al seed para evitar cualquier residuo de ejecuciones anteriores.
+      saveWealthRecords([], { skipCloudSync: true, silent: true });
+      saveClosures([], { skipCloudSync: true, silent: true });
       seedDemoWealthTimeline();
       let pushed = false;
       try {
@@ -1790,7 +1793,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
             Datos de prueba
           </div>
           <div className="text-xs text-indigo-700">
-            Carga ene/feb 2025 cerrados y mar 2025 en curso para validar cálculos y flujos.
+            Carga ene/feb 2026 cerrados y mar 2026 en curso para validar cálculos y flujos.
           </div>
           <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
             {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}

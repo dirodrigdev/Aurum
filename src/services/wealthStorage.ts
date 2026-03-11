@@ -3719,7 +3719,11 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const marKey = '2026-03';
   const janSnapshot = '2026-01-31';
   const febSnapshot = '2026-02-28';
-  const marSnapshot = '2026-03-31';
+  const marSnapshot = '2026-03-11';
+
+  // Limpieza explícita: marzo 2026 nunca debe quedar como cierre confirmado al seedear demo.
+  const closuresWithoutMarch = loadClosures().filter((closure) => closure.monthKey !== marKey);
+  saveClosures(closuresWithoutMarch, { skipCloudSync: true, silent: true });
 
   const currentFx = loadFxRates();
   const eurUsdRatio =
@@ -3827,6 +3831,17 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     febKey,
     marKey,
     historyMonthKeys: [janKey, febKey],
+  });
+
+  const seededClosures = loadClosures();
+  const lastClosureMonthKey = seededClosures[0]?.monthKey || null;
+  const derivedCurrentMonthKey = currentMonthKey();
+  const currentMonthRecords = latestRecordsForMonth(loadWealthRecords(), derivedCurrentMonthKey);
+  console.info('[seedDemoWealthTimeline] current-month-check', {
+    lastClosureMonthKey,
+    currentMonthKey: derivedCurrentMonthKey,
+    currentMonthRecordsCount: currentMonthRecords.length,
+    currentMonthRecordLabels: currentMonthRecords.map((record) => record.label),
   });
 
   return { janKey, febKey, marKey };
