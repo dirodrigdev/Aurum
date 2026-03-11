@@ -1,4 +1,4 @@
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 
@@ -796,6 +796,20 @@ const stripUndefinedDeep = (value: any): any => {
     return out;
   }
   return value;
+};
+
+const clearAurumAndWealthLocalStorage = () => {
+  if (typeof window === 'undefined') return;
+  const keysToRemove = Object.keys(window.localStorage).filter(
+    (key) => key.startsWith('aurum') || key.startsWith('wealth_'),
+  );
+  keysToRemove.forEach((key) => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  });
 };
 
 export const currentMonthKey = () => {
@@ -3721,9 +3735,20 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const febSnapshot = '2026-02-28';
   const marSnapshot = '2026-03-11';
 
-  // Limpieza explícita: marzo 2026 nunca debe quedar como cierre confirmado al seedear demo.
+  // Limpieza local explícita antes de insertar demo, para evitar residuales entre ejecuciones.
+  applyWealthStateLocal({
+    records: [],
+    closures: [],
+    instruments: [],
+    bankTokens: {},
+    deletedRecordIds: [],
+    deletedRecordAssetMonthKeys: [],
+    fx: loadFxRates(),
+  });
   const closuresWithoutMarch = loadClosures().filter((closure) => closure.monthKey !== marKey);
-  saveClosures(closuresWithoutMarch, { skipCloudSync: true, silent: true });
+  if (closuresWithoutMarch.length > 0) {
+    saveClosures(closuresWithoutMarch, { skipCloudSync: true, silent: true });
+  }
 
   const currentFx = loadFxRates();
   const eurUsdRatio =
@@ -3842,6 +3867,9 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     currentMonthKey: derivedCurrentMonthKey,
     currentMonthRecordsCount: currentMonthRecords.length,
     currentMonthRecordLabels: currentMonthRecords.map((record) => record.label),
+    closureMonthKeys: seededClosures.map((closure) => closure.monthKey),
+    hasMarchClosure: seededClosures.some((closure) => closure.monthKey === marKey),
+    hasAny2025Data: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
   });
 
   return { janKey, febKey, marKey };
@@ -3852,26 +3880,38 @@ export const clearWealthDataForFreshStart = async (
 ): Promise<{ cloudCleared: boolean; mode: 'cloud' | 'local' }> => {
   const preserveFx = options?.preserveFx !== false;
   const nextFx = preserveFx ? loadFxRates() : { ...defaultFxRates };
-  const bankTokens = loadBankTokens();
 
+  clearAurumAndWealthLocalStorage();
   applyWealthStateLocal({
     records: [],
     closures: [],
     instruments: [],
-    bankTokens,
+    bankTokens: {},
     deletedRecordIds: [],
     deletedRecordAssetMonthKeys: [],
     fx: nextFx,
   });
   saveDemoSeedMeta(null);
-  const cloud = await persistWealthStateToCloud({
-    records: [],
-    closures: [],
-    instruments: [],
-    bankTokens,
-    deletedRecordIds: [],
-    deletedRecordAssetMonthKeys: [],
-    fx: nextFx,
-  });
-  return cloud;
+  saveDeletedRecordIds([]);
+  saveDeletedRecordAssetMonthKeys([]);
+  saveInvestmentInstruments([]);
+  saveBankTokens({});
+  saveClosures([], { skipCloudSync: true, silent: true });
+  saveWealthRecords([], { skipCloudSync: true, silent: true });
+
+  const ref = await getWealthCloudRef();
+  if (!ref) {
+    throw new Error('No hay sesión autenticada para borrar datos en la nube.');
+  }
+  try {
+    await deleteDoc(ref);
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+  } catch (err: any) {
+    setLastWealthSyncIssue(`${err?.code || 'delete_error'} ${err?.message || ''}`.trim());
+    setFirestoreStatusFromError(err);
+    throw new Error(`No se pudo borrar en la nube: ${String(err?.message || err || 'error')}`);
+  }
+
+  return { cloudCleared: true, mode: 'cloud' };
 };

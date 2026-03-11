@@ -1117,10 +1117,24 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedingDemo(true);
     setSeedDemoMessage('');
     try {
+      console.info('[seed-demo] estado antes de reset', {
+        records: loadWealthRecords().length,
+        closures: loadClosures().map((c) => c.monthKey),
+        instruments: loadInvestmentInstruments().length,
+        has2025: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
+      });
       await clearWealthDataForFreshStart({ preserveFx: false });
-      // Limpieza local explícita previa al seed para evitar cualquier residuo de ejecuciones anteriores.
-      saveWealthRecords([], { skipCloudSync: true, silent: true });
-      saveClosures([], { skipCloudSync: true, silent: true });
+      const recordsAfterReset = loadWealthRecords();
+      const closuresAfterReset = loadClosures();
+      const instrumentsAfterReset = loadInvestmentInstruments();
+      if (recordsAfterReset.length || closuresAfterReset.length || instrumentsAfterReset.length) {
+        throw new Error('Reset incompleto: aún existen datos locales después del borrado.');
+      }
+      console.info('[seed-demo] estado después de reset', {
+        records: recordsAfterReset.length,
+        closures: closuresAfterReset.length,
+        instruments: instrumentsAfterReset.length,
+      });
       seedDemoWealthTimeline();
       let pushed = false;
       try {
@@ -1128,6 +1142,18 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       } catch {
         pushed = false;
       }
+      const closuresAfterSeed = loadClosures().map((closure) => closure.monthKey).sort();
+      const currentMonth = currentMonthKey();
+      const currentMonthRecords = loadWealthRecords().filter((record) =>
+        record.snapshotDate.startsWith(`${currentMonth}-`),
+      );
+      console.info('[seed-demo] verificación post-seed', {
+        closures: closuresAfterSeed,
+        currentMonthKey: currentMonth,
+        currentMonthRecordsCount: currentMonthRecords.length,
+        has2025Data: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
+        hasMarch2026Closure: closuresAfterSeed.includes('2026-03'),
+      });
       refreshLocalState();
       setSeedDemoMessage(
         pushed ? 'Datos de prueba cargados' : 'Datos de prueba cargados (sin conexión con la nube).',
@@ -1868,6 +1894,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                 : 'Reset completado solo en local. Sin conexión con la nube por ahora.',
             );
             setResetStepTwoOpen(false);
+          } catch (err: any) {
+            setResetAllMessage(`Error en reset total: ${String(err?.message || err || 'error')}`);
           } finally {
             setResettingAll(false);
           }
