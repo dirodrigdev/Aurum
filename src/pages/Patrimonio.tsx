@@ -232,6 +232,15 @@ const daysSinceIso = (iso?: string) => {
   return Math.max(0, Math.floor((Date.now() - time) / (1000 * 60 * 60 * 24)));
 };
 
+const firstDayOfMonthTs = (monthKey: string): number | null => {
+  const match = String(monthKey || '').trim().match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return new Date(year, month - 1, 1).getTime();
+};
+
 const buildStartMonthSteps = (): StartMonthStepView[] => [
   { key: 'carry', title: 'Aplicando datos del mes anterior...', status: 'pending', deltaClp: 0 },
   { key: 'mortgage', title: 'Actualizando saldo hipotecario...', status: 'pending', deltaClp: 0 },
@@ -2655,6 +2664,7 @@ export const Patrimonio: React.FC = () => {
     () => computeWealthHomeSectionAmounts(monthRecordsForTotals, fx),
     [monthRecordsForTotals, fx],
   );
+  const realCurrentMonthKey = currentMonthKey();
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
     const hasRiskRecord = Array.isArray(closure.records)
@@ -2681,6 +2691,7 @@ export const Patrimonio: React.FC = () => {
 
   const metrics = useMemo(() => {
     const closedPoints = closures
+      .filter((closure) => closure.monthKey !== realCurrentMonthKey)
       .map((closure) => ({
         key: closure.monthKey,
         net: closureSummaryNetForMode(closure),
@@ -2699,7 +2710,7 @@ export const Patrimonio: React.FC = () => {
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
+  }, [closures, includeRiskCapitalInTotals, closureNetByMonth, realCurrentMonthKey]);
 
   const latestClosure = closures[0] || null;
 
@@ -2837,7 +2848,19 @@ export const Patrimonio: React.FC = () => {
     setFx(loadFxRates());
   };
 
-  const realCurrentMonthKey = currentMonthKey();
+  const monthConsistencyCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (monthConsistencyCheckedRef.current) return;
+    monthConsistencyCheckedRef.current = true;
+    const monthKeyIsClosed = closures.some((closure) => closure.monthKey === monthKey);
+    const closeDraftIsClosed = closures.some((closure) => closure.monthKey === closeMonthDraft);
+    if (!monthKeyIsClosed && !closeDraftIsClosed) return;
+    const correctedMonth = realCurrentMonthKey;
+    setMonthKey(correctedMonth);
+    setCloseMonthDraft(correctedMonth);
+  }, [hydrationReady, closures, monthKey, closeMonthDraft, realCurrentMonthKey]);
+
   const previousClosureForMonthStart = useMemo(
     () =>
       closures
@@ -2845,6 +2868,15 @@ export const Patrimonio: React.FC = () => {
         .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null,
     [closures, realCurrentMonthKey],
   );
+
+  const pendingCloseAlert = useMemo(() => {
+    if (!latestClosure) return null;
+    const monthStartTs = firstDayOfMonthTs(realCurrentMonthKey);
+    if (!Number.isFinite(monthStartTs)) return null;
+    const days = Math.floor((Date.now() - Number(monthStartTs)) / (1000 * 60 * 60 * 24));
+    if (!Number.isFinite(days) || days <= 5) return null;
+    return `Tienes el cierre de ${monthLabel(realCurrentMonthKey).toLowerCase()} pendiente`;
+  }, [latestClosure, realCurrentMonthKey]);
 
   const computeMonthNetSnapshot = (targetMonthKey: string, fxOverride?: { usdClp: number; eurClp: number; ufClp: number }) => {
     const sourceRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
@@ -2868,7 +2900,7 @@ export const Patrimonio: React.FC = () => {
 
   const runStartMonthFlow = async () => {
     if (startMonthRunning) return;
-    const monthToStart = currentMonthKey();
+    const monthToStart = realCurrentMonthKey;
     setStartMonthFlowError('');
     setStartMonthCompleted(false);
     setStartMonthFinalNetClp(null);
@@ -2954,7 +2986,7 @@ export const Patrimonio: React.FC = () => {
   };
 
   const confirmMonthStart = () => {
-    const monthToStart = currentMonthKey();
+    const monthToStart = realCurrentMonthKey;
     writeMonthStartedFlag(monthToStart, true);
     setStartMonthModalOpen(false);
     setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} completado.`);
@@ -3058,7 +3090,7 @@ export const Patrimonio: React.FC = () => {
   const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
     const issues: CloseValidationIssue[] = [];
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
-    const realCurrentMonth = currentMonthKey();
+    const realCurrentMonth = realCurrentMonthKey;
 
     if (targetMonthKey > realCurrentMonth) {
       issues.push({
@@ -3498,13 +3530,13 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     if (!hydrationReady) return;
-    const currentMonth = currentMonthKey();
+    const currentMonth = realCurrentMonthKey;
     if (monthKey !== currentMonth) return;
     if (readMonthStartedFlag(currentMonth)) return;
     if (!previousClosureForMonthStart) return;
     setStartMonthModalOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id]);
+  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey]);
 
   if (activeSection) {
     return (
@@ -3655,6 +3687,12 @@ export const Patrimonio: React.FC = () => {
         </div>
       </Card>
 
+      {!!pendingCloseAlert && (
+        <Card className="border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          {pendingCloseAlert}
+        </Card>
+      )}
+
       <div className="space-y-2">
         <div
           role="button"
@@ -3768,7 +3806,7 @@ export const Patrimonio: React.FC = () => {
         <details>
           <summary className="text-xs text-slate-500 cursor-pointer">Cambiar mes de visualización</summary>
           <div className="mt-2">
-            <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value || currentMonthKey())} />
+            <Input type="month" value={monthKey} onChange={(e) => setMonthKey(e.target.value || realCurrentMonthKey)} />
           </div>
         </details>
       </Card>

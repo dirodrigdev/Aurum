@@ -718,6 +718,17 @@ const normalizeMonthKey = (value: unknown): string | null => {
   return /^\d{4}-\d{2}$/.test(month) ? month : null;
 };
 
+const monthAfter = (monthKey: string): string | null => {
+  const normalized = normalizeMonthKey(monthKey);
+  if (!normalized) return null;
+  const [yearRaw, monthRaw] = normalized.split('-').map(Number);
+  if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return null;
+  const base = new Date(yearRaw, monthRaw - 1, 1);
+  if (!Number.isFinite(base.getTime())) return null;
+  base.setMonth(base.getMonth() + 1);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`;
+};
+
 const normalizeBankTokensFromRaw = (raw: unknown): WealthBankTokenMap => {
   if (!raw || typeof raw !== 'object') return {};
   const parsed = raw as Record<string, unknown>;
@@ -788,8 +799,18 @@ const stripUndefinedDeep = (value: any): any => {
 };
 
 export const currentMonthKey = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const fallback = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
+  const closures = loadClosures();
+  if (!closures.length) return fallback;
+  const latestClosedMonth = closures
+    .map((closure) => normalizeMonthKey(closure.monthKey))
+    .filter((month): month is string => !!month)
+    .sort((a, b) => b.localeCompare(a))[0];
+  if (!latestClosedMonth) return fallback;
+  return monthAfter(latestClosedMonth) || fallback;
 };
 
 export function localYmd(date = new Date()) {
