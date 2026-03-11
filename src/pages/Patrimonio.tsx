@@ -529,6 +529,23 @@ const monthAfterKey = (monthKey: string) => {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 };
 
+const deriveOperationalMonthKeyFromClosures = (
+  closures: WealthMonthlyClosure[],
+  calendarMonthKey: string,
+) => {
+  const ordered = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  const latest = ordered[0] || null;
+  if (!latest?.monthKey) return calendarMonthKey;
+  const monthSet = new Set(ordered.map((closure) => closure.monthKey));
+  let candidate = monthAfterKey(latest.monthKey) || calendarMonthKey;
+  let guard = 0;
+  while (monthSet.has(candidate) && guard < 24) {
+    candidate = monthAfterKey(candidate) || candidate;
+    guard += 1;
+  }
+  return candidate;
+};
+
 const visualMonthSnapshotDate = (monthKey: string, mode: 'start' | 'end' = 'end') => {
   const [year, month] = monthKey.split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
@@ -565,8 +582,9 @@ const buildDraft = (section: MainSection, monthKey: string): DraftRecord => ({
   snapshotDate: visualMonthSnapshotDate(monthKey),
 });
 
-const buildCloseFxDraft = (rates: { usdClp: number; ufClp: number }) => ({
+const buildCloseFxDraft = (rates: { usdClp: number; eurClp: number; ufClp: number }) => ({
   usdClp: String(Math.round(Number(rates.usdClp) || 0)),
+  eurClp: String(Math.round(Number(rates.eurClp) || 0)),
   ufClp: String(Math.round(Number(rates.ufClp) || 0)),
 });
 
@@ -2602,13 +2620,17 @@ export const Patrimonio: React.FC = () => {
   const [fx, setFx] = useState(() => loadFxRates());
   const [hydrationReady, setHydrationReady] = useState(false);
 
-  const [monthKey, setMonthKey] = useState(currentMonthKey());
+  const [monthKey, setMonthKey] = useState(() =>
+    deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
+  );
   const [activeSection, setActiveSection] = useState<MainSection | null>(null);
   const [carryMessage, setCarryMessage] = useState('');
   const [closeError, setCloseError] = useState('');
   const [closeInfo, setCloseInfo] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
-  const [closeMonthDraft, setCloseMonthDraft] = useState(currentMonthKey());
+  const [closeMonthDraft, setCloseMonthDraft] = useState(() =>
+    deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
+  );
   const [closeFxDraft, setCloseFxDraft] = useState(() => buildCloseFxDraft(loadFxRates()));
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [startMonthModalOpen, setStartMonthModalOpen] = useState(false);
@@ -2786,7 +2808,11 @@ export const Patrimonio: React.FC = () => {
     () => computeWealthHomeSectionAmounts(monthRecordsForTotals, fx),
     [monthRecordsForTotals, fx],
   );
-  const realCurrentMonthKey = currentMonthKey();
+  const calendarMonthKey = currentMonthKey();
+  const realCurrentMonthKey = useMemo(
+    () => deriveOperationalMonthKeyFromClosures(closures, calendarMonthKey),
+    [closures, calendarMonthKey],
+  );
   const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
@@ -3029,6 +3055,12 @@ export const Patrimonio: React.FC = () => {
   const runStartMonthFlow = async () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
+    console.info('[Patrimonio][start-month-flow-before]', {
+      monthToStart,
+      monthKey,
+      calendarMonthKey,
+      latestClosureMonthKey: latestClosure?.monthKey || null,
+    });
     setStartMonthFlowError('');
     setStartMonthCompleted(false);
     setStartMonthFinalNetClp(null);
@@ -3111,6 +3143,12 @@ export const Patrimonio: React.FC = () => {
     setStartMonthVariationVsPrevious(previousClosureNet === null ? null : finalNet - previousClosureNet);
     setStartMonthCompleted(true);
     setStartMonthRunning(false);
+    console.info('[Patrimonio][start-month-flow-after]', {
+      monthToStart,
+      finalNet,
+      previousClosureNet,
+      variation: previousClosureNet === null ? null : finalNet - previousClosureNet,
+    });
   };
 
   const confirmMonthStart = () => {
@@ -3142,6 +3180,7 @@ export const Patrimonio: React.FC = () => {
     const fxMatches =
       !!persistedFx &&
       Math.abs((persistedFx.usdClp || 0) - fxForClose.usdClp) < 1e-6 &&
+      Math.abs((persistedFx.eurClp || 0) - fxForClose.eurClp) < 1e-6 &&
       Math.abs((persistedFx.ufClp || 0) - fxForClose.ufClp) < 1e-6;
     console.info('[Patrimonio][close-after-fx-check]', {
       targetMonthKey,
@@ -3276,7 +3315,7 @@ export const Patrimonio: React.FC = () => {
   const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
     const issues: CloseValidationIssue[] = [];
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
-    const realCurrentMonth = realCurrentMonthKey;
+    const realCurrentMonth = calendarMonthKey;
 
     if (targetMonthKey > realCurrentMonth) {
       issues.push({
@@ -3543,14 +3582,15 @@ export const Patrimonio: React.FC = () => {
   );
   const closeFxValues = useMemo(() => {
     const parsedUsd = parseStrictNumber(closeFxDraft.usdClp);
+    const parsedEur = parseStrictNumber(closeFxDraft.eurClp);
     const parsedUf = parseStrictNumber(closeFxDraft.ufClp);
     return {
       usdClp: Number.isFinite(parsedUsd) && parsedUsd > 0 ? parsedUsd : 0,
+      eurClp: Number.isFinite(parsedEur) && parsedEur > 0 ? parsedEur : 0,
       ufClp: Number.isFinite(parsedUf) && parsedUf > 0 ? parsedUf : 0,
-      eurClp: Number.isFinite(fx.eurClp) && fx.eurClp > 0 ? fx.eurClp : defaultFxRates.eurClp,
     };
-  }, [closeFxDraft, fx.eurClp]);
-  const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.ufClp > 0;
+  }, [closeFxDraft]);
+  const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
     const targetRecords = closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals);
@@ -3577,6 +3617,7 @@ export const Patrimonio: React.FC = () => {
       hasProperty,
       nonMortgageDebt: amounts.nonMortgageDebt,
       usdClp: closeFxValues.usdClp,
+      eurClp: closeFxValues.eurClp,
       ufClp: closeFxValues.ufClp,
       totalNetClp: amounts.totalNetClp,
     };
@@ -3639,7 +3680,7 @@ export const Patrimonio: React.FC = () => {
 
     const fxForClose = {
       usdClp: closeFxValues.usdClp,
-      eurClp: Number.isFinite(fx.eurClp) && fx.eurClp > 0 ? fx.eurClp : defaultFxRates.eurClp,
+      eurClp: closeFxValues.eurClp,
       ufClp: closeFxValues.ufClp,
     };
     console.info('[Patrimonio][close-before-fx-input]', {
@@ -3647,9 +3688,9 @@ export const Patrimonio: React.FC = () => {
       fxForClose,
       isHistoricalClose: targetMonthKey !== realCurrentMonthKey,
     });
-    if (!(fxForClose.usdClp > 0 && fxForClose.ufClp > 0)) {
+    if (!(fxForClose.usdClp > 0 && fxForClose.eurClp > 0 && fxForClose.ufClp > 0)) {
       setCloseInfo('');
-      setCloseError('Completá TC/UF válidos para confirmar este cierre.');
+      setCloseError('Completá USD/CLP, EUR/CLP y UF/CLP válidos para confirmar este cierre.');
       return;
     }
     completeMonthlyClose(targetMonthKey, fxForClose);
@@ -3746,12 +3787,29 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     if (!hydrationReady) return;
     const currentMonth = realCurrentMonthKey;
-    if (monthKey !== currentMonth) return;
-    if (readMonthStartedFlag(currentMonth)) return;
-    if (!previousClosureForMonthStart) return;
-    setStartMonthModalOpen(true);
+    const started = readMonthStartedFlag(currentMonth);
+    const hasPreviousClosure = !!previousClosureForMonthStart;
+    const shouldOpen = monthKey === currentMonth && !started && hasPreviousClosure;
+    console.info('[Patrimonio][start-month-gate-before]', {
+      monthKey,
+      currentMonth,
+      calendarMonthKey,
+      started,
+      hasPreviousClosure,
+      shouldOpen,
+      currentlyOpen: startMonthModalOpen,
+    });
+    if (startMonthModalOpen !== shouldOpen) {
+      setStartMonthModalOpen(shouldOpen);
+    }
+    console.info('[Patrimonio][start-month-gate-after]', {
+      monthKey,
+      currentMonth,
+      shouldOpen,
+      afterOpen: shouldOpen,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey]);
+  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey, calendarMonthKey, startMonthModalOpen]);
 
   if (activeSection) {
     return (
@@ -4077,6 +4135,7 @@ export const Patrimonio: React.FC = () => {
         onCloseFxDraftChange={(next) =>
           setCloseFxDraft((prev) => ({
             usdClp: next.usdClp ?? prev.usdClp,
+            eurClp: next.eurClp ?? prev.eurClp,
             ufClp: next.ufClp ?? prev.ufClp,
           }))
         }

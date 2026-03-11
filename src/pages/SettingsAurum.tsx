@@ -181,6 +181,31 @@ const readHideSensitiveAmountsEnabled = () => {
   }
 };
 
+const monthAfterKey = (monthKey: string) => {
+  const [year, month] = String(monthKey || '').split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+};
+
+const deriveOperationalMonthKeyFromClosures = (
+  closures: WealthMonthlyClosure[],
+  calendarMonth: string,
+) => {
+  const ordered = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  const latest = ordered[0] || null;
+  if (!latest?.monthKey) return calendarMonth;
+  const monthSet = new Set(ordered.map((closure) => closure.monthKey));
+  let candidate = monthAfterKey(latest.monthKey) || calendarMonth;
+  let guard = 0;
+  while (monthSet.has(candidate) && guard < 24) {
+    candidate = monthAfterKey(candidate) || candidate;
+    guard += 1;
+  }
+  return candidate;
+};
+
 export const SettingsAurum: React.FC = () => {
   const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
     const safeUsd = Number.isFinite(rates.usdClp) && rates.usdClp > 0 ? rates.usdClp : defaultFxRates.usdClp;
@@ -232,7 +257,9 @@ export const SettingsAurum: React.FC = () => {
   const [deleteClosureMessage, setDeleteClosureMessage] = useState('');
   const [deletingClosure, setDeletingClosure] = useState(false);
   const [allRecords, setAllRecords] = useState(() => loadWealthRecords());
-  const [checklistMonthKey, setChecklistMonthKey] = useState(() => currentMonthKey());
+  const [checklistMonthKey, setChecklistMonthKey] = useState(() =>
+    deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
+  );
   const [investmentInstruments, setInvestmentInstruments] = useState(() => loadInvestmentInstruments());
   const [closingConfig, setClosingConfig] = useState<ClosingConfigState>(() => readClosingConfig());
   const [closingConfigMessage, setClosingConfigMessage] = useState('');
@@ -481,10 +508,25 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   }, [fx]);
 
   const refreshLocalState = () => {
-    setChecklistMonthKey(currentMonthKey());
+    const closuresNow = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+    const nextChecklistMonthKey = deriveOperationalMonthKeyFromClosures(closuresNow, currentMonthKey());
+    console.info('[Settings][checklist-month-before]', {
+      currentChecklistMonthKey: checklistMonthKey,
+      closuresCount: closuresNow.length,
+      calendarMonthKey: currentMonthKey(),
+    });
+    console.info('[Settings][checklist-month-after]', {
+      nextChecklistMonthKey,
+      closuresCount: closuresNow.length,
+    });
+    if (!/^\d{4}-\d{2}$/.test(nextChecklistMonthKey)) {
+      setResetAllMessage('No pude determinar el mes operativo del checklist.');
+      return;
+    }
+    setChecklistMonthKey(nextChecklistMonthKey);
     setFx(loadFxRates());
     setFxLiveMeta(loadFxLiveSyncMeta());
-    setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+    setAvailableClosures(closuresNow);
     setAllRecords(loadWealthRecords());
     setInvestmentInstruments(loadInvestmentInstruments());
     setFsStatus(getFirestoreStatus());

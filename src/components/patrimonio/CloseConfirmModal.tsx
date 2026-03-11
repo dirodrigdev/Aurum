@@ -30,16 +30,18 @@ interface CloseConfirmModalProps {
     hasProperty: boolean;
     nonMortgageDebt: number;
     usdClp: number;
+    eurClp: number;
     ufClp: number;
     totalNetClp: number;
   };
   closeFxDraft: {
     usdClp: string;
+    eurClp: string;
     ufClp: string;
   };
   monthLabel: (monthKey: string) => string;
   onCloseMonthDraftChange: (nextMonth: string) => void;
-  onCloseFxDraftChange: (next: { usdClp?: string; ufClp?: string }) => void;
+  onCloseFxDraftChange: (next: { usdClp?: string; eurClp?: string; ufClp?: string }) => void;
   onResolveWithPrevious: (issue: CloseValidationIssueView) => void;
   onResolveExclude: (issue: CloseValidationIssueView) => void;
   onReview: (issue: CloseValidationIssueView) => void;
@@ -205,7 +207,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                 <div className="text-[11px] font-semibold text-amber-800">
                   Cierre histórico: ingresa TC/UF del momento ({monthLabel(closeMonthDraft).toLowerCase()})
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
+                <div className="mt-2 grid grid-cols-3 gap-2">
                   <div>
                     <div className="text-[11px] text-amber-800">USD/CLP</div>
                     <Input
@@ -214,6 +216,16 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
                       value={closeFxDraft.usdClp}
                       onChange={(e) => onCloseFxDraftChange({ usdClp: e.target.value })}
                       placeholder="USD/CLP"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-amber-800">EUR/CLP</div>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={closeFxDraft.eurClp}
+                      onChange={(e) => onCloseFxDraftChange({ eurClp: e.target.value })}
+                      placeholder="EUR/CLP"
                     />
                   </div>
                   <div>
@@ -230,7 +242,8 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
               </div>
             ) : (
               <div className="pt-1 text-[11px] text-slate-500">
-                TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · UF/CLP{' '}
+                TC usados: USD/CLP {Math.round(closePreview.usdClp).toLocaleString('es-CL')} · EUR/CLP{' '}
+                {Math.round(closePreview.eurClp).toLocaleString('es-CL')} · UF/CLP{' '}
                 {Math.round(closePreview.ufClp).toLocaleString('es-CL')}
               </div>
             )}
@@ -243,7 +256,7 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
 
         {!closeFxReady && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Completá los tipos de cambio antes de cerrar el mes.
+            Completá USD/CLP, EUR/CLP y UF/CLP antes de cerrar el mes.
           </div>
         )}
 
