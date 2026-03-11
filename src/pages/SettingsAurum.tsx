@@ -1136,28 +1136,49 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         instruments: instrumentsAfterReset.length,
       });
       seedDemoWealthTimeline();
-      let pushed = false;
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
+
+      const pushed = await syncWealthNow();
+      if (!pushed) {
+        throw new Error('No se pudo sincronizar de inmediato con Firestore después del seed.');
       }
+      const hydrated = await hydrateWealthFromCloud();
+      if (hydrated === 'unavailable') {
+        throw new Error('No se pudo confirmar en Firestore (sin sesión o nube no disponible).');
+      }
+
       const closuresAfterSeed = loadClosures().map((closure) => closure.monthKey).sort();
       const currentMonth = currentMonthKey();
       const currentMonthRecords = loadWealthRecords().filter((record) =>
         record.snapshotDate.startsWith(`${currentMonth}-`),
       );
+      const has2025Data = loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-'));
+      const hasMarch2026Closure = closuresAfterSeed.includes('2026-03');
+      const expectedClosures =
+        closuresAfterSeed.length === 2 && closuresAfterSeed.includes('2026-01') && closuresAfterSeed.includes('2026-02');
+      if (!expectedClosures) {
+        throw new Error(`Seed inválido: cierres esperados [2026-01, 2026-02], recibidos [${closuresAfterSeed.join(', ')}].`);
+      }
+      if (has2025Data) {
+        throw new Error('Seed inválido: quedaron registros 2025 después de cargar demo.');
+      }
+      if (hasMarch2026Closure) {
+        throw new Error('Seed inválido: existe cierre 2026-03 y no debería existir.');
+      }
+
       console.info('[seed-demo] verificación post-seed', {
         closures: closuresAfterSeed,
         currentMonthKey: currentMonth,
         currentMonthRecordsCount: currentMonthRecords.length,
-        has2025Data: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
-        hasMarch2026Closure: closuresAfterSeed.includes('2026-03'),
+        has2025Data,
+        hasMarch2026Closure,
+        syncImmediate: pushed,
+        hydratedFromCloud: hydrated,
       });
       refreshLocalState();
-      setSeedDemoMessage(
-        pushed ? 'Datos de prueba cargados' : 'Datos de prueba cargados (sin conexión con la nube).',
-      );
+      setSeedDemoMessage('Datos de prueba cargados y sincronizados. Recargando...');
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 180);
     } catch (err: any) {
       setSeedDemoMessage(`No pude cargar datos de prueba: ${String(err?.message || err || 'error')}`);
     } finally {
