@@ -100,6 +100,8 @@ import {
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
+const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
+const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
@@ -123,6 +125,14 @@ const readBanksLastAutoSyncDay = () => {
     return String(window.localStorage.getItem(BANKS_LAST_AUTO_SYNC_DAY_KEY) || '');
   } catch {
     return '';
+  }
+};
+
+const readHideSensitiveAmountsEnabled = () => {
+  try {
+    return window.localStorage.getItem(HIDE_SENSITIVE_AMOUNTS_PREF_KEY) === '1';
+  } catch {
+    return false;
   }
 };
 
@@ -2525,7 +2535,10 @@ export const Patrimonio: React.FC = () => {
   const [startMonthFinalNetClp, setStartMonthFinalNetClp] = useState<number | null>(null);
   const [startMonthVariationVsPrevious, setStartMonthVariationVsPrevious] = useState<number | null>(null);
 
-  const [showNetWorth, setShowNetWorth] = useState(false);
+  const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
+    readHideSensitiveAmountsEnabled(),
+  );
+  const [showNetWorth, setShowNetWorth] = useState(() => !readHideSensitiveAmountsEnabled());
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
     loadIncludeRiskCapitalInTotals(),
   );
@@ -2547,6 +2560,24 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     saveIncludeRiskCapitalInTotals(includeRiskCapitalInTotals);
   }, [includeRiskCapitalInTotals]);
+
+  useEffect(() => {
+    const refreshPreference = () => {
+      setHideSensitiveAmountsEnabled(readHideSensitiveAmountsEnabled());
+    };
+    window.addEventListener('storage', refreshPreference);
+    window.addEventListener(HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT, refreshPreference as EventListener);
+    return () => {
+      window.removeEventListener('storage', refreshPreference);
+      window.removeEventListener(HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT, refreshPreference as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hideSensitiveAmountsEnabled) {
+      setShowNetWorth(true);
+    }
+  }, [hideSensitiveAmountsEnabled]);
 
   useEffect(() => {
     setCarryMessage('');
@@ -2836,6 +2867,11 @@ export const Patrimonio: React.FC = () => {
   const hiddenHint = () => {
     const color = 'text-[#f3eadb]/80';
     return <span className={`text-sm font-medium ${color}`}>Pulsa para ver</span>;
+  };
+
+  const toggleNetWorthVisibility = () => {
+    if (!hideSensitiveAmountsEnabled) return;
+    setShowNetWorth((value) => !value);
   };
 
   const refreshRecords = () => setRecords(loadWealthRecords());
@@ -3580,9 +3616,13 @@ export const Patrimonio: React.FC = () => {
 
           <div className="absolute top-0 right-0 z-20 flex items-center gap-2">
             <button
-              className="text-xs text-[#efe4d1]"
-              onClick={() => setShowNetWorth((v) => !v)}
+              className={cn(
+                'text-xs text-[#efe4d1]',
+                !hideSensitiveAmountsEnabled && 'cursor-not-allowed opacity-60',
+              )}
+              onClick={toggleNetWorthVisibility}
               type="button"
+              disabled={!hideSensitiveAmountsEnabled}
             >
               {showNetWorth ? 'Ocultar' : 'Ver'}
             </button>
@@ -3591,15 +3631,18 @@ export const Patrimonio: React.FC = () => {
           <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 text-xs">
             <div className="space-y-1.5">
               <button
-                className="w-full rounded-xl bg-[#f6efe3]/10 p-2.5 text-left min-h-[56px] border border-[#c59a6c]/25"
-                onClick={() => setShowNetWorth((v) => !v)}
+                className={cn(
+                  'w-full rounded-xl bg-[#f6efe3]/10 p-2.5 text-left min-h-[56px] border border-[#c59a6c]/25',
+                  !hideSensitiveAmountsEnabled && 'cursor-default',
+                )}
+                onClick={toggleNetWorthVisibility}
                 type="button"
               >
                 <div className="text-[#e7dcc9] text-[11px] uppercase tracking-wide">Patrimonio total neto</div>
                 <div className="mt-1 min-h-[34px] flex items-center">
                   {showNetWorth && sectionAmounts.hasAllCoreSubtotalsData ? (
                     <span className="inline-flex items-center gap-2 text-3xl font-bold leading-none tracking-tight transition-all duration-200 ease-out opacity-100 translate-y-0">
-                      <span>{metricsDisplay.netWorth}</span>
+                      <span className="text-emerald-200">{metricsDisplay.netWorth}</span>
                       {includeRiskCapitalInTotals && (
                         <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                           +CapRiesgo {monthRiskResolution.hasRiskCapital ? '' : 'Sin datos'}

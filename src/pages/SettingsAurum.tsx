@@ -58,6 +58,8 @@ import { getFirestoreStatus } from '../services/firestoreStatus';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
+const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
+const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 
 interface ClosureReviewPendingEntry {
   status: 'complete' | 'pending';
@@ -171,6 +173,14 @@ const daysSinceIso = (iso?: string) => {
   return Math.max(0, Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24)));
 };
 
+const readHideSensitiveAmountsEnabled = () => {
+  try {
+    return window.localStorage.getItem(HIDE_SENSITIVE_AMOUNTS_PREF_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
 export const SettingsAurum: React.FC = () => {
   const buildDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
     const safeUsd = Number.isFinite(rates.usdClp) && rates.usdClp > 0 ? rates.usdClp : defaultFxRates.usdClp;
@@ -241,6 +251,9 @@ export const SettingsAurum: React.FC = () => {
   const [fxFallbackDecisionOpen, setFxFallbackDecisionOpen] = useState(false);
   const [fxFallbackSavedText, setFxFallbackSavedText] = useState('');
   const [openSection, setOpenSection] = useState<SettingsSectionKey | null>('quick');
+  const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
+    readHideSensitiveAmountsEnabled(),
+  );
   const syncSectionRef = useRef<HTMLDivElement | null>(null);
   const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
   const hydrationRunningRef = useRef(false);
@@ -584,6 +597,16 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
 
   const toggleSection = (key: SettingsSectionKey) => {
     setOpenSection((prev) => (prev === key ? null : key));
+  };
+
+  const onToggleHideSensitiveAmounts = (enabled: boolean) => {
+    try {
+      window.localStorage.setItem(HIDE_SENSITIVE_AMOUNTS_PREF_KEY, enabled ? '1' : '0');
+      setHideSensitiveAmountsEnabled(enabled);
+      window.dispatchEvent(new Event(HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT));
+    } catch {
+      setResetAllMessage('No pude guardar la preferencia de ocultar montos.');
+    }
   };
 
   const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
@@ -1285,6 +1308,22 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+              <div className="text-xs text-slate-600 mb-2">Preferencias</div>
+              <label className="flex items-center justify-between gap-2 text-xs">
+                <span>Ocultar montos sensibles</span>
+                <input
+                  type="checkbox"
+                  checked={hideSensitiveAmountsEnabled}
+                  onChange={(event) => onToggleHideSensitiveAmounts(event.target.checked)}
+                />
+              </label>
+              <div className="mt-1 text-[11px] text-slate-500">
+                {hideSensitiveAmountsEnabled
+                  ? 'ON: se habilita Ver/Ocultar en Patrimonio.'
+                  : 'OFF: montos siempre visibles.'}
               </div>
             </div>
           </div>
