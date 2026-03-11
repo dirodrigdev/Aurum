@@ -2640,6 +2640,7 @@ export const Patrimonio: React.FC = () => {
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [startMonthFinalNetClp, setStartMonthFinalNetClp] = useState<number | null>(null);
   const [startMonthVariationVsPrevious, setStartMonthVariationVsPrevious] = useState<number | null>(null);
+  const [startMonthDeferredSessionMonthKey, setStartMonthDeferredSessionMonthKey] = useState<string | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -3115,47 +3116,61 @@ export const Patrimonio: React.FC = () => {
       await new Promise((resolve) => window.setTimeout(resolve, 220));
     };
 
-    await runStep('carry', async () => {
-      const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
-      return {
-        message: result.added > 0 ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}).` : 'Sin cambios de arrastre.',
-      };
-    });
+    try {
+      await runStep('carry', async () => {
+        const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
+        return {
+          message: result.added > 0 ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}).` : 'Sin cambios de arrastre.',
+        };
+      });
 
-    await runStep('mortgage', async () => {
-      const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
-      if (auto.changed > 0) {
-        return { message: `Autocálculo aplicado en ${auto.changed} registros (${auto.sourceMonth || 'sin base'}).` };
-      }
-      if (auto.reason === 'missing_base_debt') {
-        return { message: 'Sin base hipotecaria para autocálculo en este mes.' };
-      }
-      return { message: 'Sin cambios de autocálculo.' };
-    });
+      await runStep('mortgage', async () => {
+        const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
+        if (auto.changed > 0) {
+          return { message: `Autocálculo aplicado en ${auto.changed} registros (${auto.sourceMonth || 'sin base'}).` };
+        }
+        if (auto.reason === 'missing_base_debt') {
+          return { message: 'Sin base hipotecaria para autocálculo en este mes.' };
+        }
+        return { message: 'Sin cambios de autocálculo.' };
+      });
 
-    await runStep('fx', async () => {
-      const result = await refreshFxRatesFromLive({ force: true });
-      return { message: result.updated ? 'TC/UF actualizados online.' : 'TC/UF sin cambios.' };
-    });
+      await runStep('fx', async () => {
+        const result = await refreshFxRatesFromLive({ force: true });
+        return { message: result.updated ? 'TC/UF actualizados online.' : 'TC/UF sin cambios.' };
+      });
 
-    const finalNet = computeMonthNetSnapshot(monthToStart);
-    setStartMonthFinalNetClp(finalNet);
-    setStartMonthVariationVsPrevious(previousClosureNet === null ? null : finalNet - previousClosureNet);
-    setStartMonthCompleted(true);
-    setStartMonthRunning(false);
-    console.info('[Patrimonio][start-month-flow-after]', {
-      monthToStart,
-      finalNet,
-      previousClosureNet,
-      variation: previousClosureNet === null ? null : finalNet - previousClosureNet,
-    });
+      const finalNet = computeMonthNetSnapshot(monthToStart);
+      setStartMonthFinalNetClp(finalNet);
+      setStartMonthVariationVsPrevious(previousClosureNet === null ? null : finalNet - previousClosureNet);
+      setStartMonthCompleted(true);
+      console.info('[Patrimonio][start-month-flow-after]', {
+        monthToStart,
+        finalNet,
+        previousClosureNet,
+        variation: previousClosureNet === null ? null : finalNet - previousClosureNet,
+      });
+    } catch (error: any) {
+      const message = String(error?.message || 'No pude completar el arranque de mes.');
+      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+    } finally {
+      setStartMonthRunning(false);
+    }
   };
 
   const confirmMonthStart = () => {
     const monthToStart = realCurrentMonthKey;
     writeMonthStartedFlag(monthToStart, true);
+    setStartMonthDeferredSessionMonthKey(null);
     setStartMonthModalOpen(false);
     setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} completado.`);
+  };
+
+  const deferMonthStartForSession = () => {
+    const monthToStart = realCurrentMonthKey;
+    setStartMonthDeferredSessionMonthKey(monthToStart);
+    setStartMonthModalOpen(false);
+    setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} pospuesto para esta sesión.`);
   };
 
   const completeMonthlyClose = (
@@ -3789,13 +3804,15 @@ export const Patrimonio: React.FC = () => {
     const currentMonth = realCurrentMonthKey;
     const started = readMonthStartedFlag(currentMonth);
     const hasPreviousClosure = !!previousClosureForMonthStart;
-    const shouldOpen = monthKey === currentMonth && !started && hasPreviousClosure;
+    const deferredInSession = startMonthDeferredSessionMonthKey === currentMonth;
+    const shouldOpen = monthKey === currentMonth && !started && hasPreviousClosure && !deferredInSession;
     console.info('[Patrimonio][start-month-gate-before]', {
       monthKey,
       currentMonth,
       calendarMonthKey,
       started,
       hasPreviousClosure,
+      deferredInSession,
       shouldOpen,
       currentlyOpen: startMonthModalOpen,
     });
@@ -3809,7 +3826,7 @@ export const Patrimonio: React.FC = () => {
       afterOpen: shouldOpen,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey, calendarMonthKey, startMonthModalOpen]);
+  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey, calendarMonthKey, startMonthModalOpen, startMonthDeferredSessionMonthKey]);
 
   if (activeSection) {
     return (
@@ -4165,8 +4182,7 @@ export const Patrimonio: React.FC = () => {
         }}
         onConfirmStart={confirmMonthStart}
         onClose={() => {
-          if (startMonthRunning) return;
-          setStartMonthModalOpen(false);
+          deferMonthStartForSession();
         }}
       />
     </div>

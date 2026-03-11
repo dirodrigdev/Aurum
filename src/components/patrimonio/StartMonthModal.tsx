@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowDownRight, ArrowUpRight, CheckCircle2, Loader2, PlayCircle, XCircle } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CheckCircle2, Loader2, PlayCircle, X, XCircle } from 'lucide-react';
 import { Button } from '../Components';
 import { formatCurrency } from '../../utils/wealthFormat';
 
@@ -66,7 +66,17 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
   return (
     <div className="fixed inset-0 z-[110] bg-black/45 p-4 flex items-end sm:items-center justify-center">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-        <div className="text-base font-semibold text-slate-900">Comenzar {monthLabel}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-base font-semibold text-slate-900">Comenzar {monthLabel}</div>
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"
+            onClick={onClose}
+            aria-label="Posponer arranque"
+          >
+            <X size={14} />
+          </button>
+        </div>
         <div className="mt-1 text-sm text-slate-600">
           Se ejecutará el arranque del mes en 3 pasos secuenciales con impacto en patrimonio.
         </div>
@@ -130,8 +140,8 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
         )}
 
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <Button variant="outline" onClick={onClose} disabled={running}>
-            Cerrar
+          <Button variant="outline" onClick={onClose}>
+            Ahora no
           </Button>
           {completed ? (
             <Button onClick={onConfirmStart}>Comenzar {monthLabel}</Button>
@@ -145,4 +155,3 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
     </div>
   );
 };
-
