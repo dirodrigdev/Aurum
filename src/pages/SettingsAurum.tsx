@@ -23,6 +23,9 @@ import {
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   MORTGAGE_AMORTIZATION_LABEL,
+  createWealthBackupSnapshot,
+  listWealthBackupSnapshots,
+  loadCloudClosuresSummary,
   loadBankTokens,
   loadClosures,
   saveClosures,
@@ -43,6 +46,7 @@ import {
   loadWealthRecords,
   removeWealthRecord,
   refreshFxRatesFromLive,
+  restoreWealthFromBackupSnapshot,
   saveInvestmentInstruments,
   WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
@@ -51,6 +55,7 @@ import {
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
   syncWealthNow,
+  WealthBackupSnapshotMeta,
   WealthMonthlyClosure,
 } from '../services/wealthStorage';
 import { auth, signOutUser } from '../services/firebase';
@@ -95,6 +100,16 @@ interface ClosingRuleConfig {
 interface ClosingConfigState {
   rules: Record<string, ClosingRuleConfig>;
 }
+
+type PreflightStatus = 'ok' | 'warn' | 'error';
+
+type PreflightCheckResult = {
+  key: string;
+  title: string;
+  status: PreflightStatus;
+  details: string;
+  resolution: string;
+};
 
 const STATIC_CLOSING_FIELDS: Array<{
   key: ClosingStaticFieldKey;
@@ -189,6 +204,11 @@ const monthAfterKey = (monthKey: string) => {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 };
 
+const calendarMonthKey = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
 const deriveOperationalMonthKeyFromClosures = (
   closures: WealthMonthlyClosure[],
   calendarMonth: string,
@@ -272,6 +292,14 @@ export const SettingsAurum: React.FC = () => {
   const [resetAllMessage, setResetAllMessage] = useState('');
   const [seedDemoMessage, setSeedDemoMessage] = useState('');
   const [seedingDemo, setSeedingDemo] = useState(false);
+  const [runningPreflight, setRunningPreflight] = useState(false);
+  const [preflightResults, setPreflightResults] = useState<PreflightCheckResult[]>([]);
+  const [preflightSummaryMessage, setPreflightSummaryMessage] = useState('');
+  const [loadingBackupSnapshots, setLoadingBackupSnapshots] = useState(false);
+  const [backupSnapshots, setBackupSnapshots] = useState<WealthBackupSnapshotMeta[]>([]);
+  const [selectedBackupId, setSelectedBackupId] = useState('');
+  const [restoreBackupBusy, setRestoreBackupBusy] = useState(false);
+  const [restoreBackupConfirmOpen, setRestoreBackupConfirmOpen] = useState(false);
   const [csvConfirmOpen, setCsvConfirmOpen] = useState(false);
   const [deleteClosureConfirmOpen, setDeleteClosureConfirmOpen] = useState(false);
   const [deleteAllClosuresConfirmOpen, setDeleteAllClosuresConfirmOpen] = useState(false);
@@ -532,6 +560,187 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setFsStatus(getFirestoreStatus());
   };
 
+  const refreshBackupSnapshots = async () => {
+    setLoadingBackupSnapshots(true);
+    try {
+      const snapshots = await listWealthBackupSnapshots(30);
+      setBackupSnapshots(snapshots);
+      if (!selectedBackupId && snapshots.length > 0) {
+        setSelectedBackupId(snapshots[0].id);
+      } else if (selectedBackupId && !snapshots.some((item) => item.id === selectedBackupId)) {
+        setSelectedBackupId(snapshots[0]?.id || '');
+      }
+    } finally {
+      setLoadingBackupSnapshots(false);
+    }
+  };
+
+  const backupBeforeDestructiveOperation = async (reason: string) => {
+    const before = {
+      records: loadWealthRecords().length,
+      closures: loadClosures().length,
+      instruments: loadInvestmentInstruments().length,
+    };
+    console.info('[Settings][backup-before][before]', { reason, ...before });
+    const backup = await createWealthBackupSnapshot(reason);
+    console.info('[Settings][backup-before][after]', {
+      reason,
+      ok: backup.ok,
+      backupId: backup.backupId,
+      createdAt: backup.createdAt,
+      message: backup.message,
+    });
+    if (backup.ok && backup.createdAt) {
+      setBackupMessage(
+        `Backup generado el ${formatDateTime(backup.createdAt)}. Puedes restaurarlo desde Ajustes → Respaldo.`,
+      );
+      await refreshBackupSnapshots();
+      return backup;
+    }
+    setBackupMessage(`No pude generar backup automático: ${backup.message}`);
+    return backup;
+  };
+
+  const runPreflightCheckNow = async () => {
+    setRunningPreflight(true);
+    setPreflightSummaryMessage('');
+    setPreflightResults([]);
+    try {
+      const localFx = loadFxRates();
+      const localClosures = loadClosures();
+      const localRecords = loadWealthRecords();
+      const homeMonthKey = currentMonthKey();
+      const expectedOperationalMonth = deriveOperationalMonthKeyFromClosures(localClosures, calendarMonthKey());
+
+      const checks: PreflightCheckResult[] = [];
+
+      const fxOk = localFx.usdClp > 0 && localFx.eurClp > 0 && localFx.ufClp > 0;
+      checks.push({
+        key: 'fx',
+        title: 'Tipos de cambio',
+        status: fxOk ? 'ok' : 'error',
+        details: fxOk
+          ? `USD/CLP ${formatFxInteger(localFx.usdClp)} · EUR/CLP ${formatFxInteger(localFx.eurClp)} · UF/CLP ${formatFxInteger(localFx.ufClp)}`
+          : 'Uno o más tipos de cambio son 0 o inválidos.',
+        resolution: fxOk
+          ? 'Sin acción.'
+          : 'Completa USD/CLP, EUR/CLP y UF/CLP en la sección "Tipos de cambio".',
+      });
+
+      const operationalOk = expectedOperationalMonth === homeMonthKey && checklistMonthKey === homeMonthKey;
+      checks.push({
+        key: 'operational-month',
+        title: 'Mes operativo',
+        status: operationalOk ? 'ok' : 'error',
+        details: `Home: ${homeMonthKey} · Settings: ${checklistMonthKey} · Esperado: ${expectedOperationalMonth}`,
+        resolution: operationalOk
+          ? 'Sin acción.'
+          : 'Pulsa "Sincronizar ahora" y vuelve a entrar a Ajustes para refrescar el mes operativo.',
+      });
+
+      const closureCounts = new Map<string, number>();
+      localClosures.forEach((closure) => {
+        closureCounts.set(closure.monthKey, (closureCounts.get(closure.monthKey) || 0) + 1);
+      });
+      const duplicateClosureMonths = Array.from(closureCounts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([month]) => month)
+        .sort();
+      checks.push({
+        key: 'duplicate-closures',
+        title: 'Cierres duplicados por mes',
+        status: duplicateClosureMonths.length ? 'error' : 'ok',
+        details: duplicateClosureMonths.length
+          ? `Duplicados detectados: ${duplicateClosureMonths.join(', ')}`
+          : 'Sin duplicados por month_key.',
+        resolution: duplicateClosureMonths.length
+          ? 'Revisa y elimina duplicados en "Zona de peligro" o reimporta el mes correcto.'
+          : 'Sin acción.',
+      });
+
+      const expectedMonthSet = new Set<string>([homeMonthKey, ...localClosures.map((closure) => closure.monthKey)]);
+      const outOfExpectedMonth = localRecords
+        .filter((record) => !expectedMonthSet.has(String(record.snapshotDate || '').slice(0, 7)))
+        .map((record) => `${record.snapshotDate} · ${record.label}`);
+      checks.push({
+        key: 'snapshot-month',
+        title: 'snapshotDate fuera del mes esperado',
+        status: outOfExpectedMonth.length ? 'warn' : 'ok',
+        details: outOfExpectedMonth.length
+          ? `${outOfExpectedMonth.length} registro(s) fuera del set esperado (${Array.from(expectedMonthSet).join(', ')})`
+          : 'Todos los registros están en meses esperados.',
+        resolution: outOfExpectedMonth.length
+          ? 'Revisa mes visual antes de guardar o corrige esos registros desde Patrimonio.'
+          : 'Sin acción.',
+      });
+
+      const cloudSummary = await loadCloudClosuresSummary();
+      if (!cloudSummary.available) {
+        checks.push({
+          key: 'local-vs-cloud',
+          title: 'Consistencia local vs nube',
+          status: 'warn',
+          details: `No disponible: ${cloudSummary.message}`,
+          resolution: 'Inicia sesión y ejecuta "Sincronizar ahora".',
+        });
+      } else {
+        const localMonths = localClosures.map((closure) => closure.monthKey).sort();
+        const cloudMonths = cloudSummary.monthKeys.sort();
+        const same =
+          localMonths.length === cloudMonths.length &&
+          localMonths.every((month, index) => month === cloudMonths[index]);
+        checks.push({
+          key: 'local-vs-cloud',
+          title: 'Consistencia local vs nube',
+          status: same ? 'ok' : 'error',
+          details: same
+            ? `Meses coinciden (${localMonths.length}).`
+            : `Local: [${localMonths.join(', ')}] · Nube: [${cloudMonths.join(', ')}]`,
+          resolution: same ? 'Sin acción.' : 'Ejecuta "Sincronizar ahora" y vuelve a verificar.',
+        });
+      }
+
+      setPreflightResults(checks);
+      const errorCount = checks.filter((item) => item.status === 'error').length;
+      const warnCount = checks.filter((item) => item.status === 'warn').length;
+      if (errorCount) {
+        setPreflightSummaryMessage(`Pre-flight finalizado con ${errorCount} error(es) y ${warnCount} advertencia(s).`);
+      } else if (warnCount) {
+        setPreflightSummaryMessage(`Pre-flight finalizado con ${warnCount} advertencia(s).`);
+      } else {
+        setPreflightSummaryMessage('Pre-flight finalizado: sistema OK.');
+      }
+    } catch (err: any) {
+      setPreflightSummaryMessage(`No pude ejecutar pre-flight: ${String(err?.message || err || 'error')}`);
+    } finally {
+      setRunningPreflight(false);
+    }
+  };
+
+  const restoreSelectedBackupNow = async () => {
+    if (!selectedBackupId) return;
+    setRestoreBackupConfirmOpen(false);
+    setRestoreBackupBusy(true);
+    try {
+      const before = {
+        records: loadWealthRecords().length,
+        closures: loadClosures().length,
+      };
+      console.info('[Settings][restore-backup][before]', { selectedBackupId, ...before });
+      const result = await restoreWealthFromBackupSnapshot(selectedBackupId);
+      refreshLocalState();
+      const after = {
+        records: loadWealthRecords().length,
+        closures: loadClosures().length,
+      };
+      console.info('[Settings][restore-backup][after]', { selectedBackupId, ...after, ok: result.ok });
+      setBackupMessage(result.ok ? 'Backup restaurado correctamente.' : `No pude restaurar backup: ${result.message}`);
+      await refreshBackupSnapshots();
+    } finally {
+      setRestoreBackupBusy(false);
+    }
+  };
+
   const copyCsvFormatToClipboard = async () => {
     const text = historicalCsvAiFormat;
     try {
@@ -620,6 +829,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     });
     if (changed) persistClosureReviewPendingState(next);
   }, [availableClosures, closureReviewPending]);
+
+  useEffect(() => {
+    if (openSection !== 'backup') return;
+    void refreshBackupSnapshots();
+  }, [openSection]);
 
   const scrollToSettingsElement = (element: HTMLElement | null) => {
     if (!element) return;
@@ -1052,6 +1266,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setCsvImportMessage('');
     setCsvImportWarnings([]);
     try {
+      await backupBeforeDestructiveOperation('Import masivo de CSV histórico');
       const result = await importHistoricalClosuresFromCsv(csvDraft);
       const summary = [
         result.importedMonths.length ? `Importados: ${result.importedMonths.join(', ')}` : 'Importados: 0',
@@ -1081,6 +1296,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setDeletingClosure(true);
     setDeleteClosureMessage('');
     try {
+      await backupBeforeDestructiveOperation(`Borrar cierre ${selectedClosureToDelete}`);
       const current = loadClosures();
       const next = current.filter((closure) => closure.monthKey !== selectedClosureToDelete);
       saveClosures(next);
@@ -1111,6 +1327,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setDeletingClosure(true);
     setDeleteClosureMessage('');
     try {
+      await backupBeforeDestructiveOperation('Borrar todos los cierres');
       saveClosures([]);
       let pushed = false;
       let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
@@ -1199,6 +1416,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedingDemo(true);
     setSeedDemoMessage('');
     try {
+      await backupBeforeDestructiveOperation('Cargar datos de prueba');
       console.info('[seed-demo] estado antes de reset', {
         records: loadWealthRecords().length,
         closures: loadClosures().map((c) => c.monthKey),
@@ -1353,6 +1571,27 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-2">
+              <div className="text-xs text-slate-600">Pre-flight antes de cargar datos reales</div>
+              <Button variant="outline" size="sm" disabled={runningPreflight} onClick={() => void runPreflightCheckNow()}>
+                {runningPreflight ? 'Verificando...' : 'Verificar estado del sistema'}
+              </Button>
+              {!!preflightSummaryMessage && <div className="text-[11px] text-slate-600">{preflightSummaryMessage}</div>}
+              {!!preflightResults.length && (
+                <div className="space-y-1.5">
+                  {preflightResults.map((item) => (
+                    <div key={item.key} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <span>{item.status === 'ok' ? '✅' : item.status === 'warn' ? '⚠️' : '❌'}</span>
+                        <span className="font-medium text-slate-800">{item.title}</span>
+                      </div>
+                      <div className="mt-0.5 text-slate-600">{item.details}</div>
+                      {item.status !== 'ok' && <div className="mt-0.5 text-slate-700">Cómo resolver: {item.resolution}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
               <div className="text-xs text-slate-600 mb-2">Preferencias</div>
@@ -1580,9 +1819,37 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
               <Button variant="secondary" onClick={() => { void copyCsvFormatToClipboard(); }}>
                 Copiar formato CSV
               </Button>
+              <Button variant="outline" onClick={() => void refreshBackupSnapshots()} disabled={loadingBackupSnapshots}>
+                {loadingBackupSnapshots ? 'Cargando backups...' : 'Cargar backups nube'}
+              </Button>
             </div>
             {!!backupMessage && <div className="text-slate-600">{backupMessage}</div>}
             {!!csvTemplateCopyMessage && <div className="text-slate-600">{csvTemplateCopyMessage}</div>}
+            {!!backupSnapshots.length && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-2">
+                <div className="text-[11px] text-slate-600">Backups disponibles en la nube</div>
+                <select
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  value={selectedBackupId}
+                  onChange={(event) => setSelectedBackupId(event.target.value)}
+                >
+                  {backupSnapshots.map((backup) => (
+                    <option key={backup.id} value={backup.id}>
+                      {formatDateTime(backup.createdAt)} · {backup.reason} · {backup.closuresCount} cierres
+                    </option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={!selectedBackupId || restoreBackupBusy}
+                    onClick={() => setRestoreBackupConfirmOpen(true)}
+                  >
+                    {restoreBackupBusy ? 'Restaurando...' : 'Restaurar backup'}
+                  </Button>
+                </div>
+              </div>
+            )}
             <Input
               type="file"
               accept=".csv,text/csv"
@@ -1775,6 +2042,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           setResettingAll(true);
           setResetAllMessage('');
           try {
+            await backupBeforeDestructiveOperation('Reset total de datos');
             const result = await clearWealthDataForFreshStart({ preserveFx: false });
             setFx(loadFxRates());
             setFxLiveMeta(loadFxLiveSyncMeta());
@@ -1886,6 +2154,22 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onCancel={() => setDeleteBlocksConfirmOpen(false)}
         onConfirm={() => {
           void deleteSelectedBlocksNow();
+        }}
+      />
+
+      <ConfirmActionModal
+        open={restoreBackupConfirmOpen}
+        busy={restoreBackupBusy}
+        title="Restaurar backup"
+        message="Se reemplazarán los datos locales por el backup seleccionado y se sincronizarán con la nube."
+        confirmText="Restaurar ahora"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (restoreBackupBusy) return;
+          setRestoreBackupConfirmOpen(false);
+        }}
+        onConfirm={() => {
+          void restoreSelectedBackupNow();
         }}
       />
 

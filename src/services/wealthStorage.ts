@@ -1,4 +1,15 @@
-import { deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+} from 'firebase/firestore';
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 
@@ -107,6 +118,33 @@ export type HistoricalCsvPreviewResult = {
   warnings: string[];
 };
 
+export type WealthBackupSnapshotMeta = {
+  id: string;
+  createdAt: string;
+  reason: string;
+  recordsCount: number;
+  closuresCount: number;
+};
+
+export type WealthBackupCreateResult = {
+  ok: boolean;
+  backupId: string | null;
+  createdAt: string | null;
+  message: string;
+};
+
+export type WealthBackupRestoreResult = {
+  ok: boolean;
+  backupId: string;
+  message: string;
+};
+
+export type WealthCloudClosuresSummary = {
+  available: boolean;
+  monthKeys: string[];
+  message: string;
+};
+
 type WealthDemoSeedMeta = {
   seededAt: string;
   janKey: string;
@@ -136,6 +174,7 @@ export const FX_LIVE_META_UPDATED_EVENT = 'aurum:fx-live-meta-updated';
 export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 export const RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT = 'aurum:risk-capital-totals-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
+const WEALTH_CLOUD_BACKUPS_COLLECTION = 'backups';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
@@ -2244,6 +2283,12 @@ const getWealthCloudRef = async () => {
   return doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);
 };
 
+const getWealthBackupsCollectionRef = async () => {
+  const wealthRef = await getWealthCloudRef();
+  if (!wealthRef) return null;
+  return collection(wealthRef, WEALTH_CLOUD_BACKUPS_COLLECTION);
+};
+
 let wealthCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let wealthCloudSyncPromise: Promise<boolean> | null = null;
 let wealthCloudSyncRequestedWhileRunning = false;
@@ -2974,6 +3019,201 @@ const normalizeCloudWealthState = (raw: any): NormalizedCloudWealthState => ({
     };
   })(),
 });
+
+const readLocalWealthStateSnapshot = (): NormalizedCloudWealthState => ({
+  updatedAt: readWealthUpdatedAt() || nowIso(),
+  records: loadWealthRecords(),
+  closures: loadClosures(),
+  instruments: loadInvestmentInstruments(),
+  bankTokens: loadBankTokens(),
+  deletedRecordIds: loadDeletedRecordIds(),
+  deletedRecordAssetMonthKeys: loadDeletedRecordAssetMonthKeys(),
+  fx: loadFxRates(),
+});
+
+export const loadCloudClosuresSummary = async (): Promise<WealthCloudClosuresSummary> => {
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) {
+      return { available: false, monthKeys: [], message: 'Sin conexión con la nube' };
+    }
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      return { available: true, monthKeys: [], message: 'Nube sin datos' };
+    }
+    const raw = snap.data() || {};
+    const closures = loadClosuresFromRaw(Array.isArray(raw.closures) ? raw.closures : []);
+    const monthKeys = closures.map((closure) => closure.monthKey).sort();
+    return { available: true, monthKeys, message: 'OK' };
+  } catch (err: any) {
+    return {
+      available: false,
+      monthKeys: [],
+      message: String(err?.message || 'No pude leer cierres en la nube'),
+    };
+  }
+};
+
+export const createWealthBackupSnapshot = async (
+  reason: string,
+): Promise<WealthBackupCreateResult> => {
+  const createdAt = nowIso();
+  const snapshot = readLocalWealthStateSnapshot();
+  const backupsRef = await getWealthBackupsCollectionRef();
+  if (!backupsRef) {
+    return {
+      ok: false,
+      backupId: null,
+      createdAt: null,
+      message: 'No pude generar backup en la nube (sin sesión o sin Firebase).',
+    };
+  }
+  const backupId = `backup_${createdAt.replace(/[:.]/g, '-')}_${crypto.randomUUID().slice(0, 8)}`;
+  const backupDocRef = doc(backupsRef, backupId);
+  try {
+    console.info('[backup][before-create]', {
+      reason,
+      records: snapshot.records.length,
+      closures: snapshot.closures.length,
+      instruments: snapshot.instruments.length,
+      updatedAt: snapshot.updatedAt,
+    });
+    await setDoc(
+      backupDocRef,
+      stripUndefinedDeep({
+        schemaVersion: 1,
+        type: 'wealth-backup',
+        backupId,
+        createdAt,
+        reason: String(reason || '').trim() || 'Operación manual',
+        state: snapshot,
+      }),
+      { merge: false },
+    );
+    const verify = await getDoc(backupDocRef);
+    if (!verify.exists()) {
+      return {
+        ok: false,
+        backupId: null,
+        createdAt: null,
+        message: 'No pude confirmar el backup en la nube.',
+      };
+    }
+    console.info('[backup][after-create]', {
+      backupId,
+      createdAt,
+      reason,
+    });
+    return {
+      ok: true,
+      backupId,
+      createdAt,
+      message: 'Backup generado correctamente.',
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      backupId: null,
+      createdAt: null,
+      message: String(err?.message || 'No pude generar backup en la nube.'),
+    };
+  }
+};
+
+export const listWealthBackupSnapshots = async (maxItems = 25): Promise<WealthBackupSnapshotMeta[]> => {
+  const backupsRef = await getWealthBackupsCollectionRef();
+  if (!backupsRef) return [];
+  try {
+    const snap = await getDocs(
+      query(backupsRef, orderBy('createdAt', 'desc'), limit(Math.max(1, Math.min(200, maxItems)))),
+    );
+    return snap.docs.map((item) => {
+      const data = item.data() || {};
+      const state = normalizeCloudWealthState(data.state || {});
+      return {
+        id: item.id,
+        createdAt: String(data.createdAt || ''),
+        reason: String(data.reason || 'Operación manual'),
+        recordsCount: state.records.length,
+        closuresCount: state.closures.length,
+      };
+    });
+  } catch {
+    return [];
+  }
+};
+
+export const restoreWealthFromBackupSnapshot = async (
+  backupId: string,
+): Promise<WealthBackupRestoreResult> => {
+  const backupsRef = await getWealthBackupsCollectionRef();
+  if (!backupsRef) {
+    return {
+      ok: false,
+      backupId,
+      message: 'No pude restaurar: sin sesión o sin Firebase.',
+    };
+  }
+  const backupDocRef = doc(backupsRef, backupId);
+  try {
+    const before = readLocalWealthStateSnapshot();
+    console.info('[backup][before-restore]', {
+      backupId,
+      records: before.records.length,
+      closures: before.closures.length,
+      instruments: before.instruments.length,
+      updatedAt: before.updatedAt,
+    });
+    const snap = await getDoc(backupDocRef);
+    if (!snap.exists()) {
+      return {
+        ok: false,
+        backupId,
+        message: 'No encontré el backup seleccionado.',
+      };
+    }
+    const raw = snap.data() || {};
+    const restored = normalizeCloudWealthState(raw.state || {});
+    applyWealthStateLocal({
+      records: restored.records,
+      closures: restored.closures,
+      instruments: restored.instruments,
+      bankTokens: restored.bankTokens,
+      deletedRecordIds: restored.deletedRecordIds,
+      deletedRecordAssetMonthKeys: restored.deletedRecordAssetMonthKeys,
+      fx: restored.fx,
+      updatedAt: restored.updatedAt || nowIso(),
+    });
+
+    const synced = await syncWealthNow();
+    if (!synced) {
+      return {
+        ok: false,
+        backupId,
+        message: 'Restauré en local, pero no pude confirmar sincronización en la nube.',
+      };
+    }
+    const after = readLocalWealthStateSnapshot();
+    console.info('[backup][after-restore]', {
+      backupId,
+      records: after.records.length,
+      closures: after.closures.length,
+      instruments: after.instruments.length,
+      updatedAt: after.updatedAt,
+    });
+    return {
+      ok: true,
+      backupId,
+      message: 'Backup restaurado y sincronizado.',
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      backupId,
+      message: String(err?.message || 'No pude restaurar el backup.'),
+    };
+  }
+};
 
 let wealthCloudSubscriptionUnsub: (() => void) | null = null;
 let wealthCloudSubscriptionUid = '';

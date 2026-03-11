@@ -11,6 +11,7 @@ vi.mock('../src/services/firebase', () => ({
 
 import { useWealthDelta } from '../src/hooks/useWealthDelta';
 import {
+  buildWealthNetBreakdown,
   RISK_CAPITAL_LABEL_CLP,
   applyMortgageAutoCalculation,
   clearWealthDataForFreshStart,
@@ -26,10 +27,12 @@ import {
   localYmd,
   refreshFxRatesFromLive,
   resolveRiskCapitalRecordsForTotals,
+  saveClosures,
   saveFxRates,
   saveIncludeRiskCapitalInTotals,
   saveWealthRecords,
   summarizeWealth,
+  upsertMonthlyClosure,
   upsertInvestmentInstrument,
   upsertWealthRecord,
 } from '../src/services/wealthStorage';
@@ -157,6 +160,19 @@ const seedCurrentMonthBaseData = () => {
   });
 
   return { monthKey, snapshotDate };
+};
+
+const makeClosureForMonth = (monthKey: string) => {
+  const fx = loadFxRates();
+  const summary = summarizeWealth([], fx);
+  return {
+    id: `closure-${monthKey}`,
+    monthKey,
+    closedAt: `${monthKey}-28T12:00:00.000Z`,
+    summary,
+    fxRates: fx,
+    records: [],
+  };
 };
 
 describe('Aurum full flow (service-level e2e)', () => {
@@ -312,5 +328,140 @@ describe('Aurum full flow (service-level e2e)', () => {
     await act(async () => {
       root?.unmount();
     });
+  });
+
+  it('TEST A — mes operativo se deriva desde último cierre (o calendario si no hay cierres)', async () => {
+    saveClosures([makeClosureForMonth('2026-03')]);
+    expect(currentMonthKey()).toBe('2026-04');
+
+    saveClosures([makeClosureForMonth('2026-03'), makeClosureForMonth('2026-01')]);
+    expect(currentMonthKey()).toBe('2026-04');
+
+    await clearWealthDataForFreshStart({ preserveFx: false });
+    expect(loadClosures()).toHaveLength(0);
+    expect(currentMonthKey()).toBe('2026-03');
+  });
+
+  it('TEST B — cierre histórico persiste USD/CLP, EUR/CLP y UF/CLP y calcula neto con ese FX histórico', () => {
+    const historicalFx = { usdClp: 960, eurClp: 1050, ufClp: 37800 };
+    saveFxRates({ usdClp: 1300, eurClp: 1450, ufClp: 42000 });
+
+    const febRecords = [
+      {
+        id: crypto.randomUUID(),
+        block: 'bank' as const,
+        source: 'Manual',
+        label: 'Banco de Chile USD',
+        amount: 1000,
+        currency: 'USD' as const,
+        snapshotDate: '2026-02-15',
+        createdAt: new Date('2026-02-15T12:00:00.000Z').toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        block: 'investment' as const,
+        source: 'Manual',
+        label: 'Tenencia / CxC EUR',
+        amount: 500,
+        currency: 'EUR' as const,
+        snapshotDate: '2026-02-15',
+        createdAt: new Date('2026-02-15T12:00:01.000Z').toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        block: 'debt' as const,
+        source: 'Manual',
+        label: 'Visa Scotia',
+        amount: 200_000,
+        currency: 'CLP' as const,
+        snapshotDate: '2026-02-15',
+        createdAt: new Date('2026-02-15T12:00:02.000Z').toISOString(),
+      },
+    ];
+
+    const closure = upsertMonthlyClosure({
+      monthKey: '2026-02',
+      records: febRecords,
+      fxRates: historicalFx,
+      closedAt: new Date('2026-02-28T18:00:00.000Z').toISOString(),
+    });
+    expect(closure.fxRates).toEqual(historicalFx);
+
+    const expectedHistoricalNet = summarizeWealth(febRecords, historicalFx).netConsolidatedClp;
+    expect(closure.summary.netConsolidatedClp).toBe(expectedHistoricalNet);
+
+    const wrongWithCurrentFx = summarizeWealth(febRecords, loadFxRates()).netConsolidatedClp;
+    expect(closure.summary.netConsolidatedClp).not.toBe(wrongWithCurrentFx);
+  });
+
+  it('TEST C — consistencia Patrimonio vs Closing para netClp y netClpWithRisk (mismo mes)', () => {
+    const fx = { usdClp: 980, eurClp: 1080, ufClp: 38100 };
+    const monthKey = '2026-03';
+    const snapshotDate = '2026-03-20';
+
+    const records = [
+      {
+        id: crypto.randomUUID(),
+        block: 'investment' as const,
+        source: 'Manual',
+        label: 'SURA inversión financiera',
+        amount: 3_000_000,
+        currency: 'CLP' as const,
+        snapshotDate,
+        createdAt: new Date('2026-03-20T12:00:00.000Z').toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        block: 'investment' as const,
+        source: 'Manual',
+        label: RISK_CAPITAL_LABEL_CLP,
+        amount: 750_000,
+        currency: 'CLP' as const,
+        snapshotDate,
+        createdAt: new Date('2026-03-20T12:00:01.000Z').toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        block: 'bank' as const,
+        source: 'Manual',
+        label: 'Banco de Chile CLP',
+        amount: 900_000,
+        currency: 'CLP' as const,
+        snapshotDate,
+        createdAt: new Date('2026-03-20T12:00:02.000Z').toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        block: 'debt' as const,
+        source: 'Manual',
+        label: 'Visa Scotia',
+        amount: 100_000,
+        currency: 'CLP' as const,
+        snapshotDate,
+        createdAt: new Date('2026-03-20T12:00:03.000Z').toISOString(),
+      },
+    ];
+
+    saveWealthRecords(records);
+    const closure = upsertMonthlyClosure({
+      monthKey,
+      records,
+      fxRates: fx,
+      closedAt: new Date('2026-03-31T18:00:00.000Z').toISOString(),
+    });
+
+    const riskOffRecords = resolveRiskCapitalRecordsForTotals(records, false).recordsForTotals;
+    const riskOnRecords = resolveRiskCapitalRecordsForTotals(records, true).recordsForTotals;
+
+    const homeOff = computeWealthHomeSectionAmounts(riskOffRecords, fx).totalNetClp;
+    const homeOn = computeWealthHomeSectionAmounts(riskOnRecords, fx).totalNetClp;
+
+    const closingOff = buildWealthNetBreakdown(riskOffRecords, fx).netClp;
+    const closingOn = buildWealthNetBreakdown(riskOnRecords, fx).netClp;
+
+    expect(homeOff).toBe(closingOff);
+    expect(homeOn).toBe(closingOn);
+    expect(closure.summary.netClp).toBe(homeOff);
+    expect(closure.summary.netClpWithRisk).toBe(homeOn);
   });
 });
