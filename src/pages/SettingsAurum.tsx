@@ -1190,8 +1190,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         setSeedDemoMessage('Datos de prueba cargados en local. No se pudo confirmar sincronización en la nube.');
         return;
       }
-      setSeedDemoMessage('Datos de prueba cargados y sincronizados. Recargando...');
-      window.setTimeout(() => window.location.reload(), 180);
+      setSeedDemoMessage('Datos de prueba cargados y sincronizados. Abriendo Patrimonio...');
+      window.setTimeout(() => {
+        window.location.hash = '#/patrimonio';
+      }, 120);
     } catch (err: any) {
       setSeedDemoMessage(`No pude cargar datos de prueba: ${String(err?.message || err || 'error')}`);
     } finally {
