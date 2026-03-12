@@ -3714,6 +3714,101 @@ const parseCsvClosedAt = (row: Record<string, string>, monthKey: string) => {
   return Number.isFinite(parsedFallback.getTime()) ? parsedFallback.toISOString() : nowIso();
 };
 
+type HistoricalCsvDetectedFormat = 'aggregated' | 'detailed' | 'simple';
+
+const detectHistoricalCsvFormat = (headers: string[]): HistoricalCsvDetectedFormat => {
+  const headerSet = new Set(headers.map((header) => normalizeLabelKey(header)));
+  if (headerSet.has(normalizeLabelKey('inv_fin_clp'))) return 'aggregated';
+  if (headerSet.has(normalizeLabelKey('sura_fin_clp'))) return 'detailed';
+  return 'simple';
+};
+
+const buildSummaryFromAggregatedHistoricalCsv = (
+  row: Record<string, string>,
+  usdClp: number,
+): WealthSnapshotSummary | null => {
+  const invFinClp = parseCsvNumber(row, ['inv_fin_clp']) ?? 0;
+  const invFinUsd = parseCsvNumber(row, ['inv_fin_usd']) ?? 0;
+  const invPrevClp = parseCsvNumber(row, ['inv_prev_clp']) ?? 0;
+  const crpClp = parseCsvNumber(row, ['crp_clp']) ?? 0;
+  const crpUsd = parseCsvNumber(row, ['crp_usd']) ?? 0;
+  const tenenciaClp = parseCsvNumber(row, ['tenencia_clp']) ?? 0;
+  const realEstateNetClp = parseCsvNumber(row, ['bienes_raices_neto_clp']) ?? 0;
+
+  const hasAnyAmount = [
+    invFinClp,
+    invFinUsd,
+    invPrevClp,
+    crpClp,
+    crpUsd,
+    tenenciaClp,
+    realEstateNetClp,
+  ].some((value) => Math.abs(value) > 0);
+  if (!hasAnyAmount) return null;
+
+  /* ESTRUCTURA DE INVERSIONES AURUM
+   * Inversiones financieras:
+   *   inv_fin_clp + (inv_fin_usd × usd_clp)
+   *
+   * Inversiones previsionales:
+   *   inv_prev_clp
+   *
+   * Otras inversiones (incluye capital de riesgo):
+   *   tenencia_clp + crp_clp + (crp_usd × usd_clp)
+   *
+   * Capital de riesgo (subset de Otras inversiones):
+   *   crp_clp + (crp_usd × usd_clp)
+   *
+   * TOTALES:
+   * investmentClp (Zap OFF) =
+   *   inv_fin + inv_prev + tenencia_clp
+   *
+   * riskCapitalClp =
+   *   crp_clp + (crp_usd × usd_clp)
+   *
+   * investmentClpWithRisk (Zap ON) =
+   *   investmentClp + riskCapitalClp
+   */
+  const invFinClpConverted = invFinClp + invFinUsd * usdClp;
+  const riskCapitalClp = crpClp + crpUsd * usdClp;
+  const investmentClp = invFinClpConverted + invPrevClp + tenenciaClp;
+  const investmentClpWithRisk = investmentClp + riskCapitalClp;
+  const netClp = investmentClp + realEstateNetClp;
+  const netClpWithRisk = investmentClpWithRisk + realEstateNetClp;
+
+  const roundedInvestmentClp = Math.round(investmentClp);
+  const roundedRiskCapitalClp = Math.round(riskCapitalClp);
+  const roundedInvestmentClpWithRisk = Math.round(investmentClpWithRisk);
+  const roundedRealEstateNetClp = Math.round(realEstateNetClp);
+  const roundedNetClp = Math.round(netClp);
+  const roundedNetClpWithRisk = Math.round(netClpWithRisk);
+  const assetsByCurrency = emptyCurrencyMap();
+  const debtsByCurrency = emptyCurrencyMap();
+  const byBlock = emptyBlockMap();
+
+  assetsByCurrency.CLP = roundedNetClpWithRisk;
+  byBlock.investment.CLP = roundedInvestmentClpWithRisk;
+  byBlock.real_estate.CLP = roundedRealEstateNetClp;
+
+  return {
+    netByCurrency: {
+      CLP: roundedNetClpWithRisk,
+      USD: 0,
+      EUR: 0,
+      UF: 0,
+    },
+    assetsByCurrency,
+    debtsByCurrency,
+    netConsolidatedClp: roundedNetClpWithRisk,
+    byBlock,
+    investmentClp: roundedInvestmentClp,
+    riskCapitalClp: roundedRiskCapitalClp,
+    investmentClpWithRisk: roundedInvestmentClpWithRisk,
+    netClp: roundedNetClp,
+    netClpWithRisk: roundedNetClpWithRisk,
+  };
+};
+
 const buildHistoricalMonthRecords = (
   monthKey: string,
   row: Record<string, string>,
@@ -3783,6 +3878,7 @@ export const importHistoricalClosuresFromCsv = async (
   }
 
   const headers = matrix[0].map((cell) => normalizeLabelKey(cell));
+  const csvFormat = detectHistoricalCsvFormat(headers);
   const rows = matrix.slice(1);
 
   const importedMonths: string[] = [];
@@ -3882,37 +3978,50 @@ export const importHistoricalClosuresFromCsv = async (
       }
     }
 
-    const records = buildHistoricalMonthRecords(monthKey, rowObj);
-    const netClpSimple = parseCsvNumber(rowObj, [
-      'net_clp',
-      'patrimonio_neto_clp',
-      'patrimonio_neto',
-      'neto_clp',
-      'patrimonio_total_clp',
-      'patrimonio_clp',
-    ]);
-    if (!records.length && netClpSimple === null) {
-      skippedMonths.push(monthKey);
-      warnings.push(`${monthKey}: no trae montos utilizables (ni detalle ni net_clp).`);
-      return;
-    }
-
     const fx: WealthFxRates = {
       usdClp: Math.round(Number(usdClpResolved)),
       eurClp: Math.round(Number(eurClpResolved)),
       ufClp: Math.round(Number(ufClpResolved)),
     };
 
-    const dedupedRecords = dedupeLatestByAsset(records);
-    const summary =
-      dedupedRecords.length > 0
-        ? summarizeWealth(dedupedRecords, fx)
-        : buildSummaryFromNetClp(Number(netClpSimple || 0));
+    let dedupedRecords: WealthRecord[] = [];
+    let summary: WealthSnapshotSummary | null = null;
+
+    if (csvFormat === 'aggregated') {
+      summary = buildSummaryFromAggregatedHistoricalCsv(rowObj, fx.usdClp);
+      if (!summary) {
+        skippedMonths.push(monthKey);
+        warnings.push(`${monthKey}: fila histórica agregada sin montos utilizables.`);
+        return;
+      }
+    } else {
+      const records = buildHistoricalMonthRecords(monthKey, rowObj);
+      const netClpSimple = parseCsvNumber(rowObj, [
+        'net_clp',
+        'patrimonio_neto_clp',
+        'patrimonio_neto',
+        'neto_clp',
+        'patrimonio_total_clp',
+        'patrimonio_clp',
+      ]);
+      if (!records.length && netClpSimple === null) {
+        skippedMonths.push(monthKey);
+        warnings.push(`${monthKey}: no trae montos utilizables (ni detalle ni net_clp).`);
+        return;
+      }
+
+      dedupedRecords = dedupeLatestByAsset(records);
+      summary =
+        dedupedRecords.length > 0
+          ? summarizeWealth(dedupedRecords, fx)
+          : buildSummaryFromNetClp(Number(netClpSimple || 0));
+    }
+
     const nextClosure: WealthMonthlyClosure = {
       id: closureByMonth.get(monthKey)?.id || crypto.randomUUID(),
       monthKey,
       closedAt: parseCsvClosedAt(rowObj, monthKey),
-      summary,
+      summary: summary!,
       fxRates: fx,
       fxMissing: fxMissing.length ? fxMissing : undefined,
       records: dedupedRecords.length ? dedupedRecords : undefined,
@@ -3932,8 +4041,20 @@ export const importHistoricalClosuresFromCsv = async (
   const mergedClosures = [...closureByMonth.values()].sort(
     (a, b) => b.monthKey.localeCompare(a.monthKey),
   );
+  console.info('[Wealth][csv-import][before-save]', {
+    csvFormat,
+    rows: rows.length,
+    existingClosures: existingClosures.length,
+  });
   saveClosures(mergedClosures);
   saveDemoSeedMeta(null);
+  console.info('[Wealth][csv-import][after-save]', {
+    csvFormat,
+    mergedClosures: mergedClosures.length,
+    importedMonths: [...new Set(importedMonths)].sort(),
+    replacedMonths: [...new Set(replacedMonths)].sort(),
+    skippedMonths: [...new Set(skippedMonths)].sort(),
+  });
 
   return {
     importedMonths: [...new Set(importedMonths)].sort(),

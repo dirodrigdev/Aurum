@@ -1,5 +1,7 @@
 /** @vitest-environment jsdom */
 import React, { act, useEffect } from 'react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, Root } from 'react-dom/client';
 
@@ -19,6 +21,7 @@ import {
   createMonthlyClosure,
   currentMonthKey,
   fillMissingWithPreviousClosure,
+  importHistoricalClosuresFromCsv,
   latestRecordsForMonth,
   loadClosures,
   loadFxRates,
@@ -527,5 +530,39 @@ describe('Aurum full flow (service-level e2e)', () => {
     expect(homeOn).toBe(closingOn);
     expect(closure.summary.netClp).toBe(homeOff);
     expect(closure.summary.netClpWithRisk).toBe(homeOn);
+  });
+
+  it('CSV histórico agregado: importa 32 cierres con netClp/netClpWithRisk y FX por mes', async () => {
+    const csv = readFileSync(path.join(process.cwd(), 'tests/fixtures_historical_aggregated.csv'), 'utf8');
+    const result = await importHistoricalClosuresFromCsv(csv);
+
+    expect(result.skippedMonths).toEqual([]);
+
+    const closures = loadClosures();
+    expect(closures).toHaveLength(32);
+    expect(closures.every((closure) => !closure.records || closure.records.length === 0)).toBe(true);
+
+    const may2023 = closures.find((closure) => closure.monthKey === '2023-05');
+    expect(may2023).toBeTruthy();
+    if (!may2023) return;
+
+    const expectedInvestmentClp = 296_867_255 + (314_620 * 790) + 576_000_000 + 47_718;
+    const expectedRiskCapitalClp = 65_500_000 + (55_800 * 790);
+    const expectedInvestmentWithRisk = expectedInvestmentClp + expectedRiskCapitalClp;
+    const expectedRealEstateNetClp = 154_239_360;
+    const expectedNetClp = expectedInvestmentClp + expectedRealEstateNetClp;
+    const expectedNetClpWithRisk = expectedInvestmentWithRisk + expectedRealEstateNetClp;
+
+    expect(may2023.fxRates).toEqual({ usdClp: 790, eurClp: 861, ufClp: 35970 });
+    expect(may2023.summary.investmentClp).toBe(expectedInvestmentClp);
+    expect(may2023.summary.riskCapitalClp).toBe(expectedRiskCapitalClp);
+    expect(may2023.summary.investmentClpWithRisk).toBe(expectedInvestmentWithRisk);
+    expect(may2023.summary.netClp).toBe(expectedNetClp);
+    expect(may2023.summary.netClpWithRisk).toBe(expectedNetClpWithRisk);
+
+    const anyRiskDelta = closures.some(
+      (closure) => Number(closure.summary.netClpWithRisk || 0) > Number(closure.summary.netClp || 0),
+    );
+    expect(anyRiskDelta).toBe(true);
   });
 });
