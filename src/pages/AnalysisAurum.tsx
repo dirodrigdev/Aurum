@@ -55,8 +55,6 @@ type MonthlyReturnRow = {
   monthKey: string;
   fx: WealthFxRates;
   rawEurClp: number;
-  normalizedEurClp: number;
-  eurNormalized: boolean;
   netClp: number;
   prevNetClp: number | null;
   varPatrimonioClp: number | null;
@@ -93,48 +91,6 @@ const safeUsdClp = (value: number) =>
 const safeUfClp = (value: number) =>
   Number.isFinite(value) && value > 0 ? value : defaultFxRates.ufClp;
 
-const normalizeEurClpForAnalysis = (rawEurClp: number, usdClp: number) => {
-  const fallback = defaultFxRates.eurClp;
-  if (!Number.isFinite(rawEurClp) || rawEurClp <= 0) {
-    return { eurClp: fallback, normalized: true, reason: 'invalid_or_missing' as const };
-  }
-
-  const candidates = [rawEurClp, rawEurClp / 10, rawEurClp / 100, rawEurClp / 1000, rawEurClp / 10000]
-    .filter((candidate) => Number.isFinite(candidate) && candidate >= 100 && candidate <= 5000);
-
-  if (!candidates.length) {
-    const eur = rawEurClp > 0 ? rawEurClp : fallback;
-    return { eurClp: eur, normalized: false, reason: 'unchanged' as const };
-  }
-
-  const usdSafe = safeUsdClp(usdClp);
-  const targetRatio = 1.1;
-  const choose = candidates
-    .map((candidate) => ({
-      value: candidate,
-      score: Math.abs(candidate / Math.max(1, usdSafe) - targetRatio),
-    }))
-    .sort((a, b) => a.score - b.score)[0];
-
-  const normalized = Math.abs(choose.value - rawEurClp) > 1e-9;
-  return {
-    eurClp: choose.value,
-    normalized,
-    reason: normalized ? ('scaled_for_analysis' as const) : ('unchanged' as const),
-  };
-};
-
-const safeFxForAnalysis = (fx?: WealthFxRates): WealthFxRates => {
-  const usdClp = safeUsdClp(Number(fx?.usdClp));
-  const rawEur = Number(fx?.eurClp);
-  const eurClp = normalizeEurClpForAnalysis(rawEur, usdClp).eurClp;
-  return {
-    usdClp,
-    eurClp,
-    ufClp: safeUfClp(Number(fx?.ufClp)),
-  };
-};
-
 const safeFxRaw = (fx?: WealthFxRates): WealthFxRates => ({
   usdClp: safeUsdClp(Number(fx?.usdClp)),
   eurClp: Number.isFinite(Number(fx?.eurClp)) && Number(fx?.eurClp) > 0 ? Number(fx?.eurClp) : defaultFxRates.eurClp,
@@ -162,10 +118,7 @@ const xLabelFromMonthKey = (monthKey: string) => {
   return `${month}/${year.slice(2)}`;
 };
 
-const computeMonthlyRows = (
-  closures: WealthMonthlyClosure[],
-  mode: 'raw' | 'normalized' = 'normalized',
-): MonthlyReturnRow[] => {
+const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[] => {
   const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   const calendarCurrent = currentMonthKey();
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
@@ -173,11 +126,7 @@ const computeMonthlyRows = (
   return filtered.map((closure, index) => {
     const prev = index > 0 ? filtered[index - 1] : null;
     const fxRaw = safeFxRaw(closure.fxRates);
-    const eurNormalization = normalizeEurClpForAnalysis(fxRaw.eurClp, fxRaw.usdClp);
-    const fx =
-      mode === 'normalized'
-        ? safeFxForAnalysis(closure.fxRates)
-        : { ...fxRaw, eurClp: fxRaw.eurClp };
+    const fx = fxRaw;
 
     const netClp = summaryNetClp(closure);
     const prevNetClp = prev ? summaryNetClp(prev) : null;
@@ -198,8 +147,6 @@ const computeMonthlyRows = (
       monthKey: closure.monthKey,
       fx,
       rawEurClp: fxRaw.eurClp,
-      normalizedEurClp: eurNormalization.eurClp,
-      eurNormalized: mode === 'normalized' ? eurNormalization.normalized : false,
       netClp,
       prevNetClp,
       varPatrimonioClp,
@@ -289,10 +236,10 @@ const SummaryTable: React.FC<{
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
-            <th className="py-1 pr-2 text-right">Var.Pat</th>
-            <th className="py-1 pr-2 text-right">Gastos</th>
+            <th className="py-1 pr-2 text-right">%</th>
             <th className="py-1 pr-2 text-right">Ret.Real</th>
-            <th className="py-1 text-right">%</th>
+            <th className="py-1 pr-2 text-right">Var.Pat</th>
+            <th className="py-1 text-right">Gastos</th>
           </tr>
         </thead>
         <tbody>
@@ -304,17 +251,17 @@ const SummaryTable: React.FC<{
                   <div>{item.label}</div>
                   <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
                 </td>
-                <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
-                </td>
-                <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
+                <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
+                  {formatPct(item.pctRetorno)}
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                   {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
                 </td>
-                <td className={cn('py-1.5 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatPct(item.pctRetorno)}
+                <td className="py-1.5 pr-2 text-right text-slate-700">
+                  {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
+                </td>
+                <td className="py-1.5 text-right text-slate-700">
+                  {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
                 </td>
               </tr>
             );
@@ -336,39 +283,52 @@ const ReturnRealHero: React.FC<{
     { key: '12m', label: 'Últ. 12M', value: last12, classes: 'text-xl md:text-2xl' },
     { key: 'mes', label: 'Últ. mes', value: lastMonth, classes: 'text-lg md:text-xl' },
   ] as const;
+  const spentClass = (value: AggregatedSummary | null | undefined) => {
+    if (value?.spendPct === null || value?.spendPct === undefined) return 'text-slate-200';
+    return value.spendPct > 100 ? 'text-rose-300' : 'text-emerald-300';
+  };
+  const retornoClass = (value: AggregatedSummary | null | undefined) =>
+    (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
   return (
     <Card className="border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 text-slate-100">
       <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
-      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-        {columns.map((column) => {
-          const value = column.value;
-          const positive = (value?.retornoRealAvgDisplay || 0) >= 0;
-          const spendingDanger = (value?.spendPct || 0) > 100;
-          return (
-            <div key={column.key} className="rounded-xl border border-slate-700/70 bg-slate-800/45 p-3">
-              <div className="text-[11px] uppercase tracking-wide text-slate-300">{column.label}</div>
-              <div className="mt-1 text-[10px] text-slate-400">% retorno</div>
-              <div className={cn(column.classes, 'font-bold', positive ? 'text-emerald-300' : 'text-rose-300')}>
-                {formatPct(value?.pctRetorno ?? null, 1)}
-              </div>
-
-              <div className="mt-2 text-[10px] text-slate-400">Promedio mensual</div>
-              <div className={cn('text-sm font-semibold', positive ? 'text-emerald-200' : 'text-rose-200')}>
-                {value?.retornoRealAvgDisplay === null || value?.retornoRealAvgDisplay === undefined
-                  ? '—'
-                  : formatCurrency(value.retornoRealAvgDisplay, currency)}
-              </div>
-
-              <div className="mt-2 text-[10px] text-slate-400">% del retorno que se gasta</div>
-              <div className={cn('text-sm font-semibold', spendingDanger ? 'text-rose-300' : 'text-slate-200')}>
-                {value?.spendPct === null || value?.spendPct === undefined
-                  ? '—'
-                  : `${value.spendPct.toFixed(1).replace('.', ',')}%`}
-              </div>
+      <div className="mt-3 rounded-xl border border-slate-700/70 bg-slate-800/45 p-3">
+        <div className="grid grid-cols-3 gap-2">
+          {columns.map((column) => (
+            <div key={`${column.key}-head`} className="text-[10px] uppercase tracking-wide text-slate-300">
+              {column.label}
             </div>
-          );
-        })}
+          ))}
+        </div>
+        <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-400">% retorno</div>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {columns.map((column) => (
+            <div key={`${column.key}-pct`} className={cn(column.classes, 'font-bold', retornoClass(column.value))}>
+              {formatPct(column.value?.pctRetorno ?? null, 1)}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 text-[10px] uppercase tracking-wide text-slate-400">Promedio mensual</div>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {columns.map((column) => (
+            <div key={`${column.key}-avg`} className={cn('font-semibold', column.classes, retornoClass(column.value))}>
+              {column.value?.retornoRealAvgDisplay === null || column.value?.retornoRealAvgDisplay === undefined
+                ? '—'
+                : formatCurrency(column.value.retornoRealAvgDisplay, currency)}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 text-[10px] uppercase tracking-wide text-slate-400">% del retorno que se gasta</div>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {columns.map((column) => (
+            <div key={`${column.key}-spent`} className={cn('font-semibold', column.classes, spentClass(column.value))}>
+              {column.value?.spendPct === null || column.value?.spendPct === undefined
+                ? '—'
+                : `${column.value.spendPct.toFixed(1).replace('.', ',')}%`}
+            </div>
+          ))}
+        </div>
       </div>
     </Card>
   );
@@ -498,26 +458,37 @@ export const AnalysisAurum: React.FC = () => {
     };
   }, [refreshClosures]);
 
-  const monthlyRowsRaw = useMemo(() => computeMonthlyRows(closures, 'raw'), [closures]);
-  const monthlyRowsAsc = useMemo(() => computeMonthlyRows(closures, 'normalized'), [closures]);
+  const monthlyRowsAsc = useMemo(() => computeMonthlyRows(closures), [closures]);
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     [monthlyRowsAsc],
   );
 
-  const eurScaleDiagnostics = useMemo(() => {
-    const rawOutliers = monthlyRowsRaw.filter((row) => row.rawEurClp > 10000);
-    const normalizedOutliers = monthlyRowsAsc.filter((row) => row.normalizedEurClp > 10000);
-    const anomalyRaw = [...monthlyRowsRaw]
+  const analysisDiagnostics = useMemo(() => {
+    const eurScaleOutliers = monthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
+    const anomalyRaw = [...monthlyRowsAsc]
       .filter((row) => row.pct !== null)
       .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
-    return { rawOutliers, normalizedOutliers, anomalyRaw };
-  }, [monthlyRowsRaw, monthlyRowsAsc]);
+    const march2025 = monthlyRowsAsc.find((row) => row.monthKey === '2025-03') || null;
+    return { eurScaleOutliers, anomalyRaw, march2025 };
+  }, [monthlyRowsAsc]);
 
   useEffect(() => {
-    const anomaly = eurScaleDiagnostics.anomalyRaw;
+    const anomaly = analysisDiagnostics.anomalyRaw;
+    const march2025 = analysisDiagnostics.march2025;
     console.info('[Analysis][eur-scale-before]', {
-      monthsWithRawEurOutlier: eurScaleDiagnostics.rawOutliers.map((row) => ({
+      march2025: march2025
+        ? {
+            rawEurClp: march2025.rawEurClp,
+            gastosEur: GASTAPP_TOTALS['2025-03'] ?? null,
+            gastosClp: march2025.gastosClp,
+            expectedGastosClp:
+              Number.isFinite(GASTAPP_TOTALS['2025-03']) && Number.isFinite(march2025.rawEurClp)
+                ? Number(GASTAPP_TOTALS['2025-03']) * Number(march2025.rawEurClp)
+                : null,
+          }
+        : null,
+      monthsWithRawEurOutlier: analysisDiagnostics.eurScaleOutliers.map((row) => ({
         monthKey: row.monthKey,
         rawEurClp: row.rawEurClp,
       })),
@@ -531,18 +502,13 @@ export const AnalysisAurum: React.FC = () => {
           }
         : null,
     });
-    console.info('[Analysis][eur-scale-after]', {
-      monthsStillOutlier: eurScaleDiagnostics.normalizedOutliers.map((row) => ({
-        monthKey: row.monthKey,
-        normalizedEurClp: row.normalizedEurClp,
-      })),
-    });
+    console.info('[Analysis][eur-scale-after]', { normalizationApplied: false });
 
-    if (eurScaleDiagnostics.normalizedOutliers.length > 0) {
+    if (analysisDiagnostics.eurScaleOutliers.length > 0) {
       setErrorMessage(
-        `No pude normalizar EUR/CLP en: ${eurScaleDiagnostics.normalizedOutliers
+        `Detecté EUR/CLP fuera de escala en: ${analysisDiagnostics.eurScaleOutliers
           .map((row) => row.monthKey)
-          .join(', ')}. Revisa esos cierres.`,
+          .join(', ')}. Corrige esos cierres en origen.`,
       );
       return;
     }
@@ -552,13 +518,13 @@ export const AnalysisAurum: React.FC = () => {
     );
     if (suspectPost) {
       setErrorMessage(
-        `Detecté gastos fuera de rango en ${suspectPost.monthKey} incluso tras normalización. Revisa el FX de ese cierre.`,
+        `Detecté gastos fuera de rango en ${suspectPost.monthKey}. Revisa el EUR/CLP guardado en ese cierre.`,
       );
       return;
     }
 
     setErrorMessage('');
-  }, [eurScaleDiagnostics, monthlyRowsAsc]);
+  }, [analysisDiagnostics, monthlyRowsAsc]);
 
   const periodSummaries = useMemo(() => {
     const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
@@ -658,13 +624,13 @@ export const AnalysisAurum: React.FC = () => {
         <>
           <ReturnRealHero sinceStart={heroSinceStart} last12={heroLast12} lastMonth={heroLastMonth} currency={currency} />
 
-          {eurScaleDiagnostics.anomalyRaw && Math.abs(Number(eurScaleDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
+          {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
             <Card className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              Diagnóstico previo: mes anómalo detectado en {eurScaleDiagnostics.anomalyRaw.monthKey} 
-              {` · Var.Pat ${eurScaleDiagnostics.anomalyRaw.varPatrimonioClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.varPatrimonioClp, 'CLP')}`}
-              {` · Gastos ${eurScaleDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
-              {` · Ret.Real ${eurScaleDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
-              {` · % ${formatPct(eurScaleDiagnostics.anomalyRaw.pct)}`}
+              Diagnóstico previo: mes anómalo detectado en {analysisDiagnostics.anomalyRaw.monthKey} 
+              {` · Var.Pat ${analysisDiagnostics.anomalyRaw.varPatrimonioClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.varPatrimonioClp, 'CLP')}`}
+              {` · Gastos ${analysisDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
+              {` · Ret.Real ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
+              {` · % ${formatPct(analysisDiagnostics.anomalyRaw.pct)}`}
             </Card>
           )}
 
@@ -678,10 +644,10 @@ export const AnalysisAurum: React.FC = () => {
                 <thead className="sticky top-0 bg-white">
                   <tr className="text-left text-slate-500">
                     <th className="py-1 pr-2">Mes</th>
-                    <th className="py-1 pr-2 text-right">Var.Pat</th>
-                    <th className="py-1 pr-2 text-right">Gastos</th>
+                    <th className="py-1 pr-2 text-right">%</th>
                     <th className="py-1 pr-2 text-right">Ret.Real</th>
-                    <th className="py-1 text-right">%</th>
+                    <th className="py-1 pr-2 text-right">Var.Pat</th>
+                    <th className="py-1 text-right">Gastos</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -696,17 +662,17 @@ export const AnalysisAurum: React.FC = () => {
                     return (
                       <tr key={row.monthKey} className="border-t border-slate-100">
                         <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabel(row.monthKey)}</td>
-                        <td className="py-1.5 pr-2 text-right text-slate-700">
-                          {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}
-                        </td>
-                        <td className="py-1.5 pr-2 text-right text-slate-700">
-                          {gastosDisplay === null ? '—' : formatCurrency(gastosDisplay, currency)}
+                        <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
+                          {formatPct(row.pct)}
                         </td>
                         <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                           {retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency)}
                         </td>
-                        <td className={cn('py-1.5 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                          {formatPct(row.pct)}
+                        <td className="py-1.5 pr-2 text-right text-slate-700">
+                          {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}
+                        </td>
+                        <td className="py-1.5 text-right text-slate-700">
+                          {gastosDisplay === null ? '—' : formatCurrency(gastosDisplay, currency)}
                         </td>
                       </tr>
                     );
