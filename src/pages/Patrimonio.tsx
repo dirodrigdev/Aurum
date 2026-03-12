@@ -54,6 +54,7 @@ import {
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   removeWealthRecordForMonthAsset,
   saveBankTokens,
+  saveFxRates,
   saveIncludeRiskCapitalInTotals,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
@@ -3124,9 +3125,24 @@ export const Patrimonio: React.FC = () => {
 
     try {
       await runStep('carry', async () => {
-        const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
+        let fxSeeded = false;
+        const previousFx = previousClosureForMonthStart?.fxRates || null;
+        if (previousFx && previousFx.usdClp > 0 && previousFx.eurClp > 0 && previousFx.ufClp > 0) {
+          saveFxRates(previousFx);
+          setFx(loadFxRates());
+          fxSeeded = true;
+        }
+        const result = fillMissingWithPreviousClosure(
+          monthToStart,
+          visualMonthSnapshotDate(monthToStart),
+          undefined,
+          { excludeBlocks: ['bank'] },
+        );
         return {
-          message: result.added > 0 ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}).` : 'Sin cambios de arrastre.',
+          message:
+            result.added > 0
+              ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}). Bancos excluidos del arrastre.${fxSeeded ? ' TC/UF iniciales cargados desde el último cierre.' : ''}`
+              : `Sin cambios de arrastre.${fxSeeded ? ' TC/UF iniciales cargados desde el último cierre.' : ''}`,
         };
       });
 

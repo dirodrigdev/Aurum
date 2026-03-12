@@ -1291,13 +1291,19 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
 
   const deleteSelectedClosureNow = async () => {
     if (!selectedClosureToDelete) return;
+    const monthKeyToDelete = selectedClosureToDelete;
     setDeleteClosureConfirmOpen(false);
     setDeletingClosure(true);
     setDeleteClosureMessage('');
     try {
-      await backupBeforeDestructiveOperation(`Borrar cierre ${selectedClosureToDelete}`);
+      const beforeLocalMonthKeys = loadClosures().map((closure) => closure.monthKey);
+      console.info('[Settings][delete-closure][before]', {
+        monthKeyToDelete,
+        beforeLocalMonthKeys,
+      });
+      await backupBeforeDestructiveOperation(`Borrar cierre ${monthKeyToDelete}`);
       const current = loadClosures();
-      const next = current.filter((closure) => closure.monthKey !== selectedClosureToDelete);
+      const next = current.filter((closure) => closure.monthKey !== monthKeyToDelete);
       saveClosures(next);
       let pushed = false;
       let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
@@ -1312,10 +1318,38 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         hydrated = 'none';
       }
       refreshLocalState();
+      const localAfterMonthKeys = loadClosures().map((closure) => closure.monthKey);
+      const localDeleted = !localAfterMonthKeys.includes(monthKeyToDelete);
+      let cloudDeleted: boolean | null = null;
+      let cloudMessage = '';
+      try {
+        const cloudSummary = await loadCloudClosuresSummary();
+        if (cloudSummary.available) {
+          cloudDeleted = !cloudSummary.monthKeys.includes(monthKeyToDelete);
+          cloudMessage = cloudDeleted ? 'Cierre eliminado en nube' : 'Cierre sigue existiendo en nube';
+        } else {
+          cloudMessage = cloudSummary.message;
+        }
+      } catch (err: any) {
+        cloudMessage = String(err?.message || 'No pude verificar nube');
+      }
+      console.info('[Settings][delete-closure][after]', {
+        monthKeyToDelete,
+        pushed,
+        hydrated,
+        localAfterMonthKeys,
+        localDeleted,
+        cloudDeleted,
+        cloudMessage,
+      });
       setSelectedClosureToDelete('');
-      setDeleteClosureMessage(
-        `Cierre ${selectedClosureToDelete} eliminado. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
-      );
+      if (!localDeleted || cloudDeleted === false) {
+        setDeleteClosureMessage(
+          `No pude confirmar el borrado completo de ${monthKeyToDelete}. Local=${localDeleted ? 'OK' : 'ERROR'} · Nube=${cloudDeleted === null ? 'sin validar' : cloudDeleted ? 'OK' : 'ERROR'}.`,
+        );
+        return;
+      }
+      setDeleteClosureMessage(`Cierre ${monthKeyToDelete} eliminado. ${describeLocalThenCloudSync(pushed, hydrated)}.`);
     } finally {
       setDeletingClosure(false);
     }

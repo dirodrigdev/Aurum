@@ -234,6 +234,70 @@ describe('Aurum full flow (service-level e2e)', () => {
     expect(closures[0].summary.netConsolidatedClp).toBe(expectedSummary.netConsolidatedClp);
   });
 
+  it('DEUDA MES ACTUAL: deudas no hipotecarias CLP/USD impactan el total del mes', () => {
+    const monthKey = currentMonthKey();
+    const snapshotDate = `${monthKey}-10`;
+    saveFxRates({ usdClp: 1000, eurClp: 1100, ufClp: 40000 });
+
+    upsertWealthRecord({
+      block: 'investment',
+      source: 'Manual',
+      label: 'SURA inversión financiera',
+      amount: 10_000_000,
+      currency: 'CLP',
+      snapshotDate,
+    });
+    upsertWealthRecord({
+      block: 'bank',
+      source: 'Manual',
+      label: 'Banco de Chile CLP',
+      amount: 2_000_000,
+      currency: 'CLP',
+      snapshotDate,
+    });
+    upsertWealthRecord({
+      block: 'bank',
+      source: 'Manual',
+      label: 'Banco de Chile USD',
+      amount: 1_000,
+      currency: 'USD',
+      snapshotDate,
+    });
+    upsertWealthRecord({
+      block: 'debt',
+      source: 'Tarjetas (cupo usado manual)',
+      label: 'Deuda tarjetas CLP',
+      amount: 500_000,
+      currency: 'CLP',
+      snapshotDate,
+    });
+    upsertWealthRecord({
+      block: 'debt',
+      source: 'Tarjetas (cupo usado manual)',
+      label: 'Deuda tarjetas USD',
+      amount: 200,
+      currency: 'USD',
+      snapshotDate,
+    });
+
+    const withDebt = snapshotNetForMonth(monthKey, { includeRiskCapital: true });
+    const expectedDebtClp = 500_000 + 200 * 1000;
+    expect(withDebt.nonMortgageDebt).toBe(expectedDebtClp);
+
+    const recordsWithoutDebt = loadWealthRecords().filter(
+      (record) =>
+        !(
+          record.snapshotDate.startsWith(`${monthKey}-`) &&
+          record.block === 'debt' &&
+          (record.label === 'Deuda tarjetas CLP' || record.label === 'Deuda tarjetas USD')
+        ),
+    );
+    saveWealthRecords(recordsWithoutDebt);
+
+    const withoutDebt = snapshotNetForMonth(monthKey, { includeRiskCapital: true });
+    expect(withoutDebt.totalNetClp - withDebt.totalNetClp).toBe(expectedDebtClp);
+  });
+
   it('ESCENARIO 2: mes siguiente -> arranque por pasos -> flag persistido y patrimonio base consistente', async () => {
     const seeded = seedCurrentMonthBaseData();
     const baseMonth = seeded.monthKey;

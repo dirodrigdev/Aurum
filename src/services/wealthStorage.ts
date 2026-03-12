@@ -1209,7 +1209,7 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
 
   return {
     records,
-    closures: mergeClosures(input.localClosures, input.remoteClosures),
+    closures: mergeClosures(input.localClosures, input.remoteClosures, preferLocal),
     instruments: mergeInvestmentInstruments(input.localInstruments, input.remoteInstruments),
     bankTokens,
     deletedRecordIds,
@@ -2653,7 +2653,28 @@ const mergeInvestmentInstruments = (
   return [...merged.values()].sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label)));
 };
 
-const mergeClosures = (localClosures: WealthMonthlyClosure[], remoteClosures: WealthMonthlyClosure[]) => {
+const mergeClosures = (
+  localClosures: WealthMonthlyClosure[],
+  remoteClosures: WealthMonthlyClosure[],
+  preferLocal = false,
+) => {
+  if (preferLocal) {
+    const remoteByMonth = new Map(remoteClosures.map((closure) => [closure.monthKey, closure] as const));
+    const mergedPreferredLocal = localClosures.map((localClosure) => {
+      const remoteClosure = remoteByMonth.get(localClosure.monthKey);
+      if (!remoteClosure) return localClosure;
+      const remoteAsVersion =
+        remoteClosure.closedAt !== localClosure.closedAt ? [toClosureVersion(remoteClosure, localClosure.closedAt)] : [];
+      const mergedVersions = mergeClosureVersions(
+        localClosure.previousVersions,
+        remoteClosure.previousVersions,
+        remoteAsVersion,
+      );
+      return mergedVersions.length ? { ...localClosure, previousVersions: mergedVersions } : localClosure;
+    });
+    return [...mergedPreferredLocal].sort(compareClosuresByMonthDesc);
+  }
+
   const map = new Map<string, WealthMonthlyClosure>();
   for (const closure of [...localClosures, ...remoteClosures]) {
     const key = closure.monthKey;
@@ -2790,6 +2811,7 @@ export const fillMissingWithPreviousClosure = (
   targetMonthKey: string,
   snapshotDate: string,
   onlyLabels?: string[],
+  options?: { excludeBlocks?: WealthBlock[] },
 ): { added: number; sourceMonth: string | null } => {
   const records = loadWealthRecords();
   const closures = loadClosures();
@@ -2811,6 +2833,7 @@ export const fillMissingWithPreviousClosure = (
   );
 
   for (const oldRecord of previous.records) {
+    if (options?.excludeBlocks?.includes(oldRecord.block)) continue;
     if (normalizedFilters.length) {
       const oldLabel = normalizeLabelKey(oldRecord.label);
       const matchesFilter = normalizedFilters.some((filter) => oldLabel === filter);
