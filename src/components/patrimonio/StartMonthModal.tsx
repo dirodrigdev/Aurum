@@ -6,7 +6,7 @@ import { formatCurrency } from '../../utils/wealthFormat';
 export type StartMonthStepStatus = 'pending' | 'running' | 'done' | 'error';
 
 export interface StartMonthStepView {
-  key: 'carry' | 'mortgage' | 'fx';
+  key: 'carry' | 'banks' | 'mortgage' | 'fx';
   title: string;
   status: StartMonthStepStatus;
   deltaClp: number;
@@ -23,8 +23,15 @@ interface StartMonthModalProps {
   flowError: string;
   finalNetClp: number | null;
   variationVsPreviousClp: number | null;
+  autoOptions: {
+    banks: boolean;
+    fx: boolean;
+    realEstate: boolean;
+  };
+  banksOptionEnabled: boolean;
+  onToggleAutoOption: (key: 'banks' | 'fx' | 'realEstate', value: boolean) => void;
+  onApplySelected: () => void;
   onStart: () => void;
-  onConfirmStart: () => void;
   onClose: () => void;
 }
 
@@ -57,8 +64,11 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
   flowError,
   finalNetClp,
   variationVsPreviousClp,
+  autoOptions,
+  banksOptionEnabled,
+  onToggleAutoOption,
+  onApplySelected,
   onStart,
-  onConfirmStart,
   onClose,
 }) => {
   if (!open) return null;
@@ -78,7 +88,7 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
           </button>
         </div>
         <div className="mt-1 text-sm text-slate-600">
-          Se ejecutará el arranque del mes en 3 pasos secuenciales con impacto en patrimonio.
+          Primero se arrastran todos los valores del último cierre. Luego puedes actualizar valores automáticos.
         </div>
 
         <div className="mt-3 space-y-2">
@@ -139,15 +149,62 @@ export const StartMonthModal: React.FC<StartMonthModalProps> = ({
           </div>
         )}
 
+        {completed && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-sm font-semibold text-slate-900">Actualizar valores automáticos</div>
+            <div className="mt-2 space-y-2 text-sm">
+              <label className={`flex items-start gap-2 ${banksOptionEnabled ? '' : 'opacity-60'}`}>
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={autoOptions.banks}
+                  disabled={!banksOptionEnabled || running}
+                  onChange={(event) => onToggleAutoOption('banks', event.target.checked)}
+                />
+                <span>
+                  Bancos vía Fintoc
+                  {!banksOptionEnabled && (
+                    <span className="block text-[11px] text-slate-500">Tokens no configurados</span>
+                  )}
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={autoOptions.fx}
+                  disabled={running}
+                  onChange={(event) => onToggleAutoOption('fx', event.target.checked)}
+                />
+                <span>Tipos de cambio (USD/CLP, EUR/CLP, UF/CLP)</span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={autoOptions.realEstate}
+                  disabled={running}
+                  onChange={(event) => onToggleAutoOption('realEstate', event.target.checked)}
+                />
+                <span>
+                  Bienes raíces (valor UF actualizado + amortización hipotecaria del mes)
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 grid grid-cols-2 gap-2">
           <Button variant="outline" onClick={onClose}>
             Ahora no
           </Button>
           {completed ? (
-            <Button onClick={onConfirmStart}>Comenzar {monthLabel}</Button>
+            <Button onClick={onApplySelected} disabled={running}>
+              {running ? 'Actualizando...' : 'Actualizar seleccionados'}
+            </Button>
           ) : (
             <Button onClick={onStart} disabled={running}>
-              {running ? 'Procesando...' : 'Iniciar arranque'}
+              {running ? 'Procesando...' : 'Aplicar arrastre'}
             </Button>
           )}
         </div>

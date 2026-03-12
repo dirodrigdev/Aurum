@@ -2802,9 +2802,9 @@ export const createMonthlyClosure = (
   });
 };
 
-const findPreviousClosureWithRecords = (monthKey: string, closures: WealthMonthlyClosure[]) => {
+const findPreviousClosure = (monthKey: string, closures: WealthMonthlyClosure[]) => {
   const ordered = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-  return ordered.find((closure) => closure.monthKey < monthKey && Array.isArray(closure.records) && closure.records.length > 0) || null;
+  return ordered.find((closure) => closure.monthKey < monthKey) || null;
 };
 
 export const fillMissingWithPreviousClosure = (
@@ -2816,10 +2816,14 @@ export const fillMissingWithPreviousClosure = (
   const records = loadWealthRecords();
   const closures = loadClosures();
   const instruments = loadInvestmentInstruments();
-  const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
+  const previous = findPreviousClosure(targetMonthKey, closures);
 
-  if (!previous || !previous.records?.length) {
+  if (!previous) {
     return { added: 0, sourceMonth: null };
+  }
+
+  if (!previous.records?.length) {
+    return { added: 0, sourceMonth: previous.monthKey };
   }
 
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
@@ -2885,7 +2889,7 @@ export const applyMortgageAutoCalculation = (
 } => {
   const records = loadWealthRecords();
   const closures = loadClosures();
-  const previous = findPreviousClosureWithRecords(targetMonthKey, closures);
+  const previous = findPreviousClosure(targetMonthKey, closures);
   const monthRecords = latestRecordsForMonth(records, targetMonthKey);
   const sourceRecords = previous?.records?.length ? dedupeLatestByAsset(previous.records) : monthRecords;
   const sourceMonth = previous?.monthKey || `${targetMonthKey} (base inicial inferida)`;
