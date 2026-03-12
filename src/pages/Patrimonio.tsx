@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { Button, Card, cn, Input, Select } from '../components/Components';
 import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
-import { StartMonthModal, StartMonthStepView } from '../components/patrimonio/StartMonthModal';
+import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
 import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse } from '../services/bankApi';
@@ -242,13 +242,6 @@ const daysSinceIso = (iso?: string) => {
   if (!Number.isFinite(time)) return null;
   return Math.max(0, Math.floor((Date.now() - time) / (1000 * 60 * 60 * 24)));
 };
-
-const buildStartMonthSteps = (): StartMonthStepView[] => [
-  { key: 'carry', title: 'Aplicando datos del mes anterior...', status: 'pending', deltaClp: 0 },
-  { key: 'banks', title: 'Actualizando bancos vía Fintoc...', status: 'pending', deltaClp: 0 },
-  { key: 'mortgage', title: 'Actualizando saldo hipotecario...', status: 'pending', deltaClp: 0 },
-  { key: 'fx', title: 'Actualizando tipos de cambio...', status: 'pending', deltaClp: 0 },
-];
 
 const currencyOptions = [
   { value: 'CLP', label: 'CLP' },
@@ -2626,19 +2619,9 @@ export const Patrimonio: React.FC = () => {
   );
   const [closeFxDraft, setCloseFxDraft] = useState(() => buildCloseFxDraft(loadFxRates()));
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
-  const [startMonthModalOpen, setStartMonthModalOpen] = useState(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
-  const [startMonthCompleted, setStartMonthCompleted] = useState(false);
-  const [startMonthSteps, setStartMonthSteps] = useState<StartMonthStepView[]>(() => buildStartMonthSteps());
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
-  const [startMonthFinalNetClp, setStartMonthFinalNetClp] = useState<number | null>(null);
-  const [startMonthVariationVsPrevious, setStartMonthVariationVsPrevious] = useState<number | null>(null);
-  const [startMonthDeferredSessionMonthKey, setStartMonthDeferredSessionMonthKey] = useState<string | null>(null);
-  const [startMonthAutoOptions, setStartMonthAutoOptions] = useState({
-    banks: true,
-    fx: true,
-    realEstate: true,
-  });
+  const [carryConfirmOpen, setCarryConfirmOpen] = useState(false);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -2854,20 +2837,39 @@ export const Patrimonio: React.FC = () => {
         net: closureSummaryNetForMode(closure),
       }))
       .sort((a, b) => a.key.localeCompare(b.key));
-    const last = closedPoints.length > 0 ? closedPoints[closedPoints.length - 1] : null;
-    const prev = closedPoints.length > 1 ? closedPoints[closedPoints.length - 2] : null;
-    const monthIncrease = last && prev ? last.net - prev.net : null;
-    const deltas: number[] = [];
+    const monthClosedPoint = closedPoints.find((point) => point.key === monthKey) || null;
+    const previousClosedPoint = closedPoints.filter((point) => point.key < monthKey).slice(-1)[0] || null;
+    const monthNetForComparison = monthClosedPoint
+      ? monthClosedPoint.net
+      : monthRecordsForTotals.length > 0
+        ? sectionAmounts.totalNetClp
+        : null;
+    const monthIncrease =
+      monthNetForComparison !== null && previousClosedPoint
+        ? monthNetForComparison - previousClosedPoint.net
+        : null;
+    const closedDeltas: number[] = [];
     for (let i = 1; i < closedPoints.length; i += 1) {
-      deltas.push(closedPoints[i].net - closedPoints[i - 1].net);
+      closedDeltas.push(closedPoints[i].net - closedPoints[i - 1].net);
     }
+    const deltas =
+      !monthClosedPoint && monthIncrease !== null
+        ? [...closedDeltas, monthIncrease]
+        : closedDeltas;
 
     return {
       monthIncrease,
       avg12: average(deltas.slice(-12)),
       avgSinceStart: average(deltas),
     };
-  }, [closures, includeRiskCapitalInTotals, closureNetByMonth, realCurrentMonthKey]);
+  }, [
+    closures,
+    includeRiskCapitalInTotals,
+    realCurrentMonthKey,
+    monthKey,
+    monthRecordsForTotals.length,
+    sectionAmounts.totalNetClp,
+  ]);
 
   const latestClosure = closures[0] || null;
 
@@ -2883,24 +2885,34 @@ export const Patrimonio: React.FC = () => {
   }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
 
   useEffect(() => {
-    if (closures.length < 2) return;
-    const currentClosure = closures[0];
-    const previousClosure = closures[1];
-    const currentNet = closureSummaryNetForMode(currentClosure);
-    const previousNet = closureSummaryNetForMode(previousClosure);
+    const closedPoints = closures
+      .filter((closure) => closure.monthKey !== realCurrentMonthKey)
+      .map((closure) => ({
+        key: closure.monthKey,
+        net: closureSummaryNetForMode(closure),
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    const previousClosedPoint = closedPoints.filter((point) => point.key < monthKey).slice(-1)[0] || null;
+    const currentNet = monthRecordsForTotals.length > 0 ? sectionAmounts.totalNetClp : null;
     console.debug('[Patrimonio] Variación mensual', {
       includeRiskCapitalInTotals,
-      currentClosure: currentClosure.monthKey,
-      previousClosure: previousClosure.monthKey,
+      monthKey,
+      previousClosedMonth: previousClosedPoint?.key || null,
       currentNet,
-      previousNet,
-      monthIncrease: currentNet - previousNet,
-      currentSummaryNet: currentClosure.summary.netClp,
-      currentSummaryNetWithRisk: currentClosure.summary.netClpWithRisk,
-      previousSummaryNet: previousClosure.summary.netClp,
-      previousSummaryNetWithRisk: previousClosure.summary.netClpWithRisk,
+      previousNet: previousClosedPoint?.net ?? null,
+      monthIncrease:
+        currentNet !== null && previousClosedPoint
+          ? currentNet - previousClosedPoint.net
+          : null,
     });
-  }, [closures, closureNetByMonth, includeRiskCapitalInTotals]);
+  }, [
+    closures,
+    includeRiskCapitalInTotals,
+    realCurrentMonthKey,
+    monthKey,
+    monthRecordsForTotals.length,
+    sectionAmounts.totalNetClp,
+  ]);
   const selectedClosureForDraft = useMemo(
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
@@ -3042,9 +3054,10 @@ export const Patrimonio: React.FC = () => {
 
   const pendingCloseAlert = useMemo(() => {
     if (!latestClosure) return null;
+    if (monthKey !== realCurrentMonthKey) return null;
     if (calendarMonthKey <= realCurrentMonthKey) return null;
     return `Tienes el cierre de ${monthLabel(realCurrentMonthKey).toLowerCase()} pendiente`;
-  }, [latestClosure, realCurrentMonthKey, calendarMonthKey]);
+  }, [latestClosure, monthKey, realCurrentMonthKey, calendarMonthKey]);
 
   const computeMonthNetSnapshot = (targetMonthKey: string, fxOverride?: { usdClp: number; eurClp: number; ufClp: number }) => {
     const sourceRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
@@ -3167,101 +3180,38 @@ export const Patrimonio: React.FC = () => {
       latestClosureMonthKey: latestClosure?.monthKey || null,
     });
     setStartMonthFlowError('');
-    setStartMonthCompleted(false);
-    setStartMonthFinalNetClp(null);
-    setStartMonthVariationVsPrevious(null);
-    setStartMonthSteps(buildStartMonthSteps());
-    setStartMonthAutoOptions({
-      banks: startMonthBanksOptionEnabled,
-      fx: true,
-      realEstate: true,
-    });
     setStartMonthRunning(true);
-
-    let runningNet = computeMonthNetSnapshot(monthToStart);
     const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
-
-    const runStep = async (
-      stepKey: StartMonthStepView['key'],
-      executor: () => Promise<{ message: string }>,
-    ) => {
-      setStartMonthSteps((prev) =>
-        prev.map((step) => (step.key === stepKey ? { ...step, status: 'running', message: '' } : step)),
-      );
-      const before = runningNet;
-      try {
-        const result = await executor();
-        refreshAllWealthState();
-        const after = computeMonthNetSnapshot(monthToStart);
-        runningNet = after;
-        setStartMonthSteps((prev) =>
-          prev.map((step) =>
-            step.key === stepKey
-              ? {
-                  ...step,
-                  status: 'done',
-                  deltaClp: after - before,
-                  message: result.message,
-                }
-              : step,
-          ),
-        );
-      } catch (error: any) {
-        const message = String(error?.message || 'Error ejecutando paso');
-        setStartMonthSteps((prev) =>
-          prev.map((step) =>
-            step.key === stepKey
-              ? {
-                  ...step,
-                  status: 'error',
-                  deltaClp: 0,
-                  message,
-                }
-              : step,
-          ),
-        );
-        setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 220));
-    };
-
     try {
-      await runStep('carry', async () => {
-        let fxSeeded = false;
-        const previousFx = previousClosureForMonthStart?.fxRates || null;
-        if (previousFx && previousFx.usdClp > 0 && previousFx.eurClp > 0 && previousFx.ufClp > 0) {
-          saveFxRates(previousFx);
-          setFx(loadFxRates());
-          fxSeeded = true;
-        }
-        const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
-        const expectedSourceMonth = previousClosureForMonthStart?.monthKey || null;
-        const sourceMatches = !expectedSourceMonth || result.sourceMonth === expectedSourceMonth;
-        if (!sourceMatches) {
-          throw new Error(
-            `Arrastre inconsistente: esperaba ${expectedSourceMonth} y recibí ${result.sourceMonth || 'sin base'}.`,
-          );
-        }
-        return {
-          message:
-            result.added > 0
-              ? `${result.added} registros arrastrados (${result.sourceMonth || 'sin base'}).${fxSeeded ? ' TC/UF iniciales cargados desde el último cierre.' : ''}`
-              : `Sin cambios de arrastre.${fxSeeded ? ' TC/UF iniciales cargados desde el último cierre.' : ''}`,
-        };
-      });
-
+      const beforeNet = computeMonthNetSnapshot(monthToStart);
+      let fxSeeded = false;
+      const previousFx = previousClosureForMonthStart?.fxRates || null;
+      if (previousFx && previousFx.usdClp > 0 && previousFx.eurClp > 0 && previousFx.ufClp > 0) {
+        saveFxRates(previousFx);
+        setFx(loadFxRates());
+        fxSeeded = true;
+      }
+      const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
+      const expectedSourceMonth = previousClosureForMonthStart?.monthKey || null;
+      const sourceMatches = !expectedSourceMonth || result.sourceMonth === expectedSourceMonth;
+      if (!sourceMatches) {
+        throw new Error(
+          `Arrastre inconsistente: esperaba ${expectedSourceMonth} y recibí ${result.sourceMonth || 'sin base'}.`,
+        );
+      }
+      refreshAllWealthState();
       const finalNet = computeMonthNetSnapshot(monthToStart);
-      setStartMonthFinalNetClp(finalNet);
       const variation = previousClosureNet === null ? null : finalNet - previousClosureNet;
-      setStartMonthVariationVsPrevious(variation);
       writeMonthStartedFlag(monthToStart, true);
-      setStartMonthDeferredSessionMonthKey(null);
-      setStartMonthCompleted(true);
       console.info('[Patrimonio][start-month-flow-after]', {
         monthToStart,
+        beforeNet,
         finalNet,
         previousClosureNet,
         variation,
+        carriedRecords: result.added,
+        sourceMonth: result.sourceMonth,
+        fxSeeded,
       });
       if (variation !== null && Math.abs(variation) > 1) {
         setCarryMessage(
@@ -3273,108 +3223,95 @@ export const Patrimonio: React.FC = () => {
     } catch (error: any) {
       const message = String(error?.message || 'No pude completar el arranque de mes.');
       setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      setCarryMessage(`No pude aplicar el arrastre: ${message}`);
     } finally {
       setStartMonthRunning(false);
+      setCarryConfirmOpen(false);
     }
   };
 
-  const runStartMonthAutoUpdates = async () => {
-    if (startMonthRunning || !startMonthCompleted) return;
+  const runStartMonthFxUpdate = async () => {
+    if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
-    const selectedCount = [
-      startMonthAutoOptions.banks && startMonthBanksOptionEnabled,
-      startMonthAutoOptions.fx,
-      startMonthAutoOptions.realEstate,
-    ].filter(Boolean).length;
-    if (!selectedCount) {
-      setStartMonthModalOpen(false);
-      setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} completado sin actualizaciones automáticas.`);
-      return;
-    }
-
     setStartMonthFlowError('');
     setStartMonthRunning(true);
-    const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
-    let runningNet = computeMonthNetSnapshot(monthToStart);
-    const runStep = async (
-      stepKey: StartMonthStepView['key'],
-      executor: () => Promise<{ message: string }>,
-    ) => {
-      setStartMonthSteps((prev) =>
-        prev.map((step) => (step.key === stepKey ? { ...step, status: 'running', message: '' } : step)),
-      );
-      const before = runningNet;
-      try {
-        const result = await executor();
-        refreshAllWealthState();
-        const after = computeMonthNetSnapshot(monthToStart);
-        runningNet = after;
-        setStartMonthSteps((prev) =>
-          prev.map((step) =>
-            step.key === stepKey
-              ? { ...step, status: 'done', deltaClp: after - before, message: result.message }
-              : step,
-          ),
-        );
-      } catch (error: any) {
-        const message = String(error?.message || 'Error ejecutando actualización');
-        setStartMonthSteps((prev) =>
-          prev.map((step) =>
-            step.key === stepKey
-              ? { ...step, status: 'error', deltaClp: 0, message }
-              : step,
-          ),
-        );
-        setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-    };
-
     try {
-      if (startMonthAutoOptions.banks && startMonthBanksOptionEnabled) {
-        await runStep('banks', async () => refreshBanksFromFintocForMonth(monthToStart));
-      }
-      if (startMonthAutoOptions.fx) {
-        await runStep('fx', async () => {
-          const result = await refreshFxRatesFromLive({ force: true });
-          return { message: result.updated ? 'TC/UF actualizados online.' : 'TC/UF sin cambios.' };
-        });
-      }
-      if (startMonthAutoOptions.realEstate) {
-        await runStep('mortgage', async () => {
-          const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
-          if (auto.changed > 0) {
-            return { message: `Autocálculo aplicado en ${auto.changed} registros (${auto.sourceMonth || 'sin base'}).` };
-          }
-          if (auto.reason === 'missing_base_debt') {
-            return { message: 'Sin base hipotecaria para autocálculo en este mes.' };
-          }
-          return { message: 'Sin cambios de autocálculo.' };
-        });
-      }
-
-      const finalNet = computeMonthNetSnapshot(monthToStart);
-      setStartMonthFinalNetClp(finalNet);
-      setStartMonthVariationVsPrevious(previousClosureNet === null ? null : finalNet - previousClosureNet);
-      setStartMonthModalOpen(false);
-      setCarryMessage(`Actualizaciones automáticas aplicadas en ${monthLabel(monthToStart).toLowerCase()}.`);
-      console.info('[Patrimonio][start-month-auto-after]', {
+      const beforeFx = loadFxRates();
+      const result = await refreshFxRatesFromLive({ force: true });
+      refreshAllWealthState();
+      const afterFx = loadFxRates();
+      console.info('[Patrimonio][start-month-fx-after]', {
         monthToStart,
-        finalNet,
-        previousClosureNet,
-        variation: previousClosureNet === null ? null : finalNet - previousClosureNet,
-        options: startMonthAutoOptions,
+        beforeFx,
+        afterFx,
+        updated: result.updated,
       });
+      setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
+    } catch (error: any) {
+      const message = String(error?.message || 'No pude actualizar TC/UF.');
+      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      setCarryMessage(`Error al actualizar TC/UF: ${message}`);
     } finally {
       setStartMonthRunning(false);
     }
   };
 
-  const deferMonthStartForSession = () => {
+  const runStartMonthBanksUpdate = async () => {
+    if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
-    setStartMonthDeferredSessionMonthKey(monthToStart);
-    setStartMonthModalOpen(false);
-    setCarryMessage(`Arranque de ${monthLabel(monthToStart).toLowerCase()} pospuesto para esta sesión.`);
+    if (!startMonthBanksOptionEnabled) {
+      setCarryMessage('Configura tokens en Ajustes para actualizar bancos vía Fintoc.');
+      return;
+    }
+    setStartMonthFlowError('');
+    setStartMonthRunning(true);
+    try {
+      const result = await refreshBanksFromFintocForMonth(monthToStart);
+      refreshAllWealthState();
+      console.info('[Patrimonio][start-month-banks-sync-after]', {
+        monthToStart,
+        updated: result.updated,
+      });
+      setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
+    } catch (error: any) {
+      const message = String(error?.message || 'No pude actualizar bancos vía Fintoc.');
+      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      setCarryMessage(`Error al actualizar bancos: ${message}`);
+    } finally {
+      setStartMonthRunning(false);
+    }
+  };
+
+  const runStartMonthRealEstateUpdate = () => {
+    if (startMonthRunning) return;
+    const monthToStart = realCurrentMonthKey;
+    const beforeNet = computeMonthNetSnapshot(monthToStart);
+    console.info('[Patrimonio][start-month-real-estate-before]', {
+      monthToStart,
+      beforeNet,
+    });
+    const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
+    refreshAllWealthState();
+    const afterNet = computeMonthNetSnapshot(monthToStart);
+    console.info('[Patrimonio][start-month-real-estate-after]', {
+      monthToStart,
+      afterNet,
+      delta: afterNet - beforeNet,
+      changed: auto.changed,
+      sourceMonth: auto.sourceMonth,
+      reason: auto.reason || null,
+    });
+    if (auto.changed > 0) {
+      setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
+      return;
+    }
+    if (auto.reason === 'missing_base_debt') {
+      const message = 'No pude recalcular bienes raíces: falta saldo de deuda hipotecaria base.';
+      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      setCarryMessage(message);
+      return;
+    }
+    setCarryMessage('Bienes raíces sin cambios.');
   };
 
   const completeMonthlyClose = (
@@ -4003,34 +3940,10 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage(`No hubo cambios por autocálculo (ya había datos actualizados en este mes).`);
   };
 
-  useEffect(() => {
-    if (!hydrationReady) return;
-    const currentMonth = realCurrentMonthKey;
-    const started = readMonthStartedFlag(currentMonth);
-    const hasPreviousClosure = !!previousClosureForMonthStart;
-    const deferredInSession = startMonthDeferredSessionMonthKey === currentMonth;
-    const shouldOpen = monthKey === currentMonth && !started && hasPreviousClosure && !deferredInSession;
-    console.info('[Patrimonio][start-month-gate-before]', {
-      monthKey,
-      currentMonth,
-      calendarMonthKey,
-      started,
-      hasPreviousClosure,
-      deferredInSession,
-      shouldOpen,
-      currentlyOpen: startMonthModalOpen,
-    });
-    if (startMonthModalOpen !== shouldOpen) {
-      setStartMonthModalOpen(shouldOpen);
-    }
-    console.info('[Patrimonio][start-month-gate-after]', {
-      monthKey,
-      currentMonth,
-      shouldOpen,
-      afterOpen: shouldOpen,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthKey, hydrationReady, previousClosureForMonthStart?.id, realCurrentMonthKey, calendarMonthKey, startMonthModalOpen, startMonthDeferredSessionMonthKey]);
+  const showCurrentMonthActionBar = monthKey === realCurrentMonthKey;
+  const carrySourceMonthLabel = previousClosureForMonthStart
+    ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
+    : null;
 
   if (activeSection) {
     return (
@@ -4065,7 +3978,7 @@ export const Patrimonio: React.FC = () => {
   }
 
   return (
-    <div className="p-3 space-y-3">
+    <div className={cn('p-3 space-y-3', showCurrentMonthActionBar && 'pb-36')}>
       <Card className="relative overflow-hidden border-0 p-4 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] text-white shadow-[0_16px_36px_rgba(11,38,34,0.55)]">
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#c59a6c_0%,_transparent_46%)]" />
         <div className="relative">
@@ -4201,6 +4114,11 @@ export const Patrimonio: React.FC = () => {
           {pendingCloseAlert}
         </Card>
       )}
+      {!!startMonthFlowError && (
+        <Card className="border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          {startMonthFlowError}
+        </Card>
+      )}
 
       <div className="space-y-2">
         <div
@@ -4276,10 +4194,35 @@ export const Patrimonio: React.FC = () => {
               <Building2 size={15} /> Bancos
             </div>
             <div className="pr-6 text-right text-base font-bold leading-tight text-sky-900 break-words">
-              {showNetWorth ? formatCurrency(sectionAmountsDisplay.financialNet, displayCurrency) : '••••'}
+              {showNetWorth ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency) : '••••'}
             </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300 bg-white/35 text-sky-700/80">
+            <ArrowRight size={11} />
+          </div>
+        </div>
+        <div
+          role="button"
+          tabIndex={0}
+          className="relative rounded-2xl border border-rose-200 bg-gradient-to-br from-[#ffe9e8] to-[#ffd7d7] px-3 py-2 text-left shadow-[0_8px_18px_rgba(165,68,68,0.16)] transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/45 min-h-[72px]"
+          onClick={() => setActiveSection('bank')}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setActiveSection('bank');
+            }
+          }}
+          aria-label="Entrar a deudas no hipotecarias"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-900">
+              <Trash2 size={15} /> Deudas no hipotecarias
+            </div>
+            <div className="pr-6 text-right text-base font-bold leading-tight text-rose-900 break-words">
+              {showNetWorth ? `-${formatCurrency(sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}` : '••••'}
+            </div>
+          </div>
+          <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-300 bg-white/35 text-rose-700/80">
             <ArrowRight size={11} />
           </div>
         </div>
@@ -4387,30 +4330,82 @@ export const Patrimonio: React.FC = () => {
         onAttemptClose={attemptMonthlyClose}
       />
 
-      <StartMonthModal
-        open={startMonthModalOpen}
-        monthLabel={monthLabel(realCurrentMonthKey)}
-        previousMonthLabel={previousClosureForMonthStart ? monthLabel(previousClosureForMonthStart.monthKey) : null}
-        steps={startMonthSteps}
-        running={startMonthRunning}
-        completed={startMonthCompleted}
-        flowError={startMonthFlowError}
-        finalNetClp={startMonthFinalNetClp}
-        variationVsPreviousClp={startMonthVariationVsPrevious}
-        autoOptions={startMonthAutoOptions}
-        banksOptionEnabled={startMonthBanksOptionEnabled}
-        onToggleAutoOption={(key, value) =>
-          setStartMonthAutoOptions((prev) => ({ ...prev, [key]: value }))
+      {showCurrentMonthActionBar && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-20 z-40">
+          <div className="mx-auto w-full max-w-xl px-3">
+            <Card className="pointer-events-auto border border-slate-200 bg-white/95 p-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur">
+              <div className="grid grid-cols-4 gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-1 text-[11px]"
+                  onClick={() => setCarryConfirmOpen(true)}
+                  disabled={!previousClosureForMonthStart || startMonthRunning}
+                  title={
+                    previousClosureForMonthStart
+                      ? `Arrastrar valores desde ${monthLabel(previousClosureForMonthStart.monthKey)}`
+                      : 'No hay cierre anterior para arrastrar'
+                  }
+                >
+                  Arrastrar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-1 text-[11px]"
+                  onClick={() => {
+                    void runStartMonthFxUpdate();
+                  }}
+                  disabled={startMonthRunning}
+                >
+                  TC/UF
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-1 text-[11px]"
+                  onClick={() => {
+                    void runStartMonthBanksUpdate();
+                  }}
+                  disabled={!startMonthBanksOptionEnabled || startMonthRunning}
+                  title={
+                    startMonthBanksOptionEnabled
+                      ? 'Actualizar saldos vía Fintoc'
+                      : 'Configura tokens en Ajustes'
+                  }
+                >
+                  Bancos
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-1 text-[11px]"
+                  onClick={runStartMonthRealEstateUpdate}
+                  disabled={startMonthRunning}
+                >
+                  Bienes raíces
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      <ConfirmActionModal
+        open={carryConfirmOpen}
+        busy={startMonthRunning}
+        title="Arrastrar valores del último cierre"
+        message={
+          carrySourceMonthLabel
+            ? `¿Arrastrar todos los valores de ${carrySourceMonthLabel}?`
+            : 'No hay cierre anterior disponible para arrastrar.'
         }
-        onApplySelected={() => {
-          void runStartMonthAutoUpdates();
-        }}
-        onStart={() => {
+        confirmText="Arrastrar valores"
+        cancelText="Cancelar"
+        onConfirm={() => {
           void runStartMonthFlow();
         }}
-        onClose={() => {
-          deferMonthStartForSession();
-        }}
+        onCancel={() => setCarryConfirmOpen(false)}
       />
     </div>
   );
