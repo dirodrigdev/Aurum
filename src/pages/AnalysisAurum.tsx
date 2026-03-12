@@ -72,6 +72,7 @@ type AggregatedSummary = {
   gastosAcumClp: number | null;
   retornoRealAcumClp: number | null;
   pctRetorno: number | null;
+  pctRetornoNote: string | null;
   spendPct: number | null;
   varPatrimonioAvgDisplay: number | null;
   gastosAvgDisplay: number | null;
@@ -195,11 +196,34 @@ const aggregateRows = (
   const varPatrimonioAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.varPatrimonioClp)) : null;
   const gastosAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.gastosClp)) : null;
   const retornoRealAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.retornoRealClp)) : null;
-
-  const pctRetorno =
-    retornoRealAcumClp === null || baseNetClp === null || baseNetClp <= 0
-      ? null
-      : (retornoRealAcumClp / baseNetClp) * 100;
+  let pctRetorno: number | null = null;
+  let pctRetornoNote: string | null = null;
+  if (validMonths > 0 && retornoRealAcumClp !== null && baseNetClp !== null && baseNetClp > 0) {
+    const periodReturn = retornoRealAcumClp / baseNetClp;
+    const growthBase = 1 + periodReturn;
+    if (growthBase <= 0) {
+      pctRetorno = null;
+      pctRetornoNote = 'período negativo';
+      console.warn('[Analysis][pct-anual-equiv-negativo]', { key, label, validMonths, periodReturn, baseNetClp });
+    } else {
+      const annualized = (Math.pow(growthBase, 12 / validMonths) - 1) * 100;
+      if (annualized > 200 || annualized < -100) {
+        pctRetorno = null;
+        pctRetornoNote = 'fuera de rango';
+        console.warn('[Analysis][pct-anual-equiv-fuera-rango]', {
+          key,
+          label,
+          validMonths,
+          annualized,
+          periodReturn,
+          baseNetClp,
+          retornoRealAcumClp,
+        });
+      } else {
+        pctRetorno = annualized;
+      }
+    }
+  }
   const spendPct =
     retornoRealAcumClp === null || retornoRealAcumClp === 0 || gastosAcumClp === null
       ? null
@@ -229,6 +253,7 @@ const aggregateRows = (
     gastosAcumClp,
     retornoRealAcumClp,
     pctRetorno,
+    pctRetornoNote,
     spendPct,
     varPatrimonioAvgDisplay,
     gastosAvgDisplay,
@@ -249,7 +274,7 @@ const SummaryTable: React.FC<{
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
-            <th className="py-1 pr-2 text-right">%</th>
+            <th className="py-1 pr-2 text-right">% anual equiv.</th>
             <th className="py-1 pr-2 text-right">Ret.Real</th>
             <th className="py-1 pr-2 text-right">Var.Pat</th>
             <th className="py-1 text-right">Gastos</th>
@@ -266,6 +291,9 @@ const SummaryTable: React.FC<{
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                   {formatPct(item.pctRetorno)}
+                  {item.pctRetorno === null && item.pctRetornoNote ? (
+                    <div className="text-[10px] font-normal text-amber-700">{item.pctRetornoNote}</div>
+                  ) : null}
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                   {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
@@ -314,11 +342,14 @@ const ReturnRealHero: React.FC<{
             </div>
           ))}
         </div>
-        <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-400">% retorno</div>
+        <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-400">% anual equiv.</div>
         <div className="mt-1 grid grid-cols-3 gap-2">
           {columns.map((column) => (
             <div key={`${column.key}-pct`} className={cn(column.classes, 'font-bold', retornoClass(column.value))}>
               {formatPct(column.value?.pctRetorno ?? null, 1)}
+              {column.value?.pctRetorno === null && column.value?.pctRetornoNote ? (
+                <div className="mt-0.5 text-[10px] font-normal text-amber-300">{column.value.pctRetornoNote}</div>
+              ) : null}
             </div>
           ))}
         </div>
