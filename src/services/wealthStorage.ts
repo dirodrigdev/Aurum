@@ -631,10 +631,18 @@ export const saveIncludeRiskCapitalInTotals = (includeRiskCapital: boolean) => {
   }
 };
 
-export const isSyntheticAggregateRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
+export const isSyntheticAggregateRecord = (
+  record: Pick<WealthRecord, 'label' | 'block'> & Partial<Pick<WealthRecord, 'note'>>,
+) => {
   const label = normalizeText(record.label);
   if (record.block === 'bank') {
-    return label === normalizeText(BANK_BALANCE_CLP_LABEL) || label === normalizeText(BANK_BALANCE_USD_LABEL);
+    const isCanonicalBankAggregate =
+      label === normalizeText(BANK_BALANCE_CLP_LABEL) || label === normalizeText(BANK_BALANCE_USD_LABEL);
+    if (!isCanonicalBankAggregate) return false;
+    // [PRODUCT RULE] Solo tratamos como sintético el agregado calculado automáticamente
+    // desde detalle de cuentas. Un agregado canónico ingresado manualmente debe contar.
+    const note = normalizeText(String(record.note || ''));
+    return note.includes(normalizeText('calculado desde detalle de cuentas'));
   }
   return false;
 };
@@ -3975,6 +3983,12 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const febSnapshot = '2026-02-28';
   const marSnapshot = '2026-03-11';
 
+  const beforeState = {
+    recordsCount: loadWealthRecords().length,
+    closureMonthKeys: loadClosures().map((closure) => closure.monthKey),
+  };
+  console.info('[seedDemoWealthTimeline][before]', beforeState);
+
   // Limpieza local explícita antes de insertar demo, para evitar residuales entre ejecuciones.
   applyWealthStateLocal({
     records: [],
@@ -3990,20 +4004,9 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     saveClosures(closuresWithoutMarch, { skipCloudSync: true, silent: true });
   }
 
-  const currentFx = loadFxRates();
-  const eurUsdRatio =
-    Number.isFinite(currentFx.eurClp) && Number.isFinite(currentFx.usdClp) && currentFx.usdClp > 0
-      ? currentFx.eurClp / currentFx.usdClp
-      : defaultFxRates.eurClp / defaultFxRates.usdClp;
-  const buildFx = (usdClp: number, ufClp: number): WealthFxRates => ({
-    usdClp,
-    ufClp,
-    eurClp: Math.round(usdClp * eurUsdRatio),
-  });
-
-  const janFx = buildFx(950, 37_500);
-  const febFx = buildFx(960, 37_800);
-  const marFx = buildFx(965, 38_100);
+  const janFx: WealthFxRates = { usdClp: 950, eurClp: 1_025, ufClp: 37_500 };
+  const febFx: WealthFxRates = { usdClp: 960, eurClp: 1_040, ufClp: 37_800 };
+  const marFx: WealthFxRates = { usdClp: 965, eurClp: 1_060, ufClp: 38_100 };
 
   const janRecords = dedupeLatestByAsset([
     makeDemoRecord('investment', 'SURA', INVESTMENT_SURA_FIN_LABEL, 45_000_000, 'CLP', janSnapshot),
@@ -4012,17 +4015,16 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_000_000, 'CLP', janSnapshot),
     makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_500, 'USD', janSnapshot),
     makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_200, 'USD', janSnapshot),
+    makeDemoRecord('investment', 'Manual', TENENCIA_CXC_PREFIX_LABEL, 1_800_000, 'CLP', janSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_000_000, 'CLP', janSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_000, 'USD', janSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 3_200_000, 'CLP', janSnapshot),
-    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 1_800_000, 'CLP', janSnapshot),
-    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 900_000, 'CLP', janSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 500, 'USD', janSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_CLP_LABEL, 5_900_000, 'CLP', janSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_USD_LABEL, 500, 'USD', janSnapshot),
     makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', janSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_800, 'UF', janSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', janSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 450_000, 'CLP', janSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 280_000, 'CLP', janSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_CLP_LABEL, 730_000, 'CLP', janSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_USD_LABEL, 120, 'USD', janSnapshot),
   ]);
 
   const febRecords = dedupeLatestByAsset([
@@ -4032,17 +4034,16 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_300_000, 'CLP', febSnapshot),
     makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_650, 'USD', febSnapshot),
     makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_200, 'USD', febSnapshot),
+    makeDemoRecord('investment', 'Manual', TENENCIA_CXC_PREFIX_LABEL, 2_050_000, 'CLP', febSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_400_000, 'CLP', febSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_200, 'USD', febSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 2_900_000, 'CLP', febSnapshot),
-    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 2_100_000, 'CLP', febSnapshot),
-    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 750_000, 'CLP', febSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 500, 'USD', febSnapshot),
-    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', febSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_CLP_LABEL, 5_750_000, 'CLP', febSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_USD_LABEL, 620, 'USD', febSnapshot),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_205, 'UF', febSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_792, 'UF', febSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', febSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 380_000, 'CLP', febSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 310_000, 'CLP', febSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_CLP_LABEL, 690_000, 'CLP', febSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_USD_LABEL, 150, 'USD', febSnapshot),
   ]);
 
   const marRecords = dedupeLatestByAsset([
@@ -4052,17 +4053,16 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
     makeDemoRecord('investment', 'PlanVital', INVESTMENT_PLANVITAL_LABEL, 18_500_000, 'CLP', marSnapshot),
     makeDemoRecord('investment', 'Global66', INVESTMENT_GLOBAL66_USD_LABEL, 2_700, 'USD', marSnapshot),
     makeDemoRecord('investment', 'Wise', INVESTMENT_WISE_USD_LABEL, 1_500, 'USD', marSnapshot),
+    makeDemoRecord('investment', 'Manual', TENENCIA_CXC_PREFIX_LABEL, 2_300_000, 'CLP', marSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_CLP, 8_600_000, 'CLP', marSnapshot),
     makeDemoRecord('investment', 'Manual', RISK_CAPITAL_LABEL_USD, 3_400, 'USD', marSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_CLP_LABEL, 4_100_000, 'CLP', marSnapshot),
-    makeDemoRecord('bank', 'Scotiabank', BANK_SCOTIA_CLP_LABEL, 1_600_000, 'CLP', marSnapshot),
-    makeDemoRecord('bank', 'Santander', BANK_SANTANDER_CLP_LABEL, 1_200_000, 'CLP', marSnapshot),
-    makeDemoRecord('bank', 'Banco de Chile', BANK_BCHILE_USD_LABEL, 800, 'USD', marSnapshot),
-    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_200, 'UF', marSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_CLP_LABEL, 6_900_000, 'CLP', marSnapshot),
+    makeDemoRecord('bank', 'Manual', BANK_BALANCE_USD_LABEL, 810, 'USD', marSnapshot),
+    makeDemoRecord('real_estate', 'Tasación', REAL_ESTATE_PROPERTY_VALUE_LABEL, 3_210, 'UF', marSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_DEBT_BALANCE_LABEL, 2_784, 'UF', marSnapshot),
     makeDemoRecord('debt', 'Hipoteca', MORTGAGE_AMORTIZATION_LABEL, 8, 'UF', marSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_VISA_BCHILE_LABEL, 520_000, 'CLP', marSnapshot),
-    makeDemoRecord('debt', 'Tarjetas', CARD_MASTERCARD_SANTANDER_LABEL, 190_000, 'CLP', marSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_CLP_LABEL, 710_000, 'CLP', marSnapshot),
+    makeDemoRecord('debt', 'Tarjetas (cupo usado manual)', DEBT_CARD_USD_LABEL, 210, 'USD', marSnapshot),
   ]);
 
   const janSummary = summarizeWealth(janRecords, janFx);
@@ -4102,6 +4102,41 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const lastClosureMonthKey = seededClosures[0]?.monthKey || null;
   const derivedCurrentMonthKey = currentMonthKey();
   const currentMonthRecords = latestRecordsForMonth(loadWealthRecords(), derivedCurrentMonthKey);
+  const requiredLabels = [
+    INVESTMENT_SURA_FIN_LABEL,
+    INVESTMENT_SURA_PREV_LABEL,
+    INVESTMENT_BTG_LABEL,
+    INVESTMENT_PLANVITAL_LABEL,
+    INVESTMENT_GLOBAL66_USD_LABEL,
+    INVESTMENT_WISE_USD_LABEL,
+    TENENCIA_CXC_PREFIX_LABEL,
+    RISK_CAPITAL_LABEL_CLP,
+    RISK_CAPITAL_LABEL_USD,
+    BANK_BALANCE_CLP_LABEL,
+    BANK_BALANCE_USD_LABEL,
+    REAL_ESTATE_PROPERTY_VALUE_LABEL,
+    MORTGAGE_DEBT_BALANCE_LABEL,
+    DEBT_CARD_CLP_LABEL,
+    DEBT_CARD_USD_LABEL,
+  ];
+  const afterRecords = loadWealthRecords();
+  const marRecordsAfter = latestRecordsForMonth(afterRecords, marKey);
+  const missingFromMarch = requiredLabels.filter(
+    (label) =>
+      !marRecordsAfter.some(
+        (record) => normalizeLabelKey(record.label) === normalizeLabelKey(label),
+      ),
+  );
+  const afterState = {
+    recordsCount: afterRecords.length,
+    closureMonthKeys: seededClosures.map((closure) => closure.monthKey),
+    missingFromMarch,
+  };
+  console.info('[seedDemoWealthTimeline][after]', afterState);
+
+  if (missingFromMarch.length > 0) {
+    throw new Error(`Seed incompleto: faltan labels en ${marKey}: ${missingFromMarch.join(', ')}`);
+  }
   console.info('[seedDemoWealthTimeline] current-month-check', {
     lastClosureMonthKey,
     currentMonthKey: derivedCurrentMonthKey,

@@ -931,17 +931,11 @@ export const ClosingAurum: React.FC = () => {
         amount: normalized,
         currency: targetCurrency,
       });
-      const persistedLabel =
-        field.key === 'bancosClp'
-          ? BANK_BALANCE_CLP_LEGACY_LABEL
-          : field.key === 'bancosUsd'
-            ? BANK_BALANCE_USD_LEGACY_LABEL
-            : field.label;
       nextRecords.push({
         id: existing?.id || crypto.randomUUID(),
         block: field.block,
         source: 'Edición cierre',
-        label: persistedLabel,
+        label: field.label,
         amount: normalized,
         currency: targetCurrency,
         createdAt,
