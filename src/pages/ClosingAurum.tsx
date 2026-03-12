@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
-import { BreakdownCard } from '../components/closing/BreakdownCard';
+import { BreakdownCard, type BreakdownSummaryInvestmentRow } from '../components/closing/BreakdownCard';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -314,6 +314,89 @@ const resolveSummaryNetForRiskMode = (
   }
   const legacy = Number(summary?.netConsolidatedClp);
   return Number.isFinite(legacy) ? legacy : 0;
+};
+
+const readFinite = (value: unknown): number | null => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const buildSummaryInvestmentRows = (
+  summary: WealthSnapshotSummary,
+  includeRiskCapitalInTotals: boolean,
+): BreakdownSummaryInvestmentRow[] => {
+  const extended = summary as {
+    investmentFinancialClp?: number;
+    investmentPrevisionalClp?: number;
+    investmentOthersClp?: number;
+    tenenciaClp?: number;
+  };
+  const baseInvestment = readFinite(summary?.investmentClp);
+  const riskCapital = readFinite(summary?.riskCapitalClp) ?? 0;
+  const investmentWithRisk = readFinite(summary?.investmentClpWithRisk);
+  const totalInvestment = includeRiskCapitalInTotals
+    ? (investmentWithRisk ?? (baseInvestment ?? 0) + riskCapital)
+    : (baseInvestment ?? ((investmentWithRisk ?? 0) - riskCapital));
+  if (!Number.isFinite(totalInvestment)) return [];
+
+  const rows: BreakdownSummaryInvestmentRow[] = [];
+  const financial = readFinite(extended.investmentFinancialClp);
+  const previsional = readFinite(extended.investmentPrevisionalClp);
+  const investmentOthers = readFinite(extended.investmentOthersClp);
+  const tenencia = readFinite(extended.tenenciaClp);
+
+  if (financial !== null) rows.push({ label: 'Inversiones financieras', valueClp: financial, group: 'financieras' });
+  if (previsional !== null) rows.push({ label: 'Inversiones previsionales', valueClp: previsional, group: 'previsionales' });
+  if (tenencia !== null) rows.push({ label: TENENCIA_CXC_PREFIX_LABEL, valueClp: tenencia, group: 'otros' });
+  if (includeRiskCapitalInTotals && Math.abs(riskCapital) > 0) {
+    rows.push({ label: 'Capital de riesgo', valueClp: riskCapital, group: 'otros' });
+  }
+  if (investmentOthers !== null) rows.push({ label: 'Otras inversiones', valueClp: investmentOthers, group: 'otros' });
+
+  const sumKnown = rows.reduce((sum, row) => sum + row.valueClp, 0);
+  const residual = totalInvestment - sumKnown;
+  if (Math.abs(residual) > 1) {
+    rows.push({ label: 'Otros', valueClp: residual, group: 'otros' });
+  }
+  if (!rows.length && Math.abs(totalInvestment) > 0) {
+    rows.push({ label: 'Otras inversiones', valueClp: totalInvestment, group: 'otros' });
+  }
+  return rows.filter((row) => Math.abs(row.valueClp) > 0.5);
+};
+
+const buildSummaryBreakdown = (
+  summary: WealthSnapshotSummary,
+  includeRiskCapitalInTotals: boolean,
+): NetBreakdown => {
+  const extended = summary as {
+    bankClp?: number;
+    nonMortgageDebtClp?: number;
+    realEstateNetClp?: number;
+    realEstateAssetsClp?: number;
+    mortgageDebtClp?: number;
+  };
+  const netClp = resolveSummaryNetForRiskMode(summary, includeRiskCapitalInTotals);
+  const investmentFromRows = buildSummaryInvestmentRows(summary, includeRiskCapitalInTotals).reduce(
+    (sum, row) => sum + row.valueClp,
+    0,
+  );
+  const bankClp = readFinite(extended.bankClp) ?? 0;
+  const nonMortgageDebtClp = readFinite(extended.nonMortgageDebtClp) ?? 0;
+  const realEstateNetClp =
+    readFinite(extended.realEstateNetClp) ?? (netClp - investmentFromRows - bankClp + nonMortgageDebtClp);
+  const mortgageDebtClp = Math.abs(readFinite(extended.mortgageDebtClp) ?? 0);
+  const realEstateAssetsClp =
+    readFinite(extended.realEstateAssetsClp) ?? Math.max(0, realEstateNetClp + mortgageDebtClp);
+
+  return {
+    netClp,
+    investmentClp: investmentFromRows,
+    realEstateAssetsClp,
+    mortgageDebtClp,
+    realEstateNetClp,
+    bankClp,
+    nonMortgageDebtClp,
+  };
 };
 
 interface ComparableVersionFields {
@@ -631,15 +714,38 @@ export const ClosingAurum: React.FC = () => {
   const selectedClosureFx = selectedClosure?.fxRates || currentFx;
   const compareClosureForSelectedFx = compareClosureForSelected?.fxRates || currentFx;
 
-  const selectedClosureBreakdown = useMemo(() => {
-    if (!selectedClosureRecords?.length) return null;
-    return buildNetBreakdown(selectedClosureRecords, selectedClosureFx);
-  }, [selectedClosureRecords, selectedClosureFx]);
+  const selectedClosureBreakdown = useMemo<NetBreakdown | null>(() => {
+    if (!selectedClosure) return null;
+    if (selectedClosureRecords?.length) return buildNetBreakdown(selectedClosureRecords, selectedClosureFx);
+    return buildSummaryBreakdown(selectedClosure.summary, includeRiskCapitalInTotals);
+  }, [selectedClosure, selectedClosureRecords, selectedClosureFx, includeRiskCapitalInTotals]);
 
-  const compareClosureForSelectedBreakdown = useMemo(() => {
-    if (!compareClosureForSelectedRecords?.length) return null;
-    return buildNetBreakdown(compareClosureForSelectedRecords, compareClosureForSelectedFx);
-  }, [compareClosureForSelectedRecords, compareClosureForSelectedFx]);
+  const compareClosureForSelectedBreakdown = useMemo<NetBreakdown | null>(() => {
+    if (!compareClosureForSelected) return null;
+    if (compareClosureForSelectedRecords?.length) {
+      return buildNetBreakdown(compareClosureForSelectedRecords, compareClosureForSelectedFx);
+    }
+    return buildSummaryBreakdown(compareClosureForSelected.summary, includeRiskCapitalInTotals);
+  }, [
+    compareClosureForSelected,
+    compareClosureForSelectedRecords,
+    compareClosureForSelectedFx,
+    includeRiskCapitalInTotals,
+  ]);
+  const selectedClosureSummaryInvestmentRows = useMemo(
+    () =>
+      selectedClosure && (!selectedClosureRecordsRaw || !selectedClosureRecordsRaw.length)
+        ? buildSummaryInvestmentRows(selectedClosure.summary, includeRiskCapitalInTotals)
+        : null,
+    [selectedClosure, selectedClosureRecordsRaw, includeRiskCapitalInTotals],
+  );
+  const compareClosureForSelectedSummaryInvestmentRows = useMemo(
+    () =>
+      compareClosureForSelected && (!compareClosureForSelectedRecordsRaw || !compareClosureForSelectedRecordsRaw.length)
+        ? buildSummaryInvestmentRows(compareClosureForSelected.summary, includeRiskCapitalInTotals)
+        : null,
+    [compareClosureForSelected, compareClosureForSelectedRecordsRaw, includeRiskCapitalInTotals],
+  );
 
   const compareClosureForHoy = useMemo(
     () =>
@@ -667,9 +773,10 @@ export const ClosingAurum: React.FC = () => {
   );
   const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
   const compareClosureForHoyBreakdown = useMemo<NetBreakdown | null>(() => {
-    if (!compareClosureForHoyRecords?.length) return null;
-    return buildNetBreakdown(compareClosureForHoyRecords, compareClosureForHoyFx);
-  }, [compareClosureForHoyRecords, compareClosureForHoyFx]);
+    if (!compareClosureForHoy) return null;
+    if (compareClosureForHoyRecords?.length) return buildNetBreakdown(compareClosureForHoyRecords, compareClosureForHoyFx);
+    return buildSummaryBreakdown(compareClosureForHoy.summary, includeRiskCapitalInTotals);
+  }, [compareClosureForHoy, compareClosureForHoyRecords, compareClosureForHoyFx, includeRiskCapitalInTotals]);
 
   const evolutionRows = useMemo(() => {
     const rows: EvolutionRow[] = closures
@@ -1192,9 +1299,7 @@ export const ClosingAurum: React.FC = () => {
               </Card>
 
               {!selectedClosureBreakdown ? (
-                <Card className="p-4 text-xs text-slate-500">
-                  Este cierre no tiene detalle suficiente para comparación.
-                </Card>
+                <Card className="p-4 text-xs text-slate-500">No hay datos suficientes para este cierre.</Card>
               ) : (
                 <BreakdownCard
                   title={monthLabel(selectedClosure.monthKey)}
@@ -1210,6 +1315,8 @@ export const ClosingAurum: React.FC = () => {
                   compareFx={compareClosureForSelectedFx}
                   currentRecords={selectedClosureRecordsRaw || []}
                   compareRecords={compareClosureForSelectedRecordsRaw}
+                  summaryInvestmentRows={selectedClosureSummaryInvestmentRows}
+                  compareSummaryInvestmentRows={compareClosureForSelectedSummaryInvestmentRows}
                   showClosureRates
                   showRiskCapitalBadge={includeRiskCapitalInTotals && selectedClosureHasRiskCapital}
                   riskModeOn={includeRiskCapitalInTotals}

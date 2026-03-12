@@ -15,6 +15,12 @@ interface InvestmentDetailRow {
   isRiskCapital: boolean;
 }
 
+export interface BreakdownSummaryInvestmentRow {
+  label: string;
+  valueClp: number;
+  group: 'financieras' | 'previsionales' | 'otros';
+}
+
 const pct = (curr: number, prev: number | null) => {
   if (prev === null || prev === 0) return null;
   return ((curr - prev) / prev) * 100;
@@ -135,6 +141,8 @@ interface BreakdownCardProps {
   showClosureRates?: boolean;
   showRiskCapitalBadge?: boolean;
   riskModeOn?: boolean;
+  summaryInvestmentRows?: BreakdownSummaryInvestmentRow[] | null;
+  compareSummaryInvestmentRows?: BreakdownSummaryInvestmentRow[] | null;
 }
 
 export const BreakdownCard: React.FC<BreakdownCardProps> = ({
@@ -152,6 +160,8 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
   showClosureRates,
   showRiskCapitalBadge = false,
   riskModeOn = false,
+  summaryInvestmentRows = null,
+  compareSummaryInvestmentRows = null,
 }) => {
   const rows = [
     {
@@ -207,10 +217,30 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
       compareFx?.ufClp,
     ],
   );
+  const summaryFallbackDetails = useMemo<InvestmentDetailRow[]>(() => {
+    if (investmentDetails.length || !summaryInvestmentRows?.length) return [];
+    const compareMap = new Map<string, number>();
+    (compareSummaryInvestmentRows || []).forEach((row) => {
+      compareMap.set(`${row.group}::${labelMatchKey(row.label)}`, row.valueClp);
+    });
+    return summaryInvestmentRows.map((row) => {
+      const key = `${row.group}::${labelMatchKey(row.label)}`;
+      const compare = compareMap.has(key) ? compareMap.get(key)! : null;
+      return {
+        key,
+        label: row.label,
+        currentClp: row.valueClp,
+        compareClp: compare,
+        group: row.group,
+        isRiskCapital: isRiskCapitalLabel(row.label),
+      };
+    });
+  }, [investmentDetails, summaryInvestmentRows, compareSummaryInvestmentRows]);
+  const effectiveInvestmentDetails = investmentDetails.length ? investmentDetails : summaryFallbackDetails;
   const showRiskBadge = riskModeOn && showRiskCapitalBadge;
-  const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
-  const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
-  const investmentOthers = investmentDetails.filter((i) => i.group === 'otros');
+  const investmentFinancial = effectiveInvestmentDetails.filter((i) => i.group === 'financieras');
+  const investmentPrevisional = effectiveInvestmentDetails.filter((i) => i.group === 'previsionales');
+  const investmentOthers = effectiveInvestmentDetails.filter((i) => i.group === 'otros');
   const financialCurrentClp = investmentFinancial.reduce((sum, row) => sum + row.currentClp, 0);
   const financialCompareClp = investmentFinancial.reduce((sum, row) => sum + (row.compareClp ?? 0), 0);
   const financialHasCompare = investmentFinancial.some((row) => row.compareClp !== null);
@@ -381,7 +411,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            {investmentDetails.map((row) => {
+            {effectiveInvestmentDetails.map((row) => {
               const current = fromClp(row.currentClp, currency, fx);
               const prev = row.compareClp !== null && compareFx ? fromClp(row.compareClp, currency, compareFx) : null;
               const delta = prev !== null ? current - prev : null;
@@ -425,7 +455,9 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
                 </div>
               );
             })}
-            {!investmentDetails.length && <div className="text-[11px] text-slate-500">Sin detalle de inversiones aún.</div>}
+            {!effectiveInvestmentDetails.length && (
+              <div className="text-[11px] text-slate-500">Sin detalle de inversiones aún.</div>
+            )}
           </div>
         </div>
       </details>
