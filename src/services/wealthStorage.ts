@@ -686,34 +686,37 @@ const MANUAL_CARD_LABEL_KEYS = new Set(
   MANUAL_CARD_LABELS.map(normalizeText),
 );
 
-const NON_MORTGAGE_DEBT_LABEL_HINTS = [
-  'tarjeta',
-  'tarjetas',
-  'deuda tarjetas',
-  'tarjetas clp',
-  'tarjetas usd',
-  'cupo usado',
-  'mastercard',
-  'visa',
-  'american express',
-  'amex',
-  'deuda no hipotecaria',
-];
+// [PRODUCT RULE] Lista blanca explícita: sólo estas etiquetas se consideran deuda no hipotecaria.
+const NON_MORTGAGE_DEBT_LABEL_WHITELIST = new Set([
+  normalizeText(DEBT_CARD_CLP_LABEL),
+  normalizeText(DEBT_CARD_USD_LABEL),
+  normalizeText(DEBT_CARD_CLP_LEGACY_LABEL),
+  normalizeText(DEBT_CARD_USD_LEGACY_LABEL),
+  ...MANUAL_CARD_LABELS.map(normalizeText),
+]);
+
+const warnedUnknownNonMortgageDebtLabels = new Set<string>();
 
 export const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'label' | 'source'>) => {
   if (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)) return false;
 
   const label = normalizeText(record.label);
-  const source = normalizeText(record.source);
-
-  if (record.block === 'debt') return true;
+  if (record.block === 'debt') {
+    if (NON_MORTGAGE_DEBT_LABEL_WHITELIST.has(label)) return true;
+    if (!warnedUnknownNonMortgageDebtLabels.has(label)) {
+      warnedUnknownNonMortgageDebtLabels.add(label);
+      console.warn('[isNonMortgageDebtRecord][unknown-debt-label]', {
+        label: record.label,
+        block: record.block,
+        source: record.source,
+      });
+    }
+    return false;
+  }
   if (record.block !== 'bank') return false;
 
   if (AGGREGATE_DEBT_LABELS_CLP.has(label) || AGGREGATE_DEBT_LABELS_USD.has(label)) return true;
   if (MANUAL_CARD_LABEL_KEYS.has(label)) return true;
-  if (label.startsWith(normalizeText('Tarjeta crédito:'))) return true;
-  if (NON_MORTGAGE_DEBT_LABEL_HINTS.some((hint) => label.includes(hint))) return true;
-  if (source.includes('tarjetas')) return true;
 
   return false;
 };

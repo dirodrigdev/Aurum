@@ -65,6 +65,7 @@ import {
   upsertInvestmentInstrument,
   upsertWealthRecord,
   validateFxRange,
+  createWealthBackupSnapshot,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
   BANK_BCHILE_CLP_LABEL,
@@ -113,6 +114,7 @@ const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const MONTH_STARTED_FLAG_PREFIX = 'aurum.month.started.';
+const START_MONTH_FLOW_STATE_PREFIX = 'aurum.start-month.flow.v1.';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
@@ -123,11 +125,25 @@ const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: Weal
 
 type StartMonthActionKey = 'carry' | 'fx' | 'banks' | 'realEstate';
 type StartMonthActionStatus = Record<StartMonthActionKey, 'pending' | 'applied'>;
+const START_MONTH_ACTION_LABELS: Record<StartMonthActionKey, string> = {
+  carry: 'Arrastrar',
+  fx: 'TC/UF',
+  banks: 'Bancos',
+  realEstate: 'Bienes raíces',
+};
 const START_MONTH_ACTION_STATUS_INITIAL: StartMonthActionStatus = {
   carry: 'pending',
   fx: 'pending',
   banks: 'pending',
   realEstate: 'pending',
+};
+
+type StartMonthFlowCheckpoint = {
+  monthKey: string;
+  actions: StartMonthActionStatus;
+  failedStep: StartMonthActionKey | null;
+  lastError: string;
+  updatedAt: string;
 };
 
 const sectionLabel: Record<MainSection, string> = {
@@ -155,6 +171,53 @@ const readHideSensitiveAmountsEnabled = () => {
 const writeBanksLastAutoSyncDay = (ymd: string) => {
   try {
     window.localStorage.setItem(BANKS_LAST_AUTO_SYNC_DAY_KEY, ymd);
+  } catch {
+    // ignore
+  }
+};
+
+const startMonthFlowStorageKey = (monthKey: string) => `${START_MONTH_FLOW_STATE_PREFIX}${monthKey}`;
+
+const readStartMonthFlowCheckpoint = (monthKey: string): StartMonthFlowCheckpoint | null => {
+  try {
+    const raw = window.localStorage.getItem(startMonthFlowStorageKey(monthKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.monthKey !== monthKey || !parsed.actions) return null;
+    return {
+      monthKey,
+      actions: {
+        carry: parsed.actions.carry === 'applied' ? 'applied' : 'pending',
+        fx: parsed.actions.fx === 'applied' ? 'applied' : 'pending',
+        banks: parsed.actions.banks === 'applied' ? 'applied' : 'pending',
+        realEstate: parsed.actions.realEstate === 'applied' ? 'applied' : 'pending',
+      },
+      failedStep:
+        parsed.failedStep === 'carry' ||
+        parsed.failedStep === 'fx' ||
+        parsed.failedStep === 'banks' ||
+        parsed.failedStep === 'realEstate'
+          ? parsed.failedStep
+          : null,
+      lastError: typeof parsed.lastError === 'string' ? parsed.lastError : '',
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeStartMonthFlowCheckpoint = (checkpoint: StartMonthFlowCheckpoint) => {
+  try {
+    window.localStorage.setItem(startMonthFlowStorageKey(checkpoint.monthKey), JSON.stringify(checkpoint));
+  } catch {
+    // ignore
+  }
+};
+
+const clearStartMonthFlowCheckpoint = (monthKey: string) => {
+  try {
+    window.localStorage.removeItem(startMonthFlowStorageKey(monthKey));
   } catch {
     // ignore
   }
@@ -3368,6 +3431,7 @@ export const Patrimonio: React.FC = () => {
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
+  const [startMonthFailedStep, setStartMonthFailedStep] = useState<StartMonthActionKey | null>(null);
   const [carryConfirmOpen, setCarryConfirmOpen] = useState(false);
   const [startMonthActionStatus, setStartMonthActionStatus] = useState<StartMonthActionStatus>(
     START_MONTH_ACTION_STATUS_INITIAL,
@@ -3557,13 +3621,25 @@ export const Patrimonio: React.FC = () => {
   const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
 
   useEffect(() => {
+    const checkpoint = readStartMonthFlowCheckpoint(realCurrentMonthKey);
+    if (checkpoint) {
+      setStartMonthActionStatus(checkpoint.actions);
+      setStartMonthFailedStep(checkpoint.failedStep);
+      setStartMonthFlowError(checkpoint.lastError || '');
+      return;
+    }
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
+    setStartMonthFailedStep(null);
+    setStartMonthFlowError('');
   }, [realCurrentMonthKey]);
 
   useEffect(() => {
     if (monthKey !== realCurrentMonthKey) return;
     if (monthRecords.length > 0) return;
+    clearStartMonthFlowCheckpoint(realCurrentMonthKey);
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
+    setStartMonthFailedStep(null);
+    setStartMonthFlowError('');
   }, [monthKey, realCurrentMonthKey, monthRecords.length]);
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
@@ -4064,6 +4140,61 @@ export const Patrimonio: React.FC = () => {
     };
   };
 
+  const persistStartMonthCheckpoint = (
+    targetMonthKey: string,
+    actions: StartMonthActionStatus,
+    failedStep: StartMonthActionKey | null,
+    lastError: string,
+  ) => {
+    writeStartMonthFlowCheckpoint({
+      monthKey: targetMonthKey,
+      actions,
+      failedStep,
+      lastError,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const markStartMonthStepApplied = (targetMonthKey: string, step: StartMonthActionKey) => {
+    setStartMonthFailedStep(null);
+    setStartMonthFlowError('');
+    setStartMonthActionStatus((prev) => {
+      const next = { ...prev, [step]: 'applied' as const };
+      persistStartMonthCheckpoint(targetMonthKey, next, null, '');
+      return next;
+    });
+  };
+
+  const markStartMonthStepFailed = (
+    targetMonthKey: string,
+    step: StartMonthActionKey,
+    message: string,
+  ) => {
+    setStartMonthFailedStep(step);
+    setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+    setStartMonthActionStatus((prev) => {
+      persistStartMonthCheckpoint(targetMonthKey, prev, step, message);
+      return prev;
+    });
+  };
+
+  const retryFailedStartMonthStep = () => {
+    if (!startMonthFailedStep) return;
+    if (startMonthFailedStep === 'carry') {
+      void runStartMonthFlow();
+      return;
+    }
+    if (startMonthFailedStep === 'fx') {
+      void runStartMonthFxUpdate();
+      return;
+    }
+    if (startMonthFailedStep === 'banks') {
+      void runStartMonthBanksUpdate();
+      return;
+    }
+    runStartMonthRealEstateUpdate();
+  };
+
   const runStartMonthFlow = async () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
@@ -4074,9 +4205,14 @@ export const Patrimonio: React.FC = () => {
       latestClosureMonthKey: latestClosure?.monthKey || null,
     });
     setStartMonthFlowError('');
+    setStartMonthFailedStep(null);
     setStartMonthRunning(true);
     const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
     try {
+      const backup = await createWealthBackupSnapshot(`Arranque de mes ${monthToStart}`);
+      if (!backup.ok) {
+        throw new Error(`No pude generar backup previo: ${backup.message}`);
+      }
       const beforeNet = computeMonthNetSnapshot(monthToStart);
       const expectedMortgageLabels = Array.from(
         new Set(
@@ -4139,10 +4275,10 @@ export const Patrimonio: React.FC = () => {
       } else {
         setCarryMessage(`Arrastre aplicado en ${monthLabel(monthToStart).toLowerCase()} con variación inicial cero.`);
       }
-      setStartMonthActionStatus((prev) => ({ ...prev, carry: 'applied' }));
+      markStartMonthStepApplied(monthToStart, 'carry');
     } catch (error: any) {
       const message = String(error?.message || 'No pude completar el arranque de mes.');
-      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      markStartMonthStepFailed(monthToStart, 'carry', message);
       setCarryMessage(`No pude aplicar el arrastre: ${message}`);
     } finally {
       setStartMonthRunning(false);
@@ -4154,6 +4290,7 @@ export const Patrimonio: React.FC = () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
     setStartMonthFlowError('');
+    setStartMonthFailedStep(null);
     setStartMonthRunning(true);
     try {
       const beforeFx = loadFxRates();
@@ -4167,10 +4304,10 @@ export const Patrimonio: React.FC = () => {
         updated: result.updated,
       });
       setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
-      setStartMonthActionStatus((prev) => ({ ...prev, fx: 'applied' }));
+      markStartMonthStepApplied(monthToStart, 'fx');
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar TC/UF.');
-      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      markStartMonthStepFailed(monthToStart, 'fx', message);
       setCarryMessage(`Error al actualizar TC/UF: ${message}`);
     } finally {
       setStartMonthRunning(false);
@@ -4185,6 +4322,7 @@ export const Patrimonio: React.FC = () => {
       return;
     }
     setStartMonthFlowError('');
+    setStartMonthFailedStep(null);
     setStartMonthRunning(true);
     try {
       const result = await refreshBanksFromFintocForMonth(monthToStart);
@@ -4194,10 +4332,10 @@ export const Patrimonio: React.FC = () => {
         updated: result.updated,
       });
       setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
-      setStartMonthActionStatus((prev) => ({ ...prev, banks: 'applied' }));
+      markStartMonthStepApplied(monthToStart, 'banks');
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar bancos vía Fintoc.');
-      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      markStartMonthStepFailed(monthToStart, 'banks', message);
       setCarryMessage(`Error al actualizar bancos: ${message}`);
     } finally {
       setStartMonthRunning(false);
@@ -4207,6 +4345,7 @@ export const Patrimonio: React.FC = () => {
   const runStartMonthRealEstateUpdate = () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
+    setStartMonthFailedStep(null);
     const beforeNet = computeMonthNetSnapshot(monthToStart);
     console.info('[Patrimonio][start-month-real-estate-before]', {
       monthToStart,
@@ -4225,17 +4364,17 @@ export const Patrimonio: React.FC = () => {
     });
     if (auto.changed > 0) {
       setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
-      setStartMonthActionStatus((prev) => ({ ...prev, realEstate: 'applied' }));
+      markStartMonthStepApplied(monthToStart, 'realEstate');
       return;
     }
     if (auto.reason === 'missing_base_debt') {
       const message = 'No pude recalcular bienes raíces: falta saldo de deuda hipotecaria base.';
-      setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
+      markStartMonthStepFailed(monthToStart, 'realEstate', message);
       setCarryMessage(message);
       return;
     }
     setCarryMessage('Bienes raíces sin cambios.');
-    setStartMonthActionStatus((prev) => ({ ...prev, realEstate: 'applied' }));
+    markStartMonthStepApplied(monthToStart, 'realEstate');
   };
 
   const completeMonthlyClose = (
@@ -4884,6 +5023,12 @@ export const Patrimonio: React.FC = () => {
     () => Object.values(startMonthActionStatus).every((status) => status === 'applied'),
     [startMonthActionStatus],
   );
+  useEffect(() => {
+    if (!allStartMonthActionsApplied) return;
+    clearStartMonthFlowCheckpoint(realCurrentMonthKey);
+    setStartMonthFailedStep(null);
+    setStartMonthFlowError('');
+  }, [allStartMonthActionsApplied, realCurrentMonthKey]);
   const showCurrentMonthActionBar = monthKey === realCurrentMonthKey && !allStartMonthActionsApplied;
   const carrySourceMonthLabel = previousClosureForMonthStart
     ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
@@ -5065,7 +5210,20 @@ export const Patrimonio: React.FC = () => {
       )}
       {!!startMonthFlowError && (
         <Card className="border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-          {startMonthFlowError}
+          <div>{startMonthFlowError}</div>
+          {startMonthFailedStep && (
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 border-red-300 bg-white text-red-700"
+                onClick={retryFailedStartMonthStep}
+                disabled={startMonthRunning}
+              >
+                Reintentar paso: {START_MONTH_ACTION_LABELS[startMonthFailedStep]}
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
