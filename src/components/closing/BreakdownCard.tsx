@@ -176,10 +176,25 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
   const deltaPct = compareNet && compareNet !== 0 ? (deltaNet! / compareNet) * 100 : null;
 
   const investmentDetails = useMemo(
-    () => buildInvestmentDetails(currentRecords, fx, compareRecords || null, compareFx || null),
+    () => {
+      const currentForDetail = riskModeOn
+        ? currentRecords
+        : currentRecords.filter(
+            (record) => !(record.block === 'investment' && isRiskCapitalLabel(record.label)),
+          );
+      const compareForDetail = (compareRecords || null)
+        ? (riskModeOn
+            ? (compareRecords || null)
+            : (compareRecords || []).filter(
+                (record) => !(record.block === 'investment' && isRiskCapitalLabel(record.label)),
+              ))
+        : null;
+      return buildInvestmentDetails(currentForDetail, fx, compareForDetail, compareFx || null);
+    },
     [
       currentRecords,
       compareRecords,
+      riskModeOn,
       fx.usdClp,
       fx.eurClp,
       fx.ufClp,
@@ -188,6 +203,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
       compareFx?.ufClp,
     ],
   );
+  const showRiskBadge = riskModeOn && showRiskCapitalBadge;
   const investmentFinancial = investmentDetails.filter((i) => i.group === 'financieras');
   const investmentPrevisional = investmentDetails.filter((i) => i.group === 'previsionales');
   const investmentOthers = investmentDetails.filter((i) => i.group === 'otros');
@@ -226,7 +242,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
       </div>
       <div className="flex items-center gap-2">
         <div className="text-[28px] leading-none font-bold text-slate-900">{formatCurrency(netDisplay, currency)}</div>
-        {showRiskCapitalBadge && (
+        {showRiskBadge && (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
             +CapRiesgo
           </span>
@@ -262,7 +278,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[13px] font-medium text-slate-700">
                   {row.label}
-                  {row.key === 'investment' && showRiskCapitalBadge && (
+                  {row.key === 'investment' && showRiskBadge && (
                     <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
                       +CapRiesgo
                     </span>
@@ -325,7 +341,7 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
             <div className="min-w-0 overflow-hidden rounded-lg border border-[#e8dfcf] bg-[#fcfaf5] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,63,58,0.08)]">
               <div className="text-[11px] font-semibold text-slate-700">
                 Otras inversiones
-                {showRiskCapitalBadge && (
+                {showRiskBadge && (
                   <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
                     +CapRiesgo
                   </span>
