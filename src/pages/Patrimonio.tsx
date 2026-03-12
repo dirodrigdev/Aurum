@@ -975,6 +975,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const tenenciaInstruments = investmentInstruments.filter((instrument) =>
       isTenenciaInstrumentLabel(instrument.label),
     );
+    const tenenciaMatchesInMonth = dedupedSectionRecords.filter(
+      (record) => record.block === 'investment' && isTenenciaInstrumentLabel(record.label),
+    );
     const otherInstruments = investmentInstruments.filter(
       (instrument) => !isTenenciaInstrumentLabel(instrument.label),
     );
@@ -1028,31 +1031,41 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       };
     });
 
-    if (tenenciaInstruments.length > 0) {
-      const tenenciaMatches = dedupedSectionRecords.filter(
-        (record) => record.block === 'investment' && isTenenciaInstrumentLabel(record.label),
-      );
-      const tenenciaRecent = [...tenenciaMatches].sort(
+    if (tenenciaInstruments.length > 0 || tenenciaMatchesInMonth.length > 0) {
+      const tenenciaRecent = [...tenenciaMatchesInMonth].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       )[0];
       const tenenciaAllCarried =
-        tenenciaMatches.length > 0 &&
-        tenenciaMatches.every((record) => isCarriedRecord(record) || isEstimatedRecord(record));
+        tenenciaMatchesInMonth.length > 0 &&
+        tenenciaMatchesInMonth.every((record) => isCarriedRecord(record) || isEstimatedRecord(record));
       const tenenciaContext: InvestmentSourceContext = {
         title: TENENCIA_BASE_LABEL,
         sourceHint: 'auto',
         source: TENENCIA_BASE_LABEL,
-        labels: tenenciaInstruments.map((instrument) => ({
-          label: instrument.label,
-          currency: instrument.currency,
-        })),
+        labels:
+          tenenciaInstruments.length > 0
+            ? tenenciaInstruments.map((instrument) => ({
+                label: instrument.label,
+                currency: instrument.currency,
+              }))
+            : [
+                {
+                  label: TENENCIA_BASE_LABEL,
+                  currency: (tenenciaRecent?.currency || 'CLP') as WealthCurrency,
+                },
+              ],
         isCustom: true,
       };
       customRows.push({
         name: TENENCIA_BASE_LABEL,
-        status: tenenciaMatches.length === 0 ? 'pendiente' : tenenciaAllCarried ? 'mes_anterior' : 'actualizado',
+        status:
+          tenenciaMatchesInMonth.length === 0
+            ? 'pendiente'
+            : tenenciaAllCarried
+              ? 'mes_anterior'
+              : 'actualizado',
         detail:
-          tenenciaMatches.length === 0
+          tenenciaMatchesInMonth.length === 0
             ? 'Sin valor este mes'
             : `${displayRecordOrigin(tenenciaRecent)} · ${formatRecordUpdatedStamp(tenenciaRecent)}`,
         isOptional: false,
@@ -1064,7 +1077,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const uniqueCustomRows = customRows.filter(
       (customRow) => !baseRows.some((baseRow) => sameCanonicalLabel(baseRow.name, customRow.name)),
     );
-    return [...baseRows, ...uniqueCustomRows];
+    const consolidated = [...baseRows, ...uniqueCustomRows];
+    const tenenciaRows = consolidated.filter((row) => isTenenciaInstrumentLabel(row.name));
+    if (tenenciaRows.length <= 1) return consolidated;
+    const canonicalTenencia = tenenciaRows[0];
+    return consolidated.filter(
+      (row) => !isTenenciaInstrumentLabel(row.name) || sameCanonicalLabel(row.name, canonicalTenencia.name),
+    );
   }, [section, dedupedSectionRecords, investmentInstruments, monthKey]);
 
   const normalizeSuggestionBlock = (block: WealthBlock): WealthBlock => {
