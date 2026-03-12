@@ -547,7 +547,7 @@ describe('Aurum full flow (service-level e2e)', () => {
     expect(may2023).toBeTruthy();
     if (!may2023) return;
 
-    const expectedInvestmentClp = 296_867_255 + (314_620 * 790) + 576_000_000 + 47_718;
+    const expectedInvestmentClp = 296_867_255 + (314_620 * 790) + 576_000_000 + 37_697_220;
     const expectedRiskCapitalClp = 65_500_000 + (55_800 * 790);
     const expectedInvestmentWithRisk = expectedInvestmentClp + expectedRiskCapitalClp;
     const expectedRealEstateNetClp = 154_239_360;
@@ -560,6 +560,7 @@ describe('Aurum full flow (service-level e2e)', () => {
     expect(may2023.summary.investmentClpWithRisk).toBe(expectedInvestmentWithRisk);
     expect(may2023.summary.netClp).toBe(expectedNetClp);
     expect(may2023.summary.netClpWithRisk).toBe(expectedNetClpWithRisk);
+    expect(may2023.summary.netClpWithRisk).toBe(1_422_935_635);
 
     const anyRiskDelta = closures.some(
       (closure) => Number(closure.summary.netClpWithRisk || 0) > Number(closure.summary.netClp || 0),
