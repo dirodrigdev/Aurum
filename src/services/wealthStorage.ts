@@ -35,6 +35,27 @@ export interface WealthFxRates {
   ufClp: number;
 }
 
+export const FX_RANGES = {
+  usd_clp: { min: 600, max: 1800 },
+  eur_clp: { min: 700, max: 2000 },
+  eur_usd: { min: 0.85, max: 1.5 },
+  uf_clp: { min: 28000, max: 55000 },
+} as const;
+
+export type FxRangeField = keyof typeof FX_RANGES;
+
+export const validateFxRange = (
+  field: FxRangeField,
+  value: number,
+): { field: FxRangeField; value: number; min: number; max: number } | null => {
+  const range = FX_RANGES[field];
+  if (!Number.isFinite(value)) return { field, value, min: range.min, max: range.max };
+  if (value < range.min || value > range.max) {
+    return { field, value, min: range.min, max: range.max };
+  }
+  return null;
+};
+
 export interface WealthSnapshotSummary {
   netByCurrency: Record<WealthCurrency, number>;
   assetsByCurrency: Record<WealthCurrency, number>;
@@ -1565,8 +1586,23 @@ const parseFlexibleNumeric = (value: unknown): number => {
     const commaAsThousands = /^\d{1,3}(,\d{3})+$/.test(normalized);
     prepared = commaAsThousands ? normalized.replace(/,/g, '') : normalized.replace(',', '.');
   } else if (hasDot) {
-    const dotAsThousands = /^\d{1,3}(\.\d{3})+$/.test(normalized);
-    prepared = dotAsThousands ? normalized.replace(/\./g, '') : normalized;
+    const parts = normalized.split('.');
+    if (parts.length >= 3) {
+      const middleGroups = parts.slice(1, -1);
+      const lastGroup = parts[parts.length - 1] || '';
+      const middleLooksThousands = middleGroups.every((group) => group.length === 3);
+      const allTrailingThousands = parts.slice(1).every((group) => group.length === 3);
+      if (allTrailingThousands) {
+        // Example: 1.234.567 => 1234567
+        prepared = normalized.replace(/\./g, '');
+      } else if (middleLooksThousands && lastGroup.length > 0 && lastGroup.length <= 3) {
+        // Example: 1.023.99 => 1023.99
+        prepared = `${parts.slice(0, -1).join('')}.${lastGroup}`;
+      }
+    } else {
+      // For a single dot group (e.g. 992.225, 35.970, 1.023) keep as decimal.
+      prepared = normalized;
+    }
   }
 
   const parsed = Number(prepared);
@@ -4010,6 +4046,25 @@ const importHistoricalClosuresFromCsvByMode = async (
     const usdClp = parseCsvNumber(rowObj, ['usd_clp', 'usdclp', 'tc_usd', 'dolar_clp']);
     const eurClpDirect = parseCsvNumber(rowObj, ['eur_clp', 'eurclp', 'tc_eur', 'euro_clp']);
     const eurUsd = parseCsvNumber(rowObj, ['eur_usd', 'eurusd', 'eur_usd_rate']);
+    const ensureFxInRange = (field: FxRangeField, rawValue: number | null) => {
+      if (rawValue === null) return true;
+      const result = validateFxRange(field, rawValue);
+      if (!result) return true;
+      const message = `${monthKey}: ${field}=${rawValue} fuera de rango esperado (${result.min}-${result.max}). Verificar formato del archivo fuente.`;
+      warnings.push(message);
+      skippedMonths.push(monthKey);
+      console.error('[Wealth][csv-import][fx-range-error]', {
+        monthKey,
+        field,
+        value: rawValue,
+        expected: result,
+        row: idx + 2,
+      });
+      return false;
+    };
+    if (!ensureFxInRange('usd_clp', usdClp)) return;
+    if (!ensureFxInRange('eur_clp', eurClpDirect)) return;
+    if (!ensureFxInRange('eur_usd', eurUsd)) return;
     const eurUsdResolved =
       eurUsd !== null && eurUsd > 0
         ? eurUsd
@@ -4042,6 +4097,10 @@ const importHistoricalClosuresFromCsvByMode = async (
         : Number.isFinite(Number(fallbackFx.eurClp)) && Number(fallbackFx.eurClp) > 0
           ? Number(fallbackFx.eurClp)
           : null;
+    if (!ensureFxInRange('uf_clp', ufClp)) return;
+    if (!ensureFxInRange('usd_clp', usdClpResolved)) return;
+    if (!ensureFxInRange('eur_clp', eurClpResolved)) return;
+    if (!ensureFxInRange('uf_clp', ufClpResolved)) return;
 
     if (usdClp === null || usdClp <= 0) fxMissing.push('usdClp');
     if (ufClp === null || ufClp <= 0) fxMissing.push('ufClp');
@@ -4178,6 +4237,7 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
   const monthSet = new Set<string>();
   const invalidMonthRows: number[] = [];
   const monthCounts = new Map<string, number>();
+  const warnings: string[] = [];
 
   rows.forEach((cells, idx) => {
     const rowObj: Record<string, string> = {};
@@ -4191,10 +4251,28 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
     }
     monthSet.add(monthKey);
     monthCounts.set(monthKey, (monthCounts.get(monthKey) || 0) + 1);
+    const usdClp = parseCsvNumber(rowObj, ['usd_clp', 'usdclp', 'tc_usd', 'dolar_clp']);
+    const eurClp = parseCsvNumber(rowObj, ['eur_clp', 'eurclp', 'tc_eur', 'euro_clp']);
+    const eurUsd = parseCsvNumber(rowObj, ['eur_usd', 'eurusd', 'eur_usd_rate']);
+    const ufClp = parseCsvNumber(rowObj, ['uf_clp', 'ufclp', 'valor_uf']);
+    const outOfRange = (
+      [
+        ['usd_clp', usdClp],
+        ['eur_clp', eurClp],
+        ['eur_usd', eurUsd],
+        ['uf_clp', ufClp],
+      ] as Array<[FxRangeField, number | null]>
+    ).find(([field, value]) => value !== null && !!validateFxRange(field, value));
+    if (outOfRange) {
+      const [field, value] = outOfRange;
+      const rule = FX_RANGES[field];
+      warnings.push(
+        `${monthKey}: ${field}=${value} fuera de rango esperado (${rule.min}-${rule.max}). Verificar formato del archivo fuente.`,
+      );
+    }
   });
 
   const monthKeys = [...monthSet].sort();
-  const warnings: string[] = [];
   if (!monthKeys.length) warnings.push('No detecté month_key válidos en el CSV.');
   if (invalidMonthRows.length) {
     warnings.push(`Filas con month_key inválido: ${invalidMonthRows.join(', ')}.`);
@@ -4408,6 +4486,135 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   });
 
   return { janKey, febKey, marKey };
+};
+
+export const repairMarch2025EurClpScale = async (): Promise<{
+  ok: boolean;
+  message: string;
+  monthKey: string;
+  beforeEurClp: number | null;
+  afterEurClp: number | null;
+  gastosClpAfter: number | null;
+  pctAfter: number | null;
+}> => {
+  const monthKey = '2025-03';
+  const expectedWrong = 992225;
+  const targetValue = 992.225;
+  const gastosEur = 4664;
+  const beforeClosures = loadClosures();
+  const targetBefore = beforeClosures.find((closure) => closure.monthKey === monthKey) || null;
+  const beforeEurClp = Number(targetBefore?.fxRates?.eurClp ?? NaN);
+  console.info('[repairMarch2025EurClpScale][before]', {
+    monthKey,
+    beforeEurClp: Number.isFinite(beforeEurClp) ? beforeEurClp : null,
+    hasClosure: !!targetBefore,
+  });
+  if (!targetBefore) {
+    return {
+      ok: false,
+      message: 'No encontré el cierre 2025-03.',
+      monthKey,
+      beforeEurClp: null,
+      afterEurClp: null,
+      gastosClpAfter: null,
+      pctAfter: null,
+    };
+  }
+  if (!Number.isFinite(beforeEurClp)) {
+    return {
+      ok: false,
+      message: 'El cierre 2025-03 no tiene eur_clp válido.',
+      monthKey,
+      beforeEurClp: null,
+      afterEurClp: null,
+      gastosClpAfter: null,
+      pctAfter: null,
+    };
+  }
+  if (Math.abs(beforeEurClp - expectedWrong) > 1e-9) {
+    return {
+      ok: false,
+      message: `No apliqué cambios: eur_clp actual es ${beforeEurClp} (esperaba ${expectedWrong}).`,
+      monthKey,
+      beforeEurClp,
+      afterEurClp: beforeEurClp,
+      gastosClpAfter: Math.round(gastosEur * beforeEurClp),
+      pctAfter: null,
+    };
+  }
+
+  const backup = await createWealthBackupSnapshot('Reparación EUR/CLP 2025-03');
+  if (!backup.ok) {
+    return {
+      ok: false,
+      message: `No pude generar backup previo: ${backup.message}`,
+      monthKey,
+      beforeEurClp,
+      afterEurClp: null,
+      gastosClpAfter: null,
+      pctAfter: null,
+    };
+  }
+
+  const nextClosures = beforeClosures.map((closure) => {
+    if (closure.monthKey !== monthKey) return closure;
+    return {
+      ...closure,
+      fxRates: {
+        usdClp: Number(closure.fxRates?.usdClp || defaultFxRates.usdClp),
+        eurClp: targetValue,
+        ufClp: Number(closure.fxRates?.ufClp || defaultFxRates.ufClp),
+      },
+    };
+  });
+  saveClosures(nextClosures);
+
+  const afterClosures = loadClosures();
+  const targetAfter = afterClosures.find((closure) => closure.monthKey === monthKey) || null;
+  const afterEurClp = Number(targetAfter?.fxRates?.eurClp ?? NaN);
+  const prev = [...afterClosures]
+    .filter((closure) => closure.monthKey < monthKey)
+    .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0];
+  const currentNet = Number(targetAfter?.summary?.netClp ?? targetAfter?.summary?.netConsolidatedClp ?? NaN);
+  const prevNet = Number(prev?.summary?.netClp ?? prev?.summary?.netConsolidatedClp ?? NaN);
+  const gastosClpAfter = Number.isFinite(afterEurClp) ? gastosEur * afterEurClp : null;
+  const retornoRealAfter =
+    Number.isFinite(currentNet) && Number.isFinite(prevNet) && gastosClpAfter !== null
+      ? currentNet - prevNet + gastosClpAfter
+      : null;
+  const pctAfter =
+    retornoRealAfter !== null && Number.isFinite(prevNet) && prevNet > 0
+      ? (retornoRealAfter / prevNet) * 100
+      : null;
+
+  console.info('[repairMarch2025EurClpScale][after]', {
+    monthKey,
+    afterEurClp: Number.isFinite(afterEurClp) ? afterEurClp : null,
+    gastosClpAfter,
+    pctAfter,
+  });
+
+  if (!Number.isFinite(afterEurClp) || Math.abs(afterEurClp - targetValue) > 1e-9) {
+    return {
+      ok: false,
+      message: 'No pude confirmar el guardado del eur_clp corregido en 2025-03.',
+      monthKey,
+      beforeEurClp,
+      afterEurClp: Number.isFinite(afterEurClp) ? afterEurClp : null,
+      gastosClpAfter,
+      pctAfter,
+    };
+  }
+
+  return {
+    ok: true,
+    message: 'Reparación aplicada correctamente en 2025-03.',
+    monthKey,
+    beforeEurClp,
+    afterEurClp,
+    gastosClpAfter,
+    pctAfter,
+  };
 };
 
 export const clearWealthDataForFreshStart = async (

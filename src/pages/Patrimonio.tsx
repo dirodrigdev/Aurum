@@ -64,6 +64,7 @@ import {
   setInvestmentInstrumentMonthExcluded,
   upsertInvestmentInstrument,
   upsertWealthRecord,
+  validateFxRange,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
   BANK_BCHILE_CLP_LABEL,
@@ -4767,6 +4768,25 @@ export const Patrimonio: React.FC = () => {
     if (!(fxForClose.usdClp > 0 && fxForClose.eurClp > 0 && fxForClose.ufClp > 0)) {
       setCloseInfo('');
       setCloseError('Completá USD/CLP, EUR/CLP y UF/CLP válidos para confirmar este cierre.');
+      return;
+    }
+    const invalidFx = [
+      validateFxRange('usd_clp', fxForClose.usdClp),
+      validateFxRange('eur_clp', fxForClose.eurClp),
+      validateFxRange('uf_clp', fxForClose.ufClp),
+    ].find((result) => !!result);
+    if (invalidFx) {
+      console.error('[Patrimonio][close-fx-range-error]', {
+        monthKey: targetMonthKey,
+        field: invalidFx.field,
+        value: invalidFx.value,
+        min: invalidFx.min,
+        max: invalidFx.max,
+      });
+      setCloseInfo('');
+      setCloseError(
+        `Valor fuera de rango esperado. Campo: ${invalidFx.field}, valor: ${invalidFx.value}, mes: ${targetMonthKey}. Verifica formato.`,
+      );
       return;
     }
     completeMonthlyClose(targetMonthKey, fxForClose);

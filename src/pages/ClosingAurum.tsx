@@ -43,6 +43,7 @@ import {
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
   loadIncludeRiskCapitalInTotals,
+  validateFxRange,
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
   isMortgageMetaDebtLabel,
@@ -1117,6 +1118,25 @@ export const ClosingAurum: React.FC = () => {
         1e-9 * Math.max(1, Math.abs(selectedClosureFx.eurClp))
         ? selectedClosureFx.eurClp
         : eurClpCandidate;
+    const invalidFx = [
+      validateFxRange('usd_clp', usdClp),
+      validateFxRange('eur_usd', eurUsd),
+      validateFxRange('uf_clp', ufClp),
+      validateFxRange('eur_clp', eurClp),
+    ].find((result) => !!result);
+    if (invalidFx) {
+      console.error('[Closing][fx-range-error]', {
+        monthKey: selectedClosure.monthKey,
+        field: invalidFx.field,
+        value: invalidFx.value,
+        min: invalidFx.min,
+        max: invalidFx.max,
+      });
+      setClosureEditError(
+        `Valor fuera de rango esperado. Campo: ${invalidFx.field}, valor: ${invalidFx.value}, mes: ${selectedClosure.monthKey}.`,
+      );
+      return;
+    }
     const nextFx: WealthFxRates = { usdClp, eurClp, ufClp };
 
     if (!selectedClosureRecordsRaw?.length) {

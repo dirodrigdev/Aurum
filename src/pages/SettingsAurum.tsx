@@ -14,6 +14,7 @@ import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
 import {
+  formatCurrency,
   formatIsoDateTime as formatDateTime,
   formatMonthLabel,
   formatRateInt as formatFxInteger,
@@ -52,11 +53,13 @@ import {
   saveInvestmentInstruments,
   WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
+  repairMarch2025EurClpScale,
   seedDemoWealthTimeline,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
   summarizeWealth,
   syncWealthNow,
+  validateFxRange,
   WealthBackupSnapshotMeta,
   WealthMonthlyClosure,
 } from '../services/wealthStorage';
@@ -295,6 +298,7 @@ export const SettingsAurum: React.FC = () => {
   const [resetAllMessage, setResetAllMessage] = useState('');
   const [seedDemoMessage, setSeedDemoMessage] = useState('');
   const [seedingDemo, setSeedingDemo] = useState(false);
+  const [repairingMarch2025, setRepairingMarch2025] = useState(false);
   const [runningPreflight, setRunningPreflight] = useState(false);
   const [preflightResults, setPreflightResults] = useState<PreflightCheckResult[]>([]);
   const [preflightSummaryMessage, setPreflightSummaryMessage] = useState('');
@@ -372,6 +376,27 @@ export const SettingsAurum: React.FC = () => {
       Math.abs(eurClpCandidate - fx.eurClp) < 1e-9 * Math.max(1, Math.abs(fx.eurClp))
         ? fx.eurClp
         : eurClpCandidate;
+    const month = currentMonthKey();
+    const invalid = [
+      validateFxRange('usd_clp', usdClp),
+      validateFxRange('eur_usd', eurUsd),
+      validateFxRange('uf_clp', ufClp),
+      validateFxRange('eur_clp', eurClp),
+    ].find((result) => !!result);
+    if (invalid) {
+      console.error('[Settings][fx-range-error]', {
+        monthKey: month,
+        field: invalid.field,
+        value: invalid.value,
+        min: invalid.min,
+        max: invalid.max,
+      });
+      setFxLiveMessage(
+        `Valor fuera de rango esperado. Campo: ${invalid.field}, valor: ${invalid.value}, mes: ${month}. Verifica formato.`,
+      );
+      syncDraftFromFx(fx);
+      return;
+    }
     const next = { usdClp, eurClp, ufClp };
     setFx(next);
     saveFxRates(next);
@@ -1564,6 +1589,31 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
+  const repairMarch2025Now = async () => {
+    setRepairingMarch2025(true);
+    setSeedDemoMessage('');
+    try {
+      const result = await repairMarch2025EurClpScale();
+      refreshLocalState();
+      if (result.ok) {
+        const gastos = result.gastosClpAfter !== null ? formatCurrency(result.gastosClpAfter, 'CLP') : '—';
+        const pct =
+          result.pctAfter === null
+            ? '—'
+            : `${result.pctAfter >= 0 ? '+' : ''}${result.pctAfter.toFixed(2).replace('.', ',')}%`;
+        setSeedDemoMessage(
+          `Reparación 2025-03 OK. eur_clp: ${result.beforeEurClp} → ${result.afterEurClp}. Gastos: ${gastos}. %: ${pct}.`,
+        );
+      } else {
+        setSeedDemoMessage(result.message);
+      }
+    } catch (err: any) {
+      setSeedDemoMessage(`Error al reparar 2025-03: ${String(err?.message || err || 'error')}`);
+    } finally {
+      setRepairingMarch2025(false);
+    }
+  };
+
   return (
     <div className="p-4 pb-32 space-y-2">
       {(!!resetAllMessage || !!closureReviewMessage || !!closingConfigMessage) && (
@@ -2093,6 +2143,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           <div className="mt-3 space-y-2 text-xs">
             <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
               {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
+            </Button>
+            <Button variant="outline" disabled={repairingMarch2025} onClick={() => void repairMarch2025Now()}>
+              {repairingMarch2025 ? 'Reparando 2025-03...' : 'Reparar EUR/CLP 2025-03'}
             </Button>
             {!!seedDemoMessage && <div className="text-indigo-800">{seedDemoMessage}</div>}
           </div>
