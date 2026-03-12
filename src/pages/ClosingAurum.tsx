@@ -56,6 +56,7 @@ import {
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
+  WealthSnapshotSummary,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
 
@@ -299,6 +300,21 @@ const dedupeClosureRecords = (records: WealthRecord[]) => {
 
 const findRecordByCanonicalLabel = (records: WealthRecord[], canonicalLabel: string) =>
   records.find((record) => matchCanonicalWithAliases(record.label, canonicalLabel)) || null;
+
+const resolveSummaryNetForRiskMode = (
+  summary: WealthSnapshotSummary,
+  includeRiskCapitalInTotals: boolean,
+) => {
+  if (includeRiskCapitalInTotals) {
+    const withRisk = Number(summary?.netClpWithRisk);
+    if (Number.isFinite(withRisk)) return withRisk;
+  } else {
+    const withoutRisk = Number(summary?.netClp);
+    if (Number.isFinite(withoutRisk)) return withoutRisk;
+  }
+  const legacy = Number(summary?.netConsolidatedClp);
+  return Number.isFinite(legacy) ? legacy : 0;
+};
 
 interface ComparableVersionFields {
   bankClp: number | null;
@@ -594,7 +610,7 @@ export const ClosingAurum: React.FC = () => {
         : null;
       const netClp = hasClosureRecords
         ? buildNetBreakdown(records || [], fx).netClp
-        : closure.summary.netConsolidatedClp;
+        : resolveSummaryNetForRiskMode(closure.summary, includeRiskCapitalInTotals);
       // [PRODUCT RULE] Cada período histórico usa su propio FX del momento del cierre.
       map.set(closure.monthKey, fromClp(netClp, currency, fx));
     });
@@ -694,7 +710,7 @@ export const ClosingAurum: React.FC = () => {
           : null;
         const netClp = hasClosureRecords
           ? buildNetBreakdown(records || [], fx).netClp
-          : c.summary.netConsolidatedClp;
+          : resolveSummaryNetForRiskMode(c.summary, includeRiskCapitalInTotals);
         const hasRiskCapital = hasClosureRecords
           ? (c.records || []).some(
               (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
@@ -748,7 +764,7 @@ export const ClosingAurum: React.FC = () => {
       const fx = item.fxRates || currentFx;
       return buildComparableVersionFields(
         item.records,
-        Number(item.summary?.netConsolidatedClp || 0),
+        resolveSummaryNetForRiskMode(item.summary, includeRiskCapitalInTotals),
         fx,
         includeRiskCapitalInTotals,
       );
@@ -777,7 +793,7 @@ export const ClosingAurum: React.FC = () => {
         : null;
       const netClp = hasVersionRecords
         ? buildNetBreakdown(records || [], fx).netClp
-        : version.summary.netConsolidatedClp;
+        : resolveSummaryNetForRiskMode(version.summary, includeRiskCapitalInTotals);
       // [PRODUCT RULE] Cada versión histórica se muestra con su FX guardado en ese momento.
       map.set(`${version.id}-${version.closedAt}`, fromClp(netClp, currency, fx));
     });
@@ -915,11 +931,17 @@ export const ClosingAurum: React.FC = () => {
         amount: normalized,
         currency: targetCurrency,
       });
+      const persistedLabel =
+        field.key === 'bancosClp'
+          ? BANK_BALANCE_CLP_LEGACY_LABEL
+          : field.key === 'bancosUsd'
+            ? BANK_BALANCE_USD_LEGACY_LABEL
+            : field.label;
       nextRecords.push({
         id: existing?.id || crypto.randomUUID(),
         block: field.block,
         source: 'Edición cierre',
-        label: field.label,
+        label: persistedLabel,
         amount: normalized,
         currency: targetCurrency,
         createdAt,
@@ -1181,7 +1203,11 @@ export const ClosingAurum: React.FC = () => {
                             <div className="mt-0.5 text-[11px] font-semibold">
                               {formatCurrency(
                                 closureDisplayNetByMonth.get(closure.monthKey) ??
-                                  fromClp(closure.summary.netConsolidatedClp, currency, closure.fxRates || currentFx),
+                                  fromClp(
+                                    resolveSummaryNetForRiskMode(closure.summary, includeRiskCapitalInTotals),
+                                    currency,
+                                    closure.fxRates || currentFx,
+                                  ),
                                 currency,
                               )}
                             </div>
@@ -1253,7 +1279,11 @@ export const ClosingAurum: React.FC = () => {
                           Neto:{' '}
                           {formatCurrency(
                             closureVersionNetDisplayById.get(`${version.id}-${version.closedAt}`) ??
-                              fromClp(version.summary.netConsolidatedClp, currency, version.fxRates || currentFx),
+                              fromClp(
+                                resolveSummaryNetForRiskMode(version.summary, includeRiskCapitalInTotals),
+                                currency,
+                                version.fxRates || currentFx,
+                              ),
                             currency,
                           )}
                         </div>
