@@ -33,6 +33,9 @@ import {
   INVESTMENT_WISE_USD_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  RISK_CAPITAL_LABEL_CLP,
+  RISK_CAPITAL_LABEL_USD,
+  TENENCIA_CXC_PREFIX_LABEL,
   resolveRiskCapitalRecordsForTotals,
   WealthCurrency,
   WealthFxRates,
@@ -104,6 +107,9 @@ const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
 
 const matchCanonicalWithAliases = (label: string, canonicalLabel: string) => {
   const key = labelMatchKey(label);
+  if (canonicalLabel === labelMatchKey(TENENCIA_CXC_PREFIX_LABEL)) {
+    return key.startsWith(canonicalLabel);
+  }
   if (key === canonicalLabel) return true;
   const aliases = CLOSURE_CANONICAL_ALIASES[canonicalLabel] || [];
   return aliases.some((alias) => key === labelMatchKey(alias));
@@ -129,6 +135,9 @@ type EditableFieldKey =
   | 'planvital'
   | 'global66'
   | 'wise'
+  | 'riskCapitalClp'
+  | 'riskCapitalUsd'
+  | 'tenencia'
   | 'valorProp'
   | 'saldoHipoteca'
   | 'bancosClp'
@@ -193,6 +202,30 @@ const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
     block: 'investment',
     canonicalLabel: 'wise cuenta principal usd',
     currency: 'USD',
+    section: 'inversiones',
+  },
+  {
+    key: 'riskCapitalClp',
+    label: RISK_CAPITAL_LABEL_CLP,
+    block: 'investment',
+    canonicalLabel: labelMatchKey(RISK_CAPITAL_LABEL_CLP),
+    currency: 'CLP',
+    section: 'inversiones',
+  },
+  {
+    key: 'riskCapitalUsd',
+    label: RISK_CAPITAL_LABEL_USD,
+    block: 'investment',
+    canonicalLabel: labelMatchKey(RISK_CAPITAL_LABEL_USD),
+    currency: 'USD',
+    section: 'inversiones',
+  },
+  {
+    key: 'tenencia',
+    label: TENENCIA_CXC_PREFIX_LABEL,
+    block: 'investment',
+    canonicalLabel: labelMatchKey(TENENCIA_CXC_PREFIX_LABEL),
+    currency: 'CLP',
     section: 'inversiones',
   },
   {
@@ -793,6 +826,21 @@ export const ClosingAurum: React.FC = () => {
 
     const snapshotDate = `${selectedClosure.monthKey}-01`;
     const createdAt = new Date().toISOString();
+    const expectedEditedFields: Array<{
+      label: string;
+      canonicalLabel: string;
+      amount: number;
+      currency: WealthCurrency;
+    }> = [];
+
+    console.info('[Closing][edit-before]', {
+      monthKey: selectedClosure.monthKey,
+      closureId: selectedClosure.id,
+      recordsCount: selectedClosureRecordsRaw.length,
+      draftFx: nextFx,
+      draftValues: closureEditDraft,
+    });
+
     for (const field of CLOSURE_EDITABLE_FIELDS) {
       const raw = closureEditDraft[field.key];
       if (String(raw || '').trim() === '') continue;
@@ -815,13 +863,21 @@ export const ClosingAurum: React.FC = () => {
       const parsed = parseStrictNumber(raw);
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
+      const targetCurrency =
+        field.key === 'tenencia' && existing?.currency ? existing.currency : field.currency;
+      expectedEditedFields.push({
+        label: field.label,
+        canonicalLabel: field.canonicalLabel,
+        amount: normalized,
+        currency: targetCurrency,
+      });
       nextRecords.push({
         id: existing?.id || crypto.randomUUID(),
         block: field.block,
         source: 'Edición cierre',
         label: field.label,
         amount: normalized,
-        currency: field.currency,
+        currency: targetCurrency,
         createdAt,
         snapshotDate,
         note: `Edición manual cierre ${selectedClosure.monthKey}`,
@@ -834,6 +890,35 @@ export const ClosingAurum: React.FC = () => {
       fxRates: nextFx,
       closedAt: new Date().toISOString(),
     });
+    const persistedClosure = loadClosures().find((closure) => closure.monthKey === selectedClosure.monthKey) || null;
+    const persistedFx = persistedClosure?.fxRates || null;
+    const fxMatches =
+      !!persistedFx &&
+      Math.abs((persistedFx.usdClp || 0) - nextFx.usdClp) < 1e-6 &&
+      Math.abs((persistedFx.eurClp || 0) - nextFx.eurClp) < 1e-6 &&
+      Math.abs((persistedFx.ufClp || 0) - nextFx.ufClp) < 1e-6;
+    const missingEditedField = expectedEditedFields.find((field) => {
+      const persistedRecord = persistedClosure?.records?.find((record) =>
+        matchCanonicalWithAliases(record.label, field.canonicalLabel),
+      );
+      if (!persistedRecord) return true;
+      if (persistedRecord.currency !== field.currency) return true;
+      return Math.abs(Number(persistedRecord.amount) - field.amount) > 1e-6;
+    });
+    console.info('[Closing][edit-after]', {
+      monthKey: selectedClosure.monthKey,
+      closureId: persistedClosure?.id || null,
+      expectedEditedFields,
+      persistedFx,
+      fxMatches,
+      missingEditedField: missingEditedField?.label || null,
+    });
+    if (!persistedClosure || !fxMatches || missingEditedField) {
+      setClosureEditError(
+        `Guardado incompleto: no pude confirmar edición de cierre${missingEditedField ? ` (${missingEditedField.label})` : ''}.`,
+      );
+      return;
+    }
     setClosureEditOpen(false);
     setClosureEditError('');
     setRevision((v) => v + 1);
