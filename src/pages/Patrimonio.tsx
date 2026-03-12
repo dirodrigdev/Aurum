@@ -114,6 +114,7 @@ const MONTH_STARTED_FLAG_PREFIX = 'aurum.month.started.';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
+  { label: TENENCIA_CXC_PREFIX_LABEL, currency: 'CLP' },
   { label: `${TENENCIA_CXC_PREFIX_LABEL} USD`, currency: 'USD' },
   { label: `${TENENCIA_CXC_PREFIX_LABEL} EUR`, currency: 'EUR' },
 ];
@@ -1028,9 +1029,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
 
     if (tenenciaInstruments.length > 0) {
-      const tenenciaMatches = tenenciaInstruments
-        .map((instrument) => findRecordForLabel(instrument.label, instrument.currency))
-        .filter((record): record is WealthRecord => !!record);
+      const tenenciaMatches = dedupedSectionRecords.filter(
+        (record) => record.block === 'investment' && isTenenciaInstrumentLabel(record.label),
+      );
       const tenenciaRecent = [...tenenciaMatches].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       )[0];

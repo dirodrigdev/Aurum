@@ -2856,7 +2856,12 @@ export const fillMissingWithPreviousClosure = (
     if (options?.excludeBlocks?.includes(oldRecord.block)) continue;
     if (normalizedFilters.length) {
       const oldLabel = normalizeLabelKey(oldRecord.label);
-      const matchesFilter = normalizedFilters.some((filter) => oldLabel === filter);
+      const matchesFilter = normalizedFilters.some((filter) => {
+        if (filter === normalizeLabelKey(TENENCIA_CXC_PREFIX_LABEL)) {
+          return oldLabel.startsWith(filter);
+        }
+        return oldLabel === filter;
+      });
       if (!matchesFilter) continue;
     }
     if (oldRecord.block === 'investment') {
