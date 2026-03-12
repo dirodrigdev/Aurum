@@ -647,6 +647,7 @@ interface InvestmentSourceContext {
   labels: Array<{ label: string; currency: WealthCurrency }>;
   instrumentId?: string;
   isCustom?: boolean;
+  primaryLabel?: string;
 }
 
 interface ChecklistRow {
@@ -677,12 +678,18 @@ interface InvestmentOperationalRow {
   detail: string;
   amountText: string;
   hasValue: boolean;
+  updatedThisMonth: boolean;
   sourceContext: InvestmentSourceContext;
 }
 
 interface PendingInvestmentDelete {
   title: string;
   targets: Array<{ label: string; currency: WealthCurrency }>;
+}
+
+interface PendingSuraOcrDecision {
+  parsed: EditableSuggestion[];
+  primaryLabel: string;
 }
 
 interface BankMovementsModalState {
@@ -743,6 +750,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [openLoadPanel, setOpenLoadPanel] = useState(false);
   const [openSourceMenu, setOpenSourceMenu] = useState(false);
   const [activeSourceContext, setActiveSourceContext] = useState<InvestmentSourceContext | null>(null);
+  const [pendingSuraOcrDecision, setPendingSuraOcrDecision] = useState<PendingSuraOcrDecision | null>(null);
   const [openCreateInvestmentModal, setOpenCreateInvestmentModal] = useState(false);
   const [newInvestmentDraft, setNewInvestmentDraft] = useState<{
     label: string;
@@ -1174,6 +1182,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     hiddenUploadInputRef.current.click();
   };
 
+  const isSuraInvestmentLabel = (label: string) =>
+    sameCanonicalLabel(label, INVESTMENT_SURA_FIN_LABEL) || sameCanonicalLabel(label, INVESTMENT_SURA_PREV_LABEL);
+
+  const sanitizeManualUpdateNote = (note?: string) => {
+    const trimmed = String(note || '').trim();
+    if (!trimmed) return undefined;
+    const normalized = normalizeForMatch(trimmed);
+    if (normalized.includes('arrastrado') || normalized.includes('mes anterior') || normalized.includes('estimado')) {
+      return undefined;
+    }
+    return trimmed;
+  };
+
   const applyInvestmentContextToParsed = (parsed: EditableSuggestion[]): EditableSuggestion[] => {
     if (section !== 'investment' || !activeSourceContext) return parsed;
 
@@ -1206,6 +1227,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         };
       })
       .filter((item): item is EditableSuggestion => !!item);
+  };
+
+  const appendSuggestions = (incoming: EditableSuggestion[]) => {
+    setSuggestions((prev) => {
+      const next = [...prev];
+      const indexByKey = new Map(next.map((item, idx) => [suggestionKey(item), idx]));
+      incoming.forEach((item) => {
+        const key = suggestionKey(item);
+        const existingIdx = indexByKey.get(key);
+        if (existingIdx === undefined) {
+          indexByKey.set(key, next.length);
+          next.push(item);
+        } else {
+          next[existingIdx] = item;
+        }
+      });
+      return next;
+    });
   };
 
   const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1244,7 +1283,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         parsed = strictDividendParsed;
       }
 
-      if (section === 'investment' && activeSourceContext?.labels.length && parsed.length < activeSourceContext.labels.length) {
+      const isSuraDualContext =
+        section === 'investment' &&
+        !!activeSourceContext &&
+        activeSourceContext.labels.length > 1 &&
+        activeSourceContext.labels.every((item) => isSuraInvestmentLabel(item.label));
+
+      if (
+        section === 'investment' &&
+        activeSourceContext?.labels.length &&
+        parsed.length < activeSourceContext.labels.length &&
+        !isSuraDualContext
+      ) {
         setOcrError(
           `No pude detectar todos los valores de ${activeSourceContext.title}. Intenta una captura más clara o usa "Ingresar monto".`,
         );
@@ -1265,24 +1315,22 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         setOcrError('La imagen parece pertenecer a otro bloque. Revisa antes de guardar.');
       }
 
-      // Permite subir varias imágenes antes de guardar todo, evitando duplicados por activo.
-      setSuggestions((prev) => {
-        const next = [...prev];
-        const indexByKey = new Map(next.map((item, idx) => [suggestionKey(item), idx]));
+      if (isSuraDualContext) {
+        const hasFin = parsed.some((item) => sameCanonicalLabel(item.label, INVESTMENT_SURA_FIN_LABEL));
+        const hasPrev = parsed.some((item) => sameCanonicalLabel(item.label, INVESTMENT_SURA_PREV_LABEL));
+        if (hasFin && hasPrev) {
+          setPendingSuraOcrDecision({
+            parsed,
+            primaryLabel:
+              activeSourceContext?.primaryLabel ||
+              activeSourceContext?.labels[0]?.label ||
+              INVESTMENT_SURA_FIN_LABEL,
+          });
+          return;
+        }
+      }
 
-        parsed.forEach((item) => {
-          const key = suggestionKey(item);
-          const existingIdx = indexByKey.get(key);
-          if (existingIdx === undefined) {
-            indexByKey.set(key, next.length);
-            next.push(item);
-          } else {
-            next[existingIdx] = item;
-          }
-        });
-
-        return next;
-      });
+      appendSuggestions(parsed);
     } catch (err: any) {
       setOcrError(err?.message || 'Error leyendo imagen');
     } finally {
@@ -1320,6 +1368,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setQuickFill(null);
     setMultiQuickFill(null);
     setActiveSourceContext(null);
+    setPendingSuraOcrDecision(null);
     onDataChanged();
   };
 
@@ -1355,6 +1404,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setQuickFill(null);
     setMultiQuickFill(null);
     setActiveSourceContext(null);
+    setPendingSuraOcrDecision(null);
     onDataChanged();
   };
 
@@ -1602,6 +1652,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   }, [sectionTotalClp, investmentTotalCompareClp]);
 
   const buildInvestmentSourceContextForRow = (row: ChecklistRow): InvestmentSourceContext => {
+    if (isSuraInvestmentLabel(row.name)) {
+      return {
+        title: 'SURA',
+        sourceHint: 'sura_resumen',
+        source: 'SURA',
+        labels: [
+          { label: INVESTMENT_SURA_FIN_LABEL, currency: 'CLP' },
+          { label: INVESTMENT_SURA_PREV_LABEL, currency: 'CLP' },
+        ],
+        primaryLabel: row.name,
+      };
+    }
     if (isTenenciaInstrumentLabel(row.name)) {
       const labelsFromInstruments = investmentInstruments
         .filter((instrument) => isTenenciaInstrumentLabel(instrument.label))
@@ -1645,7 +1707,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const investmentOperationalRows = useMemo<InvestmentOperationalRow[]>(() => {
     if (section !== 'investment') return [];
     const seen = new Set<string>();
-    return sortedChecklistRows
+    const baseRows = checklistRows
       .filter((row) => {
         const rowKey = isTenenciaInstrumentLabel(row.name) ? TENENCIA_BASE_KEY : labelMatchKey(row.name);
         if (seen.has(rowKey)) return false;
@@ -1680,10 +1742,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           detail: row.detail,
           amountText,
           hasValue,
+          updatedThisMonth: row.status === 'actualizado',
           sourceContext,
         };
       });
-  }, [section, sortedChecklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
+    const pendingFirst = baseRows.filter((row) => !row.updatedThisMonth);
+    const updatedAfter = baseRows.filter((row) => row.updatedThisMonth);
+    return [...pendingFirst, ...updatedAfter];
+  }, [section, checklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
 
   const triggerInvestmentPhotoLoad = (context: InvestmentSourceContext) => {
     setActiveSourceContext(context);
@@ -1693,6 +1759,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setSuggestions([]);
     setOcrError('');
     setOcrText('');
+    setPendingSuraOcrDecision(null);
     setOpenLoadPanel(true);
     requestAnimationFrame(() => openImagePicker());
   };
@@ -1774,6 +1841,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setOcrError('');
     setOcrText('');
     setActiveSourceContext(null);
+    setPendingSuraOcrDecision(null);
   };
 
   const openQuickFillForContext = (context: InvestmentSourceContext) => {
@@ -1785,7 +1853,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           label: entry.label,
           currency: entry.currency,
           amount: existing ? String(existing.amount) : '',
-          note: existing?.note || undefined,
+          note: sanitizeManualUpdateNote(existing?.note),
         };
       });
       setMultiQuickFill({
@@ -1794,6 +1862,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         entries,
       });
       setQuickFill(null);
+      setPendingSuraOcrDecision(null);
       setOpenLoadPanel(true);
       return;
     }
@@ -1807,10 +1876,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       label: entry.label,
       amount: existing ? String(existing.amount) : '',
       currency: entry.currency,
-      note: existing?.note || '',
+      note: sanitizeManualUpdateNote(existing?.note) || '',
       snapshotDate: existing?.snapshotDate || visualSnapshotDate,
     });
     setMultiQuickFill(null);
+    setPendingSuraOcrDecision(null);
     setOpenLoadPanel(true);
   };
 
@@ -1880,12 +1950,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       label: quickFill.label,
       amount: normalizedAmount,
       currency: quickFill.currency,
-      note: quickFill.note?.trim() || undefined,
+      note: sanitizeManualUpdateNote(quickFill.note),
       snapshotDate: quickFill.snapshotDate,
     }, 'saveQuickFill');
     if (!saved) return;
     setQuickFill(null);
     setActiveSourceContext(null);
+    setPendingSuraOcrDecision(null);
     setOpenLoadPanel(false);
     onDataChanged();
   };
@@ -1908,13 +1979,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         label: entry.label,
         amount: entry.amountParsed,
         currency: entry.currency,
-        note: entry.note?.trim() || undefined,
+        note: sanitizeManualUpdateNote(entry.note),
         snapshotDate: multiQuickFill.snapshotDate,
       }, 'saveMultiQuickFill');
       if (!saved) return;
     }
     setMultiQuickFill(null);
     setActiveSourceContext(null);
+    setPendingSuraOcrDecision(null);
     setOpenLoadPanel(false);
     onDataChanged();
   };
@@ -2485,21 +2557,26 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
           <div className="space-y-1.5">
             {investmentAnalyticsRows.map((row) => {
-              const current = includeInvestmentAmountForMode(row.currentClp, row.isRiskCapital);
-              const compare = row.compareClp === null ? null : includeInvestmentAmountForMode(row.compareClp, row.isRiskCapital);
+              const current = row.currentClp;
+              const compare = row.compareClp;
               const delta = compare === null ? null : current - compare;
               const pct = compare && compare !== 0 ? (delta! / compare) * 100 : null;
+              const riskExcluded = row.isRiskCapital && !includeRiskCapitalInTotals;
               const rowStyle =
-                row.isRiskCapital
-                  ? 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]'
+                row.isRiskCapital && riskExcluded
+                  ? 'border-slate-300 bg-slate-100/80'
+                  : row.isRiskCapital
+                    ? 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]'
                   : row.group === 'previsionales'
                     ? 'border-emerald-200 bg-emerald-50/30'
                     : row.group === 'financieras'
                       ? 'border-[#d8c39d] bg-[#f8efe2]'
                       : 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]';
               const rowLeft =
-                row.isRiskCapital
-                  ? 'border-l-4 border-l-[#e5dccb]'
+                row.isRiskCapital && riskExcluded
+                  ? 'border-l-4 border-l-slate-400'
+                  : row.isRiskCapital
+                    ? 'border-l-4 border-l-[#e5dccb]'
                   : row.group === 'previsionales'
                     ? 'border-l-4 border-l-emerald-300'
                     : row.group === 'financieras'
@@ -2509,11 +2586,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 <div
                   key={row.key}
                   className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft} ${
-                    row.isRiskCapital && !includeRiskCapitalInTotals ? 'opacity-35' : ''
+                    riskExcluded ? 'opacity-70' : ''
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[12px] text-slate-700">{row.label}</span>
+                    <div>
+                      <span className="text-[12px] text-slate-700">{row.label}</span>
+                      {riskExcluded && (
+                        <div className="text-[10px] text-slate-500">Excluido del total</div>
+                      )}
+                    </div>
                     <div className="text-right">
                       <div className="text-xs font-semibold text-slate-900">{formatCurrency(current, 'CLP')}</div>
                       {delta !== null && (
@@ -2637,12 +2719,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                   [],
                 );
                 return (
-                  <div key={row.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <div className="space-y-2">
-                      <div className="min-w-0">
+                  <div
+                    key={row.key}
+                    className={cn(
+                      'rounded-lg border px-3 py-2',
+                      row.updatedThisMonth ? 'border-emerald-300 bg-emerald-50/70' : 'border-slate-200 bg-white',
+                    )}
+                  >
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="min-w-0 space-y-1">
                         <div className="text-sm font-semibold text-slate-900">{row.name}</div>
                         <div className="text-xs text-slate-500">{row.amountText}</div>
-                        <div className="mt-0.5 text-[11px] text-slate-500">
+                        <div className="text-[11px] text-slate-500">
                           {row.status === 'actualizado' && `✅ Actualizado · ${row.detail}`}
                           {row.status === 'mes_anterior' && `🔄 Arrastre · ${row.detail}`}
                           {row.status === 'estimado' && `🔄 Estimado · ${row.detail}`}
@@ -2650,38 +2738,43 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                           {row.status === 'excluido' && 'No considerado este mes'}
                         </div>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => triggerInvestmentPhotoLoad(row.sourceContext)}
-                      >
-                        📷 Subir imagen
-                      </Button>
-                      <div className="grid grid-cols-3 gap-1.5">
+                      <div className="space-y-1.5">
                         <Button
                           size="sm"
                           variant="outline"
-                          className="col-span-2"
-                          onClick={() => openQuickFillForContext(row.sourceContext)}
+                          className="w-full"
+                          onClick={() => triggerInvestmentPhotoLoad(row.sourceContext)}
                         >
-                          ✏️ Editar
+                          📷 Subir imagen
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="col-span-1 border-slate-300 text-slate-600 hover:border-slate-400 hover:bg-slate-100"
-                          disabled={!row.hasValue}
-                          onClick={() =>
-                            setPendingInvestmentDelete({
-                              title: row.name,
-                              targets: deleteTargets,
-                            })
-                          }
-                        >
-                          🗑 Borrar
-                        </Button>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="col-span-2"
+                            onClick={() => openQuickFillForContext(row.sourceContext)}
+                          >
+                            ✏️ Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="col-span-1 border-slate-300 text-slate-500 hover:border-slate-400 hover:bg-slate-100"
+                            disabled={!row.hasValue}
+                            onClick={() =>
+                              setPendingInvestmentDelete({
+                                title: row.name,
+                                targets: deleteTargets,
+                              })
+                            }
+                          >
+                            🗑 Borrar
+                          </Button>
+                        </div>
                       </div>
+                    </div>
+                    <div className="mt-1 text-[10px] text-slate-500">
+                      {row.updatedThisMonth ? 'Actualizado este mes' : 'Pendiente de confirmar este mes'}
                     </div>
                   </div>
                 );
@@ -2843,6 +2936,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     setSuggestions([]);
                     setOcrError('');
                     setOcrText('');
+                    setPendingSuraOcrDecision(null);
                     setOpenSourceMenu(false);
                     requestAnimationFrame(() => openImagePicker());
                   }}
@@ -3181,6 +3275,69 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           </div>
         </>
       )}
+
+      {pendingSuraOcrDecision && (() => {
+        const fin = pendingSuraOcrDecision.parsed.find((item) =>
+          sameCanonicalLabel(item.label, INVESTMENT_SURA_FIN_LABEL),
+        );
+        const prev = pendingSuraOcrDecision.parsed.find((item) =>
+          sameCanonicalLabel(item.label, INVESTMENT_SURA_PREV_LABEL),
+        );
+        const onlyPrimary =
+          pendingSuraOcrDecision.parsed.find((item) =>
+            sameCanonicalLabel(item.label, pendingSuraOcrDecision.primaryLabel),
+          ) || pendingSuraOcrDecision.parsed[0];
+        return (
+          <>
+            <div
+              className="fixed inset-0 bg-slate-900/45 backdrop-blur-[1px] z-[60]"
+              onClick={() => setPendingSuraOcrDecision(null)}
+            />
+            <div className="fixed inset-0 z-[61] flex items-center justify-center p-3">
+              <div className="w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+                <Card className="space-y-3 p-4 shadow-[0_20px_40px_rgba(15,23,42,0.35)]">
+                  <div className="text-sm font-semibold text-slate-900">Detecté datos para SURA</div>
+                  <div className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                    <div>
+                      Financiero:{' '}
+                      <span className="font-semibold">
+                        {fin ? formatCurrency(fin.amount, fin.currency) : 'No detectado'}
+                      </span>
+                    </div>
+                    <div>
+                      Previsional:{' '}
+                      <span className="font-semibold">
+                        {prev ? formatCurrency(prev.amount, prev.currency) : 'No detectado'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      className="flex-1"
+                      onClick={() => {
+                        appendSuggestions(pendingSuraOcrDecision.parsed);
+                        setPendingSuraOcrDecision(null);
+                      }}
+                    >
+                      Guardar ambos
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => {
+                        if (onlyPrimary) appendSuggestions([onlyPrimary]);
+                        setPendingSuraOcrDecision(null);
+                      }}
+                    >
+                      Solo este
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
     </div>
   );
