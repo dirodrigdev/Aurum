@@ -54,6 +54,9 @@ type AnalysisTab = 'returns' | 'freedom';
 type MonthlyReturnRow = {
   monthKey: string;
   fx: WealthFxRates;
+  rawEurClp: number;
+  normalizedEurClp: number;
+  eurNormalized: boolean;
   netClp: number;
   prevNetClp: number | null;
   varPatrimonioClp: number | null;
@@ -65,28 +68,78 @@ type MonthlyReturnRow = {
 type AggregatedSummary = {
   key: string;
   label: string;
-  varPatrimonioClp: number | null;
-  gastosClp: number | null;
-  retornoRealClp: number | null;
-  pct: number | null;
-  varPatrimonioDisplay: number | null;
-  gastosDisplay: number | null;
-  retornoRealDisplay: number | null;
+  validMonths: number;
+  varPatrimonioAcumClp: number | null;
+  gastosAcumClp: number | null;
+  retornoRealAcumClp: number | null;
+  pctRetorno: number | null;
+  spendPct: number | null;
+  varPatrimonioAvgDisplay: number | null;
+  gastosAvgDisplay: number | null;
+  retornoRealAvgDisplay: number | null;
 };
 
 const loadWealthClosures = () => loadClosures();
-
-const safeFx = (fx?: WealthFxRates): WealthFxRates => ({
-  usdClp: Number.isFinite(fx?.usdClp) && Number(fx?.usdClp) > 0 ? Number(fx?.usdClp) : defaultFxRates.usdClp,
-  eurClp: Number.isFinite(fx?.eurClp) && Number(fx?.eurClp) > 0 ? Number(fx?.eurClp) : defaultFxRates.eurClp,
-  ufClp: Number.isFinite(fx?.ufClp) && Number(fx?.ufClp) > 0 ? Number(fx?.ufClp) : defaultFxRates.ufClp,
-});
 
 const summaryNetClp = (closure: WealthMonthlyClosure) => {
   if (Number.isFinite(closure.summary?.netClp)) return Number(closure.summary.netClp);
   if (Number.isFinite(closure.summary?.netConsolidatedClp)) return Number(closure.summary.netConsolidatedClp);
   return 0;
 };
+
+const safeUsdClp = (value: number) =>
+  Number.isFinite(value) && value > 0 ? value : defaultFxRates.usdClp;
+
+const safeUfClp = (value: number) =>
+  Number.isFinite(value) && value > 0 ? value : defaultFxRates.ufClp;
+
+const normalizeEurClpForAnalysis = (rawEurClp: number, usdClp: number) => {
+  const fallback = defaultFxRates.eurClp;
+  if (!Number.isFinite(rawEurClp) || rawEurClp <= 0) {
+    return { eurClp: fallback, normalized: true, reason: 'invalid_or_missing' as const };
+  }
+
+  const candidates = [rawEurClp, rawEurClp / 10, rawEurClp / 100, rawEurClp / 1000, rawEurClp / 10000]
+    .filter((candidate) => Number.isFinite(candidate) && candidate >= 100 && candidate <= 5000);
+
+  if (!candidates.length) {
+    const eur = rawEurClp > 0 ? rawEurClp : fallback;
+    return { eurClp: eur, normalized: false, reason: 'unchanged' as const };
+  }
+
+  const usdSafe = safeUsdClp(usdClp);
+  const targetRatio = 1.1;
+  const choose = candidates
+    .map((candidate) => ({
+      value: candidate,
+      score: Math.abs(candidate / Math.max(1, usdSafe) - targetRatio),
+    }))
+    .sort((a, b) => a.score - b.score)[0];
+
+  const normalized = Math.abs(choose.value - rawEurClp) > 1e-9;
+  return {
+    eurClp: choose.value,
+    normalized,
+    reason: normalized ? ('scaled_for_analysis' as const) : ('unchanged' as const),
+  };
+};
+
+const safeFxForAnalysis = (fx?: WealthFxRates): WealthFxRates => {
+  const usdClp = safeUsdClp(Number(fx?.usdClp));
+  const rawEur = Number(fx?.eurClp);
+  const eurClp = normalizeEurClpForAnalysis(rawEur, usdClp).eurClp;
+  return {
+    usdClp,
+    eurClp,
+    ufClp: safeUfClp(Number(fx?.ufClp)),
+  };
+};
+
+const safeFxRaw = (fx?: WealthFxRates): WealthFxRates => ({
+  usdClp: safeUsdClp(Number(fx?.usdClp)),
+  eurClp: Number.isFinite(Number(fx?.eurClp)) && Number(fx?.eurClp) > 0 ? Number(fx?.eurClp) : defaultFxRates.eurClp,
+  ufClp: safeUfClp(Number(fx?.ufClp)),
+});
 
 const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
   if (currency === 'CLP') return valueClp;
@@ -95,9 +148,9 @@ const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFx
   return valueClp / Math.max(1, fx.ufClp);
 };
 
-const formatPct = (value: number | null) => {
+const formatPct = (value: number | null, decimals = 2) => {
   if (value === null || !Number.isFinite(value)) return '—';
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2).replace('.', ',')}%`;
+  return `${value >= 0 ? '+' : ''}${value.toFixed(decimals).replace('.', ',')}%`;
 };
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
@@ -109,28 +162,44 @@ const xLabelFromMonthKey = (monthKey: string) => {
   return `${month}/${year.slice(2)}`;
 };
 
-const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[] => {
+const computeMonthlyRows = (
+  closures: WealthMonthlyClosure[],
+  mode: 'raw' | 'normalized' = 'normalized',
+): MonthlyReturnRow[] => {
   const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   const calendarCurrent = currentMonthKey();
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
 
   return filtered.map((closure, index) => {
     const prev = index > 0 ? filtered[index - 1] : null;
-    const fx = safeFx(closure.fxRates);
+    const fxRaw = safeFxRaw(closure.fxRates);
+    const eurNormalization = normalizeEurClpForAnalysis(fxRaw.eurClp, fxRaw.usdClp);
+    const fx =
+      mode === 'normalized'
+        ? safeFxForAnalysis(closure.fxRates)
+        : { ...fxRaw, eurClp: fxRaw.eurClp };
+
     const netClp = summaryNetClp(closure);
     const prevNetClp = prev ? summaryNetClp(prev) : null;
     const varPatrimonioClp = prevNetClp === null ? null : netClp - prevNetClp;
+
+    // [PRODUCT RULE] Cruce directo por month_key; no hay desfase entre Aurum y Gastapp.
     const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey]) ? Number(GASTAPP_TOTALS[closure.monthKey]) : null;
     const gastosClp = gastosEur === null ? null : gastosEur * fx.eurClp;
+
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
     const pct =
       retornoRealClp === null || prevNetClp === null || prevNetClp === 0
         ? null
         : (retornoRealClp / prevNetClp) * 100;
+
     return {
       monthKey: closure.monthKey,
       fx,
+      rawEurClp: fxRaw.eurClp,
+      normalizedEurClp: eurNormalization.eurClp,
+      eurNormalized: mode === 'normalized' ? eurNormalization.normalized : false,
       netClp,
       prevNetClp,
       varPatrimonioClp,
@@ -148,39 +217,62 @@ const aggregateRows = (
   currency: WealthCurrency,
   baseNetClp: number | null,
 ): AggregatedSummary => {
-  const varRows = rows.filter((row) => row.varPatrimonioClp !== null) as Array<MonthlyReturnRow & { varPatrimonioClp: number }>;
-  const gastoRows = rows.filter((row) => row.gastosClp !== null) as Array<MonthlyReturnRow & { gastosClp: number }>;
-  const retornoRows = rows.filter((row) => row.retornoRealClp !== null) as Array<MonthlyReturnRow & { retornoRealClp: number }>;
+  // [PRODUCT RULE] N para promedio mensual = meses con retornoReal válido.
+  const validRows = rows.filter(
+    (row) =>
+      row.varPatrimonioClp !== null &&
+      row.gastosClp !== null &&
+      row.retornoRealClp !== null,
+  ) as Array<
+    MonthlyReturnRow & {
+      varPatrimonioClp: number;
+      gastosClp: number;
+      retornoRealClp: number;
+    }
+  >;
 
-  const varPatrimonioClp = varRows.length ? sumNumbers(varRows.map((row) => row.varPatrimonioClp)) : null;
-  const gastosClp = gastoRows.length ? sumNumbers(gastoRows.map((row) => row.gastosClp)) : null;
-  const retornoRealClp =
-    varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
-  const pct =
-    retornoRealClp === null || baseNetClp === null || baseNetClp <= 0
+  const validMonths = validRows.length;
+  const varPatrimonioAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.varPatrimonioClp)) : null;
+  const gastosAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.gastosClp)) : null;
+  const retornoRealAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.retornoRealClp)) : null;
+
+  const pctRetorno =
+    retornoRealAcumClp === null || baseNetClp === null || baseNetClp <= 0
       ? null
-      : (retornoRealClp / baseNetClp) * 100;
+      : (retornoRealAcumClp / baseNetClp) * 100;
+  const spendPct =
+    retornoRealAcumClp === null || retornoRealAcumClp === 0 || gastosAcumClp === null
+      ? null
+      : (gastosAcumClp / retornoRealAcumClp) * 100;
 
-  const varPatrimonioDisplay = varRows.length
-    ? sumNumbers(varRows.map((row) => convertFromClp(row.varPatrimonioClp, currency, row.fx)))
+  const varPatrimonioAvgDisplay = validMonths
+    ? sumNumbers(
+        validRows.map((row) => convertFromClp(row.varPatrimonioClp, currency, row.fx)),
+      ) / validMonths
     : null;
-  const gastosDisplay = gastoRows.length
-    ? sumNumbers(gastoRows.map((row) => convertFromClp(row.gastosClp, currency, row.fx)))
+  const gastosAvgDisplay = validMonths
+    ? sumNumbers(
+        validRows.map((row) => convertFromClp(row.gastosClp, currency, row.fx)),
+      ) / validMonths
     : null;
-  const retornoRealDisplay = retornoRows.length
-    ? sumNumbers(retornoRows.map((row) => convertFromClp(row.retornoRealClp, currency, row.fx)))
+  const retornoRealAvgDisplay = validMonths
+    ? sumNumbers(
+        validRows.map((row) => convertFromClp(row.retornoRealClp, currency, row.fx)),
+      ) / validMonths
     : null;
 
   return {
     key,
     label,
-    varPatrimonioClp,
-    gastosClp,
-    retornoRealClp,
-    pct,
-    varPatrimonioDisplay,
-    gastosDisplay,
-    retornoRealDisplay,
+    validMonths,
+    varPatrimonioAcumClp,
+    gastosAcumClp,
+    retornoRealAcumClp,
+    pctRetorno,
+    spendPct,
+    varPatrimonioAvgDisplay,
+    gastosAvgDisplay,
+    retornoRealAvgDisplay,
   };
 };
 
@@ -191,8 +283,9 @@ const SummaryTable: React.FC<{
 }> = ({ title, items, currency }) => (
   <Card className="p-3 border-slate-200">
     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+    <div className="mt-0.5 text-[11px] text-slate-500">Promedio mensual</div>
     <div className="mt-2 overflow-x-auto">
-      <table className="w-full min-w-[560px] text-xs">
+      <table className="w-full min-w-[600px] text-xs">
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
@@ -204,21 +297,24 @@ const SummaryTable: React.FC<{
         </thead>
         <tbody>
           {items.map((item) => {
-            const positive = (item.retornoRealDisplay || 0) >= 0;
+            const positive = (item.retornoRealAvgDisplay || 0) >= 0;
             return (
               <tr key={item.key} className="border-t border-slate-100">
-                <td className="py-1.5 pr-2 font-medium text-slate-700">{item.label}</td>
-                <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.varPatrimonioDisplay === null ? '—' : formatCurrency(item.varPatrimonioDisplay, currency)}
+                <td className="py-1.5 pr-2 font-medium text-slate-700">
+                  <div>{item.label}</div>
+                  <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
                 </td>
                 <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.gastosDisplay === null ? '—' : formatCurrency(item.gastosDisplay, currency)}
+                  {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
+                </td>
+                <td className="py-1.5 pr-2 text-right text-slate-700">
+                  {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {item.retornoRealDisplay === null ? '—' : formatCurrency(item.retornoRealDisplay, currency)}
+                  {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
                 </td>
                 <td className={cn('py-1.5 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatPct(item.pct)}
+                  {formatPct(item.pctRetorno)}
                 </td>
               </tr>
             );
@@ -228,6 +324,55 @@ const SummaryTable: React.FC<{
     </div>
   </Card>
 );
+
+const ReturnRealHero: React.FC<{
+  sinceStart: AggregatedSummary | null;
+  last12: AggregatedSummary | null;
+  lastMonth: AggregatedSummary | null;
+  currency: WealthCurrency;
+}> = ({ sinceStart, last12, lastMonth, currency }) => {
+  const columns = [
+    { key: 'inicio', label: 'Desde inicio', value: sinceStart, classes: 'text-2xl md:text-3xl' },
+    { key: '12m', label: 'Últ. 12M', value: last12, classes: 'text-xl md:text-2xl' },
+    { key: 'mes', label: 'Últ. mes', value: lastMonth, classes: 'text-lg md:text-xl' },
+  ] as const;
+
+  return (
+    <Card className="border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 text-slate-100">
+      <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        {columns.map((column) => {
+          const value = column.value;
+          const positive = (value?.retornoRealAvgDisplay || 0) >= 0;
+          const spendingDanger = (value?.spendPct || 0) > 100;
+          return (
+            <div key={column.key} className="rounded-xl border border-slate-700/70 bg-slate-800/45 p-3">
+              <div className="text-[11px] uppercase tracking-wide text-slate-300">{column.label}</div>
+              <div className="mt-1 text-[10px] text-slate-400">% retorno</div>
+              <div className={cn(column.classes, 'font-bold', positive ? 'text-emerald-300' : 'text-rose-300')}>
+                {formatPct(value?.pctRetorno ?? null, 1)}
+              </div>
+
+              <div className="mt-2 text-[10px] text-slate-400">Promedio mensual</div>
+              <div className={cn('text-sm font-semibold', positive ? 'text-emerald-200' : 'text-rose-200')}>
+                {value?.retornoRealAvgDisplay === null || value?.retornoRealAvgDisplay === undefined
+                  ? '—'
+                  : formatCurrency(value.retornoRealAvgDisplay, currency)}
+              </div>
+
+              <div className="mt-2 text-[10px] text-slate-400">% del retorno que se gasta</div>
+              <div className={cn('text-sm font-semibold', spendingDanger ? 'text-rose-300' : 'text-slate-200')}>
+                {value?.spendPct === null || value?.spendPct === undefined
+                  ? '—'
+                  : `${value.spendPct.toFixed(1).replace('.', ',')}%`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+};
 
 const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
   const data = useMemo(
@@ -353,8 +498,67 @@ export const AnalysisAurum: React.FC = () => {
     };
   }, [refreshClosures]);
 
-  const monthlyRowsAsc = useMemo(() => computeMonthlyRows(closures), [closures]);
-  const monthlyRowsDesc = useMemo(() => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)), [monthlyRowsAsc]);
+  const monthlyRowsRaw = useMemo(() => computeMonthlyRows(closures, 'raw'), [closures]);
+  const monthlyRowsAsc = useMemo(() => computeMonthlyRows(closures, 'normalized'), [closures]);
+  const monthlyRowsDesc = useMemo(
+    () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
+    [monthlyRowsAsc],
+  );
+
+  const eurScaleDiagnostics = useMemo(() => {
+    const rawOutliers = monthlyRowsRaw.filter((row) => row.rawEurClp > 10000);
+    const normalizedOutliers = monthlyRowsAsc.filter((row) => row.normalizedEurClp > 10000);
+    const anomalyRaw = [...monthlyRowsRaw]
+      .filter((row) => row.pct !== null)
+      .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
+    return { rawOutliers, normalizedOutliers, anomalyRaw };
+  }, [monthlyRowsRaw, monthlyRowsAsc]);
+
+  useEffect(() => {
+    const anomaly = eurScaleDiagnostics.anomalyRaw;
+    console.info('[Analysis][eur-scale-before]', {
+      monthsWithRawEurOutlier: eurScaleDiagnostics.rawOutliers.map((row) => ({
+        monthKey: row.monthKey,
+        rawEurClp: row.rawEurClp,
+      })),
+      anomalyMonth: anomaly?.monthKey || null,
+      anomalyValues: anomaly
+        ? {
+            varPatrimonioClp: anomaly.varPatrimonioClp,
+            gastosClp: anomaly.gastosClp,
+            retornoRealClp: anomaly.retornoRealClp,
+            pct: anomaly.pct,
+          }
+        : null,
+    });
+    console.info('[Analysis][eur-scale-after]', {
+      monthsStillOutlier: eurScaleDiagnostics.normalizedOutliers.map((row) => ({
+        monthKey: row.monthKey,
+        normalizedEurClp: row.normalizedEurClp,
+      })),
+    });
+
+    if (eurScaleDiagnostics.normalizedOutliers.length > 0) {
+      setErrorMessage(
+        `No pude normalizar EUR/CLP en: ${eurScaleDiagnostics.normalizedOutliers
+          .map((row) => row.monthKey)
+          .join(', ')}. Revisa esos cierres.`,
+      );
+      return;
+    }
+
+    const suspectPost = monthlyRowsAsc.find(
+      (row) => row.gastosClp !== null && Math.abs(row.gastosClp) > 100_000_000,
+    );
+    if (suspectPost) {
+      setErrorMessage(
+        `Detecté gastos fuera de rango en ${suspectPost.monthKey} incluso tras normalización. Revisa el FX de ese cierre.`,
+      );
+      return;
+    }
+
+    setErrorMessage('');
+  }, [eurScaleDiagnostics, monthlyRowsAsc]);
 
   const periodSummaries = useMemo(() => {
     const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
@@ -396,22 +600,33 @@ export const AnalysisAurum: React.FC = () => {
     });
   }, [monthlyRowsAsc, currency]);
 
+  const heroSinceStart = useMemo(() => {
+    if (!monthlyRowsAsc.length) return null;
+    const baseNetClp = monthlyRowsAsc[0].netClp;
+    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, currency, baseNetClp);
+  }, [monthlyRowsAsc, currency]);
+
+  const heroLast12 = useMemo(() => {
+    const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - 12));
+    if (!rows.length) return null;
+    const baseNetClp = rows[0].netClp;
+    return aggregateRows('hero-12m', 'Últ. 12M', rows, currency, baseNetClp);
+  }, [monthlyRowsAsc, currency]);
+
+  const heroLastMonth = useMemo(() => {
+    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
+    if (!row) return null;
+    return aggregateRows('hero-ultimo', 'Últ. mes', [row], currency, row.prevNetClp);
+  }, [monthlyRowsAsc, currency]);
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
         <div className="grid grid-cols-2 gap-2">
-          <Button
-            size="sm"
-            variant={tab === 'returns' ? 'primary' : 'secondary'}
-            onClick={() => setTab('returns')}
-          >
+          <Button size="sm" variant={tab === 'returns' ? 'primary' : 'secondary'} onClick={() => setTab('returns')}>
             Retornos
           </Button>
-          <Button
-            size="sm"
-            variant={tab === 'freedom' ? 'primary' : 'secondary'}
-            onClick={() => setTab('freedom')}
-          >
+          <Button size="sm" variant={tab === 'freedom' ? 'primary' : 'secondary'} onClick={() => setTab('freedom')}>
             Libertad Financiera
           </Button>
         </div>
@@ -441,6 +656,18 @@ export const AnalysisAurum: React.FC = () => {
         </Card>
       ) : (
         <>
+          <ReturnRealHero sinceStart={heroSinceStart} last12={heroLast12} lastMonth={heroLastMonth} currency={currency} />
+
+          {eurScaleDiagnostics.anomalyRaw && Math.abs(Number(eurScaleDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
+            <Card className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              Diagnóstico previo: mes anómalo detectado en {eurScaleDiagnostics.anomalyRaw.monthKey} 
+              {` · Var.Pat ${eurScaleDiagnostics.anomalyRaw.varPatrimonioClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.varPatrimonioClp, 'CLP')}`}
+              {` · Gastos ${eurScaleDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
+              {` · Ret.Real ${eurScaleDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(eurScaleDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
+              {` · % ${formatPct(eurScaleDiagnostics.anomalyRaw.pct)}`}
+            </Card>
+          )}
+
           <Card className="border-slate-200 p-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <CalendarDays size={14} />
@@ -460,15 +687,11 @@ export const AnalysisAurum: React.FC = () => {
                 <tbody>
                   {monthlyRowsDesc.map((row) => {
                     const varDisplay =
-                      row.varPatrimonioClp === null
-                        ? null
-                        : convertFromClp(row.varPatrimonioClp, currency, row.fx);
+                      row.varPatrimonioClp === null ? null : convertFromClp(row.varPatrimonioClp, currency, row.fx);
                     const gastosDisplay =
                       row.gastosClp === null ? null : convertFromClp(row.gastosClp, currency, row.fx);
                     const retornoDisplay =
-                      row.retornoRealClp === null
-                        ? null
-                        : convertFromClp(row.retornoRealClp, currency, row.fx);
+                      row.retornoRealClp === null ? null : convertFromClp(row.retornoRealClp, currency, row.fx);
                     const positive = (retornoDisplay || 0) >= 0;
                     return (
                       <tr key={row.monthKey} className="border-t border-slate-100">
@@ -513,10 +736,9 @@ export const AnalysisAurum: React.FC = () => {
       <Card className="border-slate-200 bg-slate-50 p-3">
         <div className="flex items-center gap-2 text-xs text-slate-600">
           <BarChart3 size={14} />
-          Datos en solo lectura: los cálculos de Análisis no modifican cierres ni registros.
+          Datos en solo lectura: los cálculos de Análisis no modifican cierres ni registros persistidos.
         </div>
       </Card>
     </div>
   );
 };
-
