@@ -1601,8 +1601,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           result.pctAfter === null
             ? '—'
             : `${result.pctAfter >= 0 ? '+' : ''}${result.pctAfter.toFixed(2).replace('.', ',')}%`;
+        const warningText = result.backupWarning ? ` ${result.backupWarning}` : '';
         setSeedDemoMessage(
-          `Reparación 2025-03 OK. eur_clp: ${result.beforeEurClp} → ${result.afterEurClp}. Gastos: ${gastos}. %: ${pct}.`,
+          `Reparación 2025-03 OK. eur_clp: ${result.beforeEurClp} → ${result.afterEurClp}. Gastos: ${gastos}. %: ${pct}.${warningText}`,
         );
       } else {
         setSeedDemoMessage(result.message);

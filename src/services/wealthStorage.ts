@@ -4496,6 +4496,7 @@ export const repairMarch2025EurClpScale = async (): Promise<{
   afterEurClp: number | null;
   gastosClpAfter: number | null;
   pctAfter: number | null;
+  backupWarning?: string;
 }> => {
   const monthKey = '2025-03';
   const expectedWrong = 992225;
@@ -4544,16 +4545,15 @@ export const repairMarch2025EurClpScale = async (): Promise<{
   }
 
   const backup = await createWealthBackupSnapshot('Reparación EUR/CLP 2025-03');
-  if (!backup.ok) {
-    return {
-      ok: false,
-      message: `No pude generar backup previo: ${backup.message}`,
+  const backupWarning = !backup.ok
+    ? `No pude generar backup previo en nube (${backup.message}). Continué con la reparación local.`
+    : undefined;
+  if (backupWarning) {
+    console.warn('[repairMarch2025EurClpScale][backup-warning]', {
       monthKey,
       beforeEurClp,
-      afterEurClp: null,
-      gastosClpAfter: null,
-      pctAfter: null,
-    };
+      backupMessage: backup.message,
+    });
   }
 
   const nextClosures = beforeClosures.map((closure) => {
@@ -4608,12 +4608,15 @@ export const repairMarch2025EurClpScale = async (): Promise<{
 
   return {
     ok: true,
-    message: 'Reparación aplicada correctamente en 2025-03.',
+    message: backupWarning
+      ? `Reparación aplicada en 2025-03 con advertencia: ${backupWarning}`
+      : 'Reparación aplicada correctamente en 2025-03.',
     monthKey,
     beforeEurClp,
     afterEurClp,
     gastosClpAfter,
     pctAfter,
+    backupWarning,
   };
 };
 
