@@ -5,6 +5,7 @@ import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from 
 import { WealthDeltaToast } from './ui/WealthDeltaToast';
 import { useWealthDelta } from '../hooks/useWealthDelta';
 import {
+  loadIncludeRiskCapitalInTotals,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
 
@@ -27,8 +28,9 @@ export const Layout: React.FC = () => {
   );
 
   useEffect(() => {
-    // [PRODUCT RULE] Al abrir la app la vista por defecto siempre parte sin capital de riesgo.
-    saveIncludeRiskCapitalInTotals(false);
+    // [PRODUCT RULE] Mantener preferencia guardada para que el modo Zap sobreviva la navegación.
+    const saved = loadIncludeRiskCapitalInTotals();
+    saveIncludeRiskCapitalInTotals(saved);
   }, []);
 
   return (

@@ -55,8 +55,9 @@ type MonthlyReturnRow = {
   monthKey: string;
   fx: WealthFxRates;
   rawEurClp: number;
-  netClp: number;
+  netClp: number | null;
   prevNetClp: number | null;
+  invalidNet: boolean;
   varPatrimonioClp: number | null;
   gastosClp: number | null;
   retornoRealClp: number | null;
@@ -79,10 +80,10 @@ type AggregatedSummary = {
 
 const loadWealthClosures = () => loadClosures();
 
-const summaryNetClp = (closure: WealthMonthlyClosure) => {
+const summaryNetClp = (closure: WealthMonthlyClosure): number | null => {
   if (Number.isFinite(closure.summary?.netClp)) return Number(closure.summary.netClp);
   if (Number.isFinite(closure.summary?.netConsolidatedClp)) return Number(closure.summary.netConsolidatedClp);
-  return 0;
+  return null;
 };
 
 const safeUsdClp = (value: number) =>
@@ -122,19 +123,20 @@ const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[
   const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   const calendarCurrent = currentMonthKey();
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
+  const rows: MonthlyReturnRow[] = [];
+  let previousValidNet: number | null = null;
 
-  return filtered.map((closure, index) => {
-    const prev = index > 0 ? filtered[index - 1] : null;
+  for (const closure of filtered) {
     const fxRaw = safeFxRaw(closure.fxRates);
     const fx = fxRaw;
-
     const netClp = summaryNetClp(closure);
-    const prevNetClp = prev ? summaryNetClp(prev) : null;
-    const varPatrimonioClp = prevNetClp === null ? null : netClp - prevNetClp;
-
+    const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
+    const prevNetClp = invalidNet ? null : previousValidNet;
+    const varPatrimonioClp =
+      invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
     // [PRODUCT RULE] Cruce directo por month_key; no hay desfase entre Aurum y Gastapp.
     const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey]) ? Number(GASTAPP_TOTALS[closure.monthKey]) : null;
-    const gastosClp = gastosEur === null ? null : gastosEur * fx.eurClp;
+    const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
 
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
@@ -143,18 +145,29 @@ const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[
         ? null
         : (retornoRealClp / prevNetClp) * 100;
 
-    return {
+    if (invalidNet) {
+      console.warn('[Analysis][invalid-net]', {
+        monthKey: closure.monthKey,
+        netClp: closure.summary?.netClp ?? null,
+        netConsolidatedClp: closure.summary?.netConsolidatedClp ?? null,
+      });
+    } else {
+      previousValidNet = Number(netClp);
+    }
+    rows.push({
       monthKey: closure.monthKey,
       fx,
       rawEurClp: fxRaw.eurClp,
       netClp,
       prevNetClp,
+      invalidNet,
       varPatrimonioClp,
       gastosClp,
       retornoRealClp,
       pct,
-    };
-  });
+    });
+  }
+  return rows;
 };
 
 const aggregateRows = (
@@ -466,11 +479,12 @@ export const AnalysisAurum: React.FC = () => {
 
   const analysisDiagnostics = useMemo(() => {
     const eurScaleOutliers = monthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
+    const invalidNetMonths = monthlyRowsAsc.filter((row) => row.invalidNet).map((row) => row.monthKey);
     const anomalyRaw = [...monthlyRowsAsc]
       .filter((row) => row.pct !== null)
       .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
     const march2025 = monthlyRowsAsc.find((row) => row.monthKey === '2025-03') || null;
-    return { eurScaleOutliers, anomalyRaw, march2025 };
+    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, march2025 };
   }, [monthlyRowsAsc]);
 
   useEffect(() => {
@@ -504,6 +518,13 @@ export const AnalysisAurum: React.FC = () => {
     });
     console.info('[Analysis][eur-scale-after]', { normalizationApplied: false });
 
+    if (analysisDiagnostics.invalidNetMonths.length > 0) {
+      setErrorMessage(
+        `Hay cierres con netClp inválido en: ${analysisDiagnostics.invalidNetMonths.join(', ')}. Se muestran con "—" y no entran en resúmenes.`,
+      );
+      return;
+    }
+
     if (analysisDiagnostics.eurScaleOutliers.length > 0) {
       setErrorMessage(
         `Detecté EUR/CLP fuera de escala en: ${analysisDiagnostics.eurScaleOutliers
@@ -532,7 +553,7 @@ export const AnalysisAurum: React.FC = () => {
       const keys = monthKeysAsc.slice(Math.max(0, monthKeysAsc.length - count));
       if (!keys.length) return null;
       const rows = monthlyRowsAsc.filter((row) => keys.includes(row.monthKey));
-      const baseNetClp = rows.length ? rows[0].netClp : null;
+      const baseNetClp = rows.find((row) => row.netClp !== null)?.netClp ?? null;
       return aggregateRows(`period-${label}`, label, rows, currency, baseNetClp);
     };
 
@@ -546,7 +567,7 @@ export const AnalysisAurum: React.FC = () => {
       if (p36) summaries.push(p36);
     }
     if (monthKeysAsc.length) {
-      const baseNetClp = monthlyRowsAsc[0].netClp;
+      const baseNetClp = monthlyRowsAsc.find((row) => row.netClp !== null)?.netClp ?? null;
       summaries.push(aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, currency, baseNetClp));
     }
     return summaries;
@@ -559,8 +580,9 @@ export const AnalysisAurum: React.FC = () => {
       const previousYearBase = monthlyRowsAsc
         .filter((row) => row.monthKey < `${year}-01`)
         .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-      const baseNetClp = previousYearBase.length
-        ? previousYearBase[previousYearBase.length - 1].netClp
+      const previousYearBaseValid = previousYearBase.filter((row) => row.netClp !== null);
+      const baseNetClp = previousYearBaseValid.length
+        ? previousYearBaseValid[previousYearBaseValid.length - 1].netClp
         : null;
       return aggregateRows(`year-${year}`, String(year), rows, currency, baseNetClp);
     });
@@ -568,14 +590,14 @@ export const AnalysisAurum: React.FC = () => {
 
   const heroSinceStart = useMemo(() => {
     if (!monthlyRowsAsc.length) return null;
-    const baseNetClp = monthlyRowsAsc[0].netClp;
+    const baseNetClp = monthlyRowsAsc.find((row) => row.netClp !== null)?.netClp ?? null;
     return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, currency, baseNetClp);
   }, [monthlyRowsAsc, currency]);
 
   const heroLast12 = useMemo(() => {
     const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - 12));
     if (!rows.length) return null;
-    const baseNetClp = rows[0].netClp;
+    const baseNetClp = rows.find((row) => row.netClp !== null)?.netClp ?? null;
     return aggregateRows('hero-12m', 'Últ. 12M', rows, currency, baseNetClp);
   }, [monthlyRowsAsc, currency]);
 

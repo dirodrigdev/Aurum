@@ -3709,18 +3709,59 @@ export const Patrimonio: React.FC = () => {
   );
 
   const previousClosureSectionAmounts = useMemo(() => {
-    if (!previousClosureForComparisons?.records?.length) return null;
-    const recordsForTotals = resolveRiskCapitalRecordsForTotals(
-      previousClosureForComparisons.records,
-      includeRiskCapitalInTotals,
-    ).recordsForTotals;
-    const closureFx = previousClosureForComparisons.fxRates || fx;
-    return computeWealthHomeSectionAmounts(recordsForTotals, closureFx);
+    if (!previousClosureForComparisons) return null;
+    if (previousClosureForComparisons.records?.length) {
+      const recordsForTotals = resolveRiskCapitalRecordsForTotals(
+        previousClosureForComparisons.records,
+        includeRiskCapitalInTotals,
+      ).recordsForTotals;
+      const closureFx = previousClosureForComparisons.fxRates || fx;
+      const fromRecords = computeWealthHomeSectionAmounts(recordsForTotals, closureFx);
+      return {
+        investment: fromRecords.investment,
+        realEstateNet: fromRecords.realEstateNet,
+        bank: fromRecords.bank,
+        nonMortgageDebt: fromRecords.nonMortgageDebt,
+      };
+    }
+    const summary = previousClosureForComparisons.summary as WealthMonthlyClosure['summary'] & {
+      realEstateNetClp?: number;
+      bankClp?: number;
+      nonMortgageDebtClp?: number;
+    };
+    const investment = includeRiskCapitalInTotals
+      ? Number.isFinite(summary?.investmentClpWithRisk)
+        ? Number(summary.investmentClpWithRisk)
+        : Number.isFinite(summary?.byBlock?.investment?.CLP)
+          ? Number(summary.byBlock.investment.CLP)
+          : null
+      : Number.isFinite(summary?.investmentClp)
+        ? Number(summary.investmentClp)
+        : null;
+    const realEstateNet = Number.isFinite(summary?.realEstateNetClp)
+      ? Number(summary.realEstateNetClp)
+      : Number.isFinite(summary?.byBlock?.real_estate?.CLP)
+        ? Number(summary.byBlock.real_estate.CLP)
+        : null;
+    const bank = Number.isFinite(summary?.bankClp)
+      ? Number(summary.bankClp)
+      : Number.isFinite(summary?.byBlock?.bank?.CLP)
+        ? Number(summary.byBlock.bank.CLP)
+        : null;
+    const nonMortgageDebt = Number.isFinite(summary?.nonMortgageDebtClp)
+      ? Number(summary.nonMortgageDebtClp)
+      : Number.isFinite(summary?.byBlock?.debt?.CLP)
+        ? Number(summary.byBlock.debt.CLP)
+        : null;
+    return { investment, realEstateNet, bank, nonMortgageDebt };
   }, [previousClosureForComparisons, includeRiskCapitalInTotals, fx]);
 
   const blockVariationsDisplay = useMemo(() => {
     if (!previousClosureSectionAmounts) return null;
-    const formatVariation = (deltaClp: number, baseClp: number, debtMode = false) => {
+    const formatVariation = (deltaClp: number | null, baseClp: number | null, debtMode = false) => {
+      if (deltaClp === null || baseClp === null) {
+        return { text: '—', trend: 'neutral' } as const;
+      }
       const deltaDisplay = fromClp(deltaClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
       const pct = baseClp !== 0 ? (deltaClp / baseClp) * 100 : null;
       const pctText =
@@ -3748,19 +3789,25 @@ export const Patrimonio: React.FC = () => {
 
     return {
       investment: formatVariation(
-        sectionAmounts.investment - previousClosureSectionAmounts.investment,
+        previousClosureSectionAmounts.investment === null
+          ? null
+          : sectionAmounts.investment - previousClosureSectionAmounts.investment,
         previousClosureSectionAmounts.investment,
       ),
       realEstateNet: formatVariation(
-        sectionAmounts.realEstateNet - previousClosureSectionAmounts.realEstateNet,
+        previousClosureSectionAmounts.realEstateNet === null
+          ? null
+          : sectionAmounts.realEstateNet - previousClosureSectionAmounts.realEstateNet,
         previousClosureSectionAmounts.realEstateNet,
       ),
       bank: formatVariation(
-        sectionAmounts.bank - previousClosureSectionAmounts.bank,
+        previousClosureSectionAmounts.bank === null ? null : sectionAmounts.bank - previousClosureSectionAmounts.bank,
         previousClosureSectionAmounts.bank,
       ),
       nonMortgageDebt: formatVariation(
-        sectionAmounts.nonMortgageDebt - previousClosureSectionAmounts.nonMortgageDebt,
+        previousClosureSectionAmounts.nonMortgageDebt === null
+          ? null
+          : sectionAmounts.nonMortgageDebt - previousClosureSectionAmounts.nonMortgageDebt,
         previousClosureSectionAmounts.nonMortgageDebt,
         true,
       ),

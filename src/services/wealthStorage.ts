@@ -2837,10 +2837,69 @@ export const fillMissingWithPreviousClosure = (
   if (!previous) {
     return { added: 0, sourceMonth: null };
   }
-
-  if (!previous.records?.length) {
-    return { added: 0, sourceMonth: previous.monthKey };
-  }
+  const sourceFromSummary = (): WealthRecord[] => {
+    const summary = previous.summary as WealthSnapshotSummary & {
+      realEstateNetClp?: number;
+      bankClp?: number;
+      nonMortgageDebtClp?: number;
+    };
+    const investmentWithoutRisk = Number.isFinite(summary?.investmentClp) ? Number(summary.investmentClp) : null;
+    const riskCapital = Number.isFinite(summary?.riskCapitalClp) ? Number(summary.riskCapitalClp) : null;
+    const bankClp = Number.isFinite(summary?.bankClp)
+      ? Number(summary.bankClp)
+      : Number.isFinite(summary?.byBlock?.bank?.CLP)
+        ? Number(summary.byBlock.bank.CLP)
+        : null;
+    const nonMortgageDebtClp = Number.isFinite(summary?.nonMortgageDebtClp)
+      ? Number(summary.nonMortgageDebtClp)
+      : Number.isFinite(summary?.byBlock?.debt?.CLP)
+        ? Number(summary.byBlock.debt.CLP)
+        : null;
+    const realEstateNetClp = Number.isFinite(summary?.realEstateNetClp)
+      ? Number(summary.realEstateNetClp)
+      : Number.isFinite(summary?.byBlock?.real_estate?.CLP)
+        ? Number(summary.byBlock.real_estate.CLP)
+        : null;
+    const built: WealthRecord[] = [];
+    const createSynthetic = (block: WealthBlock, label: string, amount: number, source = 'cierre_resumen') => {
+      built.push({
+        id: crypto.randomUUID(),
+        block,
+        source,
+        label,
+        amount,
+        currency: 'CLP',
+        snapshotDate,
+        createdAt: nowIso(),
+        note: `Mes anterior (summary): cierre ${previous.monthKey}`,
+      });
+    };
+    if (investmentWithoutRisk !== null && Math.abs(investmentWithoutRisk) > 0) {
+      createSynthetic('investment', TENENCIA_CXC_PREFIX_LABEL, investmentWithoutRisk);
+    }
+    if (riskCapital !== null && Math.abs(riskCapital) > 0) {
+      createSynthetic('investment', RISK_CAPITAL_LABEL_CLP, riskCapital);
+    }
+    if (bankClp !== null && Math.abs(bankClp) > 0) {
+      createSynthetic('bank', BANK_BALANCE_CLP_LABEL, bankClp);
+    }
+    if (nonMortgageDebtClp !== null && Math.abs(nonMortgageDebtClp) > 0) {
+      createSynthetic('debt', DEBT_CARD_CLP_LABEL, nonMortgageDebtClp);
+    }
+    if (realEstateNetClp !== null && Math.abs(realEstateNetClp) > 0) {
+      createSynthetic('real_estate', REAL_ESTATE_PROPERTY_VALUE_LABEL, realEstateNetClp);
+    }
+    return built;
+  };
+  const previousSourceRecords = previous.records?.length
+    ? previous.records
+    : sourceFromSummary();
+  console.info('[fillMissingWithPreviousClosure][source]', {
+    targetMonthKey,
+    sourceMonth: previous.monthKey,
+    sourceType: previous.records?.length ? 'records' : 'summary',
+    sourceCount: previousSourceRecords.length,
+  });
 
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
 
@@ -2852,7 +2911,7 @@ export const fillMissingWithPreviousClosure = (
       .map((instrument) => `${normalizeLabelKey(instrument.label)}::${instrument.currency}`),
   );
 
-  for (const oldRecord of previous.records) {
+  for (const oldRecord of previousSourceRecords) {
     if (options?.excludeBlocks?.includes(oldRecord.block)) continue;
     if (normalizedFilters.length) {
       const oldLabel = normalizeLabelKey(oldRecord.label);
