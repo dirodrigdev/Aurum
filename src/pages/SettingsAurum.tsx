@@ -34,6 +34,7 @@ import {
   FX_RATES_UPDATED_EVENT,
   hydrateWealthFromCloud,
   getLastWealthSyncIssue,
+  importHistoricalAggregatedClosuresFromCsv,
   importHistoricalClosuresFromCsv,
   previewHistoricalClosuresCsv,
   loadFxLiveSyncMeta,
@@ -83,6 +84,7 @@ type SettingsSectionKey =
   | 'backup'
   | 'danger'
   | 'lab';
+type CsvImportMode = 'detailed' | 'aggregated';
 
 type ClosingStaticFieldKey =
   | 'investments_value'
@@ -302,6 +304,7 @@ export const SettingsAurum: React.FC = () => {
   const [restoreBackupBusy, setRestoreBackupBusy] = useState(false);
   const [restoreBackupConfirmOpen, setRestoreBackupConfirmOpen] = useState(false);
   const [csvConfirmOpen, setCsvConfirmOpen] = useState(false);
+  const [csvImportMode, setCsvImportMode] = useState<CsvImportMode>('detailed');
   const [deleteClosureConfirmOpen, setDeleteClosureConfirmOpen] = useState(false);
   const [deleteAllClosuresConfirmOpen, setDeleteAllClosuresConfirmOpen] = useState(false);
   const [deleteBlocksConfirmOpen, setDeleteBlocksConfirmOpen] = useState(false);
@@ -1267,7 +1270,16 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setCsvImportWarnings([]);
     try {
       await backupBeforeDestructiveOperation('Import masivo de CSV histórico');
-      const result = await importHistoricalClosuresFromCsv(csvDraft);
+      const beforeCount = loadClosures().length;
+      console.info('[Settings][csv-import][before]', {
+        mode: csvImportMode,
+        beforeClosures: beforeCount,
+        detectedFormat: csvPreview.format,
+      });
+      const result =
+        csvImportMode === 'aggregated'
+          ? await importHistoricalAggregatedClosuresFromCsv(csvDraft)
+          : await importHistoricalClosuresFromCsv(csvDraft);
       const summary = [
         result.importedMonths.length ? `Importados: ${result.importedMonths.join(', ')}` : 'Importados: 0',
         result.replacedMonths.length ? `Reemplazados: ${result.replacedMonths.join(', ')}` : 'Reemplazados: 0',
@@ -1277,6 +1289,15 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       setCsvImportWarnings(result.warnings);
       setCsvImportedResultVisible(true);
       refreshLocalState();
+      const afterCount = loadClosures().length;
+      console.info('[Settings][csv-import][after]', {
+        mode: csvImportMode,
+        afterClosures: afterCount,
+        deltaClosures: afterCount - beforeCount,
+        importedMonths: result.importedMonths.length,
+        replacedMonths: result.replacedMonths.length,
+        skippedMonths: result.skippedMonths.length,
+      });
       const reviewMonths = Array.from(new Set([...result.importedMonths, ...result.replacedMonths]));
       if (reviewMonths.length) {
         openClosureReview(reviewMonths, 'csv');
@@ -1922,6 +1943,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                 setCsvDraft(e.target.value);
               }}
             />
+            <div className="text-[11px] text-slate-500">
+              Usa <span className="font-semibold">Importar CSV detallado</span> para cierres con instrumentos.
+              Usa <span className="font-semibold">Importar historial agregado</span> para cierres históricos sin detalle por instrumento.
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
@@ -1937,10 +1962,43 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                     setCsvImportWarnings(csvPreview.warnings);
                     return;
                   }
+                  if (csvPreview.format === 'aggregated') {
+                    setCsvImportMessage('Este archivo es histórico agregado. Usa el botón "Importar historial agregado".');
+                    setCsvImportWarnings(csvPreview.warnings);
+                    setCsvImportedResultVisible(true);
+                    return;
+                  }
+                  setCsvImportMode('detailed');
                   setCsvConfirmOpen(true);
                 }}
               >
-                {csvImporting ? 'Importando...' : 'Importar CSV'}
+                {csvImporting && csvImportMode === 'detailed' ? 'Importando...' : 'Importar CSV detallado'}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={csvImporting}
+                onClick={async () => {
+                  if (!csvDraft.trim()) {
+                    setCsvImportMessage('Pega o carga un CSV antes de importar.');
+                    setCsvImportWarnings([]);
+                    return;
+                  }
+                  if (!csvPreview.monthKeys.length) {
+                    setCsvImportMessage('No detecté ningún month_key válido en el CSV.');
+                    setCsvImportWarnings(csvPreview.warnings);
+                    return;
+                  }
+                  if (csvPreview.format !== 'aggregated') {
+                    setCsvImportMessage('Este archivo no corresponde a historial agregado (falta inv_fin_clp).');
+                    setCsvImportWarnings(csvPreview.warnings);
+                    setCsvImportedResultVisible(true);
+                    return;
+                  }
+                  setCsvImportMode('aggregated');
+                  setCsvConfirmOpen(true);
+                }}
+              >
+                {csvImporting && csvImportMode === 'aggregated' ? 'Importando...' : 'Importar historial agregado'}
               </Button>
               <Button
                 variant="outline"
@@ -2123,12 +2181,24 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       <ConfirmActionModal
         open={csvConfirmOpen}
         busy={csvImporting}
-        title="Confirmar importación CSV"
-        message={`Se importará/reemplazará ${
-          csvPreview.monthKeys.length === 1
-            ? `el mes ${csvPreview.monthKeys[0]}`
-            : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
-        } según month_key.`}
+        title={
+          csvImportMode === 'aggregated'
+            ? 'Confirmar importación de historial agregado'
+            : 'Confirmar importación CSV detallado'
+        }
+        message={
+          csvImportMode === 'aggregated'
+            ? `Se importará/reemplazará ${
+                csvPreview.monthKeys.length === 1
+                  ? `el mes ${csvPreview.monthKeys[0]}`
+                  : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
+              } como cierres históricos sin detalle por instrumento.`
+            : `Se importará/reemplazará ${
+                csvPreview.monthKeys.length === 1
+                  ? `el mes ${csvPreview.monthKeys[0]}`
+                  : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
+              } según month_key.`
+        }
         confirmText="Importar ahora"
         cancelText="Cancelar"
         onCancel={() => setCsvConfirmOpen(false)}

@@ -21,6 +21,7 @@ import {
   createMonthlyClosure,
   currentMonthKey,
   fillMissingWithPreviousClosure,
+  importHistoricalAggregatedClosuresFromCsv,
   importHistoricalClosuresFromCsv,
   latestRecordsForMonth,
   loadClosures,
@@ -534,7 +535,7 @@ describe('Aurum full flow (service-level e2e)', () => {
 
   it('CSV histórico agregado: importa 32 cierres con netClp/netClpWithRisk y FX por mes', async () => {
     const csv = readFileSync(path.join(process.cwd(), 'tests/fixtures_historical_aggregated.csv'), 'utf8');
-    const result = await importHistoricalClosuresFromCsv(csv);
+    const result = await importHistoricalAggregatedClosuresFromCsv(csv);
 
     expect(result.skippedMonths).toEqual([]);
 
@@ -564,5 +565,13 @@ describe('Aurum full flow (service-level e2e)', () => {
       (closure) => Number(closure.summary.netClpWithRisk || 0) > Number(closure.summary.netClp || 0),
     );
     expect(anyRiskDelta).toBe(true);
+  });
+
+  it('CSV histórico agregado no entra por flujo detallado', async () => {
+    const csv = readFileSync(path.join(process.cwd(), 'tests/fixtures_historical_aggregated.csv'), 'utf8');
+    const result = await importHistoricalClosuresFromCsv(csv);
+    expect(result.importedMonths).toEqual([]);
+    expect(result.replacedMonths).toEqual([]);
+    expect(result.warnings.join(' ')).toContain('historial agregado');
   });
 });

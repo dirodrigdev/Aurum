@@ -111,11 +111,14 @@ export type HistoricalCsvImportResult = {
   warnings: string[];
 };
 
+export type HistoricalCsvDetectedFormat = 'aggregated' | 'detailed' | 'simple';
+
 export type HistoricalCsvPreviewResult = {
   monthKeys: string[];
   totalRows: number;
   invalidMonthRows: number[];
   warnings: string[];
+  format: HistoricalCsvDetectedFormat;
 };
 
 export type WealthBackupSnapshotMeta = {
@@ -3714,8 +3717,6 @@ const parseCsvClosedAt = (row: Record<string, string>, monthKey: string) => {
   return Number.isFinite(parsedFallback.getTime()) ? parsedFallback.toISOString() : nowIso();
 };
 
-type HistoricalCsvDetectedFormat = 'aggregated' | 'detailed' | 'simple';
-
 const detectHistoricalCsvFormat = (headers: string[]): HistoricalCsvDetectedFormat => {
   const headerSet = new Set(headers.map((header) => normalizeLabelKey(header)));
   if (headerSet.has(normalizeLabelKey('inv_fin_clp'))) return 'aggregated';
@@ -3864,8 +3865,11 @@ const buildHistoricalMonthRecords = (
     .filter((item): item is NonNullable<typeof item> => !!item);
 };
 
-export const importHistoricalClosuresFromCsv = async (
+type HistoricalCsvImportMode = 'detailed' | 'aggregated';
+
+const importHistoricalClosuresFromCsvByMode = async (
   csvText: string,
+  mode: HistoricalCsvImportMode,
 ): Promise<HistoricalCsvImportResult> => {
   const matrix = parseCsvMatrix(csvText);
   if (matrix.length < 2) {
@@ -3879,6 +3883,26 @@ export const importHistoricalClosuresFromCsv = async (
 
   const headers = matrix[0].map((cell) => normalizeLabelKey(cell));
   const csvFormat = detectHistoricalCsvFormat(headers);
+  if (mode === 'detailed' && csvFormat === 'aggregated') {
+    return {
+      importedMonths: [],
+      replacedMonths: [],
+      skippedMonths: [],
+      warnings: [
+        'Este archivo corresponde a historial agregado. Usa el botón "Importar historial agregado".',
+      ],
+    };
+  }
+  if (mode === 'aggregated' && csvFormat !== 'aggregated') {
+    return {
+      importedMonths: [],
+      replacedMonths: [],
+      skippedMonths: [],
+      warnings: [
+        'Este archivo no corresponde a historial agregado (falta columna inv_fin_clp). Usa el importador CSV detallado.',
+      ],
+    };
+  }
   const rows = matrix.slice(1);
 
   const importedMonths: string[] = [];
@@ -3987,7 +4011,7 @@ export const importHistoricalClosuresFromCsv = async (
     let dedupedRecords: WealthRecord[] = [];
     let summary: WealthSnapshotSummary | null = null;
 
-    if (csvFormat === 'aggregated') {
+    if (mode === 'aggregated') {
       summary = buildSummaryFromAggregatedHistoricalCsv(rowObj, fx.usdClp);
       if (!summary) {
         skippedMonths.push(monthKey);
@@ -4064,6 +4088,14 @@ export const importHistoricalClosuresFromCsv = async (
   };
 };
 
+export const importHistoricalClosuresFromCsv = async (
+  csvText: string,
+): Promise<HistoricalCsvImportResult> => importHistoricalClosuresFromCsvByMode(csvText, 'detailed');
+
+export const importHistoricalAggregatedClosuresFromCsv = async (
+  csvText: string,
+): Promise<HistoricalCsvImportResult> => importHistoricalClosuresFromCsvByMode(csvText, 'aggregated');
+
 export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPreviewResult => {
   const matrix = parseCsvMatrix(csvText);
   if (matrix.length < 2) {
@@ -4072,10 +4104,12 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
       totalRows: Math.max(0, matrix.length - 1),
       invalidMonthRows: [],
       warnings: csvText.trim() ? ['No encontré filas de datos (revisa el CSV).'] : [],
+      format: 'simple',
     };
   }
 
   const headers = matrix[0].map((cell) => normalizeLabelKey(cell));
+  const format = detectHistoricalCsvFormat(headers);
   const rows = matrix.slice(1);
   const monthSet = new Set<string>();
   const invalidMonthRows: number[] = [];
@@ -4113,6 +4147,7 @@ export const previewHistoricalClosuresCsv = (csvText: string): HistoricalCsvPrev
     totalRows: rows.length,
     invalidMonthRows,
     warnings,
+    format,
   };
 };
 
