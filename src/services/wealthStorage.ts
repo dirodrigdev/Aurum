@@ -4357,6 +4357,42 @@ export const clearWealthDataForFreshStart = async (
   const preserveFx = options?.preserveFx !== false;
   const nextFx = preserveFx ? loadFxRates() : { ...defaultFxRates };
 
+  const ref = await getWealthCloudRef();
+  if (!ref) {
+    setLastWealthSyncIssue('no_uid_or_firebase_config');
+    saveWealthSyncUiState({
+      status: 'error',
+      at: nowIso(),
+      message: 'Sin conexión con la nube',
+    });
+    throw new Error('No se pudo limpiar en la nube. Mantuve los datos locales intactos.');
+  }
+  try {
+    const beforeCloud = await getDoc(ref);
+    console.info('[clearWealthDataForFreshStart][before-cloud]', {
+      exists: beforeCloud.exists(),
+    });
+    await deleteDoc(ref);
+    const verifyCloud = await getDoc(ref);
+    console.info('[clearWealthDataForFreshStart][after-cloud]', {
+      exists: verifyCloud.exists(),
+    });
+    if (verifyCloud.exists()) {
+      throw new Error('No pude confirmar el borrado en la nube.');
+    }
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+  } catch (err: any) {
+    setLastWealthSyncIssue(`${err?.code || 'delete_error'} ${err?.message || ''}`.trim());
+    setFirestoreStatusFromError(err);
+    saveWealthSyncUiState({
+      status: 'error',
+      at: nowIso(),
+      message: 'Sin conexión con la nube',
+    });
+    throw new Error(`No se pudo limpiar en la nube. Mantuve los datos locales intactos. ${String(err?.message || '')}`.trim());
+  }
+
   clearAurumAndWealthLocalStorage();
   applyWealthStateLocal({
     records: [],
@@ -4374,31 +4410,10 @@ export const clearWealthDataForFreshStart = async (
   saveBankTokens({});
   saveClosures([], { skipCloudSync: true, silent: true });
   saveWealthRecords([], { skipCloudSync: true, silent: true });
-
-  const ref = await getWealthCloudRef();
-  if (!ref) {
-    setLastWealthSyncIssue('no_uid_or_firebase_config');
-    saveWealthSyncUiState({
-      status: 'error',
-      at: nowIso(),
-      message: 'Sin conexión con la nube',
-    });
-    return { cloudCleared: false, mode: 'local' };
-  }
-  try {
-    await deleteDoc(ref);
-    setFirestoreOk();
-    setLastWealthSyncIssue('');
-  } catch (err: any) {
-    setLastWealthSyncIssue(`${err?.code || 'delete_error'} ${err?.message || ''}`.trim());
-    setFirestoreStatusFromError(err);
-    saveWealthSyncUiState({
-      status: 'error',
-      at: nowIso(),
-      message: 'Sin conexión con la nube',
-    });
-    return { cloudCleared: false, mode: 'local' };
-  }
+  console.info('[clearWealthDataForFreshStart][after-local]', {
+    records: loadWealthRecords().length,
+    closures: loadClosures().length,
+  });
 
   return { cloudCleared: true, mode: 'cloud' };
 };

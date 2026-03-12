@@ -51,6 +51,7 @@ import {
   isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
   loadClosures,
+  createWealthBackupSnapshot,
   loadFxRates,
   loadWealthRecords,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
@@ -528,9 +529,11 @@ export const ClosingAurum: React.FC = () => {
     eurUsd: '',
     ufClp: '',
   });
+  const [may2023HotfixConfirmOpen, setMay2023HotfixConfirmOpen] = useState(false);
+  const [may2023HotfixBusy, setMay2023HotfixBusy] = useState(false);
+  const [may2023HotfixMessage, setMay2023HotfixMessage] = useState('');
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
-  const may2023HotfixAppliedRef = useRef(false);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
@@ -642,108 +645,135 @@ export const ClosingAurum: React.FC = () => {
     window.localStorage.removeItem(CLOSING_FOCUS_MONTH_KEY);
   }, [closures]);
 
-  useEffect(() => {
-    if (may2023HotfixAppliedRef.current) return;
+  const may2023HotfixTarget = useMemo(() => {
     const target = closures.find((closure) => closure.monthKey === MAY_2023_HOTFIX_MONTH_KEY);
-    if (!target || (Array.isArray(target.records) && target.records.length > 0)) return;
+    if (!target || (Array.isArray(target.records) && target.records.length > 0)) return null;
     const currentNet = Number(target.summary?.netClp || 0);
     const currentNetWithRisk = Number(target.summary?.netClpWithRisk || target.summary?.netConsolidatedClp || 0);
     if (
       Math.round(currentNet) !== MAY_2023_HOTFIX_NET_CLP_OLD ||
       Math.round(currentNetWithRisk) !== MAY_2023_HOTFIX_NET_WITH_RISK_OLD
     ) {
-      may2023HotfixAppliedRef.current = true;
-      return;
+      return null;
     }
-
-    const nextSummary: WealthSnapshotSummary = {
-      ...target.summary,
-      netByCurrency: {
-        CLP: MAY_2023_HOTFIX_NET_WITH_RISK,
-        USD: 0,
-        EUR: 0,
-        UF: 0,
-      },
-      assetsByCurrency: {
-        CLP:
-          MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP +
-          MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP +
-          MAY_2023_HOTFIX_BANK_CLP,
-        USD: 0,
-        EUR: 0,
-        UF: 0,
-      },
-      debtsByCurrency: {
-        CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP,
-        USD: 0,
-        EUR: 0,
-        UF: 0,
-      },
-      byBlock: {
-        bank: { CLP: MAY_2023_HOTFIX_BANK_CLP, USD: 0, EUR: 0, UF: 0 },
-        investment: { CLP: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP, USD: 0, EUR: 0, UF: 0 },
-        real_estate: { CLP: MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP, USD: 0, EUR: 0, UF: 0 },
-        debt: { CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP, USD: 0, EUR: 0, UF: 0 },
-      },
-      investmentClp: MAY_2023_HOTFIX_INVESTMENT_CLP,
-      riskCapitalClp: MAY_2023_HOTFIX_RISK_CLP,
-      investmentClpWithRisk: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP,
-      netClp: MAY_2023_HOTFIX_NET_CLP,
-      netClpWithRisk: MAY_2023_HOTFIX_NET_WITH_RISK,
-      netConsolidatedClp: MAY_2023_HOTFIX_NET_WITH_RISK,
-    };
-    const nextSummaryExtended = nextSummary as WealthSnapshotSummary & {
-      tenenciaClp?: number;
-      investmentFinancialClp?: number;
-      investmentPrevisionalClp?: number;
-      bankClp?: number;
-      nonMortgageDebtClp?: number;
-      realEstateNetClp?: number;
-    };
-    nextSummaryExtended.tenenciaClp = MAY_2023_HOTFIX_TENENCIA_CLP;
-    nextSummaryExtended.investmentFinancialClp = MAY_2023_HOTFIX_INVESTMENT_FINANCIAL_CLP;
-    nextSummaryExtended.investmentPrevisionalClp = MAY_2023_HOTFIX_INVESTMENT_PREVISIONAL_CLP;
-    nextSummaryExtended.bankClp = MAY_2023_HOTFIX_BANK_CLP;
-    nextSummaryExtended.nonMortgageDebtClp = MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP;
-    nextSummaryExtended.realEstateNetClp = MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP;
-
-    const replacedAt = new Date().toISOString();
-    const previousVersion = {
-      id: target.id,
-      monthKey: target.monthKey,
-      closedAt: target.closedAt,
-      replacedAt,
-      summary: target.summary,
-      fxRates: target.fxRates,
-      fxMissing: target.fxMissing,
-      records: target.records,
-    };
-    const nextClosure = {
-      ...target,
-      id: crypto.randomUUID(),
-      closedAt: replacedAt,
-      summary: nextSummary,
-      previousVersions: [previousVersion, ...(target.previousVersions || [])],
-    };
-    const nextClosures = [
-      nextClosure,
-      ...closures.filter((closure) => closure.monthKey !== MAY_2023_HOTFIX_MONTH_KEY),
-    ].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-
-    console.info('[Closing][hotfix-2023-05-before]', {
-      monthKey: target.monthKey,
-      oldNetClp: currentNet,
-      oldNetClpWithRisk: currentNetWithRisk,
-    });
-    saveClosures(nextClosures);
-    console.info('[Closing][hotfix-2023-05-after]', {
-      monthKey: target.monthKey,
-      newNetClp: MAY_2023_HOTFIX_NET_CLP,
-      newNetClpWithRisk: MAY_2023_HOTFIX_NET_WITH_RISK,
-    });
-    may2023HotfixAppliedRef.current = true;
-    setRevision((v) => v + 1);
+    return target;
   }, [closures]);
+
+  const applyMay2023Hotfix = async () => {
+    if (!may2023HotfixTarget) return;
+    setMay2023HotfixBusy(true);
+    setMay2023HotfixMessage('');
+    try {
+      const currentNet = Number(may2023HotfixTarget.summary?.netClp || 0);
+      const currentNetWithRisk = Number(
+        may2023HotfixTarget.summary?.netClpWithRisk || may2023HotfixTarget.summary?.netConsolidatedClp || 0,
+      );
+      console.info('[Closing][hotfix-2023-05-before]', {
+        monthKey: may2023HotfixTarget.monthKey,
+        oldNetClp: currentNet,
+        oldNetClpWithRisk: currentNetWithRisk,
+      });
+      const backup = await createWealthBackupSnapshot('Hotfix manual cierre 2023-05');
+      if (!backup.ok) {
+        throw new Error(`No pude generar backup previo: ${backup.message}`);
+      }
+      const nextSummary: WealthSnapshotSummary = {
+        ...may2023HotfixTarget.summary,
+        netByCurrency: {
+          CLP: MAY_2023_HOTFIX_NET_WITH_RISK,
+          USD: 0,
+          EUR: 0,
+          UF: 0,
+        },
+        assetsByCurrency: {
+          CLP:
+            MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP +
+            MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP +
+            MAY_2023_HOTFIX_BANK_CLP,
+          USD: 0,
+          EUR: 0,
+          UF: 0,
+        },
+        debtsByCurrency: {
+          CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP,
+          USD: 0,
+          EUR: 0,
+          UF: 0,
+        },
+        byBlock: {
+          bank: { CLP: MAY_2023_HOTFIX_BANK_CLP, USD: 0, EUR: 0, UF: 0 },
+          investment: { CLP: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP, USD: 0, EUR: 0, UF: 0 },
+          real_estate: { CLP: MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP, USD: 0, EUR: 0, UF: 0 },
+          debt: { CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP, USD: 0, EUR: 0, UF: 0 },
+        },
+        investmentClp: MAY_2023_HOTFIX_INVESTMENT_CLP,
+        riskCapitalClp: MAY_2023_HOTFIX_RISK_CLP,
+        investmentClpWithRisk: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP,
+        netClp: MAY_2023_HOTFIX_NET_CLP,
+        netClpWithRisk: MAY_2023_HOTFIX_NET_WITH_RISK,
+        netConsolidatedClp: MAY_2023_HOTFIX_NET_WITH_RISK,
+      };
+      const nextSummaryExtended = nextSummary as WealthSnapshotSummary & {
+        tenenciaClp?: number;
+        investmentFinancialClp?: number;
+        investmentPrevisionalClp?: number;
+        bankClp?: number;
+        nonMortgageDebtClp?: number;
+        realEstateNetClp?: number;
+      };
+      nextSummaryExtended.tenenciaClp = MAY_2023_HOTFIX_TENENCIA_CLP;
+      nextSummaryExtended.investmentFinancialClp = MAY_2023_HOTFIX_INVESTMENT_FINANCIAL_CLP;
+      nextSummaryExtended.investmentPrevisionalClp = MAY_2023_HOTFIX_INVESTMENT_PREVISIONAL_CLP;
+      nextSummaryExtended.bankClp = MAY_2023_HOTFIX_BANK_CLP;
+      nextSummaryExtended.nonMortgageDebtClp = MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP;
+      nextSummaryExtended.realEstateNetClp = MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP;
+
+      const replacedAt = new Date().toISOString();
+      const previousVersion = {
+        id: may2023HotfixTarget.id,
+        monthKey: may2023HotfixTarget.monthKey,
+        closedAt: may2023HotfixTarget.closedAt,
+        replacedAt,
+        summary: may2023HotfixTarget.summary,
+        fxRates: may2023HotfixTarget.fxRates,
+        fxMissing: may2023HotfixTarget.fxMissing,
+        records: may2023HotfixTarget.records,
+      };
+      const nextClosure = {
+        ...may2023HotfixTarget,
+        id: crypto.randomUUID(),
+        closedAt: replacedAt,
+        summary: nextSummary,
+        previousVersions: [previousVersion, ...(may2023HotfixTarget.previousVersions || [])],
+      };
+      const nextClosures = [
+        nextClosure,
+        ...closures.filter((closure) => closure.monthKey !== MAY_2023_HOTFIX_MONTH_KEY),
+      ].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+      saveClosures(nextClosures);
+      const verify = loadClosures().find((closure) => closure.monthKey === MAY_2023_HOTFIX_MONTH_KEY);
+      const verifiedNet = Number(verify?.summary?.netClp || 0);
+      const verifiedNetWithRisk = Number(verify?.summary?.netClpWithRisk || verify?.summary?.netConsolidatedClp || 0);
+      console.info('[Closing][hotfix-2023-05-after]', {
+        monthKey: MAY_2023_HOTFIX_MONTH_KEY,
+        newNetClp: verifiedNet,
+        newNetClpWithRisk: verifiedNetWithRisk,
+      });
+      if (
+        Math.round(verifiedNet) !== MAY_2023_HOTFIX_NET_CLP ||
+        Math.round(verifiedNetWithRisk) !== MAY_2023_HOTFIX_NET_WITH_RISK
+      ) {
+        throw new Error('No pude confirmar la corrección del cierre 2023-05.');
+      }
+      setMay2023HotfixMessage('Corrección aplicada correctamente en mayo 2023.');
+      setRevision((v) => v + 1);
+    } catch (err: any) {
+      setMay2023HotfixMessage(`Error al aplicar corrección: ${String(err?.message || err || 'error')}`);
+    } finally {
+      setMay2023HotfixBusy(false);
+      setMay2023HotfixConfirmOpen(false);
+    }
+  };
 
   const currentRecordsRaw = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
   const currentRecords = useMemo(
@@ -1473,6 +1503,25 @@ export const ClosingAurum: React.FC = () => {
 
       {tab === 'cierre' && (
         <div className="relative space-y-2.5 pb-12">
+          {(may2023HotfixTarget || may2023HotfixMessage) && (
+            <Card className="p-3 border border-amber-200 bg-amber-50/70">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] text-amber-900">
+                  Corrección manual disponible para cierre mayo 2023 (sin escritura automática).
+                </div>
+                {!!may2023HotfixTarget && (
+                  <Button
+                    onClick={() => setMay2023HotfixConfirmOpen(true)}
+                    disabled={may2023HotfixBusy}
+                    className="bg-amber-700 hover:bg-amber-800"
+                  >
+                    {may2023HotfixBusy ? 'Aplicando...' : 'Aplicar corrección'}
+                  </Button>
+                )}
+              </div>
+              {!!may2023HotfixMessage && <div className="mt-2 text-[11px] text-amber-900">{may2023HotfixMessage}</div>}
+            </Card>
+          )}
           {!selectedClosure ? (
             <Card className="p-4 text-xs text-slate-500">Todavía no hay cierres mensuales guardados.</Card>
           ) : (
@@ -1859,6 +1908,19 @@ export const ClosingAurum: React.FC = () => {
           setClosureEditConfirmOpen(false);
           applyClosureEdit();
         }}
+      />
+
+      <ConfirmActionModal
+        open={may2023HotfixConfirmOpen}
+        title="Aplicar corrección mayo 2023"
+        message="Se generará backup automático en la nube y luego se corregirá el summary de mayo 2023. ¿Deseas continuar?"
+        confirmText="Aplicar corrección"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (may2023HotfixBusy) return;
+          setMay2023HotfixConfirmOpen(false);
+        }}
+        onConfirm={applyMay2023Hotfix}
       />
 
       <Card className="p-3 text-[11px] text-slate-500">
