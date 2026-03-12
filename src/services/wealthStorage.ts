@@ -664,6 +664,11 @@ const MANUAL_CARD_LABEL_KEYS = new Set(
 
 const NON_MORTGAGE_DEBT_LABEL_HINTS = [
   'tarjeta',
+  'tarjetas',
+  'deuda tarjetas',
+  'tarjetas clp',
+  'tarjetas usd',
+  'cupo usado',
   'mastercard',
   'visa',
   'american express',
@@ -1987,9 +1992,6 @@ export const computeWealthHomeSectionAmounts = (
 ): WealthHomeSectionAmounts => {
   const dedupedMonthRecords = dedupeLatestByAsset(monthRecordsForTotals);
   const breakdown = buildWealthNetBreakdown(dedupedMonthRecords, fx);
-  const bankSnapshot = computeWealthBankLiquiditySnapshot(dedupedMonthRecords);
-  const safeUsd = Number(fx?.usdClp) > 0 ? Number(fx.usdClp) : defaultFxRates.usdClp;
-  const snapshotDebtClp = bankSnapshot.cardClp + bankSnapshot.cardUsd * safeUsd;
 
   const hasProperty = dedupedMonthRecords.some(
     (record) =>
@@ -2009,18 +2011,7 @@ export const computeWealthHomeSectionAmounts = (
 
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
   const bankClp = breakdown.bankClp;
-  const nonMortgageDebtClp = Math.max(breakdown.nonMortgageDebtClp, snapshotDebtClp);
-  if (
-    Math.abs(nonMortgageDebtClp - breakdown.nonMortgageDebtClp) > 1 &&
-    Math.abs(snapshotDebtClp - breakdown.nonMortgageDebtClp) > 1
-  ) {
-    console.warn('[Wealth][home-sections][non-mortgage-debt-mismatch]', {
-      breakdownNonMortgageDebtClp: breakdown.nonMortgageDebtClp,
-      snapshotDebtClp,
-      resolvedNonMortgageDebtClp: nonMortgageDebtClp,
-      recordsCount: dedupedMonthRecords.length,
-    });
-  }
+  const nonMortgageDebtClp = breakdown.nonMortgageDebtClp;
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
   const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
   const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;

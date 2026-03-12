@@ -118,6 +118,15 @@ const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: Weal
   { label: `${TENENCIA_CXC_PREFIX_LABEL} EUR`, currency: 'EUR' },
 ];
 
+type StartMonthActionKey = 'carry' | 'fx' | 'banks' | 'realEstate';
+type StartMonthActionStatus = Record<StartMonthActionKey, 'pending' | 'applied'>;
+const START_MONTH_ACTION_STATUS_INITIAL: StartMonthActionStatus = {
+  carry: 'pending',
+  fx: 'pending',
+  banks: 'pending',
+  realEstate: 'pending',
+};
+
 const sectionLabel: Record<MainSection, string> = {
   investment: 'Inversiones',
   real_estate: 'Bienes raíces',
@@ -2627,6 +2636,9 @@ export const Patrimonio: React.FC = () => {
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [carryConfirmOpen, setCarryConfirmOpen] = useState(false);
+  const [startMonthActionStatus, setStartMonthActionStatus] = useState<StartMonthActionStatus>(
+    START_MONTH_ACTION_STATUS_INITIAL,
+  );
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -2811,6 +2823,16 @@ export const Patrimonio: React.FC = () => {
   }, [calendarMonthKey, realCurrentMonthKey]);
   const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
 
+  useEffect(() => {
+    setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
+  }, [realCurrentMonthKey]);
+
+  useEffect(() => {
+    if (monthKey !== realCurrentMonthKey) return;
+    if (monthRecords.length > 0) return;
+    setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
+  }, [monthKey, realCurrentMonthKey, monthRecords.length]);
+
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
     const hasRiskRecord = Array.isArray(closure.records)
       ? closure.records.some(
@@ -2853,19 +2875,21 @@ export const Patrimonio: React.FC = () => {
       monthNetForComparison !== null && previousClosedPoint
         ? monthNetForComparison - previousClosedPoint.net
         : null;
+    const monthIncreasePct =
+      monthIncrease !== null && previousClosedPoint && previousClosedPoint.net !== 0
+        ? (monthIncrease / previousClosedPoint.net) * 100
+        : null;
     const closedDeltas: number[] = [];
     for (let i = 1; i < closedPoints.length; i += 1) {
       closedDeltas.push(closedPoints[i].net - closedPoints[i - 1].net);
     }
-    const deltas =
-      !monthClosedPoint && monthIncrease !== null
-        ? [...closedDeltas, monthIncrease]
-        : closedDeltas;
+    const hasEnoughClosedPointsForAverage = closedPoints.length >= 2;
 
     return {
       monthIncrease,
-      avg12: average(deltas.slice(-12)),
-      avgSinceStart: average(deltas),
+      monthIncreasePct,
+      avg12: hasEnoughClosedPointsForAverage ? average(closedDeltas.slice(-12)) : null,
+      avgSinceStart: hasEnoughClosedPointsForAverage ? average(closedDeltas) : null,
     };
   }, [
     closures,
@@ -2944,26 +2968,105 @@ export const Patrimonio: React.FC = () => {
     };
   }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, sectionAmounts]);
 
+  const previousClosureForComparisons = useMemo(
+    () =>
+      closures
+        .filter((closure) => closure.monthKey < monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null,
+    [closures, monthKey],
+  );
+
+  const previousClosureSectionAmounts = useMemo(() => {
+    if (!previousClosureForComparisons?.records?.length) return null;
+    const recordsForTotals = resolveRiskCapitalRecordsForTotals(
+      previousClosureForComparisons.records,
+      includeRiskCapitalInTotals,
+    ).recordsForTotals;
+    const closureFx = previousClosureForComparisons.fxRates || fx;
+    return computeWealthHomeSectionAmounts(recordsForTotals, closureFx);
+  }, [previousClosureForComparisons, includeRiskCapitalInTotals, fx]);
+
+  const blockVariationsDisplay = useMemo(() => {
+    if (!previousClosureSectionAmounts) return null;
+    const formatVariation = (deltaClp: number, baseClp: number, debtMode = false) => {
+      const deltaDisplay = fromClp(deltaClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
+      const pct = baseClp !== 0 ? (deltaClp / baseClp) * 100 : null;
+      const pctText =
+        pct === null
+          ? ''
+          : ` (${pct >= 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+            }).format(pct)}%)`;
+      const trend =
+        Math.abs(deltaClp) < 0.5
+          ? 'neutral'
+          : debtMode
+            ? deltaClp < 0
+              ? 'good'
+              : 'bad'
+            : deltaClp > 0
+              ? 'good'
+              : 'bad';
+      return {
+        text: `${deltaDisplay >= 0 ? '+' : ''}${formatCurrency(deltaDisplay, displayCurrency)}${pctText}`,
+        trend,
+      } as const;
+    };
+
+    return {
+      investment: formatVariation(
+        sectionAmounts.investment - previousClosureSectionAmounts.investment,
+        previousClosureSectionAmounts.investment,
+      ),
+      realEstateNet: formatVariation(
+        sectionAmounts.realEstateNet - previousClosureSectionAmounts.realEstateNet,
+        previousClosureSectionAmounts.realEstateNet,
+      ),
+      bank: formatVariation(
+        sectionAmounts.bank - previousClosureSectionAmounts.bank,
+        previousClosureSectionAmounts.bank,
+      ),
+      nonMortgageDebt: formatVariation(
+        sectionAmounts.nonMortgageDebt - previousClosureSectionAmounts.nonMortgageDebt,
+        previousClosureSectionAmounts.nonMortgageDebt,
+        true,
+      ),
+    };
+  }, [previousClosureSectionAmounts, sectionAmounts, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp]);
+
   const metricsDisplay = useMemo(() => {
     const convert = (value: number | null) => {
       if (value === null) return null;
       return fromClp(value, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
     };
 
-    const formatted = (value: number | null) => {
-      if (value === null) return 'Sin base';
+    const formatted = (value: number | null, emptyText = '--') => {
+      if (value === null) return emptyText;
       const prefix = value >= 0 ? '+' : '';
       return `${prefix}${formatCurrency(value, displayCurrency)}`;
     };
+
+    const monthIncreaseValue = convert(metrics.monthIncrease);
+    const monthIncreasePctText =
+      metrics.monthIncreasePct === null
+        ? ''
+        : ` (${metrics.monthIncreasePct >= 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          }).format(metrics.monthIncreasePct)}%)`;
 
     return {
       netWorth: formatCurrency(
         sectionAmountsDisplay.totalNet,
         displayCurrency,
       ),
-      monthIncrease: formatted(convert(metrics.monthIncrease)),
-      avg12: formatted(convert(metrics.avg12)),
-      avgSinceStart: formatted(convert(metrics.avgSinceStart)),
+      monthIncrease:
+        monthIncreaseValue === null
+          ? '--'
+          : `${formatted(monthIncreaseValue, '--')}${monthIncreasePctText}`,
+      avg12: formatted(convert(metrics.avg12), '--'),
+      avgSinceStart: formatted(convert(metrics.avgSinceStart), '--'),
     };
   }, [displayCurrency, fx, metrics, sectionAmountsDisplay.totalNet]);
 
@@ -3010,6 +3113,12 @@ export const Patrimonio: React.FC = () => {
   const hiddenHint = () => {
     const color = 'text-[#f3eadb]/80';
     return <span className={`text-sm font-medium ${color}`}>Pulsa para ver</span>;
+  };
+
+  const variationToneClass = (trend: 'good' | 'bad' | 'neutral' | undefined) => {
+    if (trend === 'good') return 'text-emerald-700';
+    if (trend === 'bad') return 'text-rose-700';
+    return 'text-slate-500';
   };
 
   const toggleNetWorthVisibility = () => {
@@ -3250,6 +3359,7 @@ export const Patrimonio: React.FC = () => {
       } else {
         setCarryMessage(`Arrastre aplicado en ${monthLabel(monthToStart).toLowerCase()} con variación inicial cero.`);
       }
+      setStartMonthActionStatus((prev) => ({ ...prev, carry: 'applied' }));
     } catch (error: any) {
       const message = String(error?.message || 'No pude completar el arranque de mes.');
       setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
@@ -3277,6 +3387,7 @@ export const Patrimonio: React.FC = () => {
         updated: result.updated,
       });
       setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
+      setStartMonthActionStatus((prev) => ({ ...prev, fx: 'applied' }));
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar TC/UF.');
       setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
@@ -3303,6 +3414,7 @@ export const Patrimonio: React.FC = () => {
         updated: result.updated,
       });
       setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
+      setStartMonthActionStatus((prev) => ({ ...prev, banks: 'applied' }));
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar bancos vía Fintoc.');
       setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
@@ -3333,6 +3445,7 @@ export const Patrimonio: React.FC = () => {
     });
     if (auto.changed > 0) {
       setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
+      setStartMonthActionStatus((prev) => ({ ...prev, realEstate: 'applied' }));
       return;
     }
     if (auto.reason === 'missing_base_debt') {
@@ -3342,6 +3455,7 @@ export const Patrimonio: React.FC = () => {
       return;
     }
     setCarryMessage('Bienes raíces sin cambios.');
+    setStartMonthActionStatus((prev) => ({ ...prev, realEstate: 'applied' }));
   };
 
   const completeMonthlyClose = (
@@ -3967,10 +4081,18 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage(`No hubo cambios por autocálculo (ya había datos actualizados en este mes).`);
   };
 
-  const showCurrentMonthActionBar = monthKey === realCurrentMonthKey;
+  const allStartMonthActionsApplied = useMemo(
+    () => Object.values(startMonthActionStatus).every((status) => status === 'applied'),
+    [startMonthActionStatus],
+  );
+  const showCurrentMonthActionBar = monthKey === realCurrentMonthKey && !allStartMonthActionsApplied;
   const carrySourceMonthLabel = previousClosureForMonthStart
     ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
     : null;
+  const startMonthActionButtonClass = (action: StartMonthActionKey) =>
+    startMonthActionStatus[action] === 'applied'
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+      : 'border-slate-300 bg-slate-100 text-slate-700';
 
   if (activeSection) {
     return (
@@ -4165,8 +4287,15 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#5a2f16]">
               <Landmark size={15} /> Inversiones
             </div>
-            <div className="pr-6 text-right text-base font-bold leading-tight text-[#5a2f16] break-words">
-              {showNetWorth ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency) : '••••'}
+            <div className="pr-6 text-right break-words">
+              <div className="text-base font-bold leading-tight text-[#5a2f16]">
+                {showNetWorth ? formatCurrency(sectionAmountsDisplay.investment, displayCurrency) : '••••'}
+              </div>
+              {showNetWorth && blockVariationsDisplay?.investment ? (
+                <div className={cn('mt-0.5 text-[11px] font-medium', variationToneClass(blockVariationsDisplay.investment.trend))}>
+                  · {blockVariationsDisplay.investment.text}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#7f4927]/30 bg-white/35 text-[#7f4927]/75">
@@ -4191,12 +4320,19 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1f3e2d]">
               <Home size={15} /> Bienes raíces
             </div>
-            <div className="pr-6 text-right text-base font-bold leading-tight text-[#1f3e2d] break-words">
-              {showNetWorth
-                ? hasRealEstateCoreInputs
-                  ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
-                  : 'Sin datos'
-                : '••••'}
+            <div className="pr-6 text-right break-words">
+              <div className="text-base font-bold leading-tight text-[#1f3e2d]">
+                {showNetWorth
+                  ? hasRealEstateCoreInputs
+                    ? formatCurrency(sectionAmountsDisplay.realEstateNet, displayCurrency)
+                    : 'Sin datos'
+                  : '••••'}
+              </div>
+              {showNetWorth && blockVariationsDisplay?.realEstateNet && hasRealEstateCoreInputs ? (
+                <div className={cn('mt-0.5 text-[11px] font-medium', variationToneClass(blockVariationsDisplay.realEstateNet.trend))}>
+                  · {blockVariationsDisplay.realEstateNet.text}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#2d5a3b]/30 bg-white/35 text-[#2d5a3b]/80">
@@ -4220,8 +4356,15 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-900">
               <Building2 size={15} /> Bancos
             </div>
-            <div className="pr-6 text-right text-base font-bold leading-tight text-sky-900 break-words">
-              {showNetWorth ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency) : '••••'}
+            <div className="pr-6 text-right break-words">
+              <div className="text-base font-bold leading-tight text-sky-900">
+                {showNetWorth ? formatCurrency(sectionAmountsDisplay.bank, displayCurrency) : '••••'}
+              </div>
+              {showNetWorth && blockVariationsDisplay?.bank ? (
+                <div className={cn('mt-0.5 text-[11px] font-medium', variationToneClass(blockVariationsDisplay.bank.trend))}>
+                  · {blockVariationsDisplay.bank.text}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300 bg-white/35 text-sky-700/80">
@@ -4245,8 +4388,15 @@ export const Patrimonio: React.FC = () => {
             <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-900">
               <Trash2 size={15} /> Deudas no hipotecarias
             </div>
-            <div className="pr-6 text-right text-base font-bold leading-tight text-rose-900 break-words">
-              {showNetWorth ? `-${formatCurrency(sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}` : '••••'}
+            <div className="pr-6 text-right break-words">
+              <div className="text-base font-bold leading-tight text-rose-900">
+                {showNetWorth ? `-${formatCurrency(sectionAmountsDisplay.nonMortgageDebt, displayCurrency)}` : '••••'}
+              </div>
+              {showNetWorth && blockVariationsDisplay?.nonMortgageDebt ? (
+                <div className={cn('mt-0.5 text-[11px] font-medium', variationToneClass(blockVariationsDisplay.nonMortgageDebt.trend))}>
+                  · {blockVariationsDisplay.nonMortgageDebt.text}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="pointer-events-none absolute bottom-2 right-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-300 bg-white/35 text-rose-700/80">
@@ -4365,7 +4515,7 @@ export const Patrimonio: React.FC = () => {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-9 px-1 text-[11px]"
+                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('carry'))}
                   onClick={() => setCarryConfirmOpen(true)}
                   disabled={!previousClosureForMonthStart || startMonthRunning}
                   title={
@@ -4379,7 +4529,7 @@ export const Patrimonio: React.FC = () => {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-9 px-1 text-[11px]"
+                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('fx'))}
                   onClick={() => {
                     void runStartMonthFxUpdate();
                   }}
@@ -4390,7 +4540,7 @@ export const Patrimonio: React.FC = () => {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-9 px-1 text-[11px]"
+                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('banks'))}
                   onClick={() => {
                     void runStartMonthBanksUpdate();
                   }}
@@ -4406,7 +4556,7 @@ export const Patrimonio: React.FC = () => {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-9 px-1 text-[11px]"
+                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('realEstate'))}
                   onClick={runStartMonthRealEstateUpdate}
                   disabled={startMonthRunning}
                 >
