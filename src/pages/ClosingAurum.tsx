@@ -20,7 +20,6 @@ import {
   BANK_BALANCE_USD_LABEL,
   BANK_BALANCE_USD_LEGACY_LABEL,
   buildWealthNetBreakdown,
-  computeWealthHomeSectionAmounts,
   DEBT_CARD_CLP_LABEL,
   DEBT_CARD_CLP_LEGACY_LABEL,
   DEBT_CARD_USD_LABEL,
@@ -47,6 +46,7 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
   isMortgageMetaDebtLabel,
+  isMortgagePrincipalDebtLabel,
   isSyntheticAggregateRecord,
   isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
@@ -552,23 +552,9 @@ export const ClosingAurum: React.FC = () => {
       ),
     [currentRecordsRaw],
   );
-  const currentHomeSectionAmounts = useMemo(
-    () => computeWealthHomeSectionAmounts(currentRecords, currentFx),
-    [currentRecords, currentFx],
-  );
-
   const currentBreakdown = useMemo<NetBreakdown>(
-    () => ({
-      netClp: currentHomeSectionAmounts.totalNetClp,
-      investmentClp: currentHomeSectionAmounts.investment,
-      realEstateNetClp: currentHomeSectionAmounts.realEstateNet,
-      bankClp: currentHomeSectionAmounts.bank,
-      nonMortgageDebtClp: currentHomeSectionAmounts.nonMortgageDebt,
-      // requeridos por tipo, no usados por BreakdownCard en esta vista:
-      realEstateAssetsClp: 0,
-      mortgageDebtClp: 0,
-    }),
-    [currentHomeSectionAmounts],
+    () => buildNetBreakdown(currentRecords, currentFx),
+    [currentRecords, currentFx],
   );
   const missingCriticalCount = useMemo(() => {
     const required = [...REQUIRED_INVESTMENT_LABELS, ...REQUIRED_REAL_ESTATE_CORE_FOR_NET];
@@ -682,20 +668,7 @@ export const ClosingAurum: React.FC = () => {
   const compareClosureForHoyFx = compareClosureForHoy?.fxRates || currentFx;
   const compareClosureForHoyBreakdown = useMemo<NetBreakdown | null>(() => {
     if (!compareClosureForHoyRecords?.length) return null;
-    const compareHomeSectionAmounts = computeWealthHomeSectionAmounts(
-      compareClosureForHoyRecords,
-      compareClosureForHoyFx,
-    );
-    return {
-      netClp: compareHomeSectionAmounts.totalNetClp,
-      investmentClp: compareHomeSectionAmounts.investment,
-      realEstateNetClp: compareHomeSectionAmounts.realEstateNet,
-      bankClp: compareHomeSectionAmounts.bank,
-      nonMortgageDebtClp: compareHomeSectionAmounts.nonMortgageDebt,
-      // requeridos por tipo, no usados por BreakdownCard en esta vista:
-      realEstateAssetsClp: 0,
-      mortgageDebtClp: 0,
-    };
+    return buildNetBreakdown(compareClosureForHoyRecords, compareClosureForHoyFx);
   }, [compareClosureForHoyRecords, compareClosureForHoyFx]);
 
   const evolutionRows = useMemo(() => {
@@ -822,7 +795,7 @@ export const ClosingAurum: React.FC = () => {
             (record) =>
               record.block === 'debt' &&
               record.currency === field.currency &&
-              !sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL) &&
+              !isMortgagePrincipalDebtLabel(record.label) &&
               !isMortgageMetaDebtLabel(record.label),
           )
           .reduce((sum, record) => sum + Math.abs(Number(record.amount || 0)), 0);
@@ -911,7 +884,7 @@ export const ClosingAurum: React.FC = () => {
             !(
               record.block === 'debt' &&
               record.currency === field.currency &&
-              !sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL) &&
+              !isMortgagePrincipalDebtLabel(record.label) &&
               !isMortgageMetaDebtLabel(record.label)
             ),
         );

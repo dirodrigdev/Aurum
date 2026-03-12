@@ -169,6 +169,10 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
     },
     { key: 'investment', label: 'Inversiones', valueClp: breakdown.investmentClp, prevClp: compareAgainst?.investmentClp ?? null },
   ];
+  const mortgageDebtValueClp = -Math.abs(breakdown.mortgageDebtClp || 0);
+  const mortgageDebtPrevClp = compareAgainst ? -Math.abs(compareAgainst.mortgageDebtClp || 0) : null;
+  const showMortgageDebtRow =
+    Math.abs(breakdown.mortgageDebtClp || 0) > 0 || Math.abs(compareAgainst?.mortgageDebtClp || 0) > 0;
 
   const netDisplay = fromClp(breakdown.netClp, currency, fx);
   const compareNet = compareAgainst && compareFx ? fromClp(compareAgainst.netClp, currency, compareFx) : null;
@@ -298,6 +302,19 @@ export const BreakdownCard: React.FC<BreakdownCardProps> = ({
             </div>
           );
         })}
+        {showMortgageDebtRow && (
+          <div key="mortgage_debt_info" className="grid grid-cols-[1fr_auto] gap-2 text-[11px]">
+            <div className="text-slate-500">Deuda hipotecaria (incluida en Bienes raíces)</div>
+            <div className="text-right font-medium text-slate-600">
+              {formatCurrency(fromClp(mortgageDebtValueClp, currency, fx), currency)}
+              {mortgageDebtPrevClp !== null && compareFx ? (
+                <span className="ml-1 text-[10px] text-slate-500">
+                  vs {formatCurrency(fromClp(mortgageDebtPrevClp, currency, compareFx), currency)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        )}
       </div>
 
       <details className="rounded-xl border border-[#e2dccf] bg-[#f8f5ef]">

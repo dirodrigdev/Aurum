@@ -561,6 +561,7 @@ const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
   'saldo bancos usd': [BANK_BALANCE_USD_LEGACY_LABEL],
   'deuda tarjetas clp': [DEBT_CARD_CLP_LEGACY_LABEL],
   'deuda tarjetas usd': [DEBT_CARD_USD_LEGACY_LABEL],
+  'saldo deuda hipotecaria': ['deuda hipotecaria', 'saldo hipoteca', 'hipoteca saldo deuda'],
 };
 const RISK_CAPITAL_LABEL_KEYS = new Set(RISK_CAPITAL_LABELS.map((label) => normalizeLabelKey(label)));
 
@@ -670,7 +671,7 @@ const NON_MORTGAGE_DEBT_LABEL_HINTS = [
   'deuda no hipotecaria',
 ];
 
-const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'label' | 'source'>) => {
+export const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'label' | 'source'>) => {
   if (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)) return false;
 
   const label = normalizeText(record.label);
@@ -692,9 +693,14 @@ export const isMortgageMetaDebtLabel = (labelValue: string) => {
   const label = normalizeText(labelValue);
   return (
     label.includes(normalizeText('dividendo hipotecario')) ||
+    label.includes(normalizeText('dividendo hipoteca')) ||
     label.includes(normalizeText('amortizacion hipotecaria')) ||
+    label.includes(normalizeText('amortizacion hipoteca')) ||
     label.includes(normalizeText('interes hipotecario')) ||
+    label.includes(normalizeText('interes hipoteca')) ||
     label.includes(normalizeText('seguros hipotecarios'))
+    || label.includes(normalizeText('seguro hipotecario'))
+    || label.includes(normalizeText('seguros hipoteca'))
   );
 };
 
@@ -704,7 +710,9 @@ const isMortgageDebtLabel = (labelValue: string) => {
 };
 
 export const isMortgagePrincipalDebtLabel = (labelValue: string) =>
-  normalizeText(labelValue).includes(normalizeText('saldo deuda hipotecaria'));
+  normalizeText(labelValue).includes(normalizeText('saldo deuda hipotecaria')) ||
+  normalizeText(labelValue).includes(normalizeText('deuda hipotecaria')) ||
+  normalizeText(labelValue).includes(normalizeText('saldo hipoteca'));
 
 const isDeprecatedSuraTotalRecord = (
   record: Pick<WealthRecord, 'label' | 'source' | 'block'>,

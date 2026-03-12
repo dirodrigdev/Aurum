@@ -39,6 +39,9 @@ import {
   resolveRiskCapitalRecordsForTotals,
   hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
+  isMortgageMetaDebtLabel,
+  isMortgagePrincipalDebtLabel,
+  isNonMortgageDebtRecord,
   isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
   localYmd,
@@ -382,7 +385,7 @@ const isApiSource = (source: string) => {
   return normalized.includes('fintoc') || normalized.includes('api');
 };
 const isMortgagePrincipalLabel = (label: string) => {
-  return normalizeForMatch(label).includes(normalizeForMatch(MORTGAGE_DEBT_BALANCE_LABEL));
+  return isMortgagePrincipalDebtLabel(label);
 };
 
 const isManualLikeSource = (source: string) => {
@@ -3184,6 +3187,17 @@ export const Patrimonio: React.FC = () => {
     const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
     try {
       const beforeNet = computeMonthNetSnapshot(monthToStart);
+      const expectedMortgageLabels = Array.from(
+        new Set(
+          (previousClosureForMonthStart?.records || [])
+            .filter(
+              (record) =>
+                record.block === 'debt' &&
+                (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)),
+            )
+            .map((record) => labelMatchKey(record.label)),
+        ),
+      );
       let fxSeeded = false;
       const previousFx = previousClosureForMonthStart?.fxRates || null;
       if (previousFx && previousFx.usdClp > 0 && previousFx.eurClp > 0 && previousFx.ufClp > 0) {
@@ -3200,6 +3214,18 @@ export const Patrimonio: React.FC = () => {
         );
       }
       refreshAllWealthState();
+      const currentMonthRecordsAfterCarry = latestRecordsForMonth(loadWealthRecords(), monthToStart);
+      const missingMortgageLabels = expectedMortgageLabels.filter((labelKey) =>
+        !currentMonthRecordsAfterCarry.some(
+          (record) =>
+            record.block === 'debt' &&
+            (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)) &&
+            labelMatchKey(record.label) === labelKey,
+        ),
+      );
+      if (missingMortgageLabels.length > 0) {
+        throw new Error(`Arrastre incompleto en deuda hipotecaria: faltan ${missingMortgageLabels.join(', ')}.`);
+      }
       const finalNet = computeMonthNetSnapshot(monthToStart);
       const variation = previousClosureNet === null ? null : finalNet - previousClosureNet;
       writeMonthStartedFlag(monthToStart, true);
@@ -3212,6 +3238,8 @@ export const Patrimonio: React.FC = () => {
         carriedRecords: result.added,
         sourceMonth: result.sourceMonth,
         fxSeeded,
+        expectedMortgageLabels,
+        missingMortgageLabels: [],
       });
       if (variation !== null && Math.abs(variation) > 1) {
         setCarryMessage(
@@ -3369,17 +3397,14 @@ export const Patrimonio: React.FC = () => {
       return monthRecords.filter((record) => {
         if (record.block === 'real_estate') return true;
         if (record.block !== 'debt') return false;
-        const label = normalizeForMatch(record.label);
-        return REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === label);
+        return isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label);
       });
     }
     if (activeSection === 'bank') {
       return monthRecords.filter((r) => {
         if (r.block === 'bank') return true;
         if (r.block !== 'debt') return false;
-        const source = normalizeForMatch(r.source);
-        const label = normalizeForMatch(r.label);
-        return source.includes('fintoc') || label.includes('tarjeta') || MANUAL_CARD_ITEMS.some((item) => normalizeForMatch(item.label) === label);
+        return isNonMortgageDebtRecord(r);
       });
     }
     if (activeSection === 'investment') {
@@ -3561,7 +3586,7 @@ export const Patrimonio: React.FC = () => {
     };
 
     const isMortgageDebtLabel = (label: string) =>
-      REAL_ESTATE_DEBT_LABELS.some((item) => normalizeForMatch(item) === normalizeForMatch(label));
+      isMortgagePrincipalDebtLabel(label) || isMortgageMetaDebtLabel(label);
 
     const configChecks: ConfigFieldCheck[] = [
       {
