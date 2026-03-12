@@ -1294,14 +1294,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const saveDraft = () => {
     const amount = parseStrictNumber(draft.amount);
-    if (!draft.label.trim() || !Number.isFinite(amount) || amount < 0) return;
+    const normalizedAmount = draft.block === 'debt' ? Math.abs(amount) : amount;
+    if (!draft.label.trim() || !Number.isFinite(normalizedAmount) || normalizedAmount < 0) return;
 
     const saved = upsertRecordForVisualMonth({
       id: editingId || undefined,
       block: draft.block,
       source: draft.source || 'manual',
       label: draft.label.trim(),
-      amount,
+      amount: normalizedAmount,
       currency: draft.currency,
       note: draft.note.trim() || undefined,
       snapshotDate: draft.snapshotDate,
@@ -1455,13 +1456,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const saveQuickFill = () => {
     if (!quickFill) return;
     const amount = parseStrictNumber(quickFill.amount);
-    if (!Number.isFinite(amount) || amount < 0) return;
+    const normalizedAmount = quickFill.block === 'debt' ? Math.abs(amount) : amount;
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) return;
     const saved = upsertRecordForVisualMonth({
       id: quickFill.id,
       block: quickFill.block,
       source: quickFill.source,
       label: quickFill.label,
-      amount,
+      amount: normalizedAmount,
       currency: quickFill.currency,
       note: quickFill.note?.trim() || undefined,
       snapshotDate: quickFill.snapshotDate,
