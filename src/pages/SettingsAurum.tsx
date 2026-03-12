@@ -41,6 +41,7 @@ import {
   defaultFxRates,
   clearWealthDataForFreshStart,
   isMortgageMetaDebtLabel,
+  isNonMortgageDebtRecord,
   isRiskCapitalInvestmentLabel,
   loadInvestmentInstruments,
   loadWealthRecords,
@@ -1390,6 +1391,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     try {
       const month = currentMonthKey();
       let removedRecords = 0;
+      let removedBankAndDebt = 0;
       let removedInvestment = 0;
       let removedRealEstate = 0;
 
@@ -1404,7 +1406,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       const removeById = new Set<string>();
       recordsAfterRealEstate.forEach((record) => {
         if (!record.snapshotDate.startsWith(monthPrefix)) return;
-        if (deleteBlocksDraft.bank && record.block === 'bank') {
+        if (
+          deleteBlocksDraft.bank &&
+          (record.block === 'bank' || isNonMortgageDebtRecord(record))
+        ) {
           removeById.add(record.id);
           return;
         }
@@ -1416,10 +1421,14 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }
       });
 
+      const removableRecords = recordsAfterRealEstate.filter((record) => removeById.has(record.id));
       removeById.forEach((id) => removeWealthRecord(id));
       if (removeById.size) {
         removedRecords += removeById.size;
-        removedInvestment += removeById.size;
+        removedBankAndDebt += removableRecords.filter(
+          (record) => record.block === 'bank' || isNonMortgageDebtRecord(record),
+        ).length;
+        removedInvestment += removableRecords.filter((record) => record.block === 'investment').length;
       }
 
       let pushed = false;
@@ -1437,7 +1446,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       refreshLocalState();
       setDeleteBlocksMessage(
         removedRecords
-          ? `Bloques limpiados: ${removedRecords} registros (${removedInvestment} bancos/inversiones, ${removedRealEstate} bienes raíces/hipoteca). ${describeLocalThenCloudSync(pushed, hydrated)}.`
+          ? `Bloques limpiados: ${removedRecords} registros (${removedBankAndDebt} bancos/deudas no hipotecarias, ${removedInvestment} inversiones, ${removedRealEstate} bienes raíces/hipoteca). ${describeLocalThenCloudSync(pushed, hydrated)}.`
           : 'No había registros para borrar en los bloques seleccionados.',
       );
     } finally {
