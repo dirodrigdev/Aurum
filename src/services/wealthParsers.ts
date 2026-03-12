@@ -346,16 +346,19 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
   // Prioridad 1: valor dentro del bloque "Total ahorrado actual" (OCR robusto)
   const blockMatch =
     text.match(/total\s+ahorrad[oó][\s\S]{0,140}?actual[\s\S]{0,180}/i) ||
-    text.match(/total[\s\S]{0,120}?ahorrad[oó][\s\S]{0,220}/i);
+    text.match(/total[\s\S]{0,120}?ahorrad[oó][\s\S]{0,220}/i) ||
+    text.match(/saldo[\s\S]{0,80}?total[\s\S]{0,220}/i);
   const totalFromBlock = blockMatch ? extractLargestAmountFromSnippet(blockMatch[0]) : null;
 
   // Prioridad 2: detección directa junto a etiqueta
   const nearLabelA = findAmountNearText(text, /total\s+ahorrad[oó]\s+actual[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
   const nearLabelB = findAmountNearText(text, /total\s+ahorrado[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
+  const nearLabelC = findAmountNearText(text, /saldo\s+total[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
+  const nearLabelD = findAmountNearText(text, /ahorro\s+total[^0-9]{0,40}([0-9][0-9\s.,]{4,})/i);
 
   // Prioridad 2: fallback robusto para OCR ruidoso: tomar el monto mayor del documento
   const largestAmount = extractAllLargeAmounts(text).sort((a, b) => b - a)[0] || null;
-  const candidates = [totalFromBlock, nearLabelA, nearLabelB, largestAmount]
+  const candidates = [totalFromBlock, nearLabelA, nearLabelB, nearLabelC, nearLabelD, largestAmount]
     .filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0);
   const plausibleCandidates = candidates.filter((n) => n >= 10_000_000 && n <= 2_000_000_000);
   const amount = (plausibleCandidates.length ? Math.max(...plausibleCandidates) : Math.max(...candidates)) || null;
@@ -368,8 +371,8 @@ const parsePlanvital = (text: string): ParsedWealthSuggestion[] => {
       label: INVESTMENT_PLANVITAL_LABEL,
       amount,
       currency: 'CLP',
-      confidence: totalFromBlock || nearLabelA || nearLabelB ? 0.94 : 0.78,
-      note: totalFromBlock || nearLabelA || nearLabelB
+      confidence: totalFromBlock || nearLabelA || nearLabelB || nearLabelC || nearLabelD ? 0.94 : 0.78,
+      note: totalFromBlock || nearLabelA || nearLabelB || nearLabelC || nearLabelD
         ? undefined
         : 'No se detectó "Total ahorrado actual" claramente. Se usó el monto más alto detectado.',
     },

@@ -836,6 +836,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [pendingInvestmentDelete, setPendingInvestmentDelete] = useState<PendingInvestmentDelete | null>(null);
+  const [rowSavedMessages, setRowSavedMessages] = useState<Record<string, string>>({});
+  const rowSavedTimersRef = useRef<Record<string, number>>({});
   const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
   const sectionTitle = section === 'real_estate' ? 'Bienes raíces (neto)' : sectionLabel[section];
   const expectedMonthPrefix = `${monthKey}-`;
@@ -1428,6 +1430,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
     }
 
+    markOperationalRowsSaved([{ label: item.label, currency: item.currency }], 'Guardado ✓');
+
     setOpenLoadPanel(false);
     setQuickFill(null);
     setMultiQuickFill(null);
@@ -1463,6 +1467,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }
     }
     if (failed) return;
+    markOperationalRowsSaved(
+      suggestions.map((item) => ({ label: item.label, currency: item.currency })),
+      'Guardado ✓',
+    );
     setSuggestions([]);
     setOpenLoadPanel(false);
     setQuickFill(null);
@@ -1488,6 +1496,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       snapshotDate: draft.snapshotDate,
     }, 'saveDraft');
     if (!saved) return;
+
+    if (draft.block === 'investment') {
+      markOperationalRowsSaved([{ label: draft.label.trim(), currency: draft.currency }], 'Guardado ✓');
+    }
 
     setDraft(buildDraft(section, monthKey));
     setEditingId(null);
@@ -1815,6 +1827,52 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return [...pendingFirst, ...updatedAfter];
   }, [section, checklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
 
+  useEffect(
+    () => () => {
+      Object.values(rowSavedTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+      rowSavedTimersRef.current = {};
+    },
+    [],
+  );
+
+  const markOperationalRowsSaved = (labels: Array<{ label: string; currency: WealthCurrency }>, message: string) => {
+    if (section !== 'investment' || !labels.length) return;
+    const targetKeys = investmentOperationalRows
+      .filter((row) =>
+        row.sourceContext.labels.some((target) =>
+          labels.some(
+            (savedLabel) =>
+              savedLabel.currency === target.currency && sameCanonicalLabel(savedLabel.label, target.label),
+          ),
+        ),
+      )
+      .map((row) => row.key);
+    if (!targetKeys.length) return;
+
+    setRowSavedMessages((prev) => {
+      const next = { ...prev };
+      targetKeys.forEach((key) => {
+        next[key] = message;
+      });
+      return next;
+    });
+
+    targetKeys.forEach((key) => {
+      if (rowSavedTimersRef.current[key]) {
+        window.clearTimeout(rowSavedTimersRef.current[key]);
+      }
+      rowSavedTimersRef.current[key] = window.setTimeout(() => {
+        setRowSavedMessages((prev) => {
+          if (!prev[key]) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        delete rowSavedTimersRef.current[key];
+      }, 3000);
+    });
+  };
+
   const triggerInvestmentPhotoLoad = (context: InvestmentSourceContext) => {
     setActiveSourceContext(context);
     setSourceHint(context.sourceHint);
@@ -2018,6 +2076,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       snapshotDate: quickFill.snapshotDate,
     }, 'saveQuickFill');
     if (!saved) return;
+    markOperationalRowsSaved([{ label: quickFill.label, currency: quickFill.currency }], 'Guardado ✓');
     setQuickFill(null);
     setActiveSourceContext(null);
     setPendingSuraOcrDecision(null);
@@ -2048,6 +2107,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }, 'saveMultiQuickFill');
       if (!saved) return;
     }
+    markOperationalRowsSaved(
+      parsedEntries.map((entry) => ({ label: entry.label, currency: entry.currency })),
+      'Guardado ✓',
+    );
     setMultiQuickFill(null);
     setActiveSourceContext(null);
     setPendingSuraOcrDecision(null);
@@ -2840,6 +2903,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     <div className="mt-1 text-[10px] text-slate-500">
                       {row.updatedThisMonth ? 'Actualizado este mes' : 'Pendiente de confirmar este mes'}
                     </div>
+                    {!!rowSavedMessages[row.key] && (
+                      <div className="mt-1 text-[11px] font-medium text-emerald-700">
+                        {rowSavedMessages[row.key]}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -3436,6 +3504,9 @@ export const Patrimonio: React.FC = () => {
   const [startMonthActionStatus, setStartMonthActionStatus] = useState<StartMonthActionStatus>(
     START_MONTH_ACTION_STATUS_INITIAL,
   );
+  const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
+  const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
+  const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -5023,13 +5094,38 @@ export const Patrimonio: React.FC = () => {
     () => Object.values(startMonthActionStatus).every((status) => status === 'applied'),
     [startMonthActionStatus],
   );
+  useEffect(
+    () => () => {
+      if (startMonthCompletedNoticeTimerRef.current) {
+        window.clearTimeout(startMonthCompletedNoticeTimerRef.current);
+      }
+    },
+    [],
+  );
   useEffect(() => {
     if (!allStartMonthActionsApplied) return;
-    clearStartMonthFlowCheckpoint(realCurrentMonthKey);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
   }, [allStartMonthActionsApplied, realCurrentMonthKey]);
-  const showCurrentMonthActionBar = monthKey === realCurrentMonthKey && !allStartMonthActionsApplied;
+  useEffect(() => {
+    if (monthKey !== realCurrentMonthKey) return;
+    if (!allStartMonthActionsApplied) {
+      setStartMonthCompletedNoticeVisible(false);
+      return;
+    }
+    if (startMonthCompletionShownForMonthRef.current === realCurrentMonthKey) return;
+    startMonthCompletionShownForMonthRef.current = realCurrentMonthKey;
+    setStartMonthCompletedNoticeVisible(true);
+    if (startMonthCompletedNoticeTimerRef.current) {
+      window.clearTimeout(startMonthCompletedNoticeTimerRef.current);
+    }
+    startMonthCompletedNoticeTimerRef.current = window.setTimeout(() => {
+      setStartMonthCompletedNoticeVisible(false);
+      startMonthCompletedNoticeTimerRef.current = null;
+    }, 3000);
+  }, [allStartMonthActionsApplied, monthKey, realCurrentMonthKey]);
+  const showCurrentMonthActionBar =
+    monthKey === realCurrentMonthKey && (!allStartMonthActionsApplied || startMonthCompletedNoticeVisible);
   const carrySourceMonthLabel = previousClosureForMonthStart
     ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
     : null;
@@ -5469,58 +5565,64 @@ export const Patrimonio: React.FC = () => {
         <div className="pointer-events-none fixed inset-x-0 bottom-20 z-40">
           <div className="mx-auto w-full max-w-xl px-3">
             <Card className="pointer-events-auto border border-slate-200 bg-white/95 p-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur">
-              <div className="grid grid-cols-4 gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('carry'))}
-                  onClick={() => setCarryConfirmOpen(true)}
-                  disabled={!previousClosureForMonthStart || startMonthRunning}
-                  title={
-                    previousClosureForMonthStart
-                      ? `Arrastrar valores desde ${monthLabel(previousClosureForMonthStart.monthKey)}`
-                      : 'No hay cierre anterior para arrastrar'
-                  }
-                >
-                  Arrastrar
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('fx'))}
-                  onClick={() => {
-                    void runStartMonthFxUpdate();
-                  }}
-                  disabled={startMonthRunning}
-                >
-                  TC/UF
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('banks'))}
-                  onClick={() => {
-                    void runStartMonthBanksUpdate();
-                  }}
-                  disabled={!startMonthBanksOptionEnabled || startMonthRunning}
-                  title={
-                    startMonthBanksOptionEnabled
-                      ? 'Actualizar saldos vía Fintoc'
-                      : 'Configura tokens en Ajustes'
-                  }
-                >
-                  Bancos
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('realEstate'))}
-                  onClick={runStartMonthRealEstateUpdate}
-                  disabled={startMonthRunning}
-                >
-                  Bienes raíces
-                </Button>
-              </div>
+              {allStartMonthActionsApplied ? (
+                <div className="flex h-9 items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-700">
+                  Mes iniciado ✓
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('carry'))}
+                    onClick={() => setCarryConfirmOpen(true)}
+                    disabled={!previousClosureForMonthStart || startMonthRunning}
+                    title={
+                      previousClosureForMonthStart
+                        ? `Arrastrar valores desde ${monthLabel(previousClosureForMonthStart.monthKey)}`
+                        : 'No hay cierre anterior para arrastrar'
+                    }
+                  >
+                    Arrastrar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('fx'))}
+                    onClick={() => {
+                      void runStartMonthFxUpdate();
+                    }}
+                    disabled={startMonthRunning}
+                  >
+                    TC/UF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('banks'))}
+                    onClick={() => {
+                      void runStartMonthBanksUpdate();
+                    }}
+                    disabled={!startMonthBanksOptionEnabled || startMonthRunning}
+                    title={
+                      startMonthBanksOptionEnabled
+                        ? 'Actualizar saldos vía Fintoc'
+                        : 'Configura tokens en Ajustes'
+                    }
+                  >
+                    Bancos
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('realEstate'))}
+                    onClick={runStartMonthRealEstateUpdate}
+                    disabled={startMonthRunning}
+                  >
+                    Bienes raíces
+                  </Button>
+                </div>
+              )}
             </Card>
           </div>
         </div>
