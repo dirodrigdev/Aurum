@@ -54,6 +54,7 @@ import {
   loadFxRates,
   loadWealthRecords,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+  saveClosures,
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
   WealthSnapshotSummary,
@@ -128,8 +129,21 @@ const REQUIRED_INVESTMENT_LABELS = [
 ];
 
 const REQUIRED_REAL_ESTATE_CORE_FOR_NET = [REAL_ESTATE_PROPERTY_VALUE_LABEL, MORTGAGE_DEBT_BALANCE_LABEL];
-const CLOSURES_PER_PAGE = 6;
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
+const MAY_2023_HOTFIX_MONTH_KEY = '2023-05';
+const MAY_2023_HOTFIX_NET_CLP_OLD = 1_275_704_133;
+const MAY_2023_HOTFIX_NET_WITH_RISK_OLD = 1_385_286_133;
+const MAY_2023_HOTFIX_INVESTMENT_CLP = 1_159_114_275;
+const MAY_2023_HOTFIX_RISK_CLP = 109_582_000;
+const MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP = 1_268_696_275;
+const MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP = 154_239_360;
+const MAY_2023_HOTFIX_BANK_CLP = 0;
+const MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP = 0;
+const MAY_2023_HOTFIX_NET_CLP = 1_313_353_635;
+const MAY_2023_HOTFIX_NET_WITH_RISK = 1_422_935_635;
+const MAY_2023_HOTFIX_TENENCIA_CLP = 37_697_220;
+const MAY_2023_HOTFIX_INVESTMENT_FINANCIAL_CLP = 545_417_055;
+const MAY_2023_HOTFIX_INVESTMENT_PREVISIONAL_CLP = 576_000_000;
 
 type EditableFieldKey =
   | 'suraFin'
@@ -407,6 +421,14 @@ interface ComparableVersionFields {
   netClp: number;
 }
 
+interface ClosureSummaryEditDraft {
+  investmentClp: string;
+  riskCapitalClp: string;
+  realEstateNetClp: string;
+  bankClp: string;
+  nonMortgageDebtClp: string;
+}
+
 const buildComparableVersionFields = (
   records: WealthRecord[] | undefined,
   summaryNetClp: number,
@@ -484,10 +506,16 @@ export const ClosingAurum: React.FC = () => {
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [revision, setRevision] = useState(0);
   const [selectedClosureMonthKey, setSelectedClosureMonthKey] = useState('');
-  const [closurePage, setClosurePage] = useState(0);
   const [closureEditOpen, setClosureEditOpen] = useState(false);
   const [closureEditConfirmOpen, setClosureEditConfirmOpen] = useState(false);
   const [closureEditError, setClosureEditError] = useState('');
+  const [closureSummaryEditDraft, setClosureSummaryEditDraft] = useState<ClosureSummaryEditDraft>({
+    investmentClp: '',
+    riskCapitalClp: '',
+    realEstateNetClp: '',
+    bankClp: '',
+    nonMortgageDebtClp: '',
+  });
   const [closureEditDraft, setClosureEditDraft] = useState<Record<EditableFieldKey, string>>(
     () =>
       CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
@@ -502,8 +530,7 @@ export const ClosingAurum: React.FC = () => {
   });
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
-  const lastSelectedClosureMonthKeyRef = useRef('');
-  const closureListTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const may2023HotfixAppliedRef = useRef(false);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
@@ -597,7 +624,6 @@ export const ClosingAurum: React.FC = () => {
   useEffect(() => {
     if (!closures.length) {
       setSelectedClosureMonthKey('');
-      setClosurePage(0);
       return;
     }
     setSelectedClosureMonthKey((prev) => {
@@ -607,16 +633,6 @@ export const ClosingAurum: React.FC = () => {
   }, [closures]);
 
   useEffect(() => {
-    if (!closures.length || !selectedClosureMonthKey) return;
-    if (lastSelectedClosureMonthKeyRef.current === selectedClosureMonthKey) return;
-    lastSelectedClosureMonthKeyRef.current = selectedClosureMonthKey;
-    const idx = closures.findIndex((closure) => closure.monthKey === selectedClosureMonthKey);
-    if (idx < 0) return;
-    const page = Math.floor(idx / CLOSURES_PER_PAGE);
-    setClosurePage(page);
-  }, [closures, selectedClosureMonthKey]);
-
-  useEffect(() => {
     if (!closures.length) return;
     const target = String(window.localStorage.getItem(CLOSING_FOCUS_MONTH_KEY) || '').trim();
     if (!target) return;
@@ -624,6 +640,109 @@ export const ClosingAurum: React.FC = () => {
     setTab('cierre');
     setSelectedClosureMonthKey(target);
     window.localStorage.removeItem(CLOSING_FOCUS_MONTH_KEY);
+  }, [closures]);
+
+  useEffect(() => {
+    if (may2023HotfixAppliedRef.current) return;
+    const target = closures.find((closure) => closure.monthKey === MAY_2023_HOTFIX_MONTH_KEY);
+    if (!target || (Array.isArray(target.records) && target.records.length > 0)) return;
+    const currentNet = Number(target.summary?.netClp || 0);
+    const currentNetWithRisk = Number(target.summary?.netClpWithRisk || target.summary?.netConsolidatedClp || 0);
+    if (
+      Math.round(currentNet) !== MAY_2023_HOTFIX_NET_CLP_OLD ||
+      Math.round(currentNetWithRisk) !== MAY_2023_HOTFIX_NET_WITH_RISK_OLD
+    ) {
+      may2023HotfixAppliedRef.current = true;
+      return;
+    }
+
+    const nextSummary: WealthSnapshotSummary = {
+      ...target.summary,
+      netByCurrency: {
+        CLP: MAY_2023_HOTFIX_NET_WITH_RISK,
+        USD: 0,
+        EUR: 0,
+        UF: 0,
+      },
+      assetsByCurrency: {
+        CLP:
+          MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP +
+          MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP +
+          MAY_2023_HOTFIX_BANK_CLP,
+        USD: 0,
+        EUR: 0,
+        UF: 0,
+      },
+      debtsByCurrency: {
+        CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP,
+        USD: 0,
+        EUR: 0,
+        UF: 0,
+      },
+      byBlock: {
+        bank: { CLP: MAY_2023_HOTFIX_BANK_CLP, USD: 0, EUR: 0, UF: 0 },
+        investment: { CLP: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP, USD: 0, EUR: 0, UF: 0 },
+        real_estate: { CLP: MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP, USD: 0, EUR: 0, UF: 0 },
+        debt: { CLP: MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP, USD: 0, EUR: 0, UF: 0 },
+      },
+      investmentClp: MAY_2023_HOTFIX_INVESTMENT_CLP,
+      riskCapitalClp: MAY_2023_HOTFIX_RISK_CLP,
+      investmentClpWithRisk: MAY_2023_HOTFIX_INVESTMENT_WITH_RISK_CLP,
+      netClp: MAY_2023_HOTFIX_NET_CLP,
+      netClpWithRisk: MAY_2023_HOTFIX_NET_WITH_RISK,
+      netConsolidatedClp: MAY_2023_HOTFIX_NET_WITH_RISK,
+    };
+    const nextSummaryExtended = nextSummary as WealthSnapshotSummary & {
+      tenenciaClp?: number;
+      investmentFinancialClp?: number;
+      investmentPrevisionalClp?: number;
+      bankClp?: number;
+      nonMortgageDebtClp?: number;
+      realEstateNetClp?: number;
+    };
+    nextSummaryExtended.tenenciaClp = MAY_2023_HOTFIX_TENENCIA_CLP;
+    nextSummaryExtended.investmentFinancialClp = MAY_2023_HOTFIX_INVESTMENT_FINANCIAL_CLP;
+    nextSummaryExtended.investmentPrevisionalClp = MAY_2023_HOTFIX_INVESTMENT_PREVISIONAL_CLP;
+    nextSummaryExtended.bankClp = MAY_2023_HOTFIX_BANK_CLP;
+    nextSummaryExtended.nonMortgageDebtClp = MAY_2023_HOTFIX_NON_MORTGAGE_DEBT_CLP;
+    nextSummaryExtended.realEstateNetClp = MAY_2023_HOTFIX_REAL_ESTATE_NET_CLP;
+
+    const replacedAt = new Date().toISOString();
+    const previousVersion = {
+      id: target.id,
+      monthKey: target.monthKey,
+      closedAt: target.closedAt,
+      replacedAt,
+      summary: target.summary,
+      fxRates: target.fxRates,
+      fxMissing: target.fxMissing,
+      records: target.records,
+    };
+    const nextClosure = {
+      ...target,
+      id: crypto.randomUUID(),
+      closedAt: replacedAt,
+      summary: nextSummary,
+      previousVersions: [previousVersion, ...(target.previousVersions || [])],
+    };
+    const nextClosures = [
+      nextClosure,
+      ...closures.filter((closure) => closure.monthKey !== MAY_2023_HOTFIX_MONTH_KEY),
+    ].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+
+    console.info('[Closing][hotfix-2023-05-before]', {
+      monthKey: target.monthKey,
+      oldNetClp: currentNet,
+      oldNetClpWithRisk: currentNetWithRisk,
+    });
+    saveClosures(nextClosures);
+    console.info('[Closing][hotfix-2023-05-after]', {
+      monthKey: target.monthKey,
+      newNetClp: MAY_2023_HOTFIX_NET_CLP,
+      newNetClpWithRisk: MAY_2023_HOTFIX_NET_WITH_RISK,
+    });
+    may2023HotfixAppliedRef.current = true;
+    setRevision((v) => v + 1);
   }, [closures]);
 
   const currentRecordsRaw = useMemo(() => latestRecordsForMonth(loadWealthRecords(), monthKey), [monthKey, revision]);
@@ -666,32 +785,6 @@ export const ClosingAurum: React.FC = () => {
     );
   }, [closures, selectedClosure]);
 
-  const closureTotalPages = Math.max(1, Math.ceil(closures.length / CLOSURES_PER_PAGE));
-  const safeClosurePage = Math.min(Math.max(closurePage, 0), closureTotalPages - 1);
-  const pagedClosures = closures.slice(
-    safeClosurePage * CLOSURES_PER_PAGE,
-    safeClosurePage * CLOSURES_PER_PAGE + CLOSURES_PER_PAGE,
-  );
-  const onClosureListTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    const touch = event.touches[0];
-    if (!touch) return;
-    closureListTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
-  };
-  const onClosureListTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
-    const start = closureListTouchStartRef.current;
-    closureListTouchStartRef.current = null;
-    if (!start) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - start.x;
-    const dy = touch.clientY - start.y;
-    if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy)) return;
-    if (dx < 0) {
-      setClosurePage((prev) => Math.min(closureTotalPages - 1, prev + 1));
-      return;
-    }
-    setClosurePage((prev) => Math.max(0, prev - 1));
-  };
 
   const closureDisplayNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
@@ -906,7 +999,37 @@ export const ClosingAurum: React.FC = () => {
   const hoyMonthHeadlineKey = monthKey;
 
   const openClosureEditModal = () => {
-    if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
+    if (!selectedClosure) return;
+    if (!selectedClosureRecordsRaw?.length) {
+      const summary = selectedClosure.summary as WealthSnapshotSummary & {
+        realEstateNetClp?: number;
+        bankClp?: number;
+        nonMortgageDebtClp?: number;
+      };
+      const investmentClp = Number(summary?.investmentClp || 0);
+      const riskCapitalClp = Number(summary?.riskCapitalClp || 0);
+      const fallbackBreakdown = buildSummaryBreakdown(summary, includeRiskCapitalInTotals);
+      const realEstateNetClp = Number(summary?.realEstateNetClp ?? fallbackBreakdown.realEstateNetClp);
+      const bankClp = Number(summary?.bankClp ?? fallbackBreakdown.bankClp);
+      const nonMortgageDebtClp = Number(
+        summary?.nonMortgageDebtClp ?? fallbackBreakdown.nonMortgageDebtClp,
+      );
+      setClosureSummaryEditDraft({
+        investmentClp: String(Math.round(investmentClp)),
+        riskCapitalClp: String(Math.round(riskCapitalClp)),
+        realEstateNetClp: String(Math.round(realEstateNetClp)),
+        bankClp: String(Math.round(bankClp)),
+        nonMortgageDebtClp: String(Math.round(nonMortgageDebtClp)),
+      });
+      setClosureEditRates({
+        usdClp: String(Math.round(selectedClosureFx.usdClp)),
+        eurUsd: String(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp)),
+        ufClp: String(Math.round(selectedClosureFx.ufClp)),
+      });
+      setClosureEditError('');
+      setClosureEditOpen(true);
+      return;
+    }
     const nextDraft = CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
       const existing = findRecordByCanonicalLabel(selectedClosureRecordsRaw, field.canonicalLabel);
       if (existing) {
@@ -947,7 +1070,7 @@ export const ClosingAurum: React.FC = () => {
   };
 
   const applyClosureEdit = () => {
-    if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
+    if (!selectedClosure) return;
 
     const usdClp = parseStrictNumber(closureEditRates.usdClp);
     const eurUsd = parseStrictNumber(closureEditRates.eurUsd);
@@ -965,6 +1088,116 @@ export const ClosingAurum: React.FC = () => {
         ? selectedClosureFx.eurClp
         : eurClpCandidate;
     const nextFx: WealthFxRates = { usdClp, eurClp, ufClp };
+
+    if (!selectedClosureRecordsRaw?.length) {
+      const investmentClp = parseStrictNumber(closureSummaryEditDraft.investmentClp);
+      const riskCapitalClp = parseStrictNumber(closureSummaryEditDraft.riskCapitalClp);
+      const realEstateNetClp = parseStrictNumber(closureSummaryEditDraft.realEstateNetClp);
+      const bankClp = parseStrictNumber(closureSummaryEditDraft.bankClp);
+      const nonMortgageDebtClp = parseStrictNumber(closureSummaryEditDraft.nonMortgageDebtClp);
+      if (
+        ![investmentClp, riskCapitalClp, realEstateNetClp, bankClp, nonMortgageDebtClp].every((n) =>
+          Number.isFinite(n),
+        )
+      ) {
+        setClosureEditError('Revisa los totales del resumen: deben ser números válidos.');
+        return;
+      }
+      const roundedInvestment = Math.round(investmentClp);
+      const roundedRisk = Math.round(riskCapitalClp);
+      const roundedInvestmentWithRisk = Math.round(investmentClp + riskCapitalClp);
+      const roundedRealEstate = Math.round(realEstateNetClp);
+      const roundedBank = Math.round(bankClp);
+      const roundedDebt = Math.round(Math.abs(nonMortgageDebtClp));
+      const roundedNet = Math.round(investmentClp + realEstateNetClp + bankClp - Math.abs(nonMortgageDebtClp));
+      const roundedNetWithRisk = Math.round(
+        investmentClp + riskCapitalClp + realEstateNetClp + bankClp - Math.abs(nonMortgageDebtClp),
+      );
+      const nextSummary: WealthSnapshotSummary = {
+        ...selectedClosure.summary,
+        netByCurrency: { CLP: roundedNetWithRisk, USD: 0, EUR: 0, UF: 0 },
+        assetsByCurrency: {
+          CLP: roundedInvestmentWithRisk + roundedRealEstate + roundedBank,
+          USD: 0,
+          EUR: 0,
+          UF: 0,
+        },
+        debtsByCurrency: { CLP: roundedDebt, USD: 0, EUR: 0, UF: 0 },
+        byBlock: {
+          bank: { CLP: roundedBank, USD: 0, EUR: 0, UF: 0 },
+          investment: { CLP: roundedInvestmentWithRisk, USD: 0, EUR: 0, UF: 0 },
+          real_estate: { CLP: roundedRealEstate, USD: 0, EUR: 0, UF: 0 },
+          debt: { CLP: roundedDebt, USD: 0, EUR: 0, UF: 0 },
+        },
+        investmentClp: roundedInvestment,
+        riskCapitalClp: roundedRisk,
+        investmentClpWithRisk: roundedInvestmentWithRisk,
+        netClp: roundedNet,
+        netClpWithRisk: roundedNetWithRisk,
+        netConsolidatedClp: roundedNetWithRisk,
+      };
+      const nextSummaryExtended = nextSummary as WealthSnapshotSummary & {
+        realEstateNetClp?: number;
+        bankClp?: number;
+        nonMortgageDebtClp?: number;
+      };
+      nextSummaryExtended.realEstateNetClp = roundedRealEstate;
+      nextSummaryExtended.bankClp = roundedBank;
+      nextSummaryExtended.nonMortgageDebtClp = roundedDebt;
+
+      const replacedAt = new Date().toISOString();
+      const previousVersion = {
+        id: selectedClosure.id,
+        monthKey: selectedClosure.monthKey,
+        closedAt: selectedClosure.closedAt,
+        replacedAt,
+        summary: selectedClosure.summary,
+        fxRates: selectedClosure.fxRates,
+        fxMissing: selectedClosure.fxMissing,
+        records: selectedClosure.records,
+      };
+      const nextClosure = {
+        ...selectedClosure,
+        id: crypto.randomUUID(),
+        closedAt: replacedAt,
+        fxRates: nextFx,
+        summary: nextSummary,
+        records: selectedClosure.records,
+        previousVersions: [previousVersion, ...(selectedClosure.previousVersions || [])],
+      };
+      console.info('[Closing][summary-edit-before]', {
+        monthKey: selectedClosure.monthKey,
+        previousNetClp: selectedClosure.summary?.netClp,
+        previousNetClpWithRisk: selectedClosure.summary?.netClpWithRisk,
+      });
+      const nextClosures = [
+        nextClosure,
+        ...loadClosures().filter((closure) => closure.monthKey !== selectedClosure.monthKey),
+      ].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+      saveClosures(nextClosures);
+      const persisted = loadClosures().find((closure) => closure.monthKey === selectedClosure.monthKey) || null;
+      const persistedNet = Number(persisted?.summary?.netClp || 0);
+      const persistedNetRisk = Number(persisted?.summary?.netClpWithRisk || 0);
+      console.info('[Closing][summary-edit-after]', {
+        monthKey: selectedClosure.monthKey,
+        persistedNetClp: persistedNet,
+        persistedNetClpWithRisk: persistedNetRisk,
+        expectedNetClp: roundedNet,
+        expectedNetClpWithRisk: roundedNetWithRisk,
+      });
+      if (
+        !persisted ||
+        Math.abs(persistedNet - roundedNet) > 1e-6 ||
+        Math.abs(persistedNetRisk - roundedNetWithRisk) > 1e-6
+      ) {
+        setClosureEditError('Guardado incompleto: no pude confirmar el resumen editado.');
+        return;
+      }
+      setClosureEditOpen(false);
+      setClosureEditError('');
+      setRevision((v) => v + 1);
+      return;
+    }
 
     let nextRecords = dedupeClosureRecords(
       selectedClosureRecordsRaw.map((record) => ({ ...record })),
@@ -1262,34 +1495,12 @@ export const ClosingAurum: React.FC = () => {
                   <div>
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs uppercase tracking-wide text-slate-500">Historial de cierres</div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={safeClosurePage <= 0}
-                          onClick={() => setClosurePage((prev) => Math.max(0, prev - 1))}
-                        >
-                          ◀
-                        </Button>
-                        <div className="text-[11px] text-slate-500">
-                          {safeClosurePage + 1} / {closureTotalPages}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={safeClosurePage >= closureTotalPages - 1}
-                          onClick={() => setClosurePage((prev) => Math.min(closureTotalPages - 1, prev + 1))}
-                        >
-                          ▶
-                        </Button>
-                      </div>
+                      <div className="text-[11px] text-slate-500">Desplaza para ver meses</div>
                     </div>
                     <div
                       className="mt-2 grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto pr-1"
-                      onTouchStart={onClosureListTouchStart}
-                      onTouchEnd={onClosureListTouchEnd}
                     >
-                      {pagedClosures.map((closure) => {
+                      {closures.map((closure) => {
                         const selected = closure.monthKey === selectedClosureMonthKey;
                         return (
                           <button
@@ -1321,7 +1532,7 @@ export const ClosingAurum: React.FC = () => {
                 </div>
                 {!selectedClosureRecordsRaw?.length && (
                   <div className="mt-3 text-[11px] text-amber-700">
-                    Este cierre no tiene detalle de registros para edición rápida.
+                    Este cierre no tiene detalle por instrumento. Puedes editar sus subtotales desde "Editar".
                   </div>
                 )}
               </Card>
@@ -1353,7 +1564,6 @@ export const ClosingAurum: React.FC = () => {
                       size="sm"
                       variant="outline"
                       onClick={openClosureEditModal}
-                      disabled={!selectedClosureRecordsRaw?.length}
                     >
                       Editar
                     </Button>
@@ -1516,8 +1726,65 @@ export const ClosingAurum: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(['inversiones', 'bienes_raices', 'bancos', 'deudas'] as const).map((section) => {
+            {!selectedClosureRecordsRaw?.length ? (
+              <div className="mt-3 rounded-xl border border-slate-200 p-3 space-y-2">
+                <div className="text-xs font-semibold text-slate-700">Resumen del cierre (sin detalle por instrumento)</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-slate-600">Inversiones (sin riesgo) CLP</label>
+                    <Input
+                      value={closureSummaryEditDraft.investmentClp}
+                      onChange={(e) =>
+                        setClosureSummaryEditDraft((prev) => ({ ...prev, investmentClp: e.target.value }))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600">Capital de riesgo CLP</label>
+                    <Input
+                      value={closureSummaryEditDraft.riskCapitalClp}
+                      onChange={(e) =>
+                        setClosureSummaryEditDraft((prev) => ({ ...prev, riskCapitalClp: e.target.value }))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600">Bienes raíces neto CLP</label>
+                    <Input
+                      value={closureSummaryEditDraft.realEstateNetClp}
+                      onChange={(e) =>
+                        setClosureSummaryEditDraft((prev) => ({ ...prev, realEstateNetClp: e.target.value }))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-600">Bancos CLP</label>
+                    <Input
+                      value={closureSummaryEditDraft.bankClp}
+                      onChange={(e) =>
+                        setClosureSummaryEditDraft((prev) => ({ ...prev, bankClp: e.target.value }))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[11px] text-slate-600">Deudas no hipotecarias CLP</label>
+                    <Input
+                      value={closureSummaryEditDraft.nonMortgageDebtClp}
+                      onChange={(e) =>
+                        setClosureSummaryEditDraft((prev) => ({ ...prev, nonMortgageDebtClp: e.target.value }))
+                      }
+                      inputMode="decimal"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(['inversiones', 'bienes_raices', 'bancos', 'deudas'] as const).map((section) => {
                 const titleMap: Record<'inversiones' | 'bienes_raices' | 'bancos' | 'deudas', string> = {
                   inversiones: 'Inversiones',
                   bienes_raices: 'Bienes raíces',
@@ -1545,7 +1812,8 @@ export const ClosingAurum: React.FC = () => {
                   </div>
                 );
               })}
-            </div>
+              </div>
+            )}
 
             {!!closureEditError && (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
