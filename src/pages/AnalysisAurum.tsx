@@ -317,62 +317,48 @@ const ReturnRealHero: React.FC<{
   sinceStart: AggregatedSummary | null;
   last12: AggregatedSummary | null;
   lastMonth: AggregatedSummary | null;
+  lastMonthPctMonthly: number | null;
   currency: WealthCurrency;
-}> = ({ sinceStart, last12, lastMonth, currency }) => {
-  const columns = [
-    { key: 'inicio', label: 'Desde inicio', value: sinceStart, classes: 'text-2xl md:text-3xl' },
-    { key: '12m', label: 'Últ. 12M', value: last12, classes: 'text-xl md:text-2xl' },
-    { key: 'mes', label: 'Últ. mes', value: lastMonth, classes: 'text-lg md:text-xl' },
+}> = ({ sinceStart, last12, lastMonth, lastMonthPctMonthly, currency }) => {
+  const rows = [
+    { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
+    { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
+    { key: 'mes', label: 'ÚLT. MES', value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
   const spentClass = (value: AggregatedSummary | null | undefined) => {
     if (value?.spendPct === null || value?.spendPct === undefined) return 'text-slate-200';
     return value.spendPct > 100 ? 'text-rose-300' : 'text-emerald-300';
   };
+  const pctClass = (pctValue: number | null) => (pctValue === null || pctValue >= 0 ? 'text-emerald-300' : 'text-rose-300');
   const retornoClass = (value: AggregatedSummary | null | undefined) =>
     (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
   return (
     <Card className="border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 text-slate-100">
       <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
-      <div className="mt-3 rounded-xl border border-slate-700/70 bg-slate-800/45 p-3">
-        <div className="grid grid-cols-3 gap-2">
-          {columns.map((column) => (
-            <div key={`${column.key}-head`} className="text-[10px] uppercase tracking-wide text-slate-300">
-              {column.label}
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-400">% anual equiv.</div>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {columns.map((column) => (
-            <div key={`${column.key}-pct`} className={cn(column.classes, 'font-bold', retornoClass(column.value))}>
-              {formatPct(column.value?.pctRetorno ?? null, 1)}
-              {column.value?.pctRetorno === null && column.value?.pctRetornoNote ? (
-                <div className="mt-0.5 text-[10px] font-normal text-amber-300">{column.value.pctRetornoNote}</div>
+      <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
+      <div className="mt-3 space-y-2">
+        {rows.map((row) => (
+          <div key={row.key} className="grid grid-cols-[1.4fr_0.9fr_1fr_0.9fr] items-center gap-2">
+            <div className="text-[11px] tracking-wide text-slate-400">{row.label}</div>
+            <div className={cn('text-lg font-bold', pctClass(row.pct))}>
+              {formatPct(row.pct, 1)}
+              {row.pct === null && row.value?.pctRetornoNote ? (
+                <div className="mt-0.5 text-[10px] font-normal text-amber-300">{row.value.pctRetornoNote}</div>
               ) : null}
             </div>
-          ))}
-        </div>
-        <div className="mt-3 text-[10px] uppercase tracking-wide text-slate-400">Promedio mensual</div>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {columns.map((column) => (
-            <div key={`${column.key}-avg`} className={cn('font-semibold', column.classes, retornoClass(column.value))}>
-              {column.value?.retornoRealAvgDisplay === null || column.value?.retornoRealAvgDisplay === undefined
+            <div className={cn('text-lg font-semibold', retornoClass(row.value))}>
+              {row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
                 ? '—'
-                : formatCurrency(column.value.retornoRealAvgDisplay, currency)}
+                : formatCurrency(row.value.retornoRealAvgDisplay, currency)}
             </div>
-          ))}
-        </div>
-        <div className="mt-3 text-[10px] uppercase tracking-wide text-slate-400">% del retorno que se gasta</div>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {columns.map((column) => (
-            <div key={`${column.key}-spent`} className={cn('font-semibold', column.classes, spentClass(column.value))}>
-              {column.value?.spendPct === null || column.value?.spendPct === undefined
+            <div className={cn('text-xs font-semibold', spentClass(row.value))}>
+              {row.value?.spendPct === null || row.value?.spendPct === undefined
                 ? '—'
-                : `${column.value.spendPct.toFixed(1).replace('.', ',')}%`}
+                : `${row.value.spendPct.toFixed(1).replace('.', ',')}% gasta`}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </Card>
   );
@@ -638,6 +624,11 @@ export const AnalysisAurum: React.FC = () => {
     return aggregateRows('hero-ultimo', 'Últ. mes', [row], currency, row.prevNetClp);
   }, [monthlyRowsAsc, currency]);
 
+  const heroLastMonthPctMonthly = useMemo(() => {
+    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
+    return row?.pct ?? null;
+  }, [monthlyRowsAsc]);
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
@@ -675,7 +666,13 @@ export const AnalysisAurum: React.FC = () => {
         </Card>
       ) : (
         <>
-          <ReturnRealHero sinceStart={heroSinceStart} last12={heroLast12} lastMonth={heroLastMonth} currency={currency} />
+          <ReturnRealHero
+            sinceStart={heroSinceStart}
+            last12={heroLast12}
+            lastMonth={heroLastMonth}
+            lastMonthPctMonthly={heroLastMonthPctMonthly}
+            currency={currency}
+          />
 
           {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
             <Card className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
