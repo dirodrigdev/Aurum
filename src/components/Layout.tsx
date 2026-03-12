@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Landmark, CalendarRange, Settings as SettingsIcon } from 'lucide-react';
+import { Landmark, CalendarRange, Settings as SettingsIcon, LineChart } from 'lucide-react';
 import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
 import { WealthDeltaToast } from './ui/WealthDeltaToast';
 import { useWealthDelta } from '../hooks/useWealthDelta';
@@ -20,6 +20,7 @@ export const Layout: React.FC = () => {
     () => [
       { to: '/patrimonio', label: 'Patrimonio', icon: Landmark },
       { to: '/closing', label: 'Cierre', icon: CalendarRange },
+      { to: '/analysis', label: 'Análisis', icon: LineChart },
       { to: '/settings', label: 'Ajustes', icon: SettingsIcon },
     ],
     [],

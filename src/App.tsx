@@ -5,6 +5,7 @@ import { Layout } from './components/Layout';
 import { Patrimonio } from './pages/Patrimonio';
 import { SettingsAurum } from './pages/SettingsAurum';
 import { ClosingAurum } from './pages/ClosingAurum';
+import { AnalysisAurum } from './pages/AnalysisAurum';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
 import {
   WEALTH_DATA_UPDATED_EVENT,
@@ -248,6 +249,7 @@ const App: React.FC = () => {
             <Route path="/" element={<Navigate to="/patrimonio" replace />} />
             <Route path="/patrimonio" element={<Patrimonio />} />
             <Route path="/closing" element={<ClosingAurum />} />
+            <Route path="/analysis" element={<AnalysisAurum />} />
             <Route path="/settings" element={<SettingsAurum />} />
           </Route>
           <Route path="*" element={<Navigate to="/patrimonio" replace />} />
