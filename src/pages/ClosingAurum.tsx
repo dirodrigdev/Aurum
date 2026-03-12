@@ -502,6 +502,8 @@ export const ClosingAurum: React.FC = () => {
   });
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
+  const lastSelectedClosureMonthKeyRef = useRef('');
+  const closureListTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
@@ -606,6 +608,8 @@ export const ClosingAurum: React.FC = () => {
 
   useEffect(() => {
     if (!closures.length || !selectedClosureMonthKey) return;
+    if (lastSelectedClosureMonthKeyRef.current === selectedClosureMonthKey) return;
+    lastSelectedClosureMonthKeyRef.current = selectedClosureMonthKey;
     const idx = closures.findIndex((closure) => closure.monthKey === selectedClosureMonthKey);
     if (idx < 0) return;
     const page = Math.floor(idx / CLOSURES_PER_PAGE);
@@ -668,6 +672,26 @@ export const ClosingAurum: React.FC = () => {
     safeClosurePage * CLOSURES_PER_PAGE,
     safeClosurePage * CLOSURES_PER_PAGE + CLOSURES_PER_PAGE,
   );
+  const onClosureListTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    closureListTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+  const onClosureListTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = closureListTouchStartRef.current;
+    closureListTouchStartRef.current = null;
+    if (!start) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy)) return;
+    if (dx < 0) {
+      setClosurePage((prev) => Math.min(closureTotalPages - 1, prev + 1));
+      return;
+    }
+    setClosurePage((prev) => Math.max(0, prev - 1));
+  };
 
   const closureDisplayNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
@@ -1260,7 +1284,11 @@ export const ClosingAurum: React.FC = () => {
                         </Button>
                       </div>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    <div
+                      className="mt-2 grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto pr-1"
+                      onTouchStart={onClosureListTouchStart}
+                      onTouchEnd={onClosureListTouchEnd}
+                    >
                       {pagedClosures.map((closure) => {
                         const selected = closure.monthKey === selectedClosureMonthKey;
                         return (
