@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
   Building2,
   Camera,
   FileScan,
@@ -594,6 +595,7 @@ interface EditableSuggestion extends ParsedWealthSuggestion {
 interface SectionScreenProps {
   section: MainSection;
   monthKey: string;
+  closures: WealthMonthlyClosure[];
   recordsForSection: WealthRecord[];
   includeRiskCapitalInTotals: boolean;
   onToggleRiskCapitalView: () => void;
@@ -657,6 +659,32 @@ interface ChecklistRow {
   context?: InvestmentSourceContext;
 }
 
+type InvestmentAnalyticsGroup = 'financieras' | 'previsionales' | 'otros';
+
+interface InvestmentAnalyticsRow {
+  key: string;
+  label: string;
+  group: InvestmentAnalyticsGroup;
+  isRiskCapital: boolean;
+  currentClp: number;
+  compareClp: number | null;
+}
+
+interface InvestmentOperationalRow {
+  key: string;
+  name: string;
+  status: ChecklistRow['status'];
+  detail: string;
+  amountText: string;
+  hasValue: boolean;
+  sourceContext: InvestmentSourceContext;
+}
+
+interface PendingInvestmentDelete {
+  title: string;
+  targets: Array<{ label: string; currency: WealthCurrency }>;
+}
+
 interface BankMovementsModalState {
   bank: string;
   currency: WealthCurrency;
@@ -688,6 +716,7 @@ interface CloseValidationIssue {
 const SectionScreen: React.FC<SectionScreenProps> = ({
   section,
   monthKey,
+  closures,
   recordsForSection,
   includeRiskCapitalInTotals,
   onToggleRiskCapitalView,
@@ -733,10 +762,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(false);
+  const [pendingInvestmentDelete, setPendingInvestmentDelete] = useState<PendingInvestmentDelete | null>(null);
   const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
   const sectionTitle = section === 'real_estate' ? 'Bienes raíces (neto)' : sectionLabel[section];
   const expectedMonthPrefix = `${monthKey}-`;
   const visualSnapshotDate = useMemo(() => visualMonthSnapshotDate(monthKey), [monthKey]);
+
+  const investmentGroupOrder: Record<InvestmentAnalyticsGroup, number> = {
+    financieras: 0,
+    previsionales: 1,
+    otros: 2,
+  };
 
   useEffect(() => {
     setDraft((prev) =>
@@ -1378,6 +1415,355 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     const optionalPending = checklistRows.filter((row) => row.isOptional && row.status === 'pendiente').length;
     return { total, pending, excluded, notUpdated, updated, completed, optionalPending };
   }, [checklistRows]);
+
+  const inferInvestmentCurrency = (label: string): WealthCurrency => {
+    if (sameCanonicalLabel(label, INVESTMENT_GLOBAL66_USD_LABEL)) return 'USD';
+    if (sameCanonicalLabel(label, INVESTMENT_WISE_USD_LABEL)) return 'USD';
+    if (sameCanonicalLabel(label, RISK_CAPITAL_LABEL_USD)) return 'USD';
+    const normalized = normalizeForMatch(label);
+    if (normalized.endsWith(' usd') || normalized.includes(' usd ')) return 'USD';
+    if (normalized.endsWith(' eur') || normalized.includes(' eur ')) return 'EUR';
+    return 'CLP';
+  };
+
+  const investmentMetaFromLabel = (
+    label: string,
+    currency: WealthCurrency,
+  ): { key: string; label: string; group: InvestmentAnalyticsGroup; isRiskCapital: boolean } => {
+    if (sameCanonicalLabel(label, INVESTMENT_SURA_FIN_LABEL)) {
+      return { key: 'sura_fin', label: 'SURA financiero', group: 'financieras', isRiskCapital: false };
+    }
+    if (sameCanonicalLabel(label, INVESTMENT_BTG_LABEL)) {
+      return { key: 'btg', label: 'BTG', group: 'financieras', isRiskCapital: false };
+    }
+    if (sameCanonicalLabel(label, INVESTMENT_GLOBAL66_USD_LABEL)) {
+      return { key: 'global66', label: 'Global66', group: 'financieras', isRiskCapital: false };
+    }
+    if (sameCanonicalLabel(label, INVESTMENT_WISE_USD_LABEL)) {
+      return { key: 'wise', label: 'Wise', group: 'financieras', isRiskCapital: false };
+    }
+    if (sameCanonicalLabel(label, INVESTMENT_SURA_PREV_LABEL)) {
+      return { key: 'sura_prev', label: 'SURA previsional', group: 'previsionales', isRiskCapital: false };
+    }
+    if (sameCanonicalLabel(label, INVESTMENT_PLANVITAL_LABEL)) {
+      return { key: 'planvital', label: 'PlanVital', group: 'previsionales', isRiskCapital: false };
+    }
+    if (isTenenciaInstrumentLabel(label)) {
+      return { key: 'tenencia_cxc', label: TENENCIA_CXC_PREFIX_LABEL, group: 'otros', isRiskCapital: false };
+    }
+    if (isRiskCapitalInvestmentLabel(label)) {
+      return {
+        key: `risk_${currency.toLowerCase()}`,
+        label: currency === 'USD' ? RISK_CAPITAL_LABEL_USD : RISK_CAPITAL_LABEL_CLP,
+        group: 'otros',
+        isRiskCapital: true,
+      };
+    }
+    return {
+      key: `other_${labelMatchKey(label)}_${currency.toLowerCase()}`,
+      label,
+      group: 'otros',
+      isRiskCapital: false,
+    };
+  };
+
+  const buildInvestmentAnalyticsMap = (
+    records: WealthRecord[],
+    fxRates: { usdClp: number; eurClp: number; ufClp: number },
+  ) => {
+    const map = new Map<string, InvestmentAnalyticsRow>();
+    records.forEach((record) => {
+      if (record.block !== 'investment') return;
+      const meta = investmentMetaFromLabel(record.label, record.currency);
+      const amountClp = toClp(record.amount, record.currency, fxRates.usdClp, fxRates.eurClp, fxRates.ufClp);
+      const existing = map.get(meta.key);
+      if (existing) {
+        map.set(meta.key, { ...existing, currentClp: existing.currentClp + amountClp });
+        return;
+      }
+      map.set(meta.key, {
+        key: meta.key,
+        label: meta.label,
+        group: meta.group,
+        isRiskCapital: meta.isRiskCapital,
+        currentClp: amountClp,
+        compareClp: null,
+      });
+    });
+    return map;
+  };
+
+  const previousConfirmedClosureForInvestment = useMemo(() => {
+    if (section !== 'investment') return null;
+    return (
+      [...closures]
+        .filter((closure) => closure.monthKey < monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
+    );
+  }, [section, closures, monthKey]);
+
+  const previousInvestmentRecords = useMemo(() => {
+    if (!previousConfirmedClosureForInvestment?.records?.length) return [];
+    return latestRecordsForMonth(
+      previousConfirmedClosureForInvestment.records,
+      previousConfirmedClosureForInvestment.monthKey,
+    ).filter((record) => record.block === 'investment');
+  }, [previousConfirmedClosureForInvestment]);
+
+  const investmentAnalyticsRows = useMemo<InvestmentAnalyticsRow[]>(() => {
+    if (section !== 'investment') return [];
+    const currentMap = buildInvestmentAnalyticsMap(dedupedSectionRecords, { usdClp, eurClp, ufClp });
+    const compareFx = previousConfirmedClosureForInvestment?.fxRates || { usdClp, eurClp, ufClp };
+    const compareMap = buildInvestmentAnalyticsMap(previousInvestmentRecords, compareFx);
+    const keys = new Set([...currentMap.keys(), ...compareMap.keys()]);
+    const rows = [...keys].map((key) => {
+      const current = currentMap.get(key);
+      const compare = compareMap.get(key);
+      return {
+        key,
+        label: current?.label || compare?.label || key,
+        group: current?.group || compare?.group || 'otros',
+        isRiskCapital: Boolean(current?.isRiskCapital || compare?.isRiskCapital),
+        currentClp: current?.currentClp || 0,
+        compareClp: compare ? compare.currentClp : null,
+      };
+    });
+    return rows.sort((a, b) => {
+      const groupDiff = investmentGroupOrder[a.group] - investmentGroupOrder[b.group];
+      if (groupDiff !== 0) return groupDiff;
+      if (a.isRiskCapital !== b.isRiskCapital) return a.isRiskCapital ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [
+    section,
+    dedupedSectionRecords,
+    previousInvestmentRecords,
+    previousConfirmedClosureForInvestment,
+    usdClp,
+    eurClp,
+    ufClp,
+    investmentGroupOrder,
+  ]);
+
+  const includeInvestmentAmountForMode = (amount: number, isRiskCapital: boolean) => {
+    if (!isRiskCapital) return amount;
+    return includeRiskCapitalInTotals ? amount : 0;
+  };
+
+  const investmentAnalyticsTotals = useMemo(() => {
+    const totals = {
+      financieras: { current: 0, compare: 0, hasCompare: false },
+      previsionales: { current: 0, compare: 0, hasCompare: false },
+      otros: { current: 0, compare: 0, hasCompare: false },
+    };
+    investmentAnalyticsRows.forEach((row) => {
+      totals[row.group].current += includeInvestmentAmountForMode(row.currentClp, row.isRiskCapital);
+      if (row.compareClp !== null) {
+        totals[row.group].compare += includeInvestmentAmountForMode(row.compareClp, row.isRiskCapital);
+        totals[row.group].hasCompare = true;
+      }
+    });
+    return totals;
+  }, [investmentAnalyticsRows, includeRiskCapitalInTotals]);
+
+  const investmentTotalCompareClp = useMemo(() => {
+    if (section !== 'investment') return null;
+    if (!previousConfirmedClosureForInvestment) return null;
+    if (previousInvestmentRecords.length > 0) {
+      return (
+        investmentAnalyticsTotals.financieras.compare +
+        investmentAnalyticsTotals.previsionales.compare +
+        investmentAnalyticsTotals.otros.compare
+      );
+    }
+    if (includeRiskCapitalInTotals && Number.isFinite(previousConfirmedClosureForInvestment.summary?.investmentClpWithRisk)) {
+      return Number(previousConfirmedClosureForInvestment.summary.investmentClpWithRisk);
+    }
+    if (Number.isFinite(previousConfirmedClosureForInvestment.summary?.investmentClp)) {
+      return Number(previousConfirmedClosureForInvestment.summary.investmentClp);
+    }
+    return null;
+  }, [
+    section,
+    previousConfirmedClosureForInvestment,
+    previousInvestmentRecords,
+    investmentAnalyticsTotals,
+    includeRiskCapitalInTotals,
+  ]);
+
+  const investmentTotalDelta = useMemo(() => {
+    if (section !== 'investment' || investmentTotalCompareClp === null) return null;
+    return sectionTotalClp - investmentTotalCompareClp;
+  }, [section, sectionTotalClp, investmentTotalCompareClp]);
+
+  const investmentTotalDeltaPct = useMemo(() => {
+    if (investmentTotalCompareClp === null || investmentTotalCompareClp === 0) return null;
+    return ((sectionTotalClp - investmentTotalCompareClp) / investmentTotalCompareClp) * 100;
+  }, [sectionTotalClp, investmentTotalCompareClp]);
+
+  const buildInvestmentSourceContextForRow = (row: ChecklistRow): InvestmentSourceContext => {
+    if (isTenenciaInstrumentLabel(row.name)) {
+      const labelsFromInstruments = investmentInstruments
+        .filter((instrument) => isTenenciaInstrumentLabel(instrument.label))
+        .map((instrument) => ({ label: instrument.label, currency: instrument.currency }));
+      const labelsFromRecords = dedupedSectionRecords
+        .filter((record) => record.block === 'investment' && isTenenciaInstrumentLabel(record.label))
+        .map((record) => ({ label: record.label, currency: record.currency }));
+      const labels = [...labelsFromInstruments, ...labelsFromRecords].reduce<
+        Array<{ label: string; currency: WealthCurrency }>
+      >((acc, item) => {
+        const key = `${labelMatchKey(item.label)}::${item.currency}`;
+        if (acc.some((existing) => `${labelMatchKey(existing.label)}::${existing.currency}` === key)) return acc;
+        acc.push(item);
+        return acc;
+      }, []);
+      return {
+        title: TENENCIA_CXC_PREFIX_LABEL,
+        sourceHint: 'auto',
+        source: TENENCIA_CXC_PREFIX_LABEL,
+        labels: labels.length ? labels : [{ label: TENENCIA_CXC_PREFIX_LABEL, currency: 'CLP' }],
+        isCustom: true,
+      };
+    }
+    const context = row.context;
+    const exactMatch = context?.labels.find((item) => sameCanonicalLabel(item.label, row.name));
+    return {
+      title: row.name,
+      sourceHint: context?.sourceHint || 'auto',
+      source: context?.source || 'Manual',
+      labels: [
+        {
+          label: row.name,
+          currency: exactMatch?.currency || inferInvestmentCurrency(row.name),
+        },
+      ],
+      instrumentId: row.instrumentId,
+      isCustom: row.isCustomInstrument || context?.isCustom,
+    };
+  };
+
+  const investmentOperationalRows = useMemo<InvestmentOperationalRow[]>(() => {
+    if (section !== 'investment') return [];
+    const seen = new Set<string>();
+    return sortedChecklistRows
+      .filter((row) => {
+        const rowKey = isTenenciaInstrumentLabel(row.name) ? TENENCIA_BASE_KEY : labelMatchKey(row.name);
+        if (seen.has(rowKey)) return false;
+        seen.add(rowKey);
+        return true;
+      })
+      .map((row) => {
+        const sourceContext = buildInvestmentSourceContextForRow(row);
+        const relatedRecords = dedupedSectionRecords.filter(
+          (record) =>
+            record.block === 'investment' &&
+            sourceContext.labels.some(
+              (item) => item.currency === record.currency && sameCanonicalLabel(item.label, record.label),
+            ),
+        );
+        const hasValue = relatedRecords.length > 0;
+        const amountText = hasValue
+          ? relatedRecords.length === 1
+            ? formatCurrency(relatedRecords[0].amount, relatedRecords[0].currency)
+            : formatCurrency(
+                relatedRecords.reduce(
+                  (sum, record) => sum + toClp(record.amount, record.currency, usdClp, eurClp, ufClp),
+                  0,
+                ),
+                'CLP',
+              )
+          : 'Sin valor este mes';
+        return {
+          key: row.instrumentId ? `instrument-${row.instrumentId}` : `label-${labelMatchKey(row.name)}`,
+          name: row.name,
+          status: row.status,
+          detail: row.detail,
+          amountText,
+          hasValue,
+          sourceContext,
+        };
+      });
+  }, [section, sortedChecklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
+
+  const triggerInvestmentPhotoLoad = (context: InvestmentSourceContext) => {
+    setActiveSourceContext(context);
+    setSourceHint(context.sourceHint);
+    setQuickFill(null);
+    setMultiQuickFill(null);
+    setSuggestions([]);
+    setOcrError('');
+    setOcrText('');
+    setOpenLoadPanel(true);
+    requestAnimationFrame(() => openImagePicker());
+  };
+
+  const confirmDeleteInvestmentTargets = () => {
+    if (!pendingInvestmentDelete) return;
+    const before = latestRecordsForMonth(loadWealthRecords(), monthKey);
+    console.info('[Patrimonio][investment-delete-before]', {
+      monthKey,
+      targets: pendingInvestmentDelete.targets,
+      recordsBefore: before.length,
+    });
+    pendingInvestmentDelete.targets.forEach((target) => {
+      removeWealthRecordForMonthAsset({
+        block: 'investment',
+        label: target.label,
+        currency: target.currency,
+        monthKey,
+      });
+    });
+    const after = latestRecordsForMonth(loadWealthRecords(), monthKey);
+    const removed = Math.max(0, before.length - after.length);
+    console.info('[Patrimonio][investment-delete-after]', {
+      monthKey,
+      targets: pendingInvestmentDelete.targets,
+      recordsAfter: after.length,
+      removed,
+    });
+    if (removed === 0 && pendingInvestmentDelete.targets.length > 0) {
+      setOcrError('No pude confirmar el borrado del instrumento. Reintenta.');
+      setPendingInvestmentDelete(null);
+      return;
+    }
+    setPendingInvestmentDelete(null);
+    onDataChanged();
+  };
+
+  const investmentSubtotalCards = useMemo(
+    () => [
+      {
+        key: 'financieras',
+        label: 'Inversiones financieras',
+        current: investmentAnalyticsTotals.financieras.current,
+        compare: investmentAnalyticsTotals.financieras.hasCompare
+          ? investmentAnalyticsTotals.financieras.compare
+          : null,
+        className: 'border-[#d8c39d] bg-[#f6ead7]',
+        titleClassName: 'text-[#7f5528]',
+      },
+      {
+        key: 'previsionales',
+        label: 'Inversiones previsionales',
+        current: investmentAnalyticsTotals.previsionales.current,
+        compare: investmentAnalyticsTotals.previsionales.hasCompare
+          ? investmentAnalyticsTotals.previsionales.compare
+          : null,
+        className: 'border-emerald-200 bg-emerald-50',
+        titleClassName: 'text-emerald-800',
+      },
+      {
+        key: 'otros',
+        label: 'Otras inversiones',
+        current: investmentAnalyticsTotals.otros.current,
+        compare: investmentAnalyticsTotals.otros.hasCompare ? investmentAnalyticsTotals.otros.compare : null,
+        className:
+          'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,63,58,0.08)]',
+        titleClassName: 'text-slate-700',
+      },
+    ],
+    [investmentAnalyticsTotals],
+  );
 
   const closeLoadPanel = () => {
     setOpenLoadPanel(false);
@@ -2042,7 +2428,128 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </>
       )}
 
-      {section !== 'bank' && (
+      <ConfirmActionModal
+        open={!!pendingInvestmentDelete}
+        title="Eliminar instrumento del mes"
+        message={
+          pendingInvestmentDelete
+            ? `Vas a borrar "${pendingInvestmentDelete.title}" de ${monthLabel(monthKey).toLowerCase()}. Esta acción no afecta cierres anteriores.`
+            : ''
+        }
+        tone="danger"
+        confirmText="Borrar"
+        cancelText="Cancelar"
+        onConfirm={confirmDeleteInvestmentTargets}
+        onCancel={() => setPendingInvestmentDelete(null)}
+      />
+
+      {section === 'investment' && (
+        <Card className="p-2.5 space-y-2 border-[#d9d8d1]">
+          <div className="text-[13px] font-semibold text-slate-800">Analítica de inversiones</div>
+          <div className="text-[11px] text-slate-500">
+            {previousConfirmedClosureForInvestment
+              ? `vs ${monthLabel(previousConfirmedClosureForInvestment.monthKey)}`
+              : 'Sin cierre previo confirmado para comparar'}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="text-[26px] leading-none font-bold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+            {includeRiskCapitalInTotals && sectionHasRiskCapital && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                +CapRiesgo
+              </span>
+            )}
+          </div>
+          {investmentTotalDelta !== null && (
+            <div className={`text-xs font-semibold ${investmentTotalDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+              {investmentTotalDelta >= 0 ? '+' : ''}
+              {formatCurrency(investmentTotalDelta, 'CLP')}
+              {investmentTotalDeltaPct !== null
+                ? ` (${investmentTotalDeltaPct >= 0 ? '+' : ''}${investmentTotalDeltaPct.toFixed(2)}%)`
+                : ''}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            {investmentSubtotalCards.map((card) => {
+              const delta = card.compare === null ? null : card.current - card.compare;
+              const pct = card.compare && card.compare !== 0 ? (delta! / card.compare) * 100 : null;
+              return (
+                <div key={card.key} className={`rounded-lg border px-2.5 py-2 ${card.className}`}>
+                  <div className={`text-[11px] font-semibold ${card.titleClassName}`}>
+                    {card.label}
+                    {card.key === 'otros' && includeRiskCapitalInTotals && sectionHasRiskCapital && (
+                      <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                        +CapRiesgo
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
+                  <div className="mt-0.5 text-base font-bold text-slate-900">{formatCurrency(card.current, 'CLP')}</div>
+                  {delta !== null && (
+                    <div className={`mt-1 text-[10px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {delta >= 0 ? '+' : ''}
+                      {formatCurrency(delta, 'CLP')}
+                      {pct !== null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : ''}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="space-y-1.5">
+            {investmentAnalyticsRows.map((row) => {
+              const current = includeInvestmentAmountForMode(row.currentClp, row.isRiskCapital);
+              const compare = row.compareClp === null ? null : includeInvestmentAmountForMode(row.compareClp, row.isRiskCapital);
+              const delta = compare === null ? null : current - compare;
+              const pct = compare && compare !== 0 ? (delta! / compare) * 100 : null;
+              const rowStyle =
+                row.isRiskCapital
+                  ? 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]'
+                  : row.group === 'previsionales'
+                    ? 'border-emerald-200 bg-emerald-50/30'
+                    : row.group === 'financieras'
+                      ? 'border-[#d8c39d] bg-[#f8efe2]'
+                      : 'border-[#e8dfcf] bg-[#fcfaf5] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(15,63,58,0.08)]';
+              const rowLeft =
+                row.isRiskCapital
+                  ? 'border-l-4 border-l-[#e5dccb]'
+                  : row.group === 'previsionales'
+                    ? 'border-l-4 border-l-emerald-300'
+                    : row.group === 'financieras'
+                      ? 'border-l-4 border-l-[#caa16d]'
+                      : 'border-l-4 border-l-[#e5dccb]';
+              return (
+                <div
+                  key={row.key}
+                  className={`rounded-lg border px-2.5 py-1.5 ${rowStyle} ${rowLeft} ${
+                    row.isRiskCapital && !includeRiskCapitalInTotals ? 'opacity-35' : ''
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] text-slate-700">{row.label}</span>
+                    <div className="text-right">
+                      <div className="text-xs font-semibold text-slate-900">{formatCurrency(current, 'CLP')}</div>
+                      {delta !== null && (
+                        <div className={`text-[10px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {delta >= 0 ? '+' : ''}
+                          {formatCurrency(delta, 'CLP')}
+                          {pct !== null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {!investmentAnalyticsRows.length && (
+              <div className="text-[11px] text-slate-500">Sin detalle de inversiones aún para este mes.</div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {section !== 'bank' && section !== 'investment' && (
         <Card className="p-4 space-y-2 border border-slate-200 shadow-sm bg-white">
           <div className="text-sm font-semibold text-slate-900">Cómo se compone</div>
           {dedupedSectionRecords.length === 0 && <div className="text-xs text-slate-500">Sin datos para este mes.</div>}
@@ -2053,22 +2560,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className={`font-semibold ${
-                    item.block === 'debt'
-                      ? 'text-red-700'
-                      : section === 'investment' && !isCarriedRecord(item) && !isEstimatedRecord(item)
-                        ? 'text-emerald-700'
-                        : ''
-                  }`}
+                  className={`font-semibold ${item.block === 'debt' ? 'text-red-700' : ''}`}
                   onClick={() => openRecordEditor(item)}
                 >
                   {item.block === 'debt' ? '-' : ''}
                   {formatCurrency(item.amount, item.currency)}
                 </button>
-                <button
-                  className="text-slate-400 hover:text-blue-600"
-                  onClick={() => openRecordEditor(item)}
-                >
+                <button className="text-slate-400 hover:text-blue-600" onClick={() => openRecordEditor(item)}>
                   <Pencil size={14} />
                 </button>
                 <button
@@ -2103,154 +2601,222 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         </Card>
       )}
 
-      <Card className="p-4 space-y-2 border border-slate-200 bg-slate-50/80">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
-          {checklistSummary.pending === 0 && checklistSummary.notUpdated === 0 && (
-            <div className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-700">
-              <CheckCircle2 size={12} />
-              Todo cargado
-            </div>
-          )}
-          {checklistSummary.pending === 0 && checklistSummary.notUpdated > 0 && (
-            <div className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
-              <CheckCircle2 size={12} />
-              Completo con arrastres
-            </div>
-          )}
-        </div>
-        <div className="text-[11px] text-slate-600">
-          Completadas {checklistSummary.completed} de {checklistSummary.total}
-          {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
-          {checklistSummary.optionalPending ? ` · Opcionales ${checklistSummary.optionalPending}` : ''}
-          {checklistSummary.notUpdated ? ` · No actualizadas ${checklistSummary.notUpdated}` : ''}
-          {checklistSummary.updated ? ` · Actualizadas ${checklistSummary.updated}` : ''}
-          {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
-        </div>
-        {section === 'bank' ? (
-          <div className="space-y-2">
-            <div className="grid md:grid-cols-3 gap-2">
-              {BANK_PROVIDERS.map((bank) => (
-                <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
-                  <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    {bankTokens[bank.id]
-                      ? 'Token: guardado'
-                      : bankApiPresenceByProvider[bank.id]
-                        ? 'Token: no guardado en este dispositivo (hay datos API)'
-                        : 'Token: pendiente'}
-                  </div>
-                  <div className="mt-2 flex items-center gap-1">
-                    <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
-                      Cambiar token
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
-                {updatingAllBanks || fintocDiscovering ? 'Actualizando...' : 'Actualizar bancos'}
-              </Button>
-            </div>
-            <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
-              Completar pendientes con mes anterior
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center flex-wrap gap-2">
-            {section === 'real_estate' && (
-              <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
-                Autocálculo hipotecario
-              </Button>
-            )}
-            <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
-              Completar pendientes con mes anterior
-            </Button>
-          </div>
-        )}
-        {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
-        {!!fintocStatus && (
-          <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
-            {fintocStatus}
-          </div>
-        )}
-        {section === 'bank' && !!fintocDiscovery && (
-          <div className="text-[11px] text-slate-500">
-            Diagnóstico API disponible (modo técnico oculto en esta vista).
-          </div>
-        )}
-        {sortedChecklistRows.map((row) => (
-          <div
-            key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
-            className={cn(
-              'w-full text-xs rounded-lg border border-slate-200 bg-white px-2 py-1 hover:bg-slate-100/60 cursor-pointer',
-              section === 'investment' && row.isOptional && !includeRiskCapitalInTotals && 'opacity-35',
-            )}
-            onClick={() => openChecklistItem(row)}
+      {section === 'investment' ? (
+        <Card className="border border-slate-200 bg-slate-50/80 p-0">
+          <button
+            type="button"
+            onClick={() => setOperationsOpen((prev) => !prev)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-left flex-1">
-                <div>{row.name}</div>
-                <div className="text-[11px] text-slate-500">{row.detail}</div>
+            <div>
+              <div className="text-sm font-semibold text-slate-800">Gestionar instrumentos</div>
+              <div className="text-[11px] text-slate-600">
+                Completadas {checklistSummary.completed} de {checklistSummary.total}
+                {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
               </div>
-              {row.status === 'pendiente' && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onUseMissing(section, row.name);
-                  }}
-                >
-                  Usar mes anterior
-                </Button>
-              )}
-              {section === 'investment' &&
-                row.isCustomInstrument &&
-                row.instrumentId &&
-                !isNonExcludableInvestmentLabel(row.name) && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSetInvestmentExcluded(row.instrumentId as string, row.status !== 'excluido');
-                  }}
-                >
-                  {row.status === 'excluido' ? 'Incluir mes' : 'Excluir mes'}
-                </Button>
-              )}
-              {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
-              {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
-              {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
-              {row.status === 'actualizado' && (
-                <span className="inline-flex items-center gap-1 text-emerald-700">
-                  <CheckCircle2 size={12} />
-                  Actualizado
-                </span>
-              )}
-              {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
             </div>
+            <ChevronDown
+              size={16}
+              className={cn('text-slate-500 transition-transform', operationsOpen && 'rotate-180')}
+            />
+          </button>
+          {operationsOpen && (
+            <div className="space-y-2 border-t border-slate-200 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
+                  Completar pendientes con mes anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setNewInvestmentDraft({ label: '', currency: 'CLP', amount: '', note: '' });
+                    setOpenCreateInvestmentModal(true);
+                  }}
+                >
+                  + Agregar instrumento
+                </Button>
+              </div>
+              {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
+              {investmentOperationalRows.map((row) => {
+                const deleteTargets = row.sourceContext.labels.reduce<Array<{ label: string; currency: WealthCurrency }>>(
+                  (acc, item) => {
+                    const key = `${labelMatchKey(item.label)}::${item.currency}`;
+                    if (acc.some((existing) => `${labelMatchKey(existing.label)}::${existing.currency}` === key)) {
+                      return acc;
+                    }
+                    acc.push({ label: item.label, currency: item.currency });
+                    return acc;
+                  },
+                  [],
+                );
+                return (
+                  <div key={row.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900">{row.name}</div>
+                        <div className="text-xs text-slate-500">{row.amountText}</div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">
+                          {row.status === 'actualizado' && `✅ Actualizado · ${row.detail}`}
+                          {row.status === 'mes_anterior' && `🔄 Arrastre · ${row.detail}`}
+                          {row.status === 'estimado' && `🔄 Estimado · ${row.detail}`}
+                          {row.status === 'pendiente' && 'Pendiente de carga'}
+                          {row.status === 'excluido' && 'No considerado este mes'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openQuickFillForContext(row.sourceContext)}
+                        >
+                          ✏️ Manual
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => triggerInvestmentPhotoLoad(row.sourceContext)}
+                        >
+                          📷 Foto
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          disabled={!row.hasValue}
+                          onClick={() =>
+                            setPendingInvestmentDelete({
+                              title: row.name,
+                              targets: deleteTargets,
+                            })
+                          }
+                        >
+                          🗑 Borrar
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      ) : (
+        <Card className="p-4 space-y-2 border border-slate-200 bg-slate-50/80">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-800">Checklist del bloque</div>
+            {checklistSummary.pending === 0 && checklistSummary.notUpdated === 0 && (
+              <div className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-700">
+                <CheckCircle2 size={12} />
+                Todo cargado
+              </div>
+            )}
+            {checklistSummary.pending === 0 && checklistSummary.notUpdated > 0 && (
+              <div className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
+                <CheckCircle2 size={12} />
+                Completo con arrastres
+              </div>
+            )}
           </div>
-        ))}
-        {section === 'investment' && (
-          <div className="pt-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setNewInvestmentDraft({ label: '', currency: 'CLP', amount: '', note: '' });
-                setOpenCreateInvestmentModal(true);
-              }}
+          <div className="text-[11px] text-slate-600">
+            Completadas {checklistSummary.completed} de {checklistSummary.total}
+            {checklistSummary.pending ? ` · Pendientes ${checklistSummary.pending}` : ''}
+            {checklistSummary.optionalPending ? ` · Opcionales ${checklistSummary.optionalPending}` : ''}
+            {checklistSummary.notUpdated ? ` · No actualizadas ${checklistSummary.notUpdated}` : ''}
+            {checklistSummary.updated ? ` · Actualizadas ${checklistSummary.updated}` : ''}
+            {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
+          </div>
+          {section === 'bank' ? (
+            <div className="space-y-2">
+              <div className="grid md:grid-cols-3 gap-2">
+                {BANK_PROVIDERS.map((bank) => (
+                  <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
+                    <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {bankTokens[bank.id]
+                        ? 'Token: guardado'
+                        : bankApiPresenceByProvider[bank.id]
+                          ? 'Token: no guardado en este dispositivo (hay datos API)'
+                          : 'Token: pendiente'}
+                    </div>
+                    <div className="mt-2 flex items-center gap-1">
+                      <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
+                        Cambiar token
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
+                  {updatingAllBanks || fintocDiscovering ? 'Actualizando...' : 'Actualizar bancos'}
+                </Button>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
+                Completar pendientes con mes anterior
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center flex-wrap gap-2">
+              {section === 'real_estate' && (
+                <Button variant="outline" size="sm" onClick={onApplyMortgageAuto}>
+                  Autocálculo hipotecario
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
+                Completar pendientes con mes anterior
+              </Button>
+            </div>
+          )}
+          {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
+          {!!fintocStatus && (
+            <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
+              {fintocStatus}
+            </div>
+          )}
+          {section === 'bank' && !!fintocDiscovery && (
+            <div className="text-[11px] text-slate-500">
+              Diagnóstico API disponible (modo técnico oculto en esta vista).
+            </div>
+          )}
+          {sortedChecklistRows.map((row) => (
+            <div
+              key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
+              className="w-full cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-100/60"
+              onClick={() => openChecklistItem(row)}
             >
-              Agregar inversión
-            </Button>
-          </div>
-        )}
-      </Card>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-left flex-1">
+                  <div>{row.name}</div>
+                  <div className="text-[11px] text-slate-500">{row.detail}</div>
+                </div>
+                {row.status === 'pendiente' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onUseMissing(section, row.name);
+                    }}
+                  >
+                    Usar mes anterior
+                  </Button>
+                )}
+                {row.status === 'pendiente' && <span className="text-red-700">Pendiente</span>}
+                {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
+                {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
+                {row.status === 'actualizado' && (
+                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                    <CheckCircle2 size={12} />
+                    Actualizado
+                  </span>
+                )}
+                {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {openSourceMenu && activeSourceContext && (
         <>
@@ -4120,6 +4686,7 @@ export const Patrimonio: React.FC = () => {
         <SectionScreen
           section={activeSection}
           monthKey={monthKey}
+          closures={closures}
           recordsForSection={recordsForSection}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskCapitalView={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
