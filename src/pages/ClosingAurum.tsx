@@ -46,6 +46,7 @@ import {
   loadIncludeRiskCapitalInTotals,
   WEALTH_DATA_UPDATED_EVENT,
   hydrateWealthFromCloud,
+  isMortgageMetaDebtLabel,
   isSyntheticAggregateRecord,
   isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
@@ -54,6 +55,7 @@ import {
   loadWealthRecords,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   saveIncludeRiskCapitalInTotals,
+  summarizeWealth,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
 
@@ -787,7 +789,31 @@ export const ClosingAurum: React.FC = () => {
     if (!selectedClosure || !selectedClosureRecordsRaw?.length) return;
     const nextDraft = CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
       const existing = findRecordByCanonicalLabel(selectedClosureRecordsRaw, field.canonicalLabel);
-      acc[field.key] = existing ? String(existing.amount) : '';
+      if (existing) {
+        acc[field.key] = String(existing.amount);
+        return acc;
+      }
+      if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
+        const aggregate = selectedClosureRecordsRaw
+          .filter((record) => record.block === 'bank' && record.currency === field.currency)
+          .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+        acc[field.key] = aggregate ? String(aggregate) : '';
+        return acc;
+      }
+      if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
+        const aggregate = selectedClosureRecordsRaw
+          .filter(
+            (record) =>
+              record.block === 'debt' &&
+              record.currency === field.currency &&
+              !sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL) &&
+              !isMortgageMetaDebtLabel(record.label),
+          )
+          .reduce((sum, record) => sum + Math.abs(Number(record.amount || 0)), 0);
+        acc[field.key] = aggregate ? String(aggregate) : '';
+        return acc;
+      }
+      acc[field.key] = '';
       return acc;
     }, {} as Record<EditableFieldKey, string>);
     setClosureEditDraft(nextDraft);
@@ -857,9 +883,27 @@ export const ClosingAurum: React.FC = () => {
       if (String(raw || '').trim() === '') {
         return;
       }
-      nextRecords = nextRecords.filter(
-        (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
-      );
+      // [PRODUCT RULE] Editar es la fuente de verdad del cierre: campos agregados reemplazan
+      // completamente su bloque para evitar mezclas con detalle previo.
+      if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
+        nextRecords = nextRecords.filter(
+          (record) => !(record.block === 'bank' && record.currency === field.currency),
+        );
+      } else if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
+        nextRecords = nextRecords.filter(
+          (record) =>
+            !(
+              record.block === 'debt' &&
+              record.currency === field.currency &&
+              !sameCanonicalLabel(record.label, MORTGAGE_DEBT_BALANCE_LABEL) &&
+              !isMortgageMetaDebtLabel(record.label)
+            ),
+        );
+      } else {
+        nextRecords = nextRecords.filter(
+          (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
+        );
+      }
       const parsed = parseStrictNumber(raw);
       if (!Number.isFinite(parsed)) return;
       const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
@@ -884,9 +928,29 @@ export const ClosingAurum: React.FC = () => {
       });
     });
 
+    const normalizedNextRecords = dedupeClosureRecords(nextRecords);
+    const expectedSummary = summarizeWealth(normalizedNextRecords, nextFx);
+    const expectedRiskOffNet = buildWealthNetBreakdown(
+      resolveRiskCapitalRecordsForTotals(normalizedNextRecords, false).recordsForTotals,
+      nextFx,
+    ).netClp;
+    const expectedRiskOnNet = buildWealthNetBreakdown(
+      resolveRiskCapitalRecordsForTotals(normalizedNextRecords, true).recordsForTotals,
+      nextFx,
+    ).netClp;
+    console.info('[Closing][edit-recalc-before]', {
+      monthKey: selectedClosure.monthKey,
+      expectedSummaryNetConsolidatedClp: expectedSummary.netConsolidatedClp,
+      expectedSummaryNetClp: expectedSummary.netClp,
+      expectedSummaryNetClpWithRisk: expectedSummary.netClpWithRisk,
+      expectedRiskOffNet,
+      expectedRiskOnNet,
+      normalizedRecordsCount: normalizedNextRecords.length,
+    });
+
     upsertMonthlyClosure({
       monthKey: selectedClosure.monthKey,
-      records: nextRecords,
+      records: normalizedNextRecords,
       fxRates: nextFx,
       closedAt: new Date().toISOString(),
     });
@@ -905,6 +969,11 @@ export const ClosingAurum: React.FC = () => {
       if (persistedRecord.currency !== field.currency) return true;
       return Math.abs(Number(persistedRecord.amount) - field.amount) > 1e-6;
     });
+    const persistedSummary = persistedClosure?.summary || null;
+    const summaryMatches = !!persistedSummary &&
+      Math.abs(Number(persistedSummary.netConsolidatedClp || 0) - Number(expectedSummary.netConsolidatedClp || 0)) < 1e-6 &&
+      Math.abs(Number(persistedSummary.netClp || 0) - Number(expectedSummary.netClp || 0)) < 1e-6 &&
+      Math.abs(Number(persistedSummary.netClpWithRisk || 0) - Number(expectedSummary.netClpWithRisk || 0)) < 1e-6;
     console.info('[Closing][edit-after]', {
       monthKey: selectedClosure.monthKey,
       closureId: persistedClosure?.id || null,
@@ -912,10 +981,25 @@ export const ClosingAurum: React.FC = () => {
       persistedFx,
       fxMatches,
       missingEditedField: missingEditedField?.label || null,
+      summaryMatches,
+      persistedSummaryNetConsolidatedClp: persistedSummary?.netConsolidatedClp ?? null,
+      persistedSummaryNetClp: persistedSummary?.netClp ?? null,
+      persistedSummaryNetClpWithRisk: persistedSummary?.netClpWithRisk ?? null,
+      expectedSummaryNetConsolidatedClp: expectedSummary.netConsolidatedClp,
+      expectedSummaryNetClp: expectedSummary.netClp,
+      expectedSummaryNetClpWithRisk: expectedSummary.netClpWithRisk,
+      expectedRiskOffNet,
+      expectedRiskOnNet,
     });
-    if (!persistedClosure || !fxMatches || missingEditedField) {
+    if (!persistedClosure || !fxMatches || missingEditedField || !summaryMatches) {
       setClosureEditError(
-        `Guardado incompleto: no pude confirmar edición de cierre${missingEditedField ? ` (${missingEditedField.label})` : ''}.`,
+        `Guardado incompleto: no pude confirmar edición de cierre${
+          missingEditedField
+            ? ` (${missingEditedField.label})`
+            : !summaryMatches
+              ? ' (resumen no recalculado correctamente)'
+              : ''
+        }.`,
       );
       return;
     }
