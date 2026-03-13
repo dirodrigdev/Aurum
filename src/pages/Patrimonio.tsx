@@ -1212,28 +1212,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const upsertRecordForVisualMonth = (
     payload: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string },
-    operation: string,
+    _operation: string,
   ) => {
     const snapshotDate = normalizeSnapshotDateForVisualMonth(payload.snapshotDate);
-    const before = {
-      operation,
-      monthKey,
-      id: payload.id || null,
-      requestedSnapshotDate: payload.snapshotDate,
-      normalizedSnapshotDate: snapshotDate,
-    };
-    console.info('[Patrimonio][save-before]', before);
     const saved = upsertWealthRecord({ ...payload, snapshotDate });
     const persisted = loadWealthRecords().find((record) => record.id === saved.id) || saved;
     const inExpectedMonth = String(persisted.snapshotDate || '').startsWith(expectedMonthPrefix);
-    const after = {
-      operation,
-      monthKey,
-      id: persisted.id,
-      persistedSnapshotDate: persisted.snapshotDate,
-      inExpectedMonth,
-    };
-    console.info('[Patrimonio][save-after]', after);
     if (!inExpectedMonth) {
       const visibleError = `No pude guardar "${payload.label}" en ${monthLabel(monthKey).toLowerCase()}. Reintenta.`;
       if (section === 'bank') setFintocStatus(visibleError);
@@ -1889,11 +1873,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const confirmDeleteInvestmentTargets = () => {
     if (!pendingInvestmentDelete) return;
     const before = latestRecordsForMonth(loadWealthRecords(), monthKey);
-    console.info('[Patrimonio][investment-delete-before]', {
-      monthKey,
-      targets: pendingInvestmentDelete.targets,
-      recordsBefore: before.length,
-    });
     pendingInvestmentDelete.targets.forEach((target) => {
       removeWealthRecordForMonthAsset({
         block: 'investment',
@@ -1904,12 +1883,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
     const after = latestRecordsForMonth(loadWealthRecords(), monthKey);
     const removed = Math.max(0, before.length - after.length);
-    console.info('[Patrimonio][investment-delete-after]', {
-      monthKey,
-      targets: pendingInvestmentDelete.targets,
-      recordsAfter: after.length,
-      removed,
-    });
     if (removed === 0 && pendingInvestmentDelete.targets.length > 0) {
       setOcrError('No pude confirmar el borrado del instrumento. Reintenta.');
       setPendingInvestmentDelete(null);
@@ -4128,12 +4101,6 @@ export const Patrimonio: React.FC = () => {
       return { updated: false, message: 'Tokens no configurados.' };
     }
     const snapshotDate = visualMonthSnapshotDate(targetMonthKey);
-    const before = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
-    console.info('[Patrimonio][start-month-banks-before]', {
-      targetMonthKey,
-      providers: providersWithToken.map((provider) => provider.id),
-      beforeCount: before.length,
-    });
 
     const upsertBankRecord = (
       label: string,
@@ -4190,14 +4157,6 @@ export const Patrimonio: React.FC = () => {
       .reduce((sum, record) => sum + Number(record.amount || 0), 0);
     upsertBankRecord(BANK_BALANCE_CLP_LABEL, 'CLP', totalClp, 'Calculado desde detalle de cuentas');
     upsertBankRecord(BANK_BALANCE_USD_LABEL, 'USD', totalUsd, 'Calculado desde detalle de cuentas');
-
-    const after = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
-    console.info('[Patrimonio][start-month-banks-after]', {
-      targetMonthKey,
-      afterCount: after.length,
-      totalClp,
-      totalUsd,
-    });
     return {
       updated: true,
       message: `${providersWithToken.length} banco(s) actualizado(s) vía Fintoc.`,
@@ -4262,12 +4221,6 @@ export const Patrimonio: React.FC = () => {
   const runStartMonthFlow = async () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
-    console.info('[Patrimonio][start-month-flow-before]', {
-      monthToStart,
-      monthKey,
-      calendarMonthKey,
-      latestClosureMonthKey: latestClosure?.monthKey || null,
-    });
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
@@ -4320,18 +4273,6 @@ export const Patrimonio: React.FC = () => {
       const finalNet = computeMonthNetSnapshot(monthToStart);
       const variation = previousClosureNet === null ? null : finalNet - previousClosureNet;
       writeMonthStartedFlag(monthToStart, true);
-      console.info('[Patrimonio][start-month-flow-after]', {
-        monthToStart,
-        beforeNet,
-        finalNet,
-        previousClosureNet,
-        variation,
-        carriedRecords: result.added,
-        sourceMonth: result.sourceMonth,
-        fxSeeded,
-        expectedMortgageLabels,
-        missingMortgageLabels: [],
-      });
       if (variation !== null && Math.abs(variation) > 1) {
         setCarryMessage(
           `Arrastre aplicado en ${monthLabel(monthToStart).toLowerCase()}. Variación inicial distinta de cero (${formatCurrency(variation, 'CLP')}). Revisa datos faltantes del cierre previo.`,
@@ -4357,16 +4298,8 @@ export const Patrimonio: React.FC = () => {
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
     try {
-      const beforeFx = loadFxRates();
       const result = await refreshFxRatesFromLive({ force: true });
       refreshAllWealthState();
-      const afterFx = loadFxRates();
-      console.info('[Patrimonio][start-month-fx-after]', {
-        monthToStart,
-        beforeFx,
-        afterFx,
-        updated: result.updated,
-      });
       setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF sin cambios.');
       markStartMonthStepApplied(monthToStart, 'fx');
     } catch (error: any) {
@@ -4391,10 +4324,6 @@ export const Patrimonio: React.FC = () => {
     try {
       const result = await refreshBanksFromFintocForMonth(monthToStart);
       refreshAllWealthState();
-      console.info('[Patrimonio][start-month-banks-sync-after]', {
-        monthToStart,
-        updated: result.updated,
-      });
       setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
       markStartMonthStepApplied(monthToStart, 'banks');
     } catch (error: any) {
@@ -4411,21 +4340,8 @@ export const Patrimonio: React.FC = () => {
     const monthToStart = realCurrentMonthKey;
     setStartMonthFailedStep(null);
     const beforeNet = computeMonthNetSnapshot(monthToStart);
-    console.info('[Patrimonio][start-month-real-estate-before]', {
-      monthToStart,
-      beforeNet,
-    });
     const auto = applyMortgageAutoCalculation(monthToStart, visualMonthSnapshotDate(monthToStart));
     refreshAllWealthState();
-    const afterNet = computeMonthNetSnapshot(monthToStart);
-    console.info('[Patrimonio][start-month-real-estate-after]', {
-      monthToStart,
-      afterNet,
-      delta: afterNet - beforeNet,
-      changed: auto.changed,
-      sourceMonth: auto.sourceMonth,
-      reason: auto.reason || null,
-    });
     if (auto.changed > 0) {
       setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
       markStartMonthStepApplied(monthToStart, 'realEstate');
@@ -4445,13 +4361,6 @@ export const Patrimonio: React.FC = () => {
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
   ) => {
-    const before = {
-      visualMonthBefore: monthKey,
-      targetMonthKey,
-      realCurrentMonthBefore: realCurrentMonthKey,
-      fxForClose,
-    };
-    console.info('[Patrimonio][close-before]', before);
     const targetRecords = latestRecordsForMonth(records, targetMonthKey);
     setCloseError('');
     setCloseInfo('');
@@ -4465,26 +4374,13 @@ export const Patrimonio: React.FC = () => {
       Math.abs((persistedFx.usdClp || 0) - fxForClose.usdClp) < 1e-6 &&
       Math.abs((persistedFx.eurClp || 0) - fxForClose.eurClp) < 1e-6 &&
       Math.abs((persistedFx.ufClp || 0) - fxForClose.ufClp) < 1e-6;
-    console.info('[Patrimonio][close-after-fx-check]', {
-      targetMonthKey,
-      expectedFx: fxForClose,
-      persistedFx,
-      fxMatches,
-    });
     if (!fxMatches) {
       setCloseError('El cierre se guardó, pero no pude confirmar TC/UF persistidos.');
     }
     const nextVisualMonth = monthAfterKey(targetMonthKey) || currentMonthKey();
-    const realCurrentMonthAfter = currentMonthKey();
     setMonthKey(nextVisualMonth);
     setCloseMonthDraft(nextVisualMonth);
     const advanced = nextVisualMonth !== targetMonthKey;
-    console.info('[Patrimonio][close-after]', {
-      visualMonthAfter: nextVisualMonth,
-      targetMonthKey,
-      realCurrentMonthAfter,
-      advanced,
-    });
     if (!advanced) {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
     }
@@ -4527,12 +4423,6 @@ export const Patrimonio: React.FC = () => {
 
     if (typeof input.amount === 'number' && Number.isFinite(input.amount) && input.amount > 0) {
       const expectedSnapshotDate = visualMonthSnapshotDate(monthKey);
-      console.info('[Patrimonio][save-before]', {
-        operation: 'createInvestmentInstrument',
-        monthKey,
-        label: instrument.label,
-        requestedSnapshotDate: expectedSnapshotDate,
-      });
       const saved = upsertWealthRecord({
         block: 'investment',
         source: 'Instrumento manual',
@@ -4544,13 +4434,6 @@ export const Patrimonio: React.FC = () => {
       });
       const persisted = loadWealthRecords().find((record) => record.id === saved.id) || saved;
       const inExpectedMonth = String(persisted.snapshotDate || '').startsWith(`${monthKey}-`);
-      console.info('[Patrimonio][save-after]', {
-        operation: 'createInvestmentInstrument',
-        monthKey,
-        label: instrument.label,
-        persistedSnapshotDate: persisted.snapshotDate,
-        inExpectedMonth,
-      });
       if (!inExpectedMonth) {
         setCloseError(`No pude guardar "${instrument.label}" en ${monthLabel(monthKey).toLowerCase()}.`);
       }
@@ -4963,11 +4846,6 @@ export const Patrimonio: React.FC = () => {
       eurClp: closeFxValues.eurClp,
       ufClp: closeFxValues.ufClp,
     };
-    console.info('[Patrimonio][close-before-fx-input]', {
-      targetMonthKey,
-      fxForClose,
-      isHistoricalClose: targetMonthKey !== realCurrentMonthKey,
-    });
     if (!(fxForClose.usdClp > 0 && fxForClose.eurClp > 0 && fxForClose.ufClp > 0)) {
       setCloseInfo('');
       setCloseError('Completá USD/CLP, EUR/CLP y UF/CLP válidos para confirmar este cierre.');

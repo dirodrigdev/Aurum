@@ -3000,13 +3000,6 @@ export const fillMissingWithPreviousClosure = (
   const previousSourceRecords = previous.records?.length
     ? previous.records
     : sourceFromSummary();
-  console.info('[fillMissingWithPreviousClosure][source]', {
-    targetMonthKey,
-    sourceMonth: previous.monthKey,
-    sourceType: previous.records?.length ? 'records' : 'summary',
-    sourceCount: previousSourceRecords.length,
-  });
-
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
 
   const toAdd: WealthRecord[] = [];
@@ -3297,13 +3290,6 @@ export const createWealthBackupSnapshot = async (
   const backupId = `backup_${createdAt.replace(/[:.]/g, '-')}_${crypto.randomUUID().slice(0, 8)}`;
   const backupDocRef = doc(backupsRef, backupId);
   try {
-    console.info('[backup][before-create]', {
-      reason,
-      records: snapshot.records.length,
-      closures: snapshot.closures.length,
-      instruments: snapshot.instruments.length,
-      updatedAt: snapshot.updatedAt,
-    });
     await setDoc(
       backupDocRef,
       stripUndefinedDeep({
@@ -3325,11 +3311,6 @@ export const createWealthBackupSnapshot = async (
         message: 'No pude confirmar el backup en la nube.',
       };
     }
-    console.info('[backup][after-create]', {
-      backupId,
-      createdAt,
-      reason,
-    });
     return {
       ok: true,
       backupId,
@@ -3382,14 +3363,6 @@ export const restoreWealthFromBackupSnapshot = async (
   }
   const backupDocRef = doc(backupsRef, backupId);
   try {
-    const before = readLocalWealthStateSnapshot();
-    console.info('[backup][before-restore]', {
-      backupId,
-      records: before.records.length,
-      closures: before.closures.length,
-      instruments: before.instruments.length,
-      updatedAt: before.updatedAt,
-    });
     const snap = await getDoc(backupDocRef);
     if (!snap.exists()) {
       return {
@@ -3420,14 +3393,6 @@ export const restoreWealthFromBackupSnapshot = async (
         message: 'Restauré en local, pero no pude confirmar sincronización en la nube.',
       };
     }
-    const after = readLocalWealthStateSnapshot();
-    console.info('[backup][after-restore]', {
-      backupId,
-      records: after.records.length,
-      closures: after.closures.length,
-      instruments: after.instruments.length,
-      updatedAt: after.updatedAt,
-    });
     return {
       ok: true,
       backupId,
@@ -4275,20 +4240,8 @@ const importHistoricalClosuresFromCsvByMode = async (
   const mergedClosures = [...closureByMonth.values()].sort(
     (a, b) => b.monthKey.localeCompare(a.monthKey),
   );
-  console.info('[Wealth][csv-import][before-save]', {
-    csvFormat,
-    rows: rows.length,
-    existingClosures: existingClosures.length,
-  });
   saveClosures(mergedClosures);
   saveDemoSeedMeta(null);
-  console.info('[Wealth][csv-import][after-save]', {
-    csvFormat,
-    mergedClosures: mergedClosures.length,
-    importedMonths: [...new Set(importedMonths)].sort(),
-    replacedMonths: [...new Set(replacedMonths)].sort(),
-    skippedMonths: [...new Set(skippedMonths)].sort(),
-  });
 
   return {
     importedMonths: [...new Set(importedMonths)].sort(),
@@ -4407,12 +4360,6 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
   const janSnapshot = '2026-01-31';
   const febSnapshot = '2026-02-28';
   const marSnapshot = '2026-03-11';
-
-  const beforeState = {
-    recordsCount: loadWealthRecords().length,
-    closureMonthKeys: loadClosures().map((closure) => closure.monthKey),
-  };
-  console.info('[seedDemoWealthTimeline][before]', beforeState);
 
   // Limpieza local explícita antes de insertar demo, para evitar residuales entre ejecuciones.
   applyWealthStateLocal({
@@ -4552,25 +4499,9 @@ export const seedDemoWealthTimeline = (): { janKey: string; febKey: string; marK
         (record) => normalizeLabelKey(record.label) === normalizeLabelKey(label),
       ),
   );
-  const afterState = {
-    recordsCount: afterRecords.length,
-    closureMonthKeys: seededClosures.map((closure) => closure.monthKey),
-    missingFromMarch,
-  };
-  console.info('[seedDemoWealthTimeline][after]', afterState);
-
   if (missingFromMarch.length > 0) {
     throw new Error(`Seed incompleto: faltan labels en ${marKey}: ${missingFromMarch.join(', ')}`);
   }
-  console.info('[seedDemoWealthTimeline] current-month-check', {
-    lastClosureMonthKey,
-    currentMonthKey: derivedCurrentMonthKey,
-    currentMonthRecordsCount: currentMonthRecords.length,
-    currentMonthRecordLabels: currentMonthRecords.map((record) => record.label),
-    closureMonthKeys: seededClosures.map((closure) => closure.monthKey),
-    hasMarchClosure: seededClosures.some((closure) => closure.monthKey === marKey),
-    hasAny2025Data: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
-  });
 
   return { janKey, febKey, marKey };
 };
@@ -4591,11 +4522,6 @@ export const repairMarch2025EurClpScale = async (): Promise<{
   const beforeClosures = loadClosures();
   const targetBefore = beforeClosures.find((closure) => closure.monthKey === monthKey) || null;
   const beforeEurClp = Number(targetBefore?.fxRates?.eurClp ?? NaN);
-  console.info('[repairMarch2025EurClpScale][before]', {
-    monthKey,
-    beforeEurClp: Number.isFinite(beforeEurClp) ? beforeEurClp : null,
-    hasClosure: !!targetBefore,
-  });
   if (!targetBefore) {
     return {
       ok: false,
@@ -4661,13 +4587,6 @@ export const repairMarch2025EurClpScale = async (): Promise<{
       ? (retornoRealAfter / prevNet) * 100
       : null;
 
-  console.info('[repairMarch2025EurClpScale][after]', {
-    monthKey,
-    afterEurClp: Number.isFinite(afterEurClp) ? afterEurClp : null,
-    gastosClpAfter,
-    pctAfter,
-  });
-
   if (!Number.isFinite(afterEurClp) || Math.abs(afterEurClp - targetValue) > 1e-9) {
     return {
       ok: false,
@@ -4709,14 +4628,8 @@ export const clearWealthDataForFreshStart = async (
   }
   try {
     const beforeCloud = await getDoc(ref);
-    console.info('[clearWealthDataForFreshStart][before-cloud]', {
-      exists: beforeCloud.exists(),
-    });
     await deleteDoc(ref);
     const verifyCloud = await getDoc(ref);
-    console.info('[clearWealthDataForFreshStart][after-cloud]', {
-      exists: verifyCloud.exists(),
-    });
     if (verifyCloud.exists()) {
       throw new Error('No pude confirmar el borrado en la nube.');
     }
@@ -4750,10 +4663,6 @@ export const clearWealthDataForFreshStart = async (
   saveBankTokens({});
   saveClosures([], { skipCloudSync: true, silent: true });
   saveWealthRecords([], { skipCloudSync: true, silent: true });
-  console.info('[clearWealthDataForFreshStart][after-local]', {
-    records: loadWealthRecords().length,
-    closures: loadClosures().length,
-  });
 
   return { cloudCleared: true, mode: 'cloud' };
 };

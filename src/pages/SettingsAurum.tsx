@@ -575,15 +575,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   const refreshLocalState = () => {
     const closuresNow = loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey));
     const nextChecklistMonthKey = deriveOperationalMonthKeyFromClosures(closuresNow, currentMonthKey());
-    console.info('[Settings][checklist-month-before]', {
-      currentChecklistMonthKey: checklistMonthKey,
-      closuresCount: closuresNow.length,
-      calendarMonthKey: currentMonthKey(),
-    });
-    console.info('[Settings][checklist-month-after]', {
-      nextChecklistMonthKey,
-      closuresCount: closuresNow.length,
-    });
     if (!/^\d{4}-\d{2}$/.test(nextChecklistMonthKey)) {
       setResetAllMessage('No pude determinar el mes operativo del checklist.');
       return;
@@ -624,20 +615,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   const backupBeforeDestructiveOperation = async (reason: string) => {
-    const before = {
-      records: loadWealthRecords().length,
-      closures: loadClosures().length,
-      instruments: loadInvestmentInstruments().length,
-    };
-    console.info('[Settings][backup-before][before]', { reason, ...before });
     const backup = await createWealthBackupSnapshot(reason);
-    console.info('[Settings][backup-before][after]', {
-      reason,
-      ok: backup.ok,
-      backupId: backup.backupId,
-      createdAt: backup.createdAt,
-      message: backup.message,
-    });
     if (backup.ok && backup.createdAt) {
       setBackupMessage(
         `Backup generado el ${formatDateTime(backup.createdAt)}. Puedes restaurarlo desde Ajustes → Respaldo.`,
@@ -806,18 +784,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setRestoreBackupConfirmOpen(false);
     setRestoreBackupBusy(true);
     try {
-      const before = {
-        records: loadWealthRecords().length,
-        closures: loadClosures().length,
-      };
-      console.info('[Settings][restore-backup][before]', { selectedBackupId, ...before });
       const result = await restoreWealthFromBackupSnapshot(selectedBackupId);
       refreshLocalState();
-      const after = {
-        records: loadWealthRecords().length,
-        closures: loadClosures().length,
-      };
-      console.info('[Settings][restore-backup][after]', { selectedBackupId, ...after, ok: result.ok });
       setBackupMessage(result.ok ? 'Backup restaurado correctamente.' : `No pude restaurar backup: ${result.message}`);
       await refreshBackupSnapshots();
     } finally {
@@ -1313,12 +1281,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setCsvImportMessage('');
     setCsvImportWarnings([]);
     try {
-      const beforeCount = loadClosures().length;
-      console.info('[Settings][csv-import][before]', {
-        mode: csvImportMode,
-        beforeClosures: beforeCount,
-        detectedFormat: csvPreview.format,
-      });
       const result =
         csvImportMode === 'aggregated'
           ? await importHistoricalAggregatedClosuresFromCsv(csvDraft)
@@ -1332,15 +1294,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       setCsvImportWarnings(result.warnings);
       setCsvImportedResultVisible(true);
       refreshLocalState();
-      const afterCount = loadClosures().length;
-      console.info('[Settings][csv-import][after]', {
-        mode: csvImportMode,
-        afterClosures: afterCount,
-        deltaClosures: afterCount - beforeCount,
-        importedMonths: result.importedMonths.length,
-        replacedMonths: result.replacedMonths.length,
-        skippedMonths: result.skippedMonths.length,
-      });
       const reviewMonths = Array.from(new Set([...result.importedMonths, ...result.replacedMonths]));
       if (reviewMonths.length) {
         openClosureReview(reviewMonths, 'csv');
@@ -1361,11 +1314,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setDeletingClosure(true);
     setDeleteClosureMessage('');
     try {
-      const beforeLocalMonthKeys = loadClosures().map((closure) => closure.monthKey);
-      console.info('[Settings][delete-closure][before]', {
-        monthKeyToDelete,
-        beforeLocalMonthKeys,
-      });
       const current = loadClosures();
       const next = current.filter((closure) => closure.monthKey !== monthKeyToDelete);
       saveClosures(next);
@@ -1387,14 +1335,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           cloudMessage = String(err?.message || 'No pude verificar nube');
         }
       }
-      console.info('[Settings][delete-closure][after]', {
-        monthKeyToDelete,
-        pushed,
-        localAfterMonthKeys,
-        localDeleted,
-        cloudDeleted,
-        cloudMessage,
-      });
       setSelectedClosureToDelete('');
       if (!localDeleted || cloudDeleted === false) {
         setDeleteClosureMessage(
@@ -1485,12 +1425,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedingDemo(true);
     setSeedDemoMessage('');
     try {
-      console.info('[seed-demo] estado antes de reset', {
-        records: loadWealthRecords().length,
-        closures: loadClosures().map((c) => c.monthKey),
-        instruments: loadInvestmentInstruments().length,
-        has2025: loadWealthRecords().some((record) => record.snapshotDate.startsWith('2025-')),
-      });
       await clearWealthDataForFreshStart({ preserveFx: false });
       const recordsAfterReset = loadWealthRecords();
       const closuresAfterReset = loadClosures();
@@ -1498,11 +1432,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       if (recordsAfterReset.length || closuresAfterReset.length || instrumentsAfterReset.length) {
         throw new Error('Reset incompleto: aún existen datos locales después del borrado.');
       }
-      console.info('[seed-demo] estado después de reset', {
-        records: recordsAfterReset.length,
-        closures: closuresAfterReset.length,
-        instruments: instrumentsAfterReset.length,
-      });
       seedDemoWealthTimeline();
 
       const hasAuth = Boolean(auth.currentUser?.uid);
@@ -1531,15 +1460,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       if (hasMarch2026Closure) {
         throw new Error('Seed inválido: existe cierre 2026-03 y no debería existir.');
       }
-
-      console.info('[seed-demo] verificación post-seed', {
-        closures: closuresAfterSeed,
-        currentMonthKey: currentMonth,
-        currentMonthRecordsCount: currentMonthRecords.length,
-        has2025Data,
-        hasMarch2026Closure,
-        syncImmediate: pushed,
-      });
       if (!hasAuth) {
         setSeedDemoMessage('Debes estar autenticado para realizar esta operación en la nube. Datos cargados solo en local.');
         return;

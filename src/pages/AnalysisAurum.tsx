@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
@@ -340,7 +340,6 @@ export const AnalysisAurum: React.FC = () => {
     horizonYears: '40',
     monthlySpendClp: '6000000',
   });
-  const closuresCountRef = useRef(closures.length);
   const initialFreedomOpen = useMemo(() => {
     const initialAnnualRatePct = parseNumericDraft('5');
     const initialHorizonYears = parseNumericDraft('40');
@@ -350,23 +349,14 @@ export const AnalysisAurum: React.FC = () => {
   }, [closures, includeRiskCapitalInTotals]);
   const [freedomParametersOpen, setFreedomParametersOpen] = useState(initialFreedomOpen);
 
-  const refreshClosures = useCallback((reason: string) => {
-    const beforeCount = closuresCountRef.current;
-    console.info('[Analysis][closures-before]', { reason, beforeCount });
+  const refreshClosures = useCallback(() => {
     const loaded = loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-    console.info('[Analysis][closures-after]', {
-      reason,
-      afterCount: loaded.length,
-      newestMonth: loaded.length ? loaded[loaded.length - 1].monthKey : null,
-      oldestMonth: loaded.length ? loaded[0].monthKey : null,
-    });
-    closuresCountRef.current = loaded.length;
     setClosures(loaded);
     setErrorMessage('');
   }, []);
 
   useEffect(() => {
-    refreshClosures('mount');
+    refreshClosures();
   }, [refreshClosures]);
 
   useEffect(() => {
@@ -390,10 +380,10 @@ export const AnalysisAurum: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const onWealthUpdated = () => refreshClosures('wealth-updated');
+    const onWealthUpdated = () => refreshClosures();
     const onFocus = () => {
       if (document.visibilityState !== 'visible') return;
-      refreshClosures('focus');
+      refreshClosures();
     };
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
     window.addEventListener('focus', onFocus);
@@ -425,41 +415,10 @@ export const AnalysisAurum: React.FC = () => {
     const anomalyRaw = [...monthlyRowsAsc]
       .filter((row) => row.pct !== null)
       .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
-    const march2025 = monthlyRowsAsc.find((row) => row.monthKey === '2025-03') || null;
-    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, march2025 };
+    return { eurScaleOutliers, invalidNetMonths, anomalyRaw };
   }, [monthlyRowsAsc]);
 
   useEffect(() => {
-    const anomaly = analysisDiagnostics.anomalyRaw;
-    const march2025 = analysisDiagnostics.march2025;
-    console.info('[Analysis][eur-scale-before]', {
-      march2025: march2025
-        ? {
-            rawEurClp: march2025.rawEurClp,
-            gastosEur: GASTAPP_TOTALS['2025-03'] ?? null,
-            gastosClp: march2025.gastosClp,
-            expectedGastosClp:
-              Number.isFinite(GASTAPP_TOTALS['2025-03']) && Number.isFinite(march2025.rawEurClp)
-                ? Number(GASTAPP_TOTALS['2025-03']) * Number(march2025.rawEurClp)
-                : null,
-          }
-        : null,
-      monthsWithRawEurOutlier: analysisDiagnostics.eurScaleOutliers.map((row) => ({
-        monthKey: row.monthKey,
-        rawEurClp: row.rawEurClp,
-      })),
-      anomalyMonth: anomaly?.monthKey || null,
-      anomalyValues: anomaly
-        ? {
-            varPatrimonioClp: anomaly.varPatrimonioClp,
-            gastosClp: anomaly.gastosClp,
-            retornoRealClp: anomaly.retornoRealClp,
-            pct: anomaly.pct,
-          }
-        : null,
-    });
-    console.info('[Analysis][eur-scale-after]', { normalizationApplied: false });
-
     if (analysisDiagnostics.invalidNetMonths.length > 0) {
       setErrorMessage(
         `Hay cierres con netClp inválido en: ${analysisDiagnostics.invalidNetMonths.join(', ')}. Se muestran con "—" y no entran en resúmenes.`,
