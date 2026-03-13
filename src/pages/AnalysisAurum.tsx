@@ -767,59 +767,160 @@ const FreedomParametersCard: React.FC<{
   </Card>
 );
 
-const FreedomReactiveStateCard: React.FC<{
-  withdrawalPlan: ReturnType<typeof buildMonthlyWithdrawalPlan>;
-  coveragePlan: ReturnType<typeof buildCoveragePlan>;
-}> = ({ withdrawalPlan, coveragePlan }) => (
+const monthKeyToYearLabel = (monthKey: string | null) => {
+  if (!monthKey) return '—';
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return '—';
+  return `${monthLabel(monthKey)} (${year})`;
+};
+
+const FreedomDrawdownChart: React.FC<{
+  points: { monthKey: string; balanceEndClp: number }[];
+}> = ({ points }) => {
+  if (points.length < 2) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4 text-[11px] text-slate-500">
+        La curva aparecerá cuando haya un cálculo válido.
+      </div>
+    );
+  }
+
+  const width = 640;
+  const height = 160;
+  const padding = { top: 14, right: 14, bottom: 26, left: 14 };
+  const values = points.map((point) => point.balanceEndClp);
+  const max = Math.max(...values, 1);
+  const min = 0;
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const x = (index: number) =>
+    padding.left + (points.length === 1 ? innerWidth / 2 : (innerWidth * index) / (points.length - 1));
+  const y = (value: number) => padding.top + ((max - value) / Math.max(1e-6, max - min)) * innerHeight;
+  const linePath = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(point.balanceEndClp).toFixed(2)}`)
+    .join(' ');
+  const areaPath = `${linePath} L ${x(points.length - 1).toFixed(2)} ${(height - padding.bottom).toFixed(2)} L ${x(0).toFixed(2)} ${(height - padding.bottom).toFixed(2)} Z`;
+  const labelIndexes = Array.from(new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]));
+  const startPoint = points[0];
+  const midPoint = points[Math.floor((points.length - 1) / 2)];
+  const endPoint = points[points.length - 1];
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full">
+        <defs>
+          <linearGradient id="freedomArea" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.24" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#freedomArea)" />
+        <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" />
+        {points.map((point, index) => {
+          if (!labelIndexes.includes(index)) return null;
+          return (
+            <g key={`${point.monthKey}-${index}`}>
+              <circle cx={x(index)} cy={y(point.balanceEndClp)} r="3.5" fill="#1d4ed8" />
+              <text x={x(index)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
+                {xLabelFromMonthKey(point.monthKey)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+        <div className="rounded-xl bg-white px-2 py-2">
+          <div className="uppercase tracking-wide text-slate-400">Inicio</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(startPoint.balanceEndClp, 'CLP')}</div>
+        </div>
+        <div className="rounded-xl bg-white px-2 py-2">
+          <div className="uppercase tracking-wide text-slate-400">Mitad</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(midPoint.balanceEndClp, 'CLP')}</div>
+        </div>
+        <div className="rounded-xl bg-white px-2 py-2">
+          <div className="uppercase tracking-wide text-slate-400">Final</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(endPoint.balanceEndClp, 'CLP')}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const FreedomWithdrawalBlock: React.FC<{
+  plan: ReturnType<typeof buildMonthlyWithdrawalPlan>;
+}> = ({ plan }) => (
   <Card className="border-slate-200 p-4">
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-start justify-between gap-3">
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estado reactivo</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">Base lista para Bloque 1 y Bloque 2</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">¿Cuánto puedo retirar?</div>
+        <div className="mt-1 text-sm text-slate-600">Consumiendo capital + rendimientos hasta llegar a 0.</div>
       </div>
-      <div className="flex items-center gap-2">
-        <FreedomStatusBadge status={withdrawalPlan.status} />
-        <FreedomStatusBadge status={coveragePlan.status} />
+      <FreedomStatusBadge status={plan.status} />
+    </div>
+
+    <div className="mt-4">
+      <div className="text-[11px] uppercase tracking-wide text-slate-500">Retiro mensual estimado</div>
+      <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+        {plan.monthlyWithdrawalClp !== null ? formatCompactCurrency(plan.monthlyWithdrawalClp, 'CLP') : '—'}
+      </div>
+      <div className="mt-1 text-[12px] text-slate-600">
+        {plan.status === 'ok'
+          ? `mensual durante ${plan.horizonYears} años con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
+          : plan.message || 'Completa parámetros válidos para calcular el retiro mensual.'}
+      </div>
+      <div className="mt-1 text-[11px] text-slate-500">
+        {plan.totalWithdrawnClp !== null
+          ? `Total retirado en el período: ${formatCompactCurrency(plan.totalWithdrawnClp, 'CLP')}`
+          : 'El total retirado aparecerá cuando el cálculo sea válido.'}
       </div>
     </div>
 
-    <div className="mt-3 grid gap-3 md:grid-cols-2">
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Retiro máximo</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">
-          {withdrawalPlan.monthlyWithdrawalClp !== null
-            ? `${formatCurrency(withdrawalPlan.monthlyWithdrawalClp, 'CLP')} / mes`
-            : withdrawalPlan.message || 'Pendiente de inputs válidos'}
-        </div>
-        <div className="mt-1 text-[11px] text-slate-500">
-          {withdrawalPlan.status === 'ok'
-            ? `${withdrawalPlan.totalMonths} meses · fin aprox. ${withdrawalPlan.approximateEndMonthKey ? monthLabel(withdrawalPlan.approximateEndMonthKey) : '—'}`
-            : 'Este bloque se expandirá visualmente en la Fase 3.'}
-        </div>
-      </div>
+    <div className="mt-4">
+      <FreedomDrawdownChart points={plan.curve} />
+    </div>
+  </Card>
+);
 
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Cobertura del patrimonio</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">
-          {coveragePlan.status === 'never_depletes'
-            ? 'No se agota bajo este supuesto determinista'
-            : coveragePlan.yearsCoverage !== null
-              ? `${coveragePlan.yearsCoverage.toFixed(1).replace('.', ',')} años`
-              : coveragePlan.message || 'Pendiente de inputs válidos'}
-        </div>
-        <div className="mt-1 text-[11px] text-slate-500">
-          {coveragePlan.status === 'ok'
-            ? `${Math.ceil(coveragePlan.monthsCoverage || 0)} meses · fin aprox. ${coveragePlan.approximateEndMonthKey ? monthLabel(coveragePlan.approximateEndMonthKey) : '—'}`
-            : 'Queda lista la base para la visualización completa de Fase 3.'}
-        </div>
+const FreedomCoverageBlock: React.FC<{
+  plan: ReturnType<typeof buildCoveragePlan>;
+}> = ({ plan }) => (
+  <Card className="border-slate-200 p-4">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cobertura estimada del patrimonio</div>
+        <div className="mt-1 text-sm text-slate-600">Cuánto duraría bajo el mismo supuesto determinista.</div>
+      </div>
+      <FreedomStatusBadge status={plan.status} />
+    </div>
+
+    <div className="mt-4">
+      <div className="text-[11px] uppercase tracking-wide text-slate-500">Años de cobertura</div>
+      <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+        {plan.status === 'never_depletes'
+          ? 'No se agota'
+          : plan.yearsCoverage !== null
+            ? `${plan.yearsCoverage.toFixed(1).replace('.', ',')} años`
+            : '—'}
+      </div>
+      <div className="mt-1 text-[12px] text-slate-600">
+        {plan.status === 'never_depletes'
+          ? 'No se agota bajo este supuesto determinista'
+          : plan.status === 'ok'
+            ? `retirando ${formatCompactCurrency(plan.monthlySpendClp, 'CLP')} mensual con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
+            : plan.message || 'Completa parámetros válidos para estimar la cobertura.'}
+      </div>
+      <div className="mt-1 text-[11px] text-slate-500">
+        {plan.status === 'ok'
+          ? `Año calendario aproximado: ${monthKeyToYearLabel(plan.approximateEndMonthKey)}`
+          : plan.status === 'never_depletes'
+            ? `Sin año de agotamiento estimado desde ${monthKeyToYearLabel(plan.sourceMonthKey)}`
+            : 'El año calendario aproximado aparecerá cuando el cálculo sea válido.'}
       </div>
     </div>
 
-    {withdrawalPlan.issues.length > 0 || coveragePlan.issues.length > 0 ? (
-      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-        {[...withdrawalPlan.issues, ...coveragePlan.issues].join(' · ')}
-      </div>
-    ) : null}
+    <div className="mt-4">
+      <FreedomDrawdownChart points={plan.curve} />
+    </div>
   </Card>
 );
 
@@ -1099,10 +1200,10 @@ export const AnalysisAurum: React.FC = () => {
             onChange={(key, value) => setFreedomDraft((prev) => ({ ...prev, [key]: value }))}
           />
 
-          <FreedomReactiveStateCard
-            withdrawalPlan={financialFreedomWithdrawalPlan}
-            coveragePlan={financialFreedomCoveragePlan}
-          />
+          <div className="grid gap-3 lg:grid-cols-2">
+            <FreedomWithdrawalBlock plan={financialFreedomWithdrawalPlan} />
+            <FreedomCoverageBlock plan={financialFreedomCoveragePlan} />
+          </div>
         </>
       ) : (
         <>
