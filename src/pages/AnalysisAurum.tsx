@@ -18,46 +18,10 @@ import {
   buildMonthlyWithdrawalPlan,
   resolveFinancialFreedomBase,
 } from '../services/financialFreedom';
+import { buildWealthLabModel, GASTAPP_TOTALS, type WealthLabPoint } from '../services/wealthLab';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../utils/wealthFormat';
 
-const GASTAPP_TOTALS: Record<string, number> = {
-  '2023-05': 4536,
-  '2023-06': 4724,
-  '2023-07': 4130,
-  '2023-08': 4044,
-  '2023-09': 3878,
-  '2023-10': 3504,
-  '2023-11': 3864,
-  '2023-12': 3922,
-  '2024-01': 3714,
-  '2024-02': 3881,
-  '2024-03': 3590,
-  '2024-04': 3572,
-  '2024-05': 3370,
-  '2024-06': 3471,
-  '2024-07': 5255,
-  '2024-08': 4922,
-  '2024-09': 4302,
-  '2024-10': 5173,
-  '2024-11': 5120,
-  '2024-12': 5460,
-  '2025-01': 3943,
-  '2025-02': 4507,
-  '2025-03': 4664,
-  '2025-04': 3682,
-  '2025-05': 4965,
-  '2025-06': 5169,
-  '2025-07': 5123,
-  '2025-08': 4830,
-  '2025-09': 4968,
-  '2025-10': 5197,
-  '2025-11': 4464,
-  '2025-12': 4400,
-  '2026-01': 4012,
-  '2026-02': 4567,
-};
-
-type AnalysisTab = 'returns' | 'freedom';
+type AnalysisTab = 'returns' | 'freedom' | 'lab';
 
 type FreedomControlDraft = {
   annualRatePct: string;
@@ -715,6 +679,166 @@ const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
   );
 };
 
+const LabHeaderCard: React.FC<{
+  monthKey: string | null;
+  resultadoSinFxClp: number | null;
+  aporteFxClp: number | null;
+}> = ({ monthKey, resultadoSinFxClp, aporteFxClp }) => (
+  <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
+    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
+    <div className="mt-1 text-sm text-slate-300">
+      {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del último período comparable'}
+    </div>
+    <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado sin FX</div>
+        <div className="mt-1 text-xl font-semibold text-emerald-300">
+          {resultadoSinFxClp !== null ? formatFreedomCompactClp(resultadoSinFxClp) : '—'}
+        </div>
+      </div>
+      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Aporte FX</div>
+        <div className={cn('mt-1 text-xl font-semibold', (aporteFxClp || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
+          {aporteFxClp !== null ? formatFreedomCompactClp(aporteFxClp) : '—'}
+        </div>
+      </div>
+    </div>
+  </Card>
+);
+
+const LabIndicesChart: React.FC<{ points: WealthLabPoint[] }> = ({ points }) => {
+  if (points.length < 2) {
+    return (
+      <Card className="border-slate-200 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+        <div className="mt-2 text-[11px] text-slate-500">Aún no hay suficientes meses comparables con exposición USD identificable para dibujar el índice.</div>
+      </Card>
+    );
+  }
+
+  const width = 640;
+  const height = 200;
+  const padding = { top: 14, right: 16, bottom: 28, left: 16 };
+  const values = points.flatMap((point) => [Number(point.indiceReal), Number(point.indiceSinFx)]).filter(Number.isFinite);
+  const minRaw = Math.min(...values);
+  const maxRaw = Math.max(...values);
+  const range = Math.max(1, maxRaw - minRaw);
+  const min = Math.max(0, minRaw - range * 0.15);
+  const max = maxRaw + range * 0.15;
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const x = (index: number) =>
+    padding.left + (points.length === 1 ? innerWidth / 2 : (innerWidth * index) / (points.length - 1));
+  const y = (value: number) => padding.top + ((max - value) / Math.max(1e-6, max - min)) * innerHeight;
+  const realPath = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(Number(point.indiceReal)).toFixed(2)}`)
+    .join(' ');
+  const sinFxPath = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(Number(point.indiceSinFx)).toFixed(2)}`)
+    .join(' ');
+  const labelIndexes = Array.from(new Set([0, ...points.map((_, index) => index).filter((index) => index % 6 === 0), points.length - 1]));
+
+  return (
+    <Card className="border-slate-200 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+      <div className="mt-1 text-[11px] text-slate-500">
+        Neutraliza USD/CLP mensual sobre bloques expuestos a USD. El gráfico compara índice real vs índice sin FX, ambos base 100.
+      </div>
+      <div className="mt-3">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full">
+          <line
+            x1={padding.left}
+            y1={y(100)}
+            x2={width - padding.right}
+            y2={y(100)}
+            stroke="#cbd5e1"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+          />
+          <path d={realPath} fill="none" stroke="#0f766e" strokeWidth="2.5" strokeLinecap="round" />
+          <path d={sinFxPath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" />
+          {points.map((point, index) => {
+            if (!labelIndexes.includes(index)) return null;
+            return (
+              <g key={point.monthKey}>
+                <circle cx={x(index)} cy={y(Number(point.indiceReal))} r="3" fill="#0f766e" />
+                <circle cx={x(index)} cy={y(Number(point.indiceSinFx))} r="3" fill="#2563eb" />
+                <text x={x(index)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
+                  {xLabelFromMonthKey(point.monthKey)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-3 text-[11px]">
+        <div className="inline-flex items-center gap-2 text-slate-600">
+          <span className="h-2.5 w-2.5 rounded-full bg-teal-700" />
+          Índice real base 100
+        </div>
+        <div className="inline-flex items-center gap-2 text-slate-600">
+          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+          Índice sin FX base 100
+        </div>
+      </div>
+    </Card>
+  );
+};
+
+const LabMetricsGrid: React.FC<{
+  model: ReturnType<typeof buildWealthLabModel>;
+}> = ({ model }) => {
+  const items = [
+    model.monthlyMetrics?.resultadoSinFx ?? null,
+    model.cumulativeMetrics?.resultadoSinFx ?? null,
+    model.monthlyMetrics?.real ?? null,
+    model.cumulativeMetrics?.real ?? null,
+    model.monthlyMetrics?.aporteFx ?? null,
+  ].filter(Boolean) as Array<{ label: string; valueClp: number | null; months: number }>;
+
+  if (!items.length) return null;
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {items.map((item) => (
+        <Card key={item.label} className="border-slate-200 p-3">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{item.label}</div>
+          <div className={cn('mt-1 text-lg font-semibold', (item.valueClp || 0) >= 0 ? 'text-slate-900' : 'text-rose-700')}>
+            {item.valueClp !== null ? formatFreedomCompactClp(item.valueClp) : '—'}
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">
+            {item.months > 1 ? `${item.months} meses comparables` : 'Último período comparable'}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+};
+
+const LabTabContent: React.FC<{
+  model: ReturnType<typeof buildWealthLabModel>;
+}> = ({ model }) => (
+  <div className="space-y-3">
+    <LabHeaderCard
+      monthKey={model.currentPeriodLabel}
+      resultadoSinFxClp={model.monthlyMetrics?.resultadoSinFx.valueClp ?? null}
+      aporteFxClp={model.monthlyMetrics?.aporteFx.valueClp ?? null}
+    />
+
+    <Card className="border-slate-200 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+      <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+        {model.notes.map((note) => (
+          <div key={note}>• {note}</div>
+        ))}
+      </div>
+    </Card>
+
+    <LabIndicesChart points={model.chartPoints} />
+    <LabMetricsGrid model={model} />
+  </div>
+);
+
 const FreedomStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const config =
     status === 'ok'
@@ -1294,6 +1418,10 @@ export const AnalysisAurum: React.FC = () => {
     const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
     return row?.pct ?? null;
   }, [monthlyRowsAsc]);
+  const wealthLabModel = useMemo(
+    () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
+    [closures, includeRiskCapitalInTotals],
+  );
 
   const financialFreedomBase = useMemo(
     () => resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals),
@@ -1329,15 +1457,18 @@ export const AnalysisAurum: React.FC = () => {
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <Button size="sm" variant={tab === 'returns' ? 'primary' : 'secondary'} onClick={() => setTab('returns')}>
             Retornos
           </Button>
           <Button size="sm" variant={tab === 'freedom' ? 'primary' : 'secondary'} onClick={() => setTab('freedom')}>
             Libertad Financiera
           </Button>
+          <Button size="sm" variant={tab === 'lab' ? 'primary' : 'secondary'} onClick={() => setTab('lab')}>
+            Lab
+          </Button>
         </div>
-        <div className="mt-2 flex items-center gap-1">
+        {tab === 'returns' && <div className="mt-2 flex items-center gap-1">
           {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
             <button
               key={item}
@@ -1353,10 +1484,12 @@ export const AnalysisAurum: React.FC = () => {
               {item}
             </button>
           ))}
-        </div>
+        </div>}
       </Card>
 
-      {tab === 'freedom' ? (
+      {tab === 'lab' ? (
+        <LabTabContent model={wealthLabModel} />
+      ) : tab === 'freedom' ? (
         <>
           <FreedomParametersCard
             sourceMonthKey={financialFreedomBase.sourceMonthKey}
