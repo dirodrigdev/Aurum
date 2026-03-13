@@ -71,6 +71,26 @@ export type WealthLabMetric = {
   months: number;
 };
 
+export type WealthLabWindow = 'since_start' | 'last_12m' | 'last_month';
+
+export type WealthLabPeriodView = {
+  key: WealthLabWindow;
+  label: string;
+  points: WealthLabPoint[];
+  chartPoints: WealthLabPoint[];
+  monthlyMetrics: {
+    resultadoSinFx: WealthLabMetric;
+    real: WealthLabMetric;
+    aporteFx: WealthLabMetric;
+  } | null;
+  cumulativeMetrics: {
+    resultadoSinFx: WealthLabMetric;
+    real: WealthLabMetric;
+    aporteFx: WealthLabMetric;
+  } | null;
+  currentPeriodLabel: string | null;
+};
+
 export type WealthLabModel = {
   status: 'ok' | 'no_data' | 'insufficient_fx_detail';
   points: WealthLabPoint[];
@@ -90,6 +110,105 @@ export type WealthLabModel = {
   notes: string[];
   firstComparableMonthKey: string | null;
   lastComparableMonthKey: string | null;
+};
+
+const buildMetricBundle = (points: WealthLabPoint[]): {
+  monthlyMetrics: {
+    resultadoSinFx: WealthLabMetric;
+    real: WealthLabMetric;
+    aporteFx: WealthLabMetric;
+  } | null;
+  cumulativeMetrics: {
+    resultadoSinFx: WealthLabMetric;
+    real: WealthLabMetric;
+    aporteFx: WealthLabMetric;
+  } | null;
+  currentPeriodLabel: string | null;
+} => {
+  const comparableForMetrics = points.filter(
+    (point) => point.varPatrimonioClp !== null && point.varSinFxClp !== null && point.aportesFxClp !== null,
+  );
+  const latestComparablePoint = [...points].reverse().find(
+    (point) => point.varPatrimonioClp !== null && point.varSinFxClp !== null && point.aportesFxClp !== null,
+  ) || null;
+
+  const cumulativeMetrics = comparableForMetrics.length
+    ? {
+        resultadoSinFx: {
+          label: 'Resultado sin FX acumulado',
+          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0),
+          months: comparableForMetrics.length,
+        },
+        real: {
+          label: 'Real acumulado',
+          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0),
+          months: comparableForMetrics.length,
+        },
+        aporteFx: {
+          label: 'Aporte FX acumulado',
+          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0),
+          months: comparableForMetrics.length,
+        },
+      }
+    : null;
+
+  const monthlyMetrics = latestComparablePoint
+    ? {
+        resultadoSinFx: {
+          label: 'Resultado sin FX mensual',
+          valueClp: latestComparablePoint.varSinFxClp,
+          months: 1,
+        },
+        real: {
+          label: 'Real mensual',
+          valueClp: latestComparablePoint.varPatrimonioClp,
+          months: 1,
+        },
+        aporteFx: {
+          label: 'Aporte FX mensual',
+          valueClp: latestComparablePoint.aportesFxClp,
+          months: 1,
+        },
+      }
+    : null;
+
+  return {
+    monthlyMetrics,
+    cumulativeMetrics,
+    currentPeriodLabel: latestComparablePoint?.monthKey || null,
+  };
+};
+
+export const selectWealthLabPeriod = (
+  model: WealthLabModel,
+  window: WealthLabWindow,
+): WealthLabPeriodView => {
+  const basePoints = model.chartPoints;
+  let points: WealthLabPoint[] = basePoints;
+  let chartPoints: WealthLabPoint[] = basePoints;
+  let label = 'Desde inicio';
+
+  if (window === 'last_12m') {
+    points = basePoints.slice(-12);
+    chartPoints = points;
+    label = 'Últ. 12M';
+  } else if (window === 'last_month') {
+    points = basePoints.slice(-1);
+    chartPoints = basePoints.slice(-2);
+    label = 'Últ. mes';
+  }
+
+  const metrics = buildMetricBundle(points);
+
+  return {
+    key: window,
+    label,
+    points,
+    chartPoints,
+    monthlyMetrics: metrics.monthlyMetrics,
+    cumulativeMetrics: metrics.cumulativeMetrics,
+    currentPeriodLabel: metrics.currentPeriodLabel,
+  };
 };
 
 const safeFx = (fx?: WealthFxRates): WealthFxRates => ({
@@ -260,49 +379,7 @@ export const buildWealthLabModel = (
     : [];
 
   const latestComparablePoint = [...chartPoints].reverse()[0] || null;
-  const comparableForMetrics = chartPoints.filter(
-    (point) => point.varPatrimonioClp !== null && point.varSinFxClp !== null && point.aportesFxClp !== null,
-  );
-
-  const cumulativeMetrics = comparableForMetrics.length
-    ? {
-        resultadoSinFx: {
-          label: 'Resultado sin FX acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-        real: {
-          label: 'Real acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-        aporteFx: {
-          label: 'Aporte FX acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-      }
-    : null;
-
-  const monthlyMetrics = latestComparablePoint
-    ? {
-        resultadoSinFx: {
-          label: 'Resultado sin FX mensual',
-          valueClp: latestComparablePoint.varSinFxClp,
-          months: 1,
-        },
-        real: {
-          label: 'Real mensual',
-          valueClp: latestComparablePoint.varPatrimonioClp,
-          months: 1,
-        },
-        aporteFx: {
-          label: 'Aporte FX mensual',
-          valueClp: latestComparablePoint.aportesFxClp,
-          months: 1,
-        },
-      }
-    : null;
+  const { cumulativeMetrics, monthlyMetrics, currentPeriodLabel } = buildMetricBundle(chartPoints);
 
   const notes: string[] = [
     'Neutraliza USD/CLP mensual sobre bloques expuestos a USD.',
@@ -321,7 +398,7 @@ export const buildWealthLabModel = (
     latestComparablePoint,
     cumulativeMetrics,
     monthlyMetrics,
-    currentPeriodLabel: latestComparablePoint?.monthKey || null,
+    currentPeriodLabel,
     notes,
     firstComparableMonthKey: chartPoints[0]?.monthKey || null,
     lastComparableMonthKey: latestComparablePoint?.monthKey || null,

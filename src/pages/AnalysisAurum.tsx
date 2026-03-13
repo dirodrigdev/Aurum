@@ -18,7 +18,13 @@ import {
   buildMonthlyWithdrawalPlan,
   resolveFinancialFreedomBase,
 } from '../services/financialFreedom';
-import { buildWealthLabModel, GASTAPP_TOTALS, type WealthLabPoint } from '../services/wealthLab';
+import {
+  buildWealthLabModel,
+  GASTAPP_TOTALS,
+  selectWealthLabPeriod,
+  type WealthLabPoint,
+  type WealthLabWindow,
+} from '../services/wealthLab';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../utils/wealthFormat';
 
 type AnalysisTab = 'returns' | 'freedom' | 'lab';
@@ -679,39 +685,109 @@ const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
   );
 };
 
+const LAB_WINDOW_OPTIONS: Array<{ key: WealthLabWindow; label: string }> = [
+  { key: 'since_start', label: 'Desde inicio' },
+  { key: 'last_12m', label: 'Últ. 12M' },
+  { key: 'last_month', label: 'Últ. mes' },
+];
+
 const LabHeaderCard: React.FC<{
+  periodLabel: string;
   monthKey: string | null;
   resultadoSinFxClp: number | null;
   aporteFxClp: number | null;
-}> = ({ monthKey, resultadoSinFxClp, aporteFxClp }) => (
+  includeRiskCapitalInTotals: boolean;
+  onToggleRiskMode: () => void;
+  selectedWindow: WealthLabWindow;
+  onSelectWindow: (window: WealthLabWindow) => void;
+}> = ({
+  periodLabel,
+  monthKey,
+  resultadoSinFxClp,
+  aporteFxClp,
+  includeRiskCapitalInTotals,
+  onToggleRiskMode,
+  selectedWindow,
+  onSelectWindow,
+}) => (
   <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
-    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
-    <div className="mt-1 text-sm text-slate-300">
-      {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del último período comparable'}
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="text-sm text-slate-300">
+            {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del período seleccionado'}
+          </div>
+          {includeRiskCapitalInTotals && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              +CapRiesgo
+            </span>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onToggleRiskMode}
+        className={cn(
+          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
+          includeRiskCapitalInTotals
+            ? 'border-amber-300 bg-amber-50 text-amber-600'
+            : 'border-white/20 bg-white/5 text-slate-300',
+        )}
+        title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+        aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
+      >
+        <Zap size={16} />
+      </button>
     </div>
+
+    <div className="mt-3 flex flex-wrap gap-2">
+      {LAB_WINDOW_OPTIONS.map((option) => (
+        <button
+          key={option.key}
+          type="button"
+          onClick={() => onSelectWindow(option.key)}
+          className={cn(
+            'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
+            selectedWindow === option.key
+              ? 'border-white/20 bg-white/12 text-white'
+              : 'border-white/10 bg-transparent text-slate-300',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+
     <div className="mt-4 grid grid-cols-2 gap-3">
       <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
         <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado sin FX</div>
         <div className="mt-1 text-xl font-semibold text-emerald-300">
           {resultadoSinFxClp !== null ? formatFreedomCompactClp(resultadoSinFxClp) : '—'}
         </div>
+        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
       </div>
       <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
         <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Aporte FX</div>
         <div className={cn('mt-1 text-xl font-semibold', (aporteFxClp || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
           {aporteFxClp !== null ? formatFreedomCompactClp(aporteFxClp) : '—'}
         </div>
+        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
       </div>
     </div>
   </Card>
 );
 
-const LabIndicesChart: React.FC<{ points: WealthLabPoint[] }> = ({ points }) => {
+const LabIndicesChart: React.FC<{ points: WealthLabPoint[]; periodLabel: string }> = ({ points, periodLabel }) => {
   if (points.length < 2) {
     return (
       <Card className="border-slate-200 p-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
-        <div className="mt-2 text-[11px] text-slate-500">Aún no hay suficientes meses comparables con exposición USD identificable para dibujar el índice.</div>
+        <div className="mt-2 text-[11px] text-slate-500">
+          {periodLabel === 'Últ. mes'
+            ? 'El corte Últ. mes muestra el último tramo comparable; se necesitan al menos dos puntos para dibujar la comparación base 100.'
+            : 'Aún no hay suficientes meses comparables con exposición USD identificable para dibujar el índice.'}
+        </div>
       </Card>
     );
   }
@@ -740,7 +816,10 @@ const LabIndicesChart: React.FC<{ points: WealthLabPoint[] }> = ({ points }) => 
 
   return (
     <Card className="border-slate-200 p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{periodLabel}</div>
+      </div>
       <div className="mt-1 text-[11px] text-slate-500">
         Neutraliza USD/CLP mensual sobre bloques expuestos a USD. El gráfico compara índice real vs índice sin FX, ambos base 100.
       </div>
@@ -786,22 +865,35 @@ const LabIndicesChart: React.FC<{ points: WealthLabPoint[] }> = ({ points }) => 
 };
 
 const LabMetricsGrid: React.FC<{
-  model: ReturnType<typeof buildWealthLabModel>;
-}> = ({ model }) => {
+  period: ReturnType<typeof selectWealthLabPeriod>;
+}> = ({ period }) => {
   const items = [
-    model.monthlyMetrics?.resultadoSinFx ?? null,
-    model.cumulativeMetrics?.resultadoSinFx ?? null,
-    model.monthlyMetrics?.real ?? null,
-    model.cumulativeMetrics?.real ?? null,
-    model.monthlyMetrics?.aporteFx ?? null,
-  ].filter(Boolean) as Array<{ label: string; valueClp: number | null; months: number }>;
+    {
+      key: 'resultado-sin-fx-periodo',
+      label: period.key === 'last_month' ? 'Resultado sin FX mensual' : 'Resultado sin FX del período',
+      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.resultadoSinFx.valueClp ?? null : period.cumulativeMetrics?.resultadoSinFx.valueClp ?? null,
+      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.resultadoSinFx.months ?? 0,
+    },
+    {
+      key: 'real-periodo',
+      label: period.key === 'last_month' ? 'Real mensual' : 'Real del período',
+      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.real.valueClp ?? null : period.cumulativeMetrics?.real.valueClp ?? null,
+      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.real.months ?? 0,
+    },
+    {
+      key: 'aporte-fx-periodo',
+      label: period.key === 'last_month' ? 'Aporte FX mensual' : 'Aporte FX del período',
+      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.aporteFx.valueClp ?? null : period.cumulativeMetrics?.aporteFx.valueClp ?? null,
+      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.aporteFx.months ?? 0,
+    },
+  ].filter((item) => item.valueClp !== null || item.months > 0);
 
   if (!items.length) return null;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid gap-3 sm:grid-cols-3">
       {items.map((item) => (
-        <Card key={item.label} className="border-slate-200 p-3">
+        <Card key={item.key} className="border-slate-200 p-3">
           <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{item.label}</div>
           <div className={cn('mt-1 text-lg font-semibold', (item.valueClp || 0) >= 0 ? 'text-slate-900' : 'text-rose-700')}>
             {item.valueClp !== null ? formatFreedomCompactClp(item.valueClp) : '—'}
@@ -817,27 +909,45 @@ const LabMetricsGrid: React.FC<{
 
 const LabTabContent: React.FC<{
   model: ReturnType<typeof buildWealthLabModel>;
-}> = ({ model }) => (
-  <div className="space-y-3">
-    <LabHeaderCard
-      monthKey={model.currentPeriodLabel}
-      resultadoSinFxClp={model.monthlyMetrics?.resultadoSinFx.valueClp ?? null}
-      aporteFxClp={model.monthlyMetrics?.aporteFx.valueClp ?? null}
-    />
+  includeRiskCapitalInTotals: boolean;
+  onToggleRiskMode: () => void;
+}> = ({ model, includeRiskCapitalInTotals, onToggleRiskMode }) => {
+  const [selectedWindow, setSelectedWindow] = useState<WealthLabWindow>('since_start');
+  const selectedPeriod = useMemo(() => selectWealthLabPeriod(model, selectedWindow), [model, selectedWindow]);
+  const resultValue = selectedWindow === 'last_month'
+    ? selectedPeriod.monthlyMetrics?.resultadoSinFx.valueClp ?? null
+    : selectedPeriod.cumulativeMetrics?.resultadoSinFx.valueClp ?? null;
+  const fxValue = selectedWindow === 'last_month'
+    ? selectedPeriod.monthlyMetrics?.aporteFx.valueClp ?? null
+    : selectedPeriod.cumulativeMetrics?.aporteFx.valueClp ?? null;
 
-    <Card className="border-slate-200 p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
-      <div className="mt-2 space-y-1 text-[11px] text-slate-500">
-        {model.notes.map((note) => (
-          <div key={note}>• {note}</div>
-        ))}
-      </div>
-    </Card>
+  return (
+    <div className="space-y-3">
+      <LabHeaderCard
+        periodLabel={selectedPeriod.label}
+        monthKey={selectedPeriod.currentPeriodLabel}
+        resultadoSinFxClp={resultValue}
+        aporteFxClp={fxValue}
+        includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+        onToggleRiskMode={onToggleRiskMode}
+        selectedWindow={selectedWindow}
+        onSelectWindow={setSelectedWindow}
+      />
 
-    <LabIndicesChart points={model.chartPoints} />
-    <LabMetricsGrid model={model} />
-  </div>
-);
+      <Card className="border-slate-200 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
+        <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+          {model.notes.map((note) => (
+            <div key={note}>• {note}</div>
+          ))}
+        </div>
+      </Card>
+
+      <LabIndicesChart points={selectedPeriod.chartPoints} periodLabel={selectedPeriod.label} />
+      <LabMetricsGrid period={selectedPeriod} />
+    </div>
+  );
+};
 
 const FreedomStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const config =
@@ -1488,7 +1598,11 @@ export const AnalysisAurum: React.FC = () => {
       </Card>
 
       {tab === 'lab' ? (
-        <LabTabContent model={wealthLabModel} />
+        <LabTabContent
+          model={wealthLabModel}
+          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+        />
       ) : tab === 'freedom' ? (
         <>
           <FreedomParametersCard
