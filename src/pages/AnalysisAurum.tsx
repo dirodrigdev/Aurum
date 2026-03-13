@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, LineChart } from 'lucide-react';
+import { BarChart3, CalendarDays, LineChart, Zap } from 'lucide-react';
 import { Button, Card, cn } from '../components/Components';
 import {
   WealthCurrency,
   WealthFxRates,
   WealthMonthlyClosure,
+  RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
   currentMonthKey,
   defaultFxRates,
   loadClosures,
+  loadIncludeRiskCapitalInTotals,
+  saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../utils/wealthFormat';
 
@@ -81,7 +84,10 @@ type AggregatedSummary = {
 
 const loadWealthClosures = () => loadClosures();
 
-const summaryNetClp = (closure: WealthMonthlyClosure): number | null => {
+const summaryNetClp = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals: boolean): number | null => {
+  if (includeRiskCapitalInTotals && Number.isFinite(closure.summary?.netClpWithRisk)) {
+    return Number(closure.summary.netClpWithRisk);
+  }
   if (Number.isFinite(closure.summary?.netClp)) return Number(closure.summary.netClp);
   if (Number.isFinite(closure.summary?.netConsolidatedClp)) return Number(closure.summary.netConsolidatedClp);
   return null;
@@ -152,7 +158,7 @@ const xLabelFromMonthKey = (monthKey: string) => {
   return `${month}/${year.slice(2)}`;
 };
 
-const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[] => {
+const computeMonthlyRows = (closures: WealthMonthlyClosure[], includeRiskCapitalInTotals: boolean): MonthlyReturnRow[] => {
   const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   const calendarCurrent = currentMonthKey();
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
@@ -162,7 +168,7 @@ const computeMonthlyRows = (closures: WealthMonthlyClosure[]): MonthlyReturnRow[
   for (const closure of filtered) {
     const fxRaw = safeFxRaw(closure.fxRates);
     const fx = fxRaw;
-    const netClp = summaryNetClp(closure);
+    const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
     const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
     const prevNetClp = invalidNet ? null : previousValidNet;
     const varPatrimonioClp =
@@ -351,7 +357,9 @@ const ReturnRealHero: React.FC<{
   lastMonth: AggregatedSummary | null;
   lastMonthPctMonthly: number | null;
   currency: WealthCurrency;
-}> = ({ sinceStart, last12, lastMonth, lastMonthPctMonthly, currency }) => {
+  includeRiskCapitalInTotals: boolean;
+  onToggleRiskMode: () => void;
+}> = ({ sinceStart, last12, lastMonth, lastMonthPctMonthly, currency, includeRiskCapitalInTotals, onToggleRiskMode }) => {
   const rows = [
     { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
@@ -369,8 +377,26 @@ const ReturnRealHero: React.FC<{
     <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-4 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
       <div className="relative">
-        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
-        <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
+            <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
+          </div>
+          <button
+            type="button"
+            onClick={onToggleRiskMode}
+            className={cn(
+              'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
+              includeRiskCapitalInTotals
+                ? 'border-amber-300 bg-amber-50 text-amber-600'
+                : 'border-slate-500/50 bg-white/5 text-slate-300',
+            )}
+            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+            aria-label="Alternar capital de riesgo"
+          >
+            <Zap size={16} />
+          </button>
+        </div>
       </div>
       <div className="relative mt-3 space-y-2">
         {rows.map((row) => (
@@ -519,6 +545,9 @@ const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
 export const AnalysisAurum: React.FC = () => {
   const [tab, setTab] = useState<AnalysisTab>('returns');
   const [currency, setCurrency] = useState<WealthCurrency>('CLP');
+  const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
+    loadIncludeRiskCapitalInTotals(),
+  );
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() =>
     loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey)),
   );
@@ -545,6 +574,26 @@ export const AnalysisAurum: React.FC = () => {
   }, [refreshClosures]);
 
   useEffect(() => {
+    saveIncludeRiskCapitalInTotals(includeRiskCapitalInTotals);
+  }, [includeRiskCapitalInTotals]);
+
+  useEffect(() => {
+    const refreshRiskToggle = () => setIncludeRiskCapitalInTotals(loadIncludeRiskCapitalInTotals());
+    window.addEventListener('storage', refreshRiskToggle);
+    window.addEventListener(
+      RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+      refreshRiskToggle as EventListener,
+    );
+    return () => {
+      window.removeEventListener('storage', refreshRiskToggle);
+      window.removeEventListener(
+        RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
+        refreshRiskToggle as EventListener,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     const onWealthUpdated = () => refreshClosures('wealth-updated');
     const onFocus = () => {
       if (document.visibilityState !== 'visible') return;
@@ -560,7 +609,10 @@ export const AnalysisAurum: React.FC = () => {
     };
   }, [refreshClosures]);
 
-  const monthlyRowsAsc = useMemo(() => computeMonthlyRows(closures), [closures]);
+  const monthlyRowsAsc = useMemo(
+    () => computeMonthlyRows(closures, includeRiskCapitalInTotals),
+    [closures, includeRiskCapitalInTotals],
+  );
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     [monthlyRowsAsc],
@@ -744,6 +796,8 @@ export const AnalysisAurum: React.FC = () => {
             lastMonth={heroLastMonth}
             lastMonthPctMonthly={heroLastMonthPctMonthly}
             currency={currency}
+            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+            onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           />
 
           {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
