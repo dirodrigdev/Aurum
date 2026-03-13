@@ -2273,7 +2273,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     setUpdatingAllBanks(true);
     if (!silent) setFintocStatus('');
     for (const bank of banksWithToken) {
-      // eslint-disable-next-line no-await-in-loop
       await runFintocDiscovery(bank.id, { silent: true });
     }
     setUpdatingAllBanks(false);
@@ -2383,7 +2382,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       window.removeEventListener('pointerdown', onInteraction);
       window.removeEventListener('keydown', onInteraction);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, bankTokens]);
 
   return (
@@ -4163,7 +4161,6 @@ export const Patrimonio: React.FC = () => {
     };
 
     for (const provider of providersWithToken) {
-      // eslint-disable-next-line no-await-in-loop
       const result = await discoverFintocData(String(tokens[provider.id] || '').trim());
       if (!result.ok) {
         throw new Error(result.error || `No pude actualizar ${provider.label} vía Fintoc.`);

@@ -84,7 +84,9 @@ export function ensureAnonymousAuth(): Promise<void> {
       (err) => {
         try {
           unsub();
-        } catch {}
+        } catch {
+          // ignore cleanup error
+        }
         finishErr(err);
       }
     );

@@ -324,7 +324,7 @@ export default async function handler(req, res) {
       fetchedAt: new Date().toISOString(),
       ufDate: ufData.ufDate || '',
     });
-  } catch (error) {
+  } catch {
     return res.status(502).json({
       ok: false,
       error: 'No pude obtener TC/UF online en backend.',

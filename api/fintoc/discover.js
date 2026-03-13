@@ -215,7 +215,7 @@ export default async function handler(req, res) {
       accounts: normalizedAccounts,
       probes,
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({
       ok: false,
       error: 'Error explorando Fintoc.',

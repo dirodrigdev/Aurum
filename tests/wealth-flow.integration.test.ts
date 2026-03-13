@@ -5,6 +5,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, Root } from 'react-dom/client';
 
+// Cloud-dependent integration flow. Excluded from the default quality gate and
+// only enabled when RUN_CLOUD_TESTS=1.
+const describeCloud = process.env.RUN_CLOUD_TESTS === '1' ? describe : describe.skip;
+
 vi.mock('../src/services/firebase', () => ({
   db: {},
   ensureAuthPersistence: vi.fn(async () => {}),
@@ -179,7 +183,7 @@ const makeClosureForMonth = (monthKey: string) => {
   };
 };
 
-describe('Aurum full flow (service-level e2e)', () => {
+describeCloud('Aurum full flow (service-level e2e)', () => {
   beforeEach(async () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     vi.useFakeTimers();
