@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
 import { LabTab } from '../components/analysis/LabTab';
@@ -326,6 +327,7 @@ const aggregateRows = (
 };
 
 export const AnalysisAurum: React.FC = () => {
+  const location = useLocation();
   const [tab, setTab] = useState<AnalysisTab>('returns');
   const [currency, setCurrency] = useState<WealthCurrency>('CLP');
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
@@ -542,6 +544,13 @@ export const AnalysisAurum: React.FC = () => {
       Number.isFinite(freedomMonthlySpendClp) &&
       freedomMonthlySpendClp > 0,
   );
+
+  useEffect(() => {
+    const requestedTab = (location.state as { analysisTab?: AnalysisTab } | null)?.analysisTab;
+    if (requestedTab === 'returns' || requestedTab === 'freedom' || requestedTab === 'lab') {
+      setTab((prev) => (prev === requestedTab ? prev : requestedTab));
+    }
+  }, [location.state]);
 
   useEffect(() => {
     if (!freedomInputsAreValid) {
