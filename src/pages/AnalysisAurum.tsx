@@ -718,11 +718,19 @@ const LabHeaderCard: React.FC<{
     realMonthlyEquivalent !== null &&
     sinFxMonthlyEquivalent !== null &&
     fxMonthlyEquivalent !== null;
-  const totalParts = hasComposition
-    ? Math.abs(sinFxMonthlyEquivalent) + Math.abs(fxMonthlyEquivalent)
-    : 0;
-  const sinFxShare = totalParts > 0 && sinFxMonthlyEquivalent !== null ? (Math.abs(sinFxMonthlyEquivalent) / totalParts) * 100 : 0;
-  const fxShare = totalParts > 0 && fxMonthlyEquivalent !== null ? (Math.abs(fxMonthlyEquivalent) / totalParts) * 100 : 0;
+  const compositionScale = hasComposition
+    ? Math.max(
+        Math.abs(realMonthlyEquivalent),
+        Math.abs(sinFxMonthlyEquivalent),
+        Math.abs(fxMonthlyEquivalent),
+        1,
+      )
+    : 1;
+  const toCompositionPct = (value: number) => 50 + (value / compositionScale) * 45;
+  const sinFxStart = hasComposition ? toCompositionPct(0) : 50;
+  const sinFxEnd = hasComposition && sinFxMonthlyEquivalent !== null ? toCompositionPct(sinFxMonthlyEquivalent) : 50;
+  const fxStart = sinFxEnd;
+  const fxEnd = hasComposition && realMonthlyEquivalent !== null ? toCompositionPct(realMonthlyEquivalent) : 50;
 
   const cards = [
     {
@@ -820,16 +828,50 @@ const LabHeaderCard: React.FC<{
       {hasComposition && (
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
           <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del promedio mensual equivalente</div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
-            <div className="flex h-full w-full">
-              <div
-                className="bg-emerald-400/90"
-                style={{ width: `${Math.max(0, Math.min(100, sinFxShare))}%` }}
-              />
-              <div
-                className={cn('transition-all', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90')}
-                style={{ width: `${Math.max(0, Math.min(100, fxShare))}%` }}
-              />
+          <div className="mt-1 text-[11px] text-slate-300/80">Resultado real = Resultado sin FX + Aporte FX</div>
+          <div className="relative mt-3 h-8 rounded-full bg-white/5">
+            <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
+            <div
+              className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-emerald-400/90"
+              style={{
+                left: `${Math.min(sinFxStart, sinFxEnd)}%`,
+                width: `${Math.max(0, Math.abs(sinFxEnd - sinFxStart))}%`,
+              }}
+            />
+            <div
+              className={cn(
+                'absolute top-1/2 h-3 -translate-y-1/2 rounded-full transition-all',
+                (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90',
+              )}
+              style={{
+                left: `${Math.min(fxStart, fxEnd)}%`,
+                width: `${Math.max(0, Math.abs(fxEnd - fxStart))}%`,
+              }}
+            />
+            <div
+              className={cn(
+                'absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full border',
+                (realMonthlyEquivalent || 0) >= 0 ? 'border-white/80 bg-white' : 'border-rose-200 bg-rose-300',
+              )}
+              style={{ left: `${fxEnd}%` }}
+            />
+          </div>
+          <div className="mt-2 grid gap-2 text-[11px] text-slate-300 sm:grid-cols-3">
+            <div>
+              <div className="text-slate-400">Resultado sin FX</div>
+              <div className="font-medium text-emerald-300">{formatFreedomCompactClp(sinFxMonthlyEquivalent)}</div>
+            </div>
+            <div>
+              <div className="text-slate-400">Aporte FX</div>
+              <div className={cn('font-medium', (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
+                {formatFreedomCompactClp(fxMonthlyEquivalent)}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Resultado real</div>
+              <div className={cn('font-medium', (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
+                {formatFreedomCompactClp(realMonthlyEquivalent)}
+              </div>
             </div>
           </div>
           <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
@@ -840,6 +882,10 @@ const LabHeaderCard: React.FC<{
             <div className="inline-flex items-center gap-2 text-slate-300">
               <span className={cn('h-2.5 w-2.5 rounded-full', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
               Aporte FX
+            </div>
+            <div className="inline-flex items-center gap-2 text-slate-300">
+              <span className={cn('h-2.5 w-2.5 rounded-full', (realMonthlyEquivalent || 0) >= 0 ? 'bg-white' : 'bg-rose-300')} />
+              Resultado real
             </div>
           </div>
         </div>

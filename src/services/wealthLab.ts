@@ -220,9 +220,9 @@ const buildHeadlineMetrics = (
   if (!comparablePoints.length) return null;
 
   const months = comparablePoints.length;
-  const realTotal = comparablePoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0);
   const sinFxTotal = comparablePoints.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0);
   const fxTotal = comparablePoints.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0);
+  const realTotal = sinFxTotal + fxTotal;
 
   const toMonthlyEquivalent = (value: number) => value / months;
 
