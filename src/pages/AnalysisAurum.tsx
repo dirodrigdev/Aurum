@@ -372,35 +372,35 @@ const ReturnRealHero: React.FC<{
         <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
         <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
       </div>
-      <div className="relative mt-4 space-y-2.5">
+      <div className="relative mt-3 space-y-2">
         {rows.map((row) => (
           <div
             key={row.key}
-            className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
+            className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                   {row.label}
                 </div>
-                <div className="mt-1 text-[10px] text-slate-500">
+                <div className="mt-0.5 text-[10px] text-slate-500">
                   {row.key === 'mes' ? 'Comparación mensual' : 'Tasa anual equivalente'}
                 </div>
               </div>
               <div className="min-w-0 text-right">
-                <div className={cn('text-[30px] font-bold leading-none tracking-tight', pctClass(row.pct))}>
+                <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
                   {formatPct(row.pct, 1)}
                 </div>
                 {row.pct === null && row.value?.pctRetornoNote ? (
-                  <div className="mt-1 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
+                  <div className="mt-0.5 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
                 ) : null}
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-white/[0.04] px-2.5 py-2">
-                <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-white/[0.04] px-2.5 py-1.5">
+                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
                 <div
-                  className={cn('mt-1 truncate text-lg font-semibold', retornoClass(row.value))}
+                  className={cn('mt-0.5 truncate text-[15px] font-semibold leading-tight', retornoClass(row.value))}
                   title={
                     row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
                       ? '—'
@@ -413,20 +413,20 @@ const ReturnRealHero: React.FC<{
                 </div>
               </div>
               <div
-                className="rounded-xl bg-white/[0.04] px-2.5 py-2 text-right"
+                className="rounded-xl bg-white/[0.04] px-2.5 py-1.5 text-right"
                 title={
                   row.value?.spendPct === null || row.value?.spendPct === undefined
                     ? '—'
                     : `${row.value.spendPct.toFixed(1).replace('.', ',')}% del retorno se gasta`
                 }
               >
-                <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Gastado</div>
-                <div className={cn('mt-1 text-lg font-semibold', spentClass(row.value))}>
+                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Gastado</div>
+                <div className={cn('mt-0.5 text-[15px] font-semibold leading-tight', spentClass(row.value))}>
                   {row.value?.spendPct === null || row.value?.spendPct === undefined
                     ? '—'
                     : `${row.value.spendPct.toFixed(1).replace('.', ',')}%`}
                 </div>
-                <div className="mt-0.5 text-[10px] text-slate-400">del retorno</div>
+                <div className="text-[9px] text-slate-400">del retorno</div>
               </div>
             </div>
           </div>
