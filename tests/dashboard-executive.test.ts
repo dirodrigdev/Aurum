@@ -177,6 +177,6 @@ describe('dashboard executive model', () => {
     expect(model.coverageRatio).not.toBeNull();
     expect(model.coverageRatio!).toBeGreaterThan(1);
     expect(model.capRiskDependence.level).not.toBe('Alta');
-    expect(model.insight).toBe('La foto patrimonial todavía tiene actualización dispareja.');
+    expect(model.insight).toBe('La foto patrimonial todavía es dispareja.');
   });
 });

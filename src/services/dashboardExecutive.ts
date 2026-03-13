@@ -249,23 +249,23 @@ const buildInsight = (
   freshness: DashboardFreshnessModel,
 ): string => {
   if (ratio === null || !Number.isFinite(ratio)) {
-    return 'Necesitas al menos un cierre confirmado para evaluar sostenibilidad.';
+    return 'Todavía falta una base confiable para leer sostenibilidad.';
   }
-  if (ratio < 1) return 'Hoy tu estándar de vida actual no queda cubierto por 40 años.';
+  if (ratio < 1) return 'Hoy tu estándar de vida actual no queda cubierto a 40 años.';
   if (capRiskDependence.level === 'Alta') {
-    return 'Hoy la conclusión depende demasiado de CapRiesgo.';
+    return 'La conclusión depende demasiado de CapRiesgo.';
   }
   if (marginClp !== null && marginClp < SMALL_MARGIN_CLP) {
-    return 'Hoy tu patrimonio sostiene tu vida actual, pero con margen acotado.';
+    return 'Sostiene tu vida actual, pero con margen corto.';
   }
   if (
     freshness.status === 'ok' &&
     freshness.fresh7dPct !== null &&
     freshness.fresh7dPct < LOW_FRESHNESS_THRESHOLD
   ) {
-    return 'La foto patrimonial todavía tiene actualización dispareja.';
+    return 'La foto patrimonial todavía es dispareja.';
   }
-  return 'Hoy tu patrimonio sostiene tu vida actual con holgura razonable.';
+  return 'Sostiene tu vida actual con margen razonable.';
 };
 
 export const buildExecutiveDashboardModel = ({
