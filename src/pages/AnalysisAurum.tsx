@@ -426,7 +426,7 @@ const SummaryTable: React.FC<{
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
             <th className="py-1 pr-2 text-right">% anual equiv.</th>
-            <th className="py-1 pr-2 text-right">Ret.Real</th>
+            <th className="py-1 pr-2 text-right">Ret.Econ.</th>
             <th className="py-1 pr-2 text-right">Var.Pat</th>
             <th className="py-1 text-right">Gastos</th>
           </tr>
@@ -502,8 +502,8 @@ const ReturnRealHero: React.FC<{
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
-            <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
+            <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
             {includeRiskCapitalInTotals && crpContributionInsight && (
               <div
                 className={cn(
@@ -737,21 +737,21 @@ const LabHeaderCard: React.FC<{
   const cards = [
     {
       key: 'real',
-      label: 'Resultado real mensual equiv.',
+      label: 'Resultado del período prom. mensual',
       value: realMonthlyEquivalent,
       total: headlineMetrics?.real.totalClp ?? null,
       tone: (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300',
     },
     {
       key: 'sinfx',
-      label: 'Resultado sin FX mensual equiv.',
+      label: 'Resultado sin FX prom. mensual',
       value: sinFxMonthlyEquivalent,
       total: headlineMetrics?.resultadoSinFx.totalClp ?? null,
       tone: (sinFxMonthlyEquivalent || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300',
     },
     {
       key: 'fx',
-      label: 'Aporte FX mensual equiv.',
+      label: 'Efecto FX prom. mensual',
       value: fxMonthlyEquivalent,
       total: headlineMetrics?.aporteFx.totalClp ?? null,
       tone: (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300',
@@ -765,7 +765,7 @@ const LabHeaderCard: React.FC<{
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <div className="text-sm text-slate-300">
-              {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del período seleccionado'}
+              {monthKey ? `Lectura exploratoria de ${monthLabel(monthKey)}` : 'Lectura exploratoria del período seleccionado'}
             </div>
             {includeRiskCapitalInTotals && (
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -829,8 +829,8 @@ const LabHeaderCard: React.FC<{
 
       {hasComposition && (
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del promedio mensual equivalente</div>
-          <div className="mt-1 text-[11px] text-slate-300/80">Resultado real = Resultado sin FX + Aporte FX</div>
+          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del promedio mensual</div>
+          <div className="mt-1 text-[11px] text-slate-300/80">Resultado del período = Resultado sin FX + Efecto FX</div>
           <div className="relative mt-3 h-8 rounded-full bg-white/5">
             <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
             <div
@@ -864,13 +864,13 @@ const LabHeaderCard: React.FC<{
               <div className="font-medium text-emerald-300">{formatFreedomCompactClp(sinFxMonthlyEquivalent)}</div>
             </div>
             <div>
-              <div className="text-slate-400">Aporte FX</div>
+              <div className="text-slate-400">Efecto FX</div>
               <div className={cn('font-medium', (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
                 {formatFreedomCompactClp(fxMonthlyEquivalent)}
               </div>
             </div>
             <div>
-              <div className="text-slate-400">Resultado real</div>
+              <div className="text-slate-400">Resultado del período</div>
               <div className={cn('font-medium', (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
                 {formatFreedomCompactClp(realMonthlyEquivalent)}
               </div>
@@ -883,11 +883,11 @@ const LabHeaderCard: React.FC<{
             </div>
             <div className="inline-flex items-center gap-2 text-slate-300">
               <span className={cn('h-2.5 w-2.5 rounded-full', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
-              Aporte FX
+              Efecto FX
             </div>
             <div className="inline-flex items-center gap-2 text-slate-300">
               <span className={cn('h-2.5 w-2.5 rounded-full', (realMonthlyEquivalent || 0) >= 0 ? 'bg-white' : 'bg-rose-300')} />
-              Resultado real
+              Resultado del período
             </div>
           </div>
         </div>
@@ -994,13 +994,13 @@ const LabMetricsGrid: React.FC<{
     },
     {
       key: 'real-periodo',
-      label: period.key === 'last_month' ? 'Real mensual' : 'Real del período',
+      label: period.key === 'last_month' ? 'Resultado del período mensual' : 'Resultado del período',
       valueClp: period.key === 'last_month' ? period.monthlyMetrics?.real.valueClp ?? null : period.cumulativeMetrics?.real.valueClp ?? null,
       months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.real.months ?? 0,
     },
     {
       key: 'aporte-fx-periodo',
-      label: period.key === 'last_month' ? 'Aporte FX mensual' : 'Aporte FX del período',
+      label: period.key === 'last_month' ? 'Efecto FX mensual' : 'Efecto FX del período',
       valueClp: period.key === 'last_month' ? period.monthlyMetrics?.aporteFx.valueClp ?? null : period.cumulativeMetrics?.aporteFx.valueClp ?? null,
       months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.aporteFx.months ?? 0,
     },
@@ -1275,9 +1275,9 @@ const FreedomParametersCard: React.FC<{
   <Card className="border-slate-200 p-4">
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Parámetros</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Simulación</div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <div className="text-sm font-semibold text-slate-900">Escenario base de Libertad Financiera</div>
+          <div className="text-sm font-semibold text-slate-900">Simulación de Libertad Financiera</div>
           {includeRiskCapitalInTotals && (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
               +CapRiesgo
@@ -1335,7 +1335,7 @@ const FreedomParametersCard: React.FC<{
         onClick={onToggle}
         className="mt-3 flex w-full items-center justify-between rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-left text-[11px] text-slate-600"
       >
-        <span>Ajustar tasa, horizonte y gasto mensual</span>
+              <span>Ajustar tasa, horizonte y retiro mensual</span>
         <ChevronDown className="h-4 w-4 text-slate-500" />
       </button>
     )}
@@ -1371,7 +1371,7 @@ const FreedomParametersCard: React.FC<{
             </label>
 
             <label className="grid gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Gasto mensual</span>
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Retiro mensual supuesto</span>
               <div className="relative">
                 <Input
                   value={draft.monthlySpendClp}
@@ -1390,7 +1390,7 @@ const FreedomParametersCard: React.FC<{
     )}
 
     <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-slate-700">
-      <span className="font-medium text-slate-900">Modelo simple determinista:</span>{' '}
+      <span className="font-medium text-slate-900">Simulación simple determinista:</span>{' '}
       usa una tasa constante y no incorpora volatilidad, crisis, secuencia de retornos ni simulación Monte Carlo.
       Úsalo como referencia rápida, no como proyección exhaustiva.
     </div>
@@ -1941,7 +1941,7 @@ export const AnalysisAurum: React.FC = () => {
               Diagnóstico previo: mes anómalo detectado en {analysisDiagnostics.anomalyRaw.monthKey} 
               {` · Var.Pat ${analysisDiagnostics.anomalyRaw.varPatrimonioClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.varPatrimonioClp, 'CLP')}`}
               {` · Gastos ${analysisDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
-              {` · Ret.Real ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
+              {` · Ret.Econ. ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
               {` · % ${formatPct(analysisDiagnostics.anomalyRaw.pct)}`}
             </Card>
           )}
@@ -1957,7 +1957,7 @@ export const AnalysisAurum: React.FC = () => {
                   <tr className="text-left text-slate-500">
                     <th className="py-1 pr-2">Mes</th>
                     <th className="py-1 pr-2 text-right">%</th>
-                    <th className="py-1 pr-2 text-right">Ret.Real</th>
+                    <th className="py-1 pr-2 text-right">Ret.Econ.</th>
                     <th className="py-1 pr-2 text-right">Var.Pat</th>
                     <th className="py-1 text-right">Gastos</th>
                   </tr>

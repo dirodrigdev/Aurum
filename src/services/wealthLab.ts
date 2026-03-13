@@ -160,14 +160,14 @@ const buildMetricBundle = (points: WealthLabPoint[]): {
             months: fxComparablePoints.length,
           },
           real: {
-            label: 'Real acumulado',
+            label: 'Resultado del período acumulado',
             valueClp: realPoints.length
               ? realPoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0)
               : null,
             months: realPoints.length,
           },
           aporteFx: {
-            label: 'Aporte FX acumulado',
+            label: 'Efecto FX acumulado',
             valueClp: fxComparablePoints.length
               ? fxComparablePoints.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0)
               : null,
@@ -184,12 +184,12 @@ const buildMetricBundle = (points: WealthLabPoint[]): {
           months: latestComparablePoint ? 1 : 0,
         },
         real: {
-          label: 'Real mensual',
+          label: 'Resultado del período mensual',
           valueClp: latestRealPoint?.varPatrimonioClp ?? null,
           months: latestRealPoint ? 1 : 0,
         },
         aporteFx: {
-          label: 'Aporte FX mensual',
+          label: 'Efecto FX mensual',
           valueClp: latestComparablePoint?.aportesFxClp ?? null,
           months: latestComparablePoint ? 1 : 0,
         },
@@ -228,19 +228,19 @@ const buildHeadlineMetrics = (
 
   return {
     resultadoSinFx: {
-      label: 'Resultado sin FX mensual equivalente',
+      label: 'Resultado sin FX promedio mensual',
       monthlyEquivalentClp: toMonthlyEquivalent(sinFxTotal),
       totalClp: sinFxTotal,
       months,
     },
     real: {
-      label: 'Resultado real mensual equivalente',
+      label: 'Resultado del período promedio mensual',
       monthlyEquivalentClp: toMonthlyEquivalent(realTotal),
       totalClp: realTotal,
       months,
     },
     aporteFx: {
-      label: 'Aporte FX mensual equivalente',
+      label: 'Efecto FX promedio mensual',
       monthlyEquivalentClp: toMonthlyEquivalent(fxTotal),
       totalClp: fxTotal,
       months,
