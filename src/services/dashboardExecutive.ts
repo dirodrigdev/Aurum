@@ -2,9 +2,16 @@ import { labelMatchKey } from '../utils/wealthLabels';
 import type { WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
 import { buildMonthlyWithdrawalPlan } from './financialFreedom';
 
+// Inputs fijos de la lectura ejecutiva actual. Si el KPI principal cambia,
+// debe cambiarse aquí y no en la UI.
 export const DASHBOARD_LIFE_BASELINE_CLP = 6_000_000;
 export const DASHBOARD_HORIZON_YEARS = 40;
 export const DASHBOARD_ANNUAL_RATE_PCT = 5;
+export const DASHBOARD_EXECUTIVE_ASSUMPTIONS = {
+  lifeBaselineClp: DASHBOARD_LIFE_BASELINE_CLP,
+  horizonYears: DASHBOARD_HORIZON_YEARS,
+  annualRatePct: DASHBOARD_ANNUAL_RATE_PCT,
+} as const;
 
 export type DashboardCoverageTone = 'positive' | 'warning' | 'negative' | 'neutral';
 
@@ -283,6 +290,8 @@ export const buildExecutiveDashboardModel = ({
 }): DashboardExecutiveModel => {
   const baseline = Number.isFinite(lifeBaselineClp) && lifeBaselineClp > 0 ? lifeBaselineClp : DASHBOARD_LIFE_BASELINE_CLP;
 
+  // El KPI "cobertura de vida actual" nace de la capacidad de retiro mensual
+  // estimada a 40 años / 5% anual sobre el último cierre confirmado.
   const activePlan = buildMonthlyWithdrawalPlan(
     closures,
     DASHBOARD_ANNUAL_RATE_PCT,

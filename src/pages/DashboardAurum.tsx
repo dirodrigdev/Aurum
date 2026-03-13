@@ -17,6 +17,7 @@ import {
   type WealthRecord,
 } from '../services/wealthStorage';
 import {
+  DASHBOARD_EXECUTIVE_ASSUMPTIONS,
   DASHBOARD_LIFE_BASELINE_CLP,
   buildExecutiveDashboardModel,
   type DashboardCoverageTone,
@@ -29,13 +30,6 @@ const toneClasses: Record<DashboardCoverageTone, string> = {
   warning: 'text-amber-200',
   negative: 'text-rose-200',
   neutral: 'text-slate-100',
-};
-
-const toneAccentClasses: Record<DashboardCoverageTone, string> = {
-  positive: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100',
-  warning: 'border-amber-300/35 bg-amber-300/10 text-amber-100',
-  negative: 'border-rose-300/35 bg-rose-300/10 text-rose-100',
-  neutral: 'border-slate-300/20 bg-white/5 text-slate-100',
 };
 
 const freshnessBarSegments = [
@@ -56,9 +50,9 @@ const DashboardMetricCard = ({
   tone: DashboardCoverageTone;
 }) => (
   <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 backdrop-blur-sm shadow-[0_16px_40px_rgba(3,10,26,0.24)] sm:p-5">
-    <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">{label}</div>
+    <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">{label}</div>
     <div className={cn('mt-4 text-3xl font-semibold tracking-[-0.03em] sm:text-[2.15rem]', toneClasses[tone])}>{value}</div>
-    <div className="mt-2 text-sm text-slate-400">{subtitle}</div>
+    <div className="mt-2 text-sm text-slate-200/82">{subtitle}</div>
   </Card>
 );
 
@@ -137,6 +131,10 @@ export const DashboardAurum: React.FC = () => {
   );
 
   const sourceLabel = useMemo(() => monthKeyToYearLabel(model.sourceMonthKey), [model.sourceMonthKey]);
+  const baselineLabel = useMemo(
+    () => formatFreedomCompactClp(DASHBOARD_EXECUTIVE_ASSUMPTIONS.lifeBaselineClp),
+    [],
+  );
   const freshnessKpi = useMemo(() => {
     if (model.freshness.status !== 'ok' || model.freshness.fresh7dPct === null) return '—';
     return `${Math.round(model.freshness.fresh7dPct * 100)}%`;
@@ -177,12 +175,12 @@ export const DashboardAurum: React.FC = () => {
             <div className={cn('text-[4.25rem] font-semibold leading-none tracking-[-0.07em] sm:text-[5.35rem]', toneClasses[model.coverageTone])}>
               {model.coverageHeadline}
             </div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500 sm:text-[11px]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-300/82 sm:text-[11px]">
               {model.coverageLabel}
             </div>
             <div
               className={cn(
-                'inline-flex w-fit rounded-full border px-3 py-1.5 text-sm font-medium sm:text-[15px]',
+                'inline-flex w-fit rounded-full border px-3 py-1.5 text-sm font-semibold sm:text-[15px]',
                 model.coverageTone === 'positive'
                   ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
                   : model.coverageTone === 'warning'
@@ -212,9 +210,13 @@ export const DashboardAurum: React.FC = () => {
                 </span>
               ))}
             </div>
-            <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-1.5 text-xs text-slate-300/72 sm:flex-row sm:items-center sm:justify-between">
               <span>Simulación simple determinista</span>
-              {model.sourceMonthKey ? <span>Basado en cierre confirmado de {sourceLabel}</span> : null}
+              <span>
+                Inputs: {DASHBOARD_EXECUTIVE_ASSUMPTIONS.horizonYears} años ·{' '}
+                {DASHBOARD_EXECUTIVE_ASSUMPTIONS.annualRatePct}% anual · base {baselineLabel}
+                {model.sourceMonthKey ? ` · cierre confirmado de ${sourceLabel}` : ''}
+              </span>
             </div>
           </div>
         </div>
@@ -242,12 +244,12 @@ export const DashboardAurum: React.FC = () => {
       </section>
 
       <section className="grid gap-3 sm:gap-4 lg:grid-cols-2">
-        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(13,33,70,0.96),rgba(9,23,49,0.94))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
             Frescura patrimonial
           </div>
           <div className="mt-4 text-[2.4rem] font-semibold tracking-[-0.04em] text-white">{freshnessKpi}</div>
-          <div className="mt-1 text-sm text-slate-400">Patrimonio actualizado ≤ 7 días</div>
+          <div className="mt-1 text-sm text-slate-200/82">Patrimonio actualizado ≤ 7 días</div>
           <div className="mt-5">
             <DashboardBar
               values={freshnessBarSegments.map((segment) => ({
@@ -259,8 +261,8 @@ export const DashboardAurum: React.FC = () => {
           </div>
         </Card>
 
-        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(13,33,70,0.96),rgba(9,23,49,0.94))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
             Dependencia de CapRiesgo
           </div>
           <div
@@ -275,24 +277,35 @@ export const DashboardAurum: React.FC = () => {
           >
             {model.capRiskDependence.level}
           </div>
-          <div className="mt-2 text-sm leading-relaxed text-slate-400">
+          <div className="mt-2 text-sm leading-relaxed text-slate-200/82">
             {model.capRiskDependence.summary}
           </div>
         </Card>
       </section>
 
-      <Card className={cn('border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.14)]', toneAccentClasses[model.coverageTone])}>
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] opacity-70">Insight ejecutivo</div>
-        <div className="mt-2 text-[15px] font-semibold leading-snug sm:text-base">{model.insight}</div>
+      <Card
+        className={cn(
+          'border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.14)]',
+          model.coverageTone === 'positive'
+            ? 'border-emerald-400/25 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(9,23,49,0.96))] text-emerald-50'
+            : model.coverageTone === 'warning'
+              ? 'border-amber-300/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(9,23,49,0.96))] text-amber-50'
+              : model.coverageTone === 'negative'
+                ? 'border-rose-300/28 bg-[linear-gradient(180deg,rgba(244,63,94,0.12),rgba(9,23,49,0.96))] text-rose-50'
+                : 'border-white/10 bg-[linear-gradient(180deg,rgba(15,34,68,0.96),rgba(9,23,49,0.96))] text-slate-50',
+        )}
+      >
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-200/78">Insight ejecutivo</div>
+        <div className="mt-2 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
       </Card>
 
-      <Card className="border-white/8 bg-white/4 p-4 shadow-[0_10px_24px_rgba(3,10,26,0.12)] backdrop-blur-sm">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Accesos rápidos</div>
+      <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(15,34,68,0.94),rgba(9,23,49,0.92))] p-4 text-white shadow-[0_10px_24px_rgba(3,10,26,0.18)] backdrop-blur-sm">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/84">Accesos rápidos</div>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/10 bg-white/5 px-3 text-slate-200 hover:bg-white/10"
+            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'returns' } })}
           >
             Ver Retornos
@@ -300,7 +313,7 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/10 bg-white/5 px-3 text-slate-200 hover:bg-white/10"
+            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'freedom' } })}
           >
             <BrainCircuit className="mr-1 h-3.5 w-3.5" />
@@ -309,7 +322,7 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/10 bg-white/5 px-3 text-slate-200 hover:bg-white/10"
+            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'lab' } })}
           >
             <Sparkles className="mr-1 h-3.5 w-3.5" />
@@ -318,7 +331,7 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/10 bg-white/5 px-3 text-slate-200 hover:bg-white/10"
+            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
             onClick={refreshDashboardState}
           >
             <RefreshCcw className="mr-1 h-3.5 w-3.5" />
