@@ -939,15 +939,15 @@ const FreedomDrawdownChart: React.FC<{
       <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
         <div className="rounded-xl bg-white px-2 py-2">
           <div className="uppercase tracking-wide text-slate-400">Inicio</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(startPoint.balanceEndClp, 'CLP')}</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(startPoint.balanceEndClp)}</div>
         </div>
         <div className="rounded-xl bg-white px-2 py-2">
           <div className="uppercase tracking-wide text-slate-400">Mitad</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(midPoint.balanceEndClp, 'CLP')}</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(midPoint.balanceEndClp)}</div>
         </div>
         <div className="rounded-xl bg-white px-2 py-2">
           <div className="uppercase tracking-wide text-slate-400">Final</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatCompactCurrency(endPoint.balanceEndClp, 'CLP')}</div>
+          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(endPoint.balanceEndClp)}</div>
         </div>
       </div>
     </div>
@@ -972,6 +972,15 @@ const FreedomWithdrawalBlock: React.FC<{
         </div>
       </div>
       <FreedomStatusBadge status={plan.status} />
+    </div>
+
+    <div className="mt-3 flex flex-wrap gap-2">
+      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
+        {plan.horizonYears} años
+      </span>
+      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
+        {plan.annualRatePct.toFixed(1).replace('.', ',')}% anual
+      </span>
     </div>
 
     <div className="mt-4">
@@ -1015,6 +1024,15 @@ const FreedomCoverageBlock: React.FC<{
         </div>
       </div>
       <FreedomStatusBadge status={plan.status} />
+    </div>
+
+    <div className="mt-3 flex flex-wrap gap-2">
+      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
+        {plan.annualRatePct.toFixed(1).replace('.', ',')}% anual
+      </span>
+      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
+        {formatFreedomCompactClp(plan.monthlySpendClp)}/mes
+      </span>
     </div>
 
     <div className="mt-4">
