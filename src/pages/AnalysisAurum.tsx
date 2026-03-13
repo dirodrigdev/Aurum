@@ -214,19 +214,19 @@ const buildCrpContributionInsight = (
 
   const summaryText =
     tone === 'neutral'
-      ? 'CRP no movió materialmente el resultado en los últ. 12M'
+      ? 'CapRiesgo no movió materialmente el resultado en los últ. 12M'
       : aporteMensualClp > 0
-        ? `CRP aportó ${headlineAmount}/mes en los últ. 12M`
-        : `CRP restó ${headlineAmount}/mes en los últ. 12M`;
+        ? `CapRiesgo aportó ${headlineAmount}/mes en los últ. 12M`
+        : `CapRiesgo restó ${headlineAmount}/mes en los últ. 12M`;
 
   const canShowPct = retornoConCrpClp > 1_000_000 && Math.abs(aporteClp) > 100_000;
   const pctCrp = canShowPct ? (aporteClp / retornoConCrpClp) * 100 : null;
   const detailText =
     pctCrp !== null
-      ? `Impacto marginal vs. sin capital de riesgo · Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
+      ? `Cambio explicado por CapRiesgo · Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
       : tone === 'neutral'
         ? null
-        : 'Impacto marginal vs. sin capital de riesgo';
+        : 'Cambio explicado por CapRiesgo';
   const totalText =
     tone === 'neutral' ? null : `Total período: ${formatCompactCurrency(aporteClp, 'CLP')}`;
 
