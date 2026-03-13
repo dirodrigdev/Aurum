@@ -4,12 +4,17 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
 import { formatFreedomCompactClp, monthKeyToYearLabel } from '../components/analysis/shared';
 import {
+  FX_RATES_UPDATED_EVENT,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
   loadClosures,
+  loadFxRates,
   loadIncludeRiskCapitalInTotals,
+  loadWealthRecords,
   saveIncludeRiskCapitalInTotals,
+  type WealthFxRates,
   type WealthMonthlyClosure,
+  type WealthRecord,
 } from '../services/wealthStorage';
 import {
   DASHBOARD_LIFE_BASELINE_CLP,
@@ -33,6 +38,12 @@ const toneAccentClasses: Record<DashboardCoverageTone, string> = {
   neutral: 'border-slate-300/20 bg-white/5 text-slate-100',
 };
 
+const freshnessBarSegments = [
+  { key: 'fresh7dPct', label: '≤ 7 días', className: 'bg-emerald-400' },
+  { key: 'aging30dPct', label: '8–30 días', className: 'bg-amber-300' },
+  { key: 'stalePct', label: '> 30 días', className: 'bg-rose-300' },
+] as const;
+
 const DashboardMetricCard = ({
   label,
   value,
@@ -51,26 +62,59 @@ const DashboardMetricCard = ({
   </Card>
 );
 
+const DashboardBar = ({
+  values,
+}: {
+  values: Array<{ label: string; pct: number; className: string }>;
+}) => (
+  <div className="space-y-2">
+    <div className="flex h-2.5 overflow-hidden rounded-full bg-white/8">
+      {values.map((item) => (
+        <div
+          key={item.label}
+          className={item.className}
+          style={{ width: `${Math.max(0, Math.min(100, item.pct * 100))}%` }}
+          aria-hidden="true"
+        />
+      ))}
+    </div>
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+      {values.map((item) => (
+        <span key={item.label} className="inline-flex items-center gap-1.5">
+          <span className={cn('h-2 w-2 rounded-full', item.className)} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  </div>
+);
+
 export const DashboardAurum: React.FC = () => {
   const navigate = useNavigate();
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => sortClosures(loadClosures()));
+  const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
+  const [fx, setFx] = useState<WealthFxRates>(() => loadFxRates());
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState<boolean>(() =>
     loadIncludeRiskCapitalInTotals(),
   );
 
   const refreshDashboardState = useCallback(() => {
     setClosures(sortClosures(loadClosures()));
+    setRecords(loadWealthRecords());
+    setFx(loadFxRates());
     setIncludeRiskCapitalInTotals(loadIncludeRiskCapitalInTotals());
   }, []);
 
   useEffect(() => {
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
+    window.addEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
     window.addEventListener(
       RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
       refreshDashboardState as EventListener,
     );
     return () => {
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
+      window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
       window.removeEventListener(
         RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
         refreshDashboardState as EventListener,
@@ -82,13 +126,19 @@ export const DashboardAurum: React.FC = () => {
     () =>
       buildExecutiveDashboardModel({
         closures,
+        records,
+        fx,
         includeRiskCapitalInTotals,
         lifeBaselineClp: DASHBOARD_LIFE_BASELINE_CLP,
       }),
-    [closures, includeRiskCapitalInTotals],
+    [closures, records, fx, includeRiskCapitalInTotals],
   );
 
   const sourceLabel = useMemo(() => monthKeyToYearLabel(model.sourceMonthKey), [model.sourceMonthKey]);
+  const freshnessKpi = useMemo(() => {
+    if (model.freshness.status !== 'ok' || model.freshness.fresh7dPct === null) return '—';
+    return `${Math.round(model.freshness.fresh7dPct * 100)}%`;
+  }, [model.freshness]);
 
   return (
     <div className="space-y-4 p-3">
@@ -172,6 +222,46 @@ export const DashboardAurum: React.FC = () => {
           subtitle={model.cards.margin.subtitle}
           tone={model.cards.margin.tone}
         />
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-2">
+        <Card className="border-white/10 bg-[#0d2146] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.32)]">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Frescura patrimonial
+          </div>
+          <div className="mt-3 text-4xl font-semibold tracking-tight text-white">{freshnessKpi}</div>
+          <div className="mt-2 text-sm text-slate-400">Patrimonio actualizado ≤ 7 días</div>
+          <div className="mt-4">
+            <DashboardBar
+              values={freshnessBarSegments.map((segment) => ({
+                label: segment.label,
+                pct: model.freshness[segment.key] ?? 0,
+                className: segment.className,
+              }))}
+            />
+          </div>
+        </Card>
+
+        <Card className="border-white/10 bg-[#0d2146] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.32)]">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Dependencia de CapRiesgo
+          </div>
+          <div
+            className={cn(
+              'mt-3 text-4xl font-semibold tracking-tight',
+              model.capRiskDependence.level === 'Alta'
+                ? 'text-amber-200'
+                : model.capRiskDependence.level === 'Media'
+                  ? 'text-slate-100'
+                  : 'text-emerald-300',
+            )}
+          >
+            {model.capRiskDependence.level}
+          </div>
+          <div className="mt-2 text-sm leading-relaxed text-slate-400">
+            {model.capRiskDependence.summary}
+          </div>
+        </Card>
       </section>
 
       <Card className={cn('border p-4 shadow-sm', toneAccentClasses[model.coverageTone])}>

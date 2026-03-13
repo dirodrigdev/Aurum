@@ -1,4 +1,5 @@
-import type { WealthMonthlyClosure } from './wealthStorage';
+import { labelMatchKey } from '../utils/wealthLabels';
+import type { WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
 import { buildMonthlyWithdrawalPlan } from './financialFreedom';
 
 export const DASHBOARD_LIFE_BASELINE_CLP = 6_000_000;
@@ -6,6 +7,27 @@ export const DASHBOARD_HORIZON_YEARS = 40;
 export const DASHBOARD_ANNUAL_RATE_PCT = 5;
 
 export type DashboardCoverageTone = 'positive' | 'warning' | 'negative' | 'neutral';
+
+export type DashboardFreshnessBucket = 'fresh' | 'aging' | 'stale';
+
+export type DashboardFreshnessModel = {
+  status: 'ok' | 'unavailable';
+  fresh7dPct: number | null;
+  aging30dPct: number | null;
+  stalePct: number | null;
+  totalWeightedClp: number;
+};
+
+export type DashboardCapRiskDependenceLevel = 'Baja' | 'Media' | 'Alta' | '—';
+
+export type DashboardCapRiskDependence = {
+  status: 'ok' | 'unavailable';
+  level: DashboardCapRiskDependenceLevel;
+  activeCoverageRatio: number | null;
+  alternateCoverageRatio: number | null;
+  relativeChangePct: number | null;
+  summary: string;
+};
 
 export type DashboardQuickStat = {
   label: string;
@@ -29,6 +51,8 @@ export type DashboardExecutiveModel = {
   includeRiskCapitalInTotals: boolean;
   alternativeCoverageRatio: number | null;
   alternativeMonthlySustainableClp: number | null;
+  freshness: DashboardFreshnessModel;
+  capRiskDependence: DashboardCapRiskDependence;
   chips: string[];
   insight: string;
   cards: {
@@ -41,6 +65,155 @@ export type DashboardExecutiveModel = {
 const clampFinite = (value: number | null): number | null => {
   if (value === null || !Number.isFinite(value)) return null;
   return value;
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const SMALL_MARGIN_CLP = 500_000;
+const LOW_FRESHNESS_THRESHOLD = 0.6;
+const RISK_CAPITAL_LABEL_KEYS = new Set([
+  labelMatchKey('Capital de riesgo CLP'),
+  labelMatchKey('Capital de riesgo USD'),
+]);
+
+const isRiskCapitalLabel = (label: string) => RISK_CAPITAL_LABEL_KEYS.has(labelMatchKey(label));
+
+const makeDashboardAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'currency'>) =>
+  `${record.block}::${labelMatchKey(record.label)}::${record.currency}`;
+
+const recordDateMs = (record: WealthRecord): number => {
+  const created = new Date(record.createdAt).getTime();
+  if (Number.isFinite(created) && created > 0) return created;
+  const snapshot = new Date(`${record.snapshotDate}T12:00:00`).getTime();
+  return Number.isFinite(snapshot) ? snapshot : NaN;
+};
+
+const convertRecordToClp = (record: WealthRecord, fx: WealthFxRates): number => {
+  if (!Number.isFinite(record.amount)) return 0;
+  if (record.currency === 'CLP') return record.amount;
+  if (record.currency === 'USD') return record.amount * fx.usdClp;
+  if (record.currency === 'EUR') return record.amount * fx.eurClp;
+  return record.amount * fx.ufClp;
+};
+
+const bucketFromAgeDays = (days: number): DashboardFreshnessBucket => {
+  if (days <= 7) return 'fresh';
+  if (days <= 30) return 'aging';
+  return 'stale';
+};
+
+const buildFreshnessModel = (
+  records: WealthRecord[],
+  fx: WealthFxRates,
+  includeRiskCapitalInTotals: boolean,
+): DashboardFreshnessModel => {
+  const latestByAsset = new Map<string, WealthRecord>();
+  for (const record of records) {
+    if (!includeRiskCapitalInTotals && isRiskCapitalLabel(record.label)) continue;
+    const key = makeDashboardAssetKey(record);
+    const prev = latestByAsset.get(key);
+    if (!prev) {
+      latestByAsset.set(key, record);
+      continue;
+    }
+    if ((recordDateMs(record) || 0) >= (recordDateMs(prev) || 0)) {
+      latestByAsset.set(key, record);
+    }
+  }
+
+  const latestRecords = [...latestByAsset.values()];
+  if (!latestRecords.length) {
+    return {
+      status: 'unavailable',
+      fresh7dPct: null,
+      aging30dPct: null,
+      stalePct: null,
+      totalWeightedClp: 0,
+    };
+  }
+
+  const now = Date.now();
+  let fresh = 0;
+  let aging = 0;
+  let stale = 0;
+  let total = 0;
+
+  for (const record of latestRecords) {
+    const valueClp = Math.abs(convertRecordToClp(record, fx));
+    if (!Number.isFinite(valueClp) || valueClp <= 0) continue;
+    const ageMs = now - recordDateMs(record);
+    const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
+    const bucket = bucketFromAgeDays(ageDays);
+    total += valueClp;
+    if (bucket === 'fresh') fresh += valueClp;
+    else if (bucket === 'aging') aging += valueClp;
+    else stale += valueClp;
+  }
+
+  if (total <= 0) {
+    return {
+      status: 'unavailable',
+      fresh7dPct: null,
+      aging30dPct: null,
+      stalePct: null,
+      totalWeightedClp: 0,
+    };
+  }
+
+  return {
+    status: 'ok',
+    fresh7dPct: fresh / total,
+    aging30dPct: aging / total,
+    stalePct: stale / total,
+    totalWeightedClp: total,
+  };
+};
+
+const buildCapRiskDependence = (
+  coverageWithoutRisk: number | null,
+  coverageWithRisk: number | null,
+  includeRiskCapitalInTotals: boolean,
+): DashboardCapRiskDependence => {
+  if (
+    coverageWithoutRisk === null ||
+    coverageWithRisk === null ||
+    !Number.isFinite(coverageWithoutRisk) ||
+    !Number.isFinite(coverageWithRisk)
+  ) {
+    return {
+      status: 'unavailable',
+      level: '—',
+      activeCoverageRatio: includeRiskCapitalInTotals ? coverageWithRisk : coverageWithoutRisk,
+      alternateCoverageRatio: includeRiskCapitalInTotals ? coverageWithoutRisk : coverageWithRisk,
+      relativeChangePct: null,
+      summary: 'Sin base suficiente para estimar CapRiesgo',
+    };
+  }
+
+  const activeCoverageRatio = includeRiskCapitalInTotals ? coverageWithRisk : coverageWithoutRisk;
+  const alternateCoverageRatio = includeRiskCapitalInTotals ? coverageWithoutRisk : coverageWithRisk;
+  const relativeChangePct =
+    (Math.abs(coverageWithRisk - coverageWithoutRisk) / Math.max(Math.min(coverageWithRisk, coverageWithoutRisk), 0.01)) * 100;
+  const changesVerdict = (coverageWithRisk >= 1) !== (coverageWithoutRisk >= 1);
+
+  let level: DashboardCapRiskDependenceLevel = 'Baja';
+  if (changesVerdict || relativeChangePct > 25) level = 'Alta';
+  else if (relativeChangePct >= 10 || Math.abs(coverageWithRisk - coverageWithoutRisk) >= 0.1) level = 'Media';
+
+  const formatRatio = (value: number) =>
+    `${value.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
+
+  const summary = includeRiskCapitalInTotals
+    ? `Sin CapRiesgo la cobertura cae de ${formatRatio(coverageWithRisk)} a ${formatRatio(coverageWithoutRisk)}`
+    : `Con CapRiesgo la cobertura sube de ${formatRatio(coverageWithoutRisk)} a ${formatRatio(coverageWithRisk)}`;
+
+  return {
+    status: 'ok',
+    level,
+    activeCoverageRatio,
+    alternateCoverageRatio,
+    relativeChangePct,
+    summary,
+  };
 };
 
 const coverageToneFromRatio = (ratio: number | null): DashboardCoverageTone => {
@@ -57,56 +230,54 @@ const coverageHeadlineFromRatio = (ratio: number | null): string => {
 
 const buildCoverageMessage = (
   ratio: number | null,
-  includeRiskCapitalInTotals: boolean,
-  alternativeRatio: number | null,
+  capRiskDependence: DashboardCapRiskDependence,
   marginClp: number | null,
 ): string => {
   if (ratio === null || !Number.isFinite(ratio)) return 'Necesitas al menos un cierre confirmado';
-  if (
-    includeRiskCapitalInTotals &&
-    alternativeRatio !== null &&
-    Number.isFinite(alternativeRatio) &&
-    ratio >= 1 &&
-    alternativeRatio < 1
-  ) {
+  if (ratio >= 1 && capRiskDependence.level === 'Alta') {
     return 'Depende demasiado de CapRiesgo';
   }
   if (ratio < 1) return 'No la sostiene hoy';
-  if (ratio < 1.1 || (marginClp !== null && marginClp < 500_000)) return 'Sostiene, pero con poco margen';
+  if (ratio < 1.1 || (marginClp !== null && marginClp < SMALL_MARGIN_CLP)) return 'Sostiene, pero con poco margen';
   return 'Sostiene tu vida actual';
 };
 
 const buildInsight = (
   ratio: number | null,
-  includeRiskCapitalInTotals: boolean,
-  alternativeRatio: number | null,
+  capRiskDependence: DashboardCapRiskDependence,
   marginClp: number | null,
+  freshness: DashboardFreshnessModel,
 ): string => {
   if (ratio === null || !Number.isFinite(ratio)) {
     return 'Necesitas al menos un cierre confirmado para evaluar sostenibilidad.';
   }
-  if (
-    includeRiskCapitalInTotals &&
-    alternativeRatio !== null &&
-    Number.isFinite(alternativeRatio) &&
-    ratio >= 1 &&
-    alternativeRatio < 1
-  ) {
+  if (ratio < 1) return 'Hoy tu estándar de vida actual no queda cubierto por 40 años.';
+  if (capRiskDependence.level === 'Alta') {
     return 'Hoy la conclusión depende demasiado de CapRiesgo.';
   }
-  if (ratio < 1) return 'Hoy tu estándar de vida actual no queda cubierto por 40 años.';
-  if (marginClp !== null && marginClp < 500_000) {
+  if (marginClp !== null && marginClp < SMALL_MARGIN_CLP) {
     return 'Hoy tu patrimonio sostiene tu vida actual, pero con margen acotado.';
+  }
+  if (
+    freshness.status === 'ok' &&
+    freshness.fresh7dPct !== null &&
+    freshness.fresh7dPct < LOW_FRESHNESS_THRESHOLD
+  ) {
+    return 'La foto patrimonial todavía tiene actualización dispareja.';
   }
   return 'Hoy tu patrimonio sostiene tu vida actual con holgura razonable.';
 };
 
 export const buildExecutiveDashboardModel = ({
   closures,
+  records,
+  fx,
   includeRiskCapitalInTotals,
   lifeBaselineClp = DASHBOARD_LIFE_BASELINE_CLP,
 }: {
   closures: WealthMonthlyClosure[];
+  records: WealthRecord[];
+  fx: WealthFxRates;
   includeRiskCapitalInTotals: boolean;
   lifeBaselineClp?: number;
 }): DashboardExecutiveModel => {
@@ -131,13 +302,16 @@ export const buildExecutiveDashboardModel = ({
   const alternativeCoverageRatio =
     alternativeMonthlySustainableClp === null ? null : alternativeMonthlySustainableClp / baseline;
   const marginClp = monthlySustainableClp === null ? null : monthlySustainableClp - baseline;
-  const coverageTone = coverageToneFromRatio(coverageRatio);
-  const coverageMessage = buildCoverageMessage(
-    coverageRatio,
+  const freshness = buildFreshnessModel(records, fx, includeRiskCapitalInTotals);
+  const coverageWithoutRisk = includeRiskCapitalInTotals ? alternativeCoverageRatio : coverageRatio;
+  const coverageWithRisk = includeRiskCapitalInTotals ? coverageRatio : alternativeCoverageRatio;
+  const capRiskDependence = buildCapRiskDependence(
+    coverageWithoutRisk,
+    coverageWithRisk,
     includeRiskCapitalInTotals,
-    alternativeCoverageRatio,
-    marginClp,
   );
+  const coverageTone = coverageToneFromRatio(coverageRatio);
+  const coverageMessage = buildCoverageMessage(coverageRatio, capRiskDependence, marginClp);
   const status = monthlySustainableClp === null ? (activePlan.status === 'missing_patrimony' ? 'missing_patrimony' : 'invalid') : 'ok';
 
   return {
@@ -155,13 +329,15 @@ export const buildExecutiveDashboardModel = ({
     includeRiskCapitalInTotals,
     alternativeCoverageRatio,
     alternativeMonthlySustainableClp,
+    freshness,
+    capRiskDependence,
     chips: [
       `${DASHBOARD_HORIZON_YEARS} años`,
       'Vida actual',
       `${DASHBOARD_ANNUAL_RATE_PCT}% anual`,
       ...(includeRiskCapitalInTotals ? ['⚡ +CapRiesgo'] : []),
     ],
-    insight: buildInsight(coverageRatio, includeRiskCapitalInTotals, alternativeCoverageRatio, marginClp),
+    insight: buildInsight(coverageRatio, capRiskDependence, marginClp, freshness),
     cards: {
       sustainable: {
         label: 'Capacidad sostenible mensual',
