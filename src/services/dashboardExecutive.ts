@@ -35,7 +35,9 @@ export type DashboardCapRiskDependence = {
   activeCoverageRatio: number | null;
   alternateCoverageRatio: number | null;
   relativeChangePct: number | null;
-  summary: string;
+  dependenceSummary: string;
+  impactRatioDelta: number | null;
+  impactSummary: string;
 };
 
 export type DashboardQuickStat = {
@@ -201,26 +203,38 @@ const buildCapRiskDependence = (
       activeCoverageRatio: includeRiskCapitalInTotals ? coverageWithRisk : coverageWithoutRisk,
       alternateCoverageRatio: includeRiskCapitalInTotals ? coverageWithoutRisk : coverageWithRisk,
       relativeChangePct: null,
-      summary: 'Sin base suficiente para estimar CapRiesgo',
+      dependenceSummary: 'Sin base suficiente',
+      impactRatioDelta: null,
+      impactSummary: 'Sin base suficiente',
     };
   }
 
   const activeCoverageRatio = includeRiskCapitalInTotals ? coverageWithRisk : coverageWithoutRisk;
   const alternateCoverageRatio = includeRiskCapitalInTotals ? coverageWithoutRisk : coverageWithRisk;
+  const impactRatioDelta = coverageWithRisk - coverageWithoutRisk;
   const relativeChangePct =
     (Math.abs(coverageWithRisk - coverageWithoutRisk) / Math.max(Math.min(coverageWithRisk, coverageWithoutRisk), 0.01)) * 100;
-  const changesVerdict = (coverageWithRisk >= 1) !== (coverageWithoutRisk >= 1);
+  const withRiskReaches = coverageWithRisk >= 1;
+  const withoutRiskReaches = coverageWithoutRisk >= 1;
+  const changesVerdict = withRiskReaches !== withoutRiskReaches;
+  const materialMarginDrop = relativeChangePct >= 10 || Math.abs(impactRatioDelta) >= 0.1;
 
   let level: DashboardCapRiskDependenceLevel = 'Baja';
-  if (changesVerdict || relativeChangePct > 25) level = 'Alta';
-  else if (relativeChangePct >= 10 || Math.abs(coverageWithRisk - coverageWithoutRisk) >= 0.1) level = 'Media';
+  let dependenceSummary = 'Sin CapRiesgo igual alcanza';
+  if (changesVerdict && withRiskReaches && !withoutRiskReaches) {
+    level = 'Alta';
+    dependenceSummary = 'Sin CapRiesgo ya no alcanza';
+  } else if (!withRiskReaches && !withoutRiskReaches) {
+    level = 'Baja';
+    dependenceSummary = 'Con o sin CapRiesgo no alcanza';
+  } else if (withoutRiskReaches && materialMarginDrop) {
+    level = relativeChangePct > 25 ? 'Alta' : 'Media';
+    dependenceSummary = 'Sin CapRiesgo el margen cae fuerte';
+  }
 
-  const formatRatio = (value: number) =>
-    `${value.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
-
-  const summary = includeRiskCapitalInTotals
-    ? `Sin CapRiesgo la cobertura cae de ${formatRatio(coverageWithRisk)} a ${formatRatio(coverageWithoutRisk)}`
-    : `Con CapRiesgo la cobertura sube de ${formatRatio(coverageWithoutRisk)} a ${formatRatio(coverageWithRisk)}`;
+  let impactSummary = 'Sin cambio material';
+  if (impactRatioDelta > 0.01) impactSummary = 'Mejora la cobertura';
+  else if (impactRatioDelta < -0.01) impactSummary = 'Reduce la cobertura';
 
   return {
     status: 'ok',
@@ -228,7 +242,9 @@ const buildCapRiskDependence = (
     activeCoverageRatio,
     alternateCoverageRatio,
     relativeChangePct,
-    summary,
+    dependenceSummary,
+    impactRatioDelta,
+    impactSummary,
   };
 };
 

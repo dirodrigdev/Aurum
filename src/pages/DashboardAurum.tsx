@@ -43,16 +43,22 @@ const DashboardMetricCard = ({
   value,
   subtitle,
   tone,
+  className,
+  valueClassName,
+  subtitleClassName,
 }: {
   label: string;
   value: string;
   subtitle: string;
   tone: DashboardCoverageTone;
+  className?: string;
+  valueClassName?: string;
+  subtitleClassName?: string;
 }) => (
-  <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 backdrop-blur-sm shadow-[0_16px_40px_rgba(3,10,26,0.24)] sm:p-5">
+  <Card className={cn('border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 backdrop-blur-sm shadow-[0_16px_40px_rgba(3,10,26,0.24)] sm:p-5', className)}>
     <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">{label}</div>
-    <div className={cn('mt-4 text-3xl font-semibold tracking-[-0.03em] sm:text-[2.15rem]', toneClasses[tone])}>{value}</div>
-    <div className="mt-2 text-sm text-slate-200/82">{subtitle}</div>
+    <div className={cn('mt-4 text-3xl font-semibold tracking-[-0.03em] sm:text-[2.15rem]', toneClasses[tone], valueClassName)}>{value}</div>
+    <div className={cn('mt-2 text-sm text-slate-200/82', subtitleClassName)}>{subtitle}</div>
   </Card>
 );
 
@@ -172,21 +178,19 @@ export const DashboardAurum: React.FC = () => {
           </div>
 
           <div className="space-y-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
-              <div className={cn('text-[4.25rem] font-semibold leading-none tracking-[-0.07em] sm:text-[5.35rem]', toneClasses[model.coverageTone])}>
-                {model.coverageHeadline}
-              </div>
-              <div className="flex flex-col gap-1.5 self-start rounded-2xl border border-white/8 bg-white/4 px-3 py-2 text-left sm:min-w-[124px] sm:self-auto sm:bg-transparent sm:px-0 sm:py-0">
+            <div className={cn('text-[4.25rem] font-semibold leading-none tracking-[-0.07em] sm:text-[5.35rem]', toneClasses[model.coverageTone])}>
+              {model.coverageHeadline}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-left">
                 {model.heroSensitivity.map((scenario) => (
                   <div
                     key={scenario.annualRatePct}
-                    className="text-sm font-medium tracking-[-0.02em] text-slate-300/78 sm:text-[15px]"
+                    className="inline-flex items-center rounded-full border border-white/7 bg-white/[0.03] px-2.5 py-1 text-sm font-medium tracking-[-0.02em] text-slate-300/72 sm:text-[15px]"
                   >
                     <span className="text-slate-200/88">{scenario.coverageHeadline}</span>
                     <span className="ml-2 text-slate-400/80">{scenario.annualRatePct}%</span>
                   </div>
                 ))}
-              </div>
             </div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-300/82 sm:text-[11px]">
               {model.coverageLabel}
@@ -247,6 +251,9 @@ export const DashboardAurum: React.FC = () => {
           value={formatFreedomCompactClp(model.cards.lifestyle.valueClp)}
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
+          className="border-[#876a54]/30 bg-[linear-gradient(180deg,rgba(181,126,74,0.12),rgba(255,255,255,0.03))]"
+          valueClassName="text-white"
+          subtitleClassName="text-slate-100/88"
         />
         <DashboardMetricCard
           label={model.cards.margin.label}
@@ -275,23 +282,39 @@ export const DashboardAurum: React.FC = () => {
         </Card>
 
         <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
-            Dependencia de CapRiesgo
-          </div>
-          <div
-            className={cn(
-              'mt-4 text-[2.4rem] font-semibold tracking-[-0.04em]',
-              model.capRiskDependence.level === 'Alta'
-                ? 'text-amber-200'
-                : model.capRiskDependence.level === 'Media'
-                  ? 'text-slate-100'
-                  : 'text-emerald-300',
-            )}
-          >
-            {model.capRiskDependence.level}
-          </div>
-          <div className="mt-2 text-sm leading-relaxed text-slate-200/82">
-            {model.capRiskDependence.summary}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia</div>
+              <div
+                className={cn(
+                  'mt-3 text-[2.1rem] font-semibold tracking-[-0.04em]',
+                  model.capRiskDependence.level === 'Alta'
+                    ? 'text-amber-200'
+                    : model.capRiskDependence.level === 'Media'
+                      ? 'text-slate-100'
+                      : 'text-emerald-300',
+                )}
+              >
+                {model.capRiskDependence.level}
+              </div>
+              <div className="mt-2 text-xs leading-relaxed text-slate-200/78">
+                {model.capRiskDependence.dependenceSummary}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Impacto</div>
+              <div className="mt-3 text-[2.1rem] font-semibold tracking-[-0.04em] text-slate-100">
+                {model.capRiskDependence.impactRatioDelta === null
+                  ? '—'
+                  : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}x`}
+              </div>
+              <div className="mt-2 text-xs leading-relaxed text-slate-200/78">
+                {model.capRiskDependence.impactSummary}
+              </div>
+            </div>
           </div>
         </Card>
       </section>
@@ -300,15 +323,15 @@ export const DashboardAurum: React.FC = () => {
         className={cn(
           'border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.14)]',
           model.coverageTone === 'positive'
-            ? 'border-emerald-400/25 bg-[linear-gradient(180deg,rgba(16,185,129,0.12),rgba(9,23,49,0.96))] text-emerald-50'
+            ? 'border-emerald-400/16 bg-[#0c1931] text-emerald-50'
             : model.coverageTone === 'warning'
-              ? 'border-amber-300/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(9,23,49,0.96))] text-amber-50'
+              ? 'border-amber-300/18 bg-[#0c1931] text-amber-50'
               : model.coverageTone === 'negative'
-                ? 'border-rose-300/28 bg-[linear-gradient(180deg,rgba(244,63,94,0.12),rgba(9,23,49,0.96))] text-rose-50'
-                : 'border-white/10 bg-[linear-gradient(180deg,rgba(15,34,68,0.96),rgba(9,23,49,0.96))] text-slate-50',
+                ? 'border-rose-300/18 bg-[#0c1931] text-rose-50'
+                : 'border-white/10 bg-[#0c1931] text-slate-50',
         )}
       >
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-200/78">Insight ejecutivo</div>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/78">Insight ejecutivo</div>
         <div className="mt-2 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
       </Card>
 

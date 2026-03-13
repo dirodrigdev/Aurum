@@ -167,6 +167,9 @@ describe('dashboard executive model', () => {
 
     expect(model.capRiskDependence.status).toBe('ok');
     expect(model.capRiskDependence.level).toBe('Alta');
+    expect(model.capRiskDependence.dependenceSummary).toBe('Sin CapRiesgo ya no alcanza');
+    expect(model.capRiskDependence.impactRatioDelta).toBeGreaterThan(0);
+    expect(model.capRiskDependence.impactSummary).toBe('Mejora la cobertura');
     expect(model.coverageMessage).toBe('Depende demasiado de CapRiesgo');
   });
 
