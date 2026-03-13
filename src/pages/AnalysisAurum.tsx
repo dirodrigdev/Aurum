@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, CalendarDays, LineChart, Zap } from 'lucide-react';
-import { Button, Card, cn } from '../components/Components';
+import { Button, Card, cn, Input } from '../components/Components';
 import {
   WealthCurrency,
   WealthFxRates,
@@ -13,6 +13,11 @@ import {
   loadIncludeRiskCapitalInTotals,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
+import {
+  buildCoveragePlan,
+  buildMonthlyWithdrawalPlan,
+  resolveFinancialFreedomBase,
+} from '../services/financialFreedom';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../utils/wealthFormat';
 
 const GASTAPP_TOTALS: Record<string, number> = {
@@ -53,6 +58,12 @@ const GASTAPP_TOTALS: Record<string, number> = {
 };
 
 type AnalysisTab = 'returns' | 'freedom';
+
+type FreedomControlDraft = {
+  annualRatePct: string;
+  horizonYears: string;
+  monthlySpendClp: string;
+};
 
 type MonthlyReturnRow = {
   monthKey: string;
@@ -159,6 +170,17 @@ const formatCompactCurrency = (value: number, currency: WealthCurrency) => {
   }
 
   return formatCurrency(value, currency);
+};
+
+const parseNumericDraft = (value: string): number | null => {
+  const normalized = String(value ?? '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
@@ -657,6 +679,150 @@ const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
   );
 };
 
+const FreedomStatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const config =
+    status === 'ok'
+      ? { label: 'Listo', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+      : status === 'never_depletes'
+        ? { label: 'No se agota', className: 'border-sky-200 bg-sky-50 text-sky-700' }
+        : status === 'missing_patrimony'
+          ? { label: 'Sin patrimonio', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+          : { label: 'Revisar', className: 'border-rose-200 bg-rose-50 text-rose-700' };
+  return (
+    <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', config.className)}>
+      {config.label}
+    </span>
+  );
+};
+
+const FreedomParametersCard: React.FC<{
+  sourceMonthKey: string | null;
+  patrimonioBaseClp: number | null;
+  draft: FreedomControlDraft;
+  onChange: (key: keyof FreedomControlDraft, value: string) => void;
+}> = ({ sourceMonthKey, patrimonioBaseClp, draft, onChange }) => (
+  <Card className="border-slate-200 p-4">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Parámetros</div>
+        <div className="mt-1 text-sm font-semibold text-slate-900">Modelo base de Libertad Financiera</div>
+      </div>
+      <div className="rounded-xl bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
+        Base: {sourceMonthKey ? monthLabel(sourceMonthKey) : 'Sin cierre'}
+      </div>
+    </div>
+
+    <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Patrimonio base</div>
+        <div className="mt-1 text-lg font-semibold text-slate-900">
+          {patrimonioBaseClp && patrimonioBaseClp > 0 ? formatCurrency(patrimonioBaseClp, 'CLP') : 'Sin datos de patrimonio'}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">Tomado del último cierre confirmado. No editable.</div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+        <div className="grid gap-3">
+          <label className="grid gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Tasa anual supuesta</span>
+            <Input
+              value={draft.annualRatePct}
+              onChange={(event) => onChange('annualRatePct', event.target.value)}
+              inputMode="decimal"
+              placeholder="5"
+            />
+            <span className="text-[11px] text-slate-500">Rango pensado para UI: 1% a 15%. Motor usa tasa mensual compuesta.</span>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Horizonte años</span>
+            <Input
+              value={draft.horizonYears}
+              onChange={(event) => onChange('horizonYears', event.target.value)}
+              inputMode="numeric"
+              placeholder="40"
+            />
+            <span className="text-[11px] text-slate-500">Referencia para el cálculo de retiro mensual máximo.</span>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Gasto mensual</span>
+            <Input
+              value={draft.monthlySpendClp}
+              onChange={(event) => onChange('monthlySpendClp', event.target.value)}
+              inputMode="decimal"
+              placeholder="6000000"
+            />
+            <span className="text-[11px] text-slate-500">Usado para estimar cuántos años duraría el patrimonio.</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-slate-700">
+      <span className="font-medium text-slate-900">Modelo simple determinista:</span>{' '}
+      usa una tasa constante y no incorpora volatilidad, crisis, secuencia de retornos ni simulación Monte Carlo.
+      Úsalo como referencia rápida, no como proyección exhaustiva.
+    </div>
+  </Card>
+);
+
+const FreedomReactiveStateCard: React.FC<{
+  withdrawalPlan: ReturnType<typeof buildMonthlyWithdrawalPlan>;
+  coveragePlan: ReturnType<typeof buildCoveragePlan>;
+}> = ({ withdrawalPlan, coveragePlan }) => (
+  <Card className="border-slate-200 p-4">
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estado reactivo</div>
+        <div className="mt-1 text-sm font-semibold text-slate-900">Base lista para Bloque 1 y Bloque 2</div>
+      </div>
+      <div className="flex items-center gap-2">
+        <FreedomStatusBadge status={withdrawalPlan.status} />
+        <FreedomStatusBadge status={coveragePlan.status} />
+      </div>
+    </div>
+
+    <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Retiro máximo</div>
+        <div className="mt-1 text-sm font-semibold text-slate-900">
+          {withdrawalPlan.monthlyWithdrawalClp !== null
+            ? `${formatCurrency(withdrawalPlan.monthlyWithdrawalClp, 'CLP')} / mes`
+            : withdrawalPlan.message || 'Pendiente de inputs válidos'}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">
+          {withdrawalPlan.status === 'ok'
+            ? `${withdrawalPlan.totalMonths} meses · fin aprox. ${withdrawalPlan.approximateEndMonthKey ? monthLabel(withdrawalPlan.approximateEndMonthKey) : '—'}`
+            : 'Este bloque se expandirá visualmente en la Fase 3.'}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Cobertura del patrimonio</div>
+        <div className="mt-1 text-sm font-semibold text-slate-900">
+          {coveragePlan.status === 'never_depletes'
+            ? 'No se agota bajo este supuesto determinista'
+            : coveragePlan.yearsCoverage !== null
+              ? `${coveragePlan.yearsCoverage.toFixed(1).replace('.', ',')} años`
+              : coveragePlan.message || 'Pendiente de inputs válidos'}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">
+          {coveragePlan.status === 'ok'
+            ? `${Math.ceil(coveragePlan.monthsCoverage || 0)} meses · fin aprox. ${coveragePlan.approximateEndMonthKey ? monthLabel(coveragePlan.approximateEndMonthKey) : '—'}`
+            : 'Queda lista la base para la visualización completa de Fase 3.'}
+        </div>
+      </div>
+    </div>
+
+    {withdrawalPlan.issues.length > 0 || coveragePlan.issues.length > 0 ? (
+      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+        {[...withdrawalPlan.issues, ...coveragePlan.issues].join(' · ')}
+      </div>
+    ) : null}
+  </Card>
+);
+
 export const AnalysisAurum: React.FC = () => {
   const [tab, setTab] = useState<AnalysisTab>('returns');
   const [currency, setCurrency] = useState<WealthCurrency>('CLP');
@@ -667,6 +833,11 @@ export const AnalysisAurum: React.FC = () => {
     loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey)),
   );
   const [errorMessage, setErrorMessage] = useState('');
+  const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
+    annualRatePct: '5',
+    horizonYears: '40',
+    monthlySpendClp: '6000000',
+  });
   const closuresCountRef = useRef(closures.length);
 
   const refreshClosures = useCallback((reason: string) => {
@@ -873,6 +1044,22 @@ export const AnalysisAurum: React.FC = () => {
     return row?.pct ?? null;
   }, [monthlyRowsAsc]);
 
+  const financialFreedomBase = useMemo(
+    () => resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals),
+    [closures, includeRiskCapitalInTotals],
+  );
+  const freedomAnnualRatePct = useMemo(() => parseNumericDraft(freedomDraft.annualRatePct) ?? NaN, [freedomDraft.annualRatePct]);
+  const freedomHorizonYears = useMemo(() => parseNumericDraft(freedomDraft.horizonYears) ?? NaN, [freedomDraft.horizonYears]);
+  const freedomMonthlySpendClp = useMemo(() => parseNumericDraft(freedomDraft.monthlySpendClp) ?? NaN, [freedomDraft.monthlySpendClp]);
+  const financialFreedomWithdrawalPlan = useMemo(
+    () => buildMonthlyWithdrawalPlan(closures, freedomAnnualRatePct, freedomHorizonYears, includeRiskCapitalInTotals),
+    [closures, freedomAnnualRatePct, freedomHorizonYears, includeRiskCapitalInTotals],
+  );
+  const financialFreedomCoveragePlan = useMemo(
+    () => buildCoveragePlan(closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals),
+    [closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals],
+  );
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
@@ -904,10 +1091,19 @@ export const AnalysisAurum: React.FC = () => {
       </Card>
 
       {tab === 'freedom' ? (
-        <Card className="p-5 text-center border-slate-200">
-          <div className="text-sm font-semibold text-slate-800">Libertad Financiera</div>
-          <div className="mt-2 text-xs text-slate-500">Próximamente.</div>
-        </Card>
+        <>
+          <FreedomParametersCard
+            sourceMonthKey={financialFreedomBase.sourceMonthKey}
+            patrimonioBaseClp={financialFreedomBase.patrimonioBaseClp}
+            draft={freedomDraft}
+            onChange={(key, value) => setFreedomDraft((prev) => ({ ...prev, [key]: value }))}
+          />
+
+          <FreedomReactiveStateCard
+            withdrawalPlan={financialFreedomWithdrawalPlan}
+            coveragePlan={financialFreedomCoveragePlan}
+          />
+        </>
       ) : (
         <>
           <ReturnRealHero
