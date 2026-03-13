@@ -3,7 +3,13 @@ import { CalendarDays, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
-import type { AggregatedSummary, CrpContributionInsight, MonthlyReturnRow } from './types';
+import type {
+  AggregatedSummary,
+  CrpContributionInsight,
+  MonthlyReturnRow,
+  ReturnCurveMarker,
+  ReturnCurveModel,
+} from './types';
 import { buildReturnSpendInsight, convertFromClp, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
 type ReturnsTabProps = {
@@ -22,6 +28,8 @@ type ReturnsTabProps = {
   monthlyRowsDesc: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
+  trajectoryCurve: ReturnCurveModel;
+  patrimonyCurve: ReturnCurveModel;
 };
 
 const SummaryTable: React.FC<{
@@ -300,6 +308,105 @@ const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
   );
 };
 
+const markerToneClass = (marker: ReturnCurveMarker) => {
+  if (marker.kinds.includes('max')) return 'border-emerald-300/40 bg-emerald-300/12 text-emerald-800';
+  if (marker.kinds.includes('min')) return 'border-rose-300/40 bg-rose-300/12 text-rose-800';
+  return 'border-slate-300/60 bg-white/80 text-slate-700';
+};
+
+const markerLabel = (marker: ReturnCurveMarker) =>
+  marker.kinds
+    .map((kind) => {
+      if (kind === 'start') return 'Inicio';
+      if (kind === 'end') return 'Final';
+      if (kind === 'max') return 'Máx';
+      return 'Mín';
+    })
+    .join(' · ');
+
+const TrendLineCard: React.FC<{
+  title: string;
+  subtitle: string;
+  curve: ReturnCurveModel;
+  stroke: string;
+  currency?: WealthCurrency;
+  formatter: (value: number) => string;
+}> = ({ title, subtitle, curve, stroke, currency, formatter }) => {
+  if (curve.status !== 'ok' || curve.points.length < 2 || curve.domainMin === null || curve.domainMax === null) {
+    return (
+      <Card className="border-slate-200 p-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <LineChart size={14} />
+          {title}
+        </div>
+        <div className="mt-0.5 text-[11px] text-slate-500">{subtitle}</div>
+        <div className="mt-3 text-xs text-slate-500">Aún no hay suficientes cierres para dibujar esta curva.</div>
+      </Card>
+    );
+  }
+
+  const width = 640;
+  const height = 170;
+  const padding = { top: 16, right: 16, bottom: 28, left: 16 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const pointX = (index: number) =>
+    padding.left + (curve.points.length === 1 ? innerWidth / 2 : (innerWidth * index) / (curve.points.length - 1));
+  const pointY = (value: number) =>
+    padding.top +
+    ((curve.domainMax - value) / Math.max(1e-6, curve.domainMax - curve.domainMin)) * innerHeight;
+  const path = curve.points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${pointX(index).toFixed(2)} ${pointY(point.value).toFixed(2)}`)
+    .join(' ');
+
+  return (
+    <Card className="border-slate-200 p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <LineChart size={14} />
+        {title}
+      </div>
+      <div className="mt-0.5 text-[11px] text-slate-500">{subtitle}</div>
+      <div className="mt-3">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-44 w-full">
+          <path d={path} fill="none" stroke={stroke} strokeWidth="2.5" strokeLinecap="round" />
+          {curve.points.map((point, index) => {
+            const x = pointX(index);
+            const y = pointY(point.value);
+            const showLabel = index % 6 === 0 || index === curve.points.length - 1;
+            return (
+              <g key={point.id}>
+                <circle cx={x} cy={y} r="3" fill={stroke} />
+                {showLabel && (
+                  <text x={x} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
+                    {xLabelFromMonthKey(point.monthKey)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {curve.markers.map((marker) => (
+          <div
+            key={marker.pointId}
+            className={cn(
+              'rounded-xl border px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]',
+              markerToneClass(marker),
+            )}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em]">{markerLabel(marker)}</div>
+            <div className="mt-1 text-base font-semibold tracking-tight">
+              {currency ? formatCompactCurrency(marker.value, currency) : formatter(marker.value)}
+            </div>
+            <div className="mt-0.5 text-[11px] opacity-80">{monthLabel(marker.monthKey)}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
+
 export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   heroSinceStart,
   heroLast12,
@@ -314,6 +421,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   monthlyRowsDesc,
   periodSummaries,
   yearlySummaries,
+  trajectoryCurve,
+  patrimonyCurve,
 }) => (
   <>
     <ReturnRealHero
@@ -392,5 +501,20 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} />
     <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} />
     <ReturnsChart rows={monthlyRowsAsc} />
+    <TrendLineCard
+      title="Trayectoria acumulada"
+      subtitle="Base 100"
+      curve={trajectoryCurve}
+      stroke="#0f766e"
+      formatter={(value) => `${value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
+    />
+    <TrendLineCard
+      title="Evolución del patrimonio"
+      subtitle="CLP por cierre"
+      curve={patrimonyCurve}
+      stroke="#1d4ed8"
+      currency="CLP"
+      formatter={(value) => formatCompactCurrency(value, 'CLP')}
+    />
   </>
 );

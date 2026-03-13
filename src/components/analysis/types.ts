@@ -55,3 +55,30 @@ export type CrpContributionInsight = {
   detailText: string | null;
   totalText: string | null;
 };
+
+export type ReturnCurveMarkerKind = 'start' | 'end' | 'max' | 'min';
+
+export type ReturnCurvePoint = {
+  id: string;
+  monthKey: string;
+  value: number;
+  synthetic?: boolean;
+};
+
+export type ReturnCurveMarker = {
+  pointId: string;
+  pointIndex: number;
+  monthKey: string;
+  value: number;
+  kinds: ReturnCurveMarkerKind[];
+};
+
+export type ReturnCurveModel = {
+  status: 'ok' | 'insufficient_data';
+  points: ReturnCurvePoint[];
+  markers: ReturnCurveMarker[];
+  domainMin: number | null;
+  domainMax: number | null;
+  minValue: number | null;
+  maxValue: number | null;
+};
