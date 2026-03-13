@@ -82,6 +82,16 @@ type AggregatedSummary = {
   retornoRealAvgDisplay: number | null;
 };
 
+type CrpContributionInsight = {
+  monthKey: string;
+  aporteClp: number;
+  retornoConCrpClp: number;
+  pctCrp: number | null;
+  tone: 'positive' | 'negative' | 'neutral';
+  summaryText: string;
+  detailText: string | null;
+};
+
 const loadWealthClosures = () => loadClosures();
 
 const summaryNetClp = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals: boolean): number | null => {
@@ -156,6 +166,49 @@ const monthYear = (monthKey: string) => Number(monthKey.slice(0, 4));
 const xLabelFromMonthKey = (monthKey: string) => {
   const [year, month] = monthKey.split('-');
   return `${month}/${year.slice(2)}`;
+};
+
+const buildCrpContributionInsight = (
+  rowsWithCrp: MonthlyReturnRow[],
+  rowsWithoutCrp: MonthlyReturnRow[],
+): CrpContributionInsight | null => {
+  const latestWithCrp = [...rowsWithCrp].reverse().find((row) => row.retornoRealClp !== null) || null;
+  if (!latestWithCrp || latestWithCrp.retornoRealClp === null) return null;
+  const matchingWithoutCrp =
+    rowsWithoutCrp.find((row) => row.monthKey === latestWithCrp.monthKey && row.retornoRealClp !== null) || null;
+  if (!matchingWithoutCrp || matchingWithoutCrp.retornoRealClp === null) return null;
+
+  const aporteClp = latestWithCrp.retornoRealClp - matchingWithoutCrp.retornoRealClp;
+  const retornoConCrpClp = latestWithCrp.retornoRealClp;
+  const absAporte = Math.abs(aporteClp);
+  const tone: CrpContributionInsight['tone'] =
+    absAporte < 1_000 ? 'neutral' : aporteClp > 0 ? 'positive' : 'negative';
+
+  const summaryText =
+    tone === 'neutral'
+      ? `CRP no movió materialmente el resultado en ${monthLabel(latestWithCrp.monthKey).toLowerCase()}`
+      : aporteClp > 0
+        ? `CRP aportó ${formatCompactCurrency(aporteClp, 'CLP')} al resultado`
+        : `CRP restó ${formatCompactCurrency(aporteClp, 'CLP')} al resultado`;
+
+  const canShowPct = retornoConCrpClp > 1_000_000 && absAporte > 100_000;
+  const pctCrp = canShowPct ? (aporteClp / retornoConCrpClp) * 100 : null;
+  const detailText =
+    pctCrp !== null
+      ? `Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
+      : tone === 'neutral'
+        ? null
+        : 'CRP afectó materialmente el resultado';
+
+  return {
+    monthKey: latestWithCrp.monthKey,
+    aporteClp,
+    retornoConCrpClp,
+    pctCrp,
+    tone,
+    summaryText,
+    detailText,
+  };
 };
 
 const computeMonthlyRows = (closures: WealthMonthlyClosure[], includeRiskCapitalInTotals: boolean): MonthlyReturnRow[] => {
@@ -359,7 +412,17 @@ const ReturnRealHero: React.FC<{
   currency: WealthCurrency;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
-}> = ({ sinceStart, last12, lastMonth, lastMonthPctMonthly, currency, includeRiskCapitalInTotals, onToggleRiskMode }) => {
+  crpContributionInsight: CrpContributionInsight | null;
+}> = ({
+  sinceStart,
+  last12,
+  lastMonth,
+  lastMonthPctMonthly,
+  currency,
+  includeRiskCapitalInTotals,
+  onToggleRiskMode,
+  crpContributionInsight,
+}) => {
   const rows = [
     { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
@@ -381,6 +444,23 @@ const ReturnRealHero: React.FC<{
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno real</div>
             <div className="mt-1 text-[11px] text-slate-400">Lo que generó tu patrimonio, incluyendo lo que gastaste</div>
+            {includeRiskCapitalInTotals && crpContributionInsight && (
+              <div
+                className={cn(
+                  'mt-2 inline-flex flex-col rounded-xl border px-2.5 py-2 text-left',
+                  crpContributionInsight.tone === 'positive'
+                    ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200'
+                    : crpContributionInsight.tone === 'negative'
+                      ? 'border-rose-400/25 bg-rose-400/10 text-rose-200'
+                      : 'border-slate-400/25 bg-white/5 text-slate-200',
+                )}
+              >
+                <span className="text-[11px] font-medium">{crpContributionInsight.summaryText}</span>
+                {crpContributionInsight.detailText ? (
+                  <span className="mt-0.5 text-[10px] text-slate-300">{crpContributionInsight.detailText}</span>
+                ) : null}
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -613,10 +693,15 @@ export const AnalysisAurum: React.FC = () => {
     () => computeMonthlyRows(closures, includeRiskCapitalInTotals),
     [closures, includeRiskCapitalInTotals],
   );
+  const monthlyRowsAscWithoutCrp = useMemo(() => computeMonthlyRows(closures, false), [closures]);
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     [monthlyRowsAsc],
   );
+  const crpContributionInsight = useMemo(() => {
+    if (!includeRiskCapitalInTotals) return null;
+    return buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp);
+  }, [includeRiskCapitalInTotals, monthlyRowsAsc, monthlyRowsAscWithoutCrp]);
 
   const analysisDiagnostics = useMemo(() => {
     const eurScaleOutliers = monthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
@@ -798,6 +883,7 @@ export const AnalysisAurum: React.FC = () => {
             currency={currency}
             includeRiskCapitalInTotals={includeRiskCapitalInTotals}
             onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+            crpContributionInsight={crpContributionInsight}
           />
 
           {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
