@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, LineChart, Zap } from 'lucide-react';
+import { BarChart3, CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
 import { Button, Card, cn, Input } from '../components/Components';
 import {
   WealthCurrency,
@@ -181,6 +181,42 @@ const parseNumericDraft = (value: string): number | null => {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatDraftPercent = (value: string) => {
+  const cleaned = String(value ?? '').replace(/[^\d,.]/g, '').replace(',', '.');
+  const [whole, decimal] = cleaned.split('.');
+  if (decimal === undefined) return whole;
+  return `${whole}.${decimal.slice(0, 2)}`;
+};
+
+const formatDraftInteger = (value: string) => String(value ?? '').replace(/[^\d]/g, '');
+
+const formatDraftMoney = (value: string) => {
+  const digits = String(value ?? '').replace(/[^\d]/g, '');
+  if (!digits) return '';
+  return Number(digits).toLocaleString('es-CL');
+};
+
+const formatFreedomCompactClp = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}$${scaled}MM`;
+  }
+  if (abs >= 1_000) {
+    const scaled = (abs / 1_000).toLocaleString('es-CL', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+    return `${sign}$${scaled}K`;
+  }
+  return formatCurrency(value, 'CLP');
 };
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
@@ -700,64 +736,97 @@ const FreedomParametersCard: React.FC<{
   patrimonioBaseClp: number | null;
   draft: FreedomControlDraft;
   onChange: (key: keyof FreedomControlDraft, value: string) => void;
-}> = ({ sourceMonthKey, patrimonioBaseClp, draft, onChange }) => (
+  includeRiskCapitalInTotals: boolean;
+  isOpen: boolean;
+  onToggle: () => void;
+}> = ({ sourceMonthKey, patrimonioBaseClp, draft, onChange, includeRiskCapitalInTotals, isOpen, onToggle }) => (
   <Card className="border-slate-200 p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div>
+    <button type="button" onClick={onToggle} className="flex w-full items-start justify-between gap-3 text-left">
+      <div className="min-w-0">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Parámetros</div>
-        <div className="mt-1 text-sm font-semibold text-slate-900">Modelo base de Libertad Financiera</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="text-sm font-semibold text-slate-900">Escenario base de Libertad Financiera</div>
+          {includeRiskCapitalInTotals && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              +CapRiesgo
+            </span>
+          )}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">
+          {sourceMonthKey ? `Tomado automáticamente desde ${monthLabel(sourceMonthKey)}.` : 'Sin cierre base confirmado todavía.'}
+        </div>
       </div>
-      <div className="rounded-xl bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
-        Base: {sourceMonthKey ? monthLabel(sourceMonthKey) : 'Sin cierre'}
+      <div className="flex items-center gap-2">
+        <div className="rounded-xl bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
+          {sourceMonthKey ? monthLabel(sourceMonthKey) : 'Sin cierre'}
+        </div>
+        <ChevronDown className={cn('h-4 w-4 text-slate-500 transition-transform', isOpen ? 'rotate-180' : '')} />
       </div>
-    </div>
+    </button>
 
-    <div className="mt-3 grid gap-3 md:grid-cols-2">
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Patrimonio base</div>
-        <div className="mt-1 text-lg font-semibold text-slate-900">
+    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Patrimonio base</div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+        <div className="text-base font-semibold text-slate-900">
           {patrimonioBaseClp && patrimonioBaseClp > 0 ? formatCurrency(patrimonioBaseClp, 'CLP') : 'Sin datos de patrimonio'}
         </div>
-        <div className="mt-1 text-[11px] text-slate-500">Tomado del último cierre confirmado. No editable.</div>
+        {includeRiskCapitalInTotals && (
+          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+            +CapRiesgo
+          </span>
+        )}
       </div>
+      <div className="mt-0.5 text-[11px] text-slate-500">Dato de escenario, no editable.</div>
+    </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-        <div className="grid gap-3">
-          <label className="grid gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Tasa anual supuesta</span>
-            <Input
-              value={draft.annualRatePct}
-              onChange={(event) => onChange('annualRatePct', event.target.value)}
-              inputMode="decimal"
-              placeholder="5"
-            />
-            <span className="text-[11px] text-slate-500">Rango pensado para UI: 1% a 15%. Motor usa tasa mensual compuesta.</span>
-          </label>
+    {isOpen && (
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 md:col-span-2">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Tasa anual supuesta</span>
+              <div className="relative">
+                <Input
+                  value={draft.annualRatePct}
+                  onChange={(event) => onChange('annualRatePct', formatDraftPercent(event.target.value))}
+                  inputMode="decimal"
+                  placeholder="5"
+                  className="pr-8"
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">%</span>
+              </div>
+              <span className="text-[11px] text-slate-500">Rango pensado para UI: 1% a 15%. Motor usa tasa mensual compuesta.</span>
+            </label>
 
-          <label className="grid gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Horizonte años</span>
-            <Input
-              value={draft.horizonYears}
-              onChange={(event) => onChange('horizonYears', event.target.value)}
-              inputMode="numeric"
-              placeholder="40"
-            />
-            <span className="text-[11px] text-slate-500">Referencia para el cálculo de retiro mensual máximo.</span>
-          </label>
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Horizonte años</span>
+              <Input
+                value={draft.horizonYears}
+                onChange={(event) => onChange('horizonYears', formatDraftInteger(event.target.value))}
+                inputMode="numeric"
+                placeholder="40"
+              />
+              <span className="text-[11px] text-slate-500">Referencia para el cálculo de retiro mensual máximo.</span>
+            </label>
 
-          <label className="grid gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Gasto mensual</span>
-            <Input
-              value={draft.monthlySpendClp}
-              onChange={(event) => onChange('monthlySpendClp', event.target.value)}
-              inputMode="decimal"
-              placeholder="6000000"
-            />
-            <span className="text-[11px] text-slate-500">Usado para estimar cuántos años duraría el patrimonio.</span>
-          </label>
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Gasto mensual</span>
+              <div className="relative">
+                <Input
+                  value={draft.monthlySpendClp}
+                  onChange={(event) => onChange('monthlySpendClp', formatDraftMoney(event.target.value))}
+                  inputMode="numeric"
+                  placeholder="6.000.000"
+                  className="pl-7"
+                />
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">$</span>
+              </div>
+              <span className="text-[11px] text-slate-500">Usado para estimar cuántos años duraría el patrimonio.</span>
+            </label>
+          </div>
         </div>
       </div>
-    </div>
+    )}
 
     <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-slate-700">
       <span className="font-medium text-slate-900">Modelo simple determinista:</span>{' '}
@@ -848,12 +917,20 @@ const FreedomDrawdownChart: React.FC<{
 
 const FreedomWithdrawalBlock: React.FC<{
   plan: ReturnType<typeof buildMonthlyWithdrawalPlan>;
-}> = ({ plan }) => (
+  includeRiskCapitalInTotals: boolean;
+}> = ({ plan, includeRiskCapitalInTotals }) => (
   <Card className="border-slate-200 p-4">
     <div className="flex items-start justify-between gap-3">
       <div>
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">¿Cuánto puedo retirar?</div>
-        <div className="mt-1 text-sm text-slate-600">Consumiendo capital + rendimientos hasta llegar a 0.</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <span>Consumiendo capital + rendimientos hasta llegar a 0.</span>
+          {includeRiskCapitalInTotals && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              +CapRiesgo
+            </span>
+          )}
+        </div>
       </div>
       <FreedomStatusBadge status={plan.status} />
     </div>
@@ -861,7 +938,7 @@ const FreedomWithdrawalBlock: React.FC<{
     <div className="mt-4">
       <div className="text-[11px] uppercase tracking-wide text-slate-500">Retiro mensual estimado</div>
       <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
-        {plan.monthlyWithdrawalClp !== null ? formatCompactCurrency(plan.monthlyWithdrawalClp, 'CLP') : '—'}
+        {plan.monthlyWithdrawalClp !== null ? formatFreedomCompactClp(plan.monthlyWithdrawalClp) : '—'}
       </div>
       <div className="mt-1 text-[12px] text-slate-600">
         {plan.status === 'ok'
@@ -870,7 +947,7 @@ const FreedomWithdrawalBlock: React.FC<{
       </div>
       <div className="mt-1 text-[11px] text-slate-500">
         {plan.totalWithdrawnClp !== null
-          ? `Total retirado en el período: ${formatCompactCurrency(plan.totalWithdrawnClp, 'CLP')}`
+          ? `Total retirado en el período: ${formatFreedomCompactClp(plan.totalWithdrawnClp)}`
           : 'El total retirado aparecerá cuando el cálculo sea válido.'}
       </div>
     </div>
@@ -883,12 +960,20 @@ const FreedomWithdrawalBlock: React.FC<{
 
 const FreedomCoverageBlock: React.FC<{
   plan: ReturnType<typeof buildCoveragePlan>;
-}> = ({ plan }) => (
+  includeRiskCapitalInTotals: boolean;
+}> = ({ plan, includeRiskCapitalInTotals }) => (
   <Card className="border-slate-200 p-4">
     <div className="flex items-start justify-between gap-3">
       <div>
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cobertura estimada del patrimonio</div>
-        <div className="mt-1 text-sm text-slate-600">Cuánto duraría bajo el mismo supuesto determinista.</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <span>Cuánto duraría bajo el mismo supuesto determinista.</span>
+          {includeRiskCapitalInTotals && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              +CapRiesgo
+            </span>
+          )}
+        </div>
       </div>
       <FreedomStatusBadge status={plan.status} />
     </div>
@@ -904,16 +989,16 @@ const FreedomCoverageBlock: React.FC<{
       </div>
       <div className="mt-1 text-[12px] text-slate-600">
         {plan.status === 'never_depletes'
-          ? 'No se agota bajo este supuesto determinista'
+          ? 'Con este escenario simple, el patrimonio no se agota.'
           : plan.status === 'ok'
-            ? `retirando ${formatCompactCurrency(plan.monthlySpendClp, 'CLP')} mensual con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
+            ? `retirando ${formatFreedomCompactClp(plan.monthlySpendClp)} mensual con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
             : plan.message || 'Completa parámetros válidos para estimar la cobertura.'}
       </div>
       <div className="mt-1 text-[11px] text-slate-500">
         {plan.status === 'ok'
           ? `Año calendario aproximado: ${monthKeyToYearLabel(plan.approximateEndMonthKey)}`
           : plan.status === 'never_depletes'
-            ? `Sin año de agotamiento estimado desde ${monthKeyToYearLabel(plan.sourceMonthKey)}`
+            ? `Sin año de agotamiento estimado desde el cierre base ${monthKeyToYearLabel(plan.sourceMonthKey)}`
             : 'El año calendario aproximado aparecerá cuando el cálculo sea válido.'}
       </div>
     </div>
@@ -940,6 +1025,14 @@ export const AnalysisAurum: React.FC = () => {
     monthlySpendClp: '6000000',
   });
   const closuresCountRef = useRef(closures.length);
+  const initialFreedomOpen = useMemo(() => {
+    const initialAnnualRatePct = parseNumericDraft('5');
+    const initialHorizonYears = parseNumericDraft('40');
+    const initialMonthlySpendClp = parseNumericDraft('6000000');
+    const hasBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals).status === 'ok';
+    return !(hasBase && initialAnnualRatePct && initialHorizonYears && initialMonthlySpendClp);
+  }, [closures, includeRiskCapitalInTotals]);
+  const [freedomParametersOpen, setFreedomParametersOpen] = useState(initialFreedomOpen);
 
   const refreshClosures = useCallback((reason: string) => {
     const beforeCount = closuresCountRef.current;
@@ -1160,6 +1253,21 @@ export const AnalysisAurum: React.FC = () => {
     () => buildCoveragePlan(closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals),
     [closures, freedomAnnualRatePct, freedomMonthlySpendClp, includeRiskCapitalInTotals],
   );
+  const freedomInputsAreValid = Boolean(
+    financialFreedomBase.status === 'ok' &&
+      Number.isFinite(freedomAnnualRatePct) &&
+      freedomAnnualRatePct >= 0 &&
+      Number.isFinite(freedomHorizonYears) &&
+      freedomHorizonYears > 0 &&
+      Number.isFinite(freedomMonthlySpendClp) &&
+      freedomMonthlySpendClp > 0,
+  );
+
+  useEffect(() => {
+    if (!freedomInputsAreValid) {
+      setFreedomParametersOpen(true);
+    }
+  }, [freedomInputsAreValid]);
 
   return (
     <div className="space-y-3 p-3">
@@ -1198,11 +1306,20 @@ export const AnalysisAurum: React.FC = () => {
             patrimonioBaseClp={financialFreedomBase.patrimonioBaseClp}
             draft={freedomDraft}
             onChange={(key, value) => setFreedomDraft((prev) => ({ ...prev, [key]: value }))}
+            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+            isOpen={freedomParametersOpen}
+            onToggle={() => setFreedomParametersOpen((prev) => !prev)}
           />
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <FreedomWithdrawalBlock plan={financialFreedomWithdrawalPlan} />
-            <FreedomCoverageBlock plan={financialFreedomCoveragePlan} />
+            <FreedomWithdrawalBlock
+              plan={financialFreedomWithdrawalPlan}
+              includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+            />
+            <FreedomCoverageBlock
+              plan={financialFreedomCoveragePlan}
+              includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+            />
           </div>
         </>
       ) : (
