@@ -62,6 +62,13 @@ export interface WealthSnapshotSummary {
   debtsByCurrency: Record<WealthCurrency, number>;
   netConsolidatedClp: number;
   byBlock: Record<WealthBlock, Record<WealthCurrency, number>>;
+  analysisByCurrency?: {
+    clpWithoutRisk: number;
+    usdWithoutRisk: number;
+    clpWithRisk: number;
+    usdWithRisk: number;
+    source: 'aggregated_csv' | 'records' | 'net_clp_only';
+  };
   investmentClp?: number;
   riskCapitalClp?: number;
   investmentClpWithRisk?: number;
@@ -1817,6 +1824,37 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
   const withoutRiskRecords = filterRecordsByRiskCapitalPreference(deduped, false);
   const withoutRiskBreakdown = buildWealthNetBreakdown(withoutRiskRecords, fxRates);
   const riskCapitalClp = Math.max(0, withRiskBreakdown.investmentClp - withoutRiskBreakdown.investmentClp);
+  const summarizeAnalysisByCurrency = (items: WealthRecord[]) => {
+    let clp = 0;
+    let usd = 0;
+    for (const item of items) {
+      if (isSyntheticAggregateRecord(item)) continue;
+      if (item.block === 'debt' && isMortgageMetaDebtLabel(item.label)) continue;
+      const normalizedAmount = maybeNormalizeMinorUnitAmount(item, item.amount);
+      const signedAmount = item.block === 'debt' ? -normalizedAmount : normalizedAmount;
+      if (item.currency === 'USD') {
+        usd += signedAmount;
+        continue;
+      }
+      if (item.currency === 'CLP') {
+        clp += signedAmount;
+        continue;
+      }
+      if (item.currency === 'EUR') {
+        clp += signedAmount * fxRates.eurClp;
+        continue;
+      }
+      if (item.currency === 'UF') {
+        clp += signedAmount * fxRates.ufClp;
+      }
+    }
+    return {
+      clp: Math.round(clp),
+      usd: Math.round(usd * 100) / 100,
+    };
+  };
+  const analysisWithRisk = summarizeAnalysisByCurrency(deduped);
+  const analysisWithoutRisk = summarizeAnalysisByCurrency(withoutRiskRecords);
 
   return {
     netByCurrency,
@@ -1824,6 +1862,13 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
     debtsByCurrency,
     netConsolidatedClp,
     byBlock,
+    analysisByCurrency: {
+      clpWithoutRisk: analysisWithoutRisk.clp,
+      usdWithoutRisk: analysisWithoutRisk.usd,
+      clpWithRisk: analysisWithRisk.clp,
+      usdWithRisk: analysisWithRisk.usd,
+      source: 'records',
+    },
     investmentClp: withoutRiskBreakdown.investmentClp,
     riskCapitalClp,
     investmentClpWithRisk: withRiskBreakdown.investmentClp,
@@ -1858,6 +1903,13 @@ const buildSummaryFromNetClp = (netClp: number): WealthSnapshotSummary => {
     debtsByCurrency,
     netConsolidatedClp: roundedNet,
     byBlock,
+    analysisByCurrency: {
+      clpWithoutRisk: roundedNet,
+      usdWithoutRisk: 0,
+      clpWithRisk: roundedNet,
+      usdWithRisk: 0,
+      source: 'net_clp_only',
+    },
     investmentClp: roundedNet > 0 ? roundedNet : 0,
     riskCapitalClp: 0,
     investmentClpWithRisk: roundedNet > 0 ? roundedNet : 0,
@@ -3886,6 +3938,10 @@ const buildSummaryFromAggregatedHistoricalCsv = (
   const roundedRealEstateNetClp = Math.round(realEstateNetClp);
   const roundedNetClp = Math.round(netClp);
   const roundedNetClpWithRisk = Math.round(netClpWithRisk);
+  const roundedClpWithoutRisk = Math.round(invFinClp + invPrevClp + tenenciaClp + realEstateNetClp);
+  const roundedClpWithRisk = Math.round(roundedClpWithoutRisk + crpClp);
+  const roundedUsdWithoutRisk = Math.round(invFinUsd * 100) / 100;
+  const roundedUsdWithRisk = Math.round((invFinUsd + crpUsd) * 100) / 100;
   const assetsByCurrency = emptyCurrencyMap();
   const debtsByCurrency = emptyCurrencyMap();
   const byBlock = emptyBlockMap();
@@ -3905,6 +3961,13 @@ const buildSummaryFromAggregatedHistoricalCsv = (
     debtsByCurrency,
     netConsolidatedClp: roundedNetClpWithRisk,
     byBlock,
+    analysisByCurrency: {
+      clpWithoutRisk: roundedClpWithoutRisk,
+      usdWithoutRisk: roundedUsdWithoutRisk,
+      clpWithRisk: roundedClpWithRisk,
+      usdWithRisk: roundedUsdWithRisk,
+      source: 'aggregated_csv',
+    },
     investmentClp: roundedInvestmentClp,
     riskCapitalClp: roundedRiskCapitalClp,
     investmentClpWithRisk: roundedInvestmentClpWithRisk,

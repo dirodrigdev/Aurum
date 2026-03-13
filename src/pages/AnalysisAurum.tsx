@@ -964,10 +964,14 @@ const LabTabContent: React.FC<{
   const realValue = selectedWindow === 'last_month'
     ? selectedPeriod.monthlyMetrics?.real.valueClp ?? null
     : selectedPeriod.cumulativeMetrics?.real.valueClp ?? null;
-  const needsFxCoverageWarning = selectedWindow !== 'last_month' && selectedPeriod.realMonths > 1 && selectedPeriod.fxComparableMonths < 2;
-  const fxCoverageNote = needsFxCoverageWarning
-    ? `Este corte tiene ${selectedPeriod.fxComparableMonths} mes comparable con desglose USD suficiente; Resultado sin FX y Aporte FX no representan todavía todo el período.`
-    : null;
+  const fxCoverageNote =
+    selectedPeriod.realMonths === 0
+      ? null
+      : selectedPeriod.fxComparableMonths === 0
+        ? 'Este corte todavía no tiene base CLP/USD suficiente para calcular el ajuste sin FX.'
+        : selectedPeriod.fxComparableMonths < selectedPeriod.realMonths
+          ? `Este corte usa ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses con base CLP/USD suficiente; el ajuste sin FX aún es parcial.`
+          : null;
 
   return (
     <div className="space-y-3">

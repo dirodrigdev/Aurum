@@ -47,6 +47,7 @@ const makeSummary = ({
   netClpWithRisk,
   investmentUsd = 0,
   bankUsd = 0,
+  riskUsd = 0,
 }: {
   netClp: number;
   netClpWithRisk?: number;
@@ -77,23 +78,40 @@ const makeClosure = (
     netClpWithRisk,
     investmentUsd = 0,
     bankUsd = 0,
+    riskUsd = 1000,
     usdClp = 900,
     eurClp = 1000,
     records = true,
+    includeAnalysis = true,
   }: {
     netClp: number;
     netClpWithRisk?: number;
     investmentUsd?: number;
     bankUsd?: number;
+    riskUsd?: number;
     usdClp?: number;
     eurClp?: number;
     records?: boolean;
+    includeAnalysis?: boolean;
   },
 ): TestClosure => ({
   id: monthKey,
   monthKey,
   closedAt: `${monthKey}-28T23:59:59-03:00`,
-  summary: makeSummary({ netClp, netClpWithRisk, investmentUsd, bankUsd }),
+  summary: {
+    ...makeSummary({ netClp, netClpWithRisk, investmentUsd, bankUsd }),
+    ...(includeAnalysis
+      ? {
+          analysisByCurrency: {
+            clpWithoutRisk: netClp - Math.max(0, investmentUsd + bankUsd - riskUsd) * usdClp,
+            usdWithoutRisk: Math.max(0, investmentUsd + bankUsd - riskUsd),
+            clpWithRisk: (netClpWithRisk ?? netClp) - (investmentUsd + bankUsd) * usdClp,
+            usdWithRisk: investmentUsd + bankUsd,
+            source: 'records' as const,
+          },
+        }
+      : {}),
+  },
   fxRates: { usdClp, eurClp, ufClp: 38000 },
   records: records
     ? [
@@ -102,7 +120,7 @@ const makeClosure = (
           block: 'investment',
           source: 'test',
           label: 'Global66 Cuenta Vista USD',
-          amount: Math.max(0, investmentUsd - 1000),
+          amount: Math.max(0, investmentUsd - riskUsd),
           currency: 'USD',
           snapshotDate: `${monthKey}-28`,
           createdAt: `${monthKey}-28T10:00:00Z`,
@@ -112,7 +130,7 @@ const makeClosure = (
           block: 'investment',
           source: 'test',
           label: 'Capital de riesgo USD',
-          amount: investmentUsd > 0 ? 1000 : 0,
+          amount: investmentUsd > 0 ? riskUsd : 0,
           currency: 'USD',
           snapshotDate: `${monthKey}-28`,
           createdAt: `${monthKey}-28T10:00:00Z`,
@@ -143,34 +161,34 @@ describe('wealthLab model', () => {
     expect(model.monthlyMetrics?.resultadoSinFx.valueClp).not.toBeNull();
   });
 
-  it('marca insuficiencia de detalle USD si el histórico no conserva desglose', async () => {
+  it('marca insuficiencia de detalle USD si el histórico no conserva serie CLP/USD suficiente', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const model = buildWealthLabModel(
       [
-        makeClosure('2025-11', { netClp: 90_000_000, records: false }),
-        makeClosure('2025-12', { netClp: 95_000_000, records: false }),
+        makeClosure('2031-11', { netClp: 90_000_000, records: false, includeAnalysis: false }),
+        makeClosure('2031-12', { netClp: 95_000_000, records: false, includeAnalysis: false }),
       ] as never,
       false,
     );
 
     expect(model.status).toBe('insufficient_fx_detail');
     expect(model.chartPoints).toHaveLength(0);
-    expect(model.notes.some((note) => note.includes('no conservan desglose USD suficiente'))).toBe(true);
+    expect(model.notes.some((note) => note.includes('base CLP/USD suficiente'))).toBe(true);
   });
 
   it('usa netClpWithRisk si el modo con CapRiesgo está activo', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const withoutRisk = buildWealthLabModel(
       [
-        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000 }),
-        makeClosure('2026-02', { netClp: 102_000_000, netClpWithRisk: 130_000_000, investmentUsd: 10_500 }),
+        makeClosure('2032-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000 }),
+        makeClosure('2032-02', { netClp: 102_000_000, netClpWithRisk: 130_000_000, investmentUsd: 10_500 }),
       ] as never,
       false,
     );
     const withRisk = buildWealthLabModel(
       [
-        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000 }),
-        makeClosure('2026-02', { netClp: 102_000_000, netClpWithRisk: 130_000_000, investmentUsd: 10_500 }),
+        makeClosure('2032-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000 }),
+        makeClosure('2032-02', { netClp: 102_000_000, netClpWithRisk: 130_000_000, investmentUsd: 10_500 }),
       ] as never,
       true,
     );
@@ -197,12 +215,12 @@ describe('wealthLab model', () => {
     expect(last12m.cumulativeMetrics?.real.months).toBe(12);
   });
 
-  it('no arrastra un único delta FX como si representara Desde inicio o Últ. 12M', async () => {
+  it('no fabrica métricas sin FX cuando el tramo no conserva base CLP/USD suficiente', async () => {
     const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
     const model = buildWealthLabModel(
       [
-        makeClosure('2026-01', { netClp: 100_000_000, investmentUsd: 10_000, usdClp: 900 }),
-        makeClosure('2026-02', { netClp: 110_000_000, investmentUsd: 10_500, usdClp: 1000 }),
+        makeClosure('2031-01', { netClp: 100_000_000, investmentUsd: 0, usdClp: 900, includeAnalysis: false, records: false }),
+        makeClosure('2031-02', { netClp: 110_000_000, investmentUsd: 0, usdClp: 1000, includeAnalysis: false, records: false }),
       ] as never,
       false,
     );
@@ -213,27 +231,89 @@ describe('wealthLab model', () => {
 
     expect(sinceStart.cumulativeMetrics?.resultadoSinFx.valueClp).toBeNull();
     expect(last12m.cumulativeMetrics?.aporteFx.valueClp).toBeNull();
-    expect(lastMonth.monthlyMetrics?.resultadoSinFx.valueClp).not.toBeNull();
+    expect(lastMonth.monthlyMetrics?.resultadoSinFx.valueClp).toBeNull();
   });
 
   it('cambia usdBlocks y aporte FX cuando CapRiesgo USD entra o sale del modo global', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const withoutRisk = buildWealthLabModel(
       [
-        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, usdClp: 900 }),
-        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, usdClp: 1000 }),
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, riskUsd: 1_500, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, riskUsd: 1_500, usdClp: 1000 }),
       ] as never,
       false,
     );
     const withRisk = buildWealthLabModel(
       [
-        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, usdClp: 900 }),
-        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, usdClp: 1000 }),
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, riskUsd: 1_500, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, riskUsd: 1_500, usdClp: 1000 }),
       ] as never,
       true,
     );
 
     expect(withRisk.points[1].usdBlocks).toBeGreaterThan(withoutRisk.points[1].usdBlocks ?? 0);
     expect(withRisk.points[1].aportesFxClp).not.toBe(withoutRisk.points[1].aportesFxClp);
+  });
+
+  it('usa la serie agregada CLP/USD para que Desde inicio, Últ. 12M y Últ. mes cambien de verdad', async () => {
+    const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
+    const closures = Array.from({ length: 14 }, (_, index) => {
+      const month = String(index + 1).padStart(2, '0');
+      const usdClp = 900 + index * 5;
+      const usdWithoutRisk = 8_000 + index * 200;
+      const usdWithRisk = usdWithoutRisk + 1_200;
+      const clpWithoutRisk = 80_000_000 + index * 2_000_000;
+      const clpWithRisk = clpWithoutRisk + 10_000_000 + index * 250_000;
+      const netClp = clpWithoutRisk + usdWithoutRisk * usdClp;
+      const netClpWithRisk = clpWithRisk + usdWithRisk * usdClp;
+      return makeClosure(`2025-${month}`, {
+        netClp,
+        netClpWithRisk,
+        investmentUsd: usdWithRisk,
+        riskUsd: 1_200,
+        usdClp,
+        includeAnalysis: false,
+        records: false,
+      });
+    }).map((closure, index) => ({
+      ...closure,
+      summary: {
+        ...closure.summary,
+        analysisByCurrency: {
+          clpWithoutRisk: 80_000_000 + index * 2_000_000,
+          usdWithoutRisk: 8_000 + index * 200,
+          clpWithRisk: 90_000_000 + index * 2_250_000,
+          usdWithRisk: 9_200 + index * 200,
+          source: 'aggregated_csv' as const,
+        },
+      },
+    }));
+
+    const model = buildWealthLabModel(closures as never, false);
+    const sinceStart = selectWealthLabPeriod(model, 'since_start');
+    const last12m = selectWealthLabPeriod(model, 'last_12m');
+    const lastMonth = selectWealthLabPeriod(model, 'last_month');
+
+    expect(sinceStart.cumulativeMetrics?.resultadoSinFx.valueClp).not.toBeNull();
+    expect(last12m.cumulativeMetrics?.resultadoSinFx.valueClp).not.toBeNull();
+    expect(lastMonth.monthlyMetrics?.resultadoSinFx.valueClp).not.toBeNull();
+    expect(sinceStart.cumulativeMetrics?.resultadoSinFx.valueClp).not.toBe(last12m.cumulativeMetrics?.resultadoSinFx.valueClp);
+    expect(last12m.cumulativeMetrics?.resultadoSinFx.valueClp).not.toBe(lastMonth.monthlyMetrics?.resultadoSinFx.valueClp);
+    expect(sinceStart.cumulativeMetrics?.aporteFx.valueClp).not.toBe(last12m.cumulativeMetrics?.aporteFx.valueClp);
+  });
+
+  it('usa la serie externa local como fallback para cierres históricos ya guardados sin analysisByCurrency', async () => {
+    const { buildWealthLabModel } = await import('../src/services/wealthLab');
+    const model = buildWealthLabModel(
+      [
+        makeClosure('2025-01', { netClp: 1, records: false, includeAnalysis: false }),
+        makeClosure('2025-02', { netClp: 1, records: false, includeAnalysis: false }),
+      ] as never,
+      false,
+    );
+
+    expect(model.points[0].usdExposureSource).toBe('external_series');
+    expect(model.points[1].usdExposureSource).toBe('external_series');
+    expect(model.points[1].aportesFxClp).not.toBeNull();
   });
 });

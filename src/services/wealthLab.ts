@@ -6,6 +6,7 @@ import {
   type WealthMonthlyClosure,
   type WealthSnapshotSummary,
 } from './wealthStorage';
+import { WEALTH_LAB_EXTERNAL_AGGREGATE } from '../data/wealthLabHistoricalAggregate';
 
 export const GASTAPP_TOTALS: Record<string, number> = {
   '2023-05': 4536,
@@ -52,9 +53,10 @@ export type WealthLabPoint = {
   varPatrimonioClp: number | null;
   gastosClp: number | null;
   retornoEconomicoClp: number | null;
+  aggregateClp: number | null;
   usdBlocks: number | null;
   usdExposureKnown: boolean;
-  usdExposureSource: 'records' | 'summary' | 'unknown';
+  usdExposureSource: 'summary_aggregate' | 'external_series' | 'records' | 'summary_fallback' | 'unknown';
   deltaUsdRealClp: number | null;
   deltaUsdConstClp: number | null;
   aportesFxClp: number | null;
@@ -222,7 +224,6 @@ export const selectWealthLabPeriod = (
   const metrics = buildMetricBundle(points);
   const realMonths = points.filter((point) => point.varPatrimonioClp !== null).length;
   const fxComparableMonths = points.filter((point) => point.varSinFxClp !== null && point.aportesFxClp !== null).length;
-  const shouldHideAggregateFx = window !== 'last_month' && points.length > 1 && fxComparableMonths < 2;
 
   return {
     key: window,
@@ -231,28 +232,8 @@ export const selectWealthLabPeriod = (
     chartPoints: rebaseChartPoints(chartSource),
     realMonths,
     fxComparableMonths,
-    monthlyMetrics: shouldHideAggregateFx
-      ? {
-          ...metrics.monthlyMetrics,
-          resultadoSinFx: metrics.monthlyMetrics
-            ? { ...metrics.monthlyMetrics.resultadoSinFx, valueClp: null, months: fxComparableMonths }
-            : null,
-          aporteFx: metrics.monthlyMetrics
-            ? { ...metrics.monthlyMetrics.aporteFx, valueClp: null, months: fxComparableMonths }
-            : null,
-        }
-      : metrics.monthlyMetrics,
-    cumulativeMetrics: shouldHideAggregateFx
-      ? {
-          ...metrics.cumulativeMetrics,
-          resultadoSinFx: metrics.cumulativeMetrics
-            ? { ...metrics.cumulativeMetrics.resultadoSinFx, valueClp: null, months: fxComparableMonths }
-            : null,
-          aporteFx: metrics.cumulativeMetrics
-            ? { ...metrics.cumulativeMetrics.aporteFx, valueClp: null, months: fxComparableMonths }
-            : null,
-        }
-      : metrics.cumulativeMetrics,
+    monthlyMetrics: metrics.monthlyMetrics,
+    cumulativeMetrics: metrics.cumulativeMetrics,
     currentPeriodLabel: metrics.currentPeriodLabel,
   };
 };
@@ -272,51 +253,103 @@ const summaryNetClp = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals
   return null;
 };
 
-const hasDetailedUsdBreakdown = (summary?: WealthSnapshotSummary, closure?: WealthMonthlyClosure) => {
-  const investmentUsd = Number(summary?.byBlock?.investment?.USD || 0);
-  const bankUsd = Number(summary?.byBlock?.bank?.USD || 0);
-  const netUsd = Number(summary?.netByCurrency?.USD || 0);
-  return (
-    (Array.isArray(closure?.records) && closure!.records!.length > 0) ||
-    investmentUsd !== 0 ||
-    bankUsd !== 0 ||
-    netUsd !== 0
-  );
+const summarizeAnalysisByCurrencyFromRecords = (
+  closure: WealthMonthlyClosure,
+): WealthSnapshotSummary['analysisByCurrency'] | null => {
+  if (!Array.isArray(closure.records) || !closure.records.length || !closure.fxRates) return null;
+  let clpWithRisk = 0;
+  let usdWithRisk = 0;
+  let clpWithoutRisk = 0;
+  let usdWithoutRisk = 0;
+  for (const record of closure.records) {
+    const amount = Number(record.amount || 0);
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    const signedAmount = record.block === 'debt' ? -amount : amount;
+    const includeWithoutRisk =
+      record.block !== 'investment' || !isRiskCapitalInvestmentLabel(record.label);
+    if (record.currency === 'USD') {
+      usdWithRisk += signedAmount;
+      if (includeWithoutRisk) usdWithoutRisk += signedAmount;
+      continue;
+    }
+    const clpEquivalent =
+      record.currency === 'CLP'
+        ? signedAmount
+        : record.currency === 'EUR'
+          ? signedAmount * closure.fxRates.eurClp
+          : signedAmount * closure.fxRates.ufClp;
+    clpWithRisk += clpEquivalent;
+    if (includeWithoutRisk) clpWithoutRisk += clpEquivalent;
+  }
+  return {
+    clpWithoutRisk: Math.round(clpWithoutRisk),
+    usdWithoutRisk: Math.round(usdWithoutRisk * 100) / 100,
+    clpWithRisk: Math.round(clpWithRisk),
+    usdWithRisk: Math.round(usdWithRisk * 100) / 100,
+    source: 'records',
+  };
 };
 
-const resolveUsdBlocks = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals: boolean): {
+const resolveAggregateCurrencySeries = (
+  closure: WealthMonthlyClosure,
+  includeRiskCapitalInTotals: boolean,
+): {
+  aggregateClp: number | null;
   usdBlocks: number | null;
   usdExposureKnown: boolean;
-  usdExposureSource: 'records' | 'summary' | 'unknown';
+  usdExposureSource: WealthLabPoint['usdExposureSource'];
 } => {
-  const summary = closure.summary;
-  if (Array.isArray(closure.records) && closure.records.length > 0) {
-    const usdBlocks = closure.records
-      .filter((record) => record.currency === 'USD')
-      .filter((record) => record.block === 'investment' || record.block === 'bank')
-      .filter((record) => includeRiskCapitalInTotals || !isRiskCapitalInvestmentLabel(record.label))
-      .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+  const summarySeries = closure.summary?.analysisByCurrency;
+  if (summarySeries) {
     return {
-      usdBlocks,
+      aggregateClp: includeRiskCapitalInTotals ? summarySeries.clpWithRisk : summarySeries.clpWithoutRisk,
+      usdBlocks: includeRiskCapitalInTotals ? summarySeries.usdWithRisk : summarySeries.usdWithoutRisk,
+      usdExposureKnown: true,
+      usdExposureSource: 'summary_aggregate',
+    };
+  }
+
+  const externalSeries = WEALTH_LAB_EXTERNAL_AGGREGATE[closure.monthKey];
+  if (externalSeries) {
+    return {
+      aggregateClp: includeRiskCapitalInTotals ? externalSeries.clpWithRisk : externalSeries.clpWithoutRisk,
+      usdBlocks: includeRiskCapitalInTotals ? externalSeries.usdWithRisk : externalSeries.usdWithoutRisk,
+      usdExposureKnown: true,
+      usdExposureSource: 'external_series',
+    };
+  }
+
+  const recordsSeries = summarizeAnalysisByCurrencyFromRecords(closure);
+  if (recordsSeries) {
+    return {
+      aggregateClp: includeRiskCapitalInTotals ? recordsSeries.clpWithRisk : recordsSeries.clpWithoutRisk,
+      usdBlocks: includeRiskCapitalInTotals ? recordsSeries.usdWithRisk : recordsSeries.usdWithoutRisk,
       usdExposureKnown: true,
       usdExposureSource: 'records',
     };
   }
 
-  const investmentUsd = Number(summary?.byBlock?.investment?.USD || 0);
-  const bankUsd = Number(summary?.byBlock?.bank?.USD || 0);
-  const known = hasDetailedUsdBreakdown(summary, closure);
-  if (!known) {
+  const summary = closure.summary;
+  const summaryUsd = Number(summary?.netByCurrency?.USD || 0);
+  const summaryNet = summaryNetClp(closure, includeRiskCapitalInTotals);
+  const canUseSummaryFallback =
+    Number.isFinite(summaryUsd) &&
+    summaryNet !== null &&
+    (summaryUsd !== 0 || summary?.analysisByCurrency?.source === 'net_clp_only');
+  if (canUseSummaryFallback) {
     return {
-      usdBlocks: null,
-      usdExposureKnown: false,
-      usdExposureSource: 'unknown',
+      aggregateClp: summaryNet - summaryUsd * safeFx(closure.fxRates).usdClp,
+      usdBlocks: summaryUsd,
+      usdExposureKnown: true,
+      usdExposureSource: 'summary_fallback',
     };
   }
+
   return {
-    usdBlocks: investmentUsd + bankUsd,
-    usdExposureKnown: true,
-    usdExposureSource: 'summary',
+    aggregateClp: null,
+    usdBlocks: null,
+    usdExposureKnown: false,
+    usdExposureSource: 'unknown',
   };
 };
 
@@ -345,13 +378,22 @@ export const buildWealthLabModel = (
 
   const points: WealthLabPoint[] = [];
   let previousValidNet: number | null = null;
-  let previousComparableUsd: { usdBlocks: number; usdClp: number } | null = null;
+  let previousComparableSeries: { realClp: number; usdBlocks: number; usdClp: number } | null = null;
   let lastRawIndiceReal: number | null = null;
   let lastRawIndiceSinFx: number | null = null;
 
   for (const closure of sorted) {
-    const fx = safeFx(closure.fxRates);
-    const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
+    const externalSeries = WEALTH_LAB_EXTERNAL_AGGREGATE[closure.monthKey];
+    const fx = {
+      ...safeFx(closure.fxRates),
+      usdClp: externalSeries?.usdClp ?? safeFx(closure.fxRates).usdClp,
+    };
+    const aggregateSeries = resolveAggregateCurrencySeries(closure, includeRiskCapitalInTotals);
+    const seriesRealClp =
+      aggregateSeries.aggregateClp !== null && aggregateSeries.usdBlocks !== null
+        ? aggregateSeries.aggregateClp + aggregateSeries.usdBlocks * fx.usdClp
+        : null;
+    const netClp = seriesRealClp ?? summaryNetClp(closure, includeRiskCapitalInTotals);
     const prevNetClp = netClp !== null && Number.isFinite(netClp) && netClp > 0 ? previousValidNet : null;
     const varPatrimonioClp =
       netClp !== null && prevNetClp !== null && prevNetClp > 0 ? netClp - prevNetClp : null;
@@ -359,24 +401,24 @@ export const buildWealthLabModel = (
     const gastosClp = gastosEur !== null ? gastosEur * fx.eurClp : null;
     const retornoEconomicoClp =
       varPatrimonioClp !== null && gastosClp !== null ? varPatrimonioClp + gastosClp : null;
-    const usdExposure = resolveUsdBlocks(closure, includeRiskCapitalInTotals);
     const deltaUsdRealClp =
-      usdExposure.usdExposureKnown &&
-      usdExposure.usdBlocks !== null &&
-      previousComparableUsd !== null
-        ? usdExposure.usdBlocks * fx.usdClp -
-          previousComparableUsd.usdBlocks * previousComparableUsd.usdClp
+      aggregateSeries.usdExposureKnown &&
+      aggregateSeries.usdBlocks !== null &&
+      previousComparableSeries !== null
+        ? aggregateSeries.usdBlocks * fx.usdClp -
+          previousComparableSeries.usdBlocks * previousComparableSeries.usdClp
         : null;
     const deltaUsdConstClp =
-      usdExposure.usdExposureKnown &&
-      usdExposure.usdBlocks !== null &&
-      previousComparableUsd !== null
-        ? (usdExposure.usdBlocks - previousComparableUsd.usdBlocks) * previousComparableUsd.usdClp
+      aggregateSeries.usdExposureKnown &&
+      aggregateSeries.aggregateClp !== null &&
+      aggregateSeries.usdBlocks !== null &&
+      previousComparableSeries !== null
+        ? aggregateSeries.aggregateClp + aggregateSeries.usdBlocks * previousComparableSeries.usdClp - previousComparableSeries.realClp
         : null;
     const aportesFxClp =
       deltaUsdRealClp !== null && deltaUsdConstClp !== null ? deltaUsdRealClp - deltaUsdConstClp : null;
     const varSinFxClp =
-      varPatrimonioClp !== null && aportesFxClp !== null ? varPatrimonioClp - aportesFxClp : null;
+      deltaUsdConstClp;
     const performanceSinFxClp =
       retornoEconomicoClp !== null && aportesFxClp !== null ? retornoEconomicoClp - aportesFxClp : null;
 
@@ -402,9 +444,10 @@ export const buildWealthLabModel = (
       varPatrimonioClp,
       gastosClp,
       retornoEconomicoClp,
-      usdBlocks: usdExposure.usdBlocks,
-      usdExposureKnown: usdExposure.usdExposureKnown,
-      usdExposureSource: usdExposure.usdExposureSource,
+      aggregateClp: aggregateSeries.aggregateClp,
+      usdBlocks: aggregateSeries.usdBlocks,
+      usdExposureKnown: aggregateSeries.usdExposureKnown,
+      usdExposureSource: aggregateSeries.usdExposureSource,
       deltaUsdRealClp,
       deltaUsdConstClp,
       aportesFxClp,
@@ -420,8 +463,17 @@ export const buildWealthLabModel = (
       previousValidNet = netClp;
       if (rawIndiceReal !== null) lastRawIndiceReal = rawIndiceReal;
     }
-    if (usdExposure.usdExposureKnown && usdExposure.usdBlocks !== null) {
-      previousComparableUsd = { usdBlocks: usdExposure.usdBlocks, usdClp: fx.usdClp };
+    if (
+      aggregateSeries.usdExposureKnown &&
+      aggregateSeries.aggregateClp !== null &&
+      aggregateSeries.usdBlocks !== null &&
+      seriesRealClp !== null
+    ) {
+      previousComparableSeries = {
+        realClp: seriesRealClp,
+        usdBlocks: aggregateSeries.usdBlocks,
+        usdClp: fx.usdClp,
+      };
       if (rawIndiceSinFx !== null) lastRawIndiceSinFx = rawIndiceSinFx;
     }
   }
@@ -431,13 +483,17 @@ export const buildWealthLabModel = (
   const { cumulativeMetrics, monthlyMetrics, currentPeriodLabel } = buildMetricBundle(chartPoints);
 
   const notes: string[] = [
+    'Usa la serie agregada mensual CLP/USD cuando está disponible.',
     'Neutraliza USD/CLP mensual sobre bloques expuestos a USD.',
     'Bienes raíces y previsional permanecen en CLP observado.',
     'Esta métrica representa variación patrimonial ajustada por USD/CLP, no performance pura perfecta.',
   ];
 
+  if (points.some((point) => point.usdExposureSource === 'external_series')) {
+    notes.push('Para el histórico ya cargado, Lab usa la serie mensual externa CLP/USD como fallback local explícito.');
+  }
   if (points.some((point) => !point.usdExposureKnown)) {
-    notes.push('Algunos cierres históricos no conservan desglose USD suficiente; Lab usa solo los meses con exposición USD identificable.');
+    notes.push('Algunos tramos aún no conservan base CLP/USD suficiente; Lab omite solo esos meses en el cálculo sin FX.');
   }
 
   return {

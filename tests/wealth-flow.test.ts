@@ -561,6 +561,13 @@ describe('Aurum full flow (service-level e2e)', () => {
     expect(may2023.summary.netClp).toBe(expectedNetClp);
     expect(may2023.summary.netClpWithRisk).toBe(expectedNetClpWithRisk);
     expect(may2023.summary.netClpWithRisk).toBe(1_422_935_635);
+    expect(may2023.summary.analysisByCurrency).toEqual({
+      clpWithoutRisk: 1_064_803_835,
+      usdWithoutRisk: 314620,
+      clpWithRisk: 1_130_303_835,
+      usdWithRisk: 370420,
+      source: 'aggregated_csv',
+    });
 
     const anyRiskDelta = closures.some(
       (closure) => Number(closure.summary.netClpWithRisk || 0) > Number(closure.summary.netClp || 0),
