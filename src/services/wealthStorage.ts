@@ -3237,6 +3237,11 @@ const readLocalWealthStateSnapshot = (): NormalizedCloudWealthState => ({
   fx: loadFxRates(),
 });
 
+const stripSensitiveBackupState = (snapshot: NormalizedCloudWealthState): NormalizedCloudWealthState => ({
+  ...snapshot,
+  bankTokens: {},
+});
+
 export const loadCloudClosuresSummary = async (): Promise<WealthCloudClosuresSummary> => {
   try {
     const ref = await getWealthCloudRef();
@@ -3264,7 +3269,7 @@ export const createWealthBackupSnapshot = async (
   reason: string,
 ): Promise<WealthBackupCreateResult> => {
   const createdAt = nowIso();
-  const snapshot = readLocalWealthStateSnapshot();
+  const snapshot = stripSensitiveBackupState(readLocalWealthStateSnapshot());
   const backupsRef = await getWealthBackupsCollectionRef();
   if (!backupsRef) {
     return {
@@ -3380,11 +3385,12 @@ export const restoreWealthFromBackupSnapshot = async (
     }
     const raw = snap.data() || {};
     const restored = normalizeCloudWealthState(raw.state || {});
+    const preservedBankTokens = loadBankTokens();
     applyWealthStateLocal({
       records: restored.records,
       closures: restored.closures,
       instruments: restored.instruments,
-      bankTokens: restored.bankTokens,
+      bankTokens: preservedBankTokens,
       deletedRecordIds: restored.deletedRecordIds,
       deletedRecordAssetMonthKeys: restored.deletedRecordAssetMonthKeys,
       fx: restored.fx,
@@ -4562,7 +4568,6 @@ export const repairMarch2025EurClpScale = async (): Promise<{
   afterEurClp: number | null;
   gastosClpAfter: number | null;
   pctAfter: number | null;
-  backupWarning?: string;
 }> => {
   const monthKey = '2025-03';
   const expectedWrong = 992225;
@@ -4608,18 +4613,6 @@ export const repairMarch2025EurClpScale = async (): Promise<{
       gastosClpAfter: Math.round(gastosEur * beforeEurClp),
       pctAfter: null,
     };
-  }
-
-  const backup = await createWealthBackupSnapshot('Reparación EUR/CLP 2025-03');
-  const backupWarning = !backup.ok
-    ? `No pude generar backup previo en nube (${backup.message}). Continué con la reparación local.`
-    : undefined;
-  if (backupWarning) {
-    console.warn('[repairMarch2025EurClpScale][backup-warning]', {
-      monthKey,
-      beforeEurClp,
-      backupMessage: backup.message,
-    });
   }
 
   const nextClosures = beforeClosures.map((closure) => {
@@ -4674,15 +4667,12 @@ export const repairMarch2025EurClpScale = async (): Promise<{
 
   return {
     ok: true,
-    message: backupWarning
-      ? `Reparación aplicada en 2025-03 con advertencia: ${backupWarning}`
-      : 'Reparación aplicada correctamente en 2025-03.',
+    message: 'Reparación aplicada correctamente en 2025-03.',
     monthKey,
     beforeEurClp,
     afterEurClp,
     gastosClpAfter,
     pctAfter,
-    backupWarning,
   };
 };
 

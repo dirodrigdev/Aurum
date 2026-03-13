@@ -27,7 +27,6 @@ import {
   createWealthBackupSnapshot,
   listWealthBackupSnapshots,
   loadCloudClosuresSummary,
-  loadBankTokens,
   loadClosures,
   saveClosures,
   clearCurrentMonthData,
@@ -115,6 +114,13 @@ type PreflightCheckResult = {
   status: PreflightStatus;
   details: string;
   resolution: string;
+};
+
+type BackupDecisionState = {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmText: string;
 };
 
 const STATIC_CLOSING_FIELDS: Array<{
@@ -276,6 +282,12 @@ export const SettingsAurum: React.FC = () => {
   const [fsDebug, setFsDebug] = useState('');
   const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
   const [backupMessage, setBackupMessage] = useState('');
+  const [backupDecisionState, setBackupDecisionState] = useState<BackupDecisionState>({
+    open: false,
+    title: '',
+    message: '',
+    confirmText: 'Continuar',
+  });
   const [availableClosures, setAvailableClosures] = useState(() =>
     loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
   );
@@ -322,6 +334,7 @@ export const SettingsAurum: React.FC = () => {
   const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
   const hydrationRunningRef = useRef(false);
   const lastHydrateAtRef = useRef(0);
+  const pendingUnsafeBackupActionRef = useRef<null | (() => Promise<void> | void)>(null);
 
   const describeManualSync = (
     pushed: boolean,
@@ -627,6 +640,42 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
     setBackupMessage(`No pude generar backup automático: ${backup.message}`);
     return backup;
+  };
+
+  const buildVisibleBackupExportPayload = () => ({
+    exportedAt: new Date().toISOString(),
+    wealth: {
+      records: loadWealthRecords(),
+      closures: loadClosures(),
+      investmentInstruments: loadInvestmentInstruments(),
+      fxRates: loadFxRates(),
+      fxMeta: loadFxLiveSyncMeta(),
+    },
+  });
+
+  const runDestructiveActionWithBackupGuard = async (input: {
+    backupReason: string;
+    actionLabel: string;
+    onProceed: () => Promise<void> | void;
+  }) => {
+    const backup = await backupBeforeDestructiveOperation(input.backupReason);
+    if (backup.ok) {
+      await input.onProceed();
+      return;
+    }
+
+    pendingUnsafeBackupActionRef.current = input.onProceed;
+    setBackupDecisionState({
+      open: true,
+      title: 'No pude generar respaldo previo',
+      message:
+        `Iba a ${input.actionLabel}, pero el respaldo automático falló. ` +
+        'Si continúas ahora, la operación se ejecutará sin respaldo garantizado y podría ser irreversible.',
+      confirmText: 'Continuar sin respaldo',
+    });
+    setBackupMessage(
+      `No pude generar backup automático. La operación quedó detenida hasta que confirmes continuar sin respaldo.`,
+    );
   };
 
   const runPreflightCheckNow = async () => {
@@ -1294,7 +1343,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setCsvImportMessage('');
     setCsvImportWarnings([]);
     try {
-      await backupBeforeDestructiveOperation('Import masivo de CSV histórico');
       const beforeCount = loadClosures().length;
       console.info('[Settings][csv-import][before]', {
         mode: csvImportMode,
@@ -1348,7 +1396,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         monthKeyToDelete,
         beforeLocalMonthKeys,
       });
-      await backupBeforeDestructiveOperation(`Borrar cierre ${monthKeyToDelete}`);
       const current = loadClosures();
       const next = current.filter((closure) => closure.monthKey !== monthKeyToDelete);
       saveClosures(next);
@@ -1407,7 +1454,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setDeletingClosure(true);
     setDeleteClosureMessage('');
     try {
-      await backupBeforeDestructiveOperation('Borrar todos los cierres');
       saveClosures([]);
       let pushed = false;
       let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
@@ -1504,7 +1550,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setSeedingDemo(true);
     setSeedDemoMessage('');
     try {
-      await backupBeforeDestructiveOperation('Cargar datos de prueba');
       console.info('[seed-demo] estado antes de reset', {
         records: loadWealthRecords().length,
         closures: loadClosures().map((c) => c.monthKey),
@@ -1589,6 +1634,44 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
+  const resetAllDataNow = async () => {
+    setResettingAll(true);
+    setResetAllMessage('');
+    try {
+      const result = await clearWealthDataForFreshStart({ preserveFx: false });
+      setFx(loadFxRates());
+      setFxLiveMeta(loadFxLiveSyncMeta());
+      setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
+      setAllRecords(loadWealthRecords());
+      setFsStatus(getFirestoreStatus());
+      setSelectedClosureToDelete('');
+      setDeleteClosureMessage('');
+      setCsvImportMessage('');
+      setCsvImportWarnings([]);
+      setCsvImportedResultVisible(false);
+      setClosureReviewMessage('');
+      persistClosureReviewPendingState({});
+      setDeleteBlocksMessage('');
+      setSyncMessage('');
+      setFsDebug('');
+      setBackupMessage('');
+      if (result.cloudCleared) {
+        setResetAllMessage('Reset completado. Datos limpiados en local y nube.');
+      } else if (!auth.currentUser?.uid) {
+        setResetAllMessage('Debes estar autenticado para realizar esta operación en la nube. Reset aplicado solo en local.');
+      } else {
+        const issue = getLastWealthSyncIssue();
+        const detail = issue ? ` (${issue})` : '';
+        setResetAllMessage(`Reset aplicado solo en local. No se pudo limpiar la nube${detail}.`);
+      }
+      setResetStepTwoOpen(false);
+    } catch (err: any) {
+      setResetAllMessage(`Error en reset total: ${String(err?.message || err || 'error')}`);
+    } finally {
+      setResettingAll(false);
+    }
+  };
+
   const repairMarch2025Now = async () => {
     setRepairingMarch2025(true);
     setSeedDemoMessage('');
@@ -1601,9 +1684,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           result.pctAfter === null
             ? '—'
             : `${result.pctAfter >= 0 ? '+' : ''}${result.pctAfter.toFixed(2).replace('.', ',')}%`;
-        const warningText = result.backupWarning ? ` ${result.backupWarning}` : '';
         setSeedDemoMessage(
-          `Reparación 2025-03 OK. eur_clp: ${result.beforeEurClp} → ${result.afterEurClp}. Gastos: ${gastos}. %: ${pct}.${warningText}`,
+          `Reparación 2025-03 OK. eur_clp: ${result.beforeEurClp} → ${result.afterEurClp}. Gastos: ${gastos}. %: ${pct}.`,
         );
       } else {
         setSeedDemoMessage(result.message);
@@ -1907,22 +1989,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                     const now = new Date();
                     const pad = (v: number) => String(v).padStart(2, '0');
                     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
-                    const payload = {
-                      exportedAt: now.toISOString(),
-                      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
-                      user: { email: auth.currentUser?.email || '', uid: auth.currentUser?.uid || '' },
-                      wealth: {
-                        records: loadWealthRecords(),
-                        closures: loadClosures(),
-                        investmentInstruments: loadInvestmentInstruments(),
-                        fxRates: loadFxRates(),
-                        bankTokens: loadBankTokens(),
-                        fxMeta: loadFxLiveSyncMeta(),
-                      },
-                    };
+                    const payload = buildVisibleBackupExportPayload();
                     const filename = `aurum_backup_${stamp}.json`;
                     downloadTextFile(JSON.stringify(payload, null, 2), filename, 'application/json');
-                    setBackupMessage(`Respaldo descargado: ${filename}`);
+                    setBackupMessage(`Respaldo descargado: ${filename} (sin tokens bancarios ni datos de sesión).`);
                   } catch (err: any) {
                     setBackupMessage(`No pude generar respaldo: ${String(err?.message || err || 'error')}`);
                   }
@@ -2142,10 +2212,30 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         </button>
         {openSection === 'lab' && (
           <div className="mt-3 space-y-2 text-xs">
-            <Button variant="secondary" disabled={seedingDemo} onClick={() => void loadDemoDataNow()}>
+            <Button
+              variant="secondary"
+              disabled={seedingDemo}
+              onClick={() =>
+                void runDestructiveActionWithBackupGuard({
+                  backupReason: 'Cargar datos de prueba',
+                  actionLabel: 'reemplazar los datos actuales por datos de prueba',
+                  onProceed: loadDemoDataNow,
+                })
+              }
+            >
               {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
             </Button>
-            <Button variant="outline" disabled={repairingMarch2025} onClick={() => void repairMarch2025Now()}>
+            <Button
+              variant="outline"
+              disabled={repairingMarch2025}
+              onClick={() =>
+                void runDestructiveActionWithBackupGuard({
+                  backupReason: 'Reparar EUR/CLP 2025-03',
+                  actionLabel: 'corregir el cierre 2025-03',
+                  onProceed: repairMarch2025Now,
+                })
+              }
+            >
               {repairingMarch2025 ? 'Reparando 2025-03...' : 'Reparar EUR/CLP 2025-03'}
             </Button>
             {!!seedDemoMessage && <div className="text-indigo-800">{seedDemoMessage}</div>}
@@ -2168,7 +2258,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         open={resetAllOpen}
         tone="danger"
         title="¿Estás seguro?"
-        message="Esto borrará todos tus datos sin posibilidad de recuperarlos."
+        message="Esto borrará todos tus datos. Antes de continuar, intentaré generar un respaldo en la nube; si falla, te pediré una confirmación adicional para seguir sin respaldo."
         confirmText="Sí, continuar"
         cancelText="Cancelar"
         onCancel={() => {
@@ -2192,43 +2282,32 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           if (resettingAll) return;
           setResetStepTwoOpen(false);
         }}
-        onConfirm={async () => {
-          setResettingAll(true);
-          setResetAllMessage('');
-          try {
-            await backupBeforeDestructiveOperation('Reset total de datos');
-            const result = await clearWealthDataForFreshStart({ preserveFx: false });
-            setFx(loadFxRates());
-            setFxLiveMeta(loadFxLiveSyncMeta());
-            setAvailableClosures(loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)));
-            setAllRecords(loadWealthRecords());
-            setFsStatus(getFirestoreStatus());
-            setSelectedClosureToDelete('');
-            setDeleteClosureMessage('');
-            setCsvImportMessage('');
-            setCsvImportWarnings([]);
-            setCsvImportedResultVisible(false);
-            setClosureReviewMessage('');
-            persistClosureReviewPendingState({});
-            setDeleteBlocksMessage('');
-            setSyncMessage('');
-            setFsDebug('');
-            setBackupMessage('');
-            if (result.cloudCleared) {
-              setResetAllMessage('Reset completado. Datos limpiados en local y nube.');
-            } else if (!auth.currentUser?.uid) {
-              setResetAllMessage('Debes estar autenticado para realizar esta operación en la nube. Reset aplicado solo en local.');
-            } else {
-              const issue = getLastWealthSyncIssue();
-              const detail = issue ? ` (${issue})` : '';
-              setResetAllMessage(`Reset aplicado solo en local. No se pudo limpiar la nube${detail}.`);
-            }
-            setResetStepTwoOpen(false);
-          } catch (err: any) {
-            setResetAllMessage(`Error en reset total: ${String(err?.message || err || 'error')}`);
-          } finally {
-            setResettingAll(false);
-          }
+        onConfirm={() => {
+          setResetStepTwoOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: 'Reset total de datos',
+            actionLabel: 'borrar todos los datos de la app',
+            onProceed: resetAllDataNow,
+          });
+        }}
+      />
+
+      <ConfirmActionModal
+        open={backupDecisionState.open}
+        tone="danger"
+        title={backupDecisionState.title}
+        message={backupDecisionState.message}
+        confirmText={backupDecisionState.confirmText}
+        cancelText="Cancelar"
+        onCancel={() => {
+          pendingUnsafeBackupActionRef.current = null;
+          setBackupDecisionState((prev) => ({ ...prev, open: false }));
+        }}
+        onConfirm={() => {
+          const action = pendingUnsafeBackupActionRef.current;
+          pendingUnsafeBackupActionRef.current = null;
+          setBackupDecisionState((prev) => ({ ...prev, open: false }));
+          if (action) void action();
         }}
       />
 
@@ -2246,18 +2325,23 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                 csvPreview.monthKeys.length === 1
                   ? `el mes ${csvPreview.monthKeys[0]}`
                   : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
-              } como cierres históricos sin detalle por instrumento.`
+              } como cierres históricos sin detalle por instrumento. Antes de continuar, intentaré generar un respaldo.`
             : `Se importará/reemplazará ${
                 csvPreview.monthKeys.length === 1
                   ? `el mes ${csvPreview.monthKeys[0]}`
                   : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
-              } según month_key.`
+              } según month_key. Antes de continuar, intentaré generar un respaldo.`
         }
         confirmText="Importar ahora"
         cancelText="Cancelar"
         onCancel={() => setCsvConfirmOpen(false)}
         onConfirm={() => {
-          void importCsvNow();
+          setCsvConfirmOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: 'Import masivo de CSV histórico',
+            actionLabel: 'importar o reemplazar cierres históricos',
+            onProceed: importCsvNow,
+          });
         }}
       />
 
@@ -2284,14 +2368,19 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         title="Confirmar borrado de cierre"
         message={
           selectedClosureToDelete
-            ? `Vas a borrar el cierre ${selectedClosureToDelete}. Esta acción no borra registros del mes.`
+            ? `Vas a borrar el cierre ${selectedClosureToDelete}. Esta acción no borra registros del mes. Antes de continuar, intentaré generar un respaldo.`
             : 'Selecciona un cierre antes de continuar.'
         }
         confirmText="Borrar cierre"
         cancelText="Cancelar"
         onCancel={() => setDeleteClosureConfirmOpen(false)}
         onConfirm={() => {
-          void deleteSelectedClosureNow();
+          setDeleteClosureConfirmOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: `Borrar cierre ${selectedClosureToDelete}`,
+            actionLabel: `borrar el cierre ${selectedClosureToDelete}`,
+            onProceed: deleteSelectedClosureNow,
+          });
         }}
       />
 
@@ -2300,12 +2389,17 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         tone="danger"
         busy={deletingClosure}
         title="Confirmar borrado total de cierres"
-        message={`Se eliminarán todos los cierres guardados (${availableClosures.length}). No borra registros mensuales.`}
+        message={`Se eliminarán todos los cierres guardados (${availableClosures.length}). No borra registros mensuales. Antes de continuar, intentaré generar un respaldo.`}
         confirmText="Borrar todos los cierres"
         cancelText="Cancelar"
         onCancel={() => setDeleteAllClosuresConfirmOpen(false)}
         onConfirm={() => {
-          void deleteAllClosuresNow();
+          setDeleteAllClosuresConfirmOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: 'Borrar todos los cierres',
+            actionLabel: 'borrar todos los cierres',
+            onProceed: deleteAllClosuresNow,
+          });
         }}
       />
 
@@ -2314,12 +2408,17 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         tone="danger"
         busy={deletingBlocks}
         title="Confirmar borrado de bloques"
-        message="Se eliminarán los bloques seleccionados del mes actual. Esta acción no se puede deshacer."
+        message="Se eliminarán los bloques seleccionados del mes actual. Antes de continuar, intentaré generar un respaldo. Esta acción no se puede deshacer."
         confirmText="Borrar bloques"
         cancelText="Cancelar"
         onCancel={() => setDeleteBlocksConfirmOpen(false)}
         onConfirm={() => {
-          void deleteSelectedBlocksNow();
+          setDeleteBlocksConfirmOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: 'Borrar bloques del mes actual',
+            actionLabel: 'borrar bloques del mes actual',
+            onProceed: deleteSelectedBlocksNow,
+          });
         }}
       />
 
@@ -2327,7 +2426,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         open={restoreBackupConfirmOpen}
         busy={restoreBackupBusy}
         title="Restaurar backup"
-        message="Se reemplazarán los datos locales por el backup seleccionado y se sincronizarán con la nube."
+        message="Se reemplazarán los datos locales por el backup seleccionado y se sincronizarán con la nube. Antes de continuar, intentaré generar un respaldo del estado actual."
         confirmText="Restaurar ahora"
         cancelText="Cancelar"
         onCancel={() => {
@@ -2335,7 +2434,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           setRestoreBackupConfirmOpen(false);
         }}
         onConfirm={() => {
-          void restoreSelectedBackupNow();
+          setRestoreBackupConfirmOpen(false);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: `Restaurar backup ${selectedBackupId || 'seleccionado'}`,
+            actionLabel: 'reemplazar tus datos actuales por el backup seleccionado',
+            onProceed: restoreSelectedBackupNow,
+          });
         }}
       />
 
@@ -2366,7 +2470,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         title="Eliminar inversión completamente"
         message={
           closingInvestmentDeleteTargetId
-            ? 'Se eliminará esta inversión de registros e historial de cierres con detalle. Esta acción impacta períodos anteriores y no se puede deshacer.'
+            ? 'Se eliminará esta inversión de registros e historial de cierres con detalle. Antes de continuar, intentaré generar un respaldo. Esta acción impacta períodos anteriores y no se puede deshacer.'
             : ''
         }
         confirmText="Eliminar completamente"
@@ -2376,7 +2480,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           setClosingInvestmentDeleteTargetId(null);
         }}
         onConfirm={() => {
-          void deleteInvestmentCompletelyNow();
+          setClosingInvestmentDeleteTargetId(null);
+          void runDestructiveActionWithBackupGuard({
+            backupReason: 'Eliminar inversión completamente',
+            actionLabel: 'eliminar una inversión del historial con detalle',
+            onProceed: deleteInvestmentCompletelyNow,
+          });
         }}
       />
     </div>
