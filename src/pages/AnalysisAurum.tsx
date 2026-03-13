@@ -696,6 +696,7 @@ const LabHeaderCard: React.FC<{
   monthKey: string | null;
   resultadoSinFxClp: number | null;
   aporteFxClp: number | null;
+  realClp: number | null;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
   selectedWindow: WealthLabWindow;
@@ -705,6 +706,7 @@ const LabHeaderCard: React.FC<{
   monthKey,
   resultadoSinFxClp,
   aporteFxClp,
+  realClp,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
   selectedWindow,
@@ -759,7 +761,14 @@ const LabHeaderCard: React.FC<{
       ))}
     </div>
 
-    <div className="mt-4 grid grid-cols-2 gap-3">
+    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado real</div>
+        <div className={cn('mt-1 text-xl font-semibold', (realClp || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
+          {realClp !== null ? formatFreedomCompactClp(realClp) : '—'}
+        </div>
+        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
+      </div>
       <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
         <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado sin FX</div>
         <div className="mt-1 text-xl font-semibold text-emerald-300">
@@ -775,6 +784,34 @@ const LabHeaderCard: React.FC<{
         <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
       </div>
     </div>
+
+    {realClp !== null && resultadoSinFxClp !== null && aporteFxClp !== null && (
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del resultado</div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="flex h-full w-full">
+            <div
+              className="bg-emerald-400/90"
+              style={{ width: `${Math.max(0, Math.min(100, Math.abs(resultadoSinFxClp) / Math.max(1, Math.abs(realClp)) * 100))}%` }}
+            />
+            <div
+              className={cn('transition-all', aporteFxClp >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90')}
+              style={{ width: `${Math.max(0, Math.min(100, Math.abs(aporteFxClp) / Math.max(1, Math.abs(realClp)) * 100))}%` }}
+            />
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+          <div className="inline-flex items-center gap-2 text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            Resultado sin FX
+          </div>
+          <div className="inline-flex items-center gap-2 text-slate-300">
+            <span className={cn('h-2.5 w-2.5 rounded-full', aporteFxClp >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
+            Aporte FX
+          </div>
+        </div>
+      </div>
+    )}
   </Card>
 );
 
@@ -920,6 +957,9 @@ const LabTabContent: React.FC<{
   const fxValue = selectedWindow === 'last_month'
     ? selectedPeriod.monthlyMetrics?.aporteFx.valueClp ?? null
     : selectedPeriod.cumulativeMetrics?.aporteFx.valueClp ?? null;
+  const realValue = selectedWindow === 'last_month'
+    ? selectedPeriod.monthlyMetrics?.real.valueClp ?? null
+    : selectedPeriod.cumulativeMetrics?.real.valueClp ?? null;
 
   return (
     <div className="space-y-3">
@@ -928,6 +968,7 @@ const LabTabContent: React.FC<{
         monthKey={selectedPeriod.currentPeriodLabel}
         resultadoSinFxClp={resultValue}
         aporteFxClp={fxValue}
+        realClp={realValue}
         includeRiskCapitalInTotals={includeRiskCapitalInTotals}
         onToggleRiskMode={onToggleRiskMode}
         selectedWindow={selectedWindow}

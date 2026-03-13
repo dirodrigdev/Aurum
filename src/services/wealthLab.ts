@@ -1,6 +1,7 @@
 import {
   currentMonthKey,
   defaultFxRates,
+  isRiskCapitalInvestmentLabel,
   type WealthFxRates,
   type WealthMonthlyClosure,
   type WealthSnapshotSummary,
@@ -53,7 +54,7 @@ export type WealthLabPoint = {
   retornoEconomicoClp: number | null;
   usdBlocks: number | null;
   usdExposureKnown: boolean;
-  usdExposureSource: 'summary' | 'unknown';
+  usdExposureSource: 'records' | 'summary' | 'unknown';
   deltaUsdRealClp: number | null;
   deltaUsdConstClp: number | null;
   aportesFxClp: number | null;
@@ -125,49 +126,56 @@ const buildMetricBundle = (points: WealthLabPoint[]): {
   } | null;
   currentPeriodLabel: string | null;
 } => {
-  const comparableForMetrics = points.filter(
-    (point) => point.varPatrimonioClp !== null && point.varSinFxClp !== null && point.aportesFxClp !== null,
+  const realPoints = points.filter((point) => point.varPatrimonioClp !== null);
+  const fxComparablePoints = points.filter(
+    (point) => point.varSinFxClp !== null && point.aportesFxClp !== null,
   );
-  const latestComparablePoint = [...points].reverse().find(
-    (point) => point.varPatrimonioClp !== null && point.varSinFxClp !== null && point.aportesFxClp !== null,
-  ) || null;
+  const latestRealPoint = [...realPoints].reverse()[0] || null;
+  const latestComparablePoint = [...fxComparablePoints].reverse()[0] || null;
 
-  const cumulativeMetrics = comparableForMetrics.length
-    ? {
-        resultadoSinFx: {
-          label: 'Resultado sin FX acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-        real: {
-          label: 'Real acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-        aporteFx: {
-          label: 'Aporte FX acumulado',
-          valueClp: comparableForMetrics.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0),
-          months: comparableForMetrics.length,
-        },
-      }
-    : null;
+  const cumulativeMetrics =
+    realPoints.length || fxComparablePoints.length
+      ? {
+          resultadoSinFx: {
+            label: 'Resultado sin FX acumulado',
+            valueClp: fxComparablePoints.length
+              ? fxComparablePoints.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0)
+              : null,
+            months: fxComparablePoints.length,
+          },
+          real: {
+            label: 'Real acumulado',
+            valueClp: realPoints.length
+              ? realPoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0)
+              : null,
+            months: realPoints.length,
+          },
+          aporteFx: {
+            label: 'Aporte FX acumulado',
+            valueClp: fxComparablePoints.length
+              ? fxComparablePoints.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0)
+              : null,
+            months: fxComparablePoints.length,
+          },
+        }
+      : null;
 
-  const monthlyMetrics = latestComparablePoint
+  const monthlyMetrics = latestRealPoint || latestComparablePoint
     ? {
         resultadoSinFx: {
           label: 'Resultado sin FX mensual',
-          valueClp: latestComparablePoint.varSinFxClp,
-          months: 1,
+          valueClp: latestComparablePoint?.varSinFxClp ?? null,
+          months: latestComparablePoint ? 1 : 0,
         },
         real: {
           label: 'Real mensual',
-          valueClp: latestComparablePoint.varPatrimonioClp,
-          months: 1,
+          valueClp: latestRealPoint?.varPatrimonioClp ?? null,
+          months: latestRealPoint ? 1 : 0,
         },
         aporteFx: {
           label: 'Aporte FX mensual',
-          valueClp: latestComparablePoint.aportesFxClp,
-          months: 1,
+          valueClp: latestComparablePoint?.aportesFxClp ?? null,
+          months: latestComparablePoint ? 1 : 0,
         },
       }
     : null;
@@ -175,26 +183,37 @@ const buildMetricBundle = (points: WealthLabPoint[]): {
   return {
     monthlyMetrics,
     cumulativeMetrics,
-    currentPeriodLabel: latestComparablePoint?.monthKey || null,
+    currentPeriodLabel: latestRealPoint?.monthKey || latestComparablePoint?.monthKey || null,
   };
+};
+
+const rebaseChartPoints = (points: WealthLabPoint[]): WealthLabPoint[] => {
+  const comparable = points.filter((point) => point.rawIndiceReal !== null && point.rawIndiceSinFx !== null);
+  const firstComparable = comparable[0] || null;
+  if (!firstComparable) return [];
+  return comparable.map((point) => ({
+    ...point,
+    indiceReal: (Number(point.rawIndiceReal) / Number(firstComparable.rawIndiceReal)) * 100,
+    indiceSinFx: (Number(point.rawIndiceSinFx) / Number(firstComparable.rawIndiceSinFx)) * 100,
+  }));
 };
 
 export const selectWealthLabPeriod = (
   model: WealthLabModel,
   window: WealthLabWindow,
 ): WealthLabPeriodView => {
-  const basePoints = model.chartPoints;
+  const basePoints = model.points;
   let points: WealthLabPoint[] = basePoints;
-  let chartPoints: WealthLabPoint[] = basePoints;
+  let chartSource: WealthLabPoint[] = basePoints;
   let label = 'Desde inicio';
 
   if (window === 'last_12m') {
     points = basePoints.slice(-12);
-    chartPoints = points;
+    chartSource = points;
     label = 'Últ. 12M';
   } else if (window === 'last_month') {
     points = basePoints.slice(-1);
-    chartPoints = basePoints.slice(-2);
+    chartSource = basePoints.slice(-2);
     label = 'Últ. mes';
   }
 
@@ -204,7 +223,7 @@ export const selectWealthLabPeriod = (
     key: window,
     label,
     points,
-    chartPoints,
+    chartPoints: rebaseChartPoints(chartSource),
     monthlyMetrics: metrics.monthlyMetrics,
     cumulativeMetrics: metrics.cumulativeMetrics,
     currentPeriodLabel: metrics.currentPeriodLabel,
@@ -238,12 +257,25 @@ const hasDetailedUsdBreakdown = (summary?: WealthSnapshotSummary, closure?: Weal
   );
 };
 
-const resolveUsdBlocks = (closure: WealthMonthlyClosure): {
+const resolveUsdBlocks = (closure: WealthMonthlyClosure, includeRiskCapitalInTotals: boolean): {
   usdBlocks: number | null;
   usdExposureKnown: boolean;
-  usdExposureSource: 'summary' | 'unknown';
+  usdExposureSource: 'records' | 'summary' | 'unknown';
 } => {
   const summary = closure.summary;
+  if (Array.isArray(closure.records) && closure.records.length > 0) {
+    const usdBlocks = closure.records
+      .filter((record) => record.currency === 'USD')
+      .filter((record) => record.block === 'investment' || record.block === 'bank')
+      .filter((record) => includeRiskCapitalInTotals || !isRiskCapitalInvestmentLabel(record.label))
+      .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+    return {
+      usdBlocks,
+      usdExposureKnown: true,
+      usdExposureSource: 'records',
+    };
+  }
+
   const investmentUsd = Number(summary?.byBlock?.investment?.USD || 0);
   const bankUsd = Number(summary?.byBlock?.bank?.USD || 0);
   const known = hasDetailedUsdBreakdown(summary, closure);
@@ -300,7 +332,7 @@ export const buildWealthLabModel = (
     const gastosClp = gastosEur !== null ? gastosEur * fx.eurClp : null;
     const retornoEconomicoClp =
       varPatrimonioClp !== null && gastosClp !== null ? varPatrimonioClp + gastosClp : null;
-    const usdExposure = resolveUsdBlocks(closure);
+    const usdExposure = resolveUsdBlocks(closure, includeRiskCapitalInTotals);
     const deltaUsdRealClp =
       usdExposure.usdExposureKnown &&
       usdExposure.usdBlocks !== null &&
@@ -367,17 +399,7 @@ export const buildWealthLabModel = (
     }
   }
 
-  const firstComparable = points.find((point) => point.rawIndiceReal !== null && point.rawIndiceSinFx !== null) || null;
-  const chartPoints = firstComparable
-    ? points
-        .filter((point) => point.rawIndiceReal !== null && point.rawIndiceSinFx !== null)
-        .map((point) => ({
-          ...point,
-          indiceReal: (Number(point.rawIndiceReal) / Number(firstComparable.rawIndiceReal)) * 100,
-          indiceSinFx: (Number(point.rawIndiceSinFx) / Number(firstComparable.rawIndiceSinFx)) * 100,
-        }))
-    : [];
-
+  const chartPoints = rebaseChartPoints(points);
   const latestComparablePoint = [...chartPoints].reverse()[0] || null;
   const { cumulativeMetrics, monthlyMetrics, currentPeriodLabel } = buildMetricBundle(chartPoints);
 

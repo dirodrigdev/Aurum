@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../src/services/wealthStorage', () => ({
   currentMonthKey: () => '2026-04',
   defaultFxRates: { usdClp: 900, eurClp: 1000, ufClp: 38000 },
+  isRiskCapitalInvestmentLabel: (label: string) => label === 'Capital de riesgo USD' || label === 'Capital de riesgo CLP',
 }));
 
 type TestSummary = {
@@ -101,12 +102,22 @@ const makeClosure = (
           block: 'investment',
           source: 'test',
           label: 'Global66 Cuenta Vista USD',
-          amount: investmentUsd,
+          amount: Math.max(0, investmentUsd - 1000),
           currency: 'USD',
           snapshotDate: `${monthKey}-28`,
           createdAt: `${monthKey}-28T10:00:00Z`,
         },
-      ]
+        {
+          id: `${monthKey}-risk-usd`,
+          block: 'investment',
+          source: 'test',
+          label: 'Capital de riesgo USD',
+          amount: investmentUsd > 0 ? 1000 : 0,
+          currency: 'USD',
+          snapshotDate: `${monthKey}-28`,
+          createdAt: `${monthKey}-28T10:00:00Z`,
+        },
+      ].filter((record) => record.amount > 0)
     : undefined,
 });
 
@@ -166,5 +177,44 @@ describe('wealthLab model', () => {
 
     expect(withRisk.points[1].netClp).toBe(130_000_000);
     expect(withoutRisk.points[1].netClp).toBe(102_000_000);
+  });
+
+  it('recorta correctamente el período seleccionado para que Desde inicio y Últ. 12M no usen siempre los mismos meses', async () => {
+    const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
+    const closures = Array.from({ length: 14 }, (_, index) => {
+      const month = String(index + 1).padStart(2, '0');
+      return makeClosure(`2025-${month}`, {
+        netClp: 100_000_000 + index * 1_000_000,
+        investmentUsd: 10_000 + index * 100,
+        usdClp: 900 + index,
+      });
+    });
+    const model = buildWealthLabModel(closures as never, false);
+    const sinceStart = selectWealthLabPeriod(model, 'since_start');
+    const last12m = selectWealthLabPeriod(model, 'last_12m');
+
+    expect(sinceStart.cumulativeMetrics?.real.months).toBeGreaterThan(last12m.cumulativeMetrics?.real.months ?? 0);
+    expect(last12m.cumulativeMetrics?.real.months).toBe(12);
+  });
+
+  it('cambia usdBlocks y aporte FX cuando CapRiesgo USD entra o sale del modo global', async () => {
+    const { buildWealthLabModel } = await import('../src/services/wealthLab');
+    const withoutRisk = buildWealthLabModel(
+      [
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, usdClp: 1000 }),
+      ] as never,
+      false,
+    );
+    const withRisk = buildWealthLabModel(
+      [
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 120_000_000, investmentUsd: 10_000, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 104_000_000, netClpWithRisk: 130_000_000, investmentUsd: 12_000, usdClp: 1000 }),
+      ] as never,
+      true,
+    );
+
+    expect(withRisk.points[1].usdBlocks).toBeGreaterThan(withoutRisk.points[1].usdBlocks ?? 0);
+    expect(withRisk.points[1].aportesFxClp).not.toBe(withoutRisk.points[1].aportesFxClp);
   });
 });
