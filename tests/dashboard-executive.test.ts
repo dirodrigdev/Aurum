@@ -169,8 +169,22 @@ describe('dashboard executive model', () => {
     expect(model.capRiskDependence.level).toBe('Alta');
     expect(model.capRiskDependence.dependenceSummary).toBe('Sin CapRiesgo ya no alcanza');
     expect(model.capRiskDependence.impactRatioDelta).toBeGreaterThan(0);
-    expect(model.capRiskDependence.impactSummary).toBe('Mejora la cobertura');
+    expect(model.capRiskDependence.impactSummary).toBe('Amplía el colchón');
     expect(model.coverageMessage).toBe('Depende demasiado de CapRiesgo');
+  });
+
+  it('clasifica dependencia como baja si sin CapRiesgo igual alcanza aunque el colchón mejore', () => {
+    const model = buildExecutiveDashboardModel({
+      closures: [makeClosure('2026-02', { netClp: 1_300_000_000, netClpWithRisk: 1_550_000_000 })],
+      records: [],
+      fx: DEFAULT_FX,
+      includeRiskCapitalInTotals: true,
+    });
+
+    expect(model.capRiskDependence.status).toBe('ok');
+    expect(model.capRiskDependence.level).toBe('Baja');
+    expect(model.capRiskDependence.dependenceSummary).toBe('Sin CapRiesgo igual alcanza');
+    expect(model.capRiskDependence.impactRatioDelta).toBeGreaterThan(0);
   });
 
   it('usa la frescura como insight cuando alcanza pero la foto está desactualizada', () => {

@@ -46,6 +46,7 @@ const DashboardMetricCard = ({
   className,
   valueClassName,
   subtitleClassName,
+  labelClassName,
 }: {
   label: string;
   value: string;
@@ -54,9 +55,10 @@ const DashboardMetricCard = ({
   className?: string;
   valueClassName?: string;
   subtitleClassName?: string;
+  labelClassName?: string;
 }) => (
   <Card className={cn('border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 backdrop-blur-sm shadow-[0_16px_40px_rgba(3,10,26,0.24)] sm:p-5', className)}>
-    <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">{label}</div>
+    <div className={cn('text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88', labelClassName)}>{label}</div>
     <div className={cn('mt-4 text-3xl font-semibold tracking-[-0.03em] sm:text-[2.15rem]', toneClasses[tone], valueClassName)}>{value}</div>
     <div className={cn('mt-2 text-sm text-slate-200/82', subtitleClassName)}>{subtitle}</div>
   </Card>
@@ -192,20 +194,6 @@ export const DashboardAurum: React.FC = () => {
                   </div>
                 ))}
             </div>
-            <div
-              className={cn(
-                'inline-flex w-fit rounded-full border px-3 py-1.5 text-sm font-semibold sm:text-[15px]',
-                model.coverageTone === 'positive'
-                  ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
-                  : model.coverageTone === 'warning'
-                    ? 'border-amber-300/25 bg-amber-300/10 text-amber-100'
-                    : model.coverageTone === 'negative'
-                      ? 'border-rose-300/25 bg-rose-300/10 text-rose-100'
-                      : 'border-white/10 bg-white/5 text-slate-100',
-              )}
-            >
-              {model.coverageMessage}
-            </div>
           </div>
 
           <div className="space-y-3 border-t border-white/8 pt-4">
@@ -248,9 +236,10 @@ export const DashboardAurum: React.FC = () => {
           value={formatFreedomCompactClp(model.cards.lifestyle.valueClp)}
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
-          className="border-[#9c7758]/40 bg-[linear-gradient(180deg,rgba(181,126,74,0.18),rgba(255,255,255,0.04))] shadow-[0_16px_40px_rgba(46,27,11,0.22)]"
-          valueClassName="text-[#fff8ed]"
-          subtitleClassName="text-slate-50/92"
+          className="border-[#b68357]/45 bg-[linear-gradient(180deg,rgba(210,170,129,0.96),rgba(167,114,69,0.88))] shadow-[0_16px_40px_rgba(46,27,11,0.16)]"
+          labelClassName="text-[#52301a]/84"
+          valueClassName="text-[#221105]"
+          subtitleClassName="text-[#352010]/88"
         />
         <DashboardMetricCard
           label={model.cards.margin.label}

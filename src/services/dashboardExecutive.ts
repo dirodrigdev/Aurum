@@ -88,6 +88,7 @@ const clampFinite = (value: number | null): number | null => {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const SMALL_MARGIN_CLP = 500_000;
 const LOW_FRESHNESS_THRESHOLD = 0.6;
+const CAPRISK_JUST_REACHES_THRESHOLD = 1.01;
 const RISK_CAPITAL_LABEL_KEYS = new Set([
   labelMatchKey('Capital de riesgo CLP'),
   labelMatchKey('Capital de riesgo USD'),
@@ -214,26 +215,20 @@ const buildCapRiskDependence = (
   const impactRatioDelta = coverageWithRisk - coverageWithoutRisk;
   const relativeChangePct =
     (Math.abs(coverageWithRisk - coverageWithoutRisk) / Math.max(Math.min(coverageWithRisk, coverageWithoutRisk), 0.01)) * 100;
-  const withRiskReaches = coverageWithRisk >= 1;
   const withoutRiskReaches = coverageWithoutRisk >= 1;
-  const changesVerdict = withRiskReaches !== withoutRiskReaches;
-  const materialMarginDrop = relativeChangePct >= 10 || Math.abs(impactRatioDelta) >= 0.1;
 
   let level: DashboardCapRiskDependenceLevel = 'Baja';
   let dependenceSummary = 'Sin CapRiesgo igual alcanza';
-  if (changesVerdict && withRiskReaches && !withoutRiskReaches) {
+  if (!withoutRiskReaches) {
     level = 'Alta';
     dependenceSummary = 'Sin CapRiesgo ya no alcanza';
-  } else if (!withRiskReaches && !withoutRiskReaches) {
-    level = 'Baja';
-    dependenceSummary = 'Con o sin CapRiesgo no alcanza';
-  } else if (withoutRiskReaches && materialMarginDrop) {
-    level = relativeChangePct > 25 ? 'Alta' : 'Media';
-    dependenceSummary = 'Sin CapRiesgo el margen cae fuerte';
+  } else if (coverageWithoutRisk < CAPRISK_JUST_REACHES_THRESHOLD) {
+    level = 'Media';
+    dependenceSummary = 'Sin CapRiesgo quedas muy justo';
   }
 
   let impactSummary = 'Sin cambio material';
-  if (impactRatioDelta > 0.01) impactSummary = 'Mejora la cobertura';
+  if (impactRatioDelta > 0.01) impactSummary = 'Amplía el colchón';
   else if (impactRatioDelta < -0.01) impactSummary = 'Reduce la cobertura';
 
   return {
