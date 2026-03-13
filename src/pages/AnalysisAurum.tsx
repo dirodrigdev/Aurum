@@ -83,13 +83,15 @@ type AggregatedSummary = {
 };
 
 type CrpContributionInsight = {
-  monthKey: string;
+  monthsLabel: string;
   aporteClp: number;
-  retornoConCrpClp: number;
+  aporteMensualClp: number;
+  total12mClp: number;
   pctCrp: number | null;
   tone: 'positive' | 'negative' | 'neutral';
   summaryText: string;
   detailText: string | null;
+  totalText: string | null;
 };
 
 const loadWealthClosures = () => loadClosures();
@@ -172,42 +174,72 @@ const buildCrpContributionInsight = (
   rowsWithCrp: MonthlyReturnRow[],
   rowsWithoutCrp: MonthlyReturnRow[],
 ): CrpContributionInsight | null => {
-  const latestWithCrp = [...rowsWithCrp].reverse().find((row) => row.retornoRealClp !== null) || null;
-  if (!latestWithCrp || latestWithCrp.retornoRealClp === null) return null;
-  const matchingWithoutCrp =
-    rowsWithoutCrp.find((row) => row.monthKey === latestWithCrp.monthKey && row.retornoRealClp !== null) || null;
-  if (!matchingWithoutCrp || matchingWithoutCrp.retornoRealClp === null) return null;
+  const recentWithCrp = rowsWithCrp
+    .filter((row) => row.retornoRealClp !== null)
+    .slice(Math.max(0, rowsWithCrp.length - 12));
+  if (!recentWithCrp.length) return null;
 
-  const aporteClp = latestWithCrp.retornoRealClp - matchingWithoutCrp.retornoRealClp;
-  const retornoConCrpClp = latestWithCrp.retornoRealClp;
-  const absAporte = Math.abs(aporteClp);
+  const comparableRows = recentWithCrp
+    .map((row) => {
+      const withoutCrp = rowsWithoutCrp.find(
+        (candidate) => candidate.monthKey === row.monthKey && candidate.retornoRealClp !== null,
+      );
+      if (!withoutCrp || row.retornoRealClp === null || withoutCrp.retornoRealClp === null) return null;
+      return {
+        monthKey: row.monthKey,
+        retornoConCrpClp: row.retornoRealClp,
+        retornoSinCrpClp: withoutCrp.retornoRealClp,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        monthKey: string;
+        retornoConCrpClp: number;
+        retornoSinCrpClp: number;
+      } => item !== null,
+    );
+  if (!comparableRows.length) return null;
+
+  const aporteClp = sumNumbers(
+    comparableRows.map((row) => row.retornoConCrpClp - row.retornoSinCrpClp),
+  );
+  const retornoConCrpClp = sumNumbers(comparableRows.map((row) => row.retornoConCrpClp));
+  const aporteMensualClp = aporteClp / 12;
+  const absAporte = Math.abs(aporteMensualClp);
   const tone: CrpContributionInsight['tone'] =
     absAporte < 1_000 ? 'neutral' : aporteClp > 0 ? 'positive' : 'negative';
+  const headlineAmount = formatCompactCurrency(Math.abs(aporteMensualClp), 'CLP');
 
   const summaryText =
     tone === 'neutral'
-      ? `CRP no movió materialmente el resultado en ${monthLabel(latestWithCrp.monthKey).toLowerCase()}`
-      : aporteClp > 0
-        ? `CRP aportó ${formatCompactCurrency(aporteClp, 'CLP')} al resultado`
-        : `CRP restó ${formatCompactCurrency(aporteClp, 'CLP')} al resultado`;
+      ? 'CRP no movió materialmente el resultado en los últ. 12M'
+      : aporteMensualClp > 0
+        ? `CRP aportó ${headlineAmount}/mes en los últ. 12M`
+        : `CRP restó ${headlineAmount}/mes en los últ. 12M`;
 
-  const canShowPct = retornoConCrpClp > 1_000_000 && absAporte > 100_000;
+  const canShowPct = retornoConCrpClp > 1_000_000 && Math.abs(aporteClp) > 100_000;
   const pctCrp = canShowPct ? (aporteClp / retornoConCrpClp) * 100 : null;
   const detailText =
     pctCrp !== null
-      ? `Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
+      ? `Impacto marginal vs. sin capital de riesgo · Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
       : tone === 'neutral'
         ? null
-        : 'CRP afectó materialmente el resultado';
+        : 'Impacto marginal vs. sin capital de riesgo';
+  const totalText =
+    tone === 'neutral' ? null : `Total período: ${formatCompactCurrency(aporteClp, 'CLP')}`;
 
   return {
-    monthKey: latestWithCrp.monthKey,
+    monthsLabel: 'últ. 12M',
     aporteClp,
-    retornoConCrpClp,
+    aporteMensualClp,
+    total12mClp: aporteClp,
     pctCrp,
     tone,
     summaryText,
     detailText,
+    totalText,
   };
 };
 
@@ -458,6 +490,9 @@ const ReturnRealHero: React.FC<{
                 <span className="text-[11px] font-medium">{crpContributionInsight.summaryText}</span>
                 {crpContributionInsight.detailText ? (
                   <span className="mt-0.5 text-[10px] text-slate-300">{crpContributionInsight.detailText}</span>
+                ) : null}
+                {crpContributionInsight.totalText ? (
+                  <span className="mt-0.5 text-[10px] text-slate-400">{crpContributionInsight.totalText}</span>
                 ) : null}
               </div>
             )}
