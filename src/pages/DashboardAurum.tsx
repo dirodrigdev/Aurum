@@ -249,7 +249,7 @@ export const DashboardAurum: React.FC = () => {
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
           className="border-[#9c7758]/40 bg-[linear-gradient(180deg,rgba(181,126,74,0.18),rgba(255,255,255,0.04))] shadow-[0_16px_40px_rgba(46,27,11,0.22)]"
-          valueClassName="text-white drop-shadow-[0_1px_0_rgba(0,0,0,0.28)]"
+          valueClassName="text-[#fff8ed]"
           subtitleClassName="text-slate-50/92"
         />
         <DashboardMetricCard
@@ -278,42 +278,41 @@ export const DashboardAurum: React.FC = () => {
           </div>
         </Card>
 
-        <Card className="overflow-hidden border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-0 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="grid sm:grid-cols-2">
-            <div className="p-4 sm:p-5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia</div>
-              <div
-                className={cn(
-                  'mt-3 text-[2.1rem] font-semibold tracking-[-0.04em]',
-                  model.capRiskDependence.level === 'Alta'
-                    ? 'text-amber-200'
-                    : model.capRiskDependence.level === 'Media'
-                      ? 'text-slate-100'
-                      : 'text-emerald-300',
-                )}
-              >
-                {model.capRiskDependence.level}
-              </div>
-              <div className="mt-2 text-xs leading-relaxed text-slate-200/78">
-                {model.capRiskDependence.dependenceSummary}
-              </div>
+        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+          <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)] sm:p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia</div>
+            <div
+              className={cn(
+                'mt-3 text-[1.9rem] font-semibold tracking-[-0.04em] sm:text-[2.1rem]',
+                model.capRiskDependence.level === 'Alta'
+                  ? 'text-amber-200'
+                  : model.capRiskDependence.level === 'Media'
+                    ? 'text-slate-100'
+                    : 'text-emerald-300',
+              )}
+            >
+              {model.capRiskDependence.level}
             </div>
-            <div className="border-t border-white/8 p-4 sm:border-l sm:border-t-0 sm:p-5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Impacto</div>
-              <div className="mt-3 text-[2.1rem] font-semibold tracking-[-0.04em] text-slate-100">
-                {model.capRiskDependence.impactRatioDelta === null
-                  ? '—'
-                  : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}x`}
-              </div>
-              <div className="mt-2 text-xs leading-relaxed text-slate-200/78">
-                {model.capRiskDependence.impactSummary}
-              </div>
+            <div className="mt-2 text-[11px] leading-relaxed text-slate-200/78 sm:text-xs">
+              {model.capRiskDependence.dependenceSummary}
             </div>
-          </div>
-        </Card>
+          </Card>
+
+          <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)] sm:p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Impacto</div>
+            <div className="mt-3 text-[1.9rem] font-semibold tracking-[-0.04em] text-slate-100 sm:text-[2.1rem]">
+              {model.capRiskDependence.impactRatioDelta === null
+                ? '—'
+                : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}x`}
+            </div>
+            <div className="mt-2 text-[11px] leading-relaxed text-slate-200/78 sm:text-xs">
+              {model.capRiskDependence.impactSummary}
+            </div>
+          </Card>
+        </div>
       </section>
 
       <Card
