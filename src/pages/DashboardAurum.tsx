@@ -172,8 +172,21 @@ export const DashboardAurum: React.FC = () => {
           </div>
 
           <div className="space-y-3">
-            <div className={cn('text-[4.25rem] font-semibold leading-none tracking-[-0.07em] sm:text-[5.35rem]', toneClasses[model.coverageTone])}>
-              {model.coverageHeadline}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+              <div className={cn('text-[4.25rem] font-semibold leading-none tracking-[-0.07em] sm:text-[5.35rem]', toneClasses[model.coverageTone])}>
+                {model.coverageHeadline}
+              </div>
+              <div className="flex flex-col gap-1.5 self-start rounded-2xl border border-white/8 bg-white/4 px-3 py-2 text-left sm:min-w-[124px] sm:self-auto sm:bg-transparent sm:px-0 sm:py-0">
+                {model.heroSensitivity.map((scenario) => (
+                  <div
+                    key={scenario.annualRatePct}
+                    className="text-sm font-medium tracking-[-0.02em] text-slate-300/78 sm:text-[15px]"
+                  >
+                    <span className="text-slate-200/88">{scenario.coverageHeadline}</span>
+                    <span className="ml-2 text-slate-400/80">{scenario.annualRatePct}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-300/82 sm:text-[11px]">
               {model.coverageLabel}

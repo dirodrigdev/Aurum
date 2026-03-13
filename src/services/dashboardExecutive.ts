@@ -7,10 +7,12 @@ import { buildMonthlyWithdrawalPlan } from './financialFreedom';
 export const DASHBOARD_LIFE_BASELINE_CLP = 6_000_000;
 export const DASHBOARD_HORIZON_YEARS = 40;
 export const DASHBOARD_ANNUAL_RATE_PCT = 5;
+export const DASHBOARD_SENSITIVITY_ANNUAL_RATES = [3, 7] as const;
 export const DASHBOARD_EXECUTIVE_ASSUMPTIONS = {
   lifeBaselineClp: DASHBOARD_LIFE_BASELINE_CLP,
   horizonYears: DASHBOARD_HORIZON_YEARS,
   annualRatePct: DASHBOARD_ANNUAL_RATE_PCT,
+  sensitivityAnnualRates: DASHBOARD_SENSITIVITY_ANNUAL_RATES,
 } as const;
 
 export type DashboardCoverageTone = 'positive' | 'warning' | 'negative' | 'neutral';
@@ -43,6 +45,12 @@ export type DashboardQuickStat = {
   subtitle: string;
 };
 
+export type DashboardSensitivityScenario = {
+  annualRatePct: number;
+  coverageRatio: number | null;
+  coverageHeadline: string;
+};
+
 export type DashboardExecutiveModel = {
   status: 'ok' | 'missing_patrimony' | 'invalid';
   lifeBaselineClp: number;
@@ -60,6 +68,7 @@ export type DashboardExecutiveModel = {
   alternativeMonthlySustainableClp: number | null;
   freshness: DashboardFreshnessModel;
   capRiskDependence: DashboardCapRiskDependence;
+  heroSensitivity: DashboardSensitivityScenario[];
   chips: string[];
   insight: string;
   cards: {
@@ -235,6 +244,27 @@ const coverageHeadlineFromRatio = (ratio: number | null): string => {
   return `${ratio.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
 };
 
+const buildHeroSensitivity = (
+  closures: WealthMonthlyClosure[],
+  includeRiskCapitalInTotals: boolean,
+  baseline: number,
+): DashboardSensitivityScenario[] =>
+  DASHBOARD_SENSITIVITY_ANNUAL_RATES.map((annualRatePct) => {
+    const plan = buildMonthlyWithdrawalPlan(
+      closures,
+      annualRatePct,
+      DASHBOARD_HORIZON_YEARS,
+      includeRiskCapitalInTotals,
+    );
+    const monthlyWithdrawalClp = clampFinite(plan.monthlyWithdrawalClp);
+    const coverageRatio = monthlyWithdrawalClp === null ? null : monthlyWithdrawalClp / baseline;
+    return {
+      annualRatePct,
+      coverageRatio,
+      coverageHeadline: coverageHeadlineFromRatio(coverageRatio),
+    };
+  });
+
 const buildCoverageMessage = (
   ratio: number | null,
   capRiskDependence: DashboardCapRiskDependence,
@@ -311,6 +341,7 @@ export const buildExecutiveDashboardModel = ({
   const alternativeCoverageRatio =
     alternativeMonthlySustainableClp === null ? null : alternativeMonthlySustainableClp / baseline;
   const marginClp = monthlySustainableClp === null ? null : monthlySustainableClp - baseline;
+  const heroSensitivity = buildHeroSensitivity(closures, includeRiskCapitalInTotals, baseline);
   const freshness = buildFreshnessModel(records, fx, includeRiskCapitalInTotals);
   const coverageWithoutRisk = includeRiskCapitalInTotals ? alternativeCoverageRatio : coverageRatio;
   const coverageWithRisk = includeRiskCapitalInTotals ? coverageRatio : alternativeCoverageRatio;
@@ -340,6 +371,7 @@ export const buildExecutiveDashboardModel = ({
     alternativeMonthlySustainableClp,
     freshness,
     capRiskDependence,
+    heroSensitivity,
     chips: [
       `${DASHBOARD_HORIZON_YEARS} años`,
       'Vida actual',

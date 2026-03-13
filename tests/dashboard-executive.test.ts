@@ -101,6 +101,23 @@ describe('dashboard executive model', () => {
     expect(withRisk.chips.some((chip) => chip.includes('CapRiesgo'))).toBe(true);
   });
 
+  it('expone escenarios de sensibilidad del hero a 3% y 7% usando el mismo baseline', () => {
+    const model = buildExecutiveDashboardModel({
+      closures: [makeClosure('2026-02', { netClp: 1_200_000_000 })],
+      records: [],
+      fx: DEFAULT_FX,
+      includeRiskCapitalInTotals: false,
+    });
+
+    expect(model.heroSensitivity).toHaveLength(2);
+    expect(model.heroSensitivity.map((item) => item.annualRatePct)).toEqual([3, 7]);
+    expect(model.heroSensitivity[0].coverageRatio).not.toBeNull();
+    expect(model.heroSensitivity[1].coverageRatio).not.toBeNull();
+    expect((model.heroSensitivity[1].coverageRatio ?? 0)).toBeGreaterThan(
+      model.heroSensitivity[0].coverageRatio ?? 0,
+    );
+  });
+
   it('marca falta de base cuando no hay patrimonio confirmado', () => {
     const model = buildExecutiveDashboardModel({
       closures: [makeClosure('2026-02', { netClp: 0 })],
