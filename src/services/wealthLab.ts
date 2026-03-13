@@ -79,6 +79,8 @@ export type WealthLabPeriodView = {
   label: string;
   points: WealthLabPoint[];
   chartPoints: WealthLabPoint[];
+  realMonths: number;
+  fxComparableMonths: number;
   monthlyMetrics: {
     resultadoSinFx: WealthLabMetric;
     real: WealthLabMetric;
@@ -218,14 +220,39 @@ export const selectWealthLabPeriod = (
   }
 
   const metrics = buildMetricBundle(points);
+  const realMonths = points.filter((point) => point.varPatrimonioClp !== null).length;
+  const fxComparableMonths = points.filter((point) => point.varSinFxClp !== null && point.aportesFxClp !== null).length;
+  const shouldHideAggregateFx = window !== 'last_month' && points.length > 1 && fxComparableMonths < 2;
 
   return {
     key: window,
     label,
     points,
     chartPoints: rebaseChartPoints(chartSource),
-    monthlyMetrics: metrics.monthlyMetrics,
-    cumulativeMetrics: metrics.cumulativeMetrics,
+    realMonths,
+    fxComparableMonths,
+    monthlyMetrics: shouldHideAggregateFx
+      ? {
+          ...metrics.monthlyMetrics,
+          resultadoSinFx: metrics.monthlyMetrics
+            ? { ...metrics.monthlyMetrics.resultadoSinFx, valueClp: null, months: fxComparableMonths }
+            : null,
+          aporteFx: metrics.monthlyMetrics
+            ? { ...metrics.monthlyMetrics.aporteFx, valueClp: null, months: fxComparableMonths }
+            : null,
+        }
+      : metrics.monthlyMetrics,
+    cumulativeMetrics: shouldHideAggregateFx
+      ? {
+          ...metrics.cumulativeMetrics,
+          resultadoSinFx: metrics.cumulativeMetrics
+            ? { ...metrics.cumulativeMetrics.resultadoSinFx, valueClp: null, months: fxComparableMonths }
+            : null,
+          aporteFx: metrics.cumulativeMetrics
+            ? { ...metrics.cumulativeMetrics.aporteFx, valueClp: null, months: fxComparableMonths }
+            : null,
+        }
+      : metrics.cumulativeMetrics,
     currentPeriodLabel: metrics.currentPeriodLabel,
   };
 };

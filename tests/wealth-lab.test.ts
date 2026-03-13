@@ -197,6 +197,25 @@ describe('wealthLab model', () => {
     expect(last12m.cumulativeMetrics?.real.months).toBe(12);
   });
 
+  it('no arrastra un único delta FX como si representara Desde inicio o Últ. 12M', async () => {
+    const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
+    const model = buildWealthLabModel(
+      [
+        makeClosure('2026-01', { netClp: 100_000_000, investmentUsd: 10_000, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 110_000_000, investmentUsd: 10_500, usdClp: 1000 }),
+      ] as never,
+      false,
+    );
+
+    const sinceStart = selectWealthLabPeriod(model, 'since_start');
+    const last12m = selectWealthLabPeriod(model, 'last_12m');
+    const lastMonth = selectWealthLabPeriod(model, 'last_month');
+
+    expect(sinceStart.cumulativeMetrics?.resultadoSinFx.valueClp).toBeNull();
+    expect(last12m.cumulativeMetrics?.aporteFx.valueClp).toBeNull();
+    expect(lastMonth.monthlyMetrics?.resultadoSinFx.valueClp).not.toBeNull();
+  });
+
   it('cambia usdBlocks y aporte FX cuando CapRiesgo USD entra o sale del modo global', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const withoutRisk = buildWealthLabModel(

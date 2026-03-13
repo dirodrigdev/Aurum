@@ -701,6 +701,7 @@ const LabHeaderCard: React.FC<{
   onToggleRiskMode: () => void;
   selectedWindow: WealthLabWindow;
   onSelectWindow: (window: WealthLabWindow) => void;
+  fxCoverageNote: string | null;
 }> = ({
   periodLabel,
   monthKey,
@@ -711,6 +712,7 @@ const LabHeaderCard: React.FC<{
   onToggleRiskMode,
   selectedWindow,
   onSelectWindow,
+  fxCoverageNote,
 }) => (
   <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
     <div className="flex items-start justify-between gap-3">
@@ -784,6 +786,8 @@ const LabHeaderCard: React.FC<{
         <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
       </div>
     </div>
+
+    {fxCoverageNote && <div className="mt-2 text-[11px] text-slate-300/80">{fxCoverageNote}</div>}
 
     {realClp !== null && resultadoSinFxClp !== null && aporteFxClp !== null && (
       <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
@@ -960,6 +964,10 @@ const LabTabContent: React.FC<{
   const realValue = selectedWindow === 'last_month'
     ? selectedPeriod.monthlyMetrics?.real.valueClp ?? null
     : selectedPeriod.cumulativeMetrics?.real.valueClp ?? null;
+  const needsFxCoverageWarning = selectedWindow !== 'last_month' && selectedPeriod.realMonths > 1 && selectedPeriod.fxComparableMonths < 2;
+  const fxCoverageNote = needsFxCoverageWarning
+    ? `Este corte tiene ${selectedPeriod.fxComparableMonths} mes comparable con desglose USD suficiente; Resultado sin FX y Aporte FX no representan todavía todo el período.`
+    : null;
 
   return (
     <div className="space-y-3">
@@ -973,6 +981,7 @@ const LabTabContent: React.FC<{
         onToggleRiskMode={onToggleRiskMode}
         selectedWindow={selectedWindow}
         onSelectWindow={setSelectedWindow}
+        fxCoverageNote={fxCoverageNote}
       />
 
       <Card className="border-slate-200 p-4">
