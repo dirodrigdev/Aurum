@@ -9,6 +9,8 @@ import {
   ClosureReviewModalResult,
   ClosureReviewSource,
 } from '../components/settings/ClosureReviewModal';
+import { LabToolsSection } from '../components/settings/LabToolsSection';
+import { SyncStatusSection } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -64,6 +66,11 @@ import {
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
+import {
+  BackupDecisionState,
+  defaultBackupDecisionState,
+  runDestructiveActionWithBackupGuard,
+} from '../services/settingsDestructiveGuard';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
@@ -114,13 +121,6 @@ type PreflightCheckResult = {
   status: PreflightStatus;
   details: string;
   resolution: string;
-};
-
-type BackupDecisionState = {
-  open: boolean;
-  title: string;
-  message: string;
-  confirmText: string;
 };
 
 const STATIC_CLOSING_FIELDS: Array<{
@@ -282,12 +282,7 @@ export const SettingsAurum: React.FC = () => {
   const [fsDebug, setFsDebug] = useState('');
   const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
   const [backupMessage, setBackupMessage] = useState('');
-  const [backupDecisionState, setBackupDecisionState] = useState<BackupDecisionState>({
-    open: false,
-    title: '',
-    message: '',
-    confirmText: 'Continuar',
-  });
+  const [backupDecisionState, setBackupDecisionState] = useState<BackupDecisionState>(defaultBackupDecisionState);
   const [availableClosures, setAvailableClosures] = useState(() =>
     loadClosures().sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
   );
@@ -627,6 +622,19 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     return backup;
   };
 
+  const runGuardedDestructiveAction = (input: {
+    backupReason: string;
+    actionLabel: string;
+    onProceed: () => Promise<void> | void;
+  }) =>
+    runDestructiveActionWithBackupGuard({
+      ...input,
+      backupBeforeDestructiveOperation,
+      pendingUnsafeBackupActionRef,
+      setBackupDecisionState,
+      setBackupMessage,
+    });
+
   const buildVisibleBackupExportPayload = () => ({
     exportedAt: new Date().toISOString(),
     wealth: {
@@ -637,31 +645,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       fxMeta: loadFxLiveSyncMeta(),
     },
   });
-
-  const runDestructiveActionWithBackupGuard = async (input: {
-    backupReason: string;
-    actionLabel: string;
-    onProceed: () => Promise<void> | void;
-  }) => {
-    const backup = await backupBeforeDestructiveOperation(input.backupReason);
-    if (backup.ok) {
-      await input.onProceed();
-      return;
-    }
-
-    pendingUnsafeBackupActionRef.current = input.onProceed;
-    setBackupDecisionState({
-      open: true,
-      title: 'No pude generar respaldo previo',
-      message:
-        `Iba a ${input.actionLabel}, pero el respaldo automático falló. ` +
-        'Si continúas ahora, la operación se ejecutará sin respaldo garantizado y podría ser irreversible.',
-      confirmText: 'Continuar sin respaldo',
-    });
-    setBackupMessage(
-      `No pude generar backup automático. La operación quedó detenida hasta que confirmes continuar sin respaldo.`,
-    );
-  };
 
   const runPreflightCheckNow = async () => {
     setRunningPreflight(true);
@@ -1769,41 +1752,24 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         )}
       </Card>
 
-      <Card className="border border-slate-200 bg-white p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('sync')}>
-          <div>
-            <div className="text-sm font-semibold text-slate-900">Sincronización</div>
-            <div className="text-[11px] text-slate-500">Estado Firestore y sesión</div>
-          </div>
-          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'sync' ? 'rotate-180' : ''}`} />
-        </button>
-        {openSection === 'sync' && (
-          <div className="mt-3 space-y-2 text-xs">
-            <div className={`rounded-lg border px-2.5 py-2 ${fsStatus.state === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-              {fsStatus.state === 'ok' ? 'Firestore OK' : 'Firestore con error'} · UID: {authUid || 'Sin UID'}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  const pushed = await syncLocalMutationNow();
-                  const fs = getFirestoreStatus();
-                  setFsStatus(fs);
-                  setSyncMessage(describeManualSync(pushed));
-                  setFsDebug(getLastWealthSyncIssue() || fs.message || '');
-                }}
-              >
-                Sincronizar ahora
-              </Button>
-              <Button variant="secondary" onClick={async () => { await signOutUser(); }}>
-                Cerrar sesión
-              </Button>
-            </div>
-            {!!syncMessage && <div className="text-xs text-slate-600">{syncMessage}</div>}
-            {!!fsDebug && <div className="text-xs text-slate-500 break-words">{fsDebug}</div>}
-          </div>
-        )}
-      </Card>
+      <SyncStatusSection
+        open={openSection === 'sync'}
+        authUid={authUid}
+        fsStatus={fsStatus}
+        syncMessage={syncMessage}
+        fsDebug={fsDebug}
+        onToggle={() => toggleSection('sync')}
+        onSyncNow={() => {
+          void (async () => {
+            const pushed = await syncLocalMutationNow();
+            const fs = getFirestoreStatus();
+            setFsStatus(fs);
+            setSyncMessage(describeManualSync(pushed));
+            setFsDebug(getLastWealthSyncIssue() || fs.message || '');
+          })();
+        }}
+        onSignOut={signOutUser}
+      />
 
       <Card className="border border-slate-200 bg-white p-3">
         <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('backup')}>
@@ -2036,46 +2002,27 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         )}
       </Card>
 
-      <Card className="border border-indigo-200 bg-indigo-50/40 p-3">
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => toggleSection('lab')}>
-          <div>
-            <div className="text-sm font-semibold text-slate-900">Laboratorio</div>
-            <div className="text-[11px] text-slate-500">Herramientas de prueba</div>
-          </div>
-          <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${openSection === 'lab' ? 'rotate-180' : ''}`} />
-        </button>
-        {openSection === 'lab' && (
-          <div className="mt-3 space-y-2 text-xs">
-            <Button
-              variant="secondary"
-              disabled={seedingDemo}
-              onClick={() =>
-                void runDestructiveActionWithBackupGuard({
-                  backupReason: 'Cargar datos de prueba',
-                  actionLabel: 'reemplazar los datos actuales por datos de prueba',
-                  onProceed: loadDemoDataNow,
-                })
-              }
-            >
-              {seedingDemo ? 'Cargando datos de prueba...' : 'Cargar datos de prueba'}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={repairingMarch2025}
-              onClick={() =>
-                void runDestructiveActionWithBackupGuard({
-                  backupReason: 'Reparar EUR/CLP 2025-03',
-                  actionLabel: 'corregir el cierre 2025-03',
-                  onProceed: repairMarch2025Now,
-                })
-              }
-            >
-              {repairingMarch2025 ? 'Reparando 2025-03...' : 'Reparar EUR/CLP 2025-03'}
-            </Button>
-            {!!seedDemoMessage && <div className="text-indigo-800">{seedDemoMessage}</div>}
-          </div>
-        )}
-      </Card>
+      <LabToolsSection
+        open={openSection === 'lab'}
+        seedingDemo={seedingDemo}
+        repairingMarch2025={repairingMarch2025}
+        seedDemoMessage={seedDemoMessage}
+        onToggle={() => toggleSection('lab')}
+        onLoadDemo={() =>
+          void runGuardedDestructiveAction({
+            backupReason: 'Cargar datos de prueba',
+            actionLabel: 'reemplazar los datos actuales por datos de prueba',
+            onProceed: loadDemoDataNow,
+          })
+        }
+        onRepairMarch2025={() =>
+          void runGuardedDestructiveAction({
+            backupReason: 'Reparar EUR/CLP 2025-03',
+            actionLabel: 'corregir el cierre 2025-03',
+            onProceed: repairMarch2025Now,
+          })
+        }
+      />
 
       <ClosureReviewModal
         open={closureReviewOpen}
@@ -2118,7 +2065,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }}
         onConfirm={() => {
           setResetStepTwoOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: 'Reset total de datos',
             actionLabel: 'borrar todos los datos de la app',
             onProceed: resetAllDataNow,
@@ -2171,7 +2118,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onCancel={() => setCsvConfirmOpen(false)}
         onConfirm={() => {
           setCsvConfirmOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: 'Import masivo de CSV histórico',
             actionLabel: 'importar o reemplazar cierres históricos',
             onProceed: importCsvNow,
@@ -2210,7 +2157,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onCancel={() => setDeleteClosureConfirmOpen(false)}
         onConfirm={() => {
           setDeleteClosureConfirmOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: `Borrar cierre ${selectedClosureToDelete}`,
             actionLabel: `borrar el cierre ${selectedClosureToDelete}`,
             onProceed: deleteSelectedClosureNow,
@@ -2229,7 +2176,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onCancel={() => setDeleteAllClosuresConfirmOpen(false)}
         onConfirm={() => {
           setDeleteAllClosuresConfirmOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: 'Borrar todos los cierres',
             actionLabel: 'borrar todos los cierres',
             onProceed: deleteAllClosuresNow,
@@ -2248,7 +2195,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         onCancel={() => setDeleteBlocksConfirmOpen(false)}
         onConfirm={() => {
           setDeleteBlocksConfirmOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: 'Borrar bloques del mes actual',
             actionLabel: 'borrar bloques del mes actual',
             onProceed: deleteSelectedBlocksNow,
@@ -2269,7 +2216,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }}
         onConfirm={() => {
           setRestoreBackupConfirmOpen(false);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: `Restaurar backup ${selectedBackupId || 'seleccionado'}`,
             actionLabel: 'reemplazar tus datos actuales por el backup seleccionado',
             onProceed: restoreSelectedBackupNow,
@@ -2315,7 +2262,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }}
         onConfirm={() => {
           setClosingInvestmentDeleteTargetId(null);
-          void runDestructiveActionWithBackupGuard({
+          void runGuardedDestructiveAction({
             backupReason: 'Eliminar inversión completamente',
             actionLabel: 'eliminar una inversión del historial con detalle',
             onProceed: deleteInvestmentCompletelyNow,
