@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { Button, Card, Input } from '../components/Components';
 import { BreakdownCard, type BreakdownSummaryInvestmentRow } from '../components/closing/BreakdownCard';
@@ -45,7 +45,6 @@ import {
   loadIncludeRiskCapitalInTotals,
   validateFxRange,
   WEALTH_DATA_UPDATED_EVENT,
-  hydrateWealthFromCloud,
   isMortgageMetaDebtLabel,
   isMortgagePrincipalDebtLabel,
   isSyntheticAggregateRecord,
@@ -62,6 +61,7 @@ import {
   WealthSnapshotSummary,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
+import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
 type EvolutionKind = 'cierre' | 'hoy';
@@ -533,9 +533,6 @@ export const ClosingAurum: React.FC = () => {
   const [may2023HotfixConfirmOpen, setMay2023HotfixConfirmOpen] = useState(false);
   const [may2023HotfixBusy, setMay2023HotfixBusy] = useState(false);
   const [may2023HotfixMessage, setMay2023HotfixMessage] = useState('');
-  const hydrationRunningRef = useRef(false);
-  const lastHydrateAtRef = useRef(0);
-
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_CLOSING_CURRENCY_KEY, currency);
   }, [currency]);
@@ -549,8 +546,6 @@ export const ClosingAurum: React.FC = () => {
   };
 
   useEffect(() => {
-    const HYDRATE_THROTTLE_MS = 15_000;
-
     const refreshLocal = () => {
       setCurrentFx(loadFxRates());
       setMonthKey(currentMonthKey());
@@ -558,19 +553,7 @@ export const ClosingAurum: React.FC = () => {
       setRevision((v) => v + 1);
     };
     const refreshFromCloudIfNeeded = async (force = false) => {
-      if (hydrationRunningRef.current) return;
-      const now = Date.now();
-      if (!force && now - lastHydrateAtRef.current < HYDRATE_THROTTLE_MS) {
-        refreshLocal();
-        return;
-      }
-      hydrationRunningRef.current = true;
-      try {
-        await hydrateWealthFromCloud();
-        lastHydrateAtRef.current = Date.now();
-      } finally {
-        hydrationRunningRef.current = false;
-      }
+      await hydrateWealthFromCloudShared({ force, minIntervalMs: 15_000 });
       refreshLocal();
     };
 

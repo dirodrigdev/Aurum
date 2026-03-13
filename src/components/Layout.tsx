@@ -1,13 +1,9 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Landmark, CalendarRange, Settings as SettingsIcon, LineChart } from 'lucide-react';
 import { cn, ConnectionBanner, FirestoreStatusBanner, FxSyncStatusBanner } from './Components';
 import { WealthDeltaToast } from './ui/WealthDeltaToast';
 import { useWealthDelta } from '../hooks/useWealthDelta';
-import {
-  loadIncludeRiskCapitalInTotals,
-  saveIncludeRiskCapitalInTotals,
-} from '../services/wealthStorage';
 
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 export const BOTTOM_NAV_RETAP_EVENT = 'aurum:bottom-nav-retap';
@@ -26,12 +22,6 @@ export const Layout: React.FC = () => {
     ],
     [],
   );
-
-  useEffect(() => {
-    // [PRODUCT RULE] Mantener preferencia guardada para que el modo Zap sobreviva la navegación.
-    const saved = loadIncludeRiskCapitalInTotals();
-    saveIncludeRiskCapitalInTotals(saved);
-  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">

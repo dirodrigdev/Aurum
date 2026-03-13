@@ -38,7 +38,6 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   fillMissingWithPreviousClosure,
   resolveRiskCapitalRecordsForTotals,
-  hydrateWealthFromCloud,
   ensureInitialMortgageDefaults,
   isMortgageMetaDebtLabel,
   isMortgagePrincipalDebtLabel,
@@ -97,6 +96,7 @@ import {
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
 } from '../services/wealthStorage';
+import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
 import {
@@ -3562,19 +3562,15 @@ export const Patrimonio: React.FC = () => {
   }, [activeSection]);
 
   useEffect(() => {
-    let runningRefresh = false;
+    const refreshFromLocal = () => {
+      setRecords(loadWealthRecords());
+      setClosures(loadClosures());
+      setInvestmentInstruments(loadInvestmentInstruments());
+      setFx(loadFxRates());
+    };
     const refreshFromCloudNow = async () => {
-      if (runningRefresh) return;
-      runningRefresh = true;
-      try {
-        await hydrateWealthFromCloud();
-        setRecords(loadWealthRecords());
-        setClosures(loadClosures());
-        setInvestmentInstruments(loadInvestmentInstruments());
-        setFx(loadFxRates());
-      } finally {
-        runningRefresh = false;
-      }
+      await hydrateWealthFromCloudShared({ minIntervalMs: 15_000 });
+      refreshFromLocal();
     };
 
     const goPatrimonioHome = () => {
@@ -3623,7 +3619,7 @@ export const Patrimonio: React.FC = () => {
   useEffect(() => {
     let alive = true;
     (async () => {
-      await hydrateWealthFromCloud();
+      await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
       if (!alive) return;
       setRecords(loadWealthRecords());
       setClosures(loadClosures());

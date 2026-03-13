@@ -10,13 +10,13 @@ import { auth, ensureAuthPersistence, signInWithGoogle } from './services/fireba
 import {
   WEALTH_DATA_UPDATED_EVENT,
   getIncompleteClosures,
-  hydrateWealthFromCloud,
   localYmd,
   loadClosures,
   refreshFxRatesDailyIfNeeded,
   subscribeWealthCloud,
   unsubscribeWealthCloud,
 } from './services/wealthStorage';
+import { hydrateWealthFromCloudShared } from './services/wealthHydration';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
@@ -134,7 +134,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     let cleanup: (() => void) | null = null;
 
     (async () => {
-      await hydrateWealthFromCloud();
+      await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
       const unsub = await subscribeWealthCloud();
       if (cancelled) {
         unsub();

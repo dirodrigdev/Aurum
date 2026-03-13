@@ -2546,6 +2546,14 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
   return wealthCloudSyncPromise;
 };
 
+/**
+ * Persist the current local wealth state to cloud.
+ *
+ * Use this after confirmed local mutations that must be pushed remotely.
+ * Do not chain an immediate `hydrateWealthFromCloud()` after successful local
+ * writes unless you explicitly need reconciliation/debugging: the local state is
+ * already the source of truth for the current UI transaction.
+ */
 export const syncWealthNow = async (): Promise<boolean> => {
   // Reintento corto para tolerar ventanas donde auth.currentUser aún se rehidrata.
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -2577,6 +2585,13 @@ export const scheduleWealthCloudSync = (delayMs = WEALTH_SYNC_BATCH_INTERVAL_MS)
   }, delayMs);
 };
 
+/**
+ * Reconcile local state against the cloud snapshot.
+ *
+ * Reserved for bootstrap/manual refresh/recovery flows. Screen-level code should
+ * prefer the shared hydration gate in `wealthHydration.ts` to avoid repeated
+ * document reads caused by focus, visibility or navigation events.
+ */
 export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'unavailable'> => {
   try {
     const ref = await getWealthCloudRef();

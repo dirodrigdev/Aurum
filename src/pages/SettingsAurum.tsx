@@ -32,7 +32,6 @@ import {
   clearCurrentMonthData,
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
-  hydrateWealthFromCloud,
   getLastWealthSyncIssue,
   importHistoricalAggregatedClosuresFromCsv,
   importHistoricalClosuresFromCsv,
@@ -62,6 +61,7 @@ import {
   WealthBackupSnapshotMeta,
   WealthMonthlyClosure,
 } from '../services/wealthStorage';
+import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
 
@@ -332,26 +332,22 @@ export const SettingsAurum: React.FC = () => {
   );
   const syncSectionRef = useRef<HTMLDivElement | null>(null);
   const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
-  const hydrationRunningRef = useRef(false);
-  const lastHydrateAtRef = useRef(0);
   const pendingUnsafeBackupActionRef = useRef<null | (() => Promise<void> | void)>(null);
 
   const describeManualSync = (
     pushed: boolean,
-    hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none',
   ) => {
-    if (hydrated === 'unavailable') return 'Sin conexión con la nube';
-    if (pushed && (hydrated === 'cloud' || hydrated === 'local')) return 'Sincronizado';
-    return 'Error al sincronizar';
+    if (pushed) return 'Sincronizado';
+    return auth.currentUser?.uid ? 'Error al sincronizar' : 'Sin sesión en la nube';
   };
 
   const describeLocalThenCloudSync = (
     pushed: boolean,
-    hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none',
   ) => {
-    if (pushed && (hydrated === 'cloud' || hydrated === 'local')) return 'Sincronizado';
-    if (hydrated === 'unavailable') return 'Guardado localmente · Sin conexión con la nube';
-    return 'Guardado localmente · Error al sincronizar';
+    if (pushed) return 'Guardado localmente y sincronizado';
+    return auth.currentUser?.uid
+      ? 'Guardado localmente · Error al sincronizar'
+      : 'Guardado localmente · Sin sesión en la nube';
   };
 
   const syncDraftFromFx = (rates: { usdClp: number; eurClp: number; ufClp: number }) => {
@@ -601,6 +597,17 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setFsStatus(getFirestoreStatus());
   };
 
+  const syncLocalMutationNow = async () => {
+    let pushed = false;
+    try {
+      pushed = await syncWealthNow();
+    } catch {
+      pushed = false;
+    }
+    refreshLocalState();
+    return pushed;
+  };
+
   const refreshBackupSnapshots = async () => {
     setLoadingBackupSnapshots(true);
     try {
@@ -846,21 +853,8 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   };
 
   useEffect(() => {
-    const HYDRATE_THROTTLE_MS = 20_000;
     const refreshFromCloudIfNeeded = async (force = false) => {
-      if (hydrationRunningRef.current) return;
-      const now = Date.now();
-      if (!force && now - lastHydrateAtRef.current < HYDRATE_THROTTLE_MS) {
-        refreshLocalState();
-        return;
-      }
-      hydrationRunningRef.current = true;
-      try {
-        await hydrateWealthFromCloud();
-        lastHydrateAtRef.current = Date.now();
-      } finally {
-        hydrationRunningRef.current = false;
-      }
+      await hydrateWealthFromCloudShared({ force, minIntervalMs: 20_000 });
       refreshLocalState();
     };
     const onBottomNavRetap = (event: Event) => {
@@ -1266,21 +1260,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         closureMonth >= monthKey,
       );
 
-      let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
-      }
-      try {
-        hydrated = await hydrateWealthFromCloud();
-      } catch {
-        hydrated = 'none';
-      }
-      refreshLocalState();
+      const pushed = await syncLocalMutationNow();
       setClosingConfigMessage(
-        `Instrumento "${targetInstrument.label}" cerrado desde ${formatMonthLabel(monthKey)}. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
+        `Instrumento "${targetInstrument.label}" cerrado desde ${formatMonthLabel(monthKey)}. ${describeLocalThenCloudSync(pushed)}.`,
       );
     } finally {
       setClosingInvestmentActionBusy(false);
@@ -1313,21 +1295,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       delete nextRules[toRuleKeyFromInvestmentId(targetId)];
       persistClosingConfig({ rules: nextRules });
 
-      let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
-      }
-      try {
-        hydrated = await hydrateWealthFromCloud();
-      } catch {
-        hydrated = 'none';
-      }
-      refreshLocalState();
+      const pushed = await syncLocalMutationNow();
       setClosingConfigMessage(
-        `Instrumento "${targetInstrument.label}" eliminado completamente de registros y cierres con detalle. ${describeLocalThenCloudSync(pushed, hydrated)}.`,
+        `Instrumento "${targetInstrument.label}" eliminado completamente de registros y cierres con detalle. ${describeLocalThenCloudSync(pushed)}.`,
       );
     } finally {
       setClosingInvestmentActionBusy(false);
@@ -1399,38 +1369,27 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       const current = loadClosures();
       const next = current.filter((closure) => closure.monthKey !== monthKeyToDelete);
       saveClosures(next);
-      let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
-      }
-      try {
-        hydrated = await hydrateWealthFromCloud();
-      } catch {
-        hydrated = 'none';
-      }
-      refreshLocalState();
+      const pushed = await syncLocalMutationNow();
       const localAfterMonthKeys = loadClosures().map((closure) => closure.monthKey);
       const localDeleted = !localAfterMonthKeys.includes(monthKeyToDelete);
       let cloudDeleted: boolean | null = null;
       let cloudMessage = '';
-      try {
-        const cloudSummary = await loadCloudClosuresSummary();
-        if (cloudSummary.available) {
-          cloudDeleted = !cloudSummary.monthKeys.includes(monthKeyToDelete);
-          cloudMessage = cloudDeleted ? 'Cierre eliminado en nube' : 'Cierre sigue existiendo en nube';
-        } else {
-          cloudMessage = cloudSummary.message;
+      if (pushed && auth.currentUser?.uid) {
+        try {
+          const cloudSummary = await loadCloudClosuresSummary();
+          if (cloudSummary.available) {
+            cloudDeleted = !cloudSummary.monthKeys.includes(monthKeyToDelete);
+            cloudMessage = cloudDeleted ? 'Cierre eliminado en nube' : 'Cierre sigue existiendo en nube';
+          } else {
+            cloudMessage = cloudSummary.message;
+          }
+        } catch (err: any) {
+          cloudMessage = String(err?.message || 'No pude verificar nube');
         }
-      } catch (err: any) {
-        cloudMessage = String(err?.message || 'No pude verificar nube');
       }
       console.info('[Settings][delete-closure][after]', {
         monthKeyToDelete,
         pushed,
-        hydrated,
         localAfterMonthKeys,
         localDeleted,
         cloudDeleted,
@@ -1443,7 +1402,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         );
         return;
       }
-      setDeleteClosureMessage(`Cierre ${monthKeyToDelete} eliminado. ${describeLocalThenCloudSync(pushed, hydrated)}.`);
+      setDeleteClosureMessage(`Cierre ${monthKeyToDelete} eliminado. ${describeLocalThenCloudSync(pushed)}.`);
     } finally {
       setDeletingClosure(false);
     }
@@ -1455,21 +1414,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setDeleteClosureMessage('');
     try {
       saveClosures([]);
-      let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
-      }
-      try {
-        hydrated = await hydrateWealthFromCloud();
-      } catch {
-        hydrated = 'none';
-      }
-      refreshLocalState();
+      const pushed = await syncLocalMutationNow();
       setSelectedClosureToDelete('');
-      setDeleteClosureMessage(`Se eliminaron todos los cierres. ${describeLocalThenCloudSync(pushed, hydrated)}.`);
+      setDeleteClosureMessage(`Se eliminaron todos los cierres. ${describeLocalThenCloudSync(pushed)}.`);
     } finally {
       setDeletingClosure(false);
     }
@@ -1523,22 +1470,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         removedInvestment += removableRecords.filter((record) => record.block === 'investment').length;
       }
 
-      let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-      try {
-        pushed = await syncWealthNow();
-      } catch {
-        pushed = false;
-      }
-      try {
-        hydrated = await hydrateWealthFromCloud();
-      } catch {
-        hydrated = 'none';
-      }
-      refreshLocalState();
+      const pushed = await syncLocalMutationNow();
       setDeleteBlocksMessage(
         removedRecords
-          ? `Bloques limpiados: ${removedRecords} registros (${removedBankAndDebt} bancos/deudas no hipotecarias, ${removedInvestment} inversiones, ${removedRealEstate} bienes raíces/hipoteca). ${describeLocalThenCloudSync(pushed, hydrated)}.`
+          ? `Bloques limpiados: ${removedRecords} registros (${removedBankAndDebt} bancos/deudas no hipotecarias, ${removedInvestment} inversiones, ${removedRealEstate} bienes raíces/hipoteca). ${describeLocalThenCloudSync(pushed)}.`
           : 'No había registros para borrar en los bloques seleccionados.',
       );
     } finally {
@@ -1572,18 +1507,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
 
       const hasAuth = Boolean(auth.currentUser?.uid);
       let pushed = false;
-      let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
       if (hasAuth) {
-        try {
-          pushed = await syncWealthNow();
-        } catch {
-          pushed = false;
-        }
-        try {
-          hydrated = pushed ? await hydrateWealthFromCloud() : 'none';
-        } catch {
-          hydrated = 'none';
-        }
+        pushed = await syncLocalMutationNow();
+      } else {
+        refreshLocalState();
       }
 
       const closuresAfterSeed = loadClosures().map((closure) => closure.monthKey).sort();
@@ -1612,14 +1539,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         has2025Data,
         hasMarch2026Closure,
         syncImmediate: pushed,
-        hydratedFromCloud: hydrated,
       });
-      refreshLocalState();
       if (!hasAuth) {
         setSeedDemoMessage('Debes estar autenticado para realizar esta operación en la nube. Datos cargados solo en local.');
         return;
       }
-      if (!pushed || hydrated === 'unavailable' || hydrated === 'none') {
+      if (!pushed) {
         setSeedDemoMessage('Datos de prueba cargados en local. No se pudo confirmar sincronización en la nube.');
         return;
       }
@@ -1941,21 +1866,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
               <Button
                 variant="secondary"
                 onClick={async () => {
-                  let pushed = false;
-                  let hydrated: Awaited<ReturnType<typeof hydrateWealthFromCloud>> | 'none' = 'none';
-                  try {
-                    pushed = await syncWealthNow();
-                  } catch {
-                    pushed = false;
-                  }
-                  try {
-                    hydrated = await hydrateWealthFromCloud();
-                  } catch {
-                    hydrated = 'none';
-                  }
+                  const pushed = await syncLocalMutationNow();
                   const fs = getFirestoreStatus();
                   setFsStatus(fs);
-                  setSyncMessage(describeManualSync(pushed, hydrated));
+                  setSyncMessage(describeManualSync(pushed));
                   setFsDebug(getLastWealthSyncIssue() || fs.message || '');
                 }}
               >
