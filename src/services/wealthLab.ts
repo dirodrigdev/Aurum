@@ -74,6 +74,13 @@ export type WealthLabMetric = {
   months: number;
 };
 
+export type WealthLabHeadlineMetric = {
+  label: string;
+  monthlyEquivalentClp: number | null;
+  totalClp: number | null;
+  months: number;
+};
+
 export type WealthLabWindow = 'since_start' | 'last_12m' | 'last_month';
 
 export type WealthLabPeriodView = {
@@ -92,6 +99,11 @@ export type WealthLabPeriodView = {
     resultadoSinFx: WealthLabMetric;
     real: WealthLabMetric;
     aporteFx: WealthLabMetric;
+  } | null;
+  headlineMetrics: {
+    resultadoSinFx: WealthLabHeadlineMetric;
+    real: WealthLabHeadlineMetric;
+    aporteFx: WealthLabHeadlineMetric;
   } | null;
   currentPeriodLabel: string | null;
 };
@@ -191,6 +203,51 @@ const buildMetricBundle = (points: WealthLabPoint[]): {
   };
 };
 
+const buildHeadlineMetrics = (
+  points: WealthLabPoint[],
+): {
+  resultadoSinFx: WealthLabHeadlineMetric;
+  real: WealthLabHeadlineMetric;
+  aporteFx: WealthLabHeadlineMetric;
+} | null => {
+  const comparablePoints = points.filter(
+    (point) =>
+      point.varPatrimonioClp !== null &&
+      point.varSinFxClp !== null &&
+      point.aportesFxClp !== null,
+  );
+
+  if (!comparablePoints.length) return null;
+
+  const months = comparablePoints.length;
+  const realTotal = comparablePoints.reduce((sum, point) => sum + Number(point.varPatrimonioClp || 0), 0);
+  const sinFxTotal = comparablePoints.reduce((sum, point) => sum + Number(point.varSinFxClp || 0), 0);
+  const fxTotal = comparablePoints.reduce((sum, point) => sum + Number(point.aportesFxClp || 0), 0);
+
+  const toMonthlyEquivalent = (value: number) => value / months;
+
+  return {
+    resultadoSinFx: {
+      label: 'Resultado sin FX mensual equivalente',
+      monthlyEquivalentClp: toMonthlyEquivalent(sinFxTotal),
+      totalClp: sinFxTotal,
+      months,
+    },
+    real: {
+      label: 'Resultado real mensual equivalente',
+      monthlyEquivalentClp: toMonthlyEquivalent(realTotal),
+      totalClp: realTotal,
+      months,
+    },
+    aporteFx: {
+      label: 'Aporte FX mensual equivalente',
+      monthlyEquivalentClp: toMonthlyEquivalent(fxTotal),
+      totalClp: fxTotal,
+      months,
+    },
+  };
+};
+
 const rebaseChartPoints = (points: WealthLabPoint[]): WealthLabPoint[] => {
   const comparable = points.filter((point) => point.rawIndiceReal !== null && point.rawIndiceSinFx !== null);
   const firstComparable = comparable[0] || null;
@@ -222,6 +279,7 @@ export const selectWealthLabPeriod = (
   }
 
   const metrics = buildMetricBundle(points);
+  const headlineMetrics = buildHeadlineMetrics(points);
   const realMonths = points.filter((point) => point.varPatrimonioClp !== null).length;
   const fxComparableMonths = points.filter((point) => point.varSinFxClp !== null && point.aportesFxClp !== null).length;
 
@@ -234,6 +292,7 @@ export const selectWealthLabPeriod = (
     fxComparableMonths,
     monthlyMetrics: metrics.monthlyMetrics,
     cumulativeMetrics: metrics.cumulativeMetrics,
+    headlineMetrics,
     currentPeriodLabel: metrics.currentPeriodLabel,
   };
 };

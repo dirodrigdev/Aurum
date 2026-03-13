@@ -302,6 +302,78 @@ describe('wealthLab model', () => {
     expect(sinceStart.cumulativeMetrics?.aporteFx.valueClp).not.toBe(last12m.cumulativeMetrics?.aporteFx.valueClp);
   });
 
+  it('alinea el header de Lab en base mensual equivalente usando el mismo corte temporal para real, sin FX y aporte FX', async () => {
+    const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
+    const closures = Array.from({ length: 14 }, (_, index) => {
+      const month = String(index + 1).padStart(2, '0');
+      const usdClp = 900 + index * 4;
+      const usdWithoutRisk = 7_500 + index * 180;
+      const usdWithRisk = usdWithoutRisk + 1_000;
+      const clpWithoutRisk = 70_000_000 + index * 1_750_000;
+      const clpWithRisk = clpWithoutRisk + 8_500_000 + index * 220_000;
+      const netClp = clpWithoutRisk + usdWithoutRisk * usdClp;
+      const netClpWithRisk = clpWithRisk + usdWithRisk * usdClp;
+      return makeClosure(`2024-${month}`, {
+        netClp,
+        netClpWithRisk,
+        investmentUsd: usdWithRisk,
+        riskUsd: 1_000,
+        usdClp,
+        includeAnalysis: false,
+        records: false,
+      });
+    }).map((closure, index) => ({
+      ...closure,
+      summary: {
+        ...closure.summary,
+        analysisByCurrency: {
+          clpWithoutRisk: 70_000_000 + index * 1_750_000,
+          usdWithoutRisk: 7_500 + index * 180,
+          clpWithRisk: 78_500_000 + index * 1_970_000,
+          usdWithRisk: 8_500 + index * 180,
+          source: 'aggregated_csv' as const,
+        },
+      },
+    }));
+
+    const model = buildWealthLabModel(closures as never, false);
+    const sinceStart = selectWealthLabPeriod(model, 'since_start');
+    const last12m = selectWealthLabPeriod(model, 'last_12m');
+    const lastMonth = selectWealthLabPeriod(model, 'last_month');
+
+    expect(sinceStart.headlineMetrics?.real.months).toBe(13);
+    expect(last12m.headlineMetrics?.real.months).toBe(12);
+    expect(lastMonth.headlineMetrics?.real.months).toBe(1);
+    expect(sinceStart.headlineMetrics?.real.monthlyEquivalentClp).not.toBe(last12m.headlineMetrics?.real.monthlyEquivalentClp);
+    expect(last12m.headlineMetrics?.real.monthlyEquivalentClp).not.toBe(lastMonth.headlineMetrics?.real.monthlyEquivalentClp);
+    expect(sinceStart.headlineMetrics?.resultadoSinFx.monthlyEquivalentClp).not.toBe(last12m.headlineMetrics?.resultadoSinFx.monthlyEquivalentClp);
+    expect(last12m.headlineMetrics?.aporteFx.monthlyEquivalentClp).not.toBe(lastMonth.headlineMetrics?.aporteFx.monthlyEquivalentClp);
+  });
+
+  it('actualiza el promedio mensual equivalente y el aporte FX del header cuando cambia CapRiesgo', async () => {
+    const { buildWealthLabModel, selectWealthLabPeriod } = await import('../src/services/wealthLab');
+    const withoutRisk = buildWealthLabModel(
+      [
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 121_000_000, investmentUsd: 11_000, riskUsd: 1_500, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 106_000_000, netClpWithRisk: 133_000_000, investmentUsd: 12_500, riskUsd: 1_500, usdClp: 990 }),
+      ] as never,
+      false,
+    );
+    const withRisk = buildWealthLabModel(
+      [
+        makeClosure('2026-01', { netClp: 100_000_000, netClpWithRisk: 121_000_000, investmentUsd: 11_000, riskUsd: 1_500, usdClp: 900 }),
+        makeClosure('2026-02', { netClp: 106_000_000, netClpWithRisk: 133_000_000, investmentUsd: 12_500, riskUsd: 1_500, usdClp: 990 }),
+      ] as never,
+      true,
+    );
+
+    const withoutRiskPeriod = selectWealthLabPeriod(withoutRisk, 'since_start');
+    const withRiskPeriod = selectWealthLabPeriod(withRisk, 'since_start');
+
+    expect(withRiskPeriod.headlineMetrics?.real.monthlyEquivalentClp).not.toBe(withoutRiskPeriod.headlineMetrics?.real.monthlyEquivalentClp);
+    expect(withRiskPeriod.headlineMetrics?.aporteFx.monthlyEquivalentClp).not.toBe(withoutRiskPeriod.headlineMetrics?.aporteFx.monthlyEquivalentClp);
+  });
+
   it('usa la serie externa local como fallback para cierres históricos ya guardados sin analysisByCurrency', async () => {
     const { buildWealthLabModel } = await import('../src/services/wealthLab');
     const model = buildWealthLabModel(

@@ -694,9 +694,7 @@ const LAB_WINDOW_OPTIONS: Array<{ key: WealthLabWindow; label: string }> = [
 const LabHeaderCard: React.FC<{
   periodLabel: string;
   monthKey: string | null;
-  resultadoSinFxClp: number | null;
-  aporteFxClp: number | null;
-  realClp: number | null;
+  headlineMetrics: ReturnType<typeof selectWealthLabPeriod>['headlineMetrics'];
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
   selectedWindow: WealthLabWindow;
@@ -705,119 +703,150 @@ const LabHeaderCard: React.FC<{
 }> = ({
   periodLabel,
   monthKey,
-  resultadoSinFxClp,
-  aporteFxClp,
-  realClp,
+  headlineMetrics,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
   selectedWindow,
   onSelectWindow,
   fxCoverageNote,
-}) => (
-  <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <div className="text-sm text-slate-300">
-            {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del período seleccionado'}
-          </div>
-          {includeRiskCapitalInTotals && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-              +CapRiesgo
-            </span>
-          )}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onToggleRiskMode}
-        className={cn(
-          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
-          includeRiskCapitalInTotals
-            ? 'border-amber-300 bg-amber-50 text-amber-600'
-            : 'border-white/20 bg-white/5 text-slate-300',
-        )}
-        title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-        aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
-      >
-        <Zap size={16} />
-      </button>
-    </div>
+}) => {
+  const realMonthlyEquivalent = headlineMetrics?.real.monthlyEquivalentClp ?? null;
+  const sinFxMonthlyEquivalent = headlineMetrics?.resultadoSinFx.monthlyEquivalentClp ?? null;
+  const fxMonthlyEquivalent = headlineMetrics?.aporteFx.monthlyEquivalentClp ?? null;
+  const headlineMonths = headlineMetrics?.real.months ?? 0;
+  const hasComposition =
+    realMonthlyEquivalent !== null &&
+    sinFxMonthlyEquivalent !== null &&
+    fxMonthlyEquivalent !== null;
+  const totalParts = hasComposition
+    ? Math.abs(sinFxMonthlyEquivalent) + Math.abs(fxMonthlyEquivalent)
+    : 0;
+  const sinFxShare = totalParts > 0 && sinFxMonthlyEquivalent !== null ? (Math.abs(sinFxMonthlyEquivalent) / totalParts) * 100 : 0;
+  const fxShare = totalParts > 0 && fxMonthlyEquivalent !== null ? (Math.abs(fxMonthlyEquivalent) / totalParts) * 100 : 0;
 
-    <div className="mt-3 flex flex-wrap gap-2">
-      {LAB_WINDOW_OPTIONS.map((option) => (
+  const cards = [
+    {
+      key: 'real',
+      label: 'Resultado real mensual equiv.',
+      value: realMonthlyEquivalent,
+      total: headlineMetrics?.real.totalClp ?? null,
+      tone: (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300',
+    },
+    {
+      key: 'sinfx',
+      label: 'Resultado sin FX mensual equiv.',
+      value: sinFxMonthlyEquivalent,
+      total: headlineMetrics?.resultadoSinFx.totalClp ?? null,
+      tone: (sinFxMonthlyEquivalent || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300',
+    },
+    {
+      key: 'fx',
+      label: 'Aporte FX mensual equiv.',
+      value: fxMonthlyEquivalent,
+      total: headlineMetrics?.aporteFx.totalClp ?? null,
+      tone: (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300',
+    },
+  ];
+
+  return (
+    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <div className="text-sm text-slate-300">
+              {monthKey ? `Lectura analítica de ${monthLabel(monthKey)}` : 'Lectura analítica del período seleccionado'}
+            </div>
+            {includeRiskCapitalInTotals && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                +CapRiesgo
+              </span>
+            )}
+          </div>
+        </div>
         <button
-          key={option.key}
           type="button"
-          onClick={() => onSelectWindow(option.key)}
+          onClick={onToggleRiskMode}
           className={cn(
-            'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
-            selectedWindow === option.key
-              ? 'border-white/20 bg-white/12 text-white'
-              : 'border-white/10 bg-transparent text-slate-300',
+            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
+            includeRiskCapitalInTotals
+              ? 'border-amber-300 bg-amber-50 text-amber-600'
+              : 'border-white/20 bg-white/5 text-slate-300',
           )}
+          title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
+          aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
         >
-          {option.label}
+          <Zap size={16} />
         </button>
-      ))}
-    </div>
-
-    <div className="mt-4 grid gap-3 sm:grid-cols-3">
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado real</div>
-        <div className={cn('mt-1 text-xl font-semibold', (realClp || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
-          {realClp !== null ? formatFreedomCompactClp(realClp) : '—'}
-        </div>
-        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
       </div>
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado sin FX</div>
-        <div className="mt-1 text-xl font-semibold text-emerald-300">
-          {resultadoSinFxClp !== null ? formatFreedomCompactClp(resultadoSinFxClp) : '—'}
-        </div>
-        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
-      </div>
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Aporte FX</div>
-        <div className={cn('mt-1 text-xl font-semibold', (aporteFxClp || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
-          {aporteFxClp !== null ? formatFreedomCompactClp(aporteFxClp) : '—'}
-        </div>
-        <div className="mt-1 text-[10px] text-slate-400">{periodLabel}</div>
-      </div>
-    </div>
 
-    {fxCoverageNote && <div className="mt-2 text-[11px] text-slate-300/80">{fxCoverageNote}</div>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {LAB_WINDOW_OPTIONS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onSelectWindow(option.key)}
+            className={cn(
+              'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
+              selectedWindow === option.key
+                ? 'border-white/20 bg-white/12 text-white'
+                : 'border-white/10 bg-transparent text-slate-300',
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
 
-    {realClp !== null && resultadoSinFxClp !== null && aporteFxClp !== null && (
-      <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del resultado</div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
-          <div className="flex h-full w-full">
-            <div
-              className="bg-emerald-400/90"
-              style={{ width: `${Math.max(0, Math.min(100, Math.abs(resultadoSinFxClp) / Math.max(1, Math.abs(realClp)) * 100))}%` }}
-            />
-            <div
-              className={cn('transition-all', aporteFxClp >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90')}
-              style={{ width: `${Math.max(0, Math.min(100, Math.abs(aporteFxClp) / Math.max(1, Math.abs(realClp)) * 100))}%` }}
-            />
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {cards.map((card) => (
+          <div key={card.key} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+            <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{card.label}</div>
+            <div className={cn('mt-1 text-xl font-semibold', card.tone)}>
+              {card.value !== null ? formatFreedomCompactClp(card.value) : '—'}
+            </div>
+            <div className="mt-1 text-[10px] text-slate-400">
+              {headlineMonths > 1 ? `${periodLabel} · ${headlineMonths} meses comparables` : periodLabel}
+            </div>
+            <div className="mt-1 text-[10px] text-slate-400">
+              {card.total !== null ? `Total período: ${formatFreedomCompactClp(card.total)}` : 'Total período: —'}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {fxCoverageNote && <div className="mt-2 text-[11px] text-slate-300/80">{fxCoverageNote}</div>}
+
+      {hasComposition && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del promedio mensual equivalente</div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="flex h-full w-full">
+              <div
+                className="bg-emerald-400/90"
+                style={{ width: `${Math.max(0, Math.min(100, sinFxShare))}%` }}
+              />
+              <div
+                className={cn('transition-all', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90')}
+                style={{ width: `${Math.max(0, Math.min(100, fxShare))}%` }}
+              />
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+            <div className="inline-flex items-center gap-2 text-slate-300">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              Resultado sin FX
+            </div>
+            <div className="inline-flex items-center gap-2 text-slate-300">
+              <span className={cn('h-2.5 w-2.5 rounded-full', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
+              Aporte FX
+            </div>
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
-          <div className="inline-flex items-center gap-2 text-slate-300">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-            Resultado sin FX
-          </div>
-          <div className="inline-flex items-center gap-2 text-slate-300">
-            <span className={cn('h-2.5 w-2.5 rounded-full', aporteFxClp >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
-            Aporte FX
-          </div>
-        </div>
-      </div>
-    )}
-  </Card>
-);
+      )}
+    </Card>
+  );
+};
 
 const LabIndicesChart: React.FC<{ points: WealthLabPoint[]; periodLabel: string }> = ({ points, periodLabel }) => {
   if (points.length < 2) {
@@ -955,15 +984,6 @@ const LabTabContent: React.FC<{
 }> = ({ model, includeRiskCapitalInTotals, onToggleRiskMode }) => {
   const [selectedWindow, setSelectedWindow] = useState<WealthLabWindow>('since_start');
   const selectedPeriod = useMemo(() => selectWealthLabPeriod(model, selectedWindow), [model, selectedWindow]);
-  const resultValue = selectedWindow === 'last_month'
-    ? selectedPeriod.monthlyMetrics?.resultadoSinFx.valueClp ?? null
-    : selectedPeriod.cumulativeMetrics?.resultadoSinFx.valueClp ?? null;
-  const fxValue = selectedWindow === 'last_month'
-    ? selectedPeriod.monthlyMetrics?.aporteFx.valueClp ?? null
-    : selectedPeriod.cumulativeMetrics?.aporteFx.valueClp ?? null;
-  const realValue = selectedWindow === 'last_month'
-    ? selectedPeriod.monthlyMetrics?.real.valueClp ?? null
-    : selectedPeriod.cumulativeMetrics?.real.valueClp ?? null;
   const fxCoverageNote =
     selectedPeriod.realMonths === 0
       ? null
@@ -978,9 +998,7 @@ const LabTabContent: React.FC<{
       <LabHeaderCard
         periodLabel={selectedPeriod.label}
         monthKey={selectedPeriod.currentPeriodLabel}
-        resultadoSinFxClp={resultValue}
-        aporteFxClp={fxValue}
-        realClp={realValue}
+        headlineMetrics={selectedPeriod.headlineMetrics}
         includeRiskCapitalInTotals={includeRiskCapitalInTotals}
         onToggleRiskMode={onToggleRiskMode}
         selectedWindow={selectedWindow}
