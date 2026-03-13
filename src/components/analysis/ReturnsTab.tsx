@@ -4,7 +4,7 @@ import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import type { AggregatedSummary, CrpContributionInsight, MonthlyReturnRow } from './types';
-import { convertFromClp, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
+import { buildReturnSpendInsight, convertFromClp, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
@@ -100,9 +100,12 @@ const ReturnRealHero: React.FC<{
     { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
     { key: 'mes', label: 'ÚLT. MES', value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
-  const spentClass = (value: AggregatedSummary | null | undefined) => {
-    if (value?.spendPct === null || value?.spendPct === undefined) return 'text-slate-200';
-    return value.spendPct > 100 ? 'text-rose-300' : 'text-emerald-300';
+  const spendClass = (value: AggregatedSummary | null | undefined) => {
+    const insight = buildReturnSpendInsight(value);
+    if (insight.tone === 'positive') return 'text-emerald-300';
+    if (insight.tone === 'warning') return 'text-amber-200';
+    if (insight.tone === 'negative') return 'text-rose-300';
+    return 'text-slate-200';
   };
   const pctClass = (pctValue: number | null) => (pctValue === null || pctValue >= 0 ? 'text-emerald-300' : 'text-rose-300');
   const retornoClass = (value: AggregatedSummary | null | undefined) =>
@@ -154,64 +157,64 @@ const ReturnRealHero: React.FC<{
         </div>
       </div>
       <div className="relative mt-3 space-y-2">
-        {rows.map((row) => (
-          <div
-            key={row.key}
-            className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  {row.label}
+        {rows.map((row) => {
+          const spendInsight = buildReturnSpendInsight(row.value);
+
+          return (
+            <div
+              key={row.key}
+              className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    {row.label}
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-slate-500">
+                    {row.key === 'mes' ? 'Comparación mensual' : 'Tasa anual equivalente'}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-[10px] text-slate-500">
-                  {row.key === 'mes' ? 'Comparación mensual' : 'Tasa anual equivalente'}
+                <div className="min-w-0 text-right">
+                  <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
+                    {formatPct(row.pct, 1)}
+                  </div>
+                  {row.pct === null && row.value?.pctRetornoNote ? (
+                    <div className="mt-0.5 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
+                  ) : null}
                 </div>
               </div>
-              <div className="min-w-0 text-right">
-                <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
-                  {formatPct(row.pct, 1)}
-                </div>
-                {row.pct === null && row.value?.pctRetornoNote ? (
-                  <div className="mt-0.5 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
-                ) : null}
-              </div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-white/[0.04] px-2.5 py-1.5">
-                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
-                <div
-                  className={cn('mt-0.5 truncate text-[15px] font-semibold leading-tight', retornoClass(row.value))}
-                  title={
-                    row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-white/[0.04] px-2.5 py-1.5">
+                  <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
+                  <div
+                    className={cn('mt-0.5 truncate text-[15px] font-semibold leading-tight', retornoClass(row.value))}
+                    title={
+                      row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
+                        ? '—'
+                        : formatCurrency(row.value.retornoRealAvgDisplay, currency)
+                    }
+                  >
+                    {row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
                       ? '—'
-                      : formatCurrency(row.value.retornoRealAvgDisplay, currency)
-                  }
+                      : formatCompactCurrency(row.value.retornoRealAvgDisplay, currency)}
+                  </div>
+                </div>
+                <div
+                  className="rounded-xl bg-white/[0.04] px-2.5 py-1.5 text-right"
+                  title={spendInsight.titleText}
                 >
-                  {row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
-                    ? '—'
-                    : formatCompactCurrency(row.value.retornoRealAvgDisplay, currency)}
+                  <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Gastado</div>
+                  <div className={cn('mt-0.5 text-[15px] font-semibold leading-tight', spendClass(row.value))}>
+                    {spendInsight.primaryText}
+                  </div>
+                  {spendInsight.secondaryText ? (
+                    <div className="text-[9px] text-slate-400">{spendInsight.secondaryText}</div>
+                  ) : null}
                 </div>
-              </div>
-              <div
-                className="rounded-xl bg-white/[0.04] px-2.5 py-1.5 text-right"
-                title={
-                  row.value?.spendPct === null || row.value?.spendPct === undefined
-                    ? '—'
-                    : `${row.value.spendPct.toFixed(1).replace('.', ',')}% del retorno se gasta`
-                }
-              >
-                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Gastado</div>
-                <div className={cn('mt-0.5 text-[15px] font-semibold leading-tight', spentClass(row.value))}>
-                  {row.value?.spendPct === null || row.value?.spendPct === undefined
-                    ? '—'
-                    : `${row.value.spendPct.toFixed(1).replace('.', ',')}%`}
-                </div>
-                <div className="text-[9px] text-slate-400">del retorno</div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );

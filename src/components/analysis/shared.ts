@@ -1,5 +1,6 @@
 import type { WealthCurrency, WealthFxRates } from '../../services/wealthStorage';
 import { formatCurrency, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
+import type { AggregatedSummary, ReturnSpendInsight } from './types';
 
 export const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
   if (currency === 'CLP') return valueClp;
@@ -76,4 +77,56 @@ export const monthKeyToYearLabel = (monthKey: string | null) => {
   const [year, month] = monthKey.split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return '—';
   return `${monthLabel(monthKey)} (${year})`;
+};
+
+const LOW_RETURN_SPEND_PCT_THRESHOLD = 300;
+
+export const buildReturnSpendInsight = (summary: AggregatedSummary | null | undefined): ReturnSpendInsight => {
+  if (!summary || summary.gastosAcumClp === null || summary.retornoRealAcumClp === null) {
+    return {
+      kind: 'unavailable',
+      tone: 'neutral',
+      primaryText: '—',
+      secondaryText: null,
+      titleText: 'Sin base suficiente para evaluar gasto vs retorno',
+    };
+  }
+
+  if (summary.retornoRealAcumClp <= 0) {
+    return {
+      kind: 'negative-return',
+      tone: 'negative',
+      primaryText: 'Retorno negativo',
+      secondaryText: 'El gasto no fue cubierto por el retorno del período',
+      titleText: 'Retorno negativo en el período',
+    };
+  }
+
+  if (summary.spendPct === null || !Number.isFinite(summary.spendPct)) {
+    return {
+      kind: 'unavailable',
+      tone: 'neutral',
+      primaryText: '—',
+      secondaryText: null,
+      titleText: 'Sin base suficiente para evaluar gasto vs retorno',
+    };
+  }
+
+  if (summary.spendPct > LOW_RETURN_SPEND_PCT_THRESHOLD) {
+    return {
+      kind: 'low-return',
+      tone: 'warning',
+      primaryText: 'Ratio no representativo',
+      secondaryText: 'Gasto muy superior al retorno del período',
+      titleText: 'Retorno positivo demasiado bajo para mostrar un % útil',
+    };
+  }
+
+  return {
+    kind: 'pct',
+    tone: summary.spendPct > 100 ? 'warning' : 'positive',
+    primaryText: `${summary.spendPct.toFixed(1).replace('.', ',')}%`,
+    secondaryText: 'del retorno',
+    titleText: `${summary.spendPct.toFixed(1).replace('.', ',')}% del retorno se gasta`,
+  };
 };

@@ -36,6 +36,14 @@ export type AggregatedSummary = {
   retornoRealAvgDisplay: number | null;
 };
 
+export type ReturnSpendInsight = {
+  kind: 'pct' | 'low-return' | 'negative-return' | 'unavailable';
+  tone: 'neutral' | 'positive' | 'warning' | 'negative';
+  primaryText: string;
+  secondaryText: string | null;
+  titleText: string;
+};
+
 export type CrpContributionInsight = {
   monthsLabel: string;
   aporteClp: number;
