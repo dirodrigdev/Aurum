@@ -192,9 +192,6 @@ export const DashboardAurum: React.FC = () => {
                   </div>
                 ))}
             </div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-300/82 sm:text-[11px]">
-              {model.coverageLabel}
-            </div>
             <div
               className={cn(
                 'inline-flex w-fit rounded-full border px-3 py-1.5 text-sm font-semibold sm:text-[15px]',
@@ -251,9 +248,9 @@ export const DashboardAurum: React.FC = () => {
           value={formatFreedomCompactClp(model.cards.lifestyle.valueClp)}
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
-          className="border-[#876a54]/30 bg-[linear-gradient(180deg,rgba(181,126,74,0.12),rgba(255,255,255,0.03))]"
-          valueClassName="text-white"
-          subtitleClassName="text-slate-100/88"
+          className="border-[#9c7758]/40 bg-[linear-gradient(180deg,rgba(181,126,74,0.18),rgba(255,255,255,0.04))] shadow-[0_16px_40px_rgba(46,27,11,0.22)]"
+          valueClassName="text-white drop-shadow-[0_1px_0_rgba(0,0,0,0.28)]"
+          subtitleClassName="text-slate-50/92"
         />
         <DashboardMetricCard
           label={model.cards.margin.label}
@@ -281,9 +278,9 @@ export const DashboardAurum: React.FC = () => {
           </div>
         </Card>
 
-        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+        <Card className="overflow-hidden border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-0 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
+          <div className="grid sm:grid-cols-2">
+            <div className="p-4 sm:p-5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia</div>
               <div
                 className={cn(
@@ -301,7 +298,7 @@ export const DashboardAurum: React.FC = () => {
                 {model.capRiskDependence.dependenceSummary}
               </div>
             </div>
-            <div className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+            <div className="border-t border-white/8 p-4 sm:border-l sm:border-t-0 sm:p-5">
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Impacto</div>
               <div className="mt-3 text-[2.1rem] font-semibold tracking-[-0.04em] text-slate-100">
                 {model.capRiskDependence.impactRatioDelta === null
@@ -321,17 +318,17 @@ export const DashboardAurum: React.FC = () => {
 
       <Card
         className={cn(
-          'border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.14)]',
+          'border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.12)]',
           model.coverageTone === 'positive'
-            ? 'border-emerald-400/16 bg-[#0c1931] text-emerald-50'
+            ? 'border-emerald-400/12 bg-[#0a1630] text-emerald-50'
             : model.coverageTone === 'warning'
-              ? 'border-amber-300/18 bg-[#0c1931] text-amber-50'
+              ? 'border-amber-300/14 bg-[#0a1630] text-amber-50'
               : model.coverageTone === 'negative'
-                ? 'border-rose-300/18 bg-[#0c1931] text-rose-50'
-                : 'border-white/10 bg-[#0c1931] text-slate-50',
+                ? 'border-rose-300/14 bg-[#0a1630] text-rose-50'
+                : 'border-white/8 bg-[#0a1630] text-slate-50',
         )}
       >
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/78">Insight ejecutivo</div>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/70">Insight ejecutivo</div>
         <div className="mt-2 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
       </Card>
 
