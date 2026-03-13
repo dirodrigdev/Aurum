@@ -1,6 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
-import { Button, Card, cn, Input } from '../components/Components';
+import { BarChart3 } from 'lucide-react';
+import { Button, Card } from '../components/Components';
+import { FreedomTab } from '../components/analysis/FreedomTab';
+import { LabTab } from '../components/analysis/LabTab';
+import { ReturnsTab } from '../components/analysis/ReturnsTab';
+import type {
+  AggregatedSummary,
+  AnalysisTab,
+  CrpContributionInsight,
+  FreedomControlDraft,
+  MonthlyReturnRow,
+} from '../components/analysis/types';
 import {
   WealthCurrency,
   WealthFxRates,
@@ -21,59 +31,7 @@ import {
 import {
   buildWealthLabModel,
   GASTAPP_TOTALS,
-  selectWealthLabPeriod,
-  type WealthLabPoint,
-  type WealthLabWindow,
 } from '../services/wealthLab';
-import { formatCurrency, formatMonthLabel as monthLabel } from '../utils/wealthFormat';
-
-type AnalysisTab = 'returns' | 'freedom' | 'lab';
-
-type FreedomControlDraft = {
-  annualRatePct: string;
-  horizonYears: string;
-  monthlySpendClp: string;
-};
-
-type MonthlyReturnRow = {
-  monthKey: string;
-  fx: WealthFxRates;
-  rawEurClp: number;
-  netClp: number | null;
-  prevNetClp: number | null;
-  invalidNet: boolean;
-  varPatrimonioClp: number | null;
-  gastosClp: number | null;
-  retornoRealClp: number | null;
-  pct: number | null;
-};
-
-type AggregatedSummary = {
-  key: string;
-  label: string;
-  validMonths: number;
-  varPatrimonioAcumClp: number | null;
-  gastosAcumClp: number | null;
-  retornoRealAcumClp: number | null;
-  pctRetorno: number | null;
-  pctRetornoNote: string | null;
-  spendPct: number | null;
-  varPatrimonioAvgDisplay: number | null;
-  gastosAvgDisplay: number | null;
-  retornoRealAvgDisplay: number | null;
-};
-
-type CrpContributionInsight = {
-  monthsLabel: string;
-  aporteClp: number;
-  aporteMensualClp: number;
-  total12mClp: number;
-  pctCrp: number | null;
-  tone: 'positive' | 'negative' | 'neutral';
-  summaryText: string;
-  detailText: string | null;
-  totalText: string | null;
-};
 
 const loadWealthClosures = () => loadClosures();
 
@@ -97,50 +55,6 @@ const safeFxRaw = (fx?: WealthFxRates): WealthFxRates => ({
   eurClp: Number.isFinite(Number(fx?.eurClp)) && Number(fx?.eurClp) > 0 ? Number(fx?.eurClp) : defaultFxRates.eurClp,
   ufClp: safeUfClp(Number(fx?.ufClp)),
 });
-
-const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
-  if (currency === 'CLP') return valueClp;
-  if (currency === 'USD') return valueClp / Math.max(1, fx.usdClp);
-  if (currency === 'EUR') return valueClp / Math.max(1, fx.eurClp);
-  return valueClp / Math.max(1, fx.ufClp);
-};
-
-const formatPct = (value: number | null, decimals = 2) => {
-  if (value === null || !Number.isFinite(value)) return '—';
-  return `${value >= 0 ? '+' : ''}${value.toFixed(decimals).replace('.', ',')}%`;
-};
-
-const formatCompactCurrency = (value: number, currency: WealthCurrency) => {
-  if (!Number.isFinite(value)) return '—';
-  const sign = value < 0 ? '-' : '';
-  const abs = Math.abs(value);
-
-  if (abs >= 1_000_000_000) {
-    const scaled = (abs / 1_000_000_000).toLocaleString('es-CL', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return currency === 'CLP' ? `${sign}$${scaled}B` : `${sign}${scaled}B ${currency}`;
-  }
-
-  if (abs >= 1_000_000) {
-    const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return currency === 'CLP' ? `${sign}$${scaled}MM` : `${sign}${scaled}MM ${currency}`;
-  }
-
-  if (abs >= 1_000) {
-    const scaled = (abs / 1_000).toLocaleString('es-CL', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
-    return currency === 'CLP' ? `${sign}$${scaled}K` : `${sign}${scaled}K ${currency}`;
-  }
-
-  return formatCurrency(value, currency);
-};
 
 const parseNumericDraft = (value: string): number | null => {
   const normalized = String(value ?? '')
@@ -168,35 +82,9 @@ const formatDraftMoney = (value: string) => {
   return Number(digits).toLocaleString('es-CL');
 };
 
-const formatFreedomCompactClp = (value: number | null) => {
-  if (value === null || !Number.isFinite(value)) return '—';
-  const sign = value < 0 ? '-' : '';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) {
-    const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return `${sign}$${scaled}MM`;
-  }
-  if (abs >= 1_000) {
-    const scaled = (abs / 1_000).toLocaleString('es-CL', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
-    return `${sign}$${scaled}K`;
-  }
-  return formatCurrency(value, 'CLP');
-};
-
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
 
 const monthYear = (monthKey: string) => Number(monthKey.slice(0, 4));
-
-const xLabelFromMonthKey = (monthKey: string) => {
-  const [year, month] = monthKey.split('-');
-  return `${month}/${year.slice(2)}`;
-};
 
 const buildCrpContributionInsight = (
   rowsWithCrp: MonthlyReturnRow[],
@@ -238,7 +126,25 @@ const buildCrpContributionInsight = (
   const absAporte = Math.abs(aporteMensualClp);
   const tone: CrpContributionInsight['tone'] =
     absAporte < 1_000 ? 'neutral' : aporteClp > 0 ? 'positive' : 'negative';
-  const headlineAmount = formatCompactCurrency(Math.abs(aporteMensualClp), 'CLP');
+
+  const headlineAmount = (() => {
+    const abs = Math.abs(aporteMensualClp);
+    if (abs >= 1_000_000) {
+      const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      return `$${scaled}MM`;
+    }
+    if (abs >= 1_000) {
+      const scaled = (abs / 1_000).toLocaleString('es-CL', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      });
+      return `$${scaled}K`;
+    }
+    return `$${abs.toLocaleString('es-CL')}`;
+  })();
 
   const summaryText =
     tone === 'neutral'
@@ -255,8 +161,11 @@ const buildCrpContributionInsight = (
       : tone === 'neutral'
         ? null
         : 'Cambio explicado por CapRiesgo';
-  const totalText =
-    tone === 'neutral' ? null : `Total período: ${formatCompactCurrency(aporteClp, 'CLP')}`;
+  const totalText = tone === 'neutral' ? null : `Total período: ${aporteClp.toLocaleString('es-CL', {
+    style: 'currency',
+    currency: 'CLP',
+    maximumFractionDigits: 0,
+  })}`;
 
   return {
     monthsLabel: 'últ. 12M',
@@ -286,10 +195,8 @@ const computeMonthlyRows = (closures: WealthMonthlyClosure[], includeRiskCapital
     const prevNetClp = invalidNet ? null : previousValidNet;
     const varPatrimonioClp =
       invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
-    // [PRODUCT RULE] Cruce directo por month_key; no hay desfase entre Aurum y Gastapp.
     const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey]) ? Number(GASTAPP_TOTALS[closure.monthKey]) : null;
     const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
-
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
     const pct =
@@ -322,6 +229,13 @@ const computeMonthlyRows = (closures: WealthMonthlyClosure[], includeRiskCapital
   return rows;
 };
 
+const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
+  if (currency === 'CLP') return valueClp;
+  if (currency === 'USD') return valueClp / Math.max(1, fx.usdClp);
+  if (currency === 'EUR') return valueClp / Math.max(1, fx.eurClp);
+  return valueClp / Math.max(1, fx.ufClp);
+};
+
 const aggregateRows = (
   key: string,
   label: string,
@@ -329,7 +243,6 @@ const aggregateRows = (
   currency: WealthCurrency,
   baseNetClp: number | null,
 ): AggregatedSummary => {
-  // [PRODUCT RULE] N para promedio mensual = meses con retornoReal válido.
   const validRows = rows.filter(
     (row) =>
       row.varPatrimonioClp !== null &&
@@ -411,1182 +324,6 @@ const aggregateRows = (
     retornoRealAvgDisplay,
   };
 };
-
-const SummaryTable: React.FC<{
-  title: string;
-  items: AggregatedSummary[];
-  currency: WealthCurrency;
-}> = ({ title, items, currency }) => (
-  <Card className="p-3 border-slate-200">
-    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-    <div className="mt-0.5 text-[11px] text-slate-500">Promedio mensual</div>
-    <div className="mt-2 overflow-x-auto">
-      <table className="w-full min-w-[600px] text-xs">
-        <thead>
-          <tr className="text-left text-slate-500">
-            <th className="py-1 pr-2">Tramo</th>
-            <th className="py-1 pr-2 text-right">% anual equiv.</th>
-            <th className="py-1 pr-2 text-right">Ret.Econ.</th>
-            <th className="py-1 pr-2 text-right">Var.Pat</th>
-            <th className="py-1 text-right">Gastos</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => {
-            const positive = (item.retornoRealAvgDisplay || 0) >= 0;
-            return (
-              <tr key={item.key} className="border-t border-slate-100">
-                <td className="py-1.5 pr-2 font-medium text-slate-700">
-                  <div>{item.label}</div>
-                  <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
-                </td>
-                <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatPct(item.pctRetorno)}
-                  {item.pctRetorno === null && item.pctRetornoNote ? (
-                    <div className="text-[10px] font-normal text-amber-700">{item.pctRetornoNote}</div>
-                  ) : null}
-                </td>
-                <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
-                </td>
-                <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
-                </td>
-                <td className="py-1.5 text-right text-slate-700">
-                  {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  </Card>
-);
-
-const ReturnRealHero: React.FC<{
-  sinceStart: AggregatedSummary | null;
-  last12: AggregatedSummary | null;
-  lastMonth: AggregatedSummary | null;
-  lastMonthPctMonthly: number | null;
-  currency: WealthCurrency;
-  includeRiskCapitalInTotals: boolean;
-  onToggleRiskMode: () => void;
-  crpContributionInsight: CrpContributionInsight | null;
-}> = ({
-  sinceStart,
-  last12,
-  lastMonth,
-  lastMonthPctMonthly,
-  currency,
-  includeRiskCapitalInTotals,
-  onToggleRiskMode,
-  crpContributionInsight,
-}) => {
-  const rows = [
-    { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
-    { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
-    { key: 'mes', label: 'ÚLT. MES', value: lastMonth, pct: lastMonthPctMonthly },
-  ] as const;
-  const spentClass = (value: AggregatedSummary | null | undefined) => {
-    if (value?.spendPct === null || value?.spendPct === undefined) return 'text-slate-200';
-    return value.spendPct > 100 ? 'text-rose-300' : 'text-emerald-300';
-  };
-  const pctClass = (pctValue: number | null) => (pctValue === null || pctValue >= 0 ? 'text-emerald-300' : 'text-rose-300');
-  const retornoClass = (value: AggregatedSummary | null | undefined) =>
-    (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
-
-  return (
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-4 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
-      <div className="relative">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
-            <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
-            {includeRiskCapitalInTotals && crpContributionInsight && (
-              <div
-                className={cn(
-                  'mt-2 inline-flex flex-col rounded-xl border px-2.5 py-2 text-left',
-                  crpContributionInsight.tone === 'positive'
-                    ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200'
-                    : crpContributionInsight.tone === 'negative'
-                      ? 'border-rose-400/25 bg-rose-400/10 text-rose-200'
-                      : 'border-slate-400/25 bg-white/5 text-slate-200',
-                )}
-              >
-                <span className="text-[11px] font-medium">{crpContributionInsight.summaryText}</span>
-                {crpContributionInsight.detailText ? (
-                  <span className="mt-0.5 text-[10px] text-slate-300">{crpContributionInsight.detailText}</span>
-                ) : null}
-                {crpContributionInsight.totalText ? (
-                  <span className="mt-0.5 text-[10px] text-slate-400">{crpContributionInsight.totalText}</span>
-                ) : null}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onToggleRiskMode}
-            className={cn(
-              'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
-              includeRiskCapitalInTotals
-                ? 'border-amber-300 bg-amber-50 text-amber-600'
-                : 'border-slate-500/50 bg-white/5 text-slate-300',
-            )}
-            title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-            aria-label="Alternar capital de riesgo"
-          >
-            <Zap size={16} />
-          </button>
-        </div>
-      </div>
-      <div className="relative mt-3 space-y-2">
-        {rows.map((row) => (
-          <div
-            key={row.key}
-            className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  {row.label}
-                </div>
-                <div className="mt-0.5 text-[10px] text-slate-500">
-                  {row.key === 'mes' ? 'Comparación mensual' : 'Tasa anual equivalente'}
-                </div>
-              </div>
-              <div className="min-w-0 text-right">
-                <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
-                  {formatPct(row.pct, 1)}
-                </div>
-                {row.pct === null && row.value?.pctRetornoNote ? (
-                  <div className="mt-0.5 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
-                ) : null}
-              </div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-white/[0.04] px-2.5 py-1.5">
-                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
-                <div
-                  className={cn('mt-0.5 truncate text-[15px] font-semibold leading-tight', retornoClass(row.value))}
-                  title={
-                    row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
-                      ? '—'
-                      : formatCurrency(row.value.retornoRealAvgDisplay, currency)
-                  }
-                >
-                  {row.value?.retornoRealAvgDisplay === null || row.value?.retornoRealAvgDisplay === undefined
-                    ? '—'
-                    : formatCompactCurrency(row.value.retornoRealAvgDisplay, currency)}
-                </div>
-              </div>
-              <div
-                className="rounded-xl bg-white/[0.04] px-2.5 py-1.5 text-right"
-                title={
-                  row.value?.spendPct === null || row.value?.spendPct === undefined
-                    ? '—'
-                    : `${row.value.spendPct.toFixed(1).replace('.', ',')}% del retorno se gasta`
-                }
-              >
-                <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Gastado</div>
-                <div className={cn('mt-0.5 text-[15px] font-semibold leading-tight', spentClass(row.value))}>
-                  {row.value?.spendPct === null || row.value?.spendPct === undefined
-                    ? '—'
-                    : `${row.value.spendPct.toFixed(1).replace('.', ',')}%`}
-                </div>
-                <div className="text-[9px] text-slate-400">del retorno</div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-};
-
-const ReturnsChart: React.FC<{ rows: MonthlyReturnRow[] }> = ({ rows }) => {
-  const data = useMemo(
-    () =>
-      rows
-        .filter((row) => row.pct !== null)
-        .map((row) => ({ monthKey: row.monthKey, pct: Number(row.pct) })),
-    [rows],
-  );
-
-  if (data.length < 2) {
-    return (
-      <Card className="p-3 border-slate-200">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Curva de retorno mensual (%)</div>
-        <div className="mt-3 text-xs text-slate-500">Aún no hay suficientes cierres para dibujar la curva.</div>
-      </Card>
-    );
-  }
-
-  const width = 640;
-  const height = 160;
-  const padding = { top: 12, right: 14, bottom: 22, left: 14 };
-  const minRaw = Math.min(...data.map((point) => point.pct));
-  const maxRaw = Math.max(...data.map((point) => point.pct));
-  const range = Math.max(0.5, maxRaw - minRaw);
-  const min = minRaw - range * 0.12;
-  const max = maxRaw + range * 0.12;
-  const innerWidth = width - padding.left - padding.right;
-  const innerHeight = height - padding.top - padding.bottom;
-  const average = sumNumbers(data.map((point) => point.pct)) / data.length;
-
-  const pointX = (index: number) =>
-    padding.left + (data.length === 1 ? innerWidth / 2 : (innerWidth * index) / (data.length - 1));
-  const pointY = (value: number) => padding.top + ((max - value) / Math.max(1e-6, max - min)) * innerHeight;
-  const path = data
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${pointX(index).toFixed(2)} ${pointY(point.pct).toFixed(2)}`)
-    .join(' ');
-  const avgY = pointY(average);
-
-  return (
-    <Card className="p-3 border-slate-200">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        <LineChart size={14} />
-        Curva de retorno mensual (%)
-      </div>
-      <div className="mt-2">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full">
-          <line
-            x1={padding.left}
-            y1={avgY}
-            x2={width - padding.right}
-            y2={avgY}
-            stroke="#64748b"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-          />
-          <path d={path} fill="none" stroke="#0f766e" strokeWidth="2" />
-          {data.map((point, index) => {
-            const x = pointX(index);
-            const y = pointY(point.pct);
-            const showLabel = index % 6 === 0 || index === data.length - 1;
-            return (
-              <g key={point.monthKey}>
-                <circle cx={x} cy={y} r="3" fill={point.pct >= 0 ? '#059669' : '#dc2626'} />
-                {showLabel && (
-                  <text x={x} y={height - 6} textAnchor="middle" fontSize="9" fill="#64748b">
-                    {xLabelFromMonthKey(point.monthKey)}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="mt-1 text-[11px] text-slate-500">
-        Línea punteada: promedio {average.toFixed(2).replace('.', ',')}%
-      </div>
-    </Card>
-  );
-};
-
-const LAB_WINDOW_OPTIONS: Array<{ key: WealthLabWindow; label: string }> = [
-  { key: 'since_start', label: 'Desde inicio' },
-  { key: 'last_12m', label: 'Últ. 12M' },
-  { key: 'last_month', label: 'Últ. mes' },
-];
-
-const LAB_VARIANT: 'legacy' | 'v2' = 'v2';
-
-const LabHeaderCard: React.FC<{
-  periodLabel: string;
-  monthKey: string | null;
-  headlineMetrics: ReturnType<typeof selectWealthLabPeriod>['headlineMetrics'];
-  includeRiskCapitalInTotals: boolean;
-  onToggleRiskMode: () => void;
-  selectedWindow: WealthLabWindow;
-  onSelectWindow: (window: WealthLabWindow) => void;
-  fxCoverageNote: string | null;
-}> = ({
-  periodLabel,
-  monthKey,
-  headlineMetrics,
-  includeRiskCapitalInTotals,
-  onToggleRiskMode,
-  selectedWindow,
-  onSelectWindow,
-  fxCoverageNote,
-}) => {
-  const realMonthlyEquivalent = headlineMetrics?.real.monthlyEquivalentClp ?? null;
-  const sinFxMonthlyEquivalent = headlineMetrics?.resultadoSinFx.monthlyEquivalentClp ?? null;
-  const fxMonthlyEquivalent = headlineMetrics?.aporteFx.monthlyEquivalentClp ?? null;
-  const headlineMonths = headlineMetrics?.real.months ?? 0;
-  const hasComposition =
-    realMonthlyEquivalent !== null &&
-    sinFxMonthlyEquivalent !== null &&
-    fxMonthlyEquivalent !== null;
-  const compositionScale = hasComposition
-    ? Math.max(
-        Math.abs(realMonthlyEquivalent),
-        Math.abs(sinFxMonthlyEquivalent),
-        Math.abs(fxMonthlyEquivalent),
-        1,
-      )
-    : 1;
-  const toCompositionPct = (value: number) => 50 + (value / compositionScale) * 45;
-  const sinFxStart = hasComposition ? toCompositionPct(0) : 50;
-  const sinFxEnd = hasComposition && sinFxMonthlyEquivalent !== null ? toCompositionPct(sinFxMonthlyEquivalent) : 50;
-  const fxStart = sinFxEnd;
-  const fxEnd = hasComposition && realMonthlyEquivalent !== null ? toCompositionPct(realMonthlyEquivalent) : 50;
-
-  const cards = [
-    {
-      key: 'real',
-      label: 'Resultado del período prom. mensual',
-      value: realMonthlyEquivalent,
-      total: headlineMetrics?.real.totalClp ?? null,
-      tone: (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300',
-    },
-    {
-      key: 'sinfx',
-      label: 'Resultado sin FX prom. mensual',
-      value: sinFxMonthlyEquivalent,
-      total: headlineMetrics?.resultadoSinFx.totalClp ?? null,
-      tone: (sinFxMonthlyEquivalent || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300',
-    },
-    {
-      key: 'fx',
-      label: 'Efecto FX prom. mensual',
-      value: fxMonthlyEquivalent,
-      total: headlineMetrics?.aporteFx.totalClp ?? null,
-      tone: (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300',
-    },
-  ];
-
-  return (
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <div className="text-sm text-slate-300">
-              {monthKey ? `Lectura exploratoria de ${monthLabel(monthKey)}` : 'Lectura exploratoria del período seleccionado'}
-            </div>
-            {includeRiskCapitalInTotals && (
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                +CapRiesgo
-              </span>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onToggleRiskMode}
-          className={cn(
-            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
-            includeRiskCapitalInTotals
-              ? 'border-amber-300 bg-amber-50 text-amber-600'
-              : 'border-white/20 bg-white/5 text-slate-300',
-          )}
-          title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-          aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
-        >
-          <Zap size={16} />
-        </button>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {LAB_WINDOW_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => onSelectWindow(option.key)}
-            className={cn(
-              'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
-              selectedWindow === option.key
-                ? 'border-white/20 bg-white/12 text-white'
-                : 'border-white/10 bg-transparent text-slate-300',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        {cards.map((card) => (
-          <div key={card.key} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{card.label}</div>
-            <div className={cn('mt-1 text-xl font-semibold', card.tone)}>
-              {card.value !== null ? formatFreedomCompactClp(card.value) : '—'}
-            </div>
-            <div className="mt-1 text-[10px] text-slate-400">
-              {headlineMonths > 1 ? `${periodLabel} · ${headlineMonths} meses comparables` : periodLabel}
-            </div>
-            <div className="mt-1 text-[10px] text-slate-400">
-              {card.total !== null ? `Total período: ${formatFreedomCompactClp(card.total)}` : 'Total período: —'}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {fxCoverageNote && <div className="mt-2 text-[11px] text-slate-300/80">{fxCoverageNote}</div>}
-
-      {hasComposition && (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del promedio mensual</div>
-          <div className="mt-1 text-[11px] text-slate-300/80">Resultado del período = Resultado sin FX + Efecto FX</div>
-          <div className="relative mt-3 h-8 rounded-full bg-white/5">
-            <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
-            <div
-              className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-emerald-400/90"
-              style={{
-                left: `${Math.min(sinFxStart, sinFxEnd)}%`,
-                width: `${Math.max(0, Math.abs(sinFxEnd - sinFxStart))}%`,
-              }}
-            />
-            <div
-              className={cn(
-                'absolute top-1/2 h-3 -translate-y-1/2 rounded-full transition-all',
-                (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90',
-              )}
-              style={{
-                left: `${Math.min(fxStart, fxEnd)}%`,
-                width: `${Math.max(0, Math.abs(fxEnd - fxStart))}%`,
-              }}
-            />
-            <div
-              className={cn(
-                'absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full border',
-                (realMonthlyEquivalent || 0) >= 0 ? 'border-white/80 bg-white' : 'border-rose-200 bg-rose-300',
-              )}
-              style={{ left: `${fxEnd}%` }}
-            />
-          </div>
-          <div className="mt-2 grid gap-2 text-[11px] text-slate-300 sm:grid-cols-3">
-            <div>
-              <div className="text-slate-400">Resultado sin FX</div>
-              <div className="font-medium text-emerald-300">{formatFreedomCompactClp(sinFxMonthlyEquivalent)}</div>
-            </div>
-            <div>
-              <div className="text-slate-400">Efecto FX</div>
-              <div className={cn('font-medium', (fxMonthlyEquivalent || 0) >= 0 ? 'text-sky-300' : 'text-rose-300')}>
-                {formatFreedomCompactClp(fxMonthlyEquivalent)}
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-400">Resultado del período</div>
-              <div className={cn('font-medium', (realMonthlyEquivalent || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
-                {formatFreedomCompactClp(realMonthlyEquivalent)}
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
-            <div className="inline-flex items-center gap-2 text-slate-300">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              Resultado sin FX
-            </div>
-            <div className="inline-flex items-center gap-2 text-slate-300">
-              <span className={cn('h-2.5 w-2.5 rounded-full', (fxMonthlyEquivalent || 0) >= 0 ? 'bg-sky-400' : 'bg-rose-400')} />
-              Efecto FX
-            </div>
-            <div className="inline-flex items-center gap-2 text-slate-300">
-              <span className={cn('h-2.5 w-2.5 rounded-full', (realMonthlyEquivalent || 0) >= 0 ? 'bg-white' : 'bg-rose-300')} />
-              Resultado del período
-            </div>
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-};
-
-const LabIndicesChart: React.FC<{ points: WealthLabPoint[]; periodLabel: string }> = ({ points, periodLabel }) => {
-  if (points.length < 2) {
-    return (
-      <Card className="border-slate-200 p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
-        <div className="mt-2 text-[11px] text-slate-500">
-          {periodLabel === 'Últ. mes'
-            ? 'El corte Últ. mes muestra el último tramo comparable; se necesitan al menos dos puntos para dibujar la comparación base 100.'
-            : 'Aún no hay suficientes meses comparables con exposición USD identificable para dibujar el índice.'}
-        </div>
-      </Card>
-    );
-  }
-
-  const width = 640;
-  const height = 200;
-  const padding = { top: 14, right: 16, bottom: 28, left: 16 };
-  const values = points.flatMap((point) => [Number(point.indiceReal), Number(point.indiceSinFx)]).filter(Number.isFinite);
-  const minRaw = Math.min(...values);
-  const maxRaw = Math.max(...values);
-  const range = Math.max(1, maxRaw - minRaw);
-  const min = Math.max(0, minRaw - range * 0.15);
-  const max = maxRaw + range * 0.15;
-  const innerWidth = width - padding.left - padding.right;
-  const innerHeight = height - padding.top - padding.bottom;
-  const x = (index: number) =>
-    padding.left + (points.length === 1 ? innerWidth / 2 : (innerWidth * index) / (points.length - 1));
-  const y = (value: number) => padding.top + ((max - value) / Math.max(1e-6, max - min)) * innerHeight;
-  const realPath = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(Number(point.indiceReal)).toFixed(2)}`)
-    .join(' ');
-  const sinFxPath = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(Number(point.indiceSinFx)).toFixed(2)}`)
-    .join(' ');
-  const labelIndexes = Array.from(new Set([0, ...points.map((_, index) => index).filter((index) => index % 6 === 0), points.length - 1]));
-
-  return (
-    <Card className="border-slate-200 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{periodLabel}</div>
-      </div>
-      <div className="mt-1 text-[11px] text-slate-500">
-        Neutraliza USD/CLP mensual sobre bloques expuestos a USD. El gráfico compara índice real vs índice sin FX, ambos base 100.
-      </div>
-      <div className="mt-3">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full">
-          <line
-            x1={padding.left}
-            y1={y(100)}
-            x2={width - padding.right}
-            y2={y(100)}
-            stroke="#cbd5e1"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-          />
-          <path d={realPath} fill="none" stroke="#0f766e" strokeWidth="2.5" strokeLinecap="round" />
-          <path d={sinFxPath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" />
-          {points.map((point, index) => {
-            if (!labelIndexes.includes(index)) return null;
-            return (
-              <g key={point.monthKey}>
-                <circle cx={x(index)} cy={y(Number(point.indiceReal))} r="3" fill="#0f766e" />
-                <circle cx={x(index)} cy={y(Number(point.indiceSinFx))} r="3" fill="#2563eb" />
-                <text x={x(index)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
-                  {xLabelFromMonthKey(point.monthKey)}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-3 text-[11px]">
-        <div className="inline-flex items-center gap-2 text-slate-600">
-          <span className="h-2.5 w-2.5 rounded-full bg-teal-700" />
-          Índice real base 100
-        </div>
-        <div className="inline-flex items-center gap-2 text-slate-600">
-          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
-          Índice sin FX base 100
-        </div>
-      </div>
-    </Card>
-  );
-};
-
-const LabMetricsGrid: React.FC<{
-  period: ReturnType<typeof selectWealthLabPeriod>;
-}> = ({ period }) => {
-  const items = [
-    {
-      key: 'resultado-sin-fx-periodo',
-      label: period.key === 'last_month' ? 'Resultado sin FX mensual' : 'Resultado sin FX del período',
-      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.resultadoSinFx.valueClp ?? null : period.cumulativeMetrics?.resultadoSinFx.valueClp ?? null,
-      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.resultadoSinFx.months ?? 0,
-    },
-    {
-      key: 'real-periodo',
-      label: period.key === 'last_month' ? 'Resultado del período mensual' : 'Resultado del período',
-      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.real.valueClp ?? null : period.cumulativeMetrics?.real.valueClp ?? null,
-      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.real.months ?? 0,
-    },
-    {
-      key: 'aporte-fx-periodo',
-      label: period.key === 'last_month' ? 'Efecto FX mensual' : 'Efecto FX del período',
-      valueClp: period.key === 'last_month' ? period.monthlyMetrics?.aporteFx.valueClp ?? null : period.cumulativeMetrics?.aporteFx.valueClp ?? null,
-      months: period.key === 'last_month' ? 1 : period.cumulativeMetrics?.aporteFx.months ?? 0,
-    },
-  ].filter((item) => item.valueClp !== null || item.months > 0);
-
-  if (!items.length) return null;
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      {items.map((item) => (
-        <Card key={item.key} className="border-slate-200 p-3">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{item.label}</div>
-          <div className={cn('mt-1 text-lg font-semibold', (item.valueClp || 0) >= 0 ? 'text-slate-900' : 'text-rose-700')}>
-            {item.valueClp !== null ? formatFreedomCompactClp(item.valueClp) : '—'}
-          </div>
-          <div className="mt-1 text-[10px] text-slate-500">
-            {item.months > 1 ? `${item.months} meses comparables` : 'Último período comparable'}
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-};
-
-const LabV2CompositionBar: React.FC<{
-  totalClp: number;
-  resultadoSinFxClp: number;
-  efectoFxClp: number;
-}> = ({ totalClp, resultadoSinFxClp, efectoFxClp }) => {
-  const scale = Math.max(Math.abs(totalClp), Math.abs(resultadoSinFxClp), Math.abs(efectoFxClp), 1);
-  const toPct = (value: number) => 50 + (value / scale) * 45;
-  const zero = toPct(0);
-  const sinFxEnd = toPct(resultadoSinFxClp);
-  const totalEnd = toPct(totalClp);
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Composición del período</div>
-      <div className="mt-1 text-[11px] text-slate-300/80">Resultado del período = Resultado sin FX + Efecto FX</div>
-      <div className="relative mt-3 h-8 rounded-full bg-white/5">
-        <div className="absolute inset-y-1/2 left-1/2 w-px -translate-y-1/2 bg-white/15" />
-        <div
-          className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full bg-emerald-400/90"
-          style={{
-            left: `${Math.min(zero, sinFxEnd)}%`,
-            width: `${Math.max(0, Math.abs(sinFxEnd - zero))}%`,
-          }}
-        />
-        <div
-          className={cn(
-            'absolute top-1/2 h-3 -translate-y-1/2 rounded-full',
-            efectoFxClp >= 0 ? 'bg-sky-400/90' : 'bg-rose-400/90',
-          )}
-          style={{
-            left: `${Math.min(sinFxEnd, totalEnd)}%`,
-            width: `${Math.max(0, Math.abs(totalEnd - sinFxEnd))}%`,
-          }}
-        />
-        <div
-          className={cn(
-            'absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full border',
-            totalClp >= 0 ? 'border-white/80 bg-white' : 'border-rose-200 bg-rose-300',
-          )}
-          style={{ left: `${totalEnd}%` }}
-        />
-      </div>
-      <div className="mt-3 grid gap-2 text-[11px] text-slate-300 sm:grid-cols-3">
-        <div>
-          <div className="text-slate-400">Resultado sin FX</div>
-          <div className="font-medium text-emerald-300">{formatFreedomCompactClp(resultadoSinFxClp)}</div>
-        </div>
-        <div>
-          <div className="text-slate-400">Efecto FX</div>
-          <div className={cn('font-medium', efectoFxClp >= 0 ? 'text-sky-300' : 'text-rose-300')}>
-            {formatFreedomCompactClp(efectoFxClp)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-400">Resultado del período</div>
-          <div className={cn('font-medium', totalClp >= 0 ? 'text-white' : 'text-rose-300')}>
-            {formatFreedomCompactClp(totalClp)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LabTabContentV2: React.FC<{
-  model: ReturnType<typeof buildWealthLabModel>;
-  includeRiskCapitalInTotals: boolean;
-  onToggleRiskMode: () => void;
-}> = ({ model, includeRiskCapitalInTotals, onToggleRiskMode }) => {
-  const [selectedWindow, setSelectedWindow] = useState<WealthLabWindow>('since_start');
-  const selectedPeriod = useMemo(() => selectWealthLabPeriod(model, selectedWindow), [model, selectedWindow]);
-  const totalValue = selectedPeriod.headlineMetrics?.real.totalClp ?? null;
-  const sinFxValue = selectedPeriod.headlineMetrics?.resultadoSinFx.totalClp ?? null;
-  const fxValue = selectedPeriod.headlineMetrics?.aporteFx.totalClp ?? null;
-  const comparableMonths = selectedPeriod.headlineMetrics?.real.months ?? 0;
-  const coverageNote =
-    selectedPeriod.realMonths === 0
-      ? 'Aún no hay cierres confirmados para este corte.'
-      : selectedPeriod.fxComparableMonths === 0
-        ? 'Este corte todavía no tiene base CLP/USD suficiente para separar el efecto cambiario.'
-        : selectedPeriod.fxComparableMonths < selectedPeriod.realMonths
-          ? `Usa ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses con base FX suficiente.`
-          : 'Separación simple entre movimiento sin FX y efecto cambiario.';
-
-  return (
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#0b1728] via-[#10203a] to-[#12284a] p-4 text-slate-100">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Lab</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <div className="text-sm text-slate-300">
-              {selectedPeriod.currentPeriodLabel
-                ? `Lectura FX de ${monthLabel(selectedPeriod.currentPeriodLabel)}`
-                : 'Lectura simple del período seleccionado'}
-            </div>
-            {includeRiskCapitalInTotals && (
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                +CapRiesgo
-              </span>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onToggleRiskMode}
-          className={cn(
-            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
-            includeRiskCapitalInTotals
-              ? 'border-amber-300 bg-amber-50 text-amber-600'
-              : 'border-white/20 bg-white/5 text-slate-300',
-          )}
-          title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-          aria-label={includeRiskCapitalInTotals ? 'Activar vista sin capital de riesgo' : 'Activar vista con capital de riesgo'}
-        >
-          <Zap size={16} />
-        </button>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {LAB_WINDOW_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => setSelectedWindow(option.key)}
-            className={cn(
-              'rounded-full border px-3 py-1 text-[11px] font-semibold transition',
-              selectedWindow === option.key
-                ? 'border-white/20 bg-white/12 text-white'
-                : 'border-white/10 bg-transparent text-slate-300',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Resultado del período</div>
-        <div className={cn('mt-1 text-3xl font-semibold', (totalValue || 0) >= 0 ? 'text-white' : 'text-rose-300')}>
-          {totalValue !== null ? formatFreedomCompactClp(totalValue) : '—'}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-300/80">
-          <span>{selectedPeriod.label}</span>
-          {comparableMonths > 0 && <span>· {comparableMonths} meses comparables</span>}
-        </div>
-      </div>
-
-      {totalValue !== null && sinFxValue !== null && fxValue !== null ? (
-        <div className="mt-3">
-          <LabV2CompositionBar
-            totalClp={totalValue}
-            resultadoSinFxClp={sinFxValue}
-            efectoFxClp={fxValue}
-          />
-        </div>
-      ) : (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300/80">
-          {coverageNote}
-        </div>
-      )}
-
-      {coverageNote && totalValue !== null && sinFxValue !== null && fxValue !== null && (
-        <div className="mt-3 text-[12px] text-slate-300/80">{coverageNote}</div>
-      )}
-    </Card>
-  );
-};
-
-const LabTabContent: React.FC<{
-  model: ReturnType<typeof buildWealthLabModel>;
-  includeRiskCapitalInTotals: boolean;
-  onToggleRiskMode: () => void;
-}> = ({ model, includeRiskCapitalInTotals, onToggleRiskMode }) => {
-  const [selectedWindow, setSelectedWindow] = useState<WealthLabWindow>('since_start');
-  const selectedPeriod = useMemo(() => selectWealthLabPeriod(model, selectedWindow), [model, selectedWindow]);
-  const fxCoverageNote =
-    selectedPeriod.realMonths === 0
-      ? null
-      : selectedPeriod.fxComparableMonths === 0
-        ? 'Este corte todavía no tiene base CLP/USD suficiente para calcular el ajuste sin FX.'
-        : selectedPeriod.fxComparableMonths < selectedPeriod.realMonths
-          ? `Este corte usa ${selectedPeriod.fxComparableMonths} de ${selectedPeriod.realMonths} meses con base CLP/USD suficiente; el ajuste sin FX aún es parcial.`
-          : null;
-
-  return (
-    <div className="space-y-3">
-      <LabHeaderCard
-        periodLabel={selectedPeriod.label}
-        monthKey={selectedPeriod.currentPeriodLabel}
-        headlineMetrics={selectedPeriod.headlineMetrics}
-        includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-        onToggleRiskMode={onToggleRiskMode}
-        selectedWindow={selectedWindow}
-        onSelectWindow={setSelectedWindow}
-        fxCoverageNote={fxCoverageNote}
-      />
-
-      <Card className="border-slate-200 p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retorno sin efecto cambiario</div>
-        <div className="mt-2 space-y-1 text-[11px] text-slate-500">
-          {model.notes.map((note) => (
-            <div key={note}>• {note}</div>
-          ))}
-        </div>
-      </Card>
-
-      <LabIndicesChart points={selectedPeriod.chartPoints} periodLabel={selectedPeriod.label} />
-      <LabMetricsGrid period={selectedPeriod} />
-    </div>
-  );
-};
-
-const FreedomStatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const config =
-    status === 'ok'
-      ? { label: 'Listo', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
-      : status === 'never_depletes'
-        ? { label: 'No se agota', className: 'border-sky-200 bg-sky-50 text-sky-700' }
-        : status === 'missing_patrimony'
-          ? { label: 'Sin patrimonio', className: 'border-amber-200 bg-amber-50 text-amber-700' }
-          : { label: 'Revisar', className: 'border-rose-200 bg-rose-50 text-rose-700' };
-  return (
-    <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', config.className)}>
-      {config.label}
-    </span>
-  );
-};
-
-const FreedomParametersCard: React.FC<{
-  sourceMonthKey: string | null;
-  patrimonioBaseClp: number | null;
-  draft: FreedomControlDraft;
-  onChange: (key: keyof FreedomControlDraft, value: string) => void;
-  includeRiskCapitalInTotals: boolean;
-  isOpen: boolean;
-  onToggle: () => void;
-  onToggleRiskMode: () => void;
-}> = ({
-  sourceMonthKey,
-  patrimonioBaseClp,
-  draft,
-  onChange,
-  includeRiskCapitalInTotals,
-  isOpen,
-  onToggle,
-  onToggleRiskMode,
-}) => (
-  <Card className="border-slate-200 p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Simulación</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <div className="text-sm font-semibold text-slate-900">Simulación de Libertad Financiera</div>
-          {includeRiskCapitalInTotals && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-              +CapRiesgo
-            </span>
-          )}
-        </div>
-        <div className="mt-1 text-[11px] text-slate-500">
-          {sourceMonthKey ? `Tomado automáticamente desde ${monthLabel(sourceMonthKey)}.` : 'Sin cierre base confirmado todavía.'}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={onToggleRiskMode}
-          className={cn(
-            'inline-flex h-10 w-10 items-center justify-center rounded-full border transition',
-            includeRiskCapitalInTotals
-              ? 'border-amber-300 bg-amber-50 text-amber-600'
-              : 'border-slate-300 bg-white text-slate-500',
-          )}
-          title={includeRiskCapitalInTotals ? 'Vista con capital de riesgo' : 'Vista de patrimonio puro'}
-          aria-label="Alternar capital de riesgo"
-        >
-          <Zap size={16} />
-        </button>
-        <div className="rounded-xl bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
-          {sourceMonthKey ? monthLabel(sourceMonthKey) : 'Sin cierre'}
-        </div>
-        <button
-          type="button"
-          onClick={onToggle}
-          className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-600"
-          aria-expanded={isOpen}
-          aria-label={isOpen ? 'Ocultar parámetros' : 'Mostrar parámetros'}
-        >
-          <span>{isOpen ? 'Ocultar' : 'Editar'}</span>
-          <ChevronDown className={cn('h-4 w-4 text-slate-500 transition-transform', isOpen ? 'rotate-180' : '')} />
-        </button>
-      </div>
-    </div>
-
-    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Patrimonio base</div>
-      <div className="mt-0.5 flex flex-wrap items-center gap-2">
-        <div className="text-base font-semibold text-slate-900">
-          {patrimonioBaseClp && patrimonioBaseClp > 0 ? formatCurrency(patrimonioBaseClp, 'CLP') : 'Sin datos de patrimonio'}
-        </div>
-      </div>
-      <div className="mt-0.5 text-[11px] text-slate-500">Dato de escenario, no editable.</div>
-    </div>
-
-    {!isOpen && (
-      <button
-        type="button"
-        onClick={onToggle}
-        className="mt-3 flex w-full items-center justify-between rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-left text-[11px] text-slate-600"
-      >
-              <span>Ajustar tasa, horizonte y retiro mensual</span>
-        <ChevronDown className="h-4 w-4 text-slate-500" />
-      </button>
-    )}
-
-    {isOpen && (
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 md:col-span-2">
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className="grid gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Tasa anual supuesta</span>
-              <div className="relative">
-                <Input
-                  value={draft.annualRatePct}
-                  onChange={(event) => onChange('annualRatePct', formatDraftPercent(event.target.value))}
-                  inputMode="decimal"
-                  placeholder="5"
-                  className="pr-8"
-                />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">%</span>
-              </div>
-              <span className="text-[11px] text-slate-500">Rango pensado para UI: 1% a 15%. Motor usa tasa mensual compuesta.</span>
-            </label>
-
-            <label className="grid gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Horizonte años</span>
-              <Input
-                value={draft.horizonYears}
-                onChange={(event) => onChange('horizonYears', formatDraftInteger(event.target.value))}
-                inputMode="numeric"
-                placeholder="40"
-              />
-              <span className="text-[11px] text-slate-500">Referencia para el cálculo de retiro mensual máximo.</span>
-            </label>
-
-            <label className="grid gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Retiro mensual supuesto</span>
-              <div className="relative">
-                <Input
-                  value={draft.monthlySpendClp}
-                  onChange={(event) => onChange('monthlySpendClp', formatDraftMoney(event.target.value))}
-                  inputMode="numeric"
-                  placeholder="6.000.000"
-                  className="pl-7"
-                />
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-500">$</span>
-              </div>
-              <span className="text-[11px] text-slate-500">Usado para estimar cuántos años duraría el patrimonio.</span>
-            </label>
-          </div>
-        </div>
-      </div>
-    )}
-
-    <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-slate-700">
-      <span className="font-medium text-slate-900">Simulación simple determinista:</span>{' '}
-      usa una tasa constante y no incorpora volatilidad, crisis, secuencia de retornos ni simulación Monte Carlo.
-      Úsalo como referencia rápida, no como proyección exhaustiva.
-    </div>
-  </Card>
-);
-
-const monthKeyToYearLabel = (monthKey: string | null) => {
-  if (!monthKey) return '—';
-  const [year, month] = monthKey.split('-').map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return '—';
-  return `${monthLabel(monthKey)} (${year})`;
-};
-
-const FreedomDrawdownChart: React.FC<{
-  points: { monthKey: string; balanceEndClp: number }[];
-}> = ({ points }) => {
-  if (points.length < 2) {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-4 text-[11px] text-slate-500">
-        La curva aparecerá cuando haya un cálculo válido.
-      </div>
-    );
-  }
-
-  const width = 640;
-  const height = 160;
-  const padding = { top: 14, right: 14, bottom: 26, left: 14 };
-  const values = points.map((point) => point.balanceEndClp);
-  const max = Math.max(...values, 1);
-  const min = 0;
-  const innerWidth = width - padding.left - padding.right;
-  const innerHeight = height - padding.top - padding.bottom;
-  const x = (index: number) =>
-    padding.left + (points.length === 1 ? innerWidth / 2 : (innerWidth * index) / (points.length - 1));
-  const y = (value: number) => padding.top + ((max - value) / Math.max(1e-6, max - min)) * innerHeight;
-  const linePath = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(point.balanceEndClp).toFixed(2)}`)
-    .join(' ');
-  const areaPath = `${linePath} L ${x(points.length - 1).toFixed(2)} ${(height - padding.bottom).toFixed(2)} L ${x(0).toFixed(2)} ${(height - padding.bottom).toFixed(2)} Z`;
-  const labelIndexes = Array.from(new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]));
-  const startPoint = points[0];
-  const midPoint = points[Math.floor((points.length - 1) / 2)];
-  const endPoint = points[points.length - 1];
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full">
-        <defs>
-          <linearGradient id="freedomArea" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.24" />
-            <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
-        <path d={areaPath} fill="url(#freedomArea)" />
-        <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" />
-        {points.map((point, index) => {
-          if (!labelIndexes.includes(index)) return null;
-          return (
-            <g key={`${point.monthKey}-${index}`}>
-              <circle cx={x(index)} cy={y(point.balanceEndClp)} r="3.5" fill="#1d4ed8" />
-              <text x={x(index)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
-                {xLabelFromMonthKey(point.monthKey)}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-      <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
-        <div className="rounded-xl bg-white px-2 py-2">
-          <div className="uppercase tracking-wide text-slate-400">Inicio</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(startPoint.balanceEndClp)}</div>
-        </div>
-        <div className="rounded-xl bg-white px-2 py-2">
-          <div className="uppercase tracking-wide text-slate-400">Mitad</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(midPoint.balanceEndClp)}</div>
-        </div>
-        <div className="rounded-xl bg-white px-2 py-2">
-          <div className="uppercase tracking-wide text-slate-400">Final</div>
-          <div className="mt-0.5 font-semibold text-slate-700">{formatFreedomCompactClp(endPoint.balanceEndClp)}</div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const FreedomWithdrawalBlock: React.FC<{
-  plan: ReturnType<typeof buildMonthlyWithdrawalPlan>;
-  includeRiskCapitalInTotals: boolean;
-}> = ({ plan, includeRiskCapitalInTotals }) => (
-  <Card className="border-slate-200 p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">¿Cuánto puedo retirar?</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-          <span>Consumiendo capital + rendimientos hasta llegar a 0.</span>
-          {includeRiskCapitalInTotals && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-              +CapRiesgo
-            </span>
-          )}
-        </div>
-      </div>
-      <FreedomStatusBadge status={plan.status} />
-    </div>
-
-    <div className="mt-3 flex flex-wrap gap-2">
-      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
-        {plan.horizonYears} años
-      </span>
-      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
-        {plan.annualRatePct.toFixed(1).replace('.', ',')}% anual
-      </span>
-    </div>
-
-    <div className="mt-4">
-      <div className="text-[11px] uppercase tracking-wide text-slate-500">Retiro mensual estimado</div>
-      <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
-        {plan.monthlyWithdrawalClp !== null ? formatFreedomCompactClp(plan.monthlyWithdrawalClp) : '—'}
-      </div>
-      <div className="mt-1 text-[12px] text-slate-600">
-        {plan.status === 'ok'
-          ? `mensual durante ${plan.horizonYears} años con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
-          : plan.message || 'Completa parámetros válidos para calcular el retiro mensual.'}
-      </div>
-      <div className="mt-1 text-[11px] text-slate-500">
-        {plan.totalWithdrawnClp !== null
-          ? `Total retirado en el período: ${formatFreedomCompactClp(plan.totalWithdrawnClp)}`
-          : 'El total retirado aparecerá cuando el cálculo sea válido.'}
-      </div>
-    </div>
-
-    <div className="mt-4">
-      <FreedomDrawdownChart points={plan.curve} />
-    </div>
-  </Card>
-);
-
-const FreedomCoverageBlock: React.FC<{
-  plan: ReturnType<typeof buildCoveragePlan>;
-  includeRiskCapitalInTotals: boolean;
-}> = ({ plan, includeRiskCapitalInTotals }) => (
-  <Card className="border-slate-200 p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cobertura estimada del patrimonio</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-          <span>Cuánto duraría bajo el mismo supuesto determinista.</span>
-          {includeRiskCapitalInTotals && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-              +CapRiesgo
-            </span>
-          )}
-        </div>
-      </div>
-      <FreedomStatusBadge status={plan.status} />
-    </div>
-
-    <div className="mt-3 flex flex-wrap gap-2">
-      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
-        {plan.annualRatePct.toFixed(1).replace('.', ',')}% anual
-      </span>
-      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-700">
-        {formatFreedomCompactClp(plan.monthlySpendClp)}/mes
-      </span>
-    </div>
-
-    <div className="mt-4">
-      <div className="text-[11px] uppercase tracking-wide text-slate-500">Años de cobertura</div>
-      <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
-        {plan.status === 'never_depletes'
-          ? 'No se agota'
-          : plan.yearsCoverage !== null
-            ? `${plan.yearsCoverage.toFixed(1).replace('.', ',')} años`
-            : '—'}
-      </div>
-      <div className="mt-1 text-[12px] text-slate-600">
-        {plan.status === 'never_depletes'
-          ? 'Con este escenario simple, el patrimonio no se agota.'
-          : plan.status === 'ok'
-            ? `retirando ${formatFreedomCompactClp(plan.monthlySpendClp)} mensual con tasa supuesta de ${plan.annualRatePct.toFixed(1).replace('.', ',')}% anual`
-            : plan.message || 'Completa parámetros válidos para estimar la cobertura.'}
-      </div>
-      <div className="mt-1 text-[11px] text-slate-500">
-        {plan.status === 'ok'
-          ? `Año calendario aproximado: ${monthKeyToYearLabel(plan.approximateEndMonthKey)}`
-          : plan.status === 'never_depletes'
-            ? `Sin año de agotamiento estimado desde el cierre base ${monthKeyToYearLabel(plan.sourceMonthKey)}`
-            : 'El año calendario aproximado aparecerá cuando el cálculo sea válido.'}
-      </div>
-    </div>
-
-    <div className="mt-4">
-      <FreedomDrawdownChart points={plan.curve} />
-    </div>
-  </Card>
-);
 
 export const AnalysisAurum: React.FC = () => {
   const [tab, setTab] = useState<AnalysisTab>('returns');
@@ -1816,6 +553,7 @@ export const AnalysisAurum: React.FC = () => {
     const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
     return row?.pct ?? null;
   }, [monthlyRowsAsc]);
+
   const wealthLabModel = useMemo(
     () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
     [closures, includeRiskCapitalInTotals],
@@ -1872,12 +610,11 @@ export const AnalysisAurum: React.FC = () => {
               key={item}
               type="button"
               onClick={() => setCurrency(item)}
-              className={cn(
-                'rounded-md border px-2.5 py-1 text-[11px] font-semibold transition',
+              className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
                 currency === item
                   ? 'border-slate-800 bg-slate-800 text-white'
-                  : 'border-slate-300 bg-white text-slate-600',
-              )}
+                  : 'border-slate-300 bg-white text-slate-600'
+              }`}
             >
               {item}
             </button>
@@ -1886,125 +623,50 @@ export const AnalysisAurum: React.FC = () => {
       </Card>
 
       {tab === 'lab' ? (
-        LAB_VARIANT === 'v2' ? (
-          <LabTabContentV2
-            model={wealthLabModel}
-            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-          />
-        ) : (
-          <LabTabContent
-            model={wealthLabModel}
-            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-          />
-        )
+        <LabTab
+          model={wealthLabModel}
+          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+        />
       ) : tab === 'freedom' ? (
-        <>
-          <FreedomParametersCard
-            sourceMonthKey={financialFreedomBase.sourceMonthKey}
-            patrimonioBaseClp={financialFreedomBase.patrimonioBaseClp}
-            draft={freedomDraft}
-            onChange={(key, value) => setFreedomDraft((prev) => ({ ...prev, [key]: value }))}
-            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            isOpen={freedomParametersOpen}
-            onToggle={() => setFreedomParametersOpen((prev) => !prev)}
-            onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-          />
-
-          <div className="grid gap-3 lg:grid-cols-2">
-            <FreedomWithdrawalBlock
-              plan={financialFreedomWithdrawalPlan}
-              includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            />
-            <FreedomCoverageBlock
-              plan={financialFreedomCoveragePlan}
-              includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            />
-          </div>
-        </>
+        <FreedomTab
+          sourceMonthKey={financialFreedomBase.sourceMonthKey}
+          patrimonioBaseClp={financialFreedomBase.patrimonioBaseClp}
+          draft={freedomDraft}
+          onChange={(key, value) => {
+            if (key === 'annualRatePct') {
+              setFreedomDraft((prev) => ({ ...prev, annualRatePct: formatDraftPercent(value) }));
+              return;
+            }
+            if (key === 'horizonYears') {
+              setFreedomDraft((prev) => ({ ...prev, horizonYears: formatDraftInteger(value) }));
+              return;
+            }
+            setFreedomDraft((prev) => ({ ...prev, monthlySpendClp: formatDraftMoney(value) }));
+          }}
+          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+          isOpen={freedomParametersOpen}
+          onToggleParameters={() => setFreedomParametersOpen((prev) => !prev)}
+          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+          withdrawalPlan={financialFreedomWithdrawalPlan}
+          coveragePlan={financialFreedomCoveragePlan}
+        />
       ) : (
-        <>
-          <ReturnRealHero
-            sinceStart={heroSinceStart}
-            last12={heroLast12}
-            lastMonth={heroLastMonth}
-            lastMonthPctMonthly={heroLastMonthPctMonthly}
-            currency={currency}
-            includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-            onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
-            crpContributionInsight={crpContributionInsight}
-          />
-
-          {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
-            <Card className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              Diagnóstico previo: mes anómalo detectado en {analysisDiagnostics.anomalyRaw.monthKey} 
-              {` · Var.Pat ${analysisDiagnostics.anomalyRaw.varPatrimonioClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.varPatrimonioClp, 'CLP')}`}
-              {` · Gastos ${analysisDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
-              {` · Ret.Econ. ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
-              {` · % ${formatPct(analysisDiagnostics.anomalyRaw.pct)}`}
-            </Card>
-          )}
-
-          <Card className="border-slate-200 p-3">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <CalendarDays size={14} />
-              Historial completo
-            </div>
-            <div className="mt-2 max-h-[55vh] overflow-y-auto overflow-x-auto">
-              <table className="w-full min-w-[600px] text-xs">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="text-left text-slate-500">
-                    <th className="py-1 pr-2">Mes</th>
-                    <th className="py-1 pr-2 text-right">%</th>
-                    <th className="py-1 pr-2 text-right">Ret.Econ.</th>
-                    <th className="py-1 pr-2 text-right">Var.Pat</th>
-                    <th className="py-1 text-right">Gastos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyRowsDesc.map((row) => {
-                    const varDisplay =
-                      row.varPatrimonioClp === null ? null : convertFromClp(row.varPatrimonioClp, currency, row.fx);
-                    const gastosDisplay =
-                      row.gastosClp === null ? null : convertFromClp(row.gastosClp, currency, row.fx);
-                    const retornoDisplay =
-                      row.retornoRealClp === null ? null : convertFromClp(row.retornoRealClp, currency, row.fx);
-                    const positive = (retornoDisplay || 0) >= 0;
-                    return (
-                      <tr key={row.monthKey} className="border-t border-slate-100">
-                        <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabel(row.monthKey)}</td>
-                        <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                          {formatPct(row.pct)}
-                        </td>
-                        <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                          {retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency)}
-                        </td>
-                        <td className="py-1.5 pr-2 text-right text-slate-700">
-                          {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}
-                        </td>
-                        <td className="py-1.5 text-right text-slate-700">
-                          {gastosDisplay === null ? '—' : formatCurrency(gastosDisplay, currency)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!monthlyRowsDesc.length && (
-                    <tr>
-                      <td colSpan={5} className="py-3 text-center text-xs text-slate-500">
-                        Aún no hay cierres suficientes para calcular retornos.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} />
-          <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} />
-          <ReturnsChart rows={monthlyRowsAsc} />
-        </>
+        <ReturnsTab
+          heroSinceStart={heroSinceStart}
+          heroLast12={heroLast12}
+          heroLastMonth={heroLastMonth}
+          heroLastMonthPctMonthly={heroLastMonthPctMonthly}
+          currency={currency}
+          includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+          onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
+          crpContributionInsight={crpContributionInsight}
+          analysisDiagnostics={{ anomalyRaw: analysisDiagnostics.anomalyRaw }}
+          monthlyRowsAsc={monthlyRowsAsc}
+          monthlyRowsDesc={monthlyRowsDesc}
+          periodSummaries={periodSummaries}
+          yearlySummaries={yearlySummaries}
+        />
       )}
 
       {!!errorMessage && (
