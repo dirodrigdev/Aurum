@@ -482,6 +482,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
   const csvPreview = useMemo(() => previewHistoricalClosuresCsv(deferredCsvDraft), [deferredCsvDraft]);
   const csvPreviewMonthLabel =
     csvPreview.monthKeys.length === 1 ? formatMonthLabel(csvPreview.monthKeys[0]) : '';
+  const csvExistingMonthKeys = useMemo(() => {
+    const existingMonthKeys = new Set(availableClosures.map((closure) => closure.monthKey));
+    return Array.from(new Set(csvPreview.monthKeys.filter((monthKey) => existingMonthKeys.has(monthKey)))).sort();
+  }, [availableClosures, csvPreview.monthKeys]);
   const closureHasMissingFx = (closure: WealthMonthlyClosure) => {
     const fxRates = closure.fxRates;
     if (!fxRates) return true;
@@ -2096,31 +2100,42 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         open={csvConfirmOpen}
         busy={csvImporting}
         title={
-          csvImportMode === 'aggregated'
-            ? 'Confirmar importación de historial agregado'
-            : 'Confirmar importación CSV detallado'
+          csvExistingMonthKeys.length > 0
+            ? 'Confirmar reemplazo de cierres históricos'
+            : csvImportMode === 'aggregated'
+              ? 'Confirmar importación de historial agregado'
+              : 'Confirmar importación CSV detallado'
         }
+        tone={csvExistingMonthKeys.length > 0 ? 'danger' : 'default'}
         message={
-          csvImportMode === 'aggregated'
-            ? `Se importará/reemplazará ${
-                csvPreview.monthKeys.length === 1
-                  ? `el mes ${csvPreview.monthKeys[0]}`
-                  : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
-              } como cierres históricos sin detalle por instrumento. Antes de continuar, intentaré generar un respaldo.`
-            : `Se importará/reemplazará ${
-                csvPreview.monthKeys.length === 1
-                  ? `el mes ${csvPreview.monthKeys[0]}`
-                  : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
-              } según month_key. Antes de continuar, intentaré generar un respaldo.`
+          csvExistingMonthKeys.length > 0
+            ? `El archivo contiene ${csvExistingMonthKeys.length === 1 ? 'un mes ya existente' : `${csvExistingMonthKeys.length} meses ya existentes`}: ${csvExistingMonthKeys.join(', ')}. No se reemplazará ningún cierre antes de esta confirmación. Si continúas, esos cierres se reemplazarán como versión actual. Antes de continuar, intentaré generar un respaldo.`
+            : csvImportMode === 'aggregated'
+              ? `Se importará ${
+                  csvPreview.monthKeys.length === 1
+                    ? `el mes ${csvPreview.monthKeys[0]}`
+                    : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
+                } como cierres históricos sin detalle por instrumento. Antes de continuar, intentaré generar un respaldo.`
+              : `Se importará ${
+                  csvPreview.monthKeys.length === 1
+                    ? `el mes ${csvPreview.monthKeys[0]}`
+                    : `${csvPreview.monthKeys.length} meses (${csvPreview.monthKeys.join(', ')})`
+                } según month_key. Antes de continuar, intentaré generar un respaldo.`
         }
-        confirmText="Importar ahora"
+        confirmText={csvExistingMonthKeys.length > 0 ? 'Reemplazar cierres' : 'Importar ahora'}
         cancelText="Cancelar"
         onCancel={() => setCsvConfirmOpen(false)}
         onConfirm={() => {
           setCsvConfirmOpen(false);
           void runGuardedDestructiveAction({
-            backupReason: 'Import masivo de CSV histórico',
-            actionLabel: 'importar o reemplazar cierres históricos',
+            backupReason:
+              csvExistingMonthKeys.length > 0
+                ? `Reemplazo de cierres vía import CSV (${csvExistingMonthKeys.join(', ')})`
+                : 'Import masivo de CSV histórico',
+            actionLabel:
+              csvExistingMonthKeys.length > 0
+                ? `reemplazar cierres históricos (${csvExistingMonthKeys.join(', ')})`
+                : 'importar cierres históricos',
             onProceed: importCsvNow,
           });
         }}
@@ -2149,10 +2164,10 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         title="Confirmar borrado de cierre"
         message={
           selectedClosureToDelete
-            ? `Vas a borrar el cierre ${selectedClosureToDelete}. Esta acción no borra registros del mes. Antes de continuar, intentaré generar un respaldo.`
+            ? `Vas a borrar definitivamente el cierre ${selectedClosureToDelete}. Esta acción elimina esa versión histórica actual y no borra registros del mes. Antes de continuar, intentaré generar un respaldo.`
             : 'Selecciona un cierre antes de continuar.'
         }
-        confirmText="Borrar cierre"
+        confirmText="Borrar definitivamente"
         cancelText="Cancelar"
         onCancel={() => setDeleteClosureConfirmOpen(false)}
         onConfirm={() => {

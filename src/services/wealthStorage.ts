@@ -4226,7 +4226,17 @@ const importHistoricalClosuresFromCsvByMode = async (
       records: dedupedRecords.length ? dedupedRecords : undefined,
     };
 
-    if (closureByMonth.has(monthKey)) replacedMonths.push(monthKey);
+    const existingClosure = closureByMonth.get(monthKey) || null;
+    if (existingClosure) {
+      replacedMonths.push(monthKey);
+      const preservedVersions = mergeClosureVersions(
+        existingClosure.previousVersions,
+        [toClosureVersion(existingClosure, nowIso())],
+      );
+      if (preservedVersions.length) {
+        nextClosure.previousVersions = preservedVersions;
+      }
+    }
     else importedMonths.push(monthKey);
     closureByMonth.set(monthKey, nextClosure);
   });

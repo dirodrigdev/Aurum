@@ -3463,10 +3463,16 @@ export const Patrimonio: React.FC = () => {
   const [closeError, setCloseError] = useState('');
   const [closeInfo, setCloseInfo] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [closeOverwriteConfirmOpen, setCloseOverwriteConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(() =>
     deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
   );
   const [closeFxDraft, setCloseFxDraft] = useState(() => buildCloseFxDraft(loadFxRates()));
+  const [pendingCloseOverwrite, setPendingCloseOverwrite] = useState<{
+    targetMonthKey: string;
+    fxForClose: { usdClp: number; eurClp: number; ufClp: number };
+    carriedCount: number;
+  } | null>(null);
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
@@ -3487,9 +3493,16 @@ export const Patrimonio: React.FC = () => {
     loadIncludeRiskCapitalInTotals(),
   );
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
+  const suppressCloseDraftResetRef = useRef(false);
 
   useEffect(() => {
-    if (!closeConfirmOpen) setCloseMonthDraft(monthKey);
+    if (!closeConfirmOpen) {
+      if (suppressCloseDraftResetRef.current) {
+        suppressCloseDraftResetRef.current = false;
+        return;
+      }
+      setCloseMonthDraft(monthKey);
+    }
   }, [monthKey, closeConfirmOpen]);
 
   useEffect(() => {
@@ -4385,6 +4398,20 @@ export const Patrimonio: React.FC = () => {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
     }
   };
+  const finalizeMonthlyClose = (
+    targetMonthKey: string,
+    fxForClose: { usdClp: number; eurClp: number; ufClp: number },
+    carriedCount: number,
+  ) => {
+    setPendingCloseOverwrite(null);
+    setCloseOverwriteConfirmOpen(false);
+    completeMonthlyClose(targetMonthKey, fxForClose);
+    if (carriedCount) {
+      setCarryMessage(
+        `Cierre realizado con ${carriedCount} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
+      );
+    }
+  };
 
   const recordsForSection = useMemo(() => {
     if (!activeSection) return [];
@@ -4870,12 +4897,19 @@ export const Patrimonio: React.FC = () => {
       );
       return;
     }
-    completeMonthlyClose(targetMonthKey, fxForClose);
-    if (carried.length) {
-      setCarryMessage(
-        `Cierre realizado con ${carried.length} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
-      );
+    const existingClosure = closures.find((closure) => closure.monthKey === targetMonthKey) || null;
+    if (existingClosure) {
+      suppressCloseDraftResetRef.current = true;
+      setPendingCloseOverwrite({
+        targetMonthKey,
+        fxForClose,
+        carriedCount: carried.length,
+      });
+      setCloseConfirmOpen(false);
+      setCloseOverwriteConfirmOpen(true);
+      return;
     }
+    finalizeMonthlyClose(targetMonthKey, fxForClose, carried.length);
   };
 
   const runMonthlyClose = () => {
@@ -5430,6 +5464,32 @@ export const Patrimonio: React.FC = () => {
           setCloseInfo('');
         }}
         onAttemptClose={attemptMonthlyClose}
+      />
+
+      <ConfirmActionModal
+        open={closeOverwriteConfirmOpen}
+        tone="danger"
+        title="Confirmar reemplazo de cierre"
+        message={
+          pendingCloseOverwrite
+            ? `Ya existe un cierre para ${monthLabel(pendingCloseOverwrite.targetMonthKey).toLowerCase()}. Si continúas, ese cierre será reemplazado como versión actual. La versión anterior quedará guardada en historial.`
+            : ''
+        }
+        confirmText="Reemplazar cierre"
+        cancelText="Volver"
+        onConfirm={() => {
+          if (!pendingCloseOverwrite) return;
+          finalizeMonthlyClose(
+            pendingCloseOverwrite.targetMonthKey,
+            pendingCloseOverwrite.fxForClose,
+            pendingCloseOverwrite.carriedCount,
+          );
+        }}
+        onCancel={() => {
+          setCloseOverwriteConfirmOpen(false);
+          setPendingCloseOverwrite(null);
+          setCloseConfirmOpen(true);
+        }}
       />
 
       {showCurrentMonthActionBar && (
