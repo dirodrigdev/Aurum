@@ -11,23 +11,25 @@ Before analyzing deeply, reading many files, proposing code, or executing change
 
 Model / Effort Recommendation
 - Task level: [simple | medium | complex]
-- Recommended model: [GPT-5.1-Codex-Mini | GPT-5.2-Codex | GPT-5.3-Codex | GPT-5.4]
+- Recommended model: [GPT-5.4-Mini | GPT-5.2-Codex | GPT-5.3-Codex | GPT-5.4]
 - Recommended reasoning: [Bajo | Medio | Alto | Extremadamente alto]
 - Is the current model sufficient?: [Yes | No]
 - Why: [1-2 short sentences]
 - Minimal scope first: [files / modules / functional block to inspect first]
+- Historical vs Snapshot classification: [Historical | Snapshot | Unclear]
 
 ## Model selection guidance
 Use the cheapest sufficient option first.
 
-### GPT-5.1-Codex-Mini
+### GPT-5.4-Mini
 Use for:
 - locating where something is implemented
-- understanding a specific flow
+- understanding one narrow flow
+- reviewing 1 to 3 files
 - comparing a few functions or files
 - small fixes in 1 file
 - narrow UI or text adjustments
-- analysis that should stay lightweight
+- lightweight diagnosis before execution
 
 ### GPT-5.2-Codex
 Use for:
@@ -36,14 +38,16 @@ Use for:
 - work across 1 to 3 related files
 - normal implementation tasks with limited risk
 - controlled logic changes
+- bounded historical calculation fixes
 
 ### GPT-5.3-Codex
 Use for:
 - medium refactors
 - several related files
 - more delicate logic
-- tasks where 5.2 may be too weak
+- tasks where 5.2 may be insufficient
 - deeper technical review before execution
+- riskier multi-step fixes with bounded scope
 
 ### GPT-5.4
 Use for:
@@ -77,6 +81,7 @@ Use for:
 - tasks involving several dependent files
 - subtle calculation or state issues
 - validation of risky logic
+- cross-screen consistency checks
 
 ### Extremadamente alto
 Use only when truly necessary:
@@ -86,6 +91,22 @@ Use only when truly necessary:
 - cases where lower reasoning is likely to miss major risks
 
 Do not recommend Alto or Extremadamente alto unless clearly justified.
+
+## Historical vs Snapshot rule
+Before proposing a fix, classify the metric or feature:
+
+- Historical:
+  multi-period, time series, prior months, monthly comparison, return history, evolution charts, trend logic, period-by-period calculations.
+  For these cases, recalculate period by period using each month’s own state, FX, and inputs.
+
+- Snapshot:
+  current state, current balance, current allocation, current photo, single-date dashboard metrics.
+  For these cases, convert or calculate only the current state without rebuilding history.
+
+- Unclear:
+  stop and diagnose before execution.
+
+Never mix snapshot conversion logic with historical reconstruction logic.
 
 ## Credit / token efficiency rules
 - Start with the smallest useful scope.
@@ -126,7 +147,7 @@ Never skip directly to broad implementation without first stating the plan.
 - Preserve current behavior unless a behavior change is explicitly requested.
 - Prioritize functional correctness before technical cleanup.
 - For critical flows, favor minimal surgical fixes over large refactors.
-- Call out risks before making changes that may affect cross-screen calculations, monthly close flows, sync, imports, or historical editing.
+- Call out risks before making changes that may affect cross-screen calculations, monthly close flows, sync, imports, historical editing, or period reconstruction.
 
 ## Communication style
 Explain everything in simple language for a non-programmer.
@@ -146,6 +167,7 @@ In Diagnosis:
 - clearly separate confirmed findings from hypotheses
 - if not enough evidence exists yet, say so explicitly
 - do not pretend certainty when the evidence is partial
+- if Historical vs Snapshot is unclear, say so explicitly before proposing a fix
 
 ## Plan rules
 In Plan:
@@ -153,6 +175,7 @@ In Plan:
 - describe only the current functional block
 - name the files to inspect or modify
 - explain why each file is needed
+- state whether the task is Historical or Snapshot
 - if the model or reasoning should be increased before execution, say it here and stop
 
 ## Execution rules
@@ -162,6 +185,7 @@ In Execution:
 - do not silently expand scope
 - prefer the smallest safe change
 - if a safer smaller option exists, prefer it
+- preserve behavior outside the specific bug or requested improvement
 
 At the end of execution, always list:
 - files touched
@@ -176,6 +200,7 @@ In Verification:
 - distinguish between verified behavior and unverified assumptions
 - if you could not run or confirm something, state it clearly
 - propose short manual validation steps
+- explicitly mention whether the validation covered only Snapshot behavior, only Historical behavior, or both
 
 ## When asked to analyze only
 If the user asks for analysis, architecture review, or phase planning:
@@ -197,7 +222,8 @@ Current priorities for this project:
 2. Avoid regressions
 3. Clarity of calculations across screens
 4. Stability of monthly close and historical editing
-5. Incremental refactor only after core flows are stable
+5. Correct distinction between Historical logic and Snapshot logic
+6. Incremental refactor only after core flows are stable
 
 ## Red flags
 Stop and ask to split the task if:
@@ -207,6 +233,7 @@ Stop and ask to split the task if:
 - there is uncertainty about product behavior
 - more than 3 to 5 files seem necessary for a first pass
 - the recommended model or reasoning level rises materially during the task
+- Historical vs Snapshot classification becomes unclear mid-task
 
 ## Hard stop rule
 If the task looks larger, riskier, or more ambiguous than initially expected:
