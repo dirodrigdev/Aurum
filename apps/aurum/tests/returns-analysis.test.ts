@@ -6,15 +6,18 @@ import {
   buildTrajectoryCurve,
   computeMonthlyRows,
 } from '../src/services/returnsAnalysis';
+import { buildReturnSpendInsight } from '../src/components/analysis/shared';
+import { GASTAPP_TOTALS } from '../src/data/gastappTotals';
 
 const makeClosure = (
   monthKey: string,
   {
     netClp,
+    netClpWithRisk,
     usdClp = 900,
     eurClp = 1000,
     ufClp = 38000,
-  }: { netClp: number; usdClp?: number; eurClp?: number; ufClp?: number },
+  }: { netClp: number; netClpWithRisk?: number; usdClp?: number; eurClp?: number; ufClp?: number },
 ): WealthMonthlyClosure => ({
   id: monthKey,
   monthKey,
@@ -31,7 +34,7 @@ const makeClosure = (
       debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
     },
     netClp,
-    netClpWithRisk: netClp,
+    netClpWithRisk: netClpWithRisk ?? netClp,
   },
   fxRates: {
     usdClp,
@@ -52,6 +55,7 @@ describe('returns analysis helpers', () => {
         makeClosure('2026-03', { netClp: 970_000_000 }),
       ],
       false,
+      'CLP',
     );
 
     expect(rows.map((row) => row.monthKey)).toEqual(['2026-01', '2026-02', '2026-03']);
@@ -68,6 +72,7 @@ describe('returns analysis helpers', () => {
         makeClosure('2026-03', { netClp: 1_050_000_000, eurClp: 1 }),
       ],
       false,
+      'CLP',
     );
     const curve = buildTrajectoryCurve(rows);
 
@@ -88,6 +93,7 @@ describe('returns analysis helpers', () => {
         makeClosure('2026-02', { netClp: 950_000_000 }),
       ],
       false,
+      'CLP',
     );
     const curve = buildPatrimonyCurve(rows);
 
@@ -105,11 +111,91 @@ describe('returns analysis helpers', () => {
         makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1 }),
       ],
       false,
+      'CLP',
     );
-    const summary = aggregateRows('test', 'Test', rows, 'CLP', rows.find((row) => row.netClp !== null)?.netClp ?? null);
+    const summary = aggregateRows('test', 'Test', rows, rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null);
 
     expect(summary.validMonths).toBeGreaterThan(0);
     expect(summary.retornoRealAcumClp).not.toBeNull();
     expect(summary.retornoRealAvgDisplay).not.toBeNull();
+  });
+
+  it('calculates monthly pct using per-month FX for USD and EUR', () => {
+    const closures = [
+      makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000 }),
+      makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200 }),
+    ];
+    const gastosEurFeb = GASTAPP_TOTALS['2026-02'];
+    if (!gastosEurFeb) throw new Error('Missing gastapp total for 2026-02');
+    const gastosClpFeb = gastosEurFeb * 1200;
+
+    const netUsdJan = 1_000_000_000 / 1000;
+    const netUsdFeb = 1_050_000_000 / 1050;
+    const retornoUsd = netUsdFeb - netUsdJan + gastosClpFeb / 1050;
+    const pctUsd = (retornoUsd / netUsdJan) * 100;
+
+    const netEurJan = 1_000_000_000 / 1000;
+    const netEurFeb = 1_050_000_000 / 1200;
+    const retornoEur = netEurFeb - netEurJan + gastosClpFeb / 1200;
+    const pctEur = (retornoEur / netEurJan) * 100;
+
+    const rowsUsd = computeMonthlyRows(closures, false, 'USD');
+    const rowsEur = computeMonthlyRows(closures, false, 'EUR');
+    const rowUsd = rowsUsd.find((row) => row.monthKey === '2026-02');
+    const rowEur = rowsEur.find((row) => row.monthKey === '2026-02');
+
+    expect(rowUsd?.pct).toBeCloseTo(pctUsd, 6);
+    expect(rowEur?.pct).toBeCloseTo(pctEur, 6);
+    expect(rowUsd?.pct).not.toBeCloseTo(rowEur?.pct ?? 0, 6);
+  });
+
+  it('aggregates, curves, and spend insight in display currency', () => {
+    const closures = [
+      makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000 }),
+      makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200 }),
+    ];
+    const gastosEurFeb = GASTAPP_TOTALS['2026-02'];
+    if (!gastosEurFeb) throw new Error('Missing gastapp total for 2026-02');
+    const gastosClpFeb = gastosEurFeb * 1200;
+
+    const netUsdJan = 1_000_000_000 / 1000;
+    const netUsdFeb = 1_050_000_000 / 1050;
+    const retornoUsd = netUsdFeb - netUsdJan + gastosClpFeb / 1050;
+    const pctUsd = (retornoUsd / netUsdJan) * 100;
+    const annualizedUsd = (Math.pow(1 + retornoUsd / netUsdJan, 12) - 1) * 100;
+    const spendPctUsd = (gastosClpFeb / 1050 / retornoUsd) * 100;
+
+    const rowsUsd = computeMonthlyRows(closures, false, 'USD');
+    const baseNetUsd = rowsUsd.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+    const summaryUsd = aggregateRows('usd', 'USD', rowsUsd, baseNetUsd);
+    const curveUsd = buildTrajectoryCurve(rowsUsd);
+    const patrUsd = buildPatrimonyCurve(rowsUsd);
+    const spendUsd = buildReturnSpendInsight(summaryUsd);
+
+    expect(summaryUsd.pctRetorno).toBeCloseTo(annualizedUsd, 6);
+    expect(summaryUsd.spendPct).toBeCloseTo(spendPctUsd, 6);
+    expect(curveUsd.status).toBe('ok');
+    expect(curveUsd.points[1].value).toBeCloseTo(100 * (1 + pctUsd / 100), 6);
+    expect(patrUsd.points.map((point) => point.value)).toEqual([netUsdJan, netUsdFeb]);
+    expect(spendUsd.kind).toBe('pct');
+
+    const netEurJan = 1_000_000_000 / 1000;
+    const netEurFeb = 1_050_000_000 / 1200;
+    const retornoEur = netEurFeb - netEurJan + gastosClpFeb / 1200;
+    const pctEur = (retornoEur / netEurJan) * 100;
+    const annualizedEur = (Math.pow(1 + retornoEur / netEurJan, 12) - 1) * 100;
+
+    const rowsEur = computeMonthlyRows(closures, false, 'EUR');
+    const baseNetEur = rowsEur.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+    const summaryEur = aggregateRows('eur', 'EUR', rowsEur, baseNetEur);
+    const curveEur = buildTrajectoryCurve(rowsEur);
+    const patrEur = buildPatrimonyCurve(rowsEur);
+    const spendEur = buildReturnSpendInsight(summaryEur);
+
+    expect(summaryEur.pctRetorno).toBeCloseTo(annualizedEur, 6);
+    expect(curveEur.status).toBe('ok');
+    expect(curveEur.points[1].value).toBeCloseTo(100 * (1 + pctEur / 100), 6);
+    expect(patrEur.points.map((point) => point.value)).toEqual([netEurJan, netEurFeb]);
+    expect(spendEur.kind).toBe('negative-return');
   });
 });

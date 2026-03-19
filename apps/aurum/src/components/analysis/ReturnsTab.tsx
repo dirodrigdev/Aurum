@@ -10,7 +10,7 @@ import type {
   ReturnCurveMarker,
   ReturnCurveModel,
 } from './types';
-import { buildReturnSpendInsight, convertFromClp, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
+import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
@@ -464,9 +464,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           </thead>
           <tbody>
             {monthlyRowsDesc.map((row) => {
-              const varDisplay = row.varPatrimonioClp === null ? null : convertFromClp(row.varPatrimonioClp, currency, row.fx);
-              const gastosDisplay = row.gastosClp === null ? null : convertFromClp(row.gastosClp, currency, row.fx);
-              const retornoDisplay = row.retornoRealClp === null ? null : convertFromClp(row.retornoRealClp, currency, row.fx);
+              const varDisplay = row.varPatrimonioDisplay;
+              const gastosDisplay = row.gastosDisplay;
+              const retornoDisplay = row.retornoRealDisplay;
               const positive = (retornoDisplay || 0) >= 0;
               return (
                 <tr key={row.monthKey} className="border-t border-slate-100">
@@ -510,11 +510,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     />
     <TrendLineCard
       title="Evolución del patrimonio"
-      subtitle="CLP por cierre"
+      subtitle={`${currency} por cierre`}
       curve={patrimonyCurve}
       stroke="#1d4ed8"
-      currency="CLP"
-      formatter={(value) => formatCompactCurrency(value, 'CLP')}
+      currency={currency}
+      formatter={(value) => formatCompactCurrency(value, currency)}
     />
   </>
 );

@@ -82,7 +82,7 @@ export const monthKeyToYearLabel = (monthKey: string | null) => {
 const LOW_RETURN_SPEND_PCT_THRESHOLD = 300;
 
 export const buildReturnSpendInsight = (summary: AggregatedSummary | null | undefined): ReturnSpendInsight => {
-  if (!summary || summary.gastosAcumClp === null || summary.retornoRealAcumClp === null) {
+  if (!summary || summary.gastosAcumDisplay === null || summary.retornoRealAcumDisplay === null) {
     return {
       kind: 'unavailable',
       tone: 'neutral',
@@ -92,7 +92,7 @@ export const buildReturnSpendInsight = (summary: AggregatedSummary | null | unde
     };
   }
 
-  if (summary.retornoRealAcumClp <= 0) {
+  if (summary.retornoRealAcumDisplay <= 0) {
     return {
       kind: 'negative-return',
       tone: 'negative',

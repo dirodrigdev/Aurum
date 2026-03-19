@@ -82,31 +82,40 @@ export const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: W
 export const computeMonthlyRows = (
   closures: WealthMonthlyClosure[],
   includeRiskCapitalInTotals: boolean,
+  currency: WealthCurrency,
 ): MonthlyReturnRow[] => {
   const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   const calendarCurrent = currentOperationalMonthKey(closures);
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
   const rows: MonthlyReturnRow[] = [];
   let previousValidNet: number | null = null;
+  let previousValidNetDisplay: number | null = null;
 
   for (const closure of filtered) {
     const fxRaw = safeFxRaw(closure.fxRates);
     const fx = fxRaw;
     const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
     const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
+    const netDisplay = invalidNet || netClp === null ? null : convertFromClp(netClp, currency, fx);
     const prevNetClp = invalidNet ? null : previousValidNet;
+    const prevNetDisplay = invalidNet ? null : previousValidNetDisplay;
     const varPatrimonioClp =
       invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
+    const varPatrimonioDisplay =
+      invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey])
       ? Number(GASTAPP_TOTALS[closure.monthKey])
       : null;
     const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
+    const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
+    const retornoRealDisplay =
+      varPatrimonioDisplay === null || gastosDisplay === null ? null : varPatrimonioDisplay + gastosDisplay;
     const pct =
-      retornoRealClp === null || prevNetClp === null || prevNetClp === 0
+      retornoRealDisplay === null || prevNetDisplay === null || prevNetDisplay === 0
         ? null
-        : (retornoRealClp / prevNetClp) * 100;
+        : (retornoRealDisplay / prevNetDisplay) * 100;
 
     if (invalidNet) {
       console.warn('[Analysis][invalid-net]', {
@@ -116,6 +125,7 @@ export const computeMonthlyRows = (
       });
     } else {
       previousValidNet = Number(netClp);
+      previousValidNetDisplay = Number(netDisplay);
     }
 
     rows.push({
@@ -128,6 +138,11 @@ export const computeMonthlyRows = (
       varPatrimonioClp,
       gastosClp,
       retornoRealClp,
+      netDisplay,
+      prevNetDisplay,
+      varPatrimonioDisplay,
+      gastosDisplay,
+      retornoRealDisplay,
       pct,
     });
   }
@@ -139,19 +154,21 @@ export const aggregateRows = (
   key: string,
   label: string,
   rows: MonthlyReturnRow[],
-  currency: WealthCurrency,
-  baseNetClp: number | null,
+  baseNetDisplay: number | null,
 ): AggregatedSummary => {
   const validRows = rows.filter(
     (row) =>
-      row.varPatrimonioClp !== null &&
-      row.gastosClp !== null &&
-      row.retornoRealClp !== null,
+      row.varPatrimonioDisplay !== null &&
+      row.gastosDisplay !== null &&
+      row.retornoRealDisplay !== null,
   ) as Array<
     MonthlyReturnRow & {
       varPatrimonioClp: number;
       gastosClp: number;
       retornoRealClp: number;
+      varPatrimonioDisplay: number;
+      gastosDisplay: number;
+      retornoRealDisplay: number;
     }
   >;
 
@@ -159,17 +176,24 @@ export const aggregateRows = (
   const varPatrimonioAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.varPatrimonioClp)) : null;
   const gastosAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.gastosClp)) : null;
   const retornoRealAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.retornoRealClp)) : null;
+  const varPatrimonioAcumDisplay = validMonths
+    ? sumNumbers(validRows.map((row) => row.varPatrimonioDisplay))
+    : null;
+  const gastosAcumDisplay = validMonths ? sumNumbers(validRows.map((row) => row.gastosDisplay)) : null;
+  const retornoRealAcumDisplay = validMonths
+    ? sumNumbers(validRows.map((row) => row.retornoRealDisplay))
+    : null;
 
   let pctRetorno: number | null = null;
   let pctRetornoNote: string | null = null;
 
-  if (validMonths > 0 && retornoRealAcumClp !== null && baseNetClp !== null && baseNetClp > 0) {
-    const periodReturn = retornoRealAcumClp / baseNetClp;
+  if (validMonths > 0 && retornoRealAcumDisplay !== null && baseNetDisplay !== null && baseNetDisplay > 0) {
+    const periodReturn = retornoRealAcumDisplay / baseNetDisplay;
     const growthBase = 1 + periodReturn;
     if (growthBase <= 0) {
       pctRetorno = null;
       pctRetornoNote = 'período negativo';
-      console.warn('[Analysis][pct-anual-equiv-negativo]', { key, label, validMonths, periodReturn, baseNetClp });
+      console.warn('[Analysis][pct-anual-equiv-negativo]', { key, label, validMonths, periodReturn, baseNetDisplay });
     } else {
       const annualized = (Math.pow(growthBase, 12 / validMonths) - 1) * 100;
       if (annualized > 200 || annualized < -100) {
@@ -181,8 +205,8 @@ export const aggregateRows = (
           validMonths,
           annualized,
           periodReturn,
-          baseNetClp,
-          retornoRealAcumClp,
+          baseNetDisplay,
+          retornoRealAcumDisplay,
         });
       } else {
         pctRetorno = annualized;
@@ -191,21 +215,16 @@ export const aggregateRows = (
   }
 
   const spendPct =
-    retornoRealAcumClp === null || retornoRealAcumClp === 0 || gastosAcumClp === null
+    retornoRealAcumDisplay === null || retornoRealAcumDisplay === 0 || gastosAcumDisplay === null
       ? null
-      : (gastosAcumClp / retornoRealAcumClp) * 100;
+      : (gastosAcumDisplay / retornoRealAcumDisplay) * 100;
 
-  const varPatrimonioAvgDisplay = validMonths
-    ? sumNumbers(validRows.map((row) => convertFromClp(row.varPatrimonioClp, currency, row.fx))) /
-      validMonths
-    : null;
-  const gastosAvgDisplay = validMonths
-    ? sumNumbers(validRows.map((row) => convertFromClp(row.gastosClp, currency, row.fx))) / validMonths
-    : null;
-  const retornoRealAvgDisplay = validMonths
-    ? sumNumbers(validRows.map((row) => convertFromClp(row.retornoRealClp, currency, row.fx))) /
-      validMonths
-    : null;
+  const varPatrimonioAvgDisplay =
+    validMonths && varPatrimonioAcumDisplay !== null ? varPatrimonioAcumDisplay / validMonths : null;
+  const gastosAvgDisplay =
+    validMonths && gastosAcumDisplay !== null ? gastosAcumDisplay / validMonths : null;
+  const retornoRealAvgDisplay =
+    validMonths && retornoRealAcumDisplay !== null ? retornoRealAcumDisplay / validMonths : null;
 
   return {
     key,
@@ -214,6 +233,9 @@ export const aggregateRows = (
     varPatrimonioAcumClp,
     gastosAcumClp,
     retornoRealAcumClp,
+    varPatrimonioAcumDisplay,
+    gastosAcumDisplay,
+    retornoRealAcumDisplay,
     pctRetorno,
     pctRetornoNote,
     spendPct,
@@ -333,11 +355,11 @@ export const buildTrajectoryCurve = (rows: MonthlyReturnRow[]): ReturnCurveModel
 
 export const buildPatrimonyCurve = (rows: MonthlyReturnRow[]): ReturnCurveModel => {
   const points: ReturnCurvePoint[] = rows
-    .filter((row) => row.netClp !== null)
+    .filter((row) => row.netDisplay !== null)
     .map((row) => ({
       id: row.monthKey,
       monthKey: row.monthKey,
-      value: Number(row.netClp),
+      value: Number(row.netDisplay),
     }));
 
   if (points.length < 2) {

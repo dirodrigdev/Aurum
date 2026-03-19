@@ -14,7 +14,6 @@ import type {
 } from '../components/analysis/types';
 import {
   WealthCurrency,
-  WealthFxRates,
   WealthMonthlyClosure,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
@@ -39,6 +38,7 @@ import {
 import {
   buildWealthLabModel,
 } from '../services/wealthLab';
+import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -66,101 +66,6 @@ const formatDraftMoney = (value: string) => {
   const digits = String(value ?? '').replace(/[^\d]/g, '');
   if (!digits) return '';
   return Number(digits).toLocaleString('es-CL');
-};
-
-const buildCrpContributionInsight = (
-  rowsWithCrp: MonthlyReturnRow[],
-  rowsWithoutCrp: MonthlyReturnRow[],
-): CrpContributionInsight | null => {
-  const recentWithCrp = rowsWithCrp
-    .filter((row) => row.retornoRealClp !== null)
-    .slice(Math.max(0, rowsWithCrp.length - 12));
-  if (!recentWithCrp.length) return null;
-
-  const comparableRows = recentWithCrp
-    .map((row) => {
-      const withoutCrp = rowsWithoutCrp.find(
-        (candidate) => candidate.monthKey === row.monthKey && candidate.retornoRealClp !== null,
-      );
-      if (!withoutCrp || row.retornoRealClp === null || withoutCrp.retornoRealClp === null) return null;
-      return {
-        monthKey: row.monthKey,
-        retornoConCrpClp: row.retornoRealClp,
-        retornoSinCrpClp: withoutCrp.retornoRealClp,
-      };
-    })
-    .filter(
-      (
-        item,
-      ): item is {
-        monthKey: string;
-        retornoConCrpClp: number;
-        retornoSinCrpClp: number;
-      } => item !== null,
-    );
-  if (!comparableRows.length) return null;
-
-  const aporteClp = comparableRows.reduce(
-    (sum, row) => sum + (row.retornoConCrpClp - row.retornoSinCrpClp),
-    0,
-  );
-  const retornoConCrpClp = comparableRows.reduce((sum, row) => sum + row.retornoConCrpClp, 0);
-  const aporteMensualClp = aporteClp / 12;
-  const absAporte = Math.abs(aporteMensualClp);
-  const tone: CrpContributionInsight['tone'] =
-    absAporte < 1_000 ? 'neutral' : aporteClp > 0 ? 'positive' : 'negative';
-
-  const headlineAmount = (() => {
-    const abs = Math.abs(aporteMensualClp);
-    if (abs >= 1_000_000) {
-      const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-      return `$${scaled}MM`;
-    }
-    if (abs >= 1_000) {
-      const scaled = (abs / 1_000).toLocaleString('es-CL', {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      });
-      return `$${scaled}K`;
-    }
-    return `$${abs.toLocaleString('es-CL')}`;
-  })();
-
-  const summaryText =
-    tone === 'neutral'
-      ? 'CapRiesgo no movió materialmente el resultado en los últ. 12M'
-      : aporteMensualClp > 0
-        ? `CapRiesgo aportó ${headlineAmount}/mes en los últ. 12M`
-        : `CapRiesgo restó ${headlineAmount}/mes en los últ. 12M`;
-
-  const canShowPct = retornoConCrpClp > 1_000_000 && Math.abs(aporteClp) > 100_000;
-  const pctCrp = canShowPct ? (aporteClp / retornoConCrpClp) * 100 : null;
-  const detailText =
-    pctCrp !== null
-      ? `Cambio explicado por CapRiesgo · Explicó ${Math.abs(pctCrp).toFixed(1).replace('.', ',')}% del resultado`
-      : tone === 'neutral'
-        ? null
-        : 'Cambio explicado por CapRiesgo';
-  const totalText = tone === 'neutral' ? null : `Total período: ${aporteClp.toLocaleString('es-CL', {
-    style: 'currency',
-    currency: 'CLP',
-    maximumFractionDigits: 0,
-  })}`;
-
-  return {
-    monthsLabel: 'últ. 12M',
-    aporteClp,
-    aporteMensualClp,
-    total12mClp: aporteClp,
-    pctCrp,
-    tone,
-    summaryText,
-    detailText,
-    totalText,
-  };
 };
 
 export const AnalysisAurum: React.FC = () => {
@@ -235,10 +140,13 @@ export const AnalysisAurum: React.FC = () => {
   }, [refreshClosures]);
 
   const monthlyRowsAsc = useMemo(
-    () => computeMonthlyRows(closures, includeRiskCapitalInTotals),
-    [closures, includeRiskCapitalInTotals],
+    () => computeMonthlyRows(closures, includeRiskCapitalInTotals, currency),
+    [closures, includeRiskCapitalInTotals, currency],
   );
-  const monthlyRowsAscWithoutCrp = useMemo(() => computeMonthlyRows(closures, false), [closures]);
+  const monthlyRowsAscWithoutCrp = useMemo(
+    () => computeMonthlyRows(closures, false, currency),
+    [closures, currency],
+  );
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     [monthlyRowsAsc],
@@ -247,8 +155,8 @@ export const AnalysisAurum: React.FC = () => {
   const patrimonyCurve = useMemo(() => buildPatrimonyCurve(monthlyRowsAsc), [monthlyRowsAsc]);
   const crpContributionInsight = useMemo(() => {
     if (!includeRiskCapitalInTotals) return null;
-    return buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp);
-  }, [includeRiskCapitalInTotals, monthlyRowsAsc, monthlyRowsAscWithoutCrp]);
+    return buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency);
+  }, [includeRiskCapitalInTotals, monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency]);
 
   const analysisDiagnostics = useMemo(() => {
     const eurScaleOutliers = monthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
@@ -295,8 +203,8 @@ export const AnalysisAurum: React.FC = () => {
       const keys = monthKeysAsc.slice(Math.max(0, monthKeysAsc.length - count));
       if (!keys.length) return null;
       const rows = monthlyRowsAsc.filter((row) => keys.includes(row.monthKey));
-      const baseNetClp = rows.find((row) => row.netClp !== null)?.netClp ?? null;
-      return aggregateRows(`period-${label}`, label, rows, currency, baseNetClp);
+      const baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+      return aggregateRows(`period-${label}`, label, rows, baseNetDisplay);
     };
 
     const summaries: AggregatedSummary[] = [];
@@ -309,11 +217,11 @@ export const AnalysisAurum: React.FC = () => {
       if (p36) summaries.push(p36);
     }
     if (monthKeysAsc.length) {
-      const baseNetClp = monthlyRowsAsc.find((row) => row.netClp !== null)?.netClp ?? null;
-      summaries.push(aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, currency, baseNetClp));
+      const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+      summaries.push(aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay));
     }
     return summaries;
-  }, [monthlyRowsAsc, currency]);
+  }, [monthlyRowsAsc]);
 
   const yearlySummaries = useMemo(() => {
     const years = Array.from(new Set(monthlyRowsAsc.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
@@ -322,35 +230,35 @@ export const AnalysisAurum: React.FC = () => {
       const previousYearBase = monthlyRowsAsc
         .filter((row) => row.monthKey < `${year}-01`)
         .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-      const previousYearBaseValid = previousYearBase.filter((row) => row.netClp !== null);
-      const baseNetClp = previousYearBaseValid.length
-        ? previousYearBaseValid[previousYearBaseValid.length - 1].netClp
+      const previousYearBaseValid = previousYearBase.filter((row) => row.netDisplay !== null);
+      const baseNetDisplay = previousYearBaseValid.length
+        ? previousYearBaseValid[previousYearBaseValid.length - 1].netDisplay
         : null;
-      return aggregateRows(`year-${year}`, String(year), rows, currency, baseNetClp);
+      return aggregateRows(`year-${year}`, String(year), rows, baseNetDisplay);
     });
-  }, [monthlyRowsAsc, currency]);
+  }, [monthlyRowsAsc]);
 
   const heroSinceStart = useMemo(() => {
     if (!monthlyRowsAsc.length) return null;
-    const baseNetClp = monthlyRowsAsc.find((row) => row.netClp !== null)?.netClp ?? null;
-    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, currency, baseNetClp);
-  }, [monthlyRowsAsc, currency]);
+    const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay);
+  }, [monthlyRowsAsc]);
 
   const heroLast12 = useMemo(() => {
     const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - 12));
     if (!rows.length) return null;
-    const baseNetClp = rows.find((row) => row.netClp !== null)?.netClp ?? null;
-    return aggregateRows('hero-12m', 'Últ. 12M', rows, currency, baseNetClp);
-  }, [monthlyRowsAsc, currency]);
+    const baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+    return aggregateRows('hero-12m', 'Últ. 12M', rows, baseNetDisplay);
+  }, [monthlyRowsAsc]);
 
   const heroLastMonth = useMemo(() => {
-    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
+    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     if (!row) return null;
-    return aggregateRows('hero-ultimo', 'Últ. mes', [row], currency, row.prevNetClp);
-  }, [monthlyRowsAsc, currency]);
+    return aggregateRows('hero-ultimo', 'Últ. mes', [row], row.prevNetDisplay);
+  }, [monthlyRowsAsc]);
 
   const heroLastMonthPctMonthly = useMemo(() => {
-    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealClp !== null) || null;
+    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     return row?.pct ?? null;
   }, [monthlyRowsAsc]);
 

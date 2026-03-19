@@ -18,6 +18,11 @@ export type MonthlyReturnRow = {
   varPatrimonioClp: number | null;
   gastosClp: number | null;
   retornoRealClp: number | null;
+  netDisplay: number | null;
+  prevNetDisplay: number | null;
+  varPatrimonioDisplay: number | null;
+  gastosDisplay: number | null;
+  retornoRealDisplay: number | null;
   pct: number | null;
 };
 
@@ -28,6 +33,9 @@ export type AggregatedSummary = {
   varPatrimonioAcumClp: number | null;
   gastosAcumClp: number | null;
   retornoRealAcumClp: number | null;
+  varPatrimonioAcumDisplay: number | null;
+  gastosAcumDisplay: number | null;
+  retornoRealAcumDisplay: number | null;
   pctRetorno: number | null;
   pctRetornoNote: string | null;
   spendPct: number | null;
@@ -46,9 +54,9 @@ export type ReturnSpendInsight = {
 
 export type CrpContributionInsight = {
   monthsLabel: string;
-  aporteClp: number;
-  aporteMensualClp: number;
-  total12mClp: number;
+  aporteDisplay: number;
+  aporteMensualDisplay: number;
+  total12mDisplay: number;
   pctCrp: number | null;
   tone: 'positive' | 'negative' | 'neutral';
   summaryText: string;

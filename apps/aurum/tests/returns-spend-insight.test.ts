@@ -9,6 +9,9 @@ const makeSummary = (overrides: Partial<AggregatedSummary>): AggregatedSummary =
   varPatrimonioAcumClp: 10_000_000,
   gastosAcumClp: 5_000_000,
   retornoRealAcumClp: 20_000_000,
+  varPatrimonioAcumDisplay: 10_000_000,
+  gastosAcumDisplay: 5_000_000,
+  retornoRealAcumDisplay: 20_000_000,
   pctRetorno: 10,
   pctRetornoNote: null,
   spendPct: 25,
@@ -24,6 +27,8 @@ describe('buildReturnSpendInsight', () => {
       makeSummary({
         gastosAcumClp: 6_000_000,
         retornoRealAcumClp: 20_000_000,
+        gastosAcumDisplay: 6_000_000,
+        retornoRealAcumDisplay: 20_000_000,
         spendPct: 30,
       }),
     );
@@ -38,6 +43,8 @@ describe('buildReturnSpendInsight', () => {
       makeSummary({
         gastosAcumClp: 6_000_000,
         retornoRealAcumClp: 1_500_000,
+        gastosAcumDisplay: 6_000_000,
+        retornoRealAcumDisplay: 1_500_000,
         spendPct: 400,
       }),
     );
@@ -52,6 +59,8 @@ describe('buildReturnSpendInsight', () => {
       makeSummary({
         gastosAcumClp: 6_000_000,
         retornoRealAcumClp: -1_000_000,
+        gastosAcumDisplay: 6_000_000,
+        retornoRealAcumDisplay: -1_000_000,
         spendPct: -600,
       }),
     );
