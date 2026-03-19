@@ -11,11 +11,14 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
   const [progress, setProgress] = useState(0);
   const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
+  const [currentP50, setCurrentP50] = useState<number | null>(null);
+  const [phase, setPhase] = useState<'idle' | 'quick' | 'full'>('idle');
 
   const handleOptimize = () => {
     setIsOptimizing(true);
     setResult(null);
     setProgress(0);
+    setPhase('quick');
     window.setTimeout(() => {
       window.setTimeout(() => {
         // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
@@ -23,10 +26,18 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
           ...params,
           simulation: { ...params.simulation, nSim: 500, seed: 42 },
         });
-        const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
         setCurrentProbRuin(baseline.probRuin);
+        setCurrentP50(baseline.terminalWealthPercentiles[50] || 0);
+
+        const quickConstraints = { ...DEFAULT_OPTIMIZER_CONSTRAINTS, step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 2, 0.1) };
+        const quick = runOptimizer(params, quickConstraints, objective, 150, setProgress);
+        setResult(quick);
+        setPhase('full');
+
+        const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
         setResult(r);
         setIsOptimizing(false);
+        setPhase('idle');
       }, 50);
     }, 0);
   };
@@ -38,6 +49,12 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
   ];
   const currentRuin = currentProbRuin ?? result?.probRuin ?? null;
   const insight = result ? renderInsight(result.moves) : null;
+  const optimizedWeights = result?.weights ?? params.weights;
+  const rvTotalCurrent = params.weights.rvGlobal + params.weights.rvChile;
+  const rfTotalCurrent = params.weights.rfGlobal + params.weights.rfChile;
+  const rvTotalOptim = optimizedWeights.rvGlobal + optimizedWeights.rvChile;
+  const rfTotalOptim = optimizedWeights.rfGlobal + optimizedWeights.rfChile;
+  const instrumentSuggestions = result ? buildInstrumentSuggestions(result.moves) : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -82,7 +99,10 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
       {isOptimizing ? (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <div style={{ color: T.primary, fontSize: 14, marginBottom: 8 }}>Optimizando portafolio...</div>
-          <div style={{ color: T.textMuted, fontSize: 11 }}>Evaluando combinaciones de pesos · puede tardar 30–60 segundos</div>
+          <div style={{ color: T.textMuted, fontSize: 11 }}>
+            {phase === 'quick' ? 'Estimación rápida en curso…' : 'Refinando con más iteraciones…'}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>Evaluando combinaciones de pesos · puede tardar 30–60 segundos</div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>La app sigue activa — puedes navegar a otras secciones</div>
         </div>
       ) : (
@@ -106,6 +126,30 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
 
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
+            <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
+              Antes vs Despues
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10 }}>
+              <div>
+                <div style={{ color: T.textSecondary, fontSize: 12, marginBottom: 6 }}>Actual</div>
+                <AllocationBar weights={params.weights} />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginTop: 8 }}>
+                  <Stat label="RV total" value={`${(rvTotalCurrent * 100).toFixed(0)}%`} />
+                  <Stat label="RF total" value={`${(rfTotalCurrent * 100).toFixed(0)}%`} />
+                </div>
+              </div>
+              <div>
+                <div style={{ color: T.textSecondary, fontSize: 12, marginBottom: 6 }}>Optimizado</div>
+                <AllocationBar weights={optimizedWeights} />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginTop: 8 }}>
+                  <Stat label="RV total" value={`${(rvTotalOptim * 100).toFixed(0)}%`} />
+                  <Stat label="RF total" value={`${(rfTotalOptim * 100).toFixed(0)}%`} />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
             <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
               Movimientos recomendados
@@ -145,6 +189,12 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Patrimonio P50 actual</span>
+              <span style={{ ...css.mono, color: T.textPrimary, fontSize: 13 }}>
+                {currentP50 === null ? '—' : `$${(currentP50 / 1e6).toFixed(0)}MM`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{ color: T.textSecondary, fontSize: 12 }}>Prob. ruina óptima</span>
               <span style={{ ...css.mono, color: T.positive, fontSize: 13 }}>
                 {(result.probRuin * 100).toFixed(1)}%
@@ -164,6 +214,21 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
               </span>
             </div>
           </div>
+
+          {instrumentSuggestions.length > 0 && (
+            <div style={{ marginTop: 10, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
+              <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 10 }}>
+                Instrumentos sugeridos
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {instrumentSuggestions.map((item) => (
+                  <div key={item} style={{ color: T.textSecondary, fontSize: 12 }}>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {insight && (
             <div style={{ marginTop: 10, background: T.surfaceEl, borderRadius: 10, padding: 14 }}>
@@ -216,4 +281,18 @@ function renderInsight(moves: OptimizerResult['moves']): string | null {
     return 'Más RF Global reduce volatilidad sin sacrificar retorno en el largo plazo.';
   }
   return null;
+}
+
+function buildInstrumentSuggestions(moves: OptimizerResult['moves']): string[] {
+  const map: Record<string, string> = {
+    'RV Global': 'RV Global: ETF MSCI World o Global ACWI',
+    'RF Global': 'RF Global: ETF bonos globales (aggregate)',
+    'RV Chile': 'RV Chile: ETF/IGPA o fondo renta variable local',
+    'RF Chile UF': 'RF Chile UF: fondo renta fija UF o depósitos UF',
+  };
+  const picks = moves
+    .filter((m) => m.direction === 'up')
+    .map((m) => map[m.sleeve])
+    .filter((m): m is string => Boolean(m));
+  return Array.from(new Set(picks));
 }
