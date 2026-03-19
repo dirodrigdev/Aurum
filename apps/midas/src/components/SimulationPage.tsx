@@ -25,7 +25,10 @@ export function SimulationPage({ result, params }: { result: SimulationResults |
   const probSuccess = result ? 1 - result.probRuin : null;
   const ruinPct = result ? result.probRuin * 100 : null;
   const ruinMedian = result?.ruinTimingMedian ?? null;
-  const interval = probSuccess === null ? null : [Math.max(0, probSuccess - 0.06), Math.min(1, probSuccess + 0.06)];
+  const rangeMin = probSuccess === null ? null : Math.max(0.75, probSuccess - 0.06);
+  const rangeMax = probSuccess === null ? null : Math.min(1, probSuccess + 0.06);
+  const leftPct = rangeMin === null ? 0 : ((rangeMin * 100 - 75) / (100 - 75)) * 100;
+  const widthPct = rangeMin === null || rangeMax === null ? 0 : (((rangeMax - rangeMin) * 100) / (100 - 75)) * 100;
   const spendRatio = result?.spendingRatioMedian ?? null;
   const p50 = result?.terminalWealthPercentiles[50] ?? null;
   const fanChartData: FanChartDatum[] = result
@@ -49,26 +52,24 @@ export function SimulationPage({ result, params }: { result: SimulationResults |
         ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
       />
 
-      {interval && (
+      {rangeMin !== null && rangeMax !== null && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
           <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>RANGO ESTIMADO</div>
-          <div style={{ marginTop: 10, height: 10, background: T.surfaceEl, borderRadius: 10, position: 'relative' }}>
+          <div style={{ position: 'relative', height: 6, background: T.border, borderRadius: 3, margin: '10px 0' }}>
             <div
               style={{
                 position: 'absolute',
-                left: `${interval[0] * 100}%`,
-                right: `${(1 - interval[1]) * 100}%`,
-                top: 0,
-                bottom: 0,
-                background: T.primary,
-                borderRadius: 10,
-                opacity: 0.8,
+                left: `${leftPct}%`,
+                width: `${widthPct}%`,
+                height: '100%',
+                background: ruinPct !== null ? (probSuccess > 0.92 ? T.positive : probSuccess >= 0.85 ? T.warning : T.negative) : T.primary,
+                borderRadius: 3,
               }}
             />
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, ...css.mono, color: T.textSecondary }}>
-            <span>{(interval[0] * 100).toFixed(1)}%</span>
-            <span>{(interval[1] * 100).toFixed(1)}%</span>
+            <span>{(rangeMin * 100).toFixed(1)}%</span>
+            <span>{(rangeMax * 100).toFixed(1)}%</span>
           </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 8 }}>
             Refleja incertidumbre en los supuestos del modelo (±6 pp)

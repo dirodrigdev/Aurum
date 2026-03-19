@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { ModelParameters, OptimizerResult, OptimizerObjective } from '../domain/model/types';
 import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../domain/model/defaults';
 import { runOptimizer } from '../domain/optimizer/gridSearch';
+import { runSimulation } from '../domain/simulation/engine';
 import { T, css } from './theme';
 
 export function OptimizerPage({ params }: { params: ModelParameters }) {
@@ -9,13 +10,19 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
   const [running, setRunning] = useState(false);
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
   const [progress, setProgress] = useState(0);
+  const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
 
   const run = () => {
     setRunning(true);
     setProgress(0);
     window.setTimeout(() => {
       // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
+      const baseline = runSimulation({
+        ...params,
+        simulation: { ...params.simulation, nSim: 500, seed: 42 },
+      });
       const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
+      setCurrentProbRuin(baseline.probRuin);
       setResult(r);
       setRunning(false);
     }, 0);
@@ -26,6 +33,8 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
     ['maxP50', 'Maximizar patrimonio', 'Mayor P50 terminal'],
     ['balanced', 'Equilibrado', 'Balance entre ruina y patrimonio'],
   ];
+  const currentRuin = currentProbRuin ?? result?.probRuin ?? null;
+  const insight = result ? renderInsight(result.moves) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -92,31 +101,70 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
 
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-            <div style={{ color: T.textMuted, fontSize: 11 }}>Resultado esperado</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10, marginTop: 8 }}>
-              <Stat label="Prob. ruina óptima" value={`${(result.probRuin * 100).toFixed(1)}%`} accent={T.positive} />
-              <Stat label="Patrimonio P50" value={`$${(result.terminalP50 / 1e9).toFixed(2)}B`} />
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
+            <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
+              Movimientos recomendados
+            </p>
+            {result.moves.map((m) => (
+              <div key={m.sleeve} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <span style={{ fontSize: 18, color: m.direction === 'up' ? T.positive : T.negative }}>
+                  {m.direction === 'up' ? '↑' : '↓'}
+                </span>
+                <span style={{ color: T.textSecondary, fontSize: 13, flex: 1 }}>{m.sleeve}</span>
+                <span
+                  style={{
+                    ...css.mono,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    color: m.direction === 'up' ? T.positive : T.negative,
+                  }}
+                >
+                  {m.delta > 0 ? '+' : ''}
+                  {m.delta.toFixed(1)}pp
+                </span>
+              </div>
+            ))}
+            {result.moves.length === 0 && (
+              <p style={{ color: T.textMuted, fontSize: 12 }}>El portafolio actual ya es óptimo para este objetivo.</p>
+            )}
+          </div>
+
+          <div style={{ marginTop: 10, background: T.surface, borderRadius: 10, padding: 16 }}>
+            <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
+              Resultado esperado
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Prob. ruina actual</span>
+              <span style={{ ...css.mono, color: T.textPrimary, fontSize: 13 }}>
+                {currentRuin === null ? '—' : `${(currentRuin * 100).toFixed(1)}%`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Prob. ruina óptima</span>
+              <span style={{ ...css.mono, color: T.positive, fontSize: 13 }}>
+                {(result.probRuin * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Mejora</span>
+              <span style={{ ...css.mono, color: T.positive, fontSize: 13, fontWeight: 700 }}>
+                {(result.vsCurrentRuin * 100).toFixed(1)}pp ▼
+              </span>
+            </div>
+            <div style={{ height: 1, background: T.border, marginBottom: 12 }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Patrimonio P50</span>
+              <span style={{ ...css.mono, color: T.primary, fontSize: 13 }}>
+                ${(result.terminalP50 / 1e9).toFixed(2)}B
+              </span>
             </div>
           </div>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>Movimientos recomendados</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {result.moves.map((m) => (
-                <div key={m.sleeve} style={{ background: T.surfaceEl, borderRadius: 10, padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ color: T.textPrimary, fontWeight: 700 }}>{m.sleeve}</div>
-                    <div style={{ color: T.textMuted, fontSize: 11 }}>
-                      {m.direction === 'up' ? 'Aumentar' : m.direction === 'down' ? 'Reducir' : 'Mantener'}
-                    </div>
-                  </div>
-                  <div style={{ ...css.mono, color: m.direction === 'up' ? T.positive : m.direction === 'down' ? T.negative : T.textSecondary, fontWeight: 700 }}>
-                    {m.direction === 'up' ? '↑' : m.direction === 'down' ? '↓' : '—'} {m.delta.toFixed(2)}pp
-                  </div>
-                </div>
-              ))}
+
+          {insight && (
+            <div style={{ marginTop: 10, background: T.surfaceEl, borderRadius: 10, padding: 14 }}>
+              <p style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.5, margin: 0 }}>{insight}</p>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
@@ -147,4 +195,20 @@ function AllocationBar({ weights }: { weights: ModelParameters['weights'] }) {
       ))}
     </div>
   );
+}
+
+function renderInsight(moves: OptimizerResult['moves']): string | null {
+  if (moves.find((m) => m.sleeve === 'RV Global' && m.direction === 'up')) {
+    return 'Aumentar RV Global mejora el retorno esperado aprovechando diversificación internacional.';
+  }
+  if (moves.find((m) => m.sleeve === 'RF Chile UF' && m.direction === 'down')) {
+    return 'Reducir RF Chile UF libera capital hacia activos con mayor retorno real histórico.';
+  }
+  if (moves.find((m) => m.sleeve === 'RV Chile' && m.direction === 'up')) {
+    return 'Mayor RV Chile aprovecha el ciclo local, históricamente fuerte en superciclos de commodities.';
+  }
+  if (moves.find((m) => m.sleeve === 'RF Global' && m.direction === 'up')) {
+    return 'Más RF Global reduce volatilidad sin sacrificar retorno en el largo plazo.';
+  }
+  return null;
 }
