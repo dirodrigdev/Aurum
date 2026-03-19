@@ -42,7 +42,7 @@ const computeWeightedReturn = (p: ModelParameters) =>
 const formatCapital = (value: number) => {
   if (!Number.isFinite(value)) return '—';
   const millions = value / 1_000_000;
-  return `$${millions.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}MM`;
+  return `$${millions.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}MM`;
 };
 const formatNumber = (value: number) =>
   value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -148,10 +148,10 @@ export function SimulationPage({
   const fanChartData: FanChartDatum[] = displayResult
     ? displayResult.fanChartData.map((point) => ({
         ...point,
-        outerBase: point.p5,
-        outerSpan: Math.max(0, point.p95 - point.p5),
-        innerBase: point.p25,
-        innerSpan: Math.max(0, point.p75 - point.p25),
+        outerBase: point.p5 / 1e6,
+        outerSpan: Math.max(0, (point.p95 - point.p5) / 1e6),
+        innerBase: point.p25 / 1e6,
+        innerSpan: Math.max(0, (point.p75 - point.p25) / 1e6),
       }))
     : [];
   const percentileRows = [10, 25, 50, 75, 90] as const;
@@ -237,6 +237,7 @@ export function SimulationPage({
               padding: 12,
               boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
               backdropFilter: 'blur(10px)',
+              zIndex: 40,
             }}
           >
             <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
@@ -303,13 +304,26 @@ export function SimulationPage({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>60%</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
+              {uncertaintyBand && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${((clampSuccessPct(uncertaintyBand.low * 100) - 60) / 40) * 100}%`,
+                    width: `${((clampSuccessPct(uncertaintyBand.high * 100) - clampSuccessPct(uncertaintyBand.low * 100)) / 40) * 100}%`,
+                    top: 0,
+                    bottom: 0,
+                    background: 'rgba(91, 140, 255, 0.25)',
+                    borderRadius: 999,
+                  }}
+                />
+              )}
               {SCENARIO_VARIANTS.map((variant) => {
                 const scenario = displayResult.scenarioComparison?.[variant.id === 'pessimistic' ? 'pessimistic' : variant.id === 'optimistic' ? 'optimistic' : 'base'];
                 const point = scenario ?? null;
                 const successPct = point ? ruinToSuccessPct(point.probRuin) : 0;
                 const left = clampSuccessPct(successPct);
                 const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
-                const active = variant.id === params.activeScenario;
+                const active = simulationPreset !== 'custom' && variant.id === simulationPreset;
                 return (
                   <button
                     key={variant.id}
@@ -349,7 +363,7 @@ export function SimulationPage({
         />
         <InfoCard
           label="Patrimonio P50"
-          value={p50 !== null ? `$${(p50 / 1e9).toFixed(2)}B` : '—'}
+          value={p50 !== null ? `$${(p50 / 1e6).toFixed(0)}MM` : '—'}
         />
       </div>
 
@@ -358,12 +372,13 @@ export function SimulationPage({
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {SCENARIO_VARIANTS.map((variant) => {
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', flex: 1 }}>
+                {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
                   const isBase = variant.id === 'base';
                   const active = simulationPreset === variant.id;
                   const custom = simulationPreset === 'custom';
                   const highlightedReset = isBase && custom;
+                  const working = previewRunning && simulationPreset === variant.id;
                   return (
                     <button
                       key={variant.id}
@@ -384,7 +399,7 @@ export function SimulationPage({
                         borderRadius: 999,
                         cursor: 'pointer',
                         opacity: custom && !isBase ? 0.45 : 1,
-                        boxShadow: highlightedReset ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)' : 'none',
+                        boxShadow: highlightedReset ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)' : working ? '0 0 0 2px rgba(91, 140, 255, 0.28)' : 'none',
                       }}
                     >
                       {variant.label}
@@ -408,7 +423,7 @@ export function SimulationPage({
                   />
                   <YAxis
                     tick={{ fill: T.textMuted, fontSize: 10 }}
-                    tickFormatter={(v: number | string) => `${v}B`}
+                    tickFormatter={(v: number | string) => `${v}MM`}
                     stroke={T.border}
                     width={28}
                   />
@@ -419,7 +434,7 @@ export function SimulationPage({
                       color: T.textPrimary,
                       fontSize: 11,
                     }}
-                    formatter={(value: unknown) => [`${Number(value).toFixed(2)}B CLP`]}
+                    formatter={(value: unknown) => [`${Number(value).toFixed(0)}MM CLP`]}
                     labelFormatter={(label: unknown) => `Año ${String(label)}`}
                   />
                   <Area
@@ -513,8 +528,8 @@ export function SimulationPage({
                     }}
                   >
                     <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
-                    <span style={{ ...css.mono, fontWeight: 700 }}>{`$${(clp / 1e9).toFixed(2)}B`}</span>
-                    <span style={{ ...css.mono }}>{`€${eur.toFixed(1)}M`}</span>
+                  <span style={{ ...css.mono, fontWeight: 700 }}>{`$${(clp / 1e6).toFixed(0)}MM`}</span>
+                  <span style={{ ...css.mono }}>{`€${eur.toFixed(1)}M`}</span>
                     <span style={{ ...css.mono }}>{`${(dd * 100).toFixed(1)}%`}</span>
                   </div>
                 );

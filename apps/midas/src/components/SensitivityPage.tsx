@@ -105,7 +105,7 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
               >
                 {(r.probRuin * 100).toFixed(1)}%
               </div>
-              <div style={{ ...css.mono, color: T.textSecondary, fontSize: 11, marginTop: 6 }}>P50: ${(r.p50 / 1e9).toFixed(2)}B</div>
+              <div style={{ ...css.mono, color: T.textSecondary, fontSize: 11, marginTop: 6 }}>P50: ${(r.p50 / 1e6).toFixed(0)}MM</div>
               <div style={{ marginTop: 8, height: 4, background: T.surfaceEl, borderRadius: 2 }}>
                 <div
                   style={{

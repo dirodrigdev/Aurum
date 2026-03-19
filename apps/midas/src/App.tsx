@@ -101,8 +101,11 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (!simResult) {
+      setSimResult(runSimulation(baseParams));
+    }
     return () => clearSimulationTimer();
-  }, [clearSimulationTimer]);
+  }, [baseParams, clearSimulationTimer, simResult]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => updateByPath(prev, path, value));

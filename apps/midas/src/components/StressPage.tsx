@@ -88,7 +88,7 @@ export function StressPage({ params }: { params: ModelParameters }) {
               </div>
               {!r.ruinMonth && (
                 <div style={{ marginTop: 10 }}>
-                  <Stat label="Patrimonio terminal" value={`$${(r.terminalWealthReal / 1e9).toFixed(2)}B`} />
+                  <Stat label="Patrimonio terminal" value={`$${(r.terminalWealthReal / 1e6).toFixed(0)}MM`} />
                 </div>
               )}
             </div>

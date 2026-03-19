@@ -160,7 +160,7 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: T.textSecondary, fontSize: 12 }}>Patrimonio P50</span>
               <span style={{ ...css.mono, color: T.primary, fontSize: 13 }}>
-                ${(result.terminalP50 / 1e9).toFixed(2)}B
+                ${(result.terminalP50 / 1e6).toFixed(0)}MM
               </span>
             </div>
           </div>

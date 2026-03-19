@@ -43,35 +43,23 @@ export function HeroCard({
         </div>
         {simMode && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: '0.14em',
-              textTransform: 'uppercase',
-              color: T.primary,
-              background: 'rgba(91, 140, 255, 0.18)',
-              border: `1px solid ${T.primary}`,
-              padding: '4px 8px',
-              borderRadius: 999,
-            }}>
+            <button
+              onClick={onResetSim}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.14em',
+                textTransform: 'uppercase',
+                color: T.primary,
+                background: 'rgba(91, 140, 255, 0.18)',
+                border: `1px solid ${T.primary}`,
+                padding: '4px 8px',
+                borderRadius: 999,
+                cursor: onResetSim ? 'pointer' : 'default',
+              }}
+            >
               Simulacion
-            </span>
-            {onResetSim && (
-              <button
-                onClick={onResetSim}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  fontSize: 11,
-                  padding: '4px 8px',
-                  borderRadius: 999,
-                  cursor: 'pointer',
-                }}
-              >
-                Volver a real
-              </button>
-            )}
+            </button>
           </div>
         )}
       </div>
