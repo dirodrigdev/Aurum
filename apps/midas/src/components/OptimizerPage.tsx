@@ -7,24 +7,27 @@ import { T, css } from './theme';
 
 export function OptimizerPage({ params }: { params: ModelParameters }) {
   const [result, setResult] = useState<OptimizerResult | null>(null);
-  const [running, setRunning] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
   const [progress, setProgress] = useState(0);
   const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
 
-  const run = () => {
-    setRunning(true);
+  const handleOptimize = () => {
+    setIsOptimizing(true);
+    setResult(null);
     setProgress(0);
     window.setTimeout(() => {
-      // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
-      const baseline = runSimulation({
-        ...params,
-        simulation: { ...params.simulation, nSim: 500, seed: 42 },
-      });
-      const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
-      setCurrentProbRuin(baseline.probRuin);
-      setResult(r);
-      setRunning(false);
+      window.setTimeout(() => {
+        // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
+        const baseline = runSimulation({
+          ...params,
+          simulation: { ...params.simulation, nSim: 500, seed: 42 },
+        });
+        const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
+        setCurrentProbRuin(baseline.probRuin);
+        setResult(r);
+        setIsOptimizing(false);
+      }, 50);
     }, 0);
   };
 
@@ -76,27 +79,29 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
         </div>
       </div>
 
-      <button
-        onClick={run}
-        disabled={running}
-        style={{
-          width: '100%',
-          background: running ? T.border : T.primary,
-          color: '#fff',
-          border: 'none',
-          borderRadius: 12,
-          padding: '14px 0',
-          fontWeight: 800,
-          fontSize: 14,
-          cursor: running ? 'wait' : 'pointer',
-        }}
-      >
-        {running ? `Optimizando... ${progress}%` : '▶ Optimizar'}
-      </button>
-      {running && (
-        <div style={{ color: T.textMuted, fontSize: 11, textAlign: 'center' }}>
-          El optimizador puede tardar 30-60 segundos. La app no está bloqueada.
+      {isOptimizing ? (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div style={{ color: T.primary, fontSize: 14, marginBottom: 8 }}>Optimizando portafolio...</div>
+          <div style={{ color: T.textMuted, fontSize: 11 }}>Evaluando combinaciones de pesos · puede tardar 30–60 segundos</div>
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>La app sigue activa — puedes navegar a otras secciones</div>
         </div>
+      ) : (
+        <button
+          onClick={handleOptimize}
+          style={{
+            width: '100%',
+            background: T.primary,
+            color: '#fff',
+            border: 'none',
+            borderRadius: 12,
+            padding: '14px 0',
+            fontWeight: 800,
+            fontSize: 14,
+            cursor: 'pointer',
+          }}
+        >
+          ▶ Optimizar
+        </button>
       )}
 
       {result && (
