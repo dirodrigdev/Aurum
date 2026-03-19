@@ -124,6 +124,7 @@ export function runSimulation(params: ModelParameters): SimulationResults {
     let sl = w.map(wi => wi * W0);
     let cumCL = 1, cumEUR = 1;
     let logCPU = Math.log(fx.clpUsdInitial), logCPUr = 0;
+    let logEURUSD = Math.log(fx.usdEurFixed);
     let hwm = W0, smult = 1, cnt15 = 0, cnt25 = 0;
     let maxDD = 0, gEff = 0, gPlan = 0, ruined = false;
 
@@ -131,16 +132,20 @@ export function runSimulation(params: ModelParameters): SimulationResults {
 
     for (let t = 0; t < T; t++) {
       let r: number[];
+      let dLogEURUSD: number;
       if (path) {
         const row = path[t];
-        r = [row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]];
-        // map: [rvg, rfg, sura, afp, rfcl, ipc, hicp, dfx]
+        r = [row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]];
+        // map: [rvg, rfg, sura, afp, rfcl, ipc, hicp, dfx, dEURUSD]
         const rvg = r[0], rfg = r[1];
         const rvCL = 0.55 * r[2] + 0.45 * r[3];
         const rfCL = r[4], ipc = r[5], hicp = r[6], dfx = r[7];
+        dLogEURUSD = r[8];
         r = [rvg, rfg, rvCL, rfCL, ipc, dfx];
       } else {
         r = generateRow(rng);
+        // vol EUR/USD: 9.3% anual, media 0.76% anual
+        dLogEURUSD = 0.0076 / 12 + (0.093 / Math.sqrt(12)) * randn(rng);
       }
 
       const [rRVg, rRFg, rRVcl, rRFcl, ipcM, dLogFX] = r;
@@ -154,6 +159,8 @@ export function runSimulation(params: ModelParameters): SimulationResults {
       logCPU  += dLogFX + (phi * uPrev - uPrev);
       logCPUr  = logCPU - Math.log(cumCL);
       const CPU_t = Math.exp(logCPU);
+      logEURUSD += dLogEURUSD;
+      const EURUSDt = Math.exp(logEURUSD);
       const dFX   = Math.exp(dLogFX) - 1;
 
       sl[0] *= (1 + rRVg + dFX + rRVg * dFX);
@@ -182,7 +189,7 @@ export function runSimulation(params: ModelParameters): SimulationResults {
       let GB = 0, phaseStart = 0;
       for (const ph of spendingPhases) {
         if (mes <= phaseStart + ph.durationMonths) {
-          GB = ph.currency === 'EUR' ? ph.amountReal * fx.usdEurFixed * CPU_t : ph.amountReal * cumCL;
+          GB = ph.currency === 'EUR' ? ph.amountReal * EURUSDt * CPU_t : ph.amountReal * cumCL;
           break;
         }
         phaseStart += ph.durationMonths;
@@ -270,11 +277,13 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
     ipc_cl_m: (1 + inf.ipcChileAnnual) ** (1/12) - 1,
     hicp_eur_m: (1 + inf.hipcEurAnnual) ** (1/12) - 1,
     d_logCLPUSD: 0.020 / 12,
+    d_logEURUSD: 0.0076 / 12,
   };
 
   let sl = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile].map(w => w * W0);
   let cumCL = 1, cumEUR = 1;
   let logCPU = Math.log(fx.clpUsdInitial), logCPUr = 0;
+  let logEURUSD = Math.log(fx.usdEurFixed);
   let hwm = W0, smult = 1, cnt15 = 0, cnt25 = 0, maxDD = 0;
   let ruinMonth: number | null = null, minSmult = 1;
   const traj: Array<{ year: number; wealth: number }> = [];
@@ -293,6 +302,8 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
     logCPUr = logCPU - Math.log(cumCL);
     const CPU_t = Math.exp(logCPU);
     const dFX   = Math.exp(r.d_logCLPUSD) - 1;
+    logEURUSD += r.d_logEURUSD;
+    const EURUSDt = Math.exp(logEURUSD);
 
     sl[0] *= (1 + r.r_RVg + dFX + r.r_RVg * dFX);
     sl[1] *= (1 + r.r_RFg + dFX);
@@ -319,7 +330,7 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
     let GB = 0, phaseStart = 0;
     for (const ph of spendingPhases) {
       if (mes <= phaseStart + ph.durationMonths) {
-        GB = ph.currency === 'EUR' ? ph.amountReal * fx.usdEurFixed * CPU_t : ph.amountReal * cumCL;
+        GB = ph.currency === 'EUR' ? ph.amountReal * EURUSDt * CPU_t : ph.amountReal * cumCL;
         break;
       }
       phaseStart += ph.durationMonths;
