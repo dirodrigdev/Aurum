@@ -304,7 +304,7 @@ export function ParamSheet({
                 label="Monto"
                 value={eventForm.amount}
                 onChange={(v) => setEventForm((prev) => ({ ...prev, amount: Math.max(0, v) }))}
-                step={1_000_000}
+                step={1}
               />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
