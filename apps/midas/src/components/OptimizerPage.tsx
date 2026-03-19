@@ -11,12 +11,14 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
   const [progress, setProgress] = useState(0);
 
   const run = () => {
-    setRunning(true); setProgress(0);
-    setTimeout(() => {
-      const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 600, setProgress);
+    setRunning(true);
+    setProgress(0);
+    window.setTimeout(() => {
+      // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
+      const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
       setResult(r);
       setRunning(false);
-    }, 20);
+    }, 0);
   };
 
   const OBJECTIVES: Array<[OptimizerObjective, string, string]> = [
@@ -82,6 +84,11 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
       >
         {running ? `Optimizando... ${progress}%` : '▶ Optimizar'}
       </button>
+      {running && (
+        <div style={{ color: T.textMuted, fontSize: 11, textAlign: 'center' }}>
+          El optimizador puede tardar 30-60 segundos. La app no está bloqueada.
+        </div>
+      )}
 
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

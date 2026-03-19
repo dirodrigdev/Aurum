@@ -45,7 +45,7 @@ export default function App() {
   const statusColor = simResult ? T.positive : T.textMuted;
 
   const content = useMemo(() => {
-    if (activeTab === 'sim') return <SimulationPage result={simResult} />;
+    if (activeTab === 'sim') return <SimulationPage result={simResult} params={params} />;
     if (activeTab === 'sens') return <SensitivityPage params={params} />;
     if (activeTab === 'stress') return <StressPage params={params} />;
     return <OptimizerPage params={params} />;

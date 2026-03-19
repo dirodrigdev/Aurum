@@ -4,6 +4,17 @@ import { runSimulation } from '../domain/simulation/engine';
 import { SENSITIVITY_PARAMS } from '../domain/model/defaults';
 import { T, css } from './theme';
 
+const PARAM_LABELS: Record<string, string> = {
+  blockLength: 'Largo de bloque bootstrap',
+  tcrealLT: 'Tipo de cambio real LT',
+  feeAnnual: 'Fee total anual',
+  rvGlobalAnnual: 'Retorno esperado RV Global',
+  rvChileAnnual: 'Retorno esperado RV Chile',
+  ipcChileAnnual: 'Inflación Chile base',
+  spendingPhase2: 'Gasto mensual Fase 2',
+  rvChileWeight: 'Peso RV Chile en portafolio',
+};
+
 export function SensitivityPage({ params }: { params: ModelParameters }) {
   const [results, setResults] = useState<Record<string, Array<{ label: string; probRuin: number; p50: number }>>>({});
   const [running, setRunning] = useState(false);
@@ -73,7 +84,7 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 12 }}>{sp.label}</div>
-            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>Ajusta {sp.paramPath}</div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{PARAM_LABELS[sp.id] ?? sp.label}</div>
           </button>
         ))}
       </div>
