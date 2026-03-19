@@ -7,18 +7,18 @@ import type {
 } from './types';
 
 export const DEFAULT_PARAMETERS: ModelParameters = {
-  label: 'Portafolio Real — V1.2',
-  capitalInitial: 1_650_000_000,
+  label: 'Portafolio Real — V1.4',
+  capitalInitial: 1_401_000_000,
 
   // CONFIRMED + corrección BTG (carteras CMF ene/abr/jul/oct 2025, ene 2026)
   // BTG Gestión Activa: promedio 4 períodos estables = 49% RV / 48% RF
   // BTG RV es ~75% nacional / 25% global (carteras CMF)
   // Movimiento vs V1.1: +4.5pp rvChile, -4.5pp rfChile
   weights: {
-    rvGlobal: 0.317,  // +1.1pp por BTG RV global (era 0.306)
-    rfGlobal: 0.176,  // sin cambio
-    rvChile:  0.263,  // +3.4pp por BTG RV nacional (era 0.229)
-    rfChile:  0.244,  // -4.5pp por reabsorción BTG RV (era 0.289)
+    rvGlobal: 0.359,
+    rfGlobal: 0.119,
+    rvChile:  0.264,
+    rfChile:  0.257,
   },
 
   feeAnnual: 0.0035,
@@ -63,7 +63,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   fx: {
     clpUsdInitial:   984.59,
     usdEurFixed:     1.0472,
-    tcrealLT:        650.0,    // PRELIMINARY
+    tcrealLT:        640.0,
     mrHalfLifeYears: 5.0,      // PLACEHOLDER
   },
 
