@@ -40,19 +40,24 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
 
   // Calibrado con datos reales hasta 2026-02
   returns: {
-    rvGlobalAnnual:   0.0765,  // MSCI World real 2000-2026 (era 0.0741 con 300 meses)
+    // Estos valores ahora son la referencia para la rama parametrica
+    // El bootstrap usa los targets de preprocessData.ts
+    rvGlobalAnnual:   0.065,
     rfGlobalAnnual:   0.0305,  // AGGU real 2000-2026 (era 0.0266)
-    rvChileAnnual:    0.0927,  // blend SURA+AFP — sin cambio
+    rvChileAnnual:    0.075,
     rfChileUFAnnual:  0.0102,  // real UF — sin cambio
     rvGlobalVolAnnual:  0.1532,
     rfGlobalVolAnnual:  0.0368,
     rvChileVolAnnual:   0.1141,
     rfChileVolAnnual:   0.0237,
+    // NOTA: estas correlaciones solo afectan la rama parametrica (useHistoricalData=false)
+    // El bootstrap usa las correlaciones implicitas en los datos historicos
+    // con weighted sampling que favorece el regimen 2015-2026
     correlationMatrix: [
-      [ 1.00, -0.20,  0.45,  0.08],
-      [-0.20,  1.00,  0.05,  0.38],
-      [ 0.45,  0.05,  1.00,  0.18],
-      [ 0.08,  0.38,  0.18,  1.00],
+      [ 1.00,  0.15,  0.69,  0.32],
+      [ 0.15,  1.00,  0.33,  0.33],
+      [ 0.69,  0.33,  1.00,  0.23],
+      [ 0.32,  0.33,  0.23,  1.00],
     ],
   },
 
@@ -67,7 +72,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     clpUsdInitial:   984.59,
     usdEurFixed:     1.0472,
     tcrealLT:        640.0,
-    mrHalfLifeYears: 5.0,      // PLACEHOLDER
+    mrHalfLifeYears: 6.3,      // calibrado con AR(1) empirico R²=0.98
   },
 
   simulation: {
@@ -86,29 +91,31 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
 export const SCENARIO_VARIANTS: ScenarioVariant[] = [
   {
     id: 'base', label: 'Base',
-    // Sin overrides — usa todos los valores de DEFAULT_PARAMETERS
+    // Sin overrides — usa DEFAULT_PARAMETERS con forward targets
   },
   {
     id: 'pessimistic', label: 'Pesimista',
-    rvGlobalAnnual:    0.045,
+    // P10-P25 retornos rodantes 10 anos
+    rvGlobalAnnual:    0.040,
     rfGlobalAnnual:    0.015,
-    rvChileAnnual:     0.055,
+    rvChileAnnual:     0.040,
     rfChileUFAnnual:   0.000,
-    rvGlobalVolAnnual: 0.200,
-    rfGlobalVolAnnual: 0.048,
-    rvChileVolAnnual:  0.148,
-    rfChileVolAnnual:  0.031,
+    rvGlobalVolAnnual: 0.192,
+    rfGlobalVolAnnual: 0.046,
+    rvChileVolAnnual:  0.143,
+    rfChileVolAnnual:  0.030,
     ipcChileAnnual:    0.055,
     tcrealLT:          720,
   },
   {
     id: 'optimistic', label: 'Optimista',
-    rvGlobalAnnual:    0.095,
-    rfGlobalAnnual:    0.040,
-    rvChileAnnual:     0.120,
+    // P75-P90 retornos rodantes 10 anos
+    rvGlobalAnnual:    0.100,
+    rfGlobalAnnual:    0.035,
+    rvChileAnnual:     0.110,
     rfChileUFAnnual:   0.020,
     rvGlobalVolAnnual: 0.130,
-    rfGlobalVolAnnual: 0.032,
+    rfGlobalVolAnnual: 0.031,
     rvChileVolAnnual:  0.097,
     rfChileVolAnnual:  0.020,
     ipcChileAnnual:    0.025,

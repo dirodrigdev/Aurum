@@ -7,6 +7,7 @@ import type {
 } from '../model/types';
 import { SCENARIO_VARIANTS } from '../model/defaults';
 import { loadHistoricalData } from './historicalData';
+import { preprocessHistoricalData } from './preprocessData';
 
 // ── Utilidades ────────────────────────────────────────────────
 
@@ -46,12 +47,67 @@ function percentile(sorted: number[], p: number): number {
   return lo === hi ? sorted[lo] : sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
 }
 
-function bootstrapPath(data: number[][], T: number, blen: number, rng: () => number): number[][] {
+// Se mantiene solo para referencia/testing.
+function bootstrapPathUniform(data: number[][], T: number, blen: number, rng: () => number): number[][] {
   const H = data.length;
   const path: number[][] = [];
   while (path.length < T) {
     const s = Math.floor(rng() * (H - blen));
     for (let i = 0; i < blen && path.length < T; i++) path.push(data[s + i]);
+  }
+  return path;
+}
+
+/**
+ * Bootstrap con weighted sampling - bloques recientes tienen mas peso.
+ * Half-life decay = 8 anos -> bloques 2015-2026 tienen ~65% del peso total.
+ * Preserva crisis de 2008 con ~35% de peso acumulado.
+ *
+ * Razon: corrige el sesgo de correlacion del regimen 2000-2019
+ * sin eliminar el tail risk historico relevante.
+ */
+function bootstrapPathWeighted(
+  data: number[][],
+  T: number,
+  blen: number,
+  rng: () => number,
+): number[][] {
+  const H = data.length;
+  const nBlocks = H - blen + 1;
+  const halflifeMonths = 96;
+  const lambda = Math.log(2) / halflifeMonths;
+
+  const weights = Array.from({ length: nBlocks }, (_, i) => {
+    const age = nBlocks - 1 - i;
+    return Math.exp(-lambda * age);
+  });
+
+  const wSum = weights.reduce((a, b) => a + b, 0);
+  const normWeights = weights.map(w => w / wSum);
+  const cdf = normWeights.reduce((acc, w, i) => {
+    acc.push((acc[i - 1] ?? 0) + w);
+    return acc;
+  }, [] as number[]);
+  cdf[cdf.length - 1] = 1;
+
+  const sampleBlock = (): number => {
+    const u = rng();
+    let lo = 0;
+    let hi = nBlocks - 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (cdf[mid] < u) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+
+  const path: number[][] = [];
+  while (path.length < T) {
+    const s = sampleBlock();
+    for (let i = 0; i < blen && path.length < T; i++) {
+      path.push(data[s + i]);
+    }
   }
   return path;
 }
@@ -187,6 +243,9 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
   if (sim.useHistoricalData) {
     try { histData = loadHistoricalData(); } catch { histData = null; }
   }
+  if (histData && sim.useHistoricalData) {
+    histData = preprocessHistoricalData(histData);
+  }
 
   const w = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile];
   const HICP_MEAN = (1 + inf.hipcEurAnnual) ** (1/12) - 1;
@@ -216,7 +275,7 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
     let hwm = W0, smult = 1, cnt15 = 0, cnt25 = 0;
     let maxDD = 0, gEff = 0, gPlan = 0, ruined = false;
 
-    const path = histData ? bootstrapPath(histData, T, sim.blockLength, rng) : null;
+    const path = histData ? bootstrapPathWeighted(histData, T, sim.blockLength, rng) : null;
 
     for (let t = 0; t < T; t++) {
       let r: number[];
