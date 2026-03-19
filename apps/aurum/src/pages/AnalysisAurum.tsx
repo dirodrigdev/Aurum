@@ -197,13 +197,30 @@ export const AnalysisAurum: React.FC = () => {
     setErrorMessage('');
   }, [analysisDiagnostics, monthlyRowsAsc]);
 
+  const findBaseNetBefore = (monthKey: string | null) => {
+    if (!monthKey) return null;
+    const index = monthlyRowsAsc.findIndex((row) => row.monthKey === monthKey);
+    if (index <= 0) return null;
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const candidate = monthlyRowsAsc[i].netDisplay;
+      if (candidate !== null) return candidate;
+    }
+    return null;
+  };
+
+  const baseNetForKeys = (keys: string[]) => {
+    if (!keys.length) return null;
+    return findBaseNetBefore(keys[0]);
+  };
+
   const periodSummaries = useMemo(() => {
     const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
     const toSummary = (count: number, label: string) => {
       const keys = monthKeysAsc.slice(Math.max(0, monthKeysAsc.length - count));
       if (!keys.length) return null;
       const rows = monthlyRowsAsc.filter((row) => keys.includes(row.monthKey));
-      const baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+      const baseNetDisplay =
+        baseNetForKeys(keys) ?? rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
       return aggregateRows(`period-${label}`, label, rows, baseNetDisplay);
     };
 

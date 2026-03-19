@@ -55,7 +55,8 @@ export const buildCrpContributionInsight = (
 
   const aporteDisplay = comparableRows.reduce((sum, row) => sum + (row.retornoConCrp - row.retornoSinCrp), 0);
   const retornoConCrpDisplay = comparableRows.reduce((sum, row) => sum + row.retornoConCrp, 0);
-  const aporteMensualDisplay = aporteDisplay / 12;
+  const monthsCount = comparableRows.length;
+  const aporteMensualDisplay = monthsCount > 0 ? aporteDisplay / monthsCount : 0;
   const absAporte = Math.abs(aporteMensualDisplay);
   const neutralThreshold = convertFromClp(1_000, currency, fxAverageRates);
   const tone: CrpContributionInsight['tone'] =
@@ -66,12 +67,13 @@ export const buildCrpContributionInsight = (
     return formatCompactCurrency(abs, currency);
   })();
 
+  const labelMonths = monthsCount === 12 ? 'últ. 12M' : `últ. ${monthsCount}M`;
   const summaryText =
     tone === 'neutral'
-      ? 'CapRiesgo no movió materialmente el resultado en los últ. 12M'
+      ? `CapRiesgo no movió materialmente el resultado en los ${labelMonths}`
       : aporteMensualDisplay > 0
-        ? `CapRiesgo aportó ${headlineAmount}/mes en los últ. 12M`
-        : `CapRiesgo restó ${headlineAmount}/mes en los últ. 12M`;
+        ? `CapRiesgo aportó ${headlineAmount}/mes en los ${labelMonths}`
+        : `CapRiesgo restó ${headlineAmount}/mes en los ${labelMonths}`;
 
   const pctReturnThreshold = convertFromClp(1_000_000, currency, fxAverageRates);
   const pctAporteThreshold = convertFromClp(100_000, currency, fxAverageRates);
@@ -87,7 +89,7 @@ export const buildCrpContributionInsight = (
   const totalText = tone === 'neutral' ? null : `Total período: ${formatCurrency(aporteDisplay, currency)}`;
 
   return {
-    monthsLabel: 'últ. 12M',
+    monthsLabel: labelMonths,
     aporteDisplay,
     aporteMensualDisplay,
     total12mDisplay: aporteDisplay,
