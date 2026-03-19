@@ -161,7 +161,7 @@ export const SENSITIVITY_PARAMS: SensitivityParameter[] = [
     id: 'spendingPhase2', label: 'Gasto Fase 2',
     paramPath: 'spendingPhases.1.amountReal',
     values: [4_000_000, 6_000_000, 8_000_000],
-    valueLabels: ['4M', '6M', '8M'],
+    valueLabels: ['4MM', '6MM', '8MM'],
   },
   {
     id: 'rvChileWeight', label: 'Peso RV Chile',

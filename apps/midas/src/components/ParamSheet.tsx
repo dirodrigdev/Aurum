@@ -166,14 +166,14 @@ export function ParamSheet({
             suffix="€"
           />
           <NumberInput
-            label="Gasto Fase 2 (M CLP/mes)"
+            label="Gasto Fase 2 (MM CLP/mes)"
             value={params.spendingPhases[1]?.amountReal ?? 0}
             onChange={(v) => onUpdate('spendingPhases.1.amountReal', v)}
             suffix="$"
             step={100000}
           />
           <NumberInput
-            label="Gasto Fase 3 (M CLP/mes)"
+            label="Gasto Fase 3 (MM CLP/mes)"
             value={params.spendingPhases[2]?.amountReal ?? 0}
             onChange={(v) => onUpdate('spendingPhases.2.amountReal', v)}
             suffix="$"

@@ -327,10 +327,10 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
     const yr = Math.round(((fi * FAN_RES) + 1) / 12 * 10) / 10;
     fanData.push({
       year: yr,
-      p5: percentile(sorted, 5)  / 1e9, p10: percentile(sorted, 10) / 1e9,
-      p25: percentile(sorted, 25) / 1e9, p50: percentile(sorted, 50) / 1e9,
-      p75: percentile(sorted, 75) / 1e9, p90: percentile(sorted, 90) / 1e9,
-      p95: percentile(sorted, 95) / 1e9,
+      p5: percentile(sorted, 5)  / 1e6, p10: percentile(sorted, 10) / 1e6,
+      p25: percentile(sorted, 25) / 1e6, p50: percentile(sorted, 50) / 1e6,
+      p75: percentile(sorted, 75) / 1e6, p90: percentile(sorted, 90) / 1e6,
+      p95: percentile(sorted, 95) / 1e6,
     });
   }
 
@@ -445,7 +445,7 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
 
     if (Wp <= ruinThresholdMonths * G) { ruinMonth = mes; break; }
     sl = sl.map(x => x - G * (x / Wp));
-    if (t % 12 === 0) traj.push({ year: mes / 12, wealth: sl.reduce((a, b) => a + b, 0) / cumCL / 1e9 });
+    if (t % 12 === 0) traj.push({ year: mes / 12, wealth: sl.reduce((a, b) => a + b, 0) / cumCL / 1e6 });
   }
 
   return {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { runSimulation } from '../domain/simulation/engine';
@@ -39,16 +39,22 @@ const computeWeightedReturn = (p: ModelParameters) =>
   p.weights.rvChile * p.returns.rvChileAnnual +
   p.weights.rfChile * p.returns.rfChileUFAnnual;
 
+const formatMillionsMM = (value: number) => {
+  if (!Number.isFinite(value)) return '—';
+  const decimals = value !== 0 && Math.abs(value) < 1000 ? 1 : 0;
+  return `${value.toLocaleString('es-CL', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}MM`;
+};
 const formatCapital = (value: number) => {
   if (!Number.isFinite(value)) return '—';
-  const millions = value / 1_000_000;
-  return `$${millions.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}MM`;
+  return `$${formatMillionsMM(value / 1_000_000)}`;
 };
 const formatNumber = (value: number) =>
   value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-const clampSuccessPct = (value: number) => Math.max(60, Math.min(100, value));
-const ruinToSuccessPct = (probRuin: number) => clampSuccessPct((1 - probRuin) * 100);
+const ruinToSuccessPct = (probRuin: number) => (1 - probRuin) * 100;
 
 const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters => {
   if (!overrides || !overrides.active) return p;
@@ -121,7 +127,7 @@ export function SimulationPage({
     return undefined;
   }, [simActive]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!simActive) {
       setPreviewResult(null);
       setPreviewRunning(false);
@@ -148,15 +154,40 @@ export function SimulationPage({
   const fanChartData: FanChartDatum[] = displayResult
     ? displayResult.fanChartData.map((point) => ({
         ...point,
-        outerBase: point.p5 / 1e6,
-        outerSpan: Math.max(0, (point.p95 - point.p5) / 1e6),
-        innerBase: point.p25 / 1e6,
-        innerSpan: Math.max(0, (point.p75 - point.p25) / 1e6),
+        outerBase: point.p5,
+        outerSpan: Math.max(0, point.p95 - point.p5),
+        innerBase: point.p25,
+        innerSpan: Math.max(0, point.p75 - point.p25),
       }))
     : [];
   const percentileRows = [10, 25, 50, 75, 90] as const;
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
-
+  const fanChartYears = displayResult ? Math.max(5, Math.ceil((displayResult.fanChartData.at(-1)?.year ?? 40) / 5) * 5) : 40;
+  const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
+  const scenarioSuccessValues = SCENARIO_VARIANTS.map((variant) => {
+    const key = variant.id === 'pessimistic'
+      ? 'pessimistic'
+      : variant.id === 'optimistic'
+        ? 'optimistic'
+        : 'base';
+    const scenario = displayResult?.scenarioComparison?.[key];
+    return scenario ? ruinToSuccessPct(scenario.probRuin) : null;
+  }).filter((value): value is number => value !== null);
+  const successValues = [
+    ...scenarioSuccessValues,
+    probSuccess !== null ? probSuccess * 100 : null,
+  ].filter((value): value is number => Number.isFinite(value));
+  const axisMinCandidate = successValues.length
+    ? Math.max(0, Math.floor((Math.min(...successValues) - 5) / 5) * 5)
+    : 60;
+  const axisMaxCandidate = successValues.length
+    ? Math.min(100, Math.ceil((Math.max(...successValues) + 5) / 5) * 5)
+    : 100;
+  const successAxisMin = Math.max(0, Math.min(axisMinCandidate, axisMaxCandidate - 5));
+  const successAxisMax = Math.min(100, Math.max(axisMaxCandidate, successAxisMin + 5));
+  const successAxisSpan = Math.max(1, successAxisMax - successAxisMin);
+  const mapSuccessPct = (value: number) =>
+    Math.min(100, Math.max(0, ((value - successAxisMin) / successAxisSpan) * 100));
   const openChip = (chip: 'return' | 'years' | 'capital') => {
     onSimulationTouch('custom');
     setActiveChip(chip);
@@ -301,27 +332,33 @@ export function SimulationPage({
       {displayResult && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
           <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
-            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>60%</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+              <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {uncertaintyBand && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${((clampSuccessPct(uncertaintyBand.low * 100) - 60) / 40) * 100}%`,
-                    width: `${((clampSuccessPct(uncertaintyBand.high * 100) - clampSuccessPct(uncertaintyBand.low * 100)) / 40) * 100}%`,
-                    top: 0,
-                    bottom: 0,
-                    background: 'rgba(91, 140, 255, 0.25)',
-                    borderRadius: 999,
-                  }}
-                />
-              )}
+              {uncertaintyBand && (() => {
+                const lowPct = ruinToSuccessPct(uncertaintyBand.high);
+                const highPct = ruinToSuccessPct(uncertaintyBand.low);
+                const left = mapSuccessPct(lowPct);
+                const right = mapSuccessPct(highPct);
+                return (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${Math.min(left, right)}%`,
+                      width: `${Math.max(0, Math.abs(right - left))}%`,
+                      top: 0,
+                      bottom: 0,
+                      background: 'rgba(91, 140, 255, 0.25)',
+                      borderRadius: 999,
+                    }}
+                  />
+                );
+              })()}
               {SCENARIO_VARIANTS.map((variant) => {
                 const scenario = displayResult.scenarioComparison?.[variant.id === 'pessimistic' ? 'pessimistic' : variant.id === 'optimistic' ? 'optimistic' : 'base'];
                 const point = scenario ?? null;
                 const successPct = point ? ruinToSuccessPct(point.probRuin) : 0;
-                const left = clampSuccessPct(successPct);
+                const left = mapSuccessPct(successPct);
                 const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
                 const active = simulationPreset !== 'custom' && variant.id === simulationPreset;
                 return (
@@ -347,7 +384,7 @@ export function SimulationPage({
                 );
               })}
             </div>
-            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>100%</span>
+            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
           </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
             Banda de incertidumbre (±6pp estimado):{' '}
@@ -356,16 +393,16 @@ export function SimulationPage({
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
         <InfoCard
-          label="Gasto efectivo / planificado"
+          label="Gasto modelado / planificado"
           value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
         />
-        <InfoCard
-          label="Patrimonio P50"
-          value={p50 !== null ? `$${(p50 / 1e6).toFixed(0)}MM` : '—'}
-        />
-      </div>
+          <InfoCard
+            label="Patrimonio P50"
+            value={p50 !== null ? `$${formatMillionsMM(p50 / 1e6)}` : '—'}
+          />
+        </div>
 
       {displayResult && (
         <>
@@ -417,15 +454,20 @@ export function SimulationPage({
                   <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
                   <XAxis
                     dataKey="year"
+                    type="number"
+                    domain={[0, fanChartYears]}
+                    ticks={fanChartTicks}
                     tick={{ fill: T.textMuted, fontSize: 10 }}
-                    tickFormatter={(v: number | string) => `${v}a`}
+                    tickFormatter={(v: number | string) => String(v)}
                     stroke={T.border}
+                    tickMargin={8}
+                    label={{ value: 'Años', position: 'insideBottom', offset: -2, fill: T.textMuted, fontSize: 11 }}
                   />
                   <YAxis
                     tick={{ fill: T.textMuted, fontSize: 10 }}
-                    tickFormatter={(v: number | string) => `${v}MM`}
+                    tickFormatter={(v: number | string) => formatMillionsMM(Number(v))}
                     stroke={T.border}
-                    width={28}
+                    width={46}
                   />
                   <Tooltip
                     contentStyle={{
@@ -434,7 +476,7 @@ export function SimulationPage({
                       color: T.textPrimary,
                       fontSize: 11,
                     }}
-                    formatter={(value: unknown) => [`${Number(value).toFixed(0)}MM CLP`]}
+                    formatter={(value: unknown) => [`${formatMillionsMM(Number(value))} CLP`]}
                     labelFormatter={(label: unknown) => `Año ${String(label)}`}
                   />
                   <Area
@@ -478,14 +520,18 @@ export function SimulationPage({
                   <Line type="monotone" dataKey="p50" stroke={T.primary} strokeWidth={2.5} dot={false} />
                   <Line type="monotone" dataKey="p10" stroke={T.negative} strokeWidth={1} strokeDasharray="3 3" dot={false} />
                   <ReferenceLine y={0} stroke={T.negative} strokeDasharray="4 2" />
-                  <ReferenceLine x={3} stroke={T.metalDeep} strokeDasharray="2 3" label={{ value: 'Fase 1', fill: T.textMuted, fontSize: 9 }} />
-                  <ReferenceLine x={20} stroke={T.metalDeep} strokeDasharray="2 3" label={{ value: 'Fase 2', fill: T.textMuted, fontSize: 9 }} />
+                  <ReferenceLine x={5} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine x={10} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine x={15} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine x={20} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine x={25} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine x={30} stroke={T.metalDeep} strokeDasharray="2 3" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Año 3 - fin gasto EUR</span>
-              <span>Año 20 - fin Fase 2</span>
+              <span>Años en cortes de 5</span>
+              <span>Fases marcadas en la barra</span>
             </div>
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
@@ -528,8 +574,8 @@ export function SimulationPage({
                     }}
                   >
                     <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
-                  <span style={{ ...css.mono, fontWeight: 700 }}>{`$${(clp / 1e6).toFixed(0)}MM`}</span>
-                  <span style={{ ...css.mono }}>{`€${eur.toFixed(1)}M`}</span>
+                  <span style={{ ...css.mono, fontWeight: 700 }}>{`$${formatMillionsMM(clp / 1e6)}`}</span>
+                  <span style={{ ...css.mono }}>{`€${formatMillionsMM(eur)}`}</span>
                     <span style={{ ...css.mono }}>{`${(dd * 100).toFixed(1)}%`}</span>
                   </div>
                 );
