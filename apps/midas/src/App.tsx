@@ -4,7 +4,7 @@ import { DEFAULT_PARAMETERS } from './domain/model/defaults';
 import { runSimulation } from './domain/simulation/engine';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
-import { SimulationPage } from './components/SimulationPage';
+import { SimulationPage, SimulationOverrides } from './components/SimulationPage';
 import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
@@ -35,6 +35,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
+  const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
 
   const runSim = () => {
     const res = runSimulation(params);
@@ -42,10 +43,35 @@ export default function App() {
     setActiveTab('sim');
   };
 
+  const resetSimOverrides = useCallback(() => setSimOverrides(null), []);
+
+  const handleTabChange = useCallback(
+    (tab: TabId) => {
+      if (tab === activeTab && tab === 'sim') {
+        resetSimOverrides();
+      }
+      if (tab !== 'sim' && simOverrides) {
+        resetSimOverrides();
+      }
+      setActiveTab(tab);
+    },
+    [activeTab, resetSimOverrides, simOverrides],
+  );
+
   const statusColor = simResult ? T.positive : T.textMuted;
 
   const content = useMemo(() => {
-    if (activeTab === 'sim') return <SimulationPage result={simResult} params={params} />;
+    if (activeTab === 'sim') {
+      return (
+        <SimulationPage
+          result={simResult}
+          params={params}
+          simOverrides={simOverrides}
+          onSimOverridesChange={setSimOverrides}
+          onResetSim={resetSimOverrides}
+        />
+      );
+    }
     if (activeTab === 'sens') return <SensitivityPage params={params} />;
     if (activeTab === 'stress') return <StressPage params={params} />;
     return <OptimizerPage params={params} />;
@@ -93,7 +119,7 @@ export default function App() {
         </svg>
       </button>
 
-      <BottomNav active={activeTab} onChange={setActiveTab} />
+      <BottomNav active={activeTab} onChange={handleTabChange} />
 
       <ParamSheet
         open={paramSheetOpen}

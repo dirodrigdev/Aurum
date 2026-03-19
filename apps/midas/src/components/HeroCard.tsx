@@ -6,11 +6,17 @@ export function HeroCard({
   valuePct,
   subtitle,
   ruinCopy,
+  chips,
+  mode = 'real',
+  onResetSim,
 }: {
   label: string;
   valuePct: number | null;
   subtitle?: string;
   ruinCopy?: string;
+  chips?: Array<{ id: string; value: string; onClick: () => void }>;
+  mode?: 'real' | 'sim';
+  onResetSim?: () => void;
 }) {
   const pct = valuePct === null ? null : valuePct * 100;
   const tone =
@@ -21,29 +27,93 @@ export function HeroCard({
         : pct >= 85
           ? T.warning
           : T.negative;
+  const simMode = mode === 'sim';
   return (
     <div
       style={{
-        background: T.surface,
-        border: `1px solid ${T.border}`,
+        background: simMode ? 'rgba(91, 140, 255, 0.08)' : T.surface,
+        border: simMode ? `1px solid ${T.primary}` : `1px solid ${T.border}`,
         borderRadius: 16,
         padding: 16,
       }}
     >
-      <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-        {label}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+          {label}
+        </div>
+        {simMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: T.primary,
+              background: 'rgba(91, 140, 255, 0.18)',
+              border: `1px solid ${T.primary}`,
+              padding: '4px 8px',
+              borderRadius: 999,
+            }}>
+              Simulacion
+            </span>
+            {onResetSim && (
+              <button
+                onClick={onResetSim}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  fontSize: 11,
+                  padding: '4px 8px',
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                }}
+              >
+                Volver a real
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <div
-        style={{
-          ...css.mono,
-          fontSize: 72,
-          fontWeight: 700,
-          lineHeight: 1,
-          color: tone,
-          marginTop: 8,
-        }}
-      >
-        {pct === null ? '—' : `${pct.toFixed(1)}%`}
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+        <div
+          style={{
+            ...css.mono,
+            fontSize: 72,
+            fontWeight: 700,
+            lineHeight: 1,
+            color: tone,
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
+          {pct === null ? '—' : `${pct.toFixed(1)}%`}
+        </div>
+        {chips && chips.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {chips.map((chip) => (
+              <button
+                key={chip.id}
+                onClick={chip.onClick}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  padding: '6px 10px',
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                  minWidth: 96,
+                  textAlign: 'center',
+                }}
+              >
+                {chip.value}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {subtitle && (
         <div style={{ color: T.textSecondary, fontSize: 13, marginTop: 6 }}>
