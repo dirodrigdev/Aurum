@@ -3,7 +3,8 @@
 // V1.2: BTG corregido con carteras CMF + datos MSCI/AGGU 2025-2026
 
 import type {
-  ModelParameters, SensitivityParameter, StressScenario, OptimizerConstraints
+  ModelParameters, SensitivityParameter, StressScenario, OptimizerConstraints,
+  ScenarioVariant
 } from './types';
 
 export const DEFAULT_PARAMETERS: ModelParameters = {
@@ -20,6 +21,8 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     rvChile:  0.264,
     rfChile:  0.257,
   },
+  cashflowEvents: [],
+  activeScenario: 'base',
 
   feeAnnual: 0.0035,
 
@@ -75,6 +78,43 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
 
   ruinThresholdMonths: 3,
 };
+
+// Escenarios con valores absolutos y auditables.
+// Base = calibración histórica real 2000-2026. No apilar conservadurismo aquí.
+// Pessimistic = plausible pero exigente. Optimistic = plausible pero favorable.
+// Si se recalibra el base, estos valores NO cambian automáticamente.
+export const SCENARIO_VARIANTS: ScenarioVariant[] = [
+  {
+    id: 'base', label: 'Base',
+    // Sin overrides — usa todos los valores de DEFAULT_PARAMETERS
+  },
+  {
+    id: 'pessimistic', label: 'Pesimista',
+    rvGlobalAnnual:    0.045,
+    rfGlobalAnnual:    0.015,
+    rvChileAnnual:     0.055,
+    rfChileUFAnnual:   0.000,
+    rvGlobalVolAnnual: 0.200,
+    rfGlobalVolAnnual: 0.048,
+    rvChileVolAnnual:  0.148,
+    rfChileVolAnnual:  0.031,
+    ipcChileAnnual:    0.055,
+    tcrealLT:          720,
+  },
+  {
+    id: 'optimistic', label: 'Optimista',
+    rvGlobalAnnual:    0.095,
+    rfGlobalAnnual:    0.040,
+    rvChileAnnual:     0.120,
+    rfChileUFAnnual:   0.020,
+    rvGlobalVolAnnual: 0.130,
+    rfGlobalVolAnnual: 0.032,
+    rvChileVolAnnual:  0.097,
+    rfChileVolAnnual:  0.020,
+    ipcChileAnnual:    0.025,
+    tcrealLT:          560,
+  },
+];
 
 // Pesos V1.1 para comparación en optimizador
 export const WEIGHTS_V1_1 = {

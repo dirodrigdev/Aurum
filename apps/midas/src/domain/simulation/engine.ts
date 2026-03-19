@@ -3,8 +3,9 @@
 
 import type {
   ModelParameters, SimulationResults, FanChartPoint,
-  StressScenario, StressResult
+  StressScenario, StressResult, ScenarioComparison, ScenarioPoint, ScenarioVariant
 } from '../model/types';
+import { SCENARIO_VARIANTS } from '../model/defaults';
 import { loadHistoricalData } from './historicalData';
 
 // ── Utilidades ────────────────────────────────────────────────
@@ -55,9 +56,96 @@ function bootstrapPath(data: number[][], T: number, blen: number, rng: () => num
   return path;
 }
 
+const SLEEVE_KEYS = ['rvGlobal', 'rfGlobal', 'rvChile', 'rfChile'] as const;
+const CASHFLOW_WATERFALL_ORDER = [3, 1, 2, 0] as const;
+
+export function applyScenarioVariant(
+  params: ModelParameters,
+  variant: ScenarioVariant,
+): ModelParameters {
+  return {
+    ...params,
+    returns: {
+      ...params.returns,
+      rvGlobalAnnual:    variant.rvGlobalAnnual    ?? params.returns.rvGlobalAnnual,
+      rfGlobalAnnual:    variant.rfGlobalAnnual    ?? params.returns.rfGlobalAnnual,
+      rvChileAnnual:     variant.rvChileAnnual     ?? params.returns.rvChileAnnual,
+      rfChileUFAnnual:   variant.rfChileUFAnnual    ?? params.returns.rfChileUFAnnual,
+      rvGlobalVolAnnual: variant.rvGlobalVolAnnual ?? params.returns.rvGlobalVolAnnual,
+      rfGlobalVolAnnual: variant.rfGlobalVolAnnual ?? params.returns.rfGlobalVolAnnual,
+      rvChileVolAnnual:  variant.rvChileVolAnnual   ?? params.returns.rvChileVolAnnual,
+      rfChileVolAnnual:  variant.rfChileVolAnnual   ?? params.returns.rfChileVolAnnual,
+    },
+    inflation: {
+      ...params.inflation,
+      ipcChileAnnual: variant.ipcChileAnnual ?? params.inflation.ipcChileAnnual,
+    },
+    fx: {
+      ...params.fx,
+      tcrealLT: variant.tcrealLT ?? params.fx.tcrealLT,
+    },
+  };
+}
+
+export function runScenarioComparison(
+  params: ModelParameters,
+  variants: ScenarioVariant[],
+): ScenarioComparison {
+  const lightParams = {
+    ...params,
+    simulation: { ...params.simulation, nSim: 800, seed: 42 },
+  };
+  const run = (v: ScenarioVariant): ScenarioPoint => {
+    const r = runSimulationCore(applyScenarioVariant(lightParams, v));
+    return {
+      probRuin:    r.probRuin,
+      terminalP50: r.terminalWealthPercentiles[50] ?? 0,
+      terminalP10: r.terminalWealthPercentiles[10] ?? 0,
+    };
+  };
+  return {
+    base:        run(variants.find(v => v.id === 'base')        ?? variants[0]),
+    pessimistic: run(variants.find(v => v.id === 'pessimistic') ?? variants[1]),
+    optimistic:  run(variants.find(v => v.id === 'optimistic')  ?? variants[2]),
+  };
+}
+
+function applyCashflowEvents(
+  sl: number[],
+  cashflowEvents: ModelParameters['cashflowEvents'],
+  month: number,
+  CPU_t: number,
+  EURUSDt: number,
+): void {
+  for (const ev of cashflowEvents.filter(e => e.month === month)) {
+    let amountCLP = ev.amount;
+    if (ev.currency === 'USD') amountCLP *= CPU_t;
+    if (ev.currency === 'EUR') amountCLP *= EURUSDt * CPU_t;
+
+    if (ev.type === 'inflow') {
+      const idx = ev.sleeve ? SLEEVE_KEYS.indexOf(ev.sleeve) : 3;
+      if (idx >= 0) sl[idx] += amountCLP;
+      continue;
+    }
+
+    let remaining = amountCLP;
+    const preferredIdx = ev.sleeve ? SLEEVE_KEYS.indexOf(ev.sleeve) : -1;
+    const order = preferredIdx >= 0
+      ? [preferredIdx, ...CASHFLOW_WATERFALL_ORDER.filter(i => i !== preferredIdx)]
+      : [...CASHFLOW_WATERFALL_ORDER];
+
+    for (const idx of order) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, Math.max(0, sl[idx]));
+      sl[idx] -= take;
+      remaining -= take;
+    }
+  }
+}
+
 // ── Motor principal ───────────────────────────────────────────
 
-export function runSimulation(params: ModelParameters): SimulationResults {
+export function runSimulationCore(params: ModelParameters): SimulationResults {
   const t0 = Date.now();
   const {
     capitalInitial: W0, weights, feeAnnual,
@@ -171,6 +259,7 @@ export function runSimulation(params: ModelParameters): SimulationResults {
       const W  = sl.reduce((a, b) => a + b, 0);
       const ff = (W - W * feeAnnual / 12) / W;
       sl = sl.map(x => x * ff);
+      applyCashflowEvents(sl, params.cashflowEvents, t + 1, CPU_t, EURUSDt);
       const Wp = sl.reduce((a, b) => a + b, 0);
 
       const Wr = Wp / cumCL;
@@ -247,6 +336,11 @@ export function runSimulation(params: ModelParameters): SimulationResults {
 
   return {
     probRuin: nRuin / N, nRuin, nTotal: N,
+    uncertaintyBand: {
+      low: Math.max(0, (nRuin / N) - 0.06),
+      high: Math.min(1, (nRuin / N) + 0.06),
+    },
+    scenarioComparison: undefined,
     terminalWealthPercentiles: twPct,
     terminalWealthAll: sortTW,
     maxDrawdownPercentiles: ddPct,
@@ -259,6 +353,18 @@ export function runSimulation(params: ModelParameters): SimulationResults {
     durationMs: Date.now() - t0,
     params,
   };
+}
+
+// ── Motor principal (wrapper con escenarios) ─────────────────
+
+export function runSimulation(
+  params: ModelParameters,
+  variants: ScenarioVariant[] = SCENARIO_VARIANTS,
+): SimulationResults {
+  const activeVariant = variants.find(v => v.id === params.activeScenario) ?? variants[0];
+  const results = runSimulationCore(applyScenarioVariant(params, activeVariant));
+  const scenarioComparison = runScenarioComparison(params, variants);
+  return { ...results, scenarioComparison };
 }
 
 // ── Stress test ───────────────────────────────────────────────

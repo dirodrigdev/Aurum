@@ -8,6 +8,56 @@ export interface PortfolioWeights {
   rfChile:  number;
 }
 
+export interface CashflowEvent {
+  id:          string;
+  description: string;
+  month:       number; // 1–480
+  // Convención: eventos se aplican DESPUÉS de retornos y ANTES del gasto mensual
+  // month = (año - 1) * 12 + 1  →  inicio del año indicado por el usuario
+  type:        'inflow' | 'outflow';
+  amount:      number; // en moneda original, siempre positivo
+  currency:    'CLP' | 'USD' | 'EUR';
+  sleeve?:     keyof PortfolioWeights;
+  // Lógica de entrada/salida:
+  //   inflow sin sleeve  → entra a rfChile (caja por defecto)
+  //   inflow con sleeve  → entra al sleeve indicado
+  //   outflow sin sleeve → waterfall: rfChile → rfGlobal → rvChile → rvGlobal
+  //   outflow con sleeve → sale primero del sleeve indicado; si no alcanza, continúa waterfall
+  // NOTA V1: AFP y fondos se tratan como liquidez inmediata.
+  //          No se modelan plazos de rescate, gates ni restricciones operativas reales.
+}
+
+export type ScenarioVariantId = 'base' | 'pessimistic' | 'optimistic';
+
+export interface ScenarioVariant {
+  id:    ScenarioVariantId;
+  label: string;
+  // Valores ABSOLUTOS — no multiplicadores
+  // Si undefined, usa el valor de DEFAULT_PARAMETERS (escenario base)
+  rvGlobalAnnual?:    number;
+  rfGlobalAnnual?:    number;
+  rvChileAnnual?:     number;
+  rfChileUFAnnual?:   number;
+  rvGlobalVolAnnual?: number;
+  rfGlobalVolAnnual?: number;
+  rvChileVolAnnual?:  number;
+  rfChileVolAnnual?:  number;
+  ipcChileAnnual?:    number;
+  tcrealLT?:          number;
+}
+
+export interface ScenarioPoint {
+  probRuin:    number;
+  terminalP50: number;
+  terminalP10: number;
+}
+
+export interface ScenarioComparison {
+  base:        ScenarioPoint;
+  pessimistic: ScenarioPoint;
+  optimistic:  ScenarioPoint;
+}
+
 export interface SpendingPhase {
   durationMonths: number;
   amountReal:     number;
@@ -61,6 +111,8 @@ export interface ModelParameters {
   label:                string;
   capitalInitial:       number;
   weights:              PortfolioWeights;
+  cashflowEvents:       CashflowEvent[];
+  activeScenario:       ScenarioVariantId;
   feeAnnual:            number;
   spendingPhases:       SpendingPhase[];
   spendingRule:         SpendingRule;
@@ -82,6 +134,11 @@ export interface SimulationResults {
   probRuin:                    number;
   nRuin:                       number;
   nTotal:                      number;
+  // Banda de incertidumbre heurística — NO es un intervalo de confianza estadístico.
+  // Representa incertidumbre de parámetros (±6pp sobre probRuin).
+  // Mostrar siempre con label: "Banda de incertidumbre (±6pp estimado)"
+  uncertaintyBand:             { low: number; high: number };
+  scenarioComparison?:         ScenarioComparison;
   terminalWealthPercentiles:   Record<number, number>;
   terminalWealthAll:           number[];
   maxDrawdownPercentiles:      Record<number, number>;

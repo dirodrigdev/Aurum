@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import type { ModelParameters, SimulationResults } from './domain/model/types';
+import type { CashflowEvent, ModelParameters, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS } from './domain/model/defaults';
 import { runSimulation } from './domain/simulation/engine';
 import { BottomNav, TabId } from './components/BottomNav';
@@ -27,11 +27,11 @@ function useParams() {
     });
   }, []);
   const reset = useCallback(() => setParams(cloneParams(DEFAULT_PARAMETERS)), []);
-  return { params, update, reset };
+  return { params, setParams, update, reset };
 }
 
 export default function App() {
-  const { params, update, reset } = useParams();
+  const { params, setParams, update, reset } = useParams();
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
@@ -42,6 +42,21 @@ export default function App() {
     setSimResult(res);
     setActiveTab('sim');
   };
+
+  const handleScenarioChange = useCallback(
+    (next: ScenarioVariantId) => {
+      setParams((prev) => {
+        const updated = { ...prev, activeScenario: next };
+        if (simResult) setSimResult(runSimulation(updated));
+        return updated;
+      });
+    },
+    [simResult],
+  );
+
+  const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
+    setParams((prev) => ({ ...prev, cashflowEvents: next }));
+  }, []);
 
   const resetSimOverrides = useCallback(() => setSimOverrides(null), []);
 
@@ -67,6 +82,7 @@ export default function App() {
           result={simResult}
           params={params}
           simOverrides={simOverrides}
+          onScenarioChange={handleScenarioChange}
           onSimOverridesChange={setSimOverrides}
           onResetSim={resetSimOverrides}
         />
@@ -126,6 +142,8 @@ export default function App() {
         onClose={() => setParamSheetOpen(false)}
         params={params}
         onUpdate={update}
+        cashflowEvents={params.cashflowEvents}
+        onCashflowEventsChange={handleCashflowEventsChange}
         onReset={reset}
         onRun={runSim}
       />

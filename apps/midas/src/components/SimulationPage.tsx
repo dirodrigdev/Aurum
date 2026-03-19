@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ModelParameters, SimulationResults } from '../domain/model/types';
+import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
+import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { runSimulation } from '../domain/simulation/engine';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
@@ -44,6 +45,9 @@ const formatCapital = (value: number) => {
 const formatNumber = (value: number) =>
   value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
+const clampSuccessPct = (value: number) => Math.max(60, Math.min(100, value));
+const ruinToSuccessPct = (probRuin: number) => clampSuccessPct((1 - probRuin) * 100);
+
 const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters => {
   if (!overrides || !overrides.active) return p;
   const baseReturn = computeWeightedReturn(p);
@@ -74,12 +78,14 @@ export function SimulationPage({
   result,
   params,
   simOverrides,
+  onScenarioChange,
   onSimOverridesChange,
   onResetSim,
 }: {
   result: SimulationResults | null;
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
+  onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onResetSim: () => void;
 }) {
@@ -128,10 +134,37 @@ export function SimulationPage({
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinPct = displayResult ? displayResult.probRuin * 100 : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
-  const rangeMin = probSuccess === null ? null : Math.max(0.75, probSuccess - 0.06);
-  const rangeMax = probSuccess === null ? null : Math.min(1, probSuccess + 0.06);
-  const leftPct = rangeMin === null ? 0 : ((rangeMin * 100 - 75) / (100 - 75)) * 100;
-  const widthPct = rangeMin === null || rangeMax === null ? 0 : (((rangeMax - rangeMin) * 100) / (100 - 75)) * 100;
+  const uncertaintyBand = displayResult?.uncertaintyBand ?? null;
+  const scenarioComparison = displayResult?.scenarioComparison ?? null;
+  const activeScenario = params.activeScenario;
+  const scenarioCards = scenarioComparison
+    ? [
+        {
+          id: 'pessimistic' as const,
+          label: 'Pesimista',
+          point: scenarioComparison.pessimistic,
+          active: activeScenario === 'pessimistic',
+        },
+        {
+          id: 'base' as const,
+          label: 'Base',
+          point: scenarioComparison.base,
+          active: activeScenario === 'base',
+        },
+        {
+          id: 'optimistic' as const,
+          label: 'Optimista',
+          point: scenarioComparison.optimistic,
+          active: activeScenario === 'optimistic',
+        },
+      ]
+    : [];
+  const scenarioBarPoints = scenarioCards.length
+    ? scenarioCards.map((card) => ({
+        ...card,
+        successPct: ruinToSuccessPct(card.point.probRuin),
+      }))
+    : [];
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
   const fanChartData: FanChartDatum[] = displayResult
@@ -173,21 +206,33 @@ export function SimulationPage({
     setActiveChip(null);
   };
 
-  const applyPreset = (preset: 'optimista' | 'actual' | 'pesimista') => {
-    const base = baseReturn;
-    const delta = preset === 'optimista' ? 0.015 : preset === 'pesimista' ? -0.015 : 0;
-    onSimOverridesChange({
-      active: true,
-      returnPct: Math.max(0, base + delta),
-      horizonYears: simOverrides?.horizonYears ?? baseYears,
-      capital: simOverrides?.capital ?? baseCapital,
-      preset,
-    });
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ position: 'relative' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          {SCENARIO_VARIANTS.map((variant) => {
+            const active = params.activeScenario === variant.id;
+            return (
+              <button
+                key={variant.id}
+                type="button"
+                onClick={() => onScenarioChange(variant.id)}
+                style={{
+                  background: active ? T.surfaceEl : T.surface,
+                  border: `1px solid ${active ? T.primary : T.border}`,
+                  color: active ? T.textPrimary : T.textMuted,
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {variant.label}
+              </button>
+            );
+          })}
+        </div>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={probSuccess}
@@ -296,28 +341,87 @@ export function SimulationPage({
         )}
       </div>
 
-      {rangeMin !== null && rangeMax !== null && probSuccess !== null && (
+      {displayResult && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
-          <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>RANGO ESTIMADO</div>
-          <div style={{ position: 'relative', height: 6, background: T.border, borderRadius: 3, margin: '10px 0' }}>
-            <div
-              style={{
-                position: 'absolute',
-                left: `${leftPct}%`,
-                width: `${widthPct}%`,
-                height: '100%',
-                background: ruinPct !== null ? (probSuccess > 0.92 ? T.positive : probSuccess >= 0.85 ? T.warning : T.negative) : T.primary,
-                borderRadius: 3,
-              }}
-            />
+          <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>60%</span>
+            <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
+              {scenarioBarPoints.map((card) => {
+                const left = clampSuccessPct(card.successPct);
+                const zoneColor = card.successPct >= 90 ? T.positive : card.successPct >= 80 ? T.warning : T.negative;
+                return (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => onScenarioChange(card.id)}
+                    title={`${card.label}: ${card.successPct.toFixed(1)}%`}
+                    style={{
+                      position: 'absolute',
+                      left: `${((left - 60) / 40) * 100}%`,
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      width: card.active ? 14 : 12,
+                      height: card.active ? 14 : 12,
+                      borderRadius: '50%',
+                      border: `2px solid ${zoneColor}`,
+                      background: card.active ? zoneColor : T.surface,
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>100%</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, ...css.mono, color: T.textSecondary }}>
-            <span>{(rangeMin * 100).toFixed(1)}%</span>
-            <span>{(rangeMax * 100).toFixed(1)}%</span>
+            <span>Escenario pesimista</span>
+            <span>Escenario base</span>
+            <span>Escenario optimista</span>
           </div>
-          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 8 }}>
-            Refleja incertidumbre en los supuestos del modelo (±6 pp)
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
+            Banda de incertidumbre (±6pp estimado):{' '}
+            {uncertaintyBand ? `${(uncertaintyBand.low * 100).toFixed(0)}% — ${(uncertaintyBand.high * 100).toFixed(0)}%` : '—'}
           </div>
+        </div>
+      )}
+
+      {scenarioCards.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+          {scenarioCards.map((card) => {
+            const successPct = ruinToSuccessPct(card.point.probRuin);
+            const terminalB = card.point.terminalP50 / 1e9;
+            return (
+              <button
+                key={card.id}
+                type="button"
+                onClick={() => onScenarioChange(card.id)}
+                style={{
+                  textAlign: 'left',
+                  borderRadius: 14,
+                  padding: 14,
+                  border: `1px solid ${card.active ? T.primary : T.border}`,
+                  background: card.active ? T.surfaceEl : T.surface,
+                  cursor: 'pointer',
+                  color: card.active ? T.textPrimary : T.textSecondary,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>{card.label}</span>
+                  <span style={{ ...css.mono, fontSize: 11, color: card.active ? T.primary : T.textMuted }}>
+                    {successPct.toFixed(0)}%
+                  </span>
+                </div>
+                <div style={{ marginTop: 6, ...css.mono, fontSize: 20, fontWeight: 800, color: card.active ? T.textPrimary : T.textSecondary }}>
+                  ${terminalB.toFixed(1)}B
+                </div>
+                <div style={{ marginTop: 4, fontSize: 11, color: T.textMuted }}>
+                  Ruina {(card.point.probRuin * 100).toFixed(1)}%
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -337,33 +441,7 @@ export function SimulationPage({
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {(['optimista', 'actual', 'pesimista'] as const).map((preset) => {
-                  const activePreset = simOverrides?.preset === preset;
-                  const isCustom = simOverrides?.preset === 'custom';
-                  return (
-                    <button
-                      key={preset}
-                      onClick={() => applyPreset(preset)}
-                      style={{
-                        background: activePreset ? T.primary : T.surfaceEl,
-                        border: `1px solid ${activePreset ? T.primary : T.border}`,
-                        color: activePreset ? '#fff' : isCustom ? T.textMuted : T.textSecondary,
-                        fontSize: 11,
-                        padding: '4px 10px',
-                        borderRadius: 999,
-                        cursor: 'pointer',
-                        opacity: isCustom && !activePreset ? 0.55 : 1,
-                      }}
-                    >
-                      {preset === 'optimista' ? 'Optimista' : preset === 'pesimista' ? 'Pesimista' : 'Actual'}
-                    </button>
-                  );
-                })}
-                {simOverrides?.preset === 'custom' && (
-                  <span style={{ color: T.textMuted, fontSize: 10, alignSelf: 'center' }}>Custom</span>
-                )}
-              </div>
+              {simOverrides?.preset === 'custom' && <span style={{ color: T.textMuted, fontSize: 10 }}>Custom</span>}
             </div>
             <div style={{ marginTop: 8 }}>
               <ResponsiveContainer width="100%" height={240}>

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { ModelParameters } from '../domain/model/types';
+import type { CashflowEvent, ModelParameters } from '../domain/model/types';
 import { T, css } from './theme';
 
 type NumberInputProps = {
@@ -62,6 +62,8 @@ export function ParamSheet({
   onClose,
   params,
   onUpdate,
+  cashflowEvents,
+  onCashflowEventsChange,
   onReset,
   onRun,
 }: {
@@ -69,14 +71,42 @@ export function ParamSheet({
   onClose: () => void;
   params: ModelParameters;
   onUpdate: (path: string, value: number) => void;
+  cashflowEvents: CashflowEvent[];
+  onCashflowEventsChange: (next: CashflowEvent[]) => void;
   onReset: () => void;
   onRun: () => void;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [eventForm, setEventForm] = useState({
+    description: '',
+    year: 1,
+    type: 'inflow' as CashflowEvent['type'],
+    amount: 0,
+    currency: 'CLP' as CashflowEvent['currency'],
+  });
   const weightSum = useMemo(
     () => params.weights.rvGlobal + params.weights.rfGlobal + params.weights.rvChile + params.weights.rfChile,
     [params.weights],
   );
+
+  const addCashflowEvent = () => {
+    const description = eventForm.description.trim();
+    if (!description || !Number.isFinite(eventForm.amount) || eventForm.amount <= 0) return;
+    const nextEvent: CashflowEvent = {
+      id: `${Date.now().toString()}${Math.random().toString(36).slice(2)}`,
+      description,
+      month: (Math.max(1, Math.round(eventForm.year)) - 1) * 12 + 1,
+      type: eventForm.type,
+      amount: Math.abs(eventForm.amount),
+      currency: eventForm.currency,
+    };
+    onCashflowEventsChange([...cashflowEvents, nextEvent]);
+    setEventForm((prev) => ({ ...prev, description: '', amount: 0 }));
+  };
+
+  const removeCashflowEvent = (id: string) => {
+    onCashflowEventsChange(cashflowEvents.filter((event) => event.id !== id));
+  };
 
   return (
     <div
@@ -240,6 +270,161 @@ export function ParamSheet({
               />
             </div>
           )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 6 }}>
+            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>EVENTOS DE CAJA</div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>Descripción</span>
+              <input
+                type="text"
+                value={eventForm.description}
+                placeholder="ej: Herencia, Compra auto"
+                onChange={(e) => setEventForm((prev) => ({ ...prev, description: e.target.value }))}
+                style={{
+                  background: T.surface,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '10px 12px',
+                  color: T.textPrimary,
+                  fontSize: 14,
+                  outline: 'none',
+                }}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              <NumberInput
+                label="Año"
+                value={eventForm.year}
+                onChange={(v) => setEventForm((prev) => ({ ...prev, year: Math.max(1, Math.min(40, Math.round(v))) }))}
+                min={1}
+                max={40}
+                step={1}
+              />
+              <NumberInput
+                label="Monto"
+                value={eventForm.amount}
+                onChange={(v) => setEventForm((prev) => ({ ...prev, amount: Math.max(0, v) }))}
+                step={1_000_000}
+              />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textSecondary, fontSize: 12 }}>Tipo</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  {([
+                    ['Ingreso', 'inflow'],
+                    ['Retiro', 'outflow'],
+                  ] as const).map(([label, value]) => {
+                    const active = eventForm.type === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setEventForm((prev) => ({ ...prev, type: value }))}
+                        style={{
+                          background: active ? T.primary : T.surface,
+                          color: active ? '#fff' : T.textSecondary,
+                          border: `1px solid ${active ? T.primary : T.border}`,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textSecondary, fontSize: 12 }}>Moneda</span>
+                <select
+                  value={eventForm.currency}
+                  onChange={(e) => setEventForm((prev) => ({ ...prev, currency: e.target.value as CashflowEvent['currency'] }))}
+                  style={{
+                    background: T.surface,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    color: T.textPrimary,
+                    fontSize: 14,
+                    outline: 'none',
+                  }}
+                >
+                  <option value="CLP">CLP</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                </select>
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={addCashflowEvent}
+              style={{
+                alignSelf: 'flex-start',
+                background: T.surface,
+                color: T.primary,
+                border: `1px solid ${T.border}`,
+                borderRadius: 10,
+                padding: '10px 12px',
+                cursor: 'pointer',
+                fontWeight: 700,
+              }}
+            >
+              Agregar evento
+            </button>
+
+            {cashflowEvents.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {cashflowEvents.map((event) => {
+                  const year = Math.floor((event.month - 1) / 12) + 1;
+                  const isInflow = event.type === 'inflow';
+                  const sign = isInflow ? '+' : '−';
+                  const color = isInflow ? '#2f8f4e' : '#c44747';
+                  return (
+                    <div
+                      key={event.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 10,
+                        background: T.surface,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '10px 12px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ color, fontWeight: 800, fontSize: 12 }}>
+                          {isInflow ? '↑' : '↓'} Año {year} — {event.description}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 11 }}>
+                          {sign}${event.amount.toLocaleString('es-CL')} {event.currency}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeCashflowEvent(event.id)}
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${T.border}`,
+                          color: T.textSecondary,
+                          borderRadius: 999,
+                          width: 28,
+                          height: 28,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, background: T.surfaceEl, borderTop: `1px solid ${T.border}` }}>
           <button
