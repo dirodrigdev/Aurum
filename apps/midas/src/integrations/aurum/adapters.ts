@@ -32,8 +32,8 @@ export function snapshotToParams(
 
   // Normalizar a 1.0
   const wSum = Object.values(weights).reduce((a, b) => a + b, 0);
-  Object.keys(weights).forEach(k => {
-    (weights as Record<string, number>)[k] /= wSum;
+  (['rvGlobal', 'rfGlobal', 'rvChile', 'rfChile'] as const).forEach(k => {
+    weights[k] /= wSum;
   });
 
   return {

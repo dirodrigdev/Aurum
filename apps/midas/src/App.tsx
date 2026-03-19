@@ -1,5 +1,6 @@
 // App.tsx — Midas: sistema patrimonial de largo plazo
 import React, { useState, useCallback, useRef } from 'react';
+
 import {
   AreaChart, Area, LineChart, Line, ScatterChart, Scatter,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -194,13 +195,13 @@ function MidasFanChart({ data }: { data: SimulationResults['fanChartData'] }) {
         </defs>
         <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
         <XAxis dataKey="year" stroke={T.border} tick={{ fill: T.textMuted, fontSize: 10 }}
-               tickFormatter={v => `${v}a`} />
+               tickFormatter={(v: number) => `${v}a`} />
         <YAxis stroke={T.border} tick={{ fill: T.textMuted, fontSize: 10 }}
-               tickFormatter={v => `${v}B`} width={32} />
+               tickFormatter={(v: number) => `${v}B`} width={32} />
         <Tooltip
           contentStyle={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, fontSize: 11 }}
           formatter={(v: number, n: string) => [`${v.toFixed(2)}B CLP`, n]}
-          labelFormatter={v => `Año ${v}`}
+          labelFormatter={(v: number) => `Año ${v}`}
         />
         <Area type="monotone" dataKey="p95" stroke="none" fill={T.fan1} fillOpacity={0.4} />
         <Area type="monotone" dataKey="p75" stroke="none" fill={T.fan2} fillOpacity={0.5} />
@@ -412,7 +413,7 @@ function SensitivityPage({ params }: { params: ModelParameters }) {
           const p = JSON.parse(JSON.stringify(params)) as ModelParameters;
           p.simulation.nSim = 1500; p.simulation.seed = 42;
           const parts = sp.paramPath.split('.');
-          let obj = p as Record<string, unknown>;
+          let obj = p as unknown as Record<string, unknown>;
           for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]] as Record<string, unknown>;
           obj[parts[parts.length - 1]] = val;
           const r = runSimulation(p);
@@ -574,9 +575,9 @@ function StressPage({ params }: { params: ModelParameters }) {
                 <LineChart margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
                   <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
                   <XAxis dataKey="year" type="number" domain={[0, 40]} stroke={T.border}
-                         tick={{ fill: T.textMuted, fontSize: 10 }} tickFormatter={v => `${v}a`} />
+                         tick={{ fill: T.textMuted, fontSize: 10 }} tickFormatter={(v: number) => `${v}a`} />
                   <YAxis stroke={T.border} tick={{ fill: T.textMuted, fontSize: 10 }}
-                         tickFormatter={v => `${v}B`} width={32} />
+                         tickFormatter={(v: number) => `${v}B`} width={32} />
                   <Tooltip contentStyle={{ background: T.surfaceEl, border: `1px solid ${T.border}`, color: T.textPrimary, fontSize: 11 }} />
                   <ReferenceLine y={0} stroke={T.negative} strokeDasharray="3 3" />
                   {results.map((r, i) => (
@@ -959,7 +960,7 @@ export default function App() {
               background: 'none', border: 'none', cursor: 'pointer',
               padding: '6px 14px', borderRadius: 6,
               color: tab === t.id ? T.textPrimary : T.textMuted,
-              background: tab === t.id ? T.surfaceEl : 'transparent' as any,
+              backgroundColor: tab === t.id ? T.surfaceEl : 'transparent' as any,
               fontSize: 12, fontWeight: tab === t.id ? 600 : 400,
             }}>
               {t.label}
