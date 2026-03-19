@@ -7,6 +7,11 @@ import type {
   ScenarioVariant
 } from './types';
 
+// Favorece el regimen reciente sin volver 2008 marginal para un horizonte de 40 anos.
+// Con 12 anos, los bloques 2020-2026 siguen pesando mas, pero el bloque 2000-2009
+// mantiene una presencia material para stress historico.
+export const WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS = 12;
+
 export const DEFAULT_PARAMETERS: ModelParameters = {
   label: 'Portafolio Real — V1.4',
   capitalInitial: 1_401_000_000,

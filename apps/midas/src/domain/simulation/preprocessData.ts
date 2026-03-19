@@ -12,19 +12,22 @@ export interface ForwardReturnTargets {
   rvGlobal:    number; // retorno anual forward RV Global
   rfGlobal:    number; // retorno anual forward RF Global
   rvChile:     number; // retorno anual forward RV Chile blend
-  rfChile:     number; // retorno anual forward RF Chile nominal
+  rfChileReal: number; // retorno anual forward RF Chile real / UF
   ipcChile:    number; // inflacion Chile anual forward
   clpUsdDrift: number; // drift anual CLP/USD forward
 }
 
 // Targets calibrados - consenso Claude + ChatGPT + DeepSeek + Gemini
 // Indices del array loadHistoricalData():
-// [0]=rvg, [1]=rfg, [2]=sura, [3]=afp, [4]=rfcl, [5]=ipc, [6]=hicp, [7]=dCLPUSD, [8]=dEURUSD
+// [0]=rvg, [1]=rfg, [2]=sura, [3]=afp, [4]=rfcl_uf_real, [5]=ipc, [6]=hicp, [7]=dCLPUSD, [8]=dEURUSD
 export const DEFAULT_FORWARD_TARGETS: ForwardReturnTargets = {
   rvGlobal:    0.065,
   rfGlobal:    0.0305,
   rvChile:     0.075,
-  rfChile:     0.048,
+  // Esta serie historica representa retorno real / UF.
+  // El target debe permanecer en terminos reales para ser consistente
+  // con rfChileUFAnnual y con el ajuste nominal posterior dentro del motor.
+  rfChileReal: 0.0102,
   ipcChile:    0.038,
   clpUsdDrift: 0.020,
 };
@@ -75,7 +78,9 @@ export function preprocessHistoricalData(
     adjustColumn(cols[1], targets.rfGlobal),
     suraAdjusted,
     afpAdjusted,
-    adjustColumn(cols[4], targets.rfChile),
+    // row[4] es r_RFcl_UF: retorno real / UF del sleeve chileno defensivo.
+    // Se ajusta con un target real, no nominal.
+    adjustColumn(cols[4], targets.rfChileReal),
     adjustColumn(cols[5], targets.ipcChile),
     cols[6],
     adjustColumn(cols[7], targets.clpUsdDrift),

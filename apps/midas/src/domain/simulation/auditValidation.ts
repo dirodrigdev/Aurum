@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMETERS } from '../model/defaults';
+import { DEFAULT_PARAMETERS, WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS } from '../model/defaults';
 import type { ModelParameters } from '../model/types';
 import { loadHistoricalData } from './historicalData';
 import {
@@ -115,7 +115,7 @@ function bootstrapPathUniform(data: number[][], T: number, blen: number, rng: ()
 
 function buildWeightedBootstrapWeights(H: number, blen: number) {
   const nBlocks = H - blen + 1;
-  const halflifeMonths = 96;
+  const halflifeMonths = WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS * 12;
   const lambda = Math.log(2) / halflifeMonths;
   const weights = Array.from({ length: nBlocks }, (_, i) => {
     const age = nBlocks - 1 - i;
@@ -256,12 +256,13 @@ function runVariant(
         const rvg = row[0];
         const rfg = row[1];
         const rvCL = 0.55 * row[2] + 0.45 * row[3];
-        const rfCL = row[4];
+        const rfCLReal = row[4];
         const ipc = row[5];
+        const rfCLNominal = ((1 + rfCLReal) * (1 + ipc)) - 1;
         hicpM = row[6];
         const dfx = row[7];
         dLogEURUSD = row[8];
-        r = [rvg, rfg, rvCL, rfCL, ipc, dfx];
+        r = [rvg, rfg, rvCL, rfCLNominal, ipc, dfx];
         cumCL *= (1 + ipc);
         cumEUR *= (1 + hicpM);
       } else {
@@ -480,10 +481,10 @@ function printValidation3() {
 
 function printValidation4() {
   console.log('\nVALIDACION 4 - SMOKE TEST rfChile');
-  console.log('1) Serie historica usada por el preprocess para rfChile: row[4] = r_RFcl_UF.');
-  console.log('2) El preprocess le aplica target anual 4.8% nominal.');
-  console.log('3) En la rama bootstrap del motor, row[4] se usa directo como rRFcl sin sumar IPC.');
-  console.log('4) Con eso, hoy hay inconsistencia conceptual: la serie historica parece real/UF, el target aplicado es nominal, y el uso posterior en bootstrap la trata como si ya fuera retorno nominal del sleeve.');
+  console.log('1) Serie historica usada por el preprocess para rfChile: row[4] = r_RFcl_UF, tratada como retorno real / UF.');
+  console.log(`2) El preprocess le aplica target anual real de ${(DEFAULT_FORWARD_TARGETS.rfChileReal * 100).toFixed(2)}%.`);
+  console.log('3) En la rama bootstrap del motor, row[4] se convierte a retorno nominal mensual via (1 + r_real) * (1 + IPC) - 1 antes de aplicarlo al sleeve.');
+  console.log('4) Eso queda consistente con la rama parametrica, donde rfChileUFAnnual tambien representa retorno real y luego se lleva a nominal sumando inflacion.');
 }
 
 printValidation1();

@@ -5,7 +5,7 @@ import type {
   ModelParameters, SimulationResults, FanChartPoint,
   StressScenario, StressResult, ScenarioComparison, ScenarioPoint, ScenarioVariant
 } from '../model/types';
-import { SCENARIO_VARIANTS } from '../model/defaults';
+import { SCENARIO_VARIANTS, WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS } from '../model/defaults';
 import { loadHistoricalData } from './historicalData';
 import { preprocessHistoricalData } from './preprocessData';
 
@@ -60,8 +60,8 @@ function bootstrapPathUniform(data: number[][], T: number, blen: number, rng: ()
 
 /**
  * Bootstrap con weighted sampling - bloques recientes tienen mas peso.
- * Half-life decay = 8 anos -> bloques 2015-2026 tienen ~65% del peso total.
- * Preserva crisis de 2008 con ~35% de peso acumulado.
+ * Half-life decay configurable desde defaults.ts.
+ * Se usa un valor mas prudente para no volver 2008 marginal.
  *
  * Razon: corrige el sesgo de correlacion del regimen 2000-2019
  * sin eliminar el tail risk historico relevante.
@@ -74,7 +74,7 @@ function bootstrapPathWeighted(
 ): number[][] {
   const H = data.length;
   const nBlocks = H - blen + 1;
-  const halflifeMonths = 96;
+  const halflifeMonths = WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS * 12;
   const lambda = Math.log(2) / halflifeMonths;
 
   const weights = Array.from({ length: nBlocks }, (_, i) => {
@@ -286,9 +286,13 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
         // map: [rvg, rfg, sura, afp, rfcl, ipc, hicp, dfx, dEURUSD]
         const rvg = r[0], rfg = r[1];
         const rvCL = 0.55 * r[2] + 0.45 * r[3];
-        const rfCL = r[4], ipc = r[5], hicp = r[6], dfx = r[7];
+        // row[4] = r_RFcl_UF: retorno real / UF.
+        // En la rama bootstrap debemos convertirlo a nominal con IPC mensual
+        // para mantener consistencia con rfChileUFAnnual en la rama parametrica.
+        const rfCLReal = r[4], ipc = r[5], hicp = r[6], dfx = r[7];
+        const rfCLNominal = ((1 + rfCLReal) * (1 + ipc)) - 1;
         dLogEURUSD = r[8];
-        r = [rvg, rfg, rvCL, rfCL, ipc, dfx];
+        r = [rvg, rfg, rvCL, rfCLNominal, ipc, dfx];
       } else {
         r = generateRow(rng);
         // vol EUR/USD: 9.3% anual, media 0.76% anual
