@@ -38,9 +38,11 @@ const computeWeightedReturn = (p: ModelParameters) =>
 
 const formatCapital = (value: number) => {
   if (!Number.isFinite(value)) return '—';
-  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
-  return `$${(value / 1_000_000).toFixed(2)}MM`;
+  const millions = value / 1_000_000;
+  return `$${millions.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}MM`;
 };
+const formatNumber = (value: number) =>
+  value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters => {
   if (!overrides || !overrides.active) return p;
@@ -159,17 +161,14 @@ export function SimulationPage({
     }
     const next: SimulationOverrides = {
       active: true,
-      returnPct: effectiveReturn,
-      horizonYears: effectiveYears,
-      capital: effectiveCapital,
-      preset: simOverrides?.preset ?? 'custom',
+      returnPct: simOverrides?.returnPct ?? baseReturn,
+      horizonYears: simOverrides?.horizonYears ?? baseYears,
+      capital: simOverrides?.capital ?? baseCapital,
+      preset: 'custom',
     };
     if (activeChip === 'return') next.returnPct = parsed / 100;
     if (activeChip === 'years') next.horizonYears = Math.max(1, Math.round(parsed));
     if (activeChip === 'capital') next.capital = Math.max(1, parsed);
-    if (simOverrides?.preset && simOverrides.preset !== 'custom') {
-      next.preset = 'custom';
-    }
     onSimOverridesChange(next);
     setActiveChip(null);
   };
@@ -188,83 +187,114 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <HeroCard
-        label="¿LLEGARÁS AL AÑO 40?"
-        valuePct={probSuccess}
-        subtitle={
-          displayResult
-            ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
-            : 'Corre una simulación para ver resultados'
-        }
-        ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
-        mode={simActive ? 'sim' : 'real'}
-        onResetSim={simActive ? onResetSim : undefined}
-        chips={[
-          { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
-          { id: 'years', value: `${effectiveYears} años`, onClick: () => openChip('years') },
-          { id: 'capital', value: formatCapital(effectiveCapital), onClick: () => openChip('capital') },
-        ]}
-      />
-
-      {showSimToast && (
-        <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, color: T.textSecondary, fontSize: 12 }}>
-          Esta simulacion no se guardara.
-        </div>
-      )}
-
-      {activeChip && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-          <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
-            {activeChip === 'return' ? 'Retorno promedio (%)' : activeChip === 'years' ? 'Horizonte (años)' : 'Capital inicial (CLP)'}
+      <div style={{ position: 'relative' }}>
+        <HeroCard
+          label="¿LLEGARÁS AL AÑO 40?"
+          valuePct={probSuccess}
+          subtitle={
+            displayResult
+              ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
+              : 'Corre una simulación para ver resultados'
+          }
+          ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
+          mode={simActive ? 'sim' : 'real'}
+          onResetSim={simActive ? onResetSim : undefined}
+          chips={[
+            { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
+            { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
+            { id: 'capital', value: formatCapital(effectiveCapital), onClick: () => openChip('capital') },
+          ]}
+        />
+        {showSimToast && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 6,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: '8px 12px',
+              color: T.textSecondary,
+              fontSize: 11,
+            }}
+          >
+            Esta simulación no se guardará.
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              type="number"
-              value={draftValue}
-              onChange={(e) => setDraftValue(e.target.value)}
-              style={{
-                flex: 1,
-                background: T.surfaceEl,
-                border: `1px solid ${T.border}`,
-                borderRadius: 10,
-                padding: '8px 10px',
-                color: T.textPrimary,
-              }}
-            />
-            <button
-              onClick={applyChip}
-              style={{
-                background: T.primary,
-                border: 'none',
-                color: '#fff',
-                borderRadius: 10,
-                padding: '8px 12px',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              Aplicar
-            </button>
-            <button
-              onClick={() => setActiveChip(null)}
-              style={{
-                background: 'transparent',
-                border: `1px solid ${T.border}`,
-                color: T.textSecondary,
-                borderRadius: 10,
-                padding: '8px 12px',
-                cursor: 'pointer',
-              }}
-            >
-              Cancelar
-            </button>
+        )}
+        {activeChip && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: showSimToast ? 42 : 6,
+              width: 320,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              padding: 12,
+              boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
+            }}
+          >
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
+              {activeChip === 'return'
+                ? 'Retorno promedio (%)'
+                : activeChip === 'years'
+                  ? 'Horizonte (años)'
+                  : 'Capital inicial (CLP)'}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <input
+                type="number"
+                value={draftValue}
+                onChange={(e) => setDraftValue(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  color: T.textPrimary,
+                }}
+              />
+              <button
+                onClick={applyChip}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Aplicar
+              </button>
+              <button
+                onClick={() => setActiveChip(null)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-
-      {previewRunning && simActive && (
-        <div style={{ color: T.textMuted, fontSize: 11 }}>Recalculando simulacion...</div>
-      )}
+        )}
+        {previewRunning && simActive && (
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
+            Recalculando simulación...
+          </div>
+        )}
+      </div>
 
       {rangeMin !== null && rangeMax !== null && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
