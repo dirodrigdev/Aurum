@@ -37,11 +37,11 @@ const SummaryTable: React.FC<{
   items: AggregatedSummary[];
   currency: WealthCurrency;
 }> = ({ title, items, currency }) => (
-  <Card className="p-3 border-slate-200">
-    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-    <div className="mt-0.5 text-[11px] text-slate-500">Promedio mensual</div>
-    <div className="mt-2 overflow-x-auto">
-      <table className="w-full min-w-[600px] text-xs">
+    <Card className="p-3 border-slate-200">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-0.5 text-[11px] text-slate-500">Promedio mensual</div>
+      <div className="mt-2 overflow-x-auto">
+      <table className="w-full min-w-[600px] table-fixed text-xs">
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
@@ -57,23 +57,29 @@ const SummaryTable: React.FC<{
             return (
               <tr key={item.key} className="border-t border-slate-100">
                 <td className="py-1.5 pr-2 font-medium text-slate-700">
-                  <div>{item.label}</div>
+                  <div className="truncate">{item.label}</div>
                   <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatPct(item.pctRetorno)}
+                  <div className="truncate max-w-[90px]">{formatPct(item.pctRetorno)}</div>
                   {item.pctRetorno === null && item.pctRetornoNote ? (
                     <div className="text-[10px] font-normal text-amber-700">{item.pctRetornoNote}</div>
                   ) : null}
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                  {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
+                  <div className="truncate max-w-[130px]">
+                    {item.retornoRealAvgDisplay === null ? '—' : formatCurrency(item.retornoRealAvgDisplay, currency)}
+                  </div>
                 </td>
                 <td className="py-1.5 pr-2 text-right text-slate-700">
-                  {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
+                  <div className="truncate max-w-[110px]">
+                    {item.varPatrimonioAvgDisplay === null ? '—' : formatCurrency(item.varPatrimonioAvgDisplay, currency)}
+                  </div>
                 </td>
                 <td className="py-1.5 text-right text-slate-700">
-                  {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
+                  <div className="truncate max-w-[110px]">
+                    {item.gastosAvgDisplay === null ? '—' : formatCurrency(item.gastosAvgDisplay, currency)}
+                  </div>
                 </td>
               </tr>
             );
