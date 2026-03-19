@@ -1,100 +1,193 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CashflowEvent, ModelParameters, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS } from './domain/model/defaults';
 import { runSimulation } from './domain/simulation/engine';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
-import { SimulationPage, SimulationOverrides } from './components/SimulationPage';
+import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
 import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
 import { T, css } from './components/theme';
 
+const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
+
 function cloneParams(p: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(p));
 }
 
-function useParams() {
-  const [params, setParams] = useState<ModelParameters>(cloneParams(DEFAULT_PARAMETERS));
-  const update = useCallback((path: string, value: number) => {
-    setParams((prev) => {
-      const next = cloneParams(prev);
-      const parts = path.split('.');
-      let obj: Record<string, unknown> = next as unknown as Record<string, unknown>;
-      for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]] as Record<string, unknown>;
-      obj[parts[parts.length - 1]] = value;
-      return next;
-    });
-  }, []);
-  const reset = useCallback(() => setParams(cloneParams(DEFAULT_PARAMETERS)), []);
-  return { params, setParams, update, reset };
+function updateByPath(target: ModelParameters, path: string, value: number): ModelParameters {
+  const next = cloneParams(target);
+  const parts = path.split('.');
+  let obj: Record<string, unknown> = next as unknown as Record<string, unknown>;
+  for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]] as Record<string, unknown>;
+  obj[parts[parts.length - 1]] = value;
+  return next;
+}
+
+function computeWeightedReturn(p: ModelParameters) {
+  return (
+    p.weights.rvGlobal * p.returns.rvGlobalAnnual +
+    p.weights.rfGlobal * p.returns.rfGlobalAnnual +
+    p.weights.rvChile * p.returns.rvChileAnnual +
+    p.weights.rfChile * p.returns.rfChileUFAnnual
+  );
+}
+
+function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters {
+  if (!overrides || !overrides.active) return p;
+  const baseReturn = computeWeightedReturn(p);
+  const targetReturn = overrides.returnPct ?? baseReturn;
+  const factor = baseReturn > 0 ? targetReturn / baseReturn : 1;
+  const horizonYears = overrides.horizonYears ?? Math.round(p.simulation.horizonMonths / 12);
+  const horizonMonths = Math.max(12, Math.round(horizonYears * 12));
+  return {
+    ...p,
+    capitalInitial: overrides.capital ?? p.capitalInitial,
+    simulation: {
+      ...p.simulation,
+      horizonMonths,
+      nSim: Math.min(1200, p.simulation.nSim),
+      seed: 42,
+    },
+    returns: {
+      ...p.returns,
+      rvGlobalAnnual: p.returns.rvGlobalAnnual * factor,
+      rfGlobalAnnual: p.returns.rfGlobalAnnual * factor,
+      rvChileAnnual: p.returns.rvChileAnnual * factor,
+      rfChileUFAnnual: p.returns.rfChileUFAnnual * factor,
+    },
+  };
 }
 
 export default function App() {
-  const { params, setParams, update, reset } = useParams();
+  const [baseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
+  const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
+  const [simulationActive, setSimulationActive] = useState(false);
+  const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
+  const simulationTimerRef = useRef<number | null>(null);
 
-  const runSim = () => {
-    const res = runSimulation(params);
-    setSimResult(res);
-    setActiveTab('sim');
-  };
-
-  const handleScenarioChange = useCallback(
-    (next: ScenarioVariantId) => {
-      setParams((prev) => {
-        const updated = { ...prev, activeScenario: next };
-        if (simResult) setSimResult(runSimulation(updated));
-        return updated;
-      });
-    },
-    [simResult],
-  );
-
-  const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
-    setParams((prev) => ({ ...prev, cashflowEvents: next }));
+  const clearSimulationTimer = useCallback(() => {
+    if (simulationTimerRef.current !== null) {
+      window.clearTimeout(simulationTimerRef.current);
+      simulationTimerRef.current = null;
+    }
   }, []);
 
-  const resetSimOverrides = useCallback(() => setSimOverrides(null), []);
+  const resetSimulationSession = useCallback(() => {
+    clearSimulationTimer();
+    setSimulationActive(false);
+    setSimulationPreset('base');
+    setSimOverrides(null);
+    setSimParams(cloneParams(baseParams));
+    setSimResult(null);
+    setParamSheetOpen(false);
+  }, [baseParams, clearSimulationTimer]);
 
-  const handleTabChange = useCallback(
-    (tab: TabId) => {
-      if (tab === activeTab && tab === 'sim') {
-        resetSimOverrides();
-      }
-      if (tab !== 'sim' && simOverrides) {
-        resetSimOverrides();
-      }
-      setActiveTab(tab);
+  const touchSimulation = useCallback(
+    (nextPreset: SimulationPreset = 'custom') => {
+      setSimulationActive(true);
+      setSimulationPreset(nextPreset);
+      clearSimulationTimer();
+      simulationTimerRef.current = window.setTimeout(() => {
+        resetSimulationSession();
+      }, SIMULATION_TIMEOUT_MS);
     },
-    [activeTab, resetSimOverrides, simOverrides],
+    [clearSimulationTimer, resetSimulationSession],
   );
 
-  const statusColor = simResult ? T.positive : T.textMuted;
+  useEffect(() => {
+    return () => clearSimulationTimer();
+  }, [clearSimulationTimer]);
 
-  const content = useMemo(() => {
-    if (activeTab === 'sim') {
-      return (
-        <SimulationPage
-          result={simResult}
-          params={params}
-          simOverrides={simOverrides}
-          onScenarioChange={handleScenarioChange}
-          onSimOverridesChange={setSimOverrides}
-          onResetSim={resetSimOverrides}
-        />
-      );
+  const updateSimParam = useCallback((path: string, value: number) => {
+    setSimParams((prev) => updateByPath(prev, path, value));
+    touchSimulation('custom');
+  }, [touchSimulation]);
+
+  const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
+    setSimParams((prev) => ({ ...prev, cashflowEvents: next }));
+    touchSimulation('custom');
+  }, [touchSimulation]);
+
+  const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
+    if (next === 'base') {
+      resetSimulationSession();
+      return;
     }
-    if (activeTab === 'sens') return <SensitivityPage params={params} />;
-    if (activeTab === 'stress') return <StressPage params={params} />;
-    return <OptimizerPage params={params} />;
-  }, [activeTab, params, simResult]);
+    const nextParams = cloneParams(baseParams);
+    nextParams.activeScenario = next;
+    setSimParams(nextParams);
+    setSimOverrides(null);
+    touchSimulation(next);
+  }, [baseParams, resetSimulationSession, touchSimulation]);
+
+  const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
+    setSimOverrides(next);
+    if (next) touchSimulation('custom');
+  }, [touchSimulation]);
+
+  const runSim = useCallback(() => {
+    touchSimulation(simulationPreset);
+    setSimResult(runSimulation(applySimulationOverrides(simParams, simOverrides)));
+    setActiveTab('sim');
+  }, [simOverrides, simParams, simulationPreset, touchSimulation]);
+
+  const handleTabChange = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+  }, []);
+
+  const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
+
+  const content = activeTab === 'sim' ? (
+    <SimulationPage
+      result={simResult}
+      params={simParams}
+      simOverrides={simOverrides}
+      simActive={simulationActive}
+      simulationPreset={simulationPreset}
+      onSimulationTouch={touchSimulation}
+      onScenarioChange={handleScenarioChange}
+      onSimOverridesChange={handleSimOverridesChange}
+      onResetSim={resetSimulationSession}
+    />
+  ) : activeTab === 'sens' ? (
+    <SensitivityPage params={baseParams} />
+  ) : activeTab === 'stress' ? (
+    <StressPage params={baseParams} />
+  ) : (
+    <OptimizerPage params={baseParams} />
+  );
 
   return (
-    <div style={css.app}>
+    <div style={{ ...css.app, position: 'relative', overflow: 'hidden' }}>
+      {simulationActive && (
+        <>
+          <style>{`
+            @keyframes midasAmbientPulse {
+              0%, 100% { opacity: 0.6; transform: scale(1); }
+              50% { opacity: 1; transform: scale(1.004); }
+            }
+          `}</style>
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'fixed',
+              inset: 8,
+              borderRadius: 28,
+              pointerEvents: 'none',
+              border: `1px solid rgba(91, 140, 255, 0.34)`,
+              boxShadow: 'inset 0 0 0 1px rgba(91, 140, 255, 0.12), 0 0 28px rgba(91, 140, 255, 0.12)',
+              animation: 'midasAmbientPulse 2.8s ease-in-out infinite',
+              zIndex: 8,
+            }}
+          />
+        </>
+      )}
       <Header statusColor={statusColor} />
       <main
         style={{
@@ -140,11 +233,11 @@ export default function App() {
       <ParamSheet
         open={paramSheetOpen}
         onClose={() => setParamSheetOpen(false)}
-        params={params}
-        onUpdate={update}
-        cashflowEvents={params.cashflowEvents}
+        params={simParams}
+        onUpdate={updateSimParam}
+        cashflowEvents={simParams.cashflowEvents}
         onCashflowEventsChange={handleCashflowEventsChange}
-        onReset={reset}
+        onReset={resetSimulationSession}
         onRun={runSim}
       />
     </div>
@@ -174,7 +267,7 @@ function Header({ statusColor }: { statusColor: string }) {
         <span>Midas V1.2</span>
       </div>
       <div
-        title={statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
+        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
         style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
       />
     </header>

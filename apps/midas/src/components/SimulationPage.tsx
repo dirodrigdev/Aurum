@@ -23,6 +23,8 @@ type FanChartDatum = SimulationResults['fanChartData'][number] & {
   innerSpan: number;
 };
 
+export type SimulationPreset = ScenarioVariantId | 'custom';
+
 export type SimulationOverrides = {
   active: boolean;
   returnPct?: number;
@@ -78,6 +80,9 @@ export function SimulationPage({
   result,
   params,
   simOverrides,
+  simActive,
+  simulationPreset,
+  onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
   onResetSim,
@@ -85,6 +90,9 @@ export function SimulationPage({
   result: SimulationResults | null;
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
+  simActive: boolean;
+  simulationPreset: SimulationPreset;
+  onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onResetSim: () => void;
@@ -102,7 +110,6 @@ export function SimulationPage({
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
-  const simActive = Boolean(simOverrides?.active);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -118,6 +125,8 @@ export function SimulationPage({
     if (!simActive) {
       setPreviewResult(null);
       setPreviewRunning(false);
+      setActiveChip(null);
+      setDraftValue('');
       return;
     }
     setPreviewRunning(true);
@@ -132,39 +141,8 @@ export function SimulationPage({
 
   const displayResult = simActive ? previewResult ?? result : result;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
-  const ruinPct = displayResult ? displayResult.probRuin * 100 : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const uncertaintyBand = displayResult?.uncertaintyBand ?? null;
-  const scenarioComparison = displayResult?.scenarioComparison ?? null;
-  const activeScenario = params.activeScenario;
-  const scenarioCards = scenarioComparison
-    ? [
-        {
-          id: 'pessimistic' as const,
-          label: 'Pesimista',
-          point: scenarioComparison.pessimistic,
-          active: activeScenario === 'pessimistic',
-        },
-        {
-          id: 'base' as const,
-          label: 'Base',
-          point: scenarioComparison.base,
-          active: activeScenario === 'base',
-        },
-        {
-          id: 'optimistic' as const,
-          label: 'Optimista',
-          point: scenarioComparison.optimistic,
-          active: activeScenario === 'optimistic',
-        },
-      ]
-    : [];
-  const scenarioBarPoints = scenarioCards.length
-    ? scenarioCards.map((card) => ({
-        ...card,
-        successPct: ruinToSuccessPct(card.point.probRuin),
-      }))
-    : [];
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
   const fanChartData: FanChartDatum[] = displayResult
@@ -180,6 +158,7 @@ export function SimulationPage({
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
 
   const openChip = (chip: 'return' | 'years' | 'capital') => {
+    onSimulationTouch('custom');
     setActiveChip(chip);
     if (chip === 'return') setDraftValue((effectiveReturn * 100).toFixed(2));
     if (chip === 'years') setDraftValue(String(effectiveYears));
@@ -209,30 +188,6 @@ export function SimulationPage({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ position: 'relative' }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          {SCENARIO_VARIANTS.map((variant) => {
-            const active = params.activeScenario === variant.id;
-            return (
-              <button
-                key={variant.id}
-                type="button"
-                onClick={() => onScenarioChange(variant.id)}
-                style={{
-                  background: active ? T.surfaceEl : T.surface,
-                  border: `1px solid ${active ? T.primary : T.border}`,
-                  color: active ? T.textPrimary : T.textMuted,
-                  borderRadius: 999,
-                  padding: '7px 12px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                {variant.label}
-              </button>
-            );
-          })}
-        </div>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={probSuccess}
@@ -276,11 +231,12 @@ export function SimulationPage({
               right: 0,
               marginTop: showSimToast ? 42 : 6,
               width: 320,
-              background: T.surface,
-              border: `1px solid ${T.border}`,
+              background: 'rgba(21, 25, 34, 0.98)',
+              border: `1px solid rgba(91, 140, 255, 0.26)`,
               borderRadius: 12,
               padding: 12,
-              boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
+              boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
+              backdropFilter: 'blur(10px)',
             }}
           >
             <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
@@ -347,25 +303,29 @@ export function SimulationPage({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>60%</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {scenarioBarPoints.map((card) => {
-                const left = clampSuccessPct(card.successPct);
-                const zoneColor = card.successPct >= 90 ? T.positive : card.successPct >= 80 ? T.warning : T.negative;
+              {SCENARIO_VARIANTS.map((variant) => {
+                const scenario = displayResult.scenarioComparison?.[variant.id === 'pessimistic' ? 'pessimistic' : variant.id === 'optimistic' ? 'optimistic' : 'base'];
+                const point = scenario ?? null;
+                const successPct = point ? ruinToSuccessPct(point.probRuin) : 0;
+                const left = clampSuccessPct(successPct);
+                const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
+                const active = variant.id === params.activeScenario;
                 return (
                   <button
-                    key={card.id}
+                    key={variant.id}
                     type="button"
-                    onClick={() => onScenarioChange(card.id)}
-                    title={`${card.label}: ${card.successPct.toFixed(1)}%`}
+                    onClick={() => onScenarioChange(variant.id)}
+                    title={`${variant.label}: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
                       left: `${((left - 60) / 40) * 100}%`,
                       top: '50%',
                       transform: 'translate(-50%, -50%)',
-                      width: card.active ? 14 : 12,
-                      height: card.active ? 14 : 12,
+                      width: active ? 14 : 12,
+                      height: active ? 14 : 12,
                       borderRadius: '50%',
                       border: `2px solid ${zoneColor}`,
-                      background: card.active ? zoneColor : T.surface,
+                      background: active ? zoneColor : T.surface,
                       cursor: 'pointer',
                       padding: 0,
                     }}
@@ -375,53 +335,10 @@ export function SimulationPage({
             </div>
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>100%</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, ...css.mono, color: T.textSecondary }}>
-            <span>Escenario pesimista</span>
-            <span>Escenario base</span>
-            <span>Escenario optimista</span>
-          </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
             Banda de incertidumbre (±6pp estimado):{' '}
             {uncertaintyBand ? `${(uncertaintyBand.low * 100).toFixed(0)}% — ${(uncertaintyBand.high * 100).toFixed(0)}%` : '—'}
           </div>
-        </div>
-      )}
-
-      {scenarioCards.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-          {scenarioCards.map((card) => {
-            const successPct = ruinToSuccessPct(card.point.probRuin);
-            const terminalB = card.point.terminalP50 / 1e9;
-            return (
-              <button
-                key={card.id}
-                type="button"
-                onClick={() => onScenarioChange(card.id)}
-                style={{
-                  textAlign: 'left',
-                  borderRadius: 14,
-                  padding: 14,
-                  border: `1px solid ${card.active ? T.primary : T.border}`,
-                  background: card.active ? T.surfaceEl : T.surface,
-                  cursor: 'pointer',
-                  color: card.active ? T.textPrimary : T.textSecondary,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{card.label}</span>
-                  <span style={{ ...css.mono, fontSize: 11, color: card.active ? T.primary : T.textMuted }}>
-                    {successPct.toFixed(0)}%
-                  </span>
-                </div>
-                <div style={{ marginTop: 6, ...css.mono, fontSize: 20, fontWeight: 800, color: card.active ? T.textPrimary : T.textSecondary }}>
-                  ${terminalB.toFixed(1)}B
-                </div>
-                <div style={{ marginTop: 4, fontSize: 11, color: T.textMuted }}>
-                  Ruina {(card.point.probRuin * 100).toFixed(1)}%
-                </div>
-              </button>
-            );
-          })}
         </div>
       )}
 
@@ -441,7 +358,43 @@ export function SimulationPage({
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
-              {simOverrides?.preset === 'custom' && <span style={{ color: T.textMuted, fontSize: 10 }}>Custom</span>}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {SCENARIO_VARIANTS.map((variant) => {
+                  const isBase = variant.id === 'base';
+                  const active = simulationPreset === variant.id;
+                  const custom = simulationPreset === 'custom';
+                  const highlightedReset = isBase && custom;
+                  return (
+                    <button
+                      key={variant.id}
+                      type="button"
+                      onClick={() => onScenarioChange(variant.id)}
+                      style={{
+                        background: active
+                          ? T.primary
+                          : highlightedReset
+                            ? 'rgba(91, 140, 255, 0.12)'
+                            : T.surfaceEl,
+                        border: highlightedReset
+                          ? `2px solid rgba(91, 140, 255, 0.72)`
+                          : `1px solid ${active ? T.primary : T.border}`,
+                        color: active || highlightedReset ? T.textPrimary : T.textSecondary,
+                        fontSize: 11,
+                        padding: '5px 10px',
+                        borderRadius: 999,
+                        cursor: 'pointer',
+                        opacity: custom && !isBase ? 0.45 : 1,
+                        boxShadow: highlightedReset ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)' : 'none',
+                      }}
+                    >
+                      {variant.label}
+                    </button>
+                  );
+                })}
+                {simulationPreset === 'custom' && (
+                  <span style={{ color: T.textMuted, fontSize: 10, alignSelf: 'center' }}>Custom</span>
+                )}
+              </div>
             </div>
             <div style={{ marginTop: 8 }}>
               <ResponsiveContainer width="100%" height={240}>
