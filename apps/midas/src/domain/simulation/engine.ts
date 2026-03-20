@@ -248,6 +248,8 @@ function runSimulationCoreInternal(
   } else if (sim.useHistoricalData) {
     try { histData = loadHistoricalData(); } catch { histData = null; }
   }
+  // Motor 1 aplica preprocess antes del bootstrap para no tratar el historico
+  // completo como forecast puro de medias futuras.
   if (histData && sim.useHistoricalData) {
     histData = preprocessHistoricalData(histData);
   }

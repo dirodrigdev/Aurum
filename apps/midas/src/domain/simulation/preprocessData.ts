@@ -64,6 +64,8 @@ function adjustChileBlendColumns(
 
 /**
  * Pre-procesa el dataset completo aplicando ajustes forward-looking.
+ * Motor 1 no usa el historico puro como forecast de medias: conserva la
+ * secuencia de crisis, pero recentra el nivel esperado de cada serie.
  * Llamar ANTES del bootstrap, no dentro del loop de simulacion.
  */
 export function preprocessHistoricalData(
