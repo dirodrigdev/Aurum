@@ -201,7 +201,10 @@ function applyCashflowEvents(
 
 // ── Motor principal ───────────────────────────────────────────
 
-export function runSimulationCore(params: ModelParameters): SimulationResults {
+function runSimulationCoreInternal(
+  params: ModelParameters,
+  historicalDataOverride?: number[][] | null,
+): SimulationResults {
   const t0 = Date.now();
   const {
     capitalInitial: W0, weights, feeAnnual,
@@ -240,7 +243,9 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
 
   // Datos históricos para bootstrap
   let histData: number[][] | null = null;
-  if (sim.useHistoricalData) {
+  if (typeof historicalDataOverride !== 'undefined') {
+    histData = historicalDataOverride;
+  } else if (sim.useHistoricalData) {
     try { histData = loadHistoricalData(); } catch { histData = null; }
   }
   if (histData && sim.useHistoricalData) {
@@ -416,6 +421,17 @@ export function runSimulationCore(params: ModelParameters): SimulationResults {
     durationMs: Date.now() - t0,
     params,
   };
+}
+
+export function runSimulationCoreWithHistoricalData(
+  params: ModelParameters,
+  historicalData: number[][] | null,
+): SimulationResults {
+  return runSimulationCoreInternal(params, historicalData);
+}
+
+export function runSimulationCore(params: ModelParameters): SimulationResults {
+  return runSimulationCoreInternal(params);
 }
 
 // ── Motor principal (wrapper con escenarios) ─────────────────

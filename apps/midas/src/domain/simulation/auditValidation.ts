@@ -11,6 +11,7 @@ type VariantName = 'A_baseline_viejo' | 'B_preprocess_only' | 'C_weighted_only' 
 type VariantFlags = {
   usePreprocess: boolean;
   useWeightedBootstrap: boolean;
+  weightedBootstrapHalfLifeYears?: number;
 };
 
 type VariantResult = {
@@ -113,9 +114,13 @@ function bootstrapPathUniform(data: number[][], T: number, blen: number, rng: ()
   return path;
 }
 
-function buildWeightedBootstrapWeights(H: number, blen: number) {
+function buildWeightedBootstrapWeights(
+  H: number,
+  blen: number,
+  halfLifeYears: number = WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS,
+) {
   const nBlocks = H - blen + 1;
-  const halflifeMonths = WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS * 12;
+  const halflifeMonths = halfLifeYears * 12;
   const lambda = Math.log(2) / halflifeMonths;
   const weights = Array.from({ length: nBlocks }, (_, i) => {
     const age = nBlocks - 1 - i;
@@ -131,9 +136,15 @@ function buildWeightedBootstrapWeights(H: number, blen: number) {
   return { normWeights, cdf };
 }
 
-function bootstrapPathWeighted(data: number[][], T: number, blen: number, rng: () => number): number[][] {
+function bootstrapPathWeighted(
+  data: number[][],
+  T: number,
+  blen: number,
+  rng: () => number,
+  halfLifeYears: number = WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS,
+): number[][] {
   const H = data.length;
-  const { cdf } = buildWeightedBootstrapWeights(H, blen);
+  const { cdf } = buildWeightedBootstrapWeights(H, blen, halfLifeYears);
 
   const sampleBlock = (): number => {
     const u = rng();
@@ -243,7 +254,7 @@ function runVariant(
 
     const path = histData
       ? (flags.useWeightedBootstrap
-        ? bootstrapPathWeighted(histData, T, sim.blockLength, rng)
+        ? bootstrapPathWeighted(histData, T, sim.blockLength, rng, flags.weightedBootstrapHalfLifeYears)
         : bootstrapPathUniform(histData, T, sim.blockLength, rng))
       : null;
 
@@ -424,6 +435,66 @@ function computeVariantTable() {
   }));
 }
 
+function computeHalfLifeSensitivityTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [8, 10, 12, 15].map((halfLifeYears) => ({
+    halfLifeYears,
+    ...runVariant(params, {
+      usePreprocess: true,
+      useWeightedBootstrap: true,
+      weightedBootstrapHalfLifeYears: halfLifeYears,
+    }),
+  }));
+}
+
+function computeWeightedVsUniformTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [
+    {
+      variante: 'A_preprocess_uniforme',
+      ...runVariant(params, { usePreprocess: true, useWeightedBootstrap: false }),
+    },
+    {
+      variante: 'B_preprocess_weighted_12y',
+      ...runVariant(params, {
+        usePreprocess: true,
+        useWeightedBootstrap: true,
+        weightedBootstrapHalfLifeYears: 12,
+      }),
+    },
+    {
+      variante: 'C_preprocess_weighted_15y',
+      ...runVariant(params, {
+        usePreprocess: true,
+        useWeightedBootstrap: true,
+        weightedBootstrapHalfLifeYears: 15,
+      }),
+    },
+  ];
+}
+
+function computeWeightingDominanceTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [
+    {
+      variante: 'A_baseline_viejo',
+      ...runVariant(params, { usePreprocess: false, useWeightedBootstrap: false }),
+    },
+    {
+      variante: 'B_preprocess_only',
+      ...runVariant(params, { usePreprocess: true, useWeightedBootstrap: false }),
+    },
+    {
+      variante: 'C_preprocess_weighted_12y',
+      ...runVariant(params, {
+        usePreprocess: true,
+        useWeightedBootstrap: true,
+        weightedBootstrapHalfLifeYears: 12,
+      }),
+    },
+  ];
+}
+
 function fmtPct(value: number) {
   return `${(value * 100).toFixed(2)}%`;
 }
@@ -487,7 +558,37 @@ function printValidation4() {
   console.log('4) Eso queda consistente con la rama parametrica, donde rfChileUFAnnual tambien representa retorno real y luego se lleva a nominal sumando inflacion.');
 }
 
-printValidation1();
-printValidation2();
-printValidation3();
-printValidation4();
+function printTest1() {
+  console.log('\nTEST 1 - SENSIBILIDAD DEL HALF-LIFE');
+  console.table(computeHalfLifeSensitivityTable().map((row) => ({
+    half_life: `${row.halfLifeYears} anos`,
+    probRuin: fmtPct(row.probRuin),
+    successRate: fmtPct(row.successRate),
+    terminalP50: fmtMM(row.terminalP50),
+    months_cut_pct: fmtPct(row.monthsCutPct),
+  })));
+}
+
+function printTest2() {
+  console.log('\nTEST 2 - WEIGHTED VS UNIFORM (PREPROCESS ACTIVO)');
+  console.table(computeWeightedVsUniformTable().map((row) => ({
+    variante: row.variante,
+    probRuin: fmtPct(row.probRuin),
+    successRate: fmtPct(row.successRate),
+    terminalP50: fmtMM(row.terminalP50),
+    months_cut_pct: fmtPct(row.monthsCutPct),
+  })));
+}
+
+function printTest3() {
+  console.log('\nTEST 3 - DOMINANCIA DEL WEIGHTING');
+  console.table(computeWeightingDominanceTable().map((row) => ({
+    variante: row.variante,
+    probRuin: fmtPct(row.probRuin),
+    terminalP50: fmtMM(row.terminalP50),
+  })));
+}
+
+printTest1();
+printTest2();
+printTest3();
