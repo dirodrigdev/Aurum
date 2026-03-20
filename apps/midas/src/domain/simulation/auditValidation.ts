@@ -5,6 +5,7 @@ import {
   DEFAULT_FORWARD_TARGETS,
   preprocessHistoricalData,
 } from './preprocessData';
+import { runSimulationParametricAudit } from './engineParametric';
 
 type VariantName = 'A_baseline_viejo' | 'B_preprocess_only' | 'C_weighted_only' | 'D_preprocess_weighted';
 
@@ -479,6 +480,35 @@ function computeSeedStabilityTable() {
   }));
 }
 
+function computeMotorComparisonTable() {
+  const motor1Params = cloneParams(DEFAULT_PARAMETERS);
+  const motor2Params = cloneParams(DEFAULT_PARAMETERS);
+  return [
+    {
+      motor: 'Motor 1 bootstrap',
+      ...runVariant(motor1Params, {
+        usePreprocess: true,
+        useWeightedBootstrap: true,
+      }),
+    },
+    {
+      motor: 'Motor 2 parametric',
+      ...runSimulationParametricAudit(motor2Params),
+    },
+  ];
+}
+
+function computeMotor2SeedTable() {
+  return [11, 42, 84].map((seed) => {
+    const params = cloneParams(DEFAULT_PARAMETERS);
+    params.simulation.seed = seed;
+    return {
+      seed,
+      ...runSimulationParametricAudit(params),
+    };
+  });
+}
+
 function computeWeightedVsUniformTable() {
   const params = cloneParams(DEFAULT_PARAMETERS);
   return [
@@ -591,30 +621,27 @@ function printValidation4() {
 }
 
 function printTest1() {
-  console.log('\nTEST 1 - SENSIBILIDAD POR BLOCK LENGTH');
-  console.table(computeBlockLengthSensitivityTable().map((row) => ({
-    block_length: `L=${row.blockLength}`,
+  console.log('\nCOMPARACION MOTOR 1 VS MOTOR 2');
+  console.table(computeMotorComparisonTable().map((row) => ({
+    motor: row.motor,
     probRuin: fmtPct(row.probRuin),
     successRate: fmtPct(row.successRate),
-    terminalP50: fmtMM(row.terminalP50),
+    ruin_lt_20y: fmtPct(row.ruinLt20y),
+    ruin_lt_40y: fmtPct(row.ruinLt40y),
     months_cut_pct: fmtPct(row.monthsCutPct),
+    terminalP50: fmtMM(row.terminalP50),
   })));
 }
 
 function printTest2() {
-  console.log('\nTEST 2 - ESTABILIDAD POR SEED');
-  const rows = computeSeedStabilityTable();
+  console.log('\nSENSIBILIDAD POR SEED - MOTOR 2');
+  const rows = computeMotor2SeedTable();
   console.table(rows.map((row) => ({
     seed: row.seed,
     probRuin: fmtPct(row.probRuin),
-    successRate: fmtPct(row.successRate),
     terminalP50: fmtMM(row.terminalP50),
-    months_cut_pct: fmtPct(row.monthsCutPct),
   })));
-  const probRuinValues = rows.map(row => row.probRuin);
-  const terminalP50Values = rows.map(row => row.terminalP50);
-  console.log(`probRuin min-max: ${fmtPct(Math.min(...probRuinValues))} - ${fmtPct(Math.max(...probRuinValues))}`);
-  console.log(`terminalP50 min-max: ${fmtMM(Math.min(...terminalP50Values))} - ${fmtMM(Math.max(...terminalP50Values))}`);
+  console.log('Motor 2 usa una parametrizacion multivariada normal simple.');
 }
 
 printTest1();

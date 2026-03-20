@@ -55,9 +55,9 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     rfGlobalVolAnnual:  0.0368,
     rvChileVolAnnual:   0.1141,
     rfChileVolAnnual:   0.0237,
-    // NOTA: estas correlaciones solo afectan la rama parametrica (useHistoricalData=false)
-    // El bootstrap usa las correlaciones implicitas en los datos historicos
-    // con weighted sampling que favorece el regimen 2015-2026
+    // NOTA: esta matriz gobierna la rama parametrica explicita
+    // (Motor 2 y cualquier corrida sin bootstrap historico).
+    // Motor 1 bootstrap usa correlaciones implicitas en los datos historicos.
     correlationMatrix: [
       [ 1.00,  0.15,  0.69,  0.32],
       [ 0.15,  1.00,  0.33,  0.33],
