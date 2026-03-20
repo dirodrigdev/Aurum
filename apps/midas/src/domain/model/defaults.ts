@@ -6,6 +6,7 @@ import type {
   ModelParameters, SensitivityParameter, StressScenario, OptimizerConstraints,
   ScenarioVariant
 } from './types';
+import { BASE_ECONOMIC_ASSUMPTIONS } from './economicAssumptions';
 
 // Favorece el regimen reciente sin volver 2008 marginal para un horizonte de 40 anos.
 // Con 12 anos, los bloques 2020-2026 siguen pesando mas, pero el bloque 2000-2009
@@ -47,28 +48,23 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   returns: {
     // Estos valores ahora son la referencia para la rama parametrica
     // El bootstrap usa los targets de preprocessData.ts
-    rvGlobalAnnual:   0.065,
-    rfGlobalAnnual:   0.0305,  // AGGU real 2000-2026 (era 0.0266)
-    rvChileAnnual:    0.075,
-    rfChileUFAnnual:  0.0102,  // real UF — sin cambio
-    rvGlobalVolAnnual:  0.1532,
-    rfGlobalVolAnnual:  0.0368,
-    rvChileVolAnnual:   0.1141,
-    rfChileVolAnnual:   0.0237,
+    rvGlobalAnnual:   BASE_ECONOMIC_ASSUMPTIONS.rvGlobalAnnual,
+    rfGlobalAnnual:   BASE_ECONOMIC_ASSUMPTIONS.rfGlobalAnnual,
+    rvChileAnnual:    BASE_ECONOMIC_ASSUMPTIONS.rvChileAnnual,
+    rfChileUFAnnual:  BASE_ECONOMIC_ASSUMPTIONS.rfChileRealAnnual,
+    rvGlobalVolAnnual:  BASE_ECONOMIC_ASSUMPTIONS.rvGlobalVolAnnual,
+    rfGlobalVolAnnual:  BASE_ECONOMIC_ASSUMPTIONS.rfGlobalVolAnnual,
+    rvChileVolAnnual:   BASE_ECONOMIC_ASSUMPTIONS.rvChileVolAnnual,
+    rfChileVolAnnual:   BASE_ECONOMIC_ASSUMPTIONS.rfChileVolAnnual,
     // NOTA: esta matriz gobierna la rama parametrica explicita
     // (Motor 2 y cualquier corrida sin bootstrap historico).
     // Motor 1 bootstrap usa correlaciones implicitas en los datos historicos.
-    correlationMatrix: [
-      [ 1.00,  0.15,  0.69,  0.32],
-      [ 0.15,  1.00,  0.33,  0.33],
-      [ 0.69,  0.33,  1.00,  0.23],
-      [ 0.32,  0.33,  0.23,  1.00],
-    ],
+    correlationMatrix: BASE_ECONOMIC_ASSUMPTIONS.correlationMatrix,
   },
 
   inflation: {
-    ipcChileAnnual:    0.0378,
-    hipcEurAnnual:     0.0213,
+    ipcChileAnnual:    BASE_ECONOMIC_ASSUMPTIONS.ipcChileAnnual,
+    hipcEurAnnual:     BASE_ECONOMIC_ASSUMPTIONS.hicpEuroAnnual,
     ipcChileVolAnnual: 0.0140,
     hipcEurVolAnnual:  0.0160,
   },
@@ -76,8 +72,8 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   fx: {
     clpUsdInitial:   984.59,
     usdEurFixed:     1.0472,
-    tcrealLT:        640.0,
-    mrHalfLifeYears: 6.3,      // calibrado con AR(1) empirico R²=0.98
+    tcrealLT:        BASE_ECONOMIC_ASSUMPTIONS.tcrealLT,
+    mrHalfLifeYears: BASE_ECONOMIC_ASSUMPTIONS.mrHalfLifeYears,      // calibrado con AR(1) empirico R²=0.98
   },
 
   simulation: {

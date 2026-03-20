@@ -3,6 +3,7 @@ import type {
   SimulationResults,
   FanChartPoint,
 } from '../model/types';
+import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 
 type ParametricAuditResults = {
   probRuin: number;
@@ -134,9 +135,9 @@ function runSimulationParametricInternal(params: ModelParameters): ParametricCor
   const ipcStd = inf.ipcChileVolAnnual / Math.sqrt(12);
   const hicpMean = (1 + inf.hipcEurAnnual) ** (1 / 12) - 1;
   const hicpStd = inf.hipcEurVolAnnual / Math.sqrt(12);
-  const dLogClpUsdMean = 0.020 / 12;
+  const dLogClpUsdMean = BASE_ECONOMIC_ASSUMPTIONS.clpUsdDriftAnnual / 12;
   const dLogClpUsdStd = 0.094 / Math.sqrt(12);
-  const dLogEurUsdMean = 0.0076 / 12;
+  const dLogEurUsdMean = BASE_ECONOMIC_ASSUMPTIONS.eurUsdDriftAnnual / 12;
   const dLogEurUsdStd = 0.093 / Math.sqrt(12);
 
   const w = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile];

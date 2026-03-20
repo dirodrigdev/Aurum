@@ -1,3 +1,5 @@
+import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
+
 // preprocessData.ts
 // Pre-procesamiento log-aditivo del dataset histórico.
 // Recentra los retornos a expectativas forward-looking
@@ -21,15 +23,15 @@ export interface ForwardReturnTargets {
 // Indices del array loadHistoricalData():
 // [0]=rvg, [1]=rfg, [2]=sura, [3]=afp, [4]=rfcl_uf_real, [5]=ipc, [6]=hicp, [7]=dCLPUSD, [8]=dEURUSD
 export const DEFAULT_FORWARD_TARGETS: ForwardReturnTargets = {
-  rvGlobal:    0.065,
-  rfGlobal:    0.0305,
-  rvChile:     0.075,
+  rvGlobal:    BASE_ECONOMIC_ASSUMPTIONS.rvGlobalAnnual,
+  rfGlobal:    BASE_ECONOMIC_ASSUMPTIONS.rfGlobalAnnual,
+  rvChile:     BASE_ECONOMIC_ASSUMPTIONS.rvChileAnnual,
   // Esta serie historica representa retorno real / UF.
   // El target debe permanecer en terminos reales para ser consistente
   // con rfChileUFAnnual y con el ajuste nominal posterior dentro del motor.
-  rfChileReal: 0.0102,
-  ipcChile:    0.038,
-  clpUsdDrift: 0.020,
+  rfChileReal: BASE_ECONOMIC_ASSUMPTIONS.rfChileRealAnnual,
+  ipcChile:    BASE_ECONOMIC_ASSUMPTIONS.ipcChileAnnual,
+  clpUsdDrift: BASE_ECONOMIC_ASSUMPTIONS.clpUsdDriftAnnual,
 };
 
 /**

@@ -1,4 +1,5 @@
 import { DEFAULT_PARAMETERS, WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS } from '../model/defaults';
+import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 import type { ModelParameters } from '../model/types';
 import { runSimulationParametricAudit } from './engineParametric';
 import { loadHistoricalData } from './historicalData';
@@ -16,6 +17,14 @@ type AuditResult = {
 type Motor1Flags = {
   usePreprocess: boolean;
   useWeightedBootstrap: boolean;
+};
+
+type AlignmentRow = {
+  Supuesto: string;
+  'Valor base comun': string;
+  'Motor 1 usado': string;
+  'Motor 2 usado': string;
+  Alineado: string;
 };
 
 function cloneParams(params: ModelParameters): ModelParameters {
@@ -120,7 +129,6 @@ function runMotor1Audit(baseParams: ModelParameters, flags: Motor1Flags): AuditR
     feeAnnual,
     spendingPhases,
     spendingRule,
-    returns: ret,
     inflation: inf,
     fx,
     simulation: sim,
@@ -130,54 +138,18 @@ function runMotor1Audit(baseParams: ModelParameters, flags: Motor1Flags): AuditR
   const T = sim.horizonMonths;
   const N = sim.nSim;
   const phi = Math.exp(-Math.log(2) / (fx.mrHalfLifeYears * 12));
-  const m = [
-    (1 + ret.rvGlobalAnnual) ** (1 / 12) - 1,
-    (1 + ret.rfGlobalAnnual) ** (1 / 12) - 1,
-    (1 + ret.rvChileAnnual) ** (1 / 12) - 1,
-    (1 + ret.rfChileUFAnnual + inf.ipcChileAnnual) ** (1 / 12) - 1,
-    (1 + inf.ipcChileAnnual) ** (1 / 12) - 1,
-    0.020 / 12,
-  ];
-  const v = [
-    ret.rvGlobalVolAnnual,
-    ret.rfGlobalVolAnnual,
-    ret.rvChileVolAnnual,
-    ret.rfChileVolAnnual,
-    inf.ipcChileVolAnnual,
-    0.094,
-  ].map(x => x / Math.sqrt(12));
-  const corr6: number[][] = [
-    [1.00, -0.20, 0.45, 0.08, 0.05, -0.20],
-    [-0.20, 1.00, 0.05, 0.38, -0.03, 0.05],
-    [0.45, 0.05, 1.00, 0.18, 0.18, -0.35],
-    [0.08, 0.38, 0.18, 1.00, 0.08, 0.00],
-    [0.05, -0.03, 0.18, 0.08, 1.00, 0.38],
-    [-0.20, 0.05, -0.35, 0.00, 0.38, 1.00],
-  ];
-  const L = cholesky(corr6);
   const rng = seededRNG(sim.seed);
 
   let histData: number[][] | null = loadHistoricalData();
   if (flags.usePreprocess) histData = preprocessHistoricalData(histData);
 
   const w = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile];
-  const HICP_MEAN = (1 + inf.hipcEurAnnual) ** (1 / 12) - 1;
-  const HICP_STD = inf.hipcEurVolAnnual / Math.sqrt(12);
 
   let nRuin = 0;
   const ruinMonths: number[] = [];
   const terminalW: number[] = [];
   let cutMonths = 0;
   let totalMonths = 0;
-
-  const generateRow = (localRng: () => number): number[] => {
-    const z = Array.from({ length: 6 }, () => randn(localRng));
-    const c = new Array(6).fill(0);
-    for (let i = 0; i < 6; i++) {
-      for (let j = 0; j <= i; j++) c[i] += L[i][j] * z[j];
-    }
-    return c.map((ci, i) => m[i] + v[i] * ci);
-  };
 
   for (let s = 0; s < N; s++) {
     let sl = w.map(wi => wi * W0);
@@ -198,12 +170,11 @@ function runMotor1Audit(baseParams: ModelParameters, flags: Motor1Flags): AuditR
 
     for (let t = 0; t < T; t++) {
       const row = path[t];
-      const rvg = row[0];
-      const rfg = row[1];
-      const rvCL = (0.55 * row[2]) + (0.45 * row[3]);
-      const rfCLReal = row[4];
+      const rRVg = row[0];
+      const rRFg = row[1];
+      const rRVcl = (0.55 * row[2]) + (0.45 * row[3]);
       const ipc = row[5];
-      const rfCLNominal = ((1 + rfCLReal) * (1 + ipc)) - 1;
+      const rRFcl = ((1 + row[4]) * (1 + ipc)) - 1;
       const hicpM = row[6];
       const dLogFX = row[7];
       const dLogEURUSD = row[8];
@@ -220,10 +191,10 @@ function runMotor1Audit(baseParams: ModelParameters, flags: Motor1Flags): AuditR
       const EURUSDt = Math.exp(logEURUSD);
       const dFX = Math.exp(dLogFX) - 1;
 
-      sl[0] *= (1 + rvg + dFX + rvg * dFX);
-      sl[1] *= (1 + rfg + dFX);
-      sl[2] *= (1 + rvCL);
-      sl[3] *= (1 + rfCLNominal);
+      sl[0] *= (1 + rRVg + dFX + rRVg * dFX);
+      sl[1] *= (1 + rRFg + dFX);
+      sl[2] *= (1 + rRVcl);
+      sl[3] *= (1 + rRFcl);
 
       const W = sl.reduce((a, b) => a + b, 0);
       const ff = (W - W * feeAnnual / 12) / W;
@@ -325,14 +296,9 @@ function fmtMM(value: number): string {
   return `${(value / 1e6).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}MM`;
 }
 
-function fmtMatrix(matrix: number[][]): string {
-  return matrix.map(row => `[${row.map(v => v.toFixed(2)).join(', ')}]`).join(' ');
-}
-
 function getMotor1ImplicitStats() {
-  const params = cloneParams(DEFAULT_PARAMETERS);
   const processed = preprocessHistoricalData(loadHistoricalData());
-  const weights = buildMonthlyWeights(processed.length, params.simulation.blockLength);
+  const weights = buildMonthlyWeights(processed.length, DEFAULT_PARAMETERS.simulation.blockLength);
   const series = {
     rvGlobal: processed.map(row => row[0]),
     rfGlobal: processed.map(row => row[1]),
@@ -349,7 +315,6 @@ function getMotor1ImplicitStats() {
       rfGlobal: weightedAnnualizedLogReturn(series.rfGlobal, weights),
       rvChile: weightedAnnualizedLogReturn(series.rvChile, weights),
       rfChileReal: weightedAnnualizedLogReturn(series.rfChileReal, weights),
-      rfChileNominal: weightedAnnualizedLogReturn(series.rfChileNominal, weights),
       ipcChile: weightedAnnualizedLogReturn(series.ipcChile, weights),
       clpUsdDrift: weightedMean(series.dLogClpUsd, weights) * 12,
     },
@@ -360,222 +325,144 @@ function getMotor1ImplicitStats() {
       rfChileNominal: weightedAnnualizedVol(series.rfChileNominal, weights),
     },
     correlations: {
-      rvg_rfg: weightedCorrelation(series.rvGlobal, series.rfGlobal, weights),
-      rvg_rvcl: weightedCorrelation(series.rvGlobal, series.rvChile, weights),
-      rfg_rfcl: weightedCorrelation(series.rfGlobal, series.rfChileNominal, weights),
-      rvcl_rfcl: weightedCorrelation(series.rvChile, series.rfChileNominal, weights),
+      rvgRfg: weightedCorrelation(series.rvGlobal, series.rfGlobal, weights),
+      rvgRvcl: weightedCorrelation(series.rvGlobal, series.rvChile, weights),
+      rfgRfcl: weightedCorrelation(series.rfGlobal, series.rfChileNominal, weights),
     },
   };
 }
 
-function buildConsistencyTable() {
-  const params = DEFAULT_PARAMETERS;
+function buildAlignmentTable(): AlignmentRow[] {
   const implicit = getMotor1ImplicitStats();
-  const milderCorr = params.returns.correlationMatrix.map((row, i) =>
-    row.map((value, j) => (i === j ? 1 : value * 0.5)),
-  );
-
-  const rows = [
-    {
-      Componente: 'capital inicial',
-      'Motor 1': fmtMM(params.capitalInitial),
-      'Motor 2': fmtMM(params.capitalInitial),
-      Estado: 'Igual',
-      Comentario: 'Mismo capital base.',
-    },
-    {
-      Componente: 'sleeves del portafolio',
-      'Motor 1': JSON.stringify(params.weights),
-      'Motor 2': JSON.stringify(params.weights),
-      Estado: 'Igual',
-      Comentario: 'Mismas ponderaciones iniciales.',
-    },
-    {
-      Componente: 'preprocess',
-      'Motor 1': 'Si, log-aditivo antes del bootstrap',
-      'Motor 2': 'No',
-      Estado: 'Distinto',
-      Comentario: 'Motor 1 recentra la historia; Motor 2 usa medias explicitas directamente.',
-    },
-    {
-      Componente: 'weighted bootstrap',
-      'Motor 1': `Si, half-life ${WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS}y`,
-      'Motor 2': 'No',
-      Estado: 'Distinto',
-      Comentario: 'Principal diferencia metodologica.',
-    },
-    {
-      Componente: 'retornos esperados por sleeve',
-      'Motor 1': `targets base ${fmtPct(params.returns.rvGlobalAnnual)}, ${fmtPct(params.returns.rfGlobalAnnual)}, ${fmtPct(params.returns.rvChileAnnual)}, rfChile real ${fmtPct(params.returns.rfChileUFAnnual)}; implicitos weighted ${fmtPct(implicit.expectedReturns.rvGlobal)}, ${fmtPct(implicit.expectedReturns.rfGlobal)}, ${fmtPct(implicit.expectedReturns.rvChile)}, rfChile real ${fmtPct(implicit.expectedReturns.rfChileReal)}`,
-      'Motor 2': `explicitos ${fmtPct(params.returns.rvGlobalAnnual)}, ${fmtPct(params.returns.rfGlobalAnnual)}, ${fmtPct(params.returns.rvChileAnnual)}, rfChile real ${fmtPct(params.returns.rfChileUFAnnual)}`,
-      Estado: 'Distinto',
-      Comentario: 'Motor 1 oficial termina con medias efectivas mas altas por weighting sobre historia reciente preprocesada.',
-    },
-    {
-      Componente: 'volatilidades por sleeve',
-      'Motor 1': `weighted impl ${fmtPct(implicit.annualVols.rvGlobal)}, ${fmtPct(implicit.annualVols.rfGlobal)}, ${fmtPct(implicit.annualVols.rvChile)}, rfChile nom ${fmtPct(implicit.annualVols.rfChileNominal)}`,
-      'Motor 2': `explicitas ${fmtPct(params.returns.rvGlobalVolAnnual)}, ${fmtPct(params.returns.rfGlobalVolAnnual)}, ${fmtPct(params.returns.rvChileVolAnnual)}, ${fmtPct(params.returns.rfChileVolAnnual)}`,
-      Estado: 'Distinto',
-      Comentario: 'Motor 1 usa volatilidad historica implicita; Motor 2 la fija explicitamente.',
-    },
-    {
-      Componente: 'correlaciones efectivas o usadas',
-      'Motor 1': `impl {RVg/RFg ${implicit.correlations.rvg_rfg.toFixed(2)}, RVg/RVcl ${implicit.correlations.rvg_rvcl.toFixed(2)}, RFg/RFcl ${implicit.correlations.rfg_rfcl.toFixed(2)}, RVcl/RFcl ${implicit.correlations.rvcl_rfcl.toFixed(2)}}`,
-      'Motor 2': `explicita ${fmtMatrix(params.returns.correlationMatrix)}`,
-      Estado: 'Distinto',
-      Comentario: 'Motor 1 depende de correlaciones empiricas ponderadas; Motor 2 de una matriz fija.',
-    },
-    {
-      Componente: 'inflacion usada',
-      'Motor 1': `IPC preprocess target ${fmtPct(0.038)} + historia ponderada`,
-      'Motor 2': `IPC explicita ${fmtPct(params.inflation.ipcChileAnnual)} con vol ${fmtPct(params.inflation.ipcChileVolAnnual)}`,
-      Estado: 'Distinto',
-      Comentario: 'Mismo nivel target, distinta fuente estadistica.',
-    },
-    {
-      Componente: 'tratamiento rfChile',
-      'Motor 1': 'Serie historica real UF -> conversion a nominal con IPC',
-      'Motor 2': 'Retorno real UF explicito -> conversion a nominal con IPC',
-      Estado: 'Igual',
-      Comentario: 'Semantica alineada tras la correccion.',
-    },
-    {
-      Componente: 'tratamiento FX',
-      'Motor 1': 'CLP/USD y EUR/USD historicos + mean reversion de TCR',
-      'Motor 2': 'CLP/USD y EUR/USD gaussianos + misma mean reversion de TCR',
-      Estado: 'Parecido',
-      Comentario: 'La logica economica es la misma, cambia la fuente estadistica.',
-    },
-    {
-      Componente: 'fee',
-      'Motor 1': fmtPct(params.feeAnnual),
-      'Motor 2': fmtPct(params.feeAnnual),
-      Estado: 'Igual',
-      Comentario: 'Mismo descuento mensualizado.',
-    },
-    {
-      Componente: 'gasto por fases',
-      'Motor 1': JSON.stringify(params.spendingPhases),
-      'Motor 2': JSON.stringify(params.spendingPhases),
-      Estado: 'Igual',
-      Comentario: 'Mismas fases y monedas.',
-    },
-    {
-      Componente: 'regla dinamica de gasto',
-      'Motor 1': JSON.stringify(params.spendingRule),
-      'Motor 2': JSON.stringify(params.spendingRule),
-      Estado: 'Igual',
-      Comentario: 'Mismo multiplicador de recorte por drawdown.',
-    },
-    {
-      Componente: 'rebalanceo',
-      'Motor 1': 'No rebalanceo explicito; retiro proporcional por sleeve',
-      'Motor 2': 'No rebalanceo explicito; retiro proporcional por sleeve',
-      Estado: 'Igual',
-      Comentario: 'No se detecto mismatch patrimonial relevante.',
-    },
-    {
-      Componente: 'definicion de ruina',
-      'Motor 1': `${params.ruinThresholdMonths} meses de gasto efectivo`,
-      'Motor 2': `${params.ruinThresholdMonths} meses de gasto efectivo`,
-      Estado: 'Igual',
-      Comentario: 'Mismo criterio operativo.',
-    },
-    {
-      Componente: 'seed / nSim',
-      'Motor 1': `seed ${params.simulation.seed}, nSim ${params.simulation.nSim}`,
-      'Motor 2': `seed ${params.simulation.seed}, nSim ${params.simulation.nSim}`,
-      Estado: 'Igual',
-      Comentario: 'Misma base de reproducibilidad.',
-    },
-    {
-      Componente: 'historia truncada',
-      'Motor 1': 'No en corrida oficial',
-      'Motor 2': 'No',
-      Estado: 'Igual',
-      Comentario: 'La reconciliacion usa historia completa disponible.',
-    },
-    {
-      Componente: 'distribucion / bloques',
-      'Motor 1': 'Bloques historicos ponderados',
-      'Motor 2': 'Normal multivariada mensual',
-      Estado: 'Distinto',
-      Comentario: 'Diferencia central de metodologia.',
-    },
-    {
-      Componente: 'correlacion benigna usada en Test B',
-      'Motor 1': 'No aplica',
-      'Motor 2': fmtMatrix(milderCorr),
-      Estado: 'Distinto',
-      Comentario: 'Test B usa mezcla 50% identidad / 50% matriz actual.',
-    },
-  ];
-
-  return { rows, implicit, milderCorr };
-}
-
-function buildParametricMeansAlignedVariant(params: ModelParameters, implicit: ReturnType<typeof getMotor1ImplicitStats>): ModelParameters {
-  const next = cloneParams(params);
-  next.returns = {
-    ...next.returns,
-    rvGlobalAnnual: implicit.expectedReturns.rvGlobal,
-    rfGlobalAnnual: implicit.expectedReturns.rfGlobal,
-    rvChileAnnual: implicit.expectedReturns.rvChile,
-    rfChileUFAnnual: implicit.expectedReturns.rfChileReal,
-  };
-  return next;
-}
-
-function buildBenignCorrelationVariant(params: ModelParameters, corr: number[][]): ModelParameters {
-  const next = cloneParams(params);
-  next.returns = {
-    ...next.returns,
-    correlationMatrix: corr,
-  };
-  return next;
-}
-
-function buildIsolationTable() {
-  const params = cloneParams(DEFAULT_PARAMETERS);
-  const { implicit, milderCorr } = buildConsistencyTable();
-  const motor1Official = runMotor1Audit(params, { usePreprocess: true, useWeightedBootstrap: true });
-  const motor1Uniform = runMotor1Audit(params, { usePreprocess: true, useWeightedBootstrap: false });
-  const motor2Current = runSimulationParametricAudit(params);
-  const motor2VariantA = runSimulationParametricAudit(buildParametricMeansAlignedVariant(params, implicit));
-  const motor2VariantB = runSimulationParametricAudit(buildBenignCorrelationVariant(params, milderCorr));
-
   return [
-    { Variante: 'Motor 1 oficial', ...motor1Official },
-    { Variante: 'Motor 1 uniforme + preprocess', ...motor1Uniform },
-    { Variante: 'Motor 2 actual', ...motor2Current },
-    { Variante: 'Motor 2 variant A (means alineadas a M1 implicito)', ...motor2VariantA },
-    { Variante: 'Motor 2 variant B (correlaciones mas benignas)', ...motor2VariantB },
+    {
+      Supuesto: 'rvGlobalAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rvGlobalAnnual),
+      'Motor 1 usado': `${fmtPct(DEFAULT_PARAMETERS.returns.rvGlobalAnnual)} target / ${fmtPct(implicit.expectedReturns.rvGlobal)} efectivo`,
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rvGlobalAnnual),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'rfGlobalAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rfGlobalAnnual),
+      'Motor 1 usado': `${fmtPct(DEFAULT_PARAMETERS.returns.rfGlobalAnnual)} target / ${fmtPct(implicit.expectedReturns.rfGlobal)} efectivo`,
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rfGlobalAnnual),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'rvChileAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rvChileAnnual),
+      'Motor 1 usado': `${fmtPct(DEFAULT_PARAMETERS.returns.rvChileAnnual)} target / ${fmtPct(implicit.expectedReturns.rvChile)} efectivo`,
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rvChileAnnual),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'rfChileRealAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rfChileRealAnnual),
+      'Motor 1 usado': `${fmtPct(DEFAULT_PARAMETERS.returns.rfChileUFAnnual)} target / ${fmtPct(implicit.expectedReturns.rfChileReal)} efectivo`,
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rfChileUFAnnual),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'rvGlobalVolAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rvGlobalVolAnnual),
+      'Motor 1 usado': fmtPct(implicit.annualVols.rvGlobal),
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rvGlobalVolAnnual),
+      Alineado: 'Casi',
+    },
+    {
+      Supuesto: 'rfGlobalVolAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rfGlobalVolAnnual),
+      'Motor 1 usado': fmtPct(implicit.annualVols.rfGlobal),
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rfGlobalVolAnnual),
+      Alineado: 'Casi',
+    },
+    {
+      Supuesto: 'rvChileVolAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rvChileVolAnnual),
+      'Motor 1 usado': fmtPct(implicit.annualVols.rvChile),
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rvChileVolAnnual),
+      Alineado: 'Casi',
+    },
+    {
+      Supuesto: 'rfChileVolAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.rfChileVolAnnual),
+      'Motor 1 usado': fmtPct(implicit.annualVols.rfChileNominal),
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.returns.rfChileVolAnnual),
+      Alineado: 'No exacto',
+    },
+    {
+      Supuesto: 'ipcChileAnnual',
+      'Valor base comun': fmtPct(BASE_ECONOMIC_ASSUMPTIONS.ipcChileAnnual),
+      'Motor 1 usado': `${fmtPct(DEFAULT_PARAMETERS.inflation.ipcChileAnnual)} target / ${fmtPct(implicit.expectedReturns.ipcChile)} efectivo`,
+      'Motor 2 usado': fmtPct(DEFAULT_PARAMETERS.inflation.ipcChileAnnual),
+      Alineado: 'Base si / efectivo casi',
+    },
+    {
+      Supuesto: 'tcrealLT',
+      'Valor base comun': String(BASE_ECONOMIC_ASSUMPTIONS.tcrealLT),
+      'Motor 1 usado': String(DEFAULT_PARAMETERS.fx.tcrealLT),
+      'Motor 2 usado': String(DEFAULT_PARAMETERS.fx.tcrealLT),
+      Alineado: 'Si',
+    },
+    {
+      Supuesto: 'mrHalfLifeYears',
+      'Valor base comun': String(BASE_ECONOMIC_ASSUMPTIONS.mrHalfLifeYears),
+      'Motor 1 usado': String(DEFAULT_PARAMETERS.fx.mrHalfLifeYears),
+      'Motor 2 usado': String(DEFAULT_PARAMETERS.fx.mrHalfLifeYears),
+      Alineado: 'Si',
+    },
+    {
+      Supuesto: 'correlacion RVg-RFg',
+      'Valor base comun': BASE_ECONOMIC_ASSUMPTIONS.correlationMatrix[0][1].toFixed(2),
+      'Motor 1 usado': implicit.correlations.rvgRfg.toFixed(2),
+      'Motor 2 usado': DEFAULT_PARAMETERS.returns.correlationMatrix[0][1].toFixed(2),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'correlacion RVg-RVcl',
+      'Valor base comun': BASE_ECONOMIC_ASSUMPTIONS.correlationMatrix[0][2].toFixed(2),
+      'Motor 1 usado': implicit.correlations.rvgRvcl.toFixed(2),
+      'Motor 2 usado': DEFAULT_PARAMETERS.returns.correlationMatrix[0][2].toFixed(2),
+      Alineado: 'Base si / efectivo no',
+    },
+    {
+      Supuesto: 'correlacion RFg-RFcl',
+      'Valor base comun': BASE_ECONOMIC_ASSUMPTIONS.correlationMatrix[1][3].toFixed(2),
+      'Motor 1 usado': implicit.correlations.rfgRfcl.toFixed(2),
+      'Motor 2 usado': DEFAULT_PARAMETERS.returns.correlationMatrix[1][3].toFixed(2),
+      Alineado: 'Base si / efectivo no',
+    },
   ];
 }
 
-const consistency = buildConsistencyTable();
-const isolation = buildIsolationTable();
+function buildCleanComparisonTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [
+    {
+      Motor: 'Motor 1 bootstrap',
+      ...runMotor1Audit(params, { usePreprocess: true, useWeightedBootstrap: true }),
+    },
+    {
+      Motor: 'Motor 2 parametric',
+      ...runSimulationParametricAudit(params),
+    },
+  ];
+}
 
-console.log('\nFASE 1 - TABLA DE CONSISTENCIA DE SUPUESTOS');
-console.table(consistency.rows);
+const alignment = buildAlignmentTable();
+const comparison = buildCleanComparisonTable();
 
-console.log('\nFASE 2 - TESTS DE AISLAMIENTO');
-console.table(isolation.map((row) => ({
-  variante: row.Variante,
+console.log('\nTABLA COMPARATIVA LIMPIA MOTOR 1 VS MOTOR 2');
+console.table(comparison.map((row) => ({
+  motor: row.Motor,
   probRuin: fmtPct(row.probRuin),
   successRate: fmtPct(row.successRate),
-  terminalP50: fmtMM(row.terminalP50),
+  ruin_lt_20y: fmtPct(row.ruinLt20y),
+  ruin_lt_40y: fmtPct(row.ruinLt40y),
   months_cut_pct: fmtPct(row.monthsCutPct),
+  terminalP50: fmtMM(row.terminalP50),
 })));
 
-console.log('\nFASE 3 - ATRIBUCION DE BRECHA');
-console.table(isolation.map((row) => ({
-  variante: row.Variante,
-  probRuin: fmtPct(row.probRuin),
-  successRate: fmtPct(row.successRate),
-  terminalP50: fmtMM(row.terminalP50),
-  months_cut_pct: fmtPct(row.monthsCutPct),
-})));
-
-console.log('\nOBSERVACION C');
-console.log('No se detecto mismatch material de implementacion patrimonial entre Motor 1 y Motor 2: fee, gasto, regla de recorte, retiro proporcional, FX y definicion de ruina quedaron alineados. Por eso no se corrio una variant C adicional.');
+console.log('\nTABLA DE VERIFICACION DE ALINEACION');
+console.table(alignment);

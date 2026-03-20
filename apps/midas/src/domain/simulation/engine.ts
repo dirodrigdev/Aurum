@@ -6,6 +6,7 @@ import type {
   StressScenario, StressResult, ScenarioComparison, ScenarioPoint, ScenarioVariant
 } from '../model/types';
 import { SCENARIO_VARIANTS, WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS } from '../model/defaults';
+import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 import { loadHistoricalData } from './historicalData';
 import { preprocessHistoricalData } from './preprocessData';
 
@@ -222,7 +223,7 @@ function runSimulationCoreInternal(
     (1 + ret.rvChileAnnual)   ** (1/12) - 1,
     (1 + ret.rfChileUFAnnual + inf.ipcChileAnnual) ** (1/12) - 1,
     (1 + inf.ipcChileAnnual)  ** (1/12) - 1,
-    0.020 / 12,  // d_logCLPUSD drift
+    BASE_ECONOMIC_ASSUMPTIONS.clpUsdDriftAnnual / 12,  // d_logCLPUSD drift
   ];
   const v = [
     ret.rvGlobalVolAnnual, ret.rfGlobalVolAnnual,
@@ -303,7 +304,7 @@ function runSimulationCoreInternal(
       } else {
         r = generateRow(rng);
         // vol EUR/USD: 9.3% anual, media 0.76% anual
-        dLogEURUSD = 0.0076 / 12 + (0.093 / Math.sqrt(12)) * randn(rng);
+        dLogEURUSD = (BASE_ECONOMIC_ASSUMPTIONS.eurUsdDriftAnnual / 12) + (0.093 / Math.sqrt(12)) * randn(rng);
       }
 
       const [rRVg, rRFg, rRVcl, rRFcl, ipcM, dLogFX] = r;
@@ -463,8 +464,8 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
     r_RFcl: (1 + ret.rfChileUFAnnual + inf.ipcChileAnnual) ** (1/12) - 1,
     ipc_cl_m: (1 + inf.ipcChileAnnual) ** (1/12) - 1,
     hicp_eur_m: (1 + inf.hipcEurAnnual) ** (1/12) - 1,
-    d_logCLPUSD: 0.020 / 12,
-    d_logEURUSD: 0.0076 / 12,
+    d_logCLPUSD: BASE_ECONOMIC_ASSUMPTIONS.clpUsdDriftAnnual / 12,
+    d_logEURUSD: BASE_ECONOMIC_ASSUMPTIONS.eurUsdDriftAnnual / 12,
   };
 
   let sl = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile].map(w => w * W0);
