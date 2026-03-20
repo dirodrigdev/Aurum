@@ -22,7 +22,15 @@ type WalkForwardResult = {
   probRuin: number;
   observedRuin: boolean;
   ruinConsistency: string;
-  errorP50VsReal: number;
+  errorP50Signed: number;
+  errorP50Abs: number;
+  bandWidthRelative: number;
+  minWealth: number;
+  maxDrawdown: number;
+  monthsCut: number;
+  monthsBelow12mSpend: number;
+  monthsBelow6mSpend: number;
+  nearRuinFlag: boolean;
 };
 
 const START_YEAR = 2000;
@@ -82,7 +90,16 @@ function applyCashflowEvents(
 function runObservedHistoricalPath(
   params: ModelParameters,
   observedPath: number[][],
-): { finalWealth: number; observedRuin: boolean } {
+): {
+  finalWealth: number;
+  observedRuin: boolean;
+  minWealth: number;
+  maxDrawdown: number;
+  monthsCut: number;
+  monthsBelow12mSpend: number;
+  monthsBelow6mSpend: number;
+  nearRuinFlag: boolean;
+} {
   const {
     capitalInitial: W0,
     weights,
@@ -102,6 +119,11 @@ function runObservedHistoricalPath(
   let smult = 1;
   let cnt15 = 0;
   let cnt25 = 0;
+  let minWealth = W0;
+  let maxDrawdown = 0;
+  let monthsCut = 0;
+  let monthsBelow12mSpend = 0;
+  let monthsBelow6mSpend = 0;
 
   for (let t = 0; t < observedPath.length; t++) {
     const row = observedPath[t];
@@ -134,10 +156,12 @@ function runObservedHistoricalPath(
     sl = sl.map(x => x * ff);
     applyCashflowEvents(sl, params.cashflowEvents, t + 1, CPU_t, EURUSDt);
     const Wp = sl.reduce((a, b) => a + b, 0);
+    if (Wp < minWealth) minWealth = Wp;
 
     const Wr = Wp / cumCL;
     if (Wr > hwm) hwm = Wr;
     const dd = (Wr - hwm) / hwm;
+    if (dd < maxDrawdown) maxDrawdown = dd;
 
     cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
     cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
@@ -145,6 +169,7 @@ function runObservedHistoricalPath(
     if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
     else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
     smult += spendingRule.adjustmentAlpha * (tgt - smult);
+    if (smult < 0.999) monthsCut += 1;
 
     const mes = t + 1;
     let GB = 0;
@@ -157,9 +182,20 @@ function runObservedHistoricalPath(
       phaseStart += ph.durationMonths;
     }
     const G = GB * smult;
+    if (Wp < (12 * G)) monthsBelow12mSpend += 1;
+    if (Wp < (6 * G)) monthsBelow6mSpend += 1;
 
     if (Wp <= ruinThresholdMonths * G) {
-      return { finalWealth: 0, observedRuin: true };
+      return {
+        finalWealth: 0,
+        observedRuin: true,
+        minWealth,
+        maxDrawdown,
+        monthsCut,
+        monthsBelow12mSpend,
+        monthsBelow6mSpend,
+        nearRuinFlag: true,
+      };
     }
 
     const Wfin = sl.reduce((a, b) => a + b, 0);
@@ -169,6 +205,12 @@ function runObservedHistoricalPath(
   return {
     finalWealth: sl.reduce((a, b) => a + b, 0),
     observedRuin: false,
+    minWealth,
+    maxDrawdown,
+    monthsCut,
+    monthsBelow12mSpend,
+    monthsBelow6mSpend,
+    nearRuinFlag: monthsBelow12mSpend > 0,
   };
 }
 
@@ -206,8 +248,9 @@ function evaluateWalkForward(): { cuts: WalkForwardResult[]; summary: {
   withinPct: number;
   belowPct: number;
   abovePct: number;
-  meanRelativeError: number;
+  meanAbsoluteError: number;
   meanSignedError: number;
+  meanBandWidthRelative: number;
   biasLabel: string;
 }} {
   const allData = loadHistoricalData();
@@ -232,7 +275,7 @@ function evaluateWalkForward(): { cuts: WalkForwardResult[]; summary: {
     const p90 = projected.terminalWealthPercentiles[90] ?? 0;
     const realFinalWealth = observed.finalWealth;
     const bucketReal = classifyBucket(realFinalWealth, p10, p90);
-    const errorP50VsReal = realFinalWealth !== 0 ? ((p50 / realFinalWealth) - 1) : Number.POSITIVE_INFINITY;
+    const errorP50Signed = realFinalWealth !== 0 ? ((p50 / realFinalWealth) - 1) : Number.POSITIVE_INFINITY;
     const modelExpectsRuin = projected.probRuin >= 0.5;
     const ruinConsistency = observed.observedRuin === modelExpectsRuin
       ? (observed.observedRuin ? 'Consistente con ruina' : 'Consistente con no-ruina')
@@ -249,16 +292,27 @@ function evaluateWalkForward(): { cuts: WalkForwardResult[]; summary: {
       probRuin: projected.probRuin,
       observedRuin: observed.observedRuin,
       ruinConsistency,
-      errorP50VsReal,
+      errorP50Signed,
+      errorP50Abs: Number.isFinite(errorP50Signed) ? Math.abs(errorP50Signed) : Number.POSITIVE_INFINITY,
+      bandWidthRelative: p50 !== 0 ? ((p90 - p10) / p50) : Number.POSITIVE_INFINITY,
+      minWealth: observed.minWealth,
+      maxDrawdown: observed.maxDrawdown,
+      monthsCut: observed.monthsCut,
+      monthsBelow12mSpend: observed.monthsBelow12mSpend,
+      monthsBelow6mSpend: observed.monthsBelow6mSpend,
+      nearRuinFlag: observed.nearRuinFlag,
     };
   });
 
   const within = results.filter(r => r.bucketReal === 'within_p10_p90').length;
   const below = results.filter(r => r.bucketReal === 'below_p10').length;
   const above = results.filter(r => r.bucketReal === 'above_p90').length;
-  const signedErrors = results.map(r => r.errorP50VsReal).filter(Number.isFinite);
+  const signedErrors = results.map(r => r.errorP50Signed).filter(Number.isFinite);
+  const absoluteErrors = results.map(r => r.errorP50Abs).filter(Number.isFinite);
+  const bandWidths = results.map(r => r.bandWidthRelative).filter(Number.isFinite);
   const meanSignedError = signedErrors.reduce((a, b) => a + b, 0) / signedErrors.length;
-  const meanRelativeError = signedErrors.reduce((a, b) => a + Math.abs(b), 0) / signedErrors.length;
+  const meanAbsoluteError = absoluteErrors.reduce((a, b) => a + b, 0) / absoluteErrors.length;
+  const meanBandWidthRelative = bandWidths.reduce((a, b) => a + b, 0) / bandWidths.length;
 
   return {
     cuts: results,
@@ -266,8 +320,9 @@ function evaluateWalkForward(): { cuts: WalkForwardResult[]; summary: {
       withinPct: within / results.length,
       belowPct: below / results.length,
       abovePct: above / results.length,
-      meanRelativeError,
+      meanAbsoluteError,
       meanSignedError,
+      meanBandWidthRelative,
       biasLabel: meanSignedError > 0 ? 'optimista' : meanSignedError < 0 ? 'pesimista' : 'neutral',
     },
   };
@@ -298,7 +353,9 @@ console.table(result.cuts.map(cut => ({
   probRuin: fmtPct(cut.probRuin),
   observed_ruin: cut.observedRuin ? 'si' : 'no',
   ruin_consistency: cut.ruinConsistency,
-  error_p50_vs_real: Number.isFinite(cut.errorP50VsReal) ? fmtPct(cut.errorP50VsReal) : 'inf',
+  error_p50_signed: Number.isFinite(cut.errorP50Signed) ? fmtPct(cut.errorP50Signed) : 'inf',
+  error_p50_abs: Number.isFinite(cut.errorP50Abs) ? fmtPct(cut.errorP50Abs) : 'inf',
+  band_width_relative: Number.isFinite(cut.bandWidthRelative) ? fmtPct(cut.bandWidthRelative) : 'inf',
 })));
 
 console.log('\nWALK-FORWARD - RESUMEN AGREGADO');
@@ -306,7 +363,30 @@ console.table([{
   within_p10_p90: fmtPct(result.summary.withinPct),
   below_p10: fmtPct(result.summary.belowPct),
   above_p90: fmtPct(result.summary.abovePct),
-  mean_relative_error: fmtPct(result.summary.meanRelativeError),
   mean_signed_error: fmtPct(result.summary.meanSignedError),
+  mean_absolute_error: fmtPct(result.summary.meanAbsoluteError),
+  mean_band_width_relative: fmtPct(result.summary.meanBandWidthRelative),
   bias: result.summary.biasLabel,
 }]);
+
+console.log('\nWALK-FORWARD - SUPERVIVENCIA INTERMEDIA');
+console.table(result.cuts.map(cut => ({
+  train_end: cut.trainEnd,
+  test_period: cut.testPeriod,
+  min_wealth: fmtMM(cut.minWealth),
+  max_dd: fmtPct(cut.maxDrawdown),
+  months_cut: cut.monthsCut,
+  months_lt_12m_spend: cut.monthsBelow12mSpend,
+  months_lt_6m_spend: cut.monthsBelow6mSpend,
+  near_ruin_flag: cut.nearRuinFlag ? 'si' : 'no',
+})));
+
+console.log('\nWALK-FORWARD - LECTURA POR VENTANA');
+result.cuts.forEach((cut) => {
+  const assessment = cut.observedRuin || cut.monthsBelow6mSpend > 0
+    ? 'fragil'
+    : cut.nearRuinFlag || cut.monthsCut > 0 || cut.maxDrawdown <= -0.25
+      ? 'tensa'
+      : 'comoda';
+  console.log(`${cut.trainEnd} (${cut.testPeriod}): ${assessment}`);
+});

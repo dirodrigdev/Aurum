@@ -12,6 +12,8 @@ type VariantFlags = {
   usePreprocess: boolean;
   useWeightedBootstrap: boolean;
   weightedBootstrapHalfLifeYears?: number;
+  blockLength?: number;
+  seed?: number;
 };
 
 type VariantResult = {
@@ -171,6 +173,12 @@ function runVariant(
   flags: VariantFlags,
 ): VariantResult {
   const params = cloneParams(baseParams);
+  if (typeof flags.blockLength !== 'undefined') {
+    params.simulation.blockLength = flags.blockLength;
+  }
+  if (typeof flags.seed !== 'undefined') {
+    params.simulation.seed = flags.seed;
+  }
   const {
     capitalInitial: W0,
     weights,
@@ -447,6 +455,30 @@ function computeHalfLifeSensitivityTable() {
   }));
 }
 
+function computeBlockLengthSensitivityTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [6, 12, 18, 24].map((blockLength) => ({
+    blockLength,
+    ...runVariant(params, {
+      usePreprocess: true,
+      useWeightedBootstrap: true,
+      blockLength,
+    }),
+  }));
+}
+
+function computeSeedStabilityTable() {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  return [11, 21, 42, 84, 168].map((seed) => ({
+    seed,
+    ...runVariant(params, {
+      usePreprocess: true,
+      useWeightedBootstrap: true,
+      seed,
+    }),
+  }));
+}
+
 function computeWeightedVsUniformTable() {
   const params = cloneParams(DEFAULT_PARAMETERS);
   return [
@@ -559,9 +591,9 @@ function printValidation4() {
 }
 
 function printTest1() {
-  console.log('\nTEST 1 - SENSIBILIDAD DEL HALF-LIFE');
-  console.table(computeHalfLifeSensitivityTable().map((row) => ({
-    half_life: `${row.halfLifeYears} anos`,
+  console.log('\nTEST 1 - SENSIBILIDAD POR BLOCK LENGTH');
+  console.table(computeBlockLengthSensitivityTable().map((row) => ({
+    block_length: `L=${row.blockLength}`,
     probRuin: fmtPct(row.probRuin),
     successRate: fmtPct(row.successRate),
     terminalP50: fmtMM(row.terminalP50),
@@ -570,25 +602,20 @@ function printTest1() {
 }
 
 function printTest2() {
-  console.log('\nTEST 2 - WEIGHTED VS UNIFORM (PREPROCESS ACTIVO)');
-  console.table(computeWeightedVsUniformTable().map((row) => ({
-    variante: row.variante,
+  console.log('\nTEST 2 - ESTABILIDAD POR SEED');
+  const rows = computeSeedStabilityTable();
+  console.table(rows.map((row) => ({
+    seed: row.seed,
     probRuin: fmtPct(row.probRuin),
     successRate: fmtPct(row.successRate),
     terminalP50: fmtMM(row.terminalP50),
     months_cut_pct: fmtPct(row.monthsCutPct),
   })));
-}
-
-function printTest3() {
-  console.log('\nTEST 3 - DOMINANCIA DEL WEIGHTING');
-  console.table(computeWeightingDominanceTable().map((row) => ({
-    variante: row.variante,
-    probRuin: fmtPct(row.probRuin),
-    terminalP50: fmtMM(row.terminalP50),
-  })));
+  const probRuinValues = rows.map(row => row.probRuin);
+  const terminalP50Values = rows.map(row => row.terminalP50);
+  console.log(`probRuin min-max: ${fmtPct(Math.min(...probRuinValues))} - ${fmtPct(Math.max(...probRuinValues))}`);
+  console.log(`terminalP50 min-max: ${fmtMM(Math.min(...terminalP50Values))} - ${fmtMM(Math.max(...terminalP50Values))}`);
 }
 
 printTest1();
 printTest2();
-printTest3();
