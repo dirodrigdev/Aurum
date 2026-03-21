@@ -230,10 +230,8 @@ export function SimulationPage({
           }
           ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
           mode={simActive ? 'sim' : 'real'}
-          stateLabel={stateLabel}
-          onStateClick={simActive ? onResetSim : undefined}
           chips={[
-            { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => onSimulationTouch('custom') },
+            { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
             { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
             { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
             { id: 'capital', value: formatCapital(effectiveCapital), onClick: () => openChip('capital') },

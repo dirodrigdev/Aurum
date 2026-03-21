@@ -187,6 +187,7 @@ export default function App() {
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     setSimOverrides(null);
+    touchSimulation(next);
     setSimParams((prev) => {
       const nextParams = applyScenarioEconomics(prev, next);
       const base = applySimulationOverrides(nextParams, null);
@@ -199,7 +200,6 @@ export default function App() {
       window.setTimeout(() => setSimWorking(false), 30);
       return nextParams;
     });
-    touchSimulation(next);
   }, [applyScenarioEconomics, touchSimulation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
