@@ -11,9 +11,9 @@ import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
 import { T, css } from './components/theme';
+import { loadBaseModelFromCloud, saveBaseModelToCloud } from './services/baseModelService';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
-const BASE_MODEL_STORAGE_KEY = 'midas.base-model.v1';
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type TriMotorResult = {
@@ -24,35 +24,6 @@ type TriMotorResult = {
 
 function cloneParams(p: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(p));
-}
-
-function loadPersistedBaseModel(): ModelParameters {
-  if (typeof window === 'undefined') return cloneParams(DEFAULT_PARAMETERS);
-  try {
-    const raw = window.localStorage.getItem(BASE_MODEL_STORAGE_KEY);
-    if (!raw) return cloneParams(DEFAULT_PARAMETERS);
-    const parsed = JSON.parse(raw) as ModelParameters;
-    if (
-      typeof parsed?.capitalInitial !== 'number' ||
-      typeof parsed?.feeAnnual !== 'number' ||
-      !parsed?.weights ||
-      !parsed?.returns
-    ) {
-      return cloneParams(DEFAULT_PARAMETERS);
-    }
-    return cloneParams(parsed);
-  } catch {
-    return cloneParams(DEFAULT_PARAMETERS);
-  }
-}
-
-function persistBaseModel(p: ModelParameters) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(BASE_MODEL_STORAGE_KEY, JSON.stringify(p));
-  } catch {
-    // Persistencia best-effort para no bloquear simulación.
-  }
 }
 
 function updateByPath(target: ModelParameters, path: string, value: number): ModelParameters {
@@ -100,8 +71,8 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
 }
 
 export default function App() {
-  const [baseParams, setBaseParams] = useState<ModelParameters>(() => loadPersistedBaseModel());
-  const [simParams, setSimParams] = useState<ModelParameters>(() => loadPersistedBaseModel());
+  const [baseParams, setBaseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
+  const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<TriMotorResult>({ central: null, favorable: null, prudent: null });
@@ -109,6 +80,8 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [simWorking, setSimWorking] = useState(false);
+  const [baseLoading, setBaseLoading] = useState(true);
+  const [baseSaving, setBaseSaving] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -186,11 +159,34 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!simResult.central) {
-      const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
-      setSimParams(next);
-      setSimResult(computeTriMotor(next));
-    }
+    let cancelled = false;
+    const loadBase = async () => {
+      try {
+        const cloudBase = await loadBaseModelFromCloud();
+        if (cancelled) return;
+        const source = cloudBase ?? cloneParams(DEFAULT_PARAMETERS);
+        const next = applyScenarioEconomics(cloneParams(source), 'base');
+        setBaseParams(next);
+        setSimParams(next);
+        setSimResult(computeTriMotor(next));
+      } catch {
+        if (cancelled) return;
+        const fallback = applyScenarioEconomics(cloneParams(DEFAULT_PARAMETERS), 'base');
+        setBaseParams(fallback);
+        setSimParams(fallback);
+        setSimResult(computeTriMotor(fallback));
+      } finally {
+        if (!cancelled) setBaseLoading(false);
+      }
+    };
+    void loadBase();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyScenarioEconomics, computeTriMotor]);
+
+  useEffect(() => {
+    if (baseLoading) return;
     scheduleInactivityReset();
     const handler = () => scheduleInactivityReset();
     activityHandlerRef.current = handler;
@@ -200,7 +196,7 @@ export default function App() {
       clearSimulationTimer();
       clearCalculationTimer();
     };
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
+  }, [baseLoading, clearCalculationTimer, clearSimulationTimer, scheduleInactivityReset]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
@@ -253,19 +249,24 @@ export default function App() {
     touchSimulation('custom');
   }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
 
-  const handleSaveBaseModel = useCallback((nextBase: ModelParameters) => {
+  const handleSaveBaseModel = useCallback(async (nextBase: ModelParameters) => {
     const normalizedBase = applyScenarioEconomics(cloneParams(nextBase), 'base');
-    setBaseParams(normalizedBase);
-    persistBaseModel(normalizedBase);
-    clearSimulationTimer();
-    clearCalculationTimer();
-    setSimulationActive(false);
-    setSimulationPreset('base');
-    setSimOverrides(null);
-    setSimParams(normalizedBase);
-    setSimResult(computeTriMotor(normalizedBase));
-    setSimWorking(false);
-    setParamSheetOpen(false);
+    setBaseSaving(true);
+    try {
+      await saveBaseModelToCloud(normalizedBase);
+      setBaseParams(normalizedBase);
+      clearSimulationTimer();
+      clearCalculationTimer();
+      setSimulationActive(false);
+      setSimulationPreset('base');
+      setSimOverrides(null);
+      setSimParams(normalizedBase);
+      setSimResult(computeTriMotor(normalizedBase));
+      setSimWorking(false);
+      setParamSheetOpen(false);
+    } finally {
+      setBaseSaving(false);
+    }
   }, [applyScenarioEconomics, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
 
   const runSim = useCallback(() => {
@@ -307,6 +308,8 @@ export default function App() {
       onResetSim={resetSimulationSession}
       baseParams={baseParams}
       onSaveBaseModel={handleSaveBaseModel}
+      baseLoading={baseLoading}
+      baseSaving={baseSaving}
     />
   ) : activeTab === 'sens' ? (
     <SensitivityPage params={simParams} stateLabel={stateLabel} />

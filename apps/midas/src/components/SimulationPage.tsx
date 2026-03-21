@@ -72,6 +72,8 @@ export function SimulationPage({
   onResetSim,
   baseParams,
   onSaveBaseModel,
+  baseLoading,
+  baseSaving,
 }: {
   resultCentral: SimulationResults | null;
   resultFavorable: SimulationResults | null;
@@ -88,7 +90,9 @@ export function SimulationPage({
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
   baseParams: ModelParameters;
-  onSaveBaseModel: (nextBase: ModelParameters) => void;
+  onSaveBaseModel: (nextBase: ModelParameters) => Promise<void>;
+  baseLoading: boolean;
+  baseSaving: boolean;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
@@ -97,6 +101,7 @@ export function SimulationPage({
   const [baseEditorOpen, setBaseEditorOpen] = useState(false);
   const [baseEditorStep, setBaseEditorStep] = useState<'confirm' | 'edit'>('confirm');
   const [baseDraft, setBaseDraft] = useState<ModelParameters | null>(null);
+  const [baseEditorError, setBaseEditorError] = useState<string | null>(null);
   const prevSimActive = useRef(false);
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
@@ -254,12 +259,14 @@ export function SimulationPage({
     setBaseDraft(JSON.parse(JSON.stringify(baseParams)) as ModelParameters);
     setBaseEditorStep('confirm');
     setBaseEditorOpen(true);
+    setBaseEditorError(null);
   };
 
   const closeBaseEditor = () => {
     setBaseEditorOpen(false);
     setBaseEditorStep('confirm');
     setBaseDraft(null);
+    setBaseEditorError(null);
   };
 
   const updateBaseDraft = (patcher: (prev: ModelParameters) => ModelParameters) => {
@@ -314,10 +321,15 @@ export function SimulationPage({
     });
   };
 
-  const saveBaseModel = () => {
+  const saveBaseModel = async () => {
     if (!baseDraft) return;
-    onSaveBaseModel(baseDraft);
-    closeBaseEditor();
+    try {
+      setBaseEditorError(null);
+      await onSaveBaseModel(baseDraft);
+      closeBaseEditor();
+    } catch {
+      setBaseEditorError('No se pudo guardar el modelo base en la nube. Intenta nuevamente.');
+    }
   };
 
   return (
@@ -913,17 +925,19 @@ export function SimulationPage({
                   </button>
                   <button
                     onClick={() => setBaseEditorStep('edit')}
+                    disabled={baseLoading}
                     style={{
                       background: T.primary,
                       border: 'none',
                       color: '#fff',
                       borderRadius: 10,
                       padding: '8px 12px',
-                      cursor: 'pointer',
+                      cursor: baseLoading ? 'default' : 'pointer',
                       fontWeight: 700,
+                      opacity: baseLoading ? 0.6 : 1,
                     }}
                   >
-                    Continuar
+                    {baseLoading ? 'Cargando base...' : 'Continuar'}
                   </button>
                 </div>
               </>
@@ -931,6 +945,7 @@ export function SimulationPage({
               <>
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 700 }}>Modelo base persistente</div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>Estos cambios se guardan como nuevo estado base.</div>
+                {baseEditorError && <div style={{ color: T.warning, fontSize: 12 }}>{baseEditorError}</div>}
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1077,18 +1092,20 @@ export function SimulationPage({
                     Cancelar
                   </button>
                   <button
-                    onClick={saveBaseModel}
+                    onClick={() => void saveBaseModel()}
+                    disabled={baseSaving}
                     style={{
                       background: T.primary,
                       border: 'none',
                       color: '#fff',
                       borderRadius: 10,
                       padding: '8px 12px',
-                      cursor: 'pointer',
+                      cursor: baseSaving ? 'default' : 'pointer',
                       fontWeight: 700,
+                      opacity: baseSaving ? 0.6 : 1,
                     }}
                   >
-                    Guardar modelo base
+                    {baseSaving ? 'Guardando...' : 'Guardar modelo base'}
                   </button>
                 </div>
               </>
