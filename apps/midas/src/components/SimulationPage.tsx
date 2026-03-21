@@ -70,6 +70,8 @@ export function SimulationPage({
   onSimOverridesChange,
   onUpdateParams,
   onResetSim,
+  baseParams,
+  onSaveBaseModel,
 }: {
   resultCentral: SimulationResults | null;
   resultFavorable: SimulationResults | null;
@@ -85,11 +87,16 @@ export function SimulationPage({
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
+  baseParams: ModelParameters;
+  onSaveBaseModel: (nextBase: ModelParameters) => void;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [baseEditorOpen, setBaseEditorOpen] = useState(false);
+  const [baseEditorStep, setBaseEditorStep] = useState<'confirm' | 'edit'>('confirm');
+  const [baseDraft, setBaseDraft] = useState<ModelParameters | null>(null);
   const prevSimActive = useRef(false);
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
@@ -244,9 +251,73 @@ export function SimulationPage({
   };
 
   const handleEditBase = () => {
-    if (window.confirm('Vas a modificar la configuración base guardada. ¿Quieres continuar?')) {
-      window.alert('Editar modelo base aún no está disponible.');
-    }
+    setBaseDraft(JSON.parse(JSON.stringify(baseParams)) as ModelParameters);
+    setBaseEditorStep('confirm');
+    setBaseEditorOpen(true);
+  };
+
+  const closeBaseEditor = () => {
+    setBaseEditorOpen(false);
+    setBaseEditorStep('confirm');
+    setBaseDraft(null);
+  };
+
+  const updateBaseDraft = (patcher: (prev: ModelParameters) => ModelParameters) => {
+    setBaseDraft((prev) => (prev ? patcher(prev) : prev));
+  };
+
+  const updateBaseRvRfMix = (rvPct: number) => {
+    const rvTarget = Math.min(100, Math.max(0, rvPct)) / 100;
+    updateBaseDraft((prev) => {
+      const rvTotal = prev.weights.rvGlobal + prev.weights.rvChile;
+      const rfTotal = prev.weights.rfGlobal + prev.weights.rfChile;
+      const rvRatio = rvTotal > 0 ? prev.weights.rvGlobal / rvTotal : 0.5;
+      const rfRatio = rfTotal > 0 ? prev.weights.rfGlobal / rfTotal : 0.5;
+      const nextRvGlobal = rvTarget * rvRatio;
+      const nextRvChile = rvTarget * (1 - rvRatio);
+      const rfTarget = 1 - rvTarget;
+      const nextRfGlobal = rfTarget * rfRatio;
+      const nextRfChile = rfTarget * (1 - rfRatio);
+      return {
+        ...prev,
+        weights: {
+          rvGlobal: nextRvGlobal,
+          rvChile: nextRvChile,
+          rfGlobal: nextRfGlobal,
+          rfChile: nextRfChile,
+        },
+      };
+    });
+  };
+
+  const updateBaseGlobalLocalMix = (globalPct: number) => {
+    const globalTarget = Math.min(100, Math.max(0, globalPct)) / 100;
+    updateBaseDraft((prev) => {
+      const globalTotal = prev.weights.rvGlobal + prev.weights.rfGlobal;
+      const localTotal = prev.weights.rvChile + prev.weights.rfChile;
+      const globalRvRatio = globalTotal > 0 ? prev.weights.rvGlobal / globalTotal : 0.5;
+      const localRvRatio = localTotal > 0 ? prev.weights.rvChile / localTotal : 0.5;
+      const nextGlobalRv = globalTarget * globalRvRatio;
+      const nextGlobalRf = globalTarget * (1 - globalRvRatio);
+      const localTarget = 1 - globalTarget;
+      const nextLocalRv = localTarget * localRvRatio;
+      const nextLocalRf = localTarget * (1 - localRvRatio);
+      return {
+        ...prev,
+        weights: {
+          rvGlobal: nextGlobalRv,
+          rfGlobal: nextGlobalRf,
+          rvChile: nextLocalRv,
+          rfChile: nextLocalRf,
+        },
+      };
+    });
+  };
+
+  const saveBaseModel = () => {
+    if (!baseDraft) return;
+    onSaveBaseModel(baseDraft);
+    closeBaseEditor();
   };
 
   return (
@@ -792,6 +863,239 @@ export function SimulationPage({
       >
         Editar modelo base
       </button>
+
+      {baseEditorOpen && baseDraft && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.52)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            zIndex: 120,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(680px, 100%)',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 14,
+              padding: 16,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+            }}
+          >
+            {baseEditorStep === 'confirm' ? (
+              <>
+                <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 700 }}>Editar modelo base</div>
+                <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.5 }}>
+                  Vas a modificar la configuración base guardada. Estos cambios afectarán el comportamiento por defecto de la app.
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button
+                    onClick={closeBaseEditor}
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => setBaseEditorStep('edit')}
+                    style={{
+                      background: T.primary,
+                      border: 'none',
+                      color: '#fff',
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                    }}
+                  >
+                    Continuar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 700 }}>Modelo base persistente</div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Estos cambios se guardan como nuevo estado base.</div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11 }}>Capital base (CLP)</span>
+                    <input
+                      type="text"
+                      value={formatCLP(baseDraft.capitalInitial)}
+                      onChange={(e) => updateBaseDraft((prev) => ({ ...prev, capitalInitial: Math.max(1, parseCLP(e.target.value)) }))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11 }}>Horizonte base (años)</span>
+                    <input
+                      type="number"
+                      value={Math.round(baseDraft.simulation.horizonMonths / 12)}
+                      onChange={(e) =>
+                        updateBaseDraft((prev) => ({
+                          ...prev,
+                          simulation: {
+                            ...prev.simulation,
+                            horizonMonths: Math.max(1, Math.round(Number(e.target.value) || 1)) * 12,
+                          },
+                        }))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <div>
+                  <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                    {baseDraft.spendingPhases.map((phase, idx) => (
+                      <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <span style={{ color: T.textSecondary, fontSize: 11 }}>
+                          Tramo {idx + 1} ({Math.round(phase.durationMonths / 12)} años)
+                        </span>
+                        <input
+                          type="text"
+                          value={formatCLP(phase.amountReal)}
+                          onChange={(e) =>
+                            updateBaseDraft((prev) => ({
+                              ...prev,
+                              spendingPhases: prev.spendingPhases.map((p, i) =>
+                                i === idx ? { ...p, amountReal: Math.max(0, parseCLP(e.target.value)) } : p,
+                              ),
+                            }))}
+                          style={{
+                            background: T.surfaceEl,
+                            border: `1px solid ${T.border}`,
+                            borderRadius: 10,
+                            padding: '8px 10px',
+                            color: T.textPrimary,
+                            fontSize: 12,
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11 }}>RV total (%)</span>
+                    <input
+                      type="number"
+                      value={Math.round((baseDraft.weights.rvGlobal + baseDraft.weights.rvChile) * 100)}
+                      onChange={(e) => updateBaseRvRfMix(Number(e.target.value))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
+                    <input
+                      type="number"
+                      value={Math.round((baseDraft.weights.rvGlobal + baseDraft.weights.rfGlobal) * 100)}
+                      onChange={(e) => updateBaseGlobalLocalMix(Number(e.target.value))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Fee anual (%)</span>
+                  <input
+                    type="number"
+                    value={(baseDraft.feeAnnual * 100).toFixed(2)}
+                    onChange={(e) =>
+                      updateBaseDraft((prev) => ({
+                        ...prev,
+                        feeAnnual: Math.max(0, Number(e.target.value) / 100 || 0),
+                      }))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: '8px 10px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button
+                    onClick={closeBaseEditor}
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={saveBaseModel}
+                    style={{
+                      background: T.primary,
+                      border: 'none',
+                      color: '#fff',
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                    }}
+                  >
+                    Guardar modelo base
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import type {
   ModelParameters, PortfolioWeights,
   OptimizerConstraints, OptimizerObjective, OptimizerResult
 } from '../model/types';
-import { runSimulation } from '../simulation/engine';
+import { runSimulationCentral } from '../simulation/engineCentral';
 
 type GridPoint = {
   weights: PortfolioWeights;
@@ -85,11 +85,29 @@ export function runOptimizer(
   baseParams: ModelParameters,
   constraints: OptimizerConstraints,
   objective: OptimizerObjective,
-  nSimPerPoint = 1500,
+  maxGridPoints = 300,
+  nSimPerPoint = 220,
   onProgress?: (pct: number) => void,
 ): OptimizerResult {
 
-  const grid = generateGrid(constraints);
+  const fullGrid = generateGrid(constraints);
+  const grid = fullGrid.length <= maxGridPoints
+    ? fullGrid
+    : Array.from({ length: maxGridPoints }, (_, idx) => {
+        const sampledIndex = Math.floor((idx * (fullGrid.length - 1)) / Math.max(1, maxGridPoints - 1));
+        return fullGrid[sampledIndex];
+      });
+  if (grid.length === 0) {
+    return {
+      weights: baseParams.weights,
+      probRuin: 1,
+      terminalP50: 0,
+      terminalP10: 0,
+      vsCurrentRuin: 0,
+      vsCurrentP50: 0,
+      moves: [],
+    };
+  }
   const results: GridPoint[] = [];
 
   // Parámetros de simulación reducidos para velocidad
@@ -105,7 +123,7 @@ export function runOptimizer(
   for (let i = 0; i < grid.length; i++) {
     const weights = grid[i];
     const testParams = { ...simParams, weights };
-    const r = runSimulation(testParams);
+    const r = runSimulationCentral(testParams);
     results.push({
       weights,
       probRuin:    r.probRuin,
@@ -121,7 +139,7 @@ export function runOptimizer(
   const best = results.reduce((a, b) => score(a, objective) > score(b, objective) ? a : b);
 
   // Correr el punto actual para comparar
-  const currentResult = runSimulation({ ...simParams, weights: baseParams.weights });
+  const currentResult = runSimulationCentral({ ...simParams, weights: baseParams.weights });
 
   return {
     weights:       best.weights,
@@ -147,7 +165,7 @@ export function runFrontier(
   const simParams = { ...baseParams, simulation: { ...baseParams.simulation, nSim: nSimPerPoint, seed: 42 } };
 
   return grid.map(weights => {
-    const r = runSimulation({ ...simParams, weights });
+    const r = runSimulationCentral({ ...simParams, weights });
     return {
       probRuin:    r.probRuin,
       terminalP50: r.terminalWealthPercentiles[50] || 0,

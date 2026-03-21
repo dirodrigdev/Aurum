@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { ModelParameters, OptimizerResult, OptimizerObjective } from '../domain/model/types';
 import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../domain/model/defaults';
 import { runOptimizer } from '../domain/optimizer/gridSearch';
-import { runSimulation } from '../domain/simulation/engine';
+import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 
 export function OptimizerPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
@@ -13,31 +13,39 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
   const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
   const [currentP50, setCurrentP50] = useState<number | null>(null);
   const [phase, setPhase] = useState<'idle' | 'quick' | 'full'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleOptimize = () => {
     setIsOptimizing(true);
     setResult(null);
     setProgress(0);
     setPhase('quick');
+    setErrorMsg(null);
     window.setTimeout(() => {
       window.setTimeout(() => {
-        // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
-        const baseline = runSimulation({
-          ...params,
-          simulation: { ...params.simulation, nSim: 500, seed: 42 },
-        });
-        setCurrentProbRuin(baseline.probRuin);
-        setCurrentP50(baseline.terminalWealthPercentiles[50] || 0);
+        try {
+          // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
+          const baseline = runSimulationCentral({
+            ...params,
+            simulation: { ...params.simulation, nSim: 500, seed: 42 },
+          });
+          setCurrentProbRuin(baseline.probRuin);
+          setCurrentP50(baseline.terminalWealthPercentiles[50] || 0);
 
-        const quickConstraints = { ...DEFAULT_OPTIMIZER_CONSTRAINTS, step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 2, 0.1) };
-        const quick = runOptimizer(params, quickConstraints, objective, 150, setProgress);
-        setResult(quick);
-        setPhase('full');
+          const quickConstraints = { ...DEFAULT_OPTIMIZER_CONSTRAINTS, step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 2, 0.1) };
+          const quick = runOptimizer(params, quickConstraints, objective, 120, 120, setProgress);
+          setResult(quick);
+          setPhase('full');
 
-        const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
-        setResult(r);
-        setIsOptimizing(false);
-        setPhase('idle');
+          const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 320, 220, setProgress);
+          setResult(r);
+          setIsOptimizing(false);
+          setPhase('idle');
+        } catch {
+          setIsOptimizing(false);
+          setPhase('idle');
+          setErrorMsg('No se pudo completar la optimización con esta configuración. Ajusta parámetros e intenta nuevamente.');
+        }
       }, 50);
     }, 0);
   };
@@ -125,6 +133,12 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
         >
           ▶ Optimizar
         </button>
+      )}
+
+      {errorMsg && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ color: T.warning, fontSize: 12 }}>{errorMsg}</div>
+        </div>
       )}
 
       {result && (
@@ -264,7 +278,7 @@ function AllocationBar({ weights }: { weights: ModelParameters['weights'] }) {
   return (
     <div style={{ height: 12, background: T.surfaceEl, borderRadius: 10, overflow: 'hidden', display: 'flex' }}>
       {slices.map(([v, c], idx) => (
-        <div key={idx} style={{ width: `${(v / total) * 100}%`, background: c }} />
+        <div key={idx} style={{ width: `${total > 0 ? (v / total) * 100 : 25}%`, background: c }} />
       ))}
     </div>
   );
