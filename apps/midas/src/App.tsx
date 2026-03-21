@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CashflowEvent, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant, runSimulation } from './domain/simulation/engine';
+import { runSimulationCentral } from './domain/simulation/engineCentral';
+import { runSimulationRobust } from './domain/simulation/engineRobust';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -13,6 +15,11 @@ import { T, css } from './components/theme';
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
+type TriMotorResult = {
+  central: SimulationResults | null;
+  favorable: SimulationResults | null;
+  prudent: SimulationResults | null;
+};
 
 function cloneParams(p: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(p));
@@ -67,7 +74,7 @@ export default function App() {
   const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
-  const [simResult, setSimResult] = useState<SimulationResults | null>(null);
+  const [simResult, setSimResult] = useState<TriMotorResult>({ central: null, favorable: null, prudent: null });
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
@@ -101,7 +108,11 @@ export default function App() {
     setSimOverrides(null);
     const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
     setSimParams(next);
-    setSimResult(runSimulation(next));
+    setSimResult({
+      central: runSimulationCentral(next),
+      favorable: runSimulation(next),
+      prudent: runSimulationRobust(next),
+    });
     setParamSheetOpen(false);
   }, [applyScenarioEconomics, baseParams, clearSimulationTimer]);
 
@@ -122,10 +133,14 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!simResult) {
+    if (!simResult.central) {
       const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
       setSimParams(next);
-      setSimResult(runSimulation(next));
+      setSimResult({
+        central: runSimulationCentral(next),
+        favorable: runSimulation(next),
+        prudent: runSimulationRobust(next),
+      });
     }
     scheduleInactivityReset();
     const handler = () => scheduleInactivityReset();
@@ -140,7 +155,12 @@ export default function App() {
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
       const next = updateByPath(prev, path, value);
-      setSimResult(runSimulation(applySimulationOverrides(next, simOverrides)));
+      const base = applySimulationOverrides(next, simOverrides);
+      setSimResult({
+        central: runSimulationCentral(base),
+        favorable: runSimulation(base),
+        prudent: runSimulationRobust(base),
+      });
       return next;
     });
     touchSimulation('custom');
@@ -149,7 +169,12 @@ export default function App() {
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
     setSimParams((prev) => {
       const updated = { ...prev, cashflowEvents: next };
-      setSimResult(runSimulation(applySimulationOverrides(updated, simOverrides)));
+      const base = applySimulationOverrides(updated, simOverrides);
+      setSimResult({
+        central: runSimulationCentral(base),
+        favorable: runSimulation(base),
+        prudent: runSimulationRobust(base),
+      });
       return updated;
     });
     touchSimulation('custom');
@@ -159,7 +184,12 @@ export default function App() {
     setSimOverrides(null);
     setSimParams((prev) => {
       const nextParams = applyScenarioEconomics(prev, next);
-      setSimResult(runSimulation(applySimulationOverrides(nextParams, null)));
+      const base = applySimulationOverrides(nextParams, null);
+      setSimResult({
+        central: runSimulationCentral(base),
+        favorable: runSimulation(base),
+        prudent: runSimulationRobust(base),
+      });
       return nextParams;
     });
     touchSimulation(next);
@@ -168,14 +198,24 @@ export default function App() {
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
     if (next) {
-      setSimResult(runSimulation(applySimulationOverrides(simParams, next)));
+      const base = applySimulationOverrides(simParams, next);
+      setSimResult({
+        central: runSimulationCentral(base),
+        favorable: runSimulation(base),
+        prudent: runSimulationRobust(base),
+      });
       touchSimulation('custom');
     }
   }, [simParams, touchSimulation]);
 
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
-    setSimResult(runSimulation(applySimulationOverrides(simParams, simOverrides)));
+    const base = applySimulationOverrides(simParams, simOverrides);
+    setSimResult({
+      central: runSimulationCentral(base),
+      favorable: runSimulation(base),
+      prudent: runSimulationRobust(base),
+    });
     setActiveTab('sim');
   }, [simOverrides, simParams, simulationPreset, touchSimulation]);
 
@@ -183,7 +223,7 @@ export default function App() {
     setActiveTab(tab);
   }, []);
 
-  const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
+  const statusColor = simulationActive ? T.primary : simResult.central ? T.positive : T.textMuted;
   const simulationBadge =
     simulationActive && simulationPreset !== 'base'
       ? simulationPreset === 'optimistic'
@@ -195,7 +235,9 @@ export default function App() {
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
-      result={simResult}
+      resultCentral={simResult.central}
+      resultFavorable={simResult.favorable}
+      resultPrudent={simResult.prudent}
       params={simParams}
       simOverrides={simOverrides}
       simActive={simulationActive}

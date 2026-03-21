@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
-import { runSimulation } from '../domain/simulation/engine';
+import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -83,7 +83,9 @@ const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | nul
 };
 
 export function SimulationPage({
-  result,
+  resultCentral,
+  resultFavorable,
+  resultPrudent,
   params,
   simOverrides,
   simActive,
@@ -93,7 +95,9 @@ export function SimulationPage({
   onSimOverridesChange,
   onResetSim,
 }: {
-  result: SimulationResults | null;
+  resultCentral: SimulationResults | null;
+  resultFavorable: SimulationResults | null;
+  resultPrudent: SimulationResults | null;
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
@@ -138,17 +142,18 @@ export function SimulationPage({
     setPreviewRunning(true);
     const timeout = window.setTimeout(() => {
       const nextParams = applyOverrides(params, simOverrides);
-      const res = runSimulation(nextParams);
+      const res = runSimulationCentral(nextParams);
       setPreviewResult(res);
       setPreviewRunning(false);
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [params, simOverrides, simActive]);
 
-  const displayResult = simActive ? previewResult ?? result : result;
+  const displayResult = simActive ? previewResult ?? resultCentral : resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
-  const uncertaintyBand = displayResult?.uncertaintyBand ?? null;
+  const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
+  const plausibleHigh = resultFavorable ? ruinToSuccessPct(resultFavorable.probRuin) : null;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
   const fanChartData: FanChartDatum[] = displayResult
@@ -164,17 +169,9 @@ export function SimulationPage({
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
   const fanChartYears = displayResult ? Math.max(5, Math.ceil((displayResult.fanChartData.at(-1)?.year ?? 40) / 5) * 5) : 40;
   const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
-  const scenarioSuccessValues = SCENARIO_VARIANTS.map((variant) => {
-    const key = variant.id === 'pessimistic'
-      ? 'pessimistic'
-      : variant.id === 'optimistic'
-        ? 'optimistic'
-        : 'base';
-    const scenario = displayResult?.scenarioComparison?.[key];
-    return scenario ? ruinToSuccessPct(scenario.probRuin) : null;
-  }).filter((value): value is number => value !== null);
   const successValues = [
-    ...scenarioSuccessValues,
+    plausibleLow,
+    plausibleHigh,
     probSuccess !== null ? probSuccess * 100 : null,
   ].filter((value): value is number => Number.isFinite(value));
   const axisMinCandidate = successValues.length
@@ -335,11 +332,9 @@ export function SimulationPage({
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
               <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {uncertaintyBand && (() => {
-                const lowPct = ruinToSuccessPct(uncertaintyBand.high);
-                const highPct = ruinToSuccessPct(uncertaintyBand.low);
-                const left = mapSuccessPct(lowPct);
-                const right = mapSuccessPct(highPct);
+              {plausibleLow !== null && plausibleHigh !== null && (() => {
+                const left = mapSuccessPct(plausibleLow);
+                const right = mapSuccessPct(plausibleHigh);
                 return (
                   <div
                     style={{
@@ -348,19 +343,24 @@ export function SimulationPage({
                       width: `${Math.max(0, Math.abs(right - left))}%`,
                       top: 0,
                       bottom: 0,
-                      background: 'rgba(91, 140, 255, 0.25)',
+                      background: 'rgba(91, 140, 255, 0.22)',
                       borderRadius: 999,
                     }}
                   />
                 );
               })()}
               {SCENARIO_VARIANTS.map((variant) => {
-                const scenario = displayResult.scenarioComparison?.[variant.id === 'pessimistic' ? 'pessimistic' : variant.id === 'optimistic' ? 'optimistic' : 'base'];
-                const point = scenario ?? null;
-                const successPct = point ? ruinToSuccessPct(point.probRuin) : 0;
+                const active = simulationPreset !== 'custom' && variant.id === simulationPreset;
+                const successPct =
+                  variant.id === 'pessimistic'
+                    ? plausibleLow ?? 0
+                    : variant.id === 'optimistic'
+                      ? plausibleHigh ?? 0
+                      : probSuccess !== null
+                        ? probSuccess * 100
+                        : 0;
                 const left = mapSuccessPct(successPct);
                 const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
-                const active = simulationPreset !== 'custom' && variant.id === simulationPreset;
                 return (
                   <button
                     key={variant.id}
@@ -369,7 +369,7 @@ export function SimulationPage({
                     title={`${variant.label}: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
-                      left: `${((left - 60) / 40) * 100}%`,
+                      left: `${left}%`,
                       top: '50%',
                       transform: 'translate(-50%, -50%)',
                       width: active ? 14 : 12,
@@ -387,8 +387,11 @@ export function SimulationPage({
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
           </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
-            Banda de incertidumbre (±6pp estimado):{' '}
-            {uncertaintyBand ? `${(uncertaintyBand.low * 100).toFixed(0)}% — ${(uncertaintyBand.high * 100).toFixed(0)}%` : '—'}
+            Rango plausible:{' '}
+            {plausibleLow !== null && plausibleHigh !== null
+              ? `${Math.min(plausibleLow, plausibleHigh).toFixed(0)}% — ${Math.max(plausibleLow, plausibleHigh).toFixed(0)}%`
+              : '—'}{' '}
+            <span style={{ color: T.textMuted }}>Favorable ↔ Prudente</span>
           </div>
         </div>
       )}
