@@ -42,8 +42,11 @@ export interface ScenarioVariant {
   rfGlobalVolAnnual?: number;
   rvChileVolAnnual?:  number;
   rfChileVolAnnual?:  number;
+  correlationMatrix?: number[][];
   ipcChileAnnual?:    number;
+  hipcEurAnnual?:     number;
   tcrealLT?:          number;
+  mrHalfLifeYears?:   number;
 }
 
 export interface ScenarioPoint {

@@ -1,7 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
-import { runSimulation } from '../domain/simulation/engine';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -56,34 +55,10 @@ const formatNumber = (value: number) =>
 
 const ruinToSuccessPct = (probRuin: number) => (1 - probRuin) * 100;
 
-const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters => {
-  if (!overrides || !overrides.active) return p;
-  const baseReturn = computeWeightedReturn(p);
-  const targetReturn = overrides.returnPct ?? baseReturn;
-  const factor = baseReturn > 0 ? targetReturn / baseReturn : 1;
-  const horizonYears = overrides.horizonYears ?? Math.round(p.simulation.horizonMonths / 12);
-  const horizonMonths = Math.max(12, Math.round(horizonYears * 12));
-  return {
-    ...p,
-    capitalInitial: overrides.capital ?? p.capitalInitial,
-    simulation: {
-      ...p.simulation,
-      horizonMonths,
-      nSim: Math.min(1200, p.simulation.nSim),
-      seed: 42,
-    },
-    returns: {
-      ...p.returns,
-      rvGlobalAnnual: p.returns.rvGlobalAnnual * factor,
-      rfGlobalAnnual: p.returns.rfGlobalAnnual * factor,
-      rvChileAnnual: p.returns.rvChileAnnual * factor,
-      rfChileUFAnnual: p.returns.rfChileUFAnnual * factor,
-    },
-  };
-};
-
 export function SimulationPage({
-  result,
+  resultCentral,
+  resultFavorable,
+  resultPrudent,
   params,
   simOverrides,
   simActive,
@@ -93,7 +68,9 @@ export function SimulationPage({
   onSimOverridesChange,
   onResetSim,
 }: {
-  result: SimulationResults | null;
+  resultCentral: SimulationResults | null;
+  resultFavorable: SimulationResults | null;
+  resultPrudent: SimulationResults | null;
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
@@ -103,8 +80,6 @@ export function SimulationPage({
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onResetSim: () => void;
 }) {
-  const [previewResult, setPreviewResult] = useState<SimulationResults | null>(null);
-  const [previewRunning, setPreviewRunning] = useState(false);
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
@@ -129,26 +104,16 @@ export function SimulationPage({
 
   useLayoutEffect(() => {
     if (!simActive) {
-      setPreviewResult(null);
-      setPreviewRunning(false);
       setActiveChip(null);
       setDraftValue('');
-      return;
     }
-    setPreviewRunning(true);
-    const timeout = window.setTimeout(() => {
-      const nextParams = applyOverrides(params, simOverrides);
-      const res = runSimulation(nextParams);
-      setPreviewResult(res);
-      setPreviewRunning(false);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [params, simOverrides, simActive]);
+  }, [simActive]);
 
-  const displayResult = simActive ? previewResult ?? result : result;
+  const displayResult = resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
-  const uncertaintyBand = displayResult?.uncertaintyBand ?? null;
+  const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
+  const plausibleHigh = resultFavorable ? ruinToSuccessPct(resultFavorable.probRuin) : null;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
   const fanChartData: FanChartDatum[] = displayResult
@@ -175,6 +140,8 @@ export function SimulationPage({
   }).filter((value): value is number => value !== null);
   const successValues = [
     ...scenarioSuccessValues,
+    plausibleLow,
+    plausibleHigh,
     probSuccess !== null ? probSuccess * 100 : null,
   ].filter((value): value is number => Number.isFinite(value));
   const axisMinCandidate = successValues.length
@@ -322,11 +289,6 @@ export function SimulationPage({
             </div>
           </div>
         )}
-        {previewRunning && simActive && (
-          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
-            Recalculando simulación...
-          </div>
-        )}
       </div>
 
       {displayResult && probSuccess !== null && (
@@ -335,11 +297,9 @@ export function SimulationPage({
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
               <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {uncertaintyBand && (() => {
-                const lowPct = ruinToSuccessPct(uncertaintyBand.high);
-                const highPct = ruinToSuccessPct(uncertaintyBand.low);
-                const left = mapSuccessPct(lowPct);
-                const right = mapSuccessPct(highPct);
+              {plausibleLow !== null && plausibleHigh !== null && (() => {
+                const left = mapSuccessPct(plausibleLow);
+                const right = mapSuccessPct(plausibleHigh);
                 return (
                   <div
                     style={{
@@ -348,7 +308,7 @@ export function SimulationPage({
                       width: `${Math.max(0, Math.abs(right - left))}%`,
                       top: 0,
                       bottom: 0,
-                      background: 'rgba(91, 140, 255, 0.25)',
+                      background: 'rgba(91, 140, 255, 0.22)',
                       borderRadius: 999,
                     }}
                   />
@@ -369,7 +329,7 @@ export function SimulationPage({
                     title={`${variant.label}: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
-                      left: `${((left - 60) / 40) * 100}%`,
+                      left: `${left}%`,
                       top: '50%',
                       transform: 'translate(-50%, -50%)',
                       width: active ? 14 : 12,
@@ -387,8 +347,11 @@ export function SimulationPage({
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
           </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
-            Banda de incertidumbre (±6pp estimado):{' '}
-            {uncertaintyBand ? `${(uncertaintyBand.low * 100).toFixed(0)}% — ${(uncertaintyBand.high * 100).toFixed(0)}%` : '—'}
+            Rango plausible:{' '}
+            {plausibleLow !== null && plausibleHigh !== null
+              ? `${Math.min(plausibleLow, plausibleHigh).toFixed(0)}% — ${Math.max(plausibleLow, plausibleHigh).toFixed(0)}%`
+              : '—'}{' '}
+            <span style={{ color: T.textMuted }}>Favorable ↔ Prudente</span>
           </div>
         </div>
       )}
@@ -415,7 +378,7 @@ export function SimulationPage({
                   const active = simulationPreset === variant.id;
                   const custom = simulationPreset === 'custom';
                   const highlightedReset = isBase && custom;
-                  const working = previewRunning && simulationPreset === variant.id;
+                  const working = false;
                   return (
                     <button
                       key={variant.id}
