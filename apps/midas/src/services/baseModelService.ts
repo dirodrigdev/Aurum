@@ -1,8 +1,9 @@
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { ModelParameters } from '../domain/model/types';
-import { db, ensureAnonymousAuth, ensureAuthPersistence, getCurrentUid } from './firebase';
+import { db, ensureAuthPersistence, getCurrentUid, waitForAuthRestore } from './firebase';
 
 const MIDAS_BASE_MODEL_VERSION = 1;
+export const BASE_MODEL_AUTH_REQUIRED_CODE = 'base-model/auth-required';
 
 type BaseModelDoc = {
   version: number;
@@ -12,9 +13,13 @@ type BaseModelDoc = {
 
 async function getBaseModelDocRef() {
   await ensureAuthPersistence();
-  await ensureAnonymousAuth();
+  await waitForAuthRestore();
   const uid = getCurrentUid();
-  if (!uid) throw new Error('No Firebase user available for base model persistence.');
+  if (!uid) {
+    const err = new Error('Stable Firebase user is required for base model persistence.');
+    (err as Error & { code: string }).code = BASE_MODEL_AUTH_REQUIRED_CODE;
+    throw err;
+  }
   return doc(db, 'users', uid, 'midas', 'baseModel');
 }
 

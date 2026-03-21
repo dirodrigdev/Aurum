@@ -74,6 +74,8 @@ export function SimulationPage({
   onSaveBaseModel,
   baseLoading,
   baseSaving,
+  baseNeedsAuth,
+  onCloudSignIn,
 }: {
   resultCentral: SimulationResults | null;
   resultFavorable: SimulationResults | null;
@@ -93,6 +95,8 @@ export function SimulationPage({
   onSaveBaseModel: (nextBase: ModelParameters) => Promise<void>;
   baseLoading: boolean;
   baseSaving: boolean;
+  baseNeedsAuth: boolean;
+  onCloudSignIn: () => Promise<void>;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
@@ -102,6 +106,7 @@ export function SimulationPage({
   const [baseEditorStep, setBaseEditorStep] = useState<'confirm' | 'edit'>('confirm');
   const [baseDraft, setBaseDraft] = useState<ModelParameters | null>(null);
   const [baseEditorError, setBaseEditorError] = useState<string | null>(null);
+  const [cloudSigningIn, setCloudSigningIn] = useState(false);
   const prevSimActive = useRef(false);
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
@@ -329,6 +334,18 @@ export function SimulationPage({
       closeBaseEditor();
     } catch {
       setBaseEditorError('No se pudo guardar el modelo base en la nube. Intenta nuevamente.');
+    }
+  };
+
+  const connectCloudIdentity = async () => {
+    try {
+      setCloudSigningIn(true);
+      setBaseEditorError(null);
+      await onCloudSignIn();
+    } catch {
+      setBaseEditorError('No se pudo iniciar sesión con Google. Intenta nuevamente.');
+    } finally {
+      setCloudSigningIn(false);
     }
   };
 
@@ -946,6 +963,30 @@ export function SimulationPage({
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 700 }}>Modelo base persistente</div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>Estos cambios se guardan como nuevo estado base.</div>
                 {baseEditorError && <div style={{ color: T.warning, fontSize: 12 }}>{baseEditorError}</div>}
+                {baseNeedsAuth && (
+                  <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                    <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.4 }}>
+                      Inicia sesión con Google para usar el mismo modelo base en todos tus dispositivos.
+                    </div>
+                    <button
+                      onClick={() => void connectCloudIdentity()}
+                      disabled={cloudSigningIn}
+                      style={{
+                        marginTop: 8,
+                        background: T.primary,
+                        border: 'none',
+                        color: '#fff',
+                        borderRadius: 10,
+                        padding: '8px 12px',
+                        cursor: cloudSigningIn ? 'default' : 'pointer',
+                        fontWeight: 700,
+                        opacity: cloudSigningIn ? 0.6 : 1,
+                      }}
+                    >
+                      {cloudSigningIn ? 'Conectando...' : 'Entrar con Google'}
+                    </button>
+                  </div>
+                )}
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1093,16 +1134,16 @@ export function SimulationPage({
                   </button>
                   <button
                     onClick={() => void saveBaseModel()}
-                    disabled={baseSaving}
+                    disabled={baseSaving || baseNeedsAuth}
                     style={{
                       background: T.primary,
                       border: 'none',
                       color: '#fff',
                       borderRadius: 10,
                       padding: '8px 12px',
-                      cursor: baseSaving ? 'default' : 'pointer',
+                      cursor: baseSaving || baseNeedsAuth ? 'default' : 'pointer',
                       fontWeight: 700,
-                      opacity: baseSaving ? 0.6 : 1,
+                      opacity: baseSaving || baseNeedsAuth ? 0.6 : 1,
                     }}
                   >
                     {baseSaving ? 'Guardando...' : 'Guardar modelo base'}

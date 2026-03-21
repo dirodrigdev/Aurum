@@ -3,9 +3,11 @@ import { getFirestore } from 'firebase/firestore';
 import {
   browserLocalPersistence,
   getAuth,
+  GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
-  signInAnonymously,
+  signInWithPopup,
+  signInWithRedirect,
 } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -21,9 +23,10 @@ const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
 
 let persistencePromise: Promise<void> | null = null;
-let authInitPromise: Promise<void> | null = null;
+let authReadyPromise: Promise<void> | null = null;
 
 export function ensureAuthPersistence(): Promise<void> {
   if (persistencePromise) return persistencePromise;
@@ -31,54 +34,45 @@ export function ensureAuthPersistence(): Promise<void> {
   return persistencePromise;
 }
 
-export function ensureAnonymousAuth(): Promise<void> {
-  if (authInitPromise) return authInitPromise;
-
-  authInitPromise = new Promise<void>((resolve, reject) => {
-    let done = false;
-
-    const finishOk = () => {
-      if (done) return;
-      done = true;
-      resolve();
-    };
-
-    const finishErr = (err: unknown) => {
-      if (done) return;
-      done = true;
-      authInitPromise = null;
-      reject(err);
-    };
-
+export function waitForAuthRestore(): Promise<void> {
+  if (authReadyPromise) return authReadyPromise;
+  authReadyPromise = new Promise<void>((resolve, reject) => {
     const unsub = onAuthStateChanged(
       auth,
-      async (user) => {
-        try {
-          unsub();
-          if (user || auth.currentUser) {
-            finishOk();
-            return;
-          }
-          await signInAnonymously(auth);
-          finishOk();
-        } catch (err) {
-          finishErr(err);
-        }
+      () => {
+        unsub();
+        resolve();
       },
       (err) => {
         try {
           unsub();
         } catch {
-          // ignore cleanup error
+          // ignore cleanup
         }
-        finishErr(err);
+        reject(err);
       },
     );
   });
-
-  return authInitPromise;
+  return authReadyPromise;
 }
 
 export function getCurrentUid(): string | null {
-  return auth.currentUser?.uid ?? null;
+  const user = auth.currentUser;
+  if (!user || user.isAnonymous) return null;
+  return user.uid;
+}
+
+export async function signInWithGoogle(): Promise<void> {
+  await ensureAuthPersistence();
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (err: any) {
+    const code = String(err?.code || '');
+    const needsRedirect =
+      code === 'auth/popup-blocked' ||
+      code === 'auth/cancelled-popup-request' ||
+      code === 'auth/operation-not-supported-in-this-environment';
+    if (!needsRedirect) throw err;
+    await signInWithRedirect(auth, googleProvider);
+  }
 }

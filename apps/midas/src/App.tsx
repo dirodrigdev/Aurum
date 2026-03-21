@@ -11,7 +11,8 @@ import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
 import { T, css } from './components/theme';
-import { loadBaseModelFromCloud, saveBaseModelToCloud } from './services/baseModelService';
+import { BASE_MODEL_AUTH_REQUIRED_CODE, loadBaseModelFromCloud, saveBaseModelToCloud } from './services/baseModelService';
+import { signInWithGoogle } from './services/firebase';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -82,6 +83,7 @@ export default function App() {
   const [simWorking, setSimWorking] = useState(false);
   const [baseLoading, setBaseLoading] = useState(true);
   const [baseSaving, setBaseSaving] = useState(false);
+  const [baseNeedsAuth, setBaseNeedsAuth] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -158,32 +160,37 @@ export default function App() {
     [scheduleInactivityReset],
   );
 
+  const hydrateBaseFromCloud = useCallback(async () => {
+    try {
+      const cloudBase = await loadBaseModelFromCloud();
+      const source = cloudBase ?? cloneParams(DEFAULT_PARAMETERS);
+      const next = applyScenarioEconomics(cloneParams(source), 'base');
+      setBaseParams(next);
+      setSimParams(next);
+      setSimResult(computeTriMotor(next));
+      setBaseNeedsAuth(false);
+    } catch (err) {
+      const errorCode = (err as { code?: string } | null)?.code ?? '';
+      if (errorCode === BASE_MODEL_AUTH_REQUIRED_CODE) setBaseNeedsAuth(true);
+      const fallback = applyScenarioEconomics(cloneParams(DEFAULT_PARAMETERS), 'base');
+      setBaseParams(fallback);
+      setSimParams(fallback);
+      setSimResult(computeTriMotor(fallback));
+    }
+  }, [applyScenarioEconomics, computeTriMotor]);
+
   useEffect(() => {
     let cancelled = false;
     const loadBase = async () => {
-      try {
-        const cloudBase = await loadBaseModelFromCloud();
-        if (cancelled) return;
-        const source = cloudBase ?? cloneParams(DEFAULT_PARAMETERS);
-        const next = applyScenarioEconomics(cloneParams(source), 'base');
-        setBaseParams(next);
-        setSimParams(next);
-        setSimResult(computeTriMotor(next));
-      } catch {
-        if (cancelled) return;
-        const fallback = applyScenarioEconomics(cloneParams(DEFAULT_PARAMETERS), 'base');
-        setBaseParams(fallback);
-        setSimParams(fallback);
-        setSimResult(computeTriMotor(fallback));
-      } finally {
-        if (!cancelled) setBaseLoading(false);
-      }
+      setBaseLoading(true);
+      await hydrateBaseFromCloud();
+      if (!cancelled) setBaseLoading(false);
     };
     void loadBase();
     return () => {
       cancelled = true;
     };
-  }, [applyScenarioEconomics, computeTriMotor]);
+  }, [hydrateBaseFromCloud]);
 
   useEffect(() => {
     if (baseLoading) return;
@@ -254,6 +261,7 @@ export default function App() {
     setBaseSaving(true);
     try {
       await saveBaseModelToCloud(normalizedBase);
+      setBaseNeedsAuth(false);
       setBaseParams(normalizedBase);
       clearSimulationTimer();
       clearCalculationTimer();
@@ -264,10 +272,21 @@ export default function App() {
       setSimResult(computeTriMotor(normalizedBase));
       setSimWorking(false);
       setParamSheetOpen(false);
+    } catch (err) {
+      const errorCode = (err as { code?: string } | null)?.code ?? '';
+      if (errorCode === BASE_MODEL_AUTH_REQUIRED_CODE) setBaseNeedsAuth(true);
+      throw err;
     } finally {
       setBaseSaving(false);
     }
   }, [applyScenarioEconomics, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
+
+  const handleCloudSignIn = useCallback(async () => {
+    await signInWithGoogle();
+    setBaseLoading(true);
+    await hydrateBaseFromCloud();
+    setBaseLoading(false);
+  }, [hydrateBaseFromCloud]);
 
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
@@ -310,6 +329,8 @@ export default function App() {
       onSaveBaseModel={handleSaveBaseModel}
       baseLoading={baseLoading}
       baseSaving={baseSaving}
+      baseNeedsAuth={baseNeedsAuth}
+      onCloudSignIn={handleCloudSignIn}
     />
   ) : activeTab === 'sens' ? (
     <SensitivityPage params={simParams} stateLabel={stateLabel} />
