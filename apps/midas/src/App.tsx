@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { CashflowEvent, ModelParameters, ScenarioVariantId, SimulationResults } from './domain/model/types';
-import { DEFAULT_PARAMETERS } from './domain/model/defaults';
-import { runSimulation } from './domain/simulation/engine';
+import type { CashflowEvent, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
+import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
+import { applyScenarioVariant, runSimulation } from './domain/simulation/engine';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -11,6 +11,8 @@ import { OptimizerPage } from './components/OptimizerPage';
 import { T, css } from './components/theme';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
+
+type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 
 function cloneParams(p: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(p));
@@ -70,6 +72,7 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const simulationTimerRef = useRef<number | null>(null);
+  const activityHandlerRef = useRef<() => void>();
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current !== null) {
@@ -78,61 +81,97 @@ export default function App() {
     }
   }, []);
 
+  const selectVariant = useCallback(
+    (id: ScenarioVariantId): ScenarioVariant => SCENARIO_VARIANTS.find((v) => v.id === id) ?? SCENARIO_VARIANTS[0],
+    [],
+  );
+
+  const applyScenarioEconomics: ScenarioEconomicsApplier = useCallback(
+    (p, scenarioId) => {
+      const variant = selectVariant(scenarioId);
+      return applyScenarioVariant({ ...p, activeScenario: scenarioId }, variant);
+    },
+    [selectVariant],
+  );
+
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     setSimulationActive(false);
     setSimulationPreset('base');
     setSimOverrides(null);
-    setSimParams(cloneParams(baseParams));
-    setSimResult(null);
+    const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
+    setSimParams(next);
+    setSimResult(runSimulation(next));
     setParamSheetOpen(false);
-  }, [baseParams, clearSimulationTimer]);
+  }, [applyScenarioEconomics, baseParams, clearSimulationTimer]);
+
+  const scheduleInactivityReset = useCallback(() => {
+    clearSimulationTimer();
+    simulationTimerRef.current = window.setTimeout(() => {
+      resetSimulationSession();
+    }, SIMULATION_TIMEOUT_MS);
+  }, [clearSimulationTimer, resetSimulationSession]);
 
   const touchSimulation = useCallback(
     (nextPreset: SimulationPreset = 'custom') => {
       setSimulationActive(true);
       setSimulationPreset(nextPreset);
-      clearSimulationTimer();
-      simulationTimerRef.current = window.setTimeout(() => {
-        resetSimulationSession();
-      }, SIMULATION_TIMEOUT_MS);
+      scheduleInactivityReset();
     },
-    [clearSimulationTimer, resetSimulationSession],
+    [scheduleInactivityReset],
   );
 
   useEffect(() => {
     if (!simResult) {
-      setSimResult(runSimulation(baseParams));
+      const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
+      setSimParams(next);
+      setSimResult(runSimulation(next));
     }
-    return () => clearSimulationTimer();
-  }, [baseParams, clearSimulationTimer, simResult]);
+    scheduleInactivityReset();
+    const handler = () => scheduleInactivityReset();
+    activityHandlerRef.current = handler;
+    ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.addEventListener(ev, handler));
+    return () => {
+      ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
+      clearSimulationTimer();
+    };
+  }, [applyScenarioEconomics, baseParams, clearSimulationTimer, scheduleInactivityReset, simResult]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
-    setSimParams((prev) => updateByPath(prev, path, value));
+    setSimParams((prev) => {
+      const next = updateByPath(prev, path, value);
+      setSimResult(runSimulation(applySimulationOverrides(next, simOverrides)));
+      return next;
+    });
     touchSimulation('custom');
-  }, [touchSimulation]);
+  }, [simOverrides, touchSimulation]);
 
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
-    setSimParams((prev) => ({ ...prev, cashflowEvents: next }));
+    setSimParams((prev) => {
+      const updated = { ...prev, cashflowEvents: next };
+      setSimResult(runSimulation(applySimulationOverrides(updated, simOverrides)));
+      return updated;
+    });
     touchSimulation('custom');
-  }, [touchSimulation]);
+  }, [simOverrides, touchSimulation]);
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
-    if (next === 'base') {
-      resetSimulationSession();
-      return;
-    }
-    const nextParams = cloneParams(baseParams);
-    nextParams.activeScenario = next;
-    setSimParams(nextParams);
     setSimOverrides(null);
+    setSimParams((prev) => {
+      const nextParams = applyScenarioEconomics(prev, next);
+      setSimResult(runSimulation(applySimulationOverrides(nextParams, null)));
+      return nextParams;
+    });
     touchSimulation(next);
-  }, [baseParams, resetSimulationSession, touchSimulation]);
+  }, [applyScenarioEconomics, touchSimulation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
-    if (next) touchSimulation('custom');
-  }, [touchSimulation]);
+    if (next) {
+      setSimResult(runSimulation(applySimulationOverrides(simParams, next)));
+      touchSimulation('custom');
+    }
+  }, [simParams, touchSimulation]);
 
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
@@ -145,6 +184,14 @@ export default function App() {
   }, []);
 
   const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
+  const simulationBadge =
+    simulationActive && simulationPreset !== 'base'
+      ? simulationPreset === 'optimistic'
+        ? 'Simulación · O'
+        : simulationPreset === 'pessimistic'
+          ? 'Simulación · P'
+          : 'Simulación · C'
+      : '';
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
@@ -159,11 +206,11 @@ export default function App() {
       onResetSim={resetSimulationSession}
     />
   ) : activeTab === 'sens' ? (
-    <SensitivityPage params={baseParams} />
+    <SensitivityPage params={simParams} />
   ) : activeTab === 'stress' ? (
-    <StressPage params={baseParams} />
+    <StressPage params={simParams} />
   ) : (
-    <OptimizerPage params={baseParams} />
+    <OptimizerPage params={simParams} />
   );
 
   return (
@@ -191,7 +238,7 @@ export default function App() {
           />
         </>
       )}
-      <Header statusColor={statusColor} />
+      <Header statusColor={statusColor} badge={simulationBadge} />
       <main
         style={{
           padding: '12px 16px 90px',
@@ -247,7 +294,7 @@ export default function App() {
   );
 }
 
-function Header({ statusColor }: { statusColor: string }) {
+function Header({ statusColor, badge }: { statusColor: string; badge: string }) {
   return (
     <header
       style={{
@@ -269,10 +316,13 @@ function Header({ statusColor }: { statusColor: string }) {
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div
-        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
-        style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {badge && <span style={{ color: T.textSecondary, fontSize: 11 }}>{badge}</span>}
+        <div
+          title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
+          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
+        />
+      </div>
     </header>
   );
 }

@@ -18,13 +18,14 @@ const PARAM_LABELS: Record<string, string> = {
 export function SensitivityPage({ params }: { params: ModelParameters }) {
   const [results, setResults] = useState<Record<string, Array<{ label: string; probRuin: number; p50: number }>>>({});
   const [running, setRunning] = useState(false);
-  const [active, setActive] = useState(SENSITIVITY_PARAMS[0].id);
+  const ACTIVE_PARAMS = SENSITIVITY_PARAMS.filter((p) => p.paramPath !== 'simulation.blockLength');
+  const [active, setActive] = useState(ACTIVE_PARAMS[0].id);
 
   const run = () => {
     setRunning(true);
     setTimeout(() => {
       const out: typeof results = {};
-      for (const sp of SENSITIVITY_PARAMS) {
+      for (const sp of ACTIVE_PARAMS) {
         out[sp.id] = sp.values.map((val, idx) => {
           const p = JSON.parse(JSON.stringify(params)) as ModelParameters;
           p.simulation.nSim = 1500; p.simulation.seed = 42;
@@ -49,7 +50,9 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div>
           <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>Sensibilidades</div>
-          <div style={{ color: T.textMuted, fontSize: 12 }}>Impacto de cada parámetro sobre ruina</div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Impacto de cada parámetro sobre ruina · usando tu configuración actual
+          </div>
         </div>
         <button
           onClick={run}
@@ -72,6 +75,7 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
         {SENSITIVITY_PARAMS.map((sp) => (
           <button
             key={sp.id}
+            disabled={sp.paramPath === 'simulation.blockLength'}
             onClick={() => setActive(sp.id)}
             style={{
               background: active === sp.id ? T.surfaceEl : T.surface,
@@ -80,11 +84,14 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
               borderRadius: 10,
               padding: '10px 12px',
               textAlign: 'left',
-              cursor: 'pointer',
+              cursor: sp.paramPath === 'simulation.blockLength' ? 'not-allowed' : 'pointer',
+              opacity: sp.paramPath === 'simulation.blockLength' ? 0.45 : 1,
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 12 }}>{sp.label}</div>
-            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{PARAM_LABELS[sp.id] ?? sp.label}</div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+              {sp.paramPath === 'simulation.blockLength' ? 'No aplica en el motor central' : (PARAM_LABELS[sp.id] ?? sp.label)}
+            </div>
           </button>
         ))}
       </div>
