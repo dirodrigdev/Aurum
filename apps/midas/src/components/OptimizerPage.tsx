@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { ModelParameters, OptimizerResult, OptimizerObjective } from '../domain/model/types';
 import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../domain/model/defaults';
 import { runOptimizer } from '../domain/optimizer/gridSearch';
-import { runSimulation } from '../domain/simulation/engine';
+import { runSimulationCentralV2 } from '../domain/simulation/engineCentralV2';
 import { T, css } from './theme';
 
 export function OptimizerPage({ params }: { params: ModelParameters }) {
@@ -22,7 +22,7 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
     window.setTimeout(() => {
       window.setTimeout(() => {
         // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
-        const baseline = runSimulation({
+        const baseline = runSimulationCentralV2({
           ...params,
           simulation: { ...params.simulation, nSim: 500, seed: 42 },
         });

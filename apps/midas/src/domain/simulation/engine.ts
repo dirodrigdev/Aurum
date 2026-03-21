@@ -132,14 +132,17 @@ export function applyScenarioVariant(
       rfGlobalVolAnnual: variant.rfGlobalVolAnnual ?? params.returns.rfGlobalVolAnnual,
       rvChileVolAnnual:  variant.rvChileVolAnnual   ?? params.returns.rvChileVolAnnual,
       rfChileVolAnnual:  variant.rfChileVolAnnual   ?? params.returns.rfChileVolAnnual,
+      correlationMatrix: variant.correlationMatrix ?? params.returns.correlationMatrix,
     },
     inflation: {
       ...params.inflation,
       ipcChileAnnual: variant.ipcChileAnnual ?? params.inflation.ipcChileAnnual,
+      hipcEurAnnual: variant.hipcEurAnnual ?? params.inflation.hipcEurAnnual,
     },
     fx: {
       ...params.fx,
       tcrealLT: variant.tcrealLT ?? params.fx.tcrealLT,
+      mrHalfLifeYears: variant.mrHalfLifeYears ?? params.fx.mrHalfLifeYears,
     },
   };
 }
