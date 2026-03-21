@@ -193,21 +193,16 @@ export default function App() {
   }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
-    setSimOverrides(null);
-    if (next === 'base') {
-      resetSimulationSession();
-      return;
-    }
     setSimulationActive(true);
     setSimulationPreset(next);
     scheduleInactivityReset();
     setSimParams((prev) => {
       const nextParams = applyScenarioEconomics(prev, next);
-      const base = applySimulationOverrides(nextParams, null);
+      const base = applySimulationOverrides(nextParams, simOverrides);
       queueTriMotorCalculation(base);
       return nextParams;
     });
-  }, [applyScenarioEconomics, queueTriMotorCalculation, resetSimulationSession, scheduleInactivityReset]);
+  }, [applyScenarioEconomics, queueTriMotorCalculation, scheduleInactivityReset, simOverrides]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
