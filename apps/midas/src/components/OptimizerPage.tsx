@@ -5,7 +5,7 @@ import { runOptimizer } from '../domain/optimizer/gridSearch';
 import { runSimulation } from '../domain/simulation/engine';
 import { T, css } from './theme';
 
-export function OptimizerPage({ params }: { params: ModelParameters }) {
+export function OptimizerPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
   const [result, setResult] = useState<OptimizerResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
@@ -58,9 +58,12 @@ export function OptimizerPage({ params }: { params: ModelParameters }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div>
-        <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>Optimizador</div>
-        <div style={{ color: T.textMuted, fontSize: 12 }}>Ajusta pesos para minimizar riesgo o maximizar patrimonio</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div>
+          <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>Optimizador</div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>Ajusta pesos para minimizar riesgo o maximizar patrimonio</div>
+        </div>
+        {stateLabel && <div style={{ color: T.textSecondary, fontSize: 11 }}>{stateLabel}</div>}
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>

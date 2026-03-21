@@ -8,7 +8,8 @@ export function HeroCard({
   ruinCopy,
   chips,
   mode = 'real',
-  onResetSim,
+  stateLabel,
+  onStateClick,
 }: {
   label: string;
   valuePct: number | null;
@@ -16,7 +17,8 @@ export function HeroCard({
   ruinCopy?: string;
   chips?: Array<{ id: string; value: string; onClick: () => void }>;
   mode?: 'real' | 'sim';
-  onResetSim?: () => void;
+  stateLabel?: string;
+  onStateClick?: () => void;
 }) {
   const pct = valuePct === null ? null : valuePct * 100;
   const tone =
@@ -41,27 +43,27 @@ export function HeroCard({
         <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
           {label}
         </div>
-        {simMode && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              onClick={onResetSim}
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                color: T.primary,
-                background: 'rgba(91, 140, 255, 0.18)',
-                border: `1px solid ${T.primary}`,
-                padding: '4px 8px',
-                borderRadius: 999,
-                cursor: onResetSim ? 'pointer' : 'default',
-              }}
-            >
-              Simulacion
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={onStateClick}
+            disabled={!onStateClick}
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: T.primary,
+              background: 'rgba(91, 140, 255, 0.18)',
+              border: `1px solid ${T.primary}`,
+              padding: '4px 10px',
+              borderRadius: 999,
+              cursor: onStateClick ? 'pointer' : 'default',
+              opacity: onStateClick ? 1 : 0.6,
+            }}
+          >
+            {stateLabel ?? (simMode ? 'SIMULACIÓN' : 'BASE')}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'flex-start' }}>

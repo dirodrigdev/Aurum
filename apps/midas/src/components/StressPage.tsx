@@ -4,7 +4,7 @@ import { STRESS_SCENARIOS } from '../domain/model/defaults';
 import { runStressTest } from '../domain/simulation/engine';
 import { T, css } from './theme';
 
-export function StressPage({ params }: { params: ModelParameters }) {
+export function StressPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(STRESS_SCENARIOS.map((s) => [s.id, true])),
   );
@@ -30,6 +30,7 @@ export function StressPage({ params }: { params: ModelParameters }) {
           Escenarios determinísticos (separados de Optimista/Base/Pesimista) · usan tu configuración vigente
         </div>
       </div>
+      {stateLabel && <div style={{ color: T.textSecondary, fontSize: 11 }}>{stateLabel}</div>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {STRESS_SCENARIOS.map((sc) => (

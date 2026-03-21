@@ -15,7 +15,7 @@ const PARAM_LABELS: Record<string, string> = {
   rvChileWeight: 'Peso RV Chile en portafolio',
 };
 
-export function SensitivityPage({ params }: { params: ModelParameters }) {
+export function SensitivityPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
   const [results, setResults] = useState<Record<string, Array<{ label: string; probRuin: number; p50: number }>>>({});
   const [running, setRunning] = useState(false);
   const ACTIVE_PARAMS = SENSITIVITY_PARAMS.filter((p) => p.paramPath !== 'simulation.blockLength');
@@ -54,6 +54,7 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
             Impacto de cada parámetro sobre ruina · usando tu configuración actual
           </div>
         </div>
+        {stateLabel && <div style={{ color: T.textSecondary, fontSize: 11 }}>{stateLabel}</div>}
         <button
           onClick={run}
           disabled={running}

@@ -89,7 +89,9 @@ export function SimulationPage({
   params,
   simOverrides,
   simActive,
+  simWorking,
   simulationPreset,
+  stateLabel,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -101,7 +103,9 @@ export function SimulationPage({
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
+  simWorking: boolean;
   simulationPreset: SimulationPreset;
+  stateLabel: string;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -226,8 +230,10 @@ export function SimulationPage({
           }
           ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
           mode={simActive ? 'sim' : 'real'}
-          onResetSim={simActive ? onResetSim : undefined}
+          stateLabel={stateLabel}
+          onStateClick={simActive ? onResetSim : undefined}
           chips={[
+            { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => onSimulationTouch('custom') },
             { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
             { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
             { id: 'capital', value: formatCapital(effectiveCapital), onClick: () => openChip('capital') },
@@ -418,7 +424,7 @@ export function SimulationPage({
                   const active = simulationPreset === variant.id;
                   const custom = simulationPreset === 'custom';
                   const highlightedReset = isBase && custom;
-                  const working = previewRunning && simulationPreset === variant.id;
+                  const working = active && (simWorking || previewRunning);
                   return (
                     <button
                       key={variant.id}
@@ -439,16 +445,19 @@ export function SimulationPage({
                         borderRadius: 999,
                         cursor: 'pointer',
                         opacity: custom && !isBase ? 0.45 : 1,
-                        boxShadow: highlightedReset ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)' : working ? '0 0 0 2px rgba(91, 140, 255, 0.28)' : 'none',
+                        boxShadow: highlightedReset
+                          ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)'
+                          : working
+                            ? '0 0 0 2px rgba(91, 140, 255, 0.28)'
+                            : 'none',
+                        transition: 'opacity 0.2s, transform 0.2s',
+                        transform: working ? 'scale(0.99)' : 'scale(1)',
                       }}
                     >
                       {variant.label}
                     </button>
                   );
                 })}
-                {simulationPreset === 'custom' && (
-                  <span style={{ color: T.textMuted, fontSize: 10, alignSelf: 'center' }}>Custom</span>
-                )}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>

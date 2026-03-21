@@ -78,6 +78,7 @@ export default function App() {
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
+  const [simWorking, setSimWorking] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
 
@@ -156,11 +157,13 @@ export default function App() {
     setSimParams((prev) => {
       const next = updateByPath(prev, path, value);
       const base = applySimulationOverrides(next, simOverrides);
+      setSimWorking(true);
       setSimResult({
         central: runSimulationCentral(base),
         favorable: runSimulation(base),
         prudent: runSimulationRobust(base),
       });
+      window.setTimeout(() => setSimWorking(false), 30);
       return next;
     });
     touchSimulation('custom');
@@ -170,11 +173,13 @@ export default function App() {
     setSimParams((prev) => {
       const updated = { ...prev, cashflowEvents: next };
       const base = applySimulationOverrides(updated, simOverrides);
+      setSimWorking(true);
       setSimResult({
         central: runSimulationCentral(base),
         favorable: runSimulation(base),
         prudent: runSimulationRobust(base),
       });
+      window.setTimeout(() => setSimWorking(false), 30);
       return updated;
     });
     touchSimulation('custom');
@@ -185,11 +190,13 @@ export default function App() {
     setSimParams((prev) => {
       const nextParams = applyScenarioEconomics(prev, next);
       const base = applySimulationOverrides(nextParams, null);
+      setSimWorking(true);
       setSimResult({
         central: runSimulationCentral(base),
         favorable: runSimulation(base),
         prudent: runSimulationRobust(base),
       });
+      window.setTimeout(() => setSimWorking(false), 30);
       return nextParams;
     });
     touchSimulation(next);
@@ -199,11 +206,13 @@ export default function App() {
     setSimOverrides(next);
     if (next) {
       const base = applySimulationOverrides(simParams, next);
+      setSimWorking(true);
       setSimResult({
         central: runSimulationCentral(base),
         favorable: runSimulation(base),
         prudent: runSimulationRobust(base),
       });
+      window.setTimeout(() => setSimWorking(false), 30);
       touchSimulation('custom');
     }
   }, [simParams, touchSimulation]);
@@ -211,11 +220,13 @@ export default function App() {
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
     const base = applySimulationOverrides(simParams, simOverrides);
+    setSimWorking(true);
     setSimResult({
       central: runSimulationCentral(base),
       favorable: runSimulation(base),
       prudent: runSimulationRobust(base),
     });
+    window.setTimeout(() => setSimWorking(false), 30);
     setActiveTab('sim');
   }, [simOverrides, simParams, simulationPreset, touchSimulation]);
 
@@ -224,14 +235,14 @@ export default function App() {
   }, []);
 
   const statusColor = simulationActive ? T.primary : simResult.central ? T.positive : T.textMuted;
-  const simulationBadge =
+  const stateLabel =
     simulationActive && simulationPreset !== 'base'
       ? simulationPreset === 'optimistic'
-        ? 'Simulación · O'
+        ? 'SIMULACIÓN · O'
         : simulationPreset === 'pessimistic'
-          ? 'Simulación · P'
-          : 'Simulación · C'
-      : '';
+          ? 'SIMULACIÓN · P'
+          : 'SIMULACIÓN · C'
+      : 'BASE';
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
@@ -241,18 +252,20 @@ export default function App() {
       params={simParams}
       simOverrides={simOverrides}
       simActive={simulationActive}
+      simWorking={simWorking}
       simulationPreset={simulationPreset}
+      stateLabel={stateLabel}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
       onResetSim={resetSimulationSession}
     />
   ) : activeTab === 'sens' ? (
-    <SensitivityPage params={simParams} />
+    <SensitivityPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'stress' ? (
-    <StressPage params={simParams} />
+    <StressPage params={simParams} stateLabel={stateLabel} />
   ) : (
-    <OptimizerPage params={simParams} />
+    <OptimizerPage params={simParams} stateLabel={stateLabel} />
   );
 
   return (
@@ -280,7 +293,7 @@ export default function App() {
           />
         </>
       )}
-      <Header statusColor={statusColor} badge={simulationBadge} />
+      <Header statusColor={statusColor} />
       <main
         style={{
           padding: '12px 16px 90px',
@@ -336,7 +349,7 @@ export default function App() {
   );
 }
 
-function Header({ statusColor, badge }: { statusColor: string; badge: string }) {
+function Header({ statusColor }: { statusColor: string }) {
   return (
     <header
       style={{
@@ -358,13 +371,10 @@ function Header({ statusColor, badge }: { statusColor: string; badge: string }) 
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {badge && <span style={{ color: T.textSecondary, fontSize: 11 }}>{badge}</span>}
-        <div
-          title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
-          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
-        />
-      </div>
+      <div
+        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
+        style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
+      />
     </header>
   );
 }
