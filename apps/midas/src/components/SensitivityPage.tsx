@@ -50,7 +50,9 @@ export function SensitivityPage({ params }: { params: ModelParameters }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div>
           <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>Sensibilidades</div>
-          <div style={{ color: T.textMuted, fontSize: 12 }}>Impacto de cada parámetro sobre ruina</div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Impacto de cada parámetro sobre ruina · Calculado sobre la configuración actual (Motor central)
+          </div>
         </div>
         <button
           onClick={run}

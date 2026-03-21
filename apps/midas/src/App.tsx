@@ -89,24 +89,30 @@ export default function App() {
   const selectVariant = useCallback((id: ScenarioVariantId): ScenarioVariant =>
     SCENARIO_VARIANTS.find((v) => v.id === id) ?? SCENARIO_VARIANTS[0], []);
 
-  const runAllSimulations = useCallback((params: ModelParameters, overrides: SimulationOverrides | null, preset: SimulationPreset) => {
-    const baseWithOverrides = applySimulationOverrides(params, overrides);
-    const scenarioId: ScenarioVariantId =
-      preset !== 'custom' ? preset : (params.activeScenario as ScenarioVariantId) ?? 'base';
-    const variant = selectVariant(scenarioId);
-
-    const prep = () => {
-      const next = cloneParams(baseWithOverrides);
-      next.activeScenario = scenarioId;
+  const applyScenarioEconomics = useCallback(
+    (p: ModelParameters, scenarioId: ScenarioVariantId) => {
+      const variant = selectVariant(scenarioId);
+      const next = { ...p, activeScenario: scenarioId };
       return applyScenarioVariant(next, variant);
-    };
+    },
+    [selectVariant],
+  );
 
-    const favorable = runSimulation(prep());
-    const centralRaw = runSimulationCentralV2(prep());
-    const prudent = runSimulationRobust(prep());
-    const central = { ...centralRaw, scenarioComparison: favorable.scenarioComparison };
-    setSimResult({ central, favorable, prudent });
-  }, [selectVariant]);
+  const runAllSimulations = useCallback(
+    (params: ModelParameters, overrides: SimulationOverrides | null, preset: SimulationPreset) => {
+      const baseWithOverrides = applySimulationOverrides(params, overrides);
+      const scenarioId: ScenarioVariantId =
+        preset !== 'custom' ? preset : (params.activeScenario as ScenarioVariantId) ?? 'base';
+      const prep = applyScenarioEconomics(baseWithOverrides, scenarioId);
+
+      const favorable = runSimulation(cloneParams(prep));
+      const centralRaw = runSimulationCentralV2(cloneParams(prep));
+      const prudent = runSimulationRobust(cloneParams(prep));
+      const central = { ...centralRaw, scenarioComparison: favorable.scenarioComparison };
+      setSimResult({ central, favorable, prudent });
+    },
+    [applyScenarioEconomics],
+  );
 
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
@@ -120,16 +126,20 @@ export default function App() {
     setParamSheetOpen(false);
   }, [baseParams, clearSimulationTimer, runAllSimulations]);
 
+  const scheduleInactivityReset = useCallback(() => {
+    clearSimulationTimer();
+    simulationTimerRef.current = window.setTimeout(() => {
+      resetSimulationSession();
+    }, SIMULATION_TIMEOUT_MS);
+  }, [clearSimulationTimer, resetSimulationSession]);
+
   const touchSimulation = useCallback(
     (nextPreset: SimulationPreset = 'custom') => {
       setSimulationActive(true);
       setSimulationPreset(nextPreset);
-      clearSimulationTimer();
-      simulationTimerRef.current = window.setTimeout(() => {
-        resetSimulationSession();
-      }, SIMULATION_TIMEOUT_MS);
+      scheduleInactivityReset();
     },
-    [clearSimulationTimer, resetSimulationSession],
+    [scheduleInactivityReset],
   );
 
   useEffect(() => {
@@ -138,8 +148,14 @@ export default function App() {
       next.activeScenario = 'base';
       runAllSimulations(next, null, 'base');
     }
-    return () => clearSimulationTimer();
-  }, [baseParams, clearSimulationTimer, runAllSimulations, simResult.central]);
+    scheduleInactivityReset();
+    const handler = () => scheduleInactivityReset();
+    ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.addEventListener(ev, handler));
+    return () => {
+      ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
+      clearSimulationTimer();
+    };
+  }, [baseParams, clearSimulationTimer, runAllSimulations, scheduleInactivityReset, simResult.central]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
@@ -159,14 +175,19 @@ export default function App() {
     });
   }, [runAllSimulations, simOverrides, touchSimulation]);
 
-  const handleScenarioChange = useCallback((nextScenario: ScenarioVariantId) => {
-    const next = cloneParams(baseParams);
-    next.activeScenario = nextScenario;
-    setSimParams(next);
-    setSimOverrides(null);
-    touchSimulation(nextScenario);
-    runAllSimulations(next, null, nextScenario);
-  }, [baseParams, runAllSimulations, touchSimulation]);
+  const handleScenarioChange = useCallback(
+    (nextScenario: ScenarioVariantId) => {
+      setSimOverrides(null);
+      setSimulationPreset(nextScenario);
+      setSimParams((prev) => {
+        const next = applyScenarioEconomics(prev, nextScenario);
+        runAllSimulations(next, null, nextScenario);
+        return next;
+      });
+      touchSimulation(nextScenario);
+    },
+    [applyScenarioEconomics, runAllSimulations, touchSimulation],
+  );
 
   const handleSimOverridesChange = useCallback((nextOverrides: SimulationOverrides | null) => {
     setSimOverrides(nextOverrides);
@@ -187,6 +208,14 @@ export default function App() {
   }, []);
 
   const statusColor = simulationActive ? T.primary : simResult.central ? T.positive : T.textMuted;
+  const simulationBadge =
+    simulationActive && simulationPreset !== 'base'
+      ? simulationPreset === 'optimistic'
+        ? 'Simulación · O'
+        : simulationPreset === 'pessimistic'
+          ? 'Simulación · P'
+          : 'Simulación · C'
+      : '';
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
@@ -205,7 +234,7 @@ export default function App() {
   ) : activeTab === 'sens' ? (
     <SensitivityPage params={simParams} />
   ) : activeTab === 'stress' ? (
-    <StressPage params={baseParams} />
+    <StressPage params={simParams} />
   ) : (
     <OptimizerPage params={simParams} />
   );
@@ -235,7 +264,7 @@ export default function App() {
           />
         </>
       )}
-      <Header statusColor={statusColor} />
+      <Header statusColor={statusColor} badge={simulationBadge} />
       <main
         style={{
           padding: '12px 16px 90px',
@@ -291,7 +320,7 @@ export default function App() {
   );
 }
 
-function Header({ statusColor }: { statusColor: string }) {
+function Header({ statusColor, badge }: { statusColor: string; badge: string }) {
   return (
     <header
       style={{
@@ -313,10 +342,17 @@ function Header({ statusColor }: { statusColor: string }) {
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div
-        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
-        style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {badge && (
+          <span style={{ color: T.textSecondary, fontSize: 11, letterSpacing: '0.02em' }}>
+            {badge}
+          </span>
+        )}
+        <div
+          title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
+          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
+        />
+      </div>
     </header>
   );
 }

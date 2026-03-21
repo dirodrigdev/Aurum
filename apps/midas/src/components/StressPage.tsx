@@ -26,7 +26,9 @@ export function StressPage({ params }: { params: ModelParameters }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div>
         <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>Stress tests</div>
-        <div style={{ color: T.textMuted, fontSize: 12 }}>Escenarios determinísticos (separados de Optimista/Base/Pesimista)</div>
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          Escenarios determinísticos (separados de Optimista/Base/Pesimista) · usan tu configuración vigente
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
