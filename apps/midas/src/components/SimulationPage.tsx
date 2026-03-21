@@ -68,6 +68,7 @@ export function SimulationPage({
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
+  onUpdateParams,
   onResetSim,
 }: {
   resultCentral: SimulationResults | null;
@@ -82,11 +83,13 @@ export function SimulationPage({
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
+  onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const prevSimActive = useRef(false);
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
@@ -175,6 +178,75 @@ export function SimulationPage({
     if (activeChip === 'capital') next.capital = Math.max(1, parsed);
     onSimOverridesChange(next);
     setActiveChip(null);
+  };
+
+  const formatCLP = (value: number) =>
+    value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
+  const parseCLP = (raw: string) => {
+    const cleaned = raw.replace(/\./g, '').replace(/,/g, '').trim();
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const updateSpendingPhase = (index: number, amount: number) => {
+    onUpdateParams((prev) => {
+      const next = { ...prev, spendingPhases: prev.spendingPhases.map((p, i) => (i === index ? { ...p, amountReal: amount } : p)) };
+      return next;
+    });
+  };
+
+  const updateRvRfMix = (rvPct: number) => {
+    const rvTarget = Math.min(100, Math.max(0, rvPct)) / 100;
+    onUpdateParams((prev) => {
+      const rvTotal = prev.weights.rvGlobal + prev.weights.rvChile;
+      const rfTotal = prev.weights.rfGlobal + prev.weights.rfChile;
+      const rvRatio = rvTotal > 0 ? prev.weights.rvGlobal / rvTotal : 0.5;
+      const rfRatio = rfTotal > 0 ? prev.weights.rfGlobal / rfTotal : 0.5;
+      const nextRvGlobal = rvTarget * rvRatio;
+      const nextRvChile = rvTarget * (1 - rvRatio);
+      const rfTarget = 1 - rvTarget;
+      const nextRfGlobal = rfTarget * rfRatio;
+      const nextRfChile = rfTarget * (1 - rfRatio);
+      return {
+        ...prev,
+        weights: {
+          rvGlobal: nextRvGlobal,
+          rvChile: nextRvChile,
+          rfGlobal: nextRfGlobal,
+          rfChile: nextRfChile,
+        },
+      };
+    });
+  };
+
+  const updateGlobalLocalMix = (globalPct: number) => {
+    const globalTarget = Math.min(100, Math.max(0, globalPct)) / 100;
+    onUpdateParams((prev) => {
+      const globalTotal = prev.weights.rvGlobal + prev.weights.rfGlobal;
+      const localTotal = prev.weights.rvChile + prev.weights.rfChile;
+      const globalRvRatio = globalTotal > 0 ? prev.weights.rvGlobal / globalTotal : 0.5;
+      const localRvRatio = localTotal > 0 ? prev.weights.rvChile / localTotal : 0.5;
+      const nextGlobalRv = globalTarget * globalRvRatio;
+      const nextGlobalRf = globalTarget * (1 - globalRvRatio);
+      const localTarget = 1 - globalTarget;
+      const nextLocalRv = localTarget * localRvRatio;
+      const nextLocalRf = localTarget * (1 - localRvRatio);
+      return {
+        ...prev,
+        weights: {
+          rvGlobal: nextGlobalRv,
+          rfGlobal: nextGlobalRf,
+          rvChile: nextLocalRv,
+          rfChile: nextLocalRf,
+        },
+      };
+    });
+  };
+
+  const handleEditBase = () => {
+    if (window.confirm('Vas a modificar la configuración base guardada. ¿Quieres continuar?')) {
+      window.alert('Editar modelo base aún no está disponible.');
+    }
   };
 
   return (
@@ -360,16 +432,159 @@ export function SimulationPage({
         </div>
       )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+        <button
+          onClick={() => setAdvancedOpen((prev) => !prev)}
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            color: T.textPrimary,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <span>Otros ajustes de simulación</span>
+          <span style={{ color: T.textMuted }}>{advancedOpen ? '▴' : '▾'}</span>
+        </button>
+        {advancedOpen && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                {params.spendingPhases.map((phase, idx) => (
+                  <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Tramo {idx + 1} ({Math.round(phase.durationMonths / 12)} años)
+                    </span>
+                    <input
+                      type="text"
+                      value={formatCLP(phase.amountReal)}
+                      onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
+                  <input
+                    type="number"
+                    value={Math.round((params.weights.rvGlobal + params.weights.rvChile) * 100)}
+                    onChange={(e) => updateRvRfMix(Number(e.target.value))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: '8px 10px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RF (%)</span>
+                  <input
+                    type="number"
+                    value={Math.round((params.weights.rfGlobal + params.weights.rfChile) * 100)}
+                    onChange={(e) => updateRvRfMix(100 - Number(e.target.value))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: '8px 10px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
+                  <input
+                    type="number"
+                    value={Math.round((params.weights.rvGlobal + params.weights.rfGlobal) * 100)}
+                    onChange={(e) => updateGlobalLocalMix(Number(e.target.value))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: '8px 10px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Local (%)</span>
+                  <input
+                    type="number"
+                    value={Math.round((params.weights.rvChile + params.weights.rfChile) * 100)}
+                    onChange={(e) => updateGlobalLocalMix(100 - Number(e.target.value))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: '8px 10px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Fee anual</div>
+              <input
+                type="number"
+                value={(params.feeAnnual * 100).toFixed(2)}
+                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  color: T.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
         <InfoCard
           label="Gasto modelado / planificado"
           value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
         />
-          <InfoCard
-            label="Patrimonio P50"
-            value={p50 !== null ? `$${formatMillionsMM(p50 / 1e6)}` : '—'}
-          />
-        </div>
+        <InfoCard
+          label="Patrimonio P50"
+          value={p50 !== null ? `$${formatMillionsMM(p50 / 1e6)}` : '—'}
+        />
+      </div>
 
       {displayResult && (
         <>
@@ -560,6 +775,23 @@ export function SimulationPage({
           </div>
         </>
       )}
+
+      <button
+        onClick={handleEditBase}
+        style={{
+          alignSelf: 'center',
+          marginTop: 10,
+          background: 'transparent',
+          border: `1px solid ${T.border}`,
+          borderRadius: 999,
+          padding: '8px 14px',
+          color: T.textMuted,
+          fontSize: 12,
+          cursor: 'pointer',
+        }}
+      >
+        Editar modelo base
+      </button>
     </div>
   );
 }

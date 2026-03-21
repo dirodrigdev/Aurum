@@ -213,6 +213,16 @@ export default function App() {
     }
   }, [queueTriMotorCalculation, simParams, touchSimulation]);
 
+  const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
+    setSimParams((prev) => {
+      const next = patcher(prev);
+      const base = applySimulationOverrides(next, simOverrides);
+      queueTriMotorCalculation(base);
+      return next;
+    });
+    touchSimulation('custom');
+  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
+
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
     const base = applySimulationOverrides(simParams, simOverrides);
@@ -248,6 +258,7 @@ export default function App() {
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
+      onUpdateParams={patchSimParams}
       onResetSim={resetSimulationSession}
     />
   ) : activeTab === 'sens' ? (
