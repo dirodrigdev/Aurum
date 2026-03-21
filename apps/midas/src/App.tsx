@@ -80,12 +80,20 @@ export default function App() {
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [simWorking, setSimWorking] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
+  const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current !== null) {
       window.clearTimeout(simulationTimerRef.current);
       simulationTimerRef.current = null;
+    }
+  }, []);
+
+  const clearCalculationTimer = useCallback(() => {
+    if (calculationTimerRef.current !== null) {
+      window.clearTimeout(calculationTimerRef.current);
+      calculationTimerRef.current = null;
     }
   }, []);
 
@@ -102,20 +110,34 @@ export default function App() {
     [selectVariant],
   );
 
+  const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => ({
+    central: runSimulationCentral(params),
+    favorable: runSimulation(params),
+    prudent: runSimulationRobust(params),
+  }), []);
+
+  const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
+    clearCalculationTimer();
+    setSimWorking(true);
+    calculationTimerRef.current = window.setTimeout(() => {
+      setSimResult(computeTriMotor(params));
+      setSimWorking(false);
+      calculationTimerRef.current = null;
+    }, 0);
+  }, [clearCalculationTimer, computeTriMotor]);
+
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
+    clearCalculationTimer();
     setSimulationActive(false);
     setSimulationPreset('base');
     setSimOverrides(null);
     const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
     setSimParams(next);
-    setSimResult({
-      central: runSimulationCentral(next),
-      favorable: runSimulation(next),
-      prudent: runSimulationRobust(next),
-    });
+    setSimResult(computeTriMotor(next));
+    setSimWorking(false);
     setParamSheetOpen(false);
-  }, [applyScenarioEconomics, baseParams, clearSimulationTimer]);
+  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -137,11 +159,7 @@ export default function App() {
     if (!simResult.central) {
       const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
       setSimParams(next);
-      setSimResult({
-        central: runSimulationCentral(next),
-        favorable: runSimulation(next),
-        prudent: runSimulationRobust(next),
-      });
+      setSimResult(computeTriMotor(next));
     }
     scheduleInactivityReset();
     const handler = () => scheduleInactivityReset();
@@ -150,85 +168,62 @@ export default function App() {
     return () => {
       ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
       clearSimulationTimer();
+      clearCalculationTimer();
     };
-  }, [applyScenarioEconomics, baseParams, clearSimulationTimer, scheduleInactivityReset, simResult]);
+  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
       const next = updateByPath(prev, path, value);
       const base = applySimulationOverrides(next, simOverrides);
-      setSimWorking(true);
-      setSimResult({
-        central: runSimulationCentral(base),
-        favorable: runSimulation(base),
-        prudent: runSimulationRobust(base),
-      });
-      window.setTimeout(() => setSimWorking(false), 30);
+      queueTriMotorCalculation(base);
       return next;
     });
     touchSimulation('custom');
-  }, [simOverrides, touchSimulation]);
+  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
 
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
     setSimParams((prev) => {
       const updated = { ...prev, cashflowEvents: next };
       const base = applySimulationOverrides(updated, simOverrides);
-      setSimWorking(true);
-      setSimResult({
-        central: runSimulationCentral(base),
-        favorable: runSimulation(base),
-        prudent: runSimulationRobust(base),
-      });
-      window.setTimeout(() => setSimWorking(false), 30);
+      queueTriMotorCalculation(base);
       return updated;
     });
     touchSimulation('custom');
-  }, [simOverrides, touchSimulation]);
+  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     setSimOverrides(null);
-    touchSimulation(next);
+    if (next === 'base') {
+      resetSimulationSession();
+      return;
+    }
+    setSimulationActive(true);
+    setSimulationPreset(next);
+    scheduleInactivityReset();
     setSimParams((prev) => {
       const nextParams = applyScenarioEconomics(prev, next);
       const base = applySimulationOverrides(nextParams, null);
-      setSimWorking(true);
-      setSimResult({
-        central: runSimulationCentral(base),
-        favorable: runSimulation(base),
-        prudent: runSimulationRobust(base),
-      });
-      window.setTimeout(() => setSimWorking(false), 30);
+      queueTriMotorCalculation(base);
       return nextParams;
     });
-  }, [applyScenarioEconomics, touchSimulation]);
+  }, [applyScenarioEconomics, queueTriMotorCalculation, resetSimulationSession, scheduleInactivityReset]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
     if (next) {
       const base = applySimulationOverrides(simParams, next);
-      setSimWorking(true);
-      setSimResult({
-        central: runSimulationCentral(base),
-        favorable: runSimulation(base),
-        prudent: runSimulationRobust(base),
-      });
-      window.setTimeout(() => setSimWorking(false), 30);
+      queueTriMotorCalculation(base);
       touchSimulation('custom');
     }
-  }, [simParams, touchSimulation]);
+  }, [queueTriMotorCalculation, simParams, touchSimulation]);
 
   const runSim = useCallback(() => {
     touchSimulation(simulationPreset);
     const base = applySimulationOverrides(simParams, simOverrides);
-    setSimWorking(true);
-    setSimResult({
-      central: runSimulationCentral(base),
-      favorable: runSimulation(base),
-      prudent: runSimulationRobust(base),
-    });
-    window.setTimeout(() => setSimWorking(false), 30);
+    queueTriMotorCalculation(base);
     setActiveTab('sim');
-  }, [simOverrides, simParams, simulationPreset, touchSimulation]);
+  }, [queueTriMotorCalculation, simOverrides, simParams, simulationPreset, touchSimulation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
     setActiveTab(tab);

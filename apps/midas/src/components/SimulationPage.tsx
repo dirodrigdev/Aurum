@@ -1,7 +1,6 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
-import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -56,32 +55,6 @@ const formatNumber = (value: number) =>
 
 const ruinToSuccessPct = (probRuin: number) => (1 - probRuin) * 100;
 
-const applyOverrides = (p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters => {
-  if (!overrides || !overrides.active) return p;
-  const baseReturn = computeWeightedReturn(p);
-  const targetReturn = overrides.returnPct ?? baseReturn;
-  const factor = baseReturn > 0 ? targetReturn / baseReturn : 1;
-  const horizonYears = overrides.horizonYears ?? Math.round(p.simulation.horizonMonths / 12);
-  const horizonMonths = Math.max(12, Math.round(horizonYears * 12));
-  return {
-    ...p,
-    capitalInitial: overrides.capital ?? p.capitalInitial,
-    simulation: {
-      ...p.simulation,
-      horizonMonths,
-      nSim: Math.min(1200, p.simulation.nSim),
-      seed: 42,
-    },
-    returns: {
-      ...p.returns,
-      rvGlobalAnnual: p.returns.rvGlobalAnnual * factor,
-      rfGlobalAnnual: p.returns.rfGlobalAnnual * factor,
-      rvChileAnnual: p.returns.rvChileAnnual * factor,
-      rfChileUFAnnual: p.returns.rfChileUFAnnual * factor,
-    },
-  };
-};
-
 export function SimulationPage({
   resultCentral,
   resultFavorable,
@@ -111,8 +84,6 @@ export function SimulationPage({
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onResetSim: () => void;
 }) {
-  const [previewResult, setPreviewResult] = useState<SimulationResults | null>(null);
-  const [previewRunning, setPreviewRunning] = useState(false);
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
@@ -135,25 +106,14 @@ export function SimulationPage({
     return undefined;
   }, [simActive]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!simActive) {
-      setPreviewResult(null);
-      setPreviewRunning(false);
       setActiveChip(null);
       setDraftValue('');
-      return;
     }
-    setPreviewRunning(true);
-    const timeout = window.setTimeout(() => {
-      const nextParams = applyOverrides(params, simOverrides);
-      const res = runSimulationCentral(nextParams);
-      setPreviewResult(res);
-      setPreviewRunning(false);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [params, simOverrides, simActive]);
+  }, [simActive]);
 
-  const displayResult = simActive ? previewResult ?? resultCentral : resultCentral;
+  const displayResult = resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
@@ -323,7 +283,7 @@ export function SimulationPage({
             </div>
           </div>
         )}
-        {previewRunning && simActive && (
+        {simWorking && simActive && (
           <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
             Recalculando simulación...
           </div>
@@ -422,7 +382,7 @@ export function SimulationPage({
                   const active = simulationPreset === variant.id;
                   const custom = simulationPreset === 'custom';
                   const highlightedReset = isBase && custom;
-                  const working = active && (simWorking || previewRunning);
+                  const working = active && simWorking;
                   return (
                     <button
                       key={variant.id}

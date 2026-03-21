@@ -65,6 +65,10 @@ function uniform(rng: () => number, lo: number, hi: number): number {
   return lo + ((hi - lo) * rng());
 }
 
+function clamp(value: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, value));
+}
+
 function cholesky(m: number[][]): number[][] {
   const n = m.length;
   const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -143,8 +147,7 @@ function summarizeStats(values: number[]): { mean: number; min: number; max: num
   };
 }
 
-function sampleCorrelationMatrix(rng: () => number): number[][] {
-  const base = BASE_ECONOMIC_ASSUMPTIONS.correlationMatrix;
+function sampleCorrelationMatrix(rng: () => number, base: number[][]): number[][] {
   for (let attempt = 0; attempt < 64; attempt++) {
     const c01 = uniform(rng, 0.0, 0.4);
     const c02 = uniform(rng, 0.6, 0.9);
@@ -166,19 +169,20 @@ function sampleCorrelationMatrix(rng: () => number): number[][] {
   return base.map(row => [...row]);
 }
 
-function sampleAssumptions(rng: () => number): SampledAssumptions {
-  const corr = sampleCorrelationMatrix(rng);
+function sampleAssumptions(rng: () => number, params: ModelParameters): SampledAssumptions {
+  const corr = sampleCorrelationMatrix(rng, params.returns.correlationMatrix);
+  const clpScenarioShift = clamp((params.fx.tcrealLT - 640) / 8000, -0.01, 0.01);
   return {
-    rvGlobalAnnual: uniform(rng, 0.05, 0.08),
-    rfGlobalAnnual: uniform(rng, 0.02, 0.04),
-    rvChileAnnual: uniform(rng, 0.06, 0.09),
-    rfChileRealAnnual: uniform(rng, 0.005, 0.02),
-    rvGlobalVolAnnual: BASE_ECONOMIC_ASSUMPTIONS.rvGlobalVolAnnual * uniform(rng, 0.8, 1.2),
-    rfGlobalVolAnnual: BASE_ECONOMIC_ASSUMPTIONS.rfGlobalVolAnnual * uniform(rng, 0.8, 1.2),
-    rvChileVolAnnual: BASE_ECONOMIC_ASSUMPTIONS.rvChileVolAnnual * uniform(rng, 0.8, 1.2),
-    rfChileVolAnnual: BASE_ECONOMIC_ASSUMPTIONS.rfChileVolAnnual * uniform(rng, 0.8, 1.2),
-    ipcChileAnnual: uniform(rng, 0.03, 0.045),
-    clpUsdDriftAnnual: uniform(rng, 0.01, 0.03),
+    rvGlobalAnnual: params.returns.rvGlobalAnnual + uniform(rng, -0.015, 0.015),
+    rfGlobalAnnual: params.returns.rfGlobalAnnual + uniform(rng, -0.01, 0.01),
+    rvChileAnnual: params.returns.rvChileAnnual + uniform(rng, -0.015, 0.015),
+    rfChileRealAnnual: params.returns.rfChileUFAnnual + uniform(rng, -0.0075, 0.0075),
+    rvGlobalVolAnnual: params.returns.rvGlobalVolAnnual * uniform(rng, 0.8, 1.2),
+    rfGlobalVolAnnual: params.returns.rfGlobalVolAnnual * uniform(rng, 0.8, 1.2),
+    rvChileVolAnnual: params.returns.rvChileVolAnnual * uniform(rng, 0.8, 1.2),
+    rfChileVolAnnual: params.returns.rfChileVolAnnual * uniform(rng, 0.8, 1.2),
+    ipcChileAnnual: params.inflation.ipcChileAnnual + uniform(rng, -0.008, 0.008),
+    clpUsdDriftAnnual: 0.02 + clpScenarioShift + uniform(rng, -0.01, 0.01),
     correlationMatrix: corr,
   };
 }
@@ -221,7 +225,7 @@ function runSimulationRobustInternal(params: ModelParameters): RobustCoreAudit {
   const sampledStats = buildRobustStatsAccumulator();
 
   for (let s = 0; s < N; s++) {
-    const sampled = sampleAssumptions(rng);
+    const sampled = sampleAssumptions(rng, params);
     sampledStats.rvGlobalAnnual.push(sampled.rvGlobalAnnual);
     sampledStats.rvGlobalVolAnnual.push(sampled.rvGlobalVolAnnual);
     sampledStats.corrRvGlobalRfGlobal.push(sampled.correlationMatrix[0][1]);
