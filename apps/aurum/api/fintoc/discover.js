@@ -107,6 +107,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: 'Falta FINTOC_SECRET_KEY en Vercel' });
   }
 
+  const debugEnabled =
+    String(req.headers['x-debug-fintoc'] || '').toLowerCase() === 'true' ||
+    req.body?.debug === true;
+
   const linkToken = String(req.body?.link_token || '').trim();
   if (!linkToken) {
     return res.status(400).json({ ok: false, error: 'Debes enviar link_token' });
@@ -203,7 +207,7 @@ export default async function handler(req, res) {
       { clp: 0, usd: 0 },
     );
 
-    return res.status(200).json({
+    const responsePayload = {
       ok: true,
       summary: {
         institution: String(linkProbe.response.json?.institution?.name || linkProbe.response.json?.institution || 'N/D'),
@@ -214,7 +218,25 @@ export default async function handler(req, res) {
       },
       accounts: normalizedAccounts,
       probes,
-    });
+    };
+
+    if (debugEnabled) {
+      responsePayload.debug = {
+        link: {
+          updatedAt: linkProbe.response.json?.updated_at || linkProbe.response.json?.last_updated || null,
+          status: linkProbe.status,
+          ok: linkProbe.ok,
+        },
+        accounts: {
+          count: normalizedAccounts.length,
+          totals: totals,
+          status: accountsProbe.status,
+          ok: accountsProbe.ok,
+        },
+      };
+    }
+
+    return res.status(200).json(responsePayload);
   } catch {
     return res.status(500).json({
       ok: false,

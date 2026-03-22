@@ -834,6 +834,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
+  const fintocDebugEnabled = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).has('debug-fintoc');
+  }, []);
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [pendingInvestmentDelete, setPendingInvestmentDelete] = useState<PendingInvestmentDelete | null>(null);
   const [rowSavedMessages, setRowSavedMessages] = useState<Record<string, string>>({});
@@ -2167,6 +2171,21 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     try {
       const result = await discoverFintocData(linkToken);
+      if (fintocDebugEnabled) {
+        console.groupCollapsed(`[Fintoc Debug] Respuesta cruda · ${bankName}`);
+        console.log('summary', result.summary);
+        console.log('accounts_count', result.accounts.length);
+        console.log(
+          'probes',
+          (result.probes || []).map((probe) => ({
+            endpoint: probe.endpoint,
+            ok: probe.ok,
+            status: probe.status,
+            items: probe.items,
+          })),
+        );
+        console.groupEnd();
+      }
       if (!result.ok) {
         if (!silent) setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
         setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
@@ -2183,6 +2202,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       );
       const prevTotals = summarizeAccounts(prevBankAssets);
       const nextTotals = summarizeAccounts(discoveryAssets);
+      if (fintocDebugEnabled) {
+        console.groupCollapsed(`[Fintoc Debug] Normalización · ${discoveryBank}`);
+        console.log('prev_totals', prevTotals);
+        console.log('next_totals', nextTotals);
+        console.log('usable', hasUsableFintocData(result, discoveryAssets));
+        console.groupEnd();
+      }
       if (!hasUsableFintocData(result, discoveryAssets)) {
         if (!silent) setFintocStatus('Lectura incierta: no se pudieron confirmar saldos.');
         setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
@@ -2213,6 +2239,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         },
         { clp: 0, usd: 0 },
       );
+      if (fintocDebugEnabled) {
+        console.groupCollapsed(`[Fintoc Debug] Intento guardado · ${discoveryBank}`);
+        console.log('provider_totals', providerTotals);
+        console.log('snapshot_date', snapshotDate);
+        console.log('labels', `${manualProviderPrefix} CLP`, `${manualProviderPrefix} USD`);
+        console.groupEnd();
+      }
       const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
       const upsertByLabel = (
         block: WealthBlock,
@@ -2263,6 +2296,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const totalUsd = refreshedBankDetails
         .filter((record) => record.currency === 'USD')
         .reduce((sum, record) => sum + record.amount, 0);
+      if (fintocDebugEnabled) {
+        console.groupCollapsed(`[Fintoc Debug] Guardado efectivo · ${discoveryBank}`);
+        console.log('refreshed_records', refreshedBankDetails.map((record) => ({
+          label: record.label,
+          currency: record.currency,
+          amount: record.amount,
+          source: record.source,
+          snapshotDate: record.snapshotDate,
+        })));
+        console.log('computed_totals', { clp: totalClp, usd: totalUsd });
+        console.groupEnd();
+      }
       upsertByLabel('bank', BANK_BALANCE_CLP_LABEL, 'CLP', totalClp, 'Calculado desde detalle de cuentas');
       upsertByLabel('bank', BANK_BALANCE_USD_LABEL, 'USD', totalUsd, 'Calculado desde detalle de cuentas');
       const movementProbes = (result.probes || []).filter((probe) => probe.endpoint.includes('/movements'));
@@ -2272,6 +2317,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         : 0;
       setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: movementKnown, count: movementCount } }));
       onDataChanged();
+      if (fintocDebugEnabled) {
+        console.groupCollapsed(`[Fintoc Debug] Estado UI · ${discoveryBank}`);
+        const uiSnapshot = computeWealthBankLiquiditySnapshot(dedupedSectionRecords);
+        console.log('bank_dashboard_snapshot', uiSnapshot);
+        console.log('bank_balance_labels', {
+          clp: totalClp,
+          usd: totalUsd,
+        });
+        console.groupEnd();
+      }
       if (!silent) {
         if (outcomeStatus === 'changed') {
           setFintocStatus(`Banco actualizado: ${discoveryBank}.`);

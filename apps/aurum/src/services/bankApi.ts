@@ -75,10 +75,19 @@ export const discoverFintocData = async (linkToken: string): Promise<FintocDisco
     };
   }
 
+  const debugFintoc =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug-fintoc');
+
   const response = await fetch('/api/fintoc/discover', {
     method: 'POST',
-    headers,
-    body: JSON.stringify({ link_token: linkToken }),
+    headers: {
+      ...headers,
+      ...(debugFintoc ? { 'x-debug-fintoc': 'true' } : {}),
+    },
+    body: JSON.stringify({
+      link_token: linkToken,
+      ...(debugFintoc ? { debug: true } : {}),
+    }),
   });
 
   let payload: any = null;
