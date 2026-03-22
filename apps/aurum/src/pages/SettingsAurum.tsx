@@ -76,6 +76,8 @@ const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
 const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
+const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
+const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 
 interface ClosureReviewPendingEntry {
   status: 'complete' | 'pending';
@@ -208,6 +210,23 @@ const readHideSensitiveAmountsEnabled = () => {
   }
 };
 
+const readBanksUpdateMode = (): 'manual' | 'auto' => {
+  try {
+    const raw = String(window.localStorage.getItem(BANKS_UPDATE_MODE_KEY) || '').toLowerCase();
+    return raw === 'auto' ? 'auto' : 'manual';
+  } catch {
+    return 'manual';
+  }
+};
+
+const writeBanksUpdateMode = (mode: 'manual' | 'auto') => {
+  try {
+    window.localStorage.setItem(BANKS_UPDATE_MODE_KEY, mode);
+  } catch {
+    // ignore
+  }
+};
+
 const monthAfterKey = (monthKey: string) => {
   const [year, month] = String(monthKey || '').split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
@@ -325,6 +344,7 @@ export const SettingsAurum: React.FC = () => {
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
   );
+  const [banksUpdateMode, setBanksUpdateMode] = useState<'manual' | 'auto'>(() => readBanksUpdateMode());
   const syncSectionRef = useRef<HTMLDivElement | null>(null);
   const csvImportSectionRef = useRef<HTMLDivElement | null>(null);
   const pendingUnsafeBackupActionRef = useRef<null | (() => Promise<void> | void)>(null);
@@ -890,6 +910,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     } catch {
       setResetAllMessage('No pude guardar la preferencia de ocultar montos.');
     }
+  };
+
+  const onChangeBanksUpdateMode = (mode: 'manual' | 'auto') => {
+    setBanksUpdateMode(mode);
+    writeBanksUpdateMode(mode);
+    window.dispatchEvent(new Event(BANKS_UPDATE_MODE_CHANGED_EVENT));
   };
 
   const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
@@ -1623,6 +1649,34 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
               <div className="text-xs text-slate-600 mb-2">Preferencias</div>
+              <div className="space-y-1.5 mb-2">
+                <div className="text-[11px] text-slate-600">Actualización de bancos</div>
+                <div className="flex items-center gap-3 text-xs">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="banks-update-mode"
+                      checked={banksUpdateMode === 'manual'}
+                      onChange={() => onChangeBanksUpdateMode('manual')}
+                    />
+                    Manual
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="banks-update-mode"
+                      checked={banksUpdateMode === 'auto'}
+                      onChange={() => onChangeBanksUpdateMode('auto')}
+                    />
+                    Automática
+                  </label>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {banksUpdateMode === 'manual'
+                    ? 'Manual: solo se actualiza al presionar el botón.'
+                    : 'Automática: intenta refresh al entrar en Bancos.'}
+                </div>
+              </div>
               <label className="flex items-center justify-between gap-2 text-xs">
                 <span>Ocultar montos sensibles</span>
                 <input

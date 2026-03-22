@@ -39,6 +39,7 @@ import {
   buildWealthNetBreakdown,
   computeWealthBankLiquiditySnapshot,
   computeWealthHomeSectionAmounts,
+  isAggregateNonMortgageDebtRecord,
   FX_RATES_UPDATED_EVENT,
   isSyntheticAggregateRecord,
   WEALTH_DATA_UPDATED_EVENT,
@@ -87,13 +88,13 @@ import {
   CARD_VISA_SCOTIA_LABEL,
   DEBT_CARD_CLP_LABEL,
   DEBT_CARD_USD_LABEL,
+  MANUAL_CARD_LABELS,
   INVESTMENT_BTG_LABEL,
   INVESTMENT_GLOBAL66_USD_LABEL,
   INVESTMENT_PLANVITAL_LABEL,
   INVESTMENT_SURA_FIN_LABEL,
   INVESTMENT_SURA_PREV_LABEL,
   INVESTMENT_WISE_USD_LABEL,
-  MANUAL_CARD_LABELS,
   MORTGAGE_AMORTIZATION_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   MORTGAGE_DIVIDEND_LABEL,
@@ -118,6 +119,8 @@ const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updat
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
+const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
+const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const MONTH_STARTED_FLAG_PREFIX = 'aurum.month.started.';
 const START_MONTH_FLOW_STATE_PREFIX = 'aurum.start-month.flow.v1.';
@@ -242,6 +245,15 @@ const writeBanksLastAutoAttemptDay = (ymd: string) => {
     window.localStorage.setItem(BANKS_LAST_AUTO_ATTEMPT_DAY_KEY, ymd);
   } catch {
     // ignore
+  }
+};
+
+const readBanksUpdateMode = (): 'manual' | 'auto' => {
+  try {
+    const raw = String(window.localStorage.getItem(BANKS_UPDATE_MODE_KEY) || '').toLowerCase();
+    return raw === 'auto' ? 'auto' : 'manual';
+  } catch {
+    return 'manual';
   }
 };
 
@@ -840,10 +852,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [movementsModal, setMovementsModal] = useState<BankMovementsModalState | null>(null);
   const [bankMovementMeta, setBankMovementMeta] = useState<Partial<Record<BankProviderId, BankMovementMeta>>>({});
   const [updatingAllBanks, setUpdatingAllBanks] = useState(false);
+  const [updatingBankId, setUpdatingBankId] = useState<BankProviderId | null>(null);
+  const [banksUpdateMode, setBanksUpdateMode] = useState<'manual' | 'auto'>(() => readBanksUpdateMode());
   const fintocDebugEnabled = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).has('debug-fintoc');
   }, []);
+  const isBankSection = section === 'bank';
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [pendingInvestmentDelete, setPendingInvestmentDelete] = useState<PendingInvestmentDelete | null>(null);
   const [rowSavedMessages, setRowSavedMessages] = useState<Record<string, string>>({});
@@ -869,6 +884,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   useEffect(() => {
     if (section !== 'bank') return;
+    if (banksUpdateMode !== 'auto') return;
     const refreshTokens = () => setBankTokens(loadBankTokens());
     refreshTokens();
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshTokens as EventListener);
@@ -876,6 +892,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshTokens as EventListener);
     };
   }, [section]);
+
+  useEffect(() => {
+    const syncUpdateMode = () => setBanksUpdateMode(readBanksUpdateMode());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === BANKS_UPDATE_MODE_KEY) syncUpdateMode();
+    };
+    window.addEventListener(BANKS_UPDATE_MODE_CHANGED_EVENT, syncUpdateMode as EventListener);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(BANKS_UPDATE_MODE_CHANGED_EVENT, syncUpdateMode as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const dedupedSectionRecords = useMemo(
     () => latestRecordsForMonth(recordsForSection, monthKey),
@@ -2357,6 +2386,39 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
   };
 
+  const runRefreshForBank = async (bank: { id: BankProviderId; label: string }) => {
+    const linkToken = String(bankTokens[bank.id] || '').trim();
+    const refreshIntent = await createFintocRefreshIntent(linkToken);
+    if (!refreshIntent.ok || !refreshIntent.refresh_intent_id) {
+      return { status: 'error' as const, bankLabel: bank.label };
+    }
+    if (refreshIntent.requires_mfa?.widget_token) {
+      return { status: 'uncertain' as const, bankLabel: bank.label };
+    }
+
+    const refreshIntentId = refreshIntent.refresh_intent_id;
+    let finalStatus: 'succeeded' | 'failed' | 'rejected' | 'timeout' = 'timeout';
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 180000) {
+      const statusResult = await getFintocRefreshStatus(refreshIntentId);
+      if (statusResult.ok) {
+        const status = String(statusResult.status || '').toLowerCase();
+        if (status === 'succeeded' || status === 'failed' || status === 'rejected') {
+          finalStatus = status as 'succeeded' | 'failed' | 'rejected';
+          break;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+
+    if (finalStatus !== 'succeeded') {
+      return { status: 'uncertain' as const, bankLabel: bank.label };
+    }
+
+    const outcome = await runFintocDiscovery(bank.id, { silent: true });
+    return outcome || { status: 'error' as const, bankLabel: bank.label };
+  };
+
   const runUpdateAllBanks = async (silent = false) => {
     if (section !== 'bank') return;
     const banksWithToken = BANK_PROVIDERS.filter((bank) => {
@@ -2369,41 +2431,16 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     setUpdatingAllBanks(true);
-    if (!silent) setFintocStatus('Actualizando bancos (1–3 min)...');
+    if (!silent) {
+      setFintocStatus(
+        banksUpdateMode === 'manual'
+          ? 'Actualizando bancos (manual, 1–3 min)...'
+          : 'Actualizando bancos (1–3 min)...',
+      );
+    }
     const outcomes: FintocReadOutcome[] = [];
     for (const bank of banksWithToken) {
-      const linkToken = String(bankTokens[bank.id] || '').trim();
-      const refreshIntent = await createFintocRefreshIntent(linkToken);
-      if (!refreshIntent.ok || !refreshIntent.refresh_intent_id) {
-        outcomes.push({ status: 'error', bankLabel: bank.label });
-        continue;
-      }
-      if (refreshIntent.requires_mfa?.widget_token) {
-        outcomes.push({ status: 'uncertain', bankLabel: bank.label });
-        continue;
-      }
-
-      const refreshIntentId = refreshIntent.refresh_intent_id;
-      let finalStatus: 'succeeded' | 'failed' | 'rejected' | 'timeout' = 'timeout';
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 180000) {
-        const statusResult = await getFintocRefreshStatus(refreshIntentId);
-        if (statusResult.ok) {
-          const status = String(statusResult.status || '').toLowerCase();
-          if (status === 'succeeded' || status === 'failed' || status === 'rejected') {
-            finalStatus = status as 'succeeded' | 'failed' | 'rejected';
-            break;
-          }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      }
-
-      if (finalStatus !== 'succeeded') {
-        outcomes.push({ status: 'uncertain', bankLabel: bank.label });
-        continue;
-      }
-
-      const outcome = await runFintocDiscovery(bank.id, { silent: true });
+      const outcome = await runRefreshForBank(bank);
       if (outcome) outcomes.push(outcome);
     }
     setUpdatingAllBanks(false);
@@ -2421,6 +2458,32 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         setFintocStatus('Bancos al día: sin cambios detectados.');
       }
     }
+  };
+
+  const runUpdateSingleBank = async (bank: { id: BankProviderId; label: string }) => {
+    if (section !== 'bank') return;
+    setUpdatingBankId(bank.id);
+    setFintocStatus(
+      banksUpdateMode === 'manual'
+        ? `Actualizando ${bank.label} (manual, 1–3 min)...`
+        : `Actualizando ${bank.label}...`,
+    );
+    const outcome = await runRefreshForBank(bank);
+    setUpdatingBankId(null);
+    if (!outcome) return;
+    if (outcome.status === 'error') {
+      setFintocStatus(`Error API: ${outcome.bankLabel}.`);
+      return;
+    }
+    if (outcome.status === 'uncertain') {
+      setFintocStatus(`Lectura incierta: ${outcome.bankLabel}.`);
+      return;
+    }
+    if (outcome.status === 'changed') {
+      setFintocStatus(`Banco actualizado: ${outcome.bankLabel}.`);
+      return;
+    }
+    setFintocStatus(`Banco al día: sin cambios detectados en ${outcome.bankLabel}.`);
   };
 
   const openRecordEditor = (item: WealthRecord) => {
@@ -2524,7 +2587,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       window.removeEventListener('pointerdown', onInteraction);
       window.removeEventListener('keydown', onInteraction);
     };
-  }, [section, bankTokens]);
+  }, [section, bankTokens, banksUpdateMode]);
 
   return (
     <div className="space-y-4 pb-24">
@@ -2998,7 +3061,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         <div className="text-sm font-semibold text-slate-900">{row.name}</div>
                         <div className="text-xs text-slate-500">{row.amountText}</div>
                         <div className="text-[11px] text-slate-500">
-                          {row.status === 'actualizado' && `✅ Actualizado · ${row.detail}`}
+                          {row.status === 'actualizado' &&
+                            `✅ ${
+                              isBankSection && banksUpdateMode === 'manual'
+                                ? 'Actualizado manualmente'
+                                : 'Actualizado'
+                            } · ${row.detail}`}
                           {row.status === 'mes_anterior' && `🔄 Arrastre · ${row.detail}`}
                           {row.status === 'estimado' && `🔄 Estimado · ${row.detail}`}
                           {row.status === 'pendiente' && 'Pendiente de carga'}
@@ -3041,7 +3109,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       </div>
                     </div>
                     <div className="mt-1 text-[10px] text-slate-500">
-                      {row.updatedThisMonth ? 'Actualizado este mes' : 'Pendiente de confirmar este mes'}
+                      {row.updatedThisMonth
+                        ? isBankSection && banksUpdateMode === 'manual'
+                          ? 'Actualizado manualmente este mes'
+                          : 'Actualizado este mes'
+                        : 'Pendiente de confirmar este mes'}
                     </div>
                     {!!rowSavedMessages[row.key] && (
                       <div className="mt-1 text-[11px] font-medium text-emerald-700">
@@ -3081,6 +3153,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           </div>
           {section === 'bank' ? (
             <div className="space-y-2">
+              <div className="text-[11px] text-slate-600">
+                Actualización de bancos: {banksUpdateMode === 'manual' ? 'Manual' : 'Automática'}
+              </div>
               <div className="grid md:grid-cols-3 gap-2">
                 {BANK_PROVIDERS.map((bank) => (
                   <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
@@ -3096,13 +3171,27 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
                         Cambiar token
                       </Button>
+                      {banksUpdateMode === 'manual' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={updatingAllBanks || fintocDiscovering || updatingBankId === bank.id}
+                          onClick={() => void runUpdateSingleBank(bank)}
+                        >
+                          {updatingBankId === bank.id ? 'Actualizando...' : 'Actualizar'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
-                  {updatingAllBanks || fintocDiscovering ? 'Actualizando...' : 'Actualizar bancos'}
+                  {updatingAllBanks || fintocDiscovering
+                    ? 'Actualizando...'
+                    : banksUpdateMode === 'manual'
+                      ? 'Actualizar bancos (manual)'
+                      : 'Actualizar bancos'}
                 </Button>
               </div>
               <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
@@ -3170,7 +3259,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 {row.status === 'actualizado' && (
                   <span className="inline-flex items-center gap-1 text-emerald-700">
                     <CheckCircle2 size={12} />
-                    Actualizado
+                    {isBankSection && banksUpdateMode === 'manual' ? 'Actualizado manualmente' : 'Actualizado'}
                   </span>
                 )}
                 {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
@@ -3814,12 +3903,29 @@ export const Patrimonio: React.FC = () => {
   }, [hydrationReady, investmentInstruments]);
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
+  const activeClosure = useMemo(
+    () => closures.find((closure) => closure.monthKey === monthKey) || null,
+    [closures, monthKey],
+  );
+  const previousClosureForAutoCarry = useMemo(() => {
+    const ordered = [...closures].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+    return ordered.find((closure) => closure.monthKey < monthKey) || null;
+  }, [closures, monthKey]);
   const monthRiskResolution = useMemo(
     () => resolveRiskCapitalRecordsForTotals(monthRecords, includeRiskCapitalInTotals),
     [monthRecords, includeRiskCapitalInTotals],
   );
   // [PRODUCT RULE] Si el filtro de riesgo deja vacío, usamos base sin filtrar para evitar total 0 artificial.
-  const monthRecordsForTotals = monthRiskResolution.recordsForTotals;
+  const monthRecordsForTotals = useMemo(() => {
+    if (activeClosure) return monthRiskResolution.recordsForTotals;
+    return monthRiskResolution.recordsForTotals.filter(
+      (record) =>
+        !(
+          isNonMortgageDebtRecord(record) &&
+          isAggregateNonMortgageDebtRecord(record)
+        ),
+    );
+  }, [activeClosure, monthRiskResolution.recordsForTotals]);
   const closureNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
@@ -3828,10 +3934,57 @@ export const Patrimonio: React.FC = () => {
     return map;
   }, [closures, includeRiskCapitalInTotals, fx]);
 
-  const sectionAmounts = useMemo(
-    () => computeWealthHomeSectionAmounts(monthRecordsForTotals, fx),
-    [monthRecordsForTotals, fx],
-  );
+  const resolveSectionAmountsFromClosure = (
+    closure: WealthMonthlyClosure,
+  ): ReturnType<typeof computeWealthHomeSectionAmounts> => {
+    const summary = closure.summary as WealthMonthlyClosure['summary'] & {
+      realEstateNetClp?: number;
+      bankClp?: number;
+      nonMortgageDebtClp?: number;
+    };
+    const investment = includeRiskCapitalInTotals
+      ? Number.isFinite(summary?.investmentClpWithRisk)
+        ? Number(summary.investmentClpWithRisk)
+        : Number.isFinite(summary?.byBlock?.investment?.CLP)
+          ? Number(summary.byBlock.investment.CLP)
+          : 0
+      : Number.isFinite(summary?.investmentClp)
+        ? Number(summary.investmentClp)
+        : 0;
+    const realEstateNet = Number.isFinite(summary?.realEstateNetClp)
+      ? Number(summary.realEstateNetClp)
+      : Number.isFinite(summary?.byBlock?.real_estate?.CLP)
+        ? Number(summary.byBlock.real_estate.CLP)
+        : 0;
+    const bank = Number.isFinite(summary?.bankClp)
+      ? Number(summary.bankClp)
+      : Number.isFinite(summary?.byBlock?.bank?.CLP)
+        ? Number(summary.byBlock.bank.CLP)
+        : 0;
+    const nonMortgageDebt = Number.isFinite(summary?.nonMortgageDebtClp)
+      ? Number(summary.nonMortgageDebtClp)
+      : Number.isFinite(summary?.byBlock?.debt?.CLP)
+        ? Number(summary.byBlock.debt.CLP)
+        : 0;
+    const totalNetClp = investment + realEstateNet + bank - nonMortgageDebt;
+    return {
+      investment,
+      bank,
+      realEstateNet,
+      nonMortgageDebt,
+      financialNet: bank - nonMortgageDebt,
+      totalNetClp,
+      hasInvestmentData: investment !== 0,
+      hasBankData: bank !== 0,
+      hasRealEstateCoreData: realEstateNet !== 0,
+      hasAllCoreSubtotalsData: investment !== 0 && bank !== 0 && realEstateNet !== 0,
+    };
+  };
+
+  const sectionAmounts = useMemo(() => {
+    if (activeClosure) return resolveSectionAmountsFromClosure(activeClosure);
+    return computeWealthHomeSectionAmounts(monthRecordsForTotals, fx);
+  }, [activeClosure, monthRecordsForTotals, fx, includeRiskCapitalInTotals]);
   const calendarMonthKey = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -3847,6 +4000,38 @@ export const Patrimonio: React.FC = () => {
     return Array.from(unique).sort();
   }, [calendarMonthKey, realCurrentMonthKey]);
   const isFirstUseOnboarding = records.length === 0 && closures.length === 0;
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (activeClosure) return;
+
+    const hasDetailDebt = monthRecords.some(
+      (record) =>
+        record.block === 'debt' &&
+        isNonMortgageDebtRecord(record) &&
+        !isAggregateNonMortgageDebtRecord(record),
+    );
+    if (hasDetailDebt) {
+      return;
+    }
+    const hasPreviousDetail = (previousClosureForAutoCarry?.records || []).some(
+      (record) =>
+        record.block === 'debt' &&
+        isNonMortgageDebtRecord(record) &&
+        !isAggregateNonMortgageDebtRecord(record),
+    );
+    if (!hasPreviousDetail) return;
+
+    const result = fillMissingWithPreviousClosure(
+      monthKey,
+      visualMonthSnapshotDate(monthKey),
+      [...MANUAL_CARD_LABELS],
+      { excludeSummaryDebtAggregate: true },
+    );
+    if (result.added > 0) {
+      refreshRecords();
+    }
+  }, [hydrationReady, activeClosure, monthKey, monthRecords, previousClosureForAutoCarry]);
 
   useEffect(() => {
     const checkpoint = readStartMonthFlowCheckpoint(realCurrentMonthKey);
@@ -5110,7 +5295,12 @@ export const Patrimonio: React.FC = () => {
     const isRealEstate = section === 'real_estate';
     const targetSnapshotDate = visualMonthSnapshotDate(monthKey);
     const init = isRealEstate && !isSingleItem ? ensureInitialMortgageDefaults(monthKey, targetSnapshotDate) : { added: 0 };
-    const result = fillMissingWithPreviousClosure(monthKey, targetSnapshotDate, itemName ? [itemName] : undefined);
+    const result = fillMissingWithPreviousClosure(
+      monthKey,
+      targetSnapshotDate,
+      itemName ? [itemName] : undefined,
+      { excludeSummaryDebtAggregate: true },
+    );
     const auto = isRealEstate && !isSingleItem
       ? applyMortgageAutoCalculation(monthKey, targetSnapshotDate)
       : { changed: 0, sourceMonth: null, reason: null };

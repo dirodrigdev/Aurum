@@ -689,6 +689,16 @@ const AGGREGATE_DEBT_LABELS_USD = new Set([
   normalizeText(DEBT_CARD_USD_LEGACY_LABEL),
 ]);
 
+export const isAggregateNonMortgageDebtLabel = (labelValue: string) => {
+  const label = normalizeText(labelValue);
+  return AGGREGATE_DEBT_LABELS_CLP.has(label) || AGGREGATE_DEBT_LABELS_USD.has(label);
+};
+
+export const isAggregateNonMortgageDebtRecord = (record: Pick<WealthRecord, 'label' | 'block'>) => {
+  if (record.block !== 'debt' && record.block !== 'bank') return false;
+  return isAggregateNonMortgageDebtLabel(record.label);
+};
+
 const MANUAL_CARD_LABEL_KEYS = new Set(
   MANUAL_CARD_LABELS.map(normalizeText),
 );
@@ -2933,7 +2943,7 @@ export const fillMissingWithPreviousClosure = (
   targetMonthKey: string,
   snapshotDate: string,
   onlyLabels?: string[],
-  options?: { excludeBlocks?: WealthBlock[] },
+  options?: { excludeBlocks?: WealthBlock[]; excludeSummaryDebtAggregate?: boolean },
 ): { added: number; sourceMonth: string | null } => {
   const records = loadWealthRecords();
   const closures = loadClosures();
@@ -2989,7 +2999,11 @@ export const fillMissingWithPreviousClosure = (
     if (bankClp !== null && Math.abs(bankClp) > 0) {
       createSynthetic('bank', BANK_BALANCE_CLP_LABEL, bankClp);
     }
-    if (nonMortgageDebtClp !== null && Math.abs(nonMortgageDebtClp) > 0) {
+    if (
+      !options?.excludeSummaryDebtAggregate &&
+      nonMortgageDebtClp !== null &&
+      Math.abs(nonMortgageDebtClp) > 0
+    ) {
       createSynthetic('debt', DEBT_CARD_CLP_LABEL, nonMortgageDebtClp);
     }
     if (realEstateNetClp !== null && Math.abs(realEstateNetClp) > 0) {
