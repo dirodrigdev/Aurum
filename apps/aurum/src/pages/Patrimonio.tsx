@@ -2100,6 +2100,41 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return [...map.values()];
   };
 
+  type FintocReadStatus = 'error' | 'uncertain' | 'no_change' | 'changed';
+  type FintocReadOutcome = { status: FintocReadStatus; bankLabel: string };
+
+  const summarizeAccounts = (accounts: FintocAccountNormalized[]) =>
+    accounts.reduce(
+      (acc, account) => {
+        const currency = toWealthCurrency(account.currency);
+        if (!currency) return acc;
+        if (currency === 'CLP') acc.clp += account.balance;
+        if (currency === 'USD') acc.usd += account.balance;
+        acc.count += 1;
+        if (Number.isFinite(account.balance)) acc.hasBalance = true;
+        return acc;
+      },
+      { clp: 0, usd: 0, count: 0, hasBalance: false },
+    );
+
+  const hasUsableFintocData = (result: FintocDiscoverResponse, accounts: FintocAccountNormalized[]) => {
+    const hasAccounts = result.accounts.length > 0 || result.summary.accounts > 0;
+    const hasTotals = Math.abs(result.summary.clp) + Math.abs(result.summary.usd) > 0;
+    const hasBalance = accounts.some((acc) => Number.isFinite(acc.balance));
+    return hasAccounts || hasTotals || hasBalance;
+  };
+
+  const hasFintocChanges = (
+    prev: ReturnType<typeof summarizeAccounts>,
+    next: ReturnType<typeof summarizeAccounts>,
+  ) => {
+    if (!prev.count && next.count) return true;
+    if (prev.count !== next.count) return true;
+    if (Math.abs(prev.clp - next.clp) > 0.01) return true;
+    if (Math.abs(prev.usd - next.usd) > 0.01) return true;
+    return false;
+  };
+
   const ensureBankToken = (bankId: BankProviderId, forcePrompt = false) => {
     const existing = String(bankTokens[bankId] || '').trim();
     if (existing && !forcePrompt) return existing;
@@ -2114,7 +2149,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return entered;
   };
 
-  const runFintocDiscovery = async (bankId: BankProviderId, options?: { silent?: boolean }) => {
+  const runFintocDiscovery = async (
+    bankId: BankProviderId,
+    options?: { silent?: boolean },
+  ): Promise<FintocReadOutcome | null> => {
     if (section !== 'bank') return;
     const silent = !!options?.silent;
     const bankName = BANK_PROVIDERS.find((bank) => bank.id === bankId)?.label || 'Banco';
@@ -2132,15 +2170,31 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       if (!result.ok) {
         if (!silent) setFintocStatus(`Error API: ${result.error || 'No se pudo explorar.'}`);
         setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
-        return;
+        return { status: 'error', bankLabel: bankName };
       }
       const snapshotDate = visualSnapshotDate;
       if (!silent) setFintocDiscovery(result);
       const discoveryBank = String(result.summary.institution || bankName).trim() || bankName;
+      const discoveryAssets = result.accounts
+        .filter((acc) => !isCreditCardAccount(acc))
+        .map((acc) => ({ ...acc, bank: discoveryBank }));
+      const prevBankAssets = (fintocLastSync?.assets || []).filter(
+        (acc) => (acc.bank || bankName) === discoveryBank,
+      );
+      const prevTotals = summarizeAccounts(prevBankAssets);
+      const nextTotals = summarizeAccounts(discoveryAssets);
+      if (!hasUsableFintocData(result, discoveryAssets)) {
+        if (!silent) setFintocStatus('Lectura incierta: no se pudieron confirmar saldos.');
+        setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
+        return { status: 'uncertain', bankLabel: discoveryBank };
+      }
+      const changed = hasFintocChanges(prevTotals, nextTotals);
+      const outcomeStatus: FintocReadStatus = changed ? 'changed' : 'no_change';
+
       setFintocLastSync((prev) => ({
         assets: mergeAccounts(
           prev?.assets || [],
-          result.accounts.filter((acc) => !isCreditCardAccount(acc)).map((acc) => ({ ...acc, bank: discoveryBank })),
+          discoveryAssets,
         ),
         cards: mergeAccounts(
           prev?.cards || [],
@@ -2149,7 +2203,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }));
 
       // También actualiza los cuadros principales del banco para evitar que queden "Pendiente" tras explorar.
-      const discoveryAssets = result.accounts.filter((acc) => !isCreditCardAccount(acc));
       const providerTotals = discoveryAssets.reduce(
         (acc, account) => {
           const currency = toWealthCurrency(account.currency);
@@ -2220,13 +2273,17 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: movementKnown, count: movementCount } }));
       onDataChanged();
       if (!silent) {
-        setFintocStatus(
-          `Exploración ${discoveryBank}: ${result.summary.accounts} cuentas, ${result.summary.movements} movimientos.`,
-        );
+        if (outcomeStatus === 'changed') {
+          setFintocStatus(`Banco actualizado: ${discoveryBank}.`);
+        } else {
+          setFintocStatus(`Banco al día: sin cambios detectados en ${discoveryBank}.`);
+        }
       }
+      return { status: outcomeStatus, bankLabel: discoveryBank };
     } catch (error: any) {
       if (!silent) setFintocStatus(`Error API: ${error?.message || 'No se pudo explorar.'}`);
       setBankMovementMeta((prev) => ({ ...prev, [bankId]: { known: false, count: 0 } }));
+      return { status: 'error', bankLabel: bankName };
     } finally {
       setFintocDiscovering(false);
     }
@@ -2245,12 +2302,25 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
     setUpdatingAllBanks(true);
     if (!silent) setFintocStatus('');
+    const outcomes: FintocReadOutcome[] = [];
     for (const bank of banksWithToken) {
-      await runFintocDiscovery(bank.id, { silent: true });
+      const outcome = await runFintocDiscovery(bank.id, { silent: true });
+      if (outcome) outcomes.push(outcome);
     }
     setUpdatingAllBanks(false);
     if (!silent) {
-      setFintocStatus(`Bancos actualizados: ${banksWithToken.map((b) => b.label).join(', ')}.`);
+      const errored = outcomes.filter((o) => o.status === 'error').map((o) => o.bankLabel);
+      const uncertain = outcomes.filter((o) => o.status === 'uncertain').map((o) => o.bankLabel);
+      const changed = outcomes.filter((o) => o.status === 'changed').map((o) => o.bankLabel);
+      if (errored.length) {
+        setFintocStatus(`Error API: ${errored.join(', ')}.`);
+      } else if (uncertain.length) {
+        setFintocStatus(`Lectura incierta: ${uncertain.join(', ')}.`);
+      } else if (changed.length) {
+        setFintocStatus(`Bancos actualizados: ${changed.join(', ')}.`);
+      } else {
+        setFintocStatus('Bancos al día: sin cambios detectados.');
+      }
     }
   };
 
@@ -2954,7 +3024,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           )}
           {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
           {!!fintocStatus && (
-            <div className={`text-xs ${fintocStatus.startsWith('Error') ? 'text-red-700' : 'text-emerald-700'}`}>
+            <div
+              className={`text-xs ${
+                fintocStatus.startsWith('Error')
+                  ? 'text-red-700'
+                  : fintocStatus.startsWith('Lectura incierta')
+                    ? 'text-amber-700'
+                    : 'text-emerald-700'
+              }`}
+            >
               {fintocStatus}
             </div>
           )}
