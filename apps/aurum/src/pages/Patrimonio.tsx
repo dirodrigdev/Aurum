@@ -958,7 +958,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       };
     }
 
-    const snapshot = computeWealthBankLiquiditySnapshot(dedupedSectionRecords);
+    const bankSnapshotRecords = closures.some((closure) => closure.monthKey === monthKey)
+      ? dedupedSectionRecords
+      : dedupedSectionRecords.filter(
+          (record) =>
+            !(isNonMortgageDebtRecord(record) && isAggregateNonMortgageDebtRecord(record)),
+        );
+    const snapshot = computeWealthBankLiquiditySnapshot(bankSnapshotRecords);
 
     const syncAccounts = fintocLastSync?.assets?.length
       ? fintocLastSync.assets
