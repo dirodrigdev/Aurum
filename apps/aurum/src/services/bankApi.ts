@@ -48,6 +48,22 @@ export interface FintocDiscoverResponse {
   error?: string;
 }
 
+export interface FintocRefreshIntentResponse {
+  ok: boolean;
+  refresh_intent_id?: string;
+  status?: string;
+  requires_mfa?: { widget_token: string } | null;
+  error?: string;
+}
+
+export interface FintocRefreshStatusResponse {
+  ok: boolean;
+  status?: string;
+  requires_mfa?: { widget_token: string } | null;
+  updated_at?: string | null;
+  error?: string;
+}
+
 const getAuthHeaders = async (): Promise<Record<string, string> | null> => {
   try {
     const currentUser = auth.currentUser;
@@ -61,6 +77,74 @@ const getAuthHeaders = async (): Promise<Record<string, string> | null> => {
   } catch {
     return null;
   }
+};
+
+export const createFintocRefreshIntent = async (
+  linkToken: string,
+): Promise<FintocRefreshIntentResponse> => {
+  const headers = await getAuthHeaders();
+  if (!headers) {
+    return { ok: false, error: 'Debes iniciar sesión nuevamente para consultar bancos.' };
+  }
+
+  const response = await fetch('/api/fintoc/refresh-intent', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ link_token: linkToken }),
+  });
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || !payload?.ok) {
+    return { ok: false, error: payload?.error || 'No pude crear Refresh Intent.' };
+  }
+
+  return {
+    ok: true,
+    refresh_intent_id: String(payload?.refresh_intent_id || ''),
+    status: payload?.status ? String(payload.status) : undefined,
+    requires_mfa: payload?.requires_mfa || null,
+  };
+};
+
+export const getFintocRefreshStatus = async (
+  refreshIntentId: string,
+): Promise<FintocRefreshStatusResponse> => {
+  const headers = await getAuthHeaders();
+  if (!headers) {
+    return { ok: false, error: 'Debes iniciar sesión nuevamente para consultar bancos.' };
+  }
+
+  const response = await fetch(
+    `/api/fintoc/refresh-status?refresh_intent_id=${encodeURIComponent(refreshIntentId)}`,
+    {
+      method: 'GET',
+      headers,
+    },
+  );
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || !payload?.ok) {
+    return { ok: false, error: payload?.error || 'No pude consultar estado de refresh.' };
+  }
+
+  return {
+    ok: true,
+    status: payload?.status ? String(payload.status) : undefined,
+    requires_mfa: payload?.requires_mfa || null,
+    updated_at: payload?.updated_at ? String(payload.updated_at) : null,
+  };
 };
 
 export const discoverFintocData = async (linkToken: string): Promise<FintocDiscoverResponse> => {

@@ -19,7 +19,13 @@ import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
-import { FintocAccountNormalized, discoverFintocData, FintocDiscoverResponse } from '../services/bankApi';
+import {
+  FintocAccountNormalized,
+  discoverFintocData,
+  FintocDiscoverResponse,
+  createFintocRefreshIntent,
+  getFintocRefreshStatus,
+} from '../services/bankApi';
 import {
   WealthBlock,
   WealthCurrency,
@@ -2239,6 +2245,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         },
         { clp: 0, usd: 0 },
       );
+      const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
       if (fintocDebugEnabled) {
         console.groupCollapsed(`[Fintoc Debug] Intento guardado · ${discoveryBank}`);
         console.log('provider_totals', providerTotals);
@@ -2246,7 +2253,6 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         console.log('labels', `${manualProviderPrefix} CLP`, `${manualProviderPrefix} USD`);
         console.groupEnd();
       }
-      const manualProviderPrefix = BANK_PROVIDERS.find((provider) => provider.id === bankId)?.label || bankName;
       const upsertByLabel = (
         block: WealthBlock,
         label: string,
@@ -2363,9 +2369,40 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     setUpdatingAllBanks(true);
-    if (!silent) setFintocStatus('');
+    if (!silent) setFintocStatus('Actualizando bancos (1–3 min)...');
     const outcomes: FintocReadOutcome[] = [];
     for (const bank of banksWithToken) {
+      const linkToken = String(bankTokens[bank.id] || '').trim();
+      const refreshIntent = await createFintocRefreshIntent(linkToken);
+      if (!refreshIntent.ok || !refreshIntent.refresh_intent_id) {
+        outcomes.push({ status: 'error', bankLabel: bank.label });
+        continue;
+      }
+      if (refreshIntent.requires_mfa?.widget_token) {
+        outcomes.push({ status: 'uncertain', bankLabel: bank.label });
+        continue;
+      }
+
+      const refreshIntentId = refreshIntent.refresh_intent_id;
+      let finalStatus: 'succeeded' | 'failed' | 'rejected' | 'timeout' = 'timeout';
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 180000) {
+        const statusResult = await getFintocRefreshStatus(refreshIntentId);
+        if (statusResult.ok) {
+          const status = String(statusResult.status || '').toLowerCase();
+          if (status === 'succeeded' || status === 'failed' || status === 'rejected') {
+            finalStatus = status as 'succeeded' | 'failed' | 'rejected';
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+
+      if (finalStatus !== 'succeeded') {
+        outcomes.push({ status: 'uncertain', bankLabel: bank.label });
+        continue;
+      }
+
       const outcome = await runFintocDiscovery(bank.id, { silent: true });
       if (outcome) outcomes.push(outcome);
     }
