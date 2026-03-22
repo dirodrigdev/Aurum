@@ -128,6 +128,37 @@ Never mix snapshot conversion logic with historical reconstruction logic.
 
 Never skip directly to broad implementation without first stating the plan.
 
+## Autonomy by default
+- If the requested change is acotado, touches up to 3 files, does not change architecture, and does not touch sensitive systems outside the requested scope, execute without asking for reconfirmation.
+- For these normal changes, after execution and verification, commit and push directly if all quality gates pass and no unrelated files are included.
+- Do not ask unnecessary follow-up questions if the task is already clear and bounded.
+
+## When to stop and ask for confirmation
+Stop and ask before proceeding only if one or more of these apply:
+- the scope grows materially beyond the initial task
+- more than 3 to 5 files are needed for a first safe pass
+- the task touches storage, auth, Firebase/Firestore, webhooks, Fintoc/API externa, historical closures, imports, or cross-screen financial calculations outside the original scope
+- product behavior is ambiguous or not yet defined
+- build/lint/test fail and the minimal correction is no longer obvious
+- the commit would include unrelated pending files
+- branch/rebase conflicts appear
+- Historical vs Snapshot classification becomes unclear mid-task
+
+## Quality gate and automatic commit/push
+If all the following are true:
+- the change remains within the approved scope
+- build/lint/test pass when applicable
+- no unrelated files are included
+- no branch/rebase conflict exists
+- no sensitive system outside scope was touched unexpectedly
+
+then:
+- prepare a clear commit message
+- commit
+- push directly without asking again
+
+If any of those fail, stop and report briefly before continuing.
+
 ## Scope control
 - Work on only 1 functional block per task.
 - Touch only the files strictly necessary for that block.
