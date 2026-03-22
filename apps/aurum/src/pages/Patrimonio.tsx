@@ -2721,7 +2721,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                           >
                             <Pencil size={14} />
                           </span>
-                          {existing && (
+                          {existing && banksUpdateMode === 'auto' && (
                             <span
                               className={`absolute right-8 top-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold ${
                                 isApiSource(existing.source)
@@ -3160,40 +3160,34 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 {BANK_PROVIDERS.map((bank) => (
                   <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
                     <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      {bankTokens[bank.id]
-                        ? 'Token: guardado'
-                        : bankApiPresenceByProvider[bank.id]
-                          ? 'Token: no guardado en este dispositivo (hay datos API)'
-                          : 'Token: pendiente'}
-                    </div>
-                    <div className="mt-2 flex items-center gap-1">
-                      <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
-                        Cambiar token
-                      </Button>
-                      {banksUpdateMode === 'manual' && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={updatingAllBanks || fintocDiscovering || updatingBankId === bank.id}
-                          onClick={() => void runUpdateSingleBank(bank)}
-                        >
-                          {updatingBankId === bank.id ? 'Actualizando...' : 'Actualizar'}
-                        </Button>
-                      )}
-                    </div>
+                    {banksUpdateMode === 'auto' && (
+                      <>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          {bankTokens[bank.id]
+                            ? 'Token: guardado'
+                            : bankApiPresenceByProvider[bank.id]
+                              ? 'Token: no guardado en este dispositivo (hay datos API)'
+                              : 'Token: pendiente'}
+                        </div>
+                        <div className="mt-2 flex items-center gap-1">
+                          <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
+                            Cambiar token
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
-                  {updatingAllBanks || fintocDiscovering
-                    ? 'Actualizando...'
-                    : banksUpdateMode === 'manual'
-                      ? 'Actualizar bancos (manual)'
+              {banksUpdateMode === 'auto' && (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
+                    {updatingAllBanks || fintocDiscovering
+                      ? 'Actualizando...'
                       : 'Actualizar bancos'}
-                </Button>
-              </div>
+                  </Button>
+                </div>
+              )}
               <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
                 Completar pendientes con mes anterior
               </Button>
