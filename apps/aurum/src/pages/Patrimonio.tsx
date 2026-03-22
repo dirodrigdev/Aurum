@@ -2319,8 +2319,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       onDataChanged();
       if (fintocDebugEnabled) {
         console.groupCollapsed(`[Fintoc Debug] Estado UI · ${discoveryBank}`);
-        const uiSnapshot = computeWealthBankLiquiditySnapshot(dedupedSectionRecords);
+        const bankMatch = normalizeForMatch(manualProviderPrefix);
+        const bankSpecificRecords = dedupedSectionRecords.filter(
+          (record) =>
+            record.block === 'bank' &&
+            normalizeForMatch(record.label).includes(bankMatch),
+        );
+        const uiSnapshot = computeWealthBankLiquiditySnapshot(bankSpecificRecords);
         console.log('bank_dashboard_snapshot', uiSnapshot);
+        console.log('bank_records_count', bankSpecificRecords.length);
         console.log('bank_balance_labels', {
           clp: totalClp,
           usd: totalUsd,
