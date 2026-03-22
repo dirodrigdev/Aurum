@@ -3152,34 +3152,45 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             {checklistSummary.excluded ? ` · No consideradas ${checklistSummary.excluded}` : ''}
           </div>
           {section === 'bank' ? (
-            <div className="space-y-2">
-              <div className="text-[11px] text-slate-600">
-                Actualización de bancos: {banksUpdateMode === 'manual' ? 'Manual' : 'Automática'}
-              </div>
-              <div className="grid md:grid-cols-3 gap-2">
-                {BANK_PROVIDERS.map((bank) => (
-                  <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
-                    <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
-                    {banksUpdateMode === 'auto' && (
-                      <>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          {bankTokens[bank.id]
-                            ? 'Token: guardado'
-                            : bankApiPresenceByProvider[bank.id]
-                              ? 'Token: no guardado en este dispositivo (hay datos API)'
-                              : 'Token: pendiente'}
-                        </div>
-                        <div className="mt-2 flex items-center gap-1">
-                          <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
-                            Cambiar token
-                          </Button>
-                        </div>
-                      </>
-                    )}
+            banksUpdateMode === 'manual' ? (
+              <div className="space-y-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+                  <div className="text-sm font-semibold text-slate-800">Actualización de bancos: Manual</div>
+                  <div className="text-xs text-slate-600">
+                    Los saldos se gestionan manualmente y no se actualizan por integración automática.
                   </div>
-                ))}
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => window.location.assign('/settings')}>
+                      Ir a configuración
+                    </Button>
+                  </div>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
+                  Completar pendientes con mes anterior
+                </Button>
               </div>
-              {banksUpdateMode === 'auto' && (
+            ) : (
+              <div className="space-y-2">
+                <div className="text-[11px] text-slate-600">Actualización de bancos: Automática</div>
+                <div className="grid md:grid-cols-3 gap-2">
+                  {BANK_PROVIDERS.map((bank) => (
+                    <div key={bank.id} className="rounded-lg border border-slate-200 p-2 bg-slate-50">
+                      <div className="text-xs font-semibold text-slate-700">{bank.label}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        {bankTokens[bank.id]
+                          ? 'Token: guardado'
+                          : bankApiPresenceByProvider[bank.id]
+                            ? 'Token: no guardado en este dispositivo (hay datos API)'
+                            : 'Token: pendiente'}
+                      </div>
+                      <div className="mt-2 flex items-center gap-1">
+                        <Button size="sm" variant="outline" onClick={() => ensureBankToken(bank.id, true)}>
+                          Cambiar token
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" onClick={() => runUpdateAllBanks()} disabled={updatingAllBanks || fintocDiscovering}>
                     {updatingAllBanks || fintocDiscovering
@@ -3187,11 +3198,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       : 'Actualizar bancos'}
                   </Button>
                 </div>
-              )}
-              <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
-                Completar pendientes con mes anterior
-              </Button>
-            </div>
+                <Button variant="secondary" size="sm" onClick={() => onUseMissing(section)}>
+                  Completar pendientes con mes anterior
+                </Button>
+              </div>
+            )
           ) : (
             <div className="flex items-center flex-wrap gap-2">
               {section === 'real_estate' && (
@@ -3205,7 +3216,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             </div>
           )}
           {!!carryMessage && <div className="text-xs text-blue-700">{carryMessage}</div>}
-          {!!fintocStatus && (
+          {banksUpdateMode === 'auto' && !!fintocStatus && (
             <div
               className={`text-xs ${
                 fintocStatus.startsWith('Error')
@@ -3218,12 +3229,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               {fintocStatus}
             </div>
           )}
-          {section === 'bank' && !!fintocDiscovery && (
+          {section === 'bank' && banksUpdateMode === 'auto' && !!fintocDiscovery && (
             <div className="text-[11px] text-slate-500">
               Diagnóstico API disponible (modo técnico oculto en esta vista).
             </div>
           )}
-          {sortedChecklistRows.map((row) => (
+          {(isBankSection && banksUpdateMode === 'manual'
+            ? sortedChecklistRows.filter(
+                (row) =>
+                  !sameCanonicalLabel(row.name, BANK_BALANCE_CLP_LABEL) &&
+                  !sameCanonicalLabel(row.name, BANK_BALANCE_USD_LABEL),
+              )
+            : sortedChecklistRows
+          ).map((row) => (
             <div
               key={row.instrumentId ? `custom-${row.instrumentId}` : row.name}
               className="w-full cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-100/60"
