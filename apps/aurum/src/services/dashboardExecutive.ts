@@ -226,13 +226,21 @@ const buildFreshnessModel = (
       const valueClp = Math.abs(convertRecordToClp(record, fx));
       const ageMs = now - recordDateMs(record);
       const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
+      const bucket = Number.isFinite(ageDays) ? bucketFromAgeDays(ageDays) : 'stale';
       return {
         label: record.label,
         valueClp,
         ageDays: Number.isFinite(ageDays) ? Math.round(ageDays) : 0,
+        bucket,
       };
     })
-    .filter((item) => Number.isFinite(item.valueClp) && item.valueClp > 0 && Number.isFinite(item.ageDays))
+    .filter(
+      (item) =>
+        Number.isFinite(item.valueClp) &&
+        item.valueClp > 0 &&
+        Number.isFinite(item.ageDays) &&
+        item.bucket !== 'fresh',
+    )
     .map((item) => ({
       label: item.label,
       weightPct: total > 0 ? item.valueClp / total : 0,
