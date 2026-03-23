@@ -1,6 +1,10 @@
 import { labelMatchKey } from '../utils/wealthLabels';
 import type { WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
 import { buildMonthlyWithdrawalPlan } from './financialFreedom';
+import {
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
+} from './wealthStorage';
 
 // Inputs fijos de la lectura ejecutiva actual. Si el KPI principal cambia,
 // debe cambiarse aquí y no en la UI.
@@ -104,7 +108,39 @@ const isRiskCapitalLabel = (label: string) => RISK_CAPITAL_LABEL_KEYS.has(labelM
 const makeDashboardAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'currency'>) =>
   `${record.block}::${labelMatchKey(record.label)}::${record.currency}`;
 
+const isCarriedNote = (note?: string) => {
+  const normalized = String(note || '').toLowerCase();
+  return normalized.includes('arrastrado') || normalized.includes('mes anterior');
+};
+
+const isStableAssetRecord = (record: WealthRecord) => {
+  if (record.block !== 'real_estate') return false;
+  const key = labelMatchKey(record.label);
+  return (
+    key === labelMatchKey(REAL_ESTATE_PROPERTY_VALUE_LABEL) ||
+    key === labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL)
+  );
+};
+
+const monthKeyToEndDateMs = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return NaN;
+  const lastDay = new Date(year, month, 0).getDate();
+  return new Date(`${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T12:00:00`).getTime();
+};
+
+const carriedSourceMonthFromNote = (note?: string) => {
+  const match = String(note || '').match(/cierre\s+(\d{4}-\d{2})/i);
+  return match?.[1] || null;
+};
+
 const recordDateMs = (record: WealthRecord): number => {
+  if (isCarriedNote(record.note) && !isStableAssetRecord(record)) {
+    const sourceMonth = carriedSourceMonthFromNote(record.note);
+    const sourceDate = sourceMonth ? monthKeyToEndDateMs(sourceMonth) : NaN;
+    if (Number.isFinite(sourceDate)) return sourceDate;
+    return NaN;
+  }
   const created = new Date(record.createdAt).getTime();
   if (Number.isFinite(created) && created > 0) return created;
   const snapshot = new Date(`${record.snapshotDate}T12:00:00`).getTime();
