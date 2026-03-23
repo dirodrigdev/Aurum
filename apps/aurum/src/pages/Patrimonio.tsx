@@ -701,6 +701,8 @@ interface ChecklistRow {
   isCustomInstrument?: boolean;
   instrumentId?: string;
   context?: InvestmentSourceContext;
+  freshness?: 'fresh' | 'ok' | 'stale' | null;
+  freshnessDays?: number | null;
 }
 
 type InvestmentAnalyticsGroup = 'financieras' | 'previsionales' | 'otros';
@@ -722,6 +724,8 @@ interface InvestmentOperationalRow {
   amountText: string;
   hasValue: boolean;
   updatedThisMonth: boolean;
+  freshness: 'fresh' | 'ok' | 'stale' | null;
+  freshnessDays: number | null;
   sourceContext: InvestmentSourceContext;
 }
 
@@ -1045,14 +1049,26 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const checklistRows = useMemo<ChecklistRow[]>(() => {
+    const resolveFreshness = (record: WealthRecord | null) => {
+      if (!record) return { freshness: null, freshnessDays: null };
+      const updatedAt = record.createdAt || record.snapshotDate;
+      const freshnessDays = daysSinceIso(updatedAt);
+      if (freshnessDays === null) return { freshness: null, freshnessDays: null };
+      if (freshnessDays <= 2) return { freshness: 'fresh' as const, freshnessDays };
+      if (freshnessDays <= 7) return { freshness: 'ok' as const, freshnessDays };
+      return { freshness: 'stale' as const, freshnessDays };
+    };
     const baseRows = sectionChecklist[section].map((name): ChecklistRow => {
       const match = dedupedSectionRecords.find((r) => sameCanonicalLabel(r.label, name));
+      const freshnessMeta = resolveFreshness(match || null);
       if (!match) {
         return {
           name,
           status: 'pendiente',
           detail: 'Sin dato este mes',
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+          freshness: null,
+          freshnessDays: null,
         };
       }
       if (isCarriedRecord(match)) {
@@ -1061,6 +1077,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           status: 'mes_anterior',
           detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+          freshness: null,
+          freshnessDays: null,
         };
       }
       if (isEstimatedRecord(match)) {
@@ -1070,6 +1088,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             status: 'mes_anterior',
             detail: `Mes anterior · ${formatRecordUpdatedStamp(match)}`,
             context: undefined,
+            freshness: null,
+            freshnessDays: null,
           };
         }
         return {
@@ -1077,6 +1097,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           status: 'estimado',
           detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
           context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+          freshness: null,
+          freshnessDays: null,
         };
       }
       return {
@@ -1084,6 +1106,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         status: 'actualizado',
         detail: `${displayRecordOrigin(match)} · ${formatRecordUpdatedStamp(match)}`,
         context: section === 'investment' ? buildInvestmentContext(name) : undefined,
+        freshness: freshnessMeta.freshness,
+        freshnessDays: freshnessMeta.freshnessDays,
       };
     });
 
@@ -1111,10 +1135,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
+          freshness: null,
+          freshnessDays: null,
         };
       }
 
       const match = findRecordForLabel(instrument.label, instrument.currency);
+      const freshnessMeta = resolveFreshness(match || null);
       if (!match) {
         return {
           name: instrument.label,
@@ -1124,6 +1151,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
+          freshness: null,
+          freshnessDays: null,
         };
       }
       if (isCarriedRecord(match)) {
@@ -1135,6 +1164,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           isCustomInstrument: true,
           instrumentId: instrument.id,
           context: buildInvestmentContext(instrument.label, instrument),
+          freshness: null,
+          freshnessDays: null,
         };
       }
       return {
@@ -1145,6 +1176,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         isCustomInstrument: true,
         instrumentId: instrument.id,
         context: buildInvestmentContext(instrument.label, instrument),
+        freshness: freshnessMeta.freshness,
+        freshnessDays: freshnessMeta.freshnessDays,
       };
     });
 
@@ -1188,6 +1221,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         isOptional: false,
         isCustomInstrument: true,
         context: tenenciaContext,
+        freshness:
+          tenenciaMatchesInMonth.length === 0 || tenenciaAllCarried
+            ? null
+            : resolveFreshness(tenenciaRecent || null).freshness,
+        freshnessDays:
+          tenenciaMatchesInMonth.length === 0 || tenenciaAllCarried
+            ? null
+            : resolveFreshness(tenenciaRecent || null).freshnessDays,
       });
     }
 
@@ -1509,7 +1550,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       if (row.status === 'pendiente') return 0;
       if (row.status === 'mes_anterior') return 1;
       if (row.status === 'estimado') return 2;
-      if (row.status === 'actualizado') return 3;
+      if (row.status === 'actualizado') {
+        if (row.freshness === 'stale') return 3.0;
+        if (row.freshness === 'ok') return 3.1;
+        if (row.freshness === 'fresh') return 3.2;
+        return 3.1;
+      }
       return 4;
     };
     return [...checklistRows].sort((a, b) => weight(a) - weight(b));
@@ -1809,11 +1855,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           amountText,
           hasValue,
           updatedThisMonth: row.status === 'actualizado',
+          freshness: row.freshness || null,
+          freshnessDays: row.freshnessDays ?? null,
           sourceContext,
         };
       });
+    const freshnessRank = (row: InvestmentOperationalRow) => {
+      if (row.freshness === 'stale') return 0;
+      if (row.freshness === 'ok') return 1;
+      if (row.freshness === 'fresh') return 2;
+      return 1;
+    };
     const pendingFirst = baseRows.filter((row) => !row.updatedThisMonth);
-    const updatedAfter = baseRows.filter((row) => row.updatedThisMonth);
+    const updatedAfter = baseRows.filter((row) => row.updatedThisMonth).sort((a, b) => freshnessRank(a) - freshnessRank(b));
     return [...pendingFirst, ...updatedAfter];
   }, [section, checklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
 
@@ -3020,7 +3074,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     key={row.key}
                     className={cn(
                       'rounded-lg border px-3 py-2',
-                      row.updatedThisMonth ? 'border-emerald-300 bg-emerald-50/70' : 'border-slate-200 bg-white',
+                      row.updatedThisMonth
+                        ? row.freshness === 'fresh'
+                          ? 'border-emerald-300 bg-emerald-50/70'
+                          : row.freshness === 'ok'
+                            ? 'border-emerald-200 bg-emerald-50/30'
+                            : row.freshness === 'stale'
+                              ? 'border-amber-200 bg-amber-50/30'
+                              : 'border-emerald-200 bg-emerald-50/30'
+                        : 'border-slate-200 bg-white',
                     )}
                   >
                     <div className="grid grid-cols-2 gap-3">
@@ -3030,9 +3092,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         <div className="text-[11px] text-slate-500">
                           {row.status === 'actualizado' &&
                             `✅ ${
-                              isBankSection && banksUpdateMode === 'manual'
-                                ? 'Actualizado manualmente'
-                                : 'Actualizado'
+                              row.freshness === 'stale'
+                                ? 'Revisar'
+                                : isBankSection && banksUpdateMode === 'manual'
+                                  ? 'Actualizado manualmente'
+                                  : 'Actualizado'
                             } · ${row.detail}`}
                           {row.status === 'mes_anterior' && `🔄 Arrastre · ${row.detail}`}
                           {row.status === 'estimado' && `🔄 Estimado · ${row.detail}`}
@@ -3236,9 +3300,17 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 {row.status === 'mes_anterior' && <span className="text-amber-700">Arrastre de mes anterior</span>}
                 {row.status === 'estimado' && <span className="text-amber-700">Estimado del sistema</span>}
                 {row.status === 'actualizado' && (
-                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                  <span
+                    className={`inline-flex items-center gap-1 ${
+                      row.freshness === 'stale' ? 'text-amber-700' : 'text-emerald-700'
+                    }`}
+                  >
                     <CheckCircle2 size={12} />
-                    {isBankSection && banksUpdateMode === 'manual' ? 'Actualizado manualmente' : 'Actualizado'}
+                    {row.freshness === 'stale'
+                      ? 'Revisar'
+                      : isBankSection && banksUpdateMode === 'manual'
+                        ? 'Actualizado manualmente'
+                        : 'Actualizado'}
                   </span>
                 )}
                 {row.status === 'excluido' && <span className="text-slate-500">No considerado</span>}
@@ -3631,6 +3703,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         const prev = pendingSuraOcrDecision.parsed.find((item) =>
           sameCanonicalLabel(item.label, INVESTMENT_SURA_PREV_LABEL),
         );
+        const ambiguousSharedTotal =
+          !!fin && !!prev && Math.abs(fin.amount - prev.amount) < 1;
         const onlyPrimary =
           pendingSuraOcrDecision.parsed.find((item) =>
             sameCanonicalLabel(item.label, pendingSuraOcrDecision.primaryLabel),
@@ -3658,17 +3732,24 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                         {prev ? formatCurrency(prev.amount, prev.currency) : 'No detectado'}
                       </span>
                     </div>
+                    {ambiguousSharedTotal && (
+                      <div className="text-[11px] text-amber-700">
+                        Detecté un monto igual para ambas cuentas. Para evitar duplicar, elige solo una.
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      className="flex-1"
-                      onClick={() => {
-                        appendSuggestions(pendingSuraOcrDecision.parsed);
-                        setPendingSuraOcrDecision(null);
-                      }}
-                    >
-                      Guardar ambos
-                    </Button>
+                    {!ambiguousSharedTotal && (
+                      <Button
+                        className="flex-1"
+                        onClick={() => {
+                          appendSuggestions(pendingSuraOcrDecision.parsed);
+                          setPendingSuraOcrDecision(null);
+                        }}
+                      >
+                        Guardar ambos
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       className="flex-1"
