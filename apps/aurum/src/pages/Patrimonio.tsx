@@ -89,6 +89,8 @@ import {
   DEBT_CARD_CLP_LABEL,
   DEBT_CARD_USD_LABEL,
   MANUAL_CARD_LABELS,
+  START_MONTH_CHECKPOINT_LABEL,
+  isStartMonthCheckpointRecord,
   INVESTMENT_BTG_LABEL,
   INVESTMENT_GLOBAL66_USD_LABEL,
   INVESTMENT_PLANVITAL_LABEL,
@@ -122,8 +124,6 @@ const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
-const MONTH_STARTED_FLAG_PREFIX = 'aurum.month.started.';
-const START_MONTH_FLOW_STATE_PREFIX = 'aurum.start-month.flow.v1.';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
@@ -185,16 +185,14 @@ const writeBanksLastAutoSyncDay = (ymd: string) => {
   }
 };
 
-const startMonthFlowStorageKey = (monthKey: string) => `${START_MONTH_FLOW_STATE_PREFIX}${monthKey}`;
 
-const readStartMonthFlowCheckpoint = (monthKey: string): StartMonthFlowCheckpoint | null => {
+const parseStartMonthCheckpointNote = (note?: string): StartMonthFlowCheckpoint | null => {
+  if (!note) return null;
   try {
-    const raw = window.localStorage.getItem(startMonthFlowStorageKey(monthKey));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || parsed.monthKey !== monthKey || !parsed.actions) return null;
+    const parsed = JSON.parse(note);
+    if (!parsed || !parsed.monthKey || !parsed.actions) return null;
     return {
-      monthKey,
+      monthKey: String(parsed.monthKey),
       actions: {
         carry: parsed.actions.carry === 'applied' ? 'applied' : 'pending',
         fx: parsed.actions.fx === 'applied' ? 'applied' : 'pending',
@@ -213,22 +211,6 @@ const readStartMonthFlowCheckpoint = (monthKey: string): StartMonthFlowCheckpoin
     };
   } catch {
     return null;
-  }
-};
-
-const writeStartMonthFlowCheckpoint = (checkpoint: StartMonthFlowCheckpoint) => {
-  try {
-    window.localStorage.setItem(startMonthFlowStorageKey(checkpoint.monthKey), JSON.stringify(checkpoint));
-  } catch {
-    // ignore
-  }
-};
-
-const clearStartMonthFlowCheckpoint = (monthKey: string) => {
-  try {
-    window.localStorage.removeItem(startMonthFlowStorageKey(monthKey));
-  } catch {
-    // ignore
   }
 };
 
@@ -257,27 +239,6 @@ const readBanksUpdateMode = (): 'manual' | 'auto' => {
   }
 };
 
-const monthStartedFlagKey = (targetMonthKey: string) => `${MONTH_STARTED_FLAG_PREFIX}${targetMonthKey}`;
-
-const readMonthStartedFlag = (targetMonthKey: string) => {
-  try {
-    return window.localStorage.getItem(monthStartedFlagKey(targetMonthKey)) === '1';
-  } catch {
-    return false;
-  }
-};
-
-const writeMonthStartedFlag = (targetMonthKey: string, started: boolean) => {
-  try {
-    if (started) {
-      window.localStorage.setItem(monthStartedFlagKey(targetMonthKey), '1');
-      return;
-    }
-    window.localStorage.removeItem(monthStartedFlagKey(targetMonthKey));
-  } catch {
-    // ignore
-  }
-};
 
 const sourceOptionsBySection: Record<MainSection, Array<{ value: string; label: string }>> = {
   investment: [
@@ -3921,6 +3882,14 @@ export const Patrimonio: React.FC = () => {
   }, [hydrationReady, investmentInstruments]);
 
   const monthRecords = useMemo(() => latestRecordsForMonth(records, monthKey), [records, monthKey]);
+  const startMonthCheckpointRecord = useMemo(
+    () => monthRecords.find((record) => isStartMonthCheckpointRecord(record)) || null,
+    [monthRecords],
+  );
+  const startMonthCheckpoint = useMemo(
+    () => parseStartMonthCheckpointNote(startMonthCheckpointRecord?.note),
+    [startMonthCheckpointRecord],
+  );
   const activeClosure = useMemo(
     () => closures.find((closure) => closure.monthKey === monthKey) || null,
     [closures, monthKey],
@@ -4052,22 +4021,21 @@ export const Patrimonio: React.FC = () => {
   }, [hydrationReady, activeClosure, monthKey, monthRecords, previousClosureForAutoCarry]);
 
   useEffect(() => {
-    const checkpoint = readStartMonthFlowCheckpoint(realCurrentMonthKey);
-    if (checkpoint) {
-      setStartMonthActionStatus(checkpoint.actions);
-      setStartMonthFailedStep(checkpoint.failedStep);
-      setStartMonthFlowError(checkpoint.lastError || '');
+    if (monthKey !== realCurrentMonthKey) return;
+    if (startMonthCheckpoint && startMonthCheckpoint.monthKey === realCurrentMonthKey) {
+      setStartMonthActionStatus(startMonthCheckpoint.actions);
+      setStartMonthFailedStep(startMonthCheckpoint.failedStep);
+      setStartMonthFlowError(startMonthCheckpoint.lastError || '');
       return;
     }
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-  }, [realCurrentMonthKey]);
+  }, [monthKey, realCurrentMonthKey, startMonthCheckpoint]);
 
   useEffect(() => {
     if (monthKey !== realCurrentMonthKey) return;
     if (monthRecords.length > 0) return;
-    clearStartMonthFlowCheckpoint(realCurrentMonthKey);
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
@@ -4562,12 +4530,25 @@ export const Patrimonio: React.FC = () => {
     failedStep: StartMonthActionKey | null,
     lastError: string,
   ) => {
-    writeStartMonthFlowCheckpoint({
+    const existing = latestRecordsForMonth(loadWealthRecords(), targetMonthKey).find((record) =>
+      isStartMonthCheckpointRecord(record),
+    );
+    const checkpoint: StartMonthFlowCheckpoint = {
       monthKey: targetMonthKey,
       actions,
       failedStep,
       lastError,
       updatedAt: new Date().toISOString(),
+    };
+    upsertWealthRecord({
+      id: existing?.id,
+      block: 'debt',
+      source: 'Sistema',
+      label: START_MONTH_CHECKPOINT_LABEL,
+      amount: 0,
+      currency: 'CLP',
+      snapshotDate: existing?.snapshotDate || visualMonthSnapshotDate(targetMonthKey),
+      note: JSON.stringify(checkpoint),
     });
   };
 
@@ -4592,6 +4573,13 @@ export const Patrimonio: React.FC = () => {
       persistStartMonthCheckpoint(targetMonthKey, prev, step, message);
       return prev;
     });
+  };
+
+  const skipStartMonthCarry = () => {
+    const monthToStart = realCurrentMonthKey;
+    setCarryConfirmOpen(false);
+    setCarryMessage(`Arrastre omitido en ${monthLabel(monthToStart).toLowerCase()}. Puedes cargarlo manualmente después si lo necesitas.`);
+    markStartMonthStepApplied(monthToStart, 'carry');
   };
 
   const retryFailedStartMonthStep = () => {
@@ -4665,7 +4653,6 @@ export const Patrimonio: React.FC = () => {
       }
       const finalNet = computeMonthNetSnapshot(monthToStart);
       const variation = previousClosureNet === null ? null : finalNet - previousClosureNet;
-      writeMonthStartedFlag(monthToStart, true);
       if (variation !== null && Math.abs(variation) > 1) {
         setCarryMessage(
           `Arrastre aplicado en ${monthLabel(monthToStart).toLowerCase()}. Variación inicial distinta de cero (${formatCurrency(variation, 'CLP')}). Revisa datos faltantes del cierre previo.`,
@@ -4754,7 +4741,9 @@ export const Patrimonio: React.FC = () => {
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
   ) => {
-    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
+    const targetRecords = latestRecordsForMonth(records, targetMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
@@ -4795,24 +4784,25 @@ export const Patrimonio: React.FC = () => {
 
   const recordsForSection = useMemo(() => {
     if (!activeSection) return [];
+    const visibleRecords = monthRecords.filter((record) => !isStartMonthCheckpointRecord(record));
     if (activeSection === 'real_estate') {
-      return monthRecords.filter((record) => {
+      return visibleRecords.filter((record) => {
         if (record.block === 'real_estate') return true;
         if (record.block !== 'debt') return false;
         return isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label);
       });
     }
     if (activeSection === 'bank') {
-      return monthRecords.filter((r) => {
+      return visibleRecords.filter((r) => {
         if (r.block === 'bank') return true;
         if (r.block !== 'debt') return false;
         return isNonMortgageDebtRecord(r);
       });
     }
     if (activeSection === 'investment') {
-      return monthRecords.filter((r) => r.block === 'investment');
+      return visibleRecords.filter((r) => r.block === 'investment');
     }
-    return monthRecords.filter((r) => r.block === activeSection);
+    return visibleRecords.filter((r) => r.block === activeSection);
   }, [activeSection, includeRiskCapitalInTotals, monthRecords]);
 
   const createInvestmentInstrument = (input: {
@@ -4884,7 +4874,9 @@ export const Patrimonio: React.FC = () => {
 
   const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
     const issues: CloseValidationIssue[] = [];
-    const targetRecords = latestRecordsForMonth(records, targetMonthKey);
+    const targetRecords = latestRecordsForMonth(records, targetMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
     const realCurrentMonth = calendarMonthKey;
 
     if (targetMonthKey > realCurrentMonth) {
@@ -5955,10 +5947,12 @@ export const Patrimonio: React.FC = () => {
         }
         confirmText="Arrastrar valores"
         cancelText="Cancelar"
+        auxiliaryText="Omitir este mes"
         onConfirm={() => {
           void runStartMonthFlow();
         }}
         onCancel={() => setCarryConfirmOpen(false)}
+        onAuxiliaryAction={skipStartMonthCarry}
       />
     </div>
   );

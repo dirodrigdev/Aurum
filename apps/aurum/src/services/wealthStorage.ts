@@ -29,6 +29,11 @@ export interface WealthRecord {
   note?: string;
 }
 
+export const START_MONTH_CHECKPOINT_LABEL = 'Checkpoint inicio mes';
+export const isStartMonthCheckpointRecord = (record: Pick<WealthRecord, 'label'>) => {
+  return normalizeText(record.label) === normalizeText(START_MONTH_CHECKPOINT_LABEL);
+};
+
 export interface WealthFxRates {
   usdClp: number;
   eurClp: number;
@@ -667,6 +672,7 @@ export const isSyntheticAggregateRecord = (
   record: Pick<WealthRecord, 'label' | 'block'> & Partial<Pick<WealthRecord, 'note'>>,
 ) => {
   const label = normalizeText(record.label);
+  if (label === normalizeText(START_MONTH_CHECKPOINT_LABEL)) return true;
   if (record.block === 'bank') {
     const isCanonicalBankAggregate =
       label === normalizeText(BANK_BALANCE_CLP_LABEL) || label === normalizeText(BANK_BALANCE_USD_LABEL);
@@ -715,6 +721,7 @@ const NON_MORTGAGE_DEBT_LABEL_WHITELIST = new Set([
 const warnedUnknownNonMortgageDebtLabels = new Set<string>();
 
 export const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'label' | 'source'>) => {
+  if (isStartMonthCheckpointRecord(record)) return false;
   if (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label)) return false;
 
   const label = normalizeText(record.label);

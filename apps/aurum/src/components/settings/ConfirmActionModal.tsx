@@ -8,9 +8,11 @@ interface ConfirmActionModalProps {
   message: string;
   confirmText?: string;
   cancelText?: string;
+  auxiliaryText?: string;
   tone?: 'danger' | 'default';
   onConfirm: () => void;
   onCancel: () => void;
+  onAuxiliaryAction?: () => void;
 }
 
 export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
@@ -20,9 +22,11 @@ export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
   message,
   confirmText = 'Confirmar',
   cancelText = 'Cancelar',
+  auxiliaryText,
   tone = 'default',
   onConfirm,
   onCancel,
+  onAuxiliaryAction,
 }) => {
   if (!open) return null;
 
@@ -40,6 +44,11 @@ export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
           <div className="mt-2 text-sm text-slate-600">{message}</div>
         </div>
         <div className="flex justify-end gap-2">
+          {onAuxiliaryAction && auxiliaryText && (
+            <Button variant="ghost" onClick={onAuxiliaryAction} disabled={busy}>
+              {auxiliaryText}
+            </Button>
+          )}
           <Button variant="outline" onClick={onCancel} disabled={busy}>
             {cancelText}
           </Button>
