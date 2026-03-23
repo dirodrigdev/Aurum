@@ -499,7 +499,7 @@ const getChangedFieldLabels = (
 
 
 export const ClosingAurum: React.FC = () => {
-  const [tab, setTab] = useState<ClosingTab>('hoy');
+  const [tab, setTab] = useState<ClosingTab>('cierre');
   const [currency, setCurrency] = useState<WealthCurrency>(() => readPreferredClosingCurrency());
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState(() =>
     loadIncludeRiskCapitalInTotals(),
@@ -1398,20 +1398,7 @@ export const ClosingAurum: React.FC = () => {
     <div className="p-4 space-y-2.5">
       <Card className="p-2 border-[#d5d7ce] bg-gradient-to-r from-[#f5f2e8] to-[#edf3ec]">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="grid grid-cols-3 gap-1">
-            <Button
-              variant={tab === 'hoy' ? 'primary' : 'secondary'}
-              size="sm"
-              className={
-                tab === 'hoy'
-                  ? 'text-[#f4efe3]'
-                  : 'bg-white text-slate-700 hover:bg-slate-50'
-              }
-              style={tab === 'hoy' ? { backgroundColor: ANKRE_DEEP_GREEN } : undefined}
-              onClick={() => setTab('hoy')}
-            >
-              Hoy
-            </Button>
+          <div className="grid grid-cols-2 gap-1">
             <Button
               variant={tab === 'cierre' ? 'primary' : 'secondary'}
               size="sm"
