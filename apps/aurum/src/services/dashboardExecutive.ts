@@ -25,6 +25,11 @@ export type DashboardFreshnessModel = {
   aging30dPct: number | null;
   stalePct: number | null;
   totalWeightedClp: number;
+  laggards: Array<{
+    label: string;
+    weightPct: number;
+    ageDays: number;
+  }>;
 };
 
 export type DashboardCapRiskDependenceLevel = 'Baja' | 'Media' | 'Alta' | '—';
@@ -147,6 +152,7 @@ const buildFreshnessModel = (
       aging30dPct: null,
       stalePct: null,
       totalWeightedClp: 0,
+      laggards: [],
     };
   }
 
@@ -175,8 +181,29 @@ const buildFreshnessModel = (
       aging30dPct: null,
       stalePct: null,
       totalWeightedClp: 0,
+      laggards: [],
     };
   }
+
+  const laggards = latestRecords
+    .map((record) => {
+      const valueClp = Math.abs(convertRecordToClp(record, fx));
+      const ageMs = now - recordDateMs(record);
+      const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
+      return {
+        label: record.label,
+        valueClp,
+        ageDays: Number.isFinite(ageDays) ? Math.round(ageDays) : 0,
+      };
+    })
+    .filter((item) => Number.isFinite(item.valueClp) && item.valueClp > 0 && Number.isFinite(item.ageDays))
+    .map((item) => ({
+      label: item.label,
+      weightPct: total > 0 ? item.valueClp / total : 0,
+      ageDays: item.ageDays,
+    }))
+    .sort((a, b) => b.weightPct - a.weightPct)
+    .slice(0, 5);
 
   return {
     status: 'ok',
@@ -184,6 +211,7 @@ const buildFreshnessModel = (
     aging30dPct: aging / total,
     stalePct: stale / total,
     totalWeightedClp: total,
+    laggards,
   };
 };
 

@@ -265,6 +265,23 @@ export const DashboardAurum: React.FC = () => {
               }))}
             />
           </div>
+          {model.freshness.laggards.length > 0 && (
+            <div className="mt-4 space-y-2 text-[11px] text-slate-200/80">
+              <div className="text-[10px] uppercase tracking-[0.24em] text-slate-300/70">
+                Actualiza para llegar a 100%
+              </div>
+              <ul className="space-y-1">
+                {model.freshness.laggards.map((item) => (
+                  <li key={`${item.label}-${item.ageDays}`} className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate">{item.label}</span>
+                    <span className="shrink-0 text-slate-200/70">
+                      {Math.round(item.weightPct * 100)}% · {item.ageDays}d
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Card>
 
         <div className="grid grid-cols-2 gap-3 sm:gap-4">
