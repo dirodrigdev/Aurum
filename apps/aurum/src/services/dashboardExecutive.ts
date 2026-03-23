@@ -2,6 +2,10 @@ import { labelMatchKey } from '../utils/wealthLabels';
 import type { WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
 import { buildMonthlyWithdrawalPlan } from './financialFreedom';
 import {
+  DEBT_CARD_CLP_LABEL,
+  DEBT_CARD_USD_LABEL,
+  DEBT_CARD_CLP_LEGACY_LABEL,
+  DEBT_CARD_USD_LEGACY_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
 } from './wealthStorage';
@@ -114,12 +118,22 @@ const isCarriedNote = (note?: string) => {
 };
 
 const isStableAssetRecord = (record: WealthRecord) => {
-  if (record.block !== 'real_estate') return false;
   const key = labelMatchKey(record.label);
-  return (
-    key === labelMatchKey(REAL_ESTATE_PROPERTY_VALUE_LABEL) ||
-    key === labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL)
-  );
+  if (record.block === 'real_estate') {
+    return (
+      key === labelMatchKey(REAL_ESTATE_PROPERTY_VALUE_LABEL) ||
+      key === labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL)
+    );
+  }
+  if (record.block === 'debt') {
+    return (
+      key === labelMatchKey(DEBT_CARD_CLP_LABEL) ||
+      key === labelMatchKey(DEBT_CARD_USD_LABEL) ||
+      key === labelMatchKey(DEBT_CARD_CLP_LEGACY_LABEL) ||
+      key === labelMatchKey(DEBT_CARD_USD_LEGACY_LABEL)
+    );
+  }
+  return false;
 };
 
 const monthKeyToEndDateMs = (monthKey: string) => {
