@@ -203,7 +203,7 @@ const buildFreshnessModel = (
     if (!Number.isFinite(valueClp) || valueClp <= 0) continue;
     const ageMs = now - recordDateMs(record);
     const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
-    const bucket = bucketFromAgeDays(ageDays);
+    const bucket = isStableAssetRecord(record) ? 'fresh' : bucketFromAgeDays(ageDays);
     total += valueClp;
     if (bucket === 'fresh') fresh += valueClp;
     else if (bucket === 'aging') aging += valueClp;
@@ -232,6 +232,7 @@ const buildFreshnessModel = (
         valueClp,
         ageDays: Number.isFinite(ageDays) ? Math.round(ageDays) : 0,
         bucket,
+        isStable: isStableAssetRecord(record),
       };
     })
     .filter(
@@ -239,7 +240,8 @@ const buildFreshnessModel = (
         Number.isFinite(item.valueClp) &&
         item.valueClp > 0 &&
         Number.isFinite(item.ageDays) &&
-        item.bucket !== 'fresh',
+        item.bucket !== 'fresh' &&
+        !item.isStable,
     )
     .map((item) => ({
       label: item.label,
