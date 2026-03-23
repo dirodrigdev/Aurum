@@ -1835,12 +1835,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
               (item) => item.currency === record.currency && sameCanonicalLabel(item.label, record.label),
             ),
         );
-        const hasValue = relatedRecords.length > 0;
+        const isSuraRow =
+          sameCanonicalLabel(row.name, INVESTMENT_SURA_FIN_LABEL) ||
+          sameCanonicalLabel(row.name, INVESTMENT_SURA_PREV_LABEL);
+        const displayRecords = isSuraRow
+          ? relatedRecords.filter((record) => sameCanonicalLabel(record.label, row.name))
+          : relatedRecords;
+        const hasValue = displayRecords.length > 0;
         const amountText = hasValue
-          ? relatedRecords.length === 1
-            ? formatCurrency(relatedRecords[0].amount, relatedRecords[0].currency)
+          ? displayRecords.length === 1
+            ? formatCurrency(displayRecords[0].amount, displayRecords[0].currency)
             : formatCurrency(
-                relatedRecords.reduce(
+                displayRecords.reduce(
                   (sum, record) => sum + toClp(record.amount, record.currency, usdClp, eurClp, ufClp),
                   0,
                 ),
@@ -3704,7 +3710,10 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           sameCanonicalLabel(item.label, INVESTMENT_SURA_PREV_LABEL),
         );
         const ambiguousSharedTotal =
-          !!fin && !!prev && Math.abs(fin.amount - prev.amount) < 1;
+          !!fin &&
+          !!prev &&
+          Math.abs(fin.amount - prev.amount) <=
+            Math.max(1_000, Math.min(fin.amount, prev.amount) * 0.01);
         const onlyPrimary =
           pendingSuraOcrDecision.parsed.find((item) =>
             sameCanonicalLabel(item.label, pendingSuraOcrDecision.primaryLabel),
