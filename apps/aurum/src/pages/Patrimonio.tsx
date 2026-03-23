@@ -726,6 +726,7 @@ interface InvestmentOperationalRow {
   updatedThisMonth: boolean;
   freshness: 'fresh' | 'ok' | 'stale' | null;
   freshnessDays: number | null;
+  updatedAtMs: number | null;
   sourceContext: InvestmentSourceContext;
 }
 
@@ -1841,6 +1842,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         const displayRecords = isSuraRow
           ? relatedRecords.filter((record) => sameCanonicalLabel(record.label, row.name))
           : relatedRecords;
+        const updatedAtMs = (() => {
+          if (!displayRecords.length) return null;
+          const candidates = displayRecords
+            .map((record) => {
+              const created = new Date(record.createdAt).getTime();
+              if (Number.isFinite(created) && created > 0) return created;
+              const snapshot = new Date(`${record.snapshotDate}T12:00:00`).getTime();
+              return Number.isFinite(snapshot) ? snapshot : NaN;
+            })
+            .filter((value) => Number.isFinite(value));
+          if (!candidates.length) return null;
+          return Math.max(...(candidates as number[]));
+        })();
         const hasValue = displayRecords.length > 0;
         const amountText = hasValue
           ? displayRecords.length === 1
@@ -1863,17 +1877,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           updatedThisMonth: row.status === 'actualizado',
           freshness: row.freshness || null,
           freshnessDays: row.freshnessDays ?? null,
+          updatedAtMs,
           sourceContext,
         };
       });
-    const freshnessRank = (row: InvestmentOperationalRow) => {
-      if (row.freshness === 'stale') return 0;
-      if (row.freshness === 'ok') return 1;
-      if (row.freshness === 'fresh') return 2;
-      return 1;
-    };
     const pendingFirst = baseRows.filter((row) => !row.updatedThisMonth);
-    const updatedAfter = baseRows.filter((row) => row.updatedThisMonth).sort((a, b) => freshnessRank(a) - freshnessRank(b));
+    const updatedAfter = baseRows
+      .filter((row) => row.updatedThisMonth)
+      .sort((a, b) => {
+        const aTime = a.updatedAtMs ?? -Infinity;
+        const bTime = b.updatedAtMs ?? -Infinity;
+        if (aTime !== bTime) return aTime - bTime;
+        return a.name.localeCompare(b.name);
+      });
     return [...pendingFirst, ...updatedAfter];
   }, [section, checklistRows, dedupedSectionRecords, investmentInstruments, usdClp, eurClp, ufClp]);
 
