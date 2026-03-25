@@ -30,6 +30,7 @@ import {
 } from '../services/financialFreedom';
 import {
   aggregateRows,
+  buildTrailingSummary,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
   computeMonthlyRows,
@@ -197,40 +198,16 @@ export const AnalysisAurum: React.FC = () => {
     setErrorMessage('');
   }, [analysisDiagnostics, monthlyRowsAsc]);
 
-  const findBaseNetBefore = (monthKey: string | null) => {
-    if (!monthKey) return null;
-    const index = monthlyRowsAsc.findIndex((row) => row.monthKey === monthKey);
-    if (index <= 0) return null;
-    for (let i = index - 1; i >= 0; i -= 1) {
-      const candidate = monthlyRowsAsc[i].netDisplay;
-      if (candidate !== null) return candidate;
-    }
-    return null;
-  };
-
-  const baseNetForKeys = (keys: string[]) => {
-    if (!keys.length) return null;
-    return findBaseNetBefore(keys[0]);
-  };
-
   const periodSummaries = useMemo(() => {
     const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
-    const toSummary = (count: number, label: string) => {
-      const keys = monthKeysAsc.slice(Math.max(0, monthKeysAsc.length - count));
-      if (!keys.length) return null;
-      const rows = monthlyRowsAsc.filter((row) => keys.includes(row.monthKey));
-      const baseNetDisplay =
-        baseNetForKeys(keys) ?? rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-      return aggregateRows(`period-${label}`, label, rows, baseNetDisplay);
-    };
 
     const summaries: AggregatedSummary[] = [];
-    const p12 = toSummary(12, '12M');
+    const p12 = buildTrailingSummary(monthlyRowsAsc, 12, 'period-12M', '12M');
     if (p12) summaries.push(p12);
-    const p24 = toSummary(24, '24M');
+    const p24 = buildTrailingSummary(monthlyRowsAsc, 24, 'period-24M', '24M');
     if (p24) summaries.push(p24);
     if (monthKeysAsc.length >= 36) {
-      const p36 = toSummary(36, '36M');
+      const p36 = buildTrailingSummary(monthlyRowsAsc, 36, 'period-36M', '36M');
       if (p36) summaries.push(p36);
     }
     if (monthKeysAsc.length) {
@@ -262,10 +239,7 @@ export const AnalysisAurum: React.FC = () => {
   }, [monthlyRowsAsc]);
 
   const heroLast12 = useMemo(() => {
-    const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - 12));
-    if (!rows.length) return null;
-    const baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-    return aggregateRows('hero-12m', 'Últ. 12M', rows, baseNetDisplay);
+    return buildTrailingSummary(monthlyRowsAsc, 12, 'hero-12m', 'Últ. 12M');
   }, [monthlyRowsAsc]);
 
   const heroLastMonth = useMemo(() => {

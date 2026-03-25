@@ -245,6 +245,36 @@ export const aggregateRows = (
   };
 };
 
+export const buildTrailingSummary = (
+  monthlyRowsAsc: MonthlyReturnRow[],
+  count: number,
+  key: string,
+  label: string,
+): AggregatedSummary | null => {
+  const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - count));
+  if (!rows.length) return null;
+
+  const firstMonthKey = rows[0]?.monthKey ?? null;
+  let baseNetDisplay: number | null = null;
+
+  if (firstMonthKey) {
+    const firstIndex = monthlyRowsAsc.findIndex((row) => row.monthKey === firstMonthKey);
+    for (let index = firstIndex - 1; index >= 0; index -= 1) {
+      const candidate = monthlyRowsAsc[index]?.netDisplay ?? null;
+      if (candidate !== null) {
+        baseNetDisplay = candidate;
+        break;
+      }
+    }
+  }
+
+  if (baseNetDisplay === null) {
+    baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+  }
+
+  return aggregateRows(key, label, rows, baseNetDisplay);
+};
+
 const buildCurveDomain = (values: number[]) => {
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
