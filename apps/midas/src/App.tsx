@@ -9,6 +9,7 @@ import { SimulationPage, SimulationOverrides, SimulationPreset } from './compone
 import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
+import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -289,6 +290,8 @@ export default function App() {
     <SensitivityPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
+  ) : activeTab === 'settings' ? (
+    <SettingsPage baseCapitalClp={baseParams.capitalInitial} />
   ) : (
     <OptimizerPage
       baseParams={simParams}

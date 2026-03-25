@@ -1,7 +1,7 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'sim' | 'sens' | 'stress' | 'opt';
+type TabId = 'sim' | 'sens' | 'stress' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
   sim: (
@@ -26,6 +26,12 @@ const icons: Record<TabId, JSX.Element> = {
       <circle cx="10" cy="10" r="1.8" fill="currentColor" />
     </svg>
   ),
+  settings: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M10 3.5 11.1 5h2l.3 1.8 1.6.9-.8 1.7.8 1.7-1.6.9-.3 1.8h-2L10 16.5 8.9 15h-2l-.3-1.8-1.6-.9.8-1.7-.8-1.7 1.6-.9L6.9 5h2L10 3.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="10" cy="10" r="2" fill="currentColor" />
+    </svg>
+  ),
 };
 
 export function BottomNav({
@@ -40,6 +46,7 @@ export function BottomNav({
     { id: 'sens', label: 'Sensibilidades' },
     { id: 'stress', label: 'Stress' },
     { id: 'opt', label: 'Optimizador' },
+    { id: 'settings', label: 'Ajustes' },
   ];
   return (
     <div
@@ -50,7 +57,7 @@ export function BottomNav({
         right: 0,
         height: 64,
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
+        gridTemplateColumns: 'repeat(5, 1fr)',
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,
