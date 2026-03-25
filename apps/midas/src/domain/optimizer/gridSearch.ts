@@ -14,6 +14,12 @@ type GridPoint = {
   terminalP10: number;
 };
 
+type OptimizerRunOptions = {
+  // Portion of the total portfolio that is actually movable by the optimizer.
+  // 1.0 means full portfolio, 0.4 means only 40% of weights can shift.
+  decisionShare?: number;
+};
+
 type OptimizerProgress = {
   pct: number;
   evaluated: number;
@@ -112,12 +118,51 @@ function buildOptimizerParams(
   };
 }
 
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function normalizeWeights(weights: PortfolioWeights): PortfolioWeights {
+  const rvGlobal = clamp01(weights.rvGlobal);
+  const rfGlobal = clamp01(weights.rfGlobal);
+  const rvChile = clamp01(weights.rvChile);
+  const rfChile = clamp01(weights.rfChile);
+  const sum = rvGlobal + rfGlobal + rvChile + rfChile;
+  if (sum <= 0) return { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  return {
+    rvGlobal: rvGlobal / sum,
+    rfGlobal: rfGlobal / sum,
+    rvChile: rvChile / sum,
+    rfChile: rfChile / sum,
+  };
+}
+
+function applyDecisionShareToWeights(
+  currentWeights: PortfolioWeights,
+  candidateWeights: PortfolioWeights,
+  decisionShare: number,
+): PortfolioWeights {
+  const safeShare = clamp01(decisionShare);
+  if (safeShare <= 0) return normalizeWeights(currentWeights);
+  if (safeShare >= 1) return normalizeWeights(candidateWeights);
+  return normalizeWeights({
+    rvGlobal: currentWeights.rvGlobal + (candidateWeights.rvGlobal - currentWeights.rvGlobal) * safeShare,
+    rfGlobal: currentWeights.rfGlobal + (candidateWeights.rfGlobal - currentWeights.rfGlobal) * safeShare,
+    rvChile: currentWeights.rvChile + (candidateWeights.rvChile - currentWeights.rvChile) * safeShare,
+    rfChile: currentWeights.rfChile + (candidateWeights.rfChile - currentWeights.rfChile) * safeShare,
+  });
+}
+
 export function evaluateOptimizerPoint(
   baseParams: ModelParameters,
-  weights: PortfolioWeights,
+  candidateWeights: PortfolioWeights,
   nSimPerPoint: number,
+  options?: OptimizerRunOptions,
 ): SimulationPoint {
-  const result = runMidasSimulation(buildOptimizerParams(baseParams, weights, nSimPerPoint), 'primary');
+  const decisionShare = clamp01(options?.decisionShare ?? 1);
+  const effectiveWeights = applyDecisionShareToWeights(baseParams.weights, candidateWeights, decisionShare);
+  const result = runMidasSimulation(buildOptimizerParams(baseParams, effectiveWeights, nSimPerPoint), 'primary');
   return {
     probRuin: result.probRuin,
     terminalP50: result.terminalWealthPercentiles[50] || 0,
@@ -135,15 +180,17 @@ export function runOptimizer(
   objective: OptimizerObjective,
   nSimPerPoint = 1500,
   onProgress?: (pct: number) => void,
+  options?: OptimizerRunOptions,
 ): OptimizerResult {
 
   const grid = generateGrid(constraints);
   const results: GridPoint[] = [];
   const progressEvery = Math.max(1, Math.floor(grid.length / 20));
+  const runOptions: OptimizerRunOptions = { decisionShare: clamp01(options?.decisionShare ?? 1) };
 
   for (let i = 0; i < grid.length; i++) {
     const weights = grid[i];
-    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint);
+    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint, runOptions);
     results.push({
       weights,
       probRuin:    r.probRuin,
@@ -159,8 +206,8 @@ export function runOptimizer(
   const best = results.reduce((a, b) => score(a, objective) > score(b, objective) ? a : b);
 
   const displaySimCount = baseParams.simulation.nSim;
-  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount);
-  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount);
+  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount, runOptions);
+  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount, runOptions);
 
   return {
     weights:       best.weights,
@@ -179,11 +226,13 @@ export async function runOptimizerAsync(
   objective: OptimizerObjective,
   nSimPerPoint = 1500,
   options: AsyncOptimizerOptions = {},
+  runOptions: OptimizerRunOptions = {},
 ): Promise<OptimizerResult> {
   const grid = generateGrid(constraints);
   const results: GridPoint[] = [];
   const total = grid.length;
   const yieldEvery = Math.max(1, options.yieldEvery ?? 1);
+  const safeRunOptions: OptimizerRunOptions = { decisionShare: clamp01(runOptions.decisionShare ?? 1) };
 
   const reportProgress = (evaluated: number) => {
     if (!options.onProgress || total <= 0) return;
@@ -195,7 +244,7 @@ export async function runOptimizerAsync(
   };
 
   if (total === 0) {
-    const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, baseParams.simulation.nSim);
+    const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, baseParams.simulation.nSim, safeRunOptions);
     return {
       weights: baseParams.weights,
       probRuin: currentResult.probRuin,
@@ -212,7 +261,7 @@ export async function runOptimizerAsync(
       throw new Error('optimizer_cancelled');
     }
     const weights = grid[i];
-    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint);
+    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint, safeRunOptions);
     results.push({
       weights,
       probRuin: r.probRuin,
@@ -227,8 +276,8 @@ export async function runOptimizerAsync(
 
   const best = results.reduce((a, b) => (score(a, objective) > score(b, objective) ? a : b));
   const displaySimCount = baseParams.simulation.nSim;
-  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount);
-  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount);
+  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount, safeRunOptions);
+  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount, safeRunOptions);
 
   return {
     weights: best.weights,

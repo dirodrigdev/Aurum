@@ -10,11 +10,13 @@ type StartMessage =
       runId: number;
       params: ModelParameters;
       objective: OptimizerObjective;
+      decisionShare?: number;
     }
   | {
       type: 'baseline-only';
       runId: number;
       params: ModelParameters;
+      decisionShare?: number;
     };
 
 type WorkerMessage =
@@ -58,8 +60,13 @@ function post(message: WorkerMessage) {
   self.postMessage(message);
 }
 
-function buildBaseline(params: ModelParameters) {
-  const result = evaluateOptimizerPoint(params, params.weights, params.simulation.nSim);
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function buildBaseline(params: ModelParameters, decisionShare = 1) {
+  const result = evaluateOptimizerPoint(params, params.weights, params.simulation.nSim, { decisionShare });
   return {
     probRuin: result.probRuin,
     terminalP50: result.terminalP50 || 0,
@@ -71,8 +78,9 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
 
   if (event.data.type === 'baseline-only') {
     const { runId, params } = event.data;
+    const decisionShare = clamp01(event.data.decisionShare ?? 1);
     try {
-      const baseline = buildBaseline(params);
+      const baseline = buildBaseline(params, decisionShare);
       post({
         type: 'baseline',
         runId,
@@ -92,12 +100,13 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
   if (event.data.type !== 'start') return;
 
   const { runId, params, objective } = event.data;
+  const decisionShare = clamp01(event.data.decisionShare ?? 1);
   let baselineProbRuin: number | undefined;
   let baselineP50: number | undefined;
   let quickResult: OptimizerResult | undefined;
 
   try {
-    const baseline = buildBaseline(params);
+    const baseline = buildBaseline(params, decisionShare);
     baselineProbRuin = baseline.probRuin;
     baselineP50 = baseline.terminalP50;
     post({
@@ -120,7 +129,7 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
         pct: Math.max(1, Math.round(pct * 0.35)),
         detail: `Estimación rápida (${pct}%)`,
       });
-    });
+    }, { decisionShare });
 
     post({
       type: 'quick-result',
@@ -141,7 +150,7 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
         pct: Math.min(99, 35 + Math.round(pct * 0.65)),
         detail: `Refinando (${pct}%)`,
       });
-    });
+    }, { decisionShare });
 
     post({
       type: 'done',

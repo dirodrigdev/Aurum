@@ -88,6 +88,16 @@ export function OptimizerPage({
   const activeParams = usingSimulation ? simulationParams : baseParams;
   const sourceLabel = usingSimulation ? simulationLabel ?? 'SIMULACION ACTIVA' : 'BASE REAL';
   const activeSource: OptimizerSourceMode = usingSimulation ? 'simulation' : 'base';
+  const totalCapital = Number.isFinite(activeParams.capitalInitial) ? Math.max(0, activeParams.capitalInitial) : 0;
+  const optimizationBaseCapital = useMemo(() => {
+    const fromAurum = optimizableBaseReference.amountClp;
+    if (Number.isFinite(fromAurum) && Number(fromAurum) > 0) return Number(fromAurum);
+    return totalCapital;
+  }, [optimizableBaseReference.amountClp, totalCapital]);
+  const decisionShare = useMemo(() => {
+    if (!(totalCapital > 0)) return 1;
+    return clamp01(optimizationBaseCapital / totalCapital);
+  }, [optimizationBaseCapital, totalCapital]);
   const activeBaseline = baselineBySource[activeSource];
   const currentProbRuin = activeBaseline?.probRuin ?? null;
   const currentP50 = activeBaseline?.terminalP50 ?? null;
@@ -148,12 +158,13 @@ export function OptimizerPage({
       type: 'baseline-only',
       runId,
       params: activeParams,
+      decisionShare,
     });
 
     return () => {
       worker.terminate();
     };
-  }, [activeParams, activeSource, baselineBySource]);
+  }, [activeParams, activeSource, baselineBySource, decisionShare]);
 
   useEffect(() => {
     setResult(null);
@@ -185,6 +196,7 @@ export function OptimizerPage({
     if (isOptimizing) return;
     const runSourceMode: OptimizerSourceMode = sourceMode;
     const paramsForRun = activeParams;
+    const runDecisionShare = decisionShare;
     if (typeof Worker === 'undefined') {
       setErrorMessage('Este navegador no soporta el modo estable del optimizador.');
       startTransition(() => {
@@ -311,6 +323,7 @@ export function OptimizerPage({
       runId,
       params: paramsForRun,
       objective,
+      decisionShare: runDecisionShare,
     });
   };
 
@@ -333,7 +346,7 @@ export function OptimizerPage({
   const rvSplitOptimized = summarizeWithinBlock(optimizedWeights, 'rv');
   const rfSplitCurrent = summarizeWithinBlock(currentWeights, 'rf');
   const rfSplitOptimized = summarizeWithinBlock(optimizedWeights, 'rf');
-  const movementAmounts = visibleResult ? buildMoveAmounts(currentWeights, optimizedWeights, activeParams.capitalInitial) : [];
+  const movementAmounts = visibleResult ? buildMoveAmounts(currentWeights, optimizedWeights, optimizationBaseCapital) : [];
   const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
   const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
   const instrumentBaseSummary = useMemo(
@@ -450,14 +463,16 @@ export function OptimizerPage({
         <SectionTitle
           eyebrow="Base de partida"
           title={usingSimulation ? 'Cartera seleccionada: simulacion activa' : 'Cartera seleccionada: base real'}
-          subtitle="El optimizador parte desde esta distribucion, no desde una cartera implicita."
+          subtitle="La simulacion sigue usando patrimonio total; la decision del optimizador se limita al universo optimizable."
         />
         <RiskBar summary={riskCurrent} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginTop: 10 }}>
           <Stat label="Exito actual" value={currentSuccess === null ? 'Calculando...' : formatPercent(currentSuccess)} />
           <Stat label="Ruina actual" value={currentProbRuin === null ? 'Calculando...' : formatPercent(currentProbRuin)} />
           <Stat label="P50 actual" value={currentP50 === null ? 'Calculando...' : formatMoneyCompact(currentP50)} />
-          <Stat label="Capital base" value={formatMoneyCompact(activeParams.capitalInitial)} />
+          <Stat label="Patrimonio total (simulacion)" value={formatMoneyCompact(totalCapital)} />
+          <Stat label="Universo optimizable" value={formatMoneyCompact(optimizationBaseCapital)} />
+          <Stat label="Porcion movible" value={formatPercent(decisionShare)} />
         </div>
       </div>
 
@@ -534,8 +549,8 @@ export function OptimizerPage({
               title="Actual vs optimizado teorico"
               subtitle={
                 usingSimulation
-                  ? 'Este resultado esta calculado sobre la simulacion activa seleccionada.'
-                  : 'Este resultado esta calculado sobre la cartera base real.'
+                  ? 'Resultado sobre patrimonio total de la simulacion activa, con decision acotada al sleeve optimizable.'
+                  : 'Resultado sobre patrimonio total de la base real, con decision acotada al sleeve optimizable.'
               }
             />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
@@ -660,14 +675,14 @@ export function OptimizerPage({
               <Stat
                 label="Mover hacia RV"
                 value={`${formatSignedPp(riskOptimized.rv - riskCurrent.rv)} · ${formatSignedMoney(
-                  (riskOptimized.rv - riskCurrent.rv) * activeParams.capitalInitial,
+                  (riskOptimized.rv - riskCurrent.rv) * optimizationBaseCapital,
                 )}`}
                 accent={riskOptimized.rv >= riskCurrent.rv ? T.positive : T.negative}
               />
               <Stat
                 label="Mover hacia RF"
                 value={`${formatSignedPp(riskOptimized.rf - riskCurrent.rf)} · ${formatSignedMoney(
-                  (riskOptimized.rf - riskCurrent.rf) * activeParams.capitalInitial,
+                  (riskOptimized.rf - riskCurrent.rf) * optimizationBaseCapital,
                 )}`}
                 accent={riskOptimized.rf >= riskCurrent.rf ? T.positive : T.negative}
               />

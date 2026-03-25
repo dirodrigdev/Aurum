@@ -186,10 +186,10 @@ export default function App() {
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
 
   useEffect(() => {
-    if (simulationActive) return;
-    const snapshot = toOptimizerBaselineSnapshot(simResult.central);
-    if (snapshot) setBaseOptimizerSnapshot(snapshot);
-  }, [simulationActive, simResult.central]);
+    const baseFromAurum = applyScenarioEconomics(cloneParams(baseParams), 'base');
+    const tri = computeTriMotor(baseFromAurum);
+    setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(tri.central));
+  }, [applyScenarioEconomics, baseParams, computeTriMotor]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
@@ -356,7 +356,7 @@ export default function App() {
     <SettingsPage optimizableBaseReference={optimizableBaseReference} />
   ) : (
     <OptimizerPage
-      baseParams={simParams}
+      baseParams={baseParams}
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
