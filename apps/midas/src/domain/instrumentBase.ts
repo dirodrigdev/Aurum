@@ -25,8 +25,15 @@ export type InstrumentBaseSummary = {
   managerCount: number;
   totalAmountCLP: number;
   weightedExposure: InstrumentExposure | null;
-  coverageRatio: number | null;
-  differenceClp: number | null;
+  coverageVsOptimizableBaseRatio: number | null;
+  differenceVsOptimizableBaseClp: number | null;
+};
+
+export type OptimizableBaseReference = {
+  amountClp: number | null;
+  asOf: string | null;
+  sourceLabel: string;
+  status: 'available' | 'pending';
 };
 
 export type InstrumentBaseValidation = {
@@ -88,7 +95,7 @@ const normalizePair = (
 
 const buildSummary = (
   snapshot: InstrumentBaseSnapshot,
-  baseCapitalClp?: number | null,
+  optimizableBaseClp?: number | null,
 ): InstrumentBaseSummary => {
   const totalAmountCLP = snapshot.instruments.reduce((sum, item) => sum + item.currentAmountCLP, 0);
   const managerCount = new Set(snapshot.instruments.map((item) => item.manager)).size;
@@ -108,9 +115,9 @@ const buildSummary = (
         )
       : null;
 
-  const coverageRatio =
-    baseCapitalClp && Number.isFinite(baseCapitalClp) && baseCapitalClp > 0
-      ? totalAmountCLP / baseCapitalClp
+  const coverageVsOptimizableBaseRatio =
+    optimizableBaseClp && Number.isFinite(optimizableBaseClp) && optimizableBaseClp > 0
+      ? totalAmountCLP / optimizableBaseClp
       : null;
 
   return {
@@ -118,11 +125,11 @@ const buildSummary = (
     managerCount,
     totalAmountCLP,
     weightedExposure,
-    coverageRatio,
-    differenceClp:
-      coverageRatio === null || !baseCapitalClp || !Number.isFinite(baseCapitalClp)
+    coverageVsOptimizableBaseRatio,
+    differenceVsOptimizableBaseClp:
+      coverageVsOptimizableBaseRatio === null || !optimizableBaseClp || !Number.isFinite(optimizableBaseClp)
         ? null
-        : totalAmountCLP - baseCapitalClp,
+        : totalAmountCLP - optimizableBaseClp,
   };
 };
 
@@ -136,7 +143,7 @@ const parseRootArray = (parsed: unknown): unknown[] | null => {
 
 export const validateInstrumentBaseJson = (
   rawJson: string,
-  baseCapitalClp?: number | null,
+  optimizableBaseClp?: number | null,
 ): InstrumentBaseValidation => {
   const trimmed = String(rawJson || '').trim();
   if (!trimmed) {
@@ -245,13 +252,13 @@ export const validateInstrumentBaseJson = (
         }
       : null;
 
-  const summary = snapshot ? buildSummary(snapshot, baseCapitalClp) : null;
+  const summary = snapshot ? buildSummary(snapshot, optimizableBaseClp) : null;
 
-  if (summary && summary.coverageRatio !== null && summary.coverageRatio < 0.95) {
-    warnings.push('La cobertura es parcial respecto a la cartera base real actual.');
+  if (summary && summary.coverageVsOptimizableBaseRatio !== null && summary.coverageVsOptimizableBaseRatio < 0.95) {
+    warnings.push('La cobertura es parcial respecto a la base optimizable oficial.');
   }
-  if (summary && summary.coverageRatio !== null && summary.coverageRatio > 1.05) {
-    warnings.push('El total cargado supera la cartera base real actual.');
+  if (summary && summary.coverageVsOptimizableBaseRatio !== null && summary.coverageVsOptimizableBaseRatio > 1.05) {
+    warnings.push('La base instrumental cargada supera la base optimizable oficial.');
   }
 
   return {
@@ -288,8 +295,8 @@ export const clearInstrumentBaseSnapshot = () => {
 
 export const summarizeInstrumentBase = (
   snapshot: InstrumentBaseSnapshot | null,
-  baseCapitalClp?: number | null,
+  optimizableBaseClp?: number | null,
 ): InstrumentBaseSummary | null => {
   if (!snapshot) return null;
-  return buildSummary(snapshot, baseCapitalClp);
+  return buildSummary(snapshot, optimizableBaseClp);
 };

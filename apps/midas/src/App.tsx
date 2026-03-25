@@ -11,6 +11,7 @@ import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
+import type { OptimizableBaseReference } from './domain/instrumentBase';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -268,6 +269,15 @@ export default function App() {
     () => (simulationActive ? toOptimizerBaselineSnapshot(simResult.central) : null),
     [simulationActive, simResult.central],
   );
+  const optimizableBaseReference = useMemo<OptimizableBaseReference>(
+    () => ({
+      amountClp: null,
+      asOf: null,
+      sourceLabel: 'Aurum · último cierre confirmado',
+      status: 'pending',
+    }),
+    [],
+  );
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
@@ -291,7 +301,7 @@ export default function App() {
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'settings' ? (
-    <SettingsPage baseCapitalClp={baseParams.capitalInitial} />
+    <SettingsPage optimizableBaseReference={optimizableBaseReference} />
   ) : (
     <OptimizerPage
       baseParams={simParams}

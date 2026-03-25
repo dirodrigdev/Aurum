@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   clearInstrumentBaseSnapshot,
   loadInstrumentBaseSnapshot,
+  type OptimizableBaseReference,
   saveInstrumentBaseSnapshot,
   summarizeInstrumentBase,
   validateInstrumentBaseJson,
@@ -120,7 +121,7 @@ function ExposureSummary({ summary }: { summary: InstrumentBaseSummary | null })
   );
 }
 
-export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
+export function SettingsPage({ optimizableBaseReference }: { optimizableBaseReference: OptimizableBaseReference }) {
   const [savedSnapshot, setSavedSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const [editorValue, setEditorValue] = useState(() => loadInstrumentBaseSnapshot()?.rawJson || '');
   const [validation, setValidation] = useState<InstrumentBaseValidation | null>(null);
@@ -135,12 +136,12 @@ export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
   }, []);
 
   const savedSummary = useMemo(
-    () => summarizeInstrumentBase(savedSnapshot, baseCapitalClp),
-    [savedSnapshot, baseCapitalClp],
+    () => summarizeInstrumentBase(savedSnapshot, optimizableBaseReference.amountClp),
+    [savedSnapshot, optimizableBaseReference.amountClp],
   );
 
   const runValidation = () => {
-    const next = validateInstrumentBaseJson(editorValue, baseCapitalClp);
+    const next = validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
     setValidation(next);
     setStatusMessage(next.ok ? 'JSON válido. Puedes guardarlo como base instrumental.' : 'Corrige el JSON antes de guardar.');
     return next;
@@ -149,7 +150,7 @@ export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
   const handleSave = () => {
     const next = validation && validation.snapshot?.rawJson === editorValue.trim()
       ? validation
-      : validateInstrumentBaseJson(editorValue, baseCapitalClp);
+      : validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
     setValidation(next);
     if (!next.ok || !next.snapshot) {
       setStatusMessage('No pude guardar la base instrumental. Revisa los errores.');
@@ -200,15 +201,19 @@ export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
             lineHeight: 1.5,
           }}
         >
-          La cobertura se compara contra la <strong style={{ color: T.textPrimary }}>cartera base real</strong> de Midas, no contra una simulación activa.
+          La cobertura se compara contra la <strong style={{ color: T.textPrimary }}>base optimizable oficial</strong>, que debe venir desde Aurum / último cierre confirmado.
         </div>
       </section>
 
       <section style={{ display: 'grid', gap: 12 }}>
         <SummaryCard
-          title="Cartera base real"
-          value={formatMoneyClp(baseCapitalClp)}
-          subtitle="Referencia actual para medir cobertura de la base cargada"
+          title="Inversiones optimizables"
+          value={formatMoneyClp(optimizableBaseReference.amountClp)}
+          subtitle={
+            optimizableBaseReference.status === 'available'
+              ? `Fuente: ${optimizableBaseReference.sourceLabel}${optimizableBaseReference.asOf ? ` · ${formatDateTime(optimizableBaseReference.asOf)}` : ''}`
+              : `Pendiente de conexión con ${optimizableBaseReference.sourceLabel}`
+          }
         />
         {savedSummary && (
           <>
@@ -219,14 +224,14 @@ export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
                 subtitle={`${savedSummary.managerCount} administradora(s)`}
               />
               <SummaryCard
-                title="Total cargado"
+                title="Base instrumental cargada"
                 value={formatMoneyClp(savedSummary.totalAmountCLP)}
                 subtitle={`Última actualización: ${formatDateTime(savedSnapshot?.savedAt || null)}`}
               />
               <SummaryCard
                 title="Cobertura"
-                value={formatPct(savedSummary.coverageRatio)}
-                subtitle={`Diferencia vs base: ${formatMoneyClp(savedSummary.differenceClp)}`}
+                value={formatPct(savedSummary.coverageVsOptimizableBaseRatio)}
+                subtitle={`Diferencia vs base optimizable: ${formatMoneyClp(savedSummary.differenceVsOptimizableBaseClp)}`}
               />
             </div>
             <ExposureSummary summary={savedSummary} />
@@ -396,8 +401,8 @@ export function SettingsPage({ baseCapitalClp }: { baseCapitalClp: number }) {
               <div style={{ color: T.textSecondary, fontSize: 13, display: 'grid', gap: 6 }}>
                 <div>Instrumentos válidos: <strong style={{ color: T.textPrimary }}>{validation.summary.instrumentCount}</strong></div>
                 <div>Total cargado: <strong style={{ color: T.textPrimary }}>{formatMoneyClp(validation.summary.totalAmountCLP)}</strong></div>
-                <div>Cobertura estimada: <strong style={{ color: T.textPrimary }}>{formatPct(validation.summary.coverageRatio)}</strong></div>
-                <div>Diferencia vs base real: <strong style={{ color: T.textPrimary }}>{formatMoneyClp(validation.summary.differenceClp)}</strong></div>
+                <div>Cobertura estimada: <strong style={{ color: T.textPrimary }}>{formatPct(validation.summary.coverageVsOptimizableBaseRatio)}</strong></div>
+                <div>Diferencia vs base optimizable: <strong style={{ color: T.textPrimary }}>{formatMoneyClp(validation.summary.differenceVsOptimizableBaseClp)}</strong></div>
               </div>
             )}
           </div>
