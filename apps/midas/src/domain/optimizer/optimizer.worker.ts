@@ -1,9 +1,8 @@
 /// <reference lib="webworker" />
 
 import type { ModelParameters, OptimizerObjective, OptimizerResult } from '../model/types';
-import { DEFAULT_OPTIMIZER_CONSTRAINTS, SCENARIO_VARIANTS } from '../model/defaults';
-import { applyScenarioVariant, runSimulationCore } from '../simulation/engine';
-import { runOptimizer } from './gridSearch';
+import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../model/defaults';
+import { evaluateOptimizerPoint, runOptimizer } from './gridSearch';
 
 type StartMessage = {
   type: 'start';
@@ -56,23 +55,10 @@ function post(message: WorkerMessage) {
 }
 
 function buildBaseline(params: ModelParameters) {
-  const variant = SCENARIO_VARIANTS.find((item) => item.id === params.activeScenario) ?? SCENARIO_VARIANTS[0];
-  const result = runSimulationCore(
-    applyScenarioVariant(
-      {
-        ...params,
-        simulation: {
-          ...params.simulation,
-          nSim: BASELINE_SIM_COUNT,
-          seed: 42,
-        },
-      },
-      variant,
-    ),
-  );
+  const result = evaluateOptimizerPoint(params, params.weights, params.simulation.nSim);
   return {
     probRuin: result.probRuin,
-    terminalP50: result.terminalWealthPercentiles[50] || 0,
+    terminalP50: result.terminalP50 || 0,
   };
 }
 

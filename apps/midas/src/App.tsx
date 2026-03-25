@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CashflowEvent, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant, runSimulation } from './domain/simulation/engine';
@@ -244,6 +244,11 @@ export default function App() {
           : 'SIMULACIÓN · C'
       : 'BASE';
 
+  const optimizerSimulationParams = useMemo(
+    () => applySimulationOverrides(simParams, simOverrides),
+    [simOverrides, simParams],
+  );
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult.central}
@@ -267,8 +272,8 @@ export default function App() {
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : (
     <OptimizerPage
-      baseParams={baseParams}
-      simulationParams={simParams}
+      baseParams={simParams}
+      simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
     />

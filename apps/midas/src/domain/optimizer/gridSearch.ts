@@ -5,8 +5,7 @@ import type {
   ModelParameters, PortfolioWeights,
   OptimizerConstraints, OptimizerObjective, OptimizerResult
 } from '../model/types';
-import { SCENARIO_VARIANTS } from '../model/defaults';
-import { applyScenarioVariant, runSimulationCore } from '../simulation/engine';
+import { runSimulationCentral } from '../simulation/engineCentral';
 
 type GridPoint = {
   weights: PortfolioWeights;
@@ -91,10 +90,10 @@ function describeMoves(
   return sleeves
     .map(([label, key]) => ({
       sleeve: label,
-      delta: Math.round((optimal[key] - current[key]) * 1000) / 10,
+      delta: (optimal[key] - current[key]) * 100,
       direction: (optimal[key] >= current[key] ? 'up' : 'down') as 'up' | 'down',
     }))
-    .filter(m => Math.abs(m.delta) >= 0.5);
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
 function buildOptimizerParams(
@@ -102,27 +101,23 @@ function buildOptimizerParams(
   weights: PortfolioWeights,
   nSimPerPoint: number,
 ): ModelParameters {
-  const variant = SCENARIO_VARIANTS.find((item) => item.id === baseParams.activeScenario) ?? SCENARIO_VARIANTS[0];
-  return applyScenarioVariant(
-    {
-      ...baseParams,
-      weights,
-      simulation: {
-        ...baseParams.simulation,
-        nSim: nSimPerPoint,
-        seed: 42,
-      },
+  return {
+    ...baseParams,
+    weights,
+    simulation: {
+      ...baseParams.simulation,
+      nSim: nSimPerPoint,
+      seed: 42,
     },
-    variant,
-  );
+  };
 }
 
-function simulatePoint(
+export function evaluateOptimizerPoint(
   baseParams: ModelParameters,
   weights: PortfolioWeights,
   nSimPerPoint: number,
 ): SimulationPoint {
-  const result = runSimulationCore(buildOptimizerParams(baseParams, weights, nSimPerPoint));
+  const result = runSimulationCentral(buildOptimizerParams(baseParams, weights, nSimPerPoint));
   return {
     probRuin: result.probRuin,
     terminalP50: result.terminalWealthPercentiles[50] || 0,
@@ -148,7 +143,7 @@ export function runOptimizer(
 
   for (let i = 0; i < grid.length; i++) {
     const weights = grid[i];
-    const r = simulatePoint(baseParams, weights, nSimPerPoint);
+    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint);
     results.push({
       weights,
       probRuin:    r.probRuin,
@@ -163,16 +158,17 @@ export function runOptimizer(
   // Encontrar el óptimo
   const best = results.reduce((a, b) => score(a, objective) > score(b, objective) ? a : b);
 
-  // Correr el punto actual para comparar
-  const currentResult = simulatePoint(baseParams, baseParams.weights, nSimPerPoint);
+  const displaySimCount = baseParams.simulation.nSim;
+  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount);
+  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount);
 
   return {
     weights:       best.weights,
-    probRuin:      best.probRuin,
-    terminalP50:   best.terminalP50,
-    terminalP10:   best.terminalP10,
-    vsCurrentRuin: best.probRuin - currentResult.probRuin,
-    vsCurrentP50:  best.terminalP50 - currentResult.terminalP50,
+    probRuin:      bestResult.probRuin,
+    terminalP50:   bestResult.terminalP50,
+    terminalP10:   bestResult.terminalP10,
+    vsCurrentRuin: currentResult.probRuin - bestResult.probRuin,
+    vsCurrentP50:  bestResult.terminalP50 - currentResult.terminalP50,
     moves:         describeMoves(baseParams.weights, best.weights),
   };
 }
@@ -199,7 +195,7 @@ export async function runOptimizerAsync(
   };
 
   if (total === 0) {
-    const currentResult = simulatePoint(baseParams, baseParams.weights, nSimPerPoint);
+    const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, baseParams.simulation.nSim);
     return {
       weights: baseParams.weights,
       probRuin: currentResult.probRuin,
@@ -216,7 +212,7 @@ export async function runOptimizerAsync(
       throw new Error('optimizer_cancelled');
     }
     const weights = grid[i];
-    const r = simulatePoint(baseParams, weights, nSimPerPoint);
+    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint);
     results.push({
       weights,
       probRuin: r.probRuin,
@@ -230,15 +226,17 @@ export async function runOptimizerAsync(
   }
 
   const best = results.reduce((a, b) => (score(a, objective) > score(b, objective) ? a : b));
-  const currentResult = simulatePoint(baseParams, baseParams.weights, nSimPerPoint);
+  const displaySimCount = baseParams.simulation.nSim;
+  const bestResult = evaluateOptimizerPoint(baseParams, best.weights, displaySimCount);
+  const currentResult = evaluateOptimizerPoint(baseParams, baseParams.weights, displaySimCount);
 
   return {
     weights: best.weights,
-    probRuin: best.probRuin,
-    terminalP50: best.terminalP50,
-    terminalP10: best.terminalP10,
-    vsCurrentRuin: best.probRuin - currentResult.probRuin,
-    vsCurrentP50: best.terminalP50 - currentResult.terminalP50,
+    probRuin: bestResult.probRuin,
+    terminalP50: bestResult.terminalP50,
+    terminalP10: bestResult.terminalP10,
+    vsCurrentRuin: currentResult.probRuin - bestResult.probRuin,
+    vsCurrentP50: bestResult.terminalP50 - currentResult.terminalP50,
     moves: describeMoves(baseParams.weights, best.weights),
   };
 }
@@ -255,7 +253,7 @@ export function runFrontier(
   const grid = generateGrid(constraints);
 
   return grid.map(weights => {
-    const r = simulatePoint(baseParams, weights, nSimPerPoint);
+    const r = evaluateOptimizerPoint(baseParams, weights, nSimPerPoint);
     return {
       probRuin:    r.probRuin,
       terminalP50: r.terminalP50,

@@ -256,8 +256,9 @@ export function OptimizerPage({
   const rvSplitOptimized = summarizeWithinBlock(optimizedWeights, 'rv');
   const rfSplitCurrent = summarizeWithinBlock(currentWeights, 'rf');
   const rfSplitOptimized = summarizeWithinBlock(optimizedWeights, 'rf');
-  const movementAmounts = visibleResult ? buildMoveAmounts(visibleResult.moves, activeParams.capitalInitial) : [];
-  const insight = visibleResult ? renderInsight(visibleResult, usingSimulation) : null;
+  const movementAmounts = visibleResult ? buildMoveAmounts(currentWeights, optimizedWeights, activeParams.capitalInitial) : [];
+  const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
+  const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -491,7 +492,7 @@ export function OptimizerPage({
                     {move.direction === 'up' ? '↑' : '↓'}
                   </span>
                   <span style={{ color: T.textSecondary, fontSize: 13, flex: 1 }}>{move.sleeve}</span>
-                  <span style={{ ...css.mono, color: T.textPrimary, fontSize: 12 }}>{formatSignedPp(move.delta / 100)}</span>
+                  <span style={{ ...css.mono, color: T.textPrimary, fontSize: 12 }}>{formatSignedPp(move.deltaPp / 100)}</span>
                   <span
                     style={{
                       ...css.mono,
@@ -505,6 +506,19 @@ export function OptimizerPage({
                   </span>
                 </div>
               ))}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: 4,
+                  paddingTop: 10,
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Neto total</span>
+                <span style={{ ...css.mono, color: T.textSecondary, fontSize: 12 }}>{formatSignedMoney(movementNetAmount)}</span>
+              </div>
               {movementAmounts.length === 0 && (
                 <p style={{ color: T.textMuted, fontSize: 12, margin: 0 }}>
                   La cartera ya está muy cerca del punto teorico para este objetivo.
@@ -726,17 +740,36 @@ function summarizeWithinBlock(weights: PortfolioWeights, block: 'rv' | 'rf') {
   };
 }
 
-function buildMoveAmounts(moves: OptimizerResult['moves'], capitalInitial: number) {
-  return moves.map((move) => ({
-    ...move,
-    amount: (move.delta / 100) * capitalInitial,
-  }));
+function buildMoveAmounts(currentWeights: PortfolioWeights, optimizedWeights: PortfolioWeights, capitalInitial: number) {
+  const sleeves: Array<{ sleeve: string; current: number; optimized: number }> = [
+    { sleeve: 'RV Global', current: currentWeights.rvGlobal, optimized: optimizedWeights.rvGlobal },
+    { sleeve: 'RF Global', current: currentWeights.rfGlobal, optimized: optimizedWeights.rfGlobal },
+    { sleeve: 'RV Chile', current: currentWeights.rvChile, optimized: optimizedWeights.rvChile },
+    { sleeve: 'RF Chile UF', current: currentWeights.rfChile, optimized: optimizedWeights.rfChile },
+  ];
+
+  return sleeves
+    .map((item) => {
+      const deltaPp = (item.optimized - item.current) * 100;
+      return {
+        sleeve: item.sleeve,
+        deltaPp,
+        direction: (deltaPp >= 0 ? 'up' : 'down') as 'up' | 'down',
+        amount: (deltaPp / 100) * capitalInitial,
+      };
+    })
+    .filter((move) => Math.abs(move.deltaPp) >= 0.01 || Math.abs(move.amount) >= 1)
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
 }
 
-function renderInsight(result: OptimizerResult, usingSimulation: boolean): string | null {
+function renderInsight(
+  result: OptimizerResult,
+  movementAmounts: Array<{ sleeve: string; deltaPp: number; direction: 'up' | 'down'; amount: number }>,
+  usingSimulation: boolean,
+): string | null {
   const successGainPp = result.vsCurrentRuin * 100;
   const source = usingSimulation ? 'la simulacion activa' : 'la cartera base';
-  const topMove = result.moves[0];
+  const topMove = movementAmounts[0];
   if (!topMove) {
     return `Sobre ${source}, el optimizador no detecta un cambio teorico material para este objetivo.`;
   }
@@ -750,7 +783,7 @@ function formatPercent(value: number) {
 }
 
 function formatSignedPp(value: number) {
-  const pp = value * 100;
+  const pp = Math.abs(value) < 0.00005 ? 0 : value * 100;
   return `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}pp`;
 }
 
@@ -763,7 +796,8 @@ function formatMoneyCompact(value: number) {
 }
 
 function formatSignedMoney(value: number) {
-  return `${value >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(value))}`;
+  const safeValue = Math.abs(value) < 1 ? 0 : value;
+  return `${safeValue >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(safeValue))}`;
 }
 
 function clamp01(value: number) {
