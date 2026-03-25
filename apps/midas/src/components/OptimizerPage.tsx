@@ -3,6 +3,8 @@ import type { ModelParameters, OptimizerObjective, OptimizerResult, PortfolioWei
 import { T, css } from './theme';
 
 type OptimizerSourceMode = 'base' | 'simulation';
+type BaselineSnapshot = { probRuin: number; terminalP50: number };
+type BaselineBySource = Record<OptimizerSourceMode, BaselineSnapshot | null>;
 
 type OptimizerWorkerMessage =
   | {
@@ -44,19 +46,25 @@ export function OptimizerPage({
   simulationParams,
   simulationActive,
   simulationLabel,
+  preloadedBaseStats,
+  preloadedSimulationStats,
 }: {
   baseParams: ModelParameters;
   simulationParams: ModelParameters;
   simulationActive: boolean;
   simulationLabel?: string;
+  preloadedBaseStats?: BaselineSnapshot | null;
+  preloadedSimulationStats?: BaselineSnapshot | null;
 }) {
   const [result, setResult] = useState<OptimizerResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
   const [progress, setProgress] = useState(0);
   const [progressDetail, setProgressDetail] = useState('');
-  const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
-  const [currentP50, setCurrentP50] = useState<number | null>(null);
+  const [baselineBySource, setBaselineBySource] = useState<BaselineBySource>({
+    base: preloadedBaseStats ?? null,
+    simulation: preloadedSimulationStats ?? null,
+  });
   const [phase, setPhase] = useState<'idle' | 'quick' | 'full'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sourceMode, setSourceMode] = useState<OptimizerSourceMode>('base');
@@ -68,6 +76,10 @@ export function OptimizerPage({
   const usingSimulation = simulationActive && sourceMode === 'simulation';
   const activeParams = usingSimulation ? simulationParams : baseParams;
   const sourceLabel = usingSimulation ? simulationLabel ?? 'SIMULACION ACTIVA' : 'BASE REAL';
+  const activeSource: OptimizerSourceMode = usingSimulation ? 'simulation' : 'base';
+  const activeBaseline = baselineBySource[activeSource];
+  const currentProbRuin = activeBaseline?.probRuin ?? null;
+  const currentP50 = activeBaseline?.terminalP50 ?? null;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -84,9 +96,47 @@ export function OptimizerPage({
   }, [simulationActive, sourceMode]);
 
   useEffect(() => {
+    setBaselineBySource((prev) => ({
+      base: preloadedBaseStats ?? prev.base,
+      simulation: preloadedSimulationStats ?? prev.simulation,
+    }));
+  }, [preloadedBaseStats, preloadedSimulationStats]);
+
+  useEffect(() => {
+    if (baselineBySource[activeSource]) return;
+    if (typeof Worker === 'undefined') return;
+
+    const runId = Date.now();
+    const worker = new Worker(new URL('../domain/optimizer/optimizer.worker.ts', import.meta.url), { type: 'module' });
+
+    worker.onmessage = (event: MessageEvent<OptimizerWorkerMessage>) => {
+      const message = event.data;
+      if (!message || message.runId !== runId) return;
+      if (message.type === 'baseline') {
+        setBaselineBySource((prev) => ({
+          ...prev,
+          [activeSource]: {
+            probRuin: message.probRuin,
+            terminalP50: message.terminalP50,
+          },
+        }));
+        worker.terminate();
+      }
+    };
+
+    worker.postMessage({
+      type: 'baseline-only',
+      runId,
+      params: activeParams,
+    });
+
+    return () => {
+      worker.terminate();
+    };
+  }, [activeParams, activeSource, baselineBySource]);
+
+  useEffect(() => {
     setResult(null);
-    setCurrentProbRuin(null);
-    setCurrentP50(null);
     setErrorMessage(null);
     setProgress(0);
     setProgressDetail('');
@@ -113,10 +163,12 @@ export function OptimizerPage({
 
   const handleOptimize = () => {
     if (isOptimizing) return;
+    const runSourceMode: OptimizerSourceMode = sourceMode;
+    const paramsForRun = activeParams;
     if (typeof Worker === 'undefined') {
       setErrorMessage('Este navegador no soporta el modo estable del optimizador.');
       startTransition(() => {
-        setResult(buildFallbackResult(activeParams, null, null));
+        setResult(buildFallbackResult(paramsForRun, null, null));
       });
       return;
     }
@@ -141,7 +193,7 @@ export function OptimizerPage({
       if (!isMountedRef.current || runIdRef.current !== runId || workerRef.current !== worker) return;
       stopWorker();
       startTransition(() => {
-        setResult(sanitizeResult(quickResult ?? buildFallbackResult(activeParams, baselineRuin, baselineP50), activeParams));
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(paramsForRun, baselineRuin, baselineP50), paramsForRun));
       });
       setErrorMessage('La optimizacion tardó demasiado. Dejé un resultado de respaldo para que la app siga usable.');
       setProgressDetail('Tiempo maximo alcanzado');
@@ -157,8 +209,13 @@ export function OptimizerPage({
       if (message.type === 'baseline') {
         baselineRuin = message.probRuin;
         baselineP50 = message.terminalP50;
-        setCurrentProbRuin(message.probRuin);
-        setCurrentP50(message.terminalP50);
+        setBaselineBySource((prev) => ({
+          ...prev,
+          [runSourceMode]: {
+            probRuin: message.probRuin,
+            terminalP50: message.terminalP50,
+          },
+        }));
         setProgressDetail('Linea base lista');
         return;
       }
@@ -171,14 +228,14 @@ export function OptimizerPage({
       }
 
       if (message.type === 'quick-result') {
-        quickResult = sanitizeResult(message.result, activeParams);
+        quickResult = sanitizeResult(message.result, paramsForRun);
         setProgress((prev) => Math.max(prev, 35));
         return;
       }
 
       if (message.type === 'done') {
         startTransition(() => {
-          setResult(sanitizeResult(message.result, activeParams));
+          setResult(sanitizeResult(message.result, paramsForRun));
         });
         setProgress(100);
         setProgressDetail('Optimizacion completada');
@@ -190,9 +247,9 @@ export function OptimizerPage({
       if (message.type === 'error') {
         baselineRuin = message.baselineProbRuin ?? baselineRuin;
         baselineP50 = message.baselineP50 ?? baselineP50;
-        quickResult = message.quickResult ? sanitizeResult(message.quickResult, activeParams) : quickResult;
+        quickResult = message.quickResult ? sanitizeResult(message.quickResult, paramsForRun) : quickResult;
         startTransition(() => {
-          setResult(sanitizeResult(quickResult ?? buildFallbackResult(activeParams, baselineRuin, baselineP50), activeParams));
+          setResult(sanitizeResult(quickResult ?? buildFallbackResult(paramsForRun, baselineRuin, baselineP50), paramsForRun));
         });
         setErrorMessage(
           'No pude completar la optimizacion. Te dejo un resultado de respaldo para que no pierdas continuidad.',
@@ -207,7 +264,7 @@ export function OptimizerPage({
       if (!isMountedRef.current || runIdRef.current !== runId) return;
       stopWorker();
       startTransition(() => {
-        setResult(sanitizeResult(quickResult ?? buildFallbackResult(activeParams, baselineRuin, baselineP50), activeParams));
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(paramsForRun, baselineRuin, baselineP50), paramsForRun));
       });
       setErrorMessage('El calculo falló en segundo plano. Dejé un resultado de respaldo para mantener la app estable.');
       setProgressDetail('Error en optimizacion');
@@ -220,7 +277,7 @@ export function OptimizerPage({
       if (!isMountedRef.current || runIdRef.current !== runId) return;
       stopWorker();
       startTransition(() => {
-        setResult(sanitizeResult(quickResult ?? buildFallbackResult(activeParams, baselineRuin, baselineP50), activeParams));
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(paramsForRun, baselineRuin, baselineP50), paramsForRun));
       });
       setErrorMessage('No pude leer la respuesta del optimizador. Te dejo un resultado de respaldo.');
       setProgressDetail('Error de comunicacion');
@@ -232,7 +289,7 @@ export function OptimizerPage({
     worker.postMessage({
       type: 'start',
       runId,
-      params: activeParams,
+      params: paramsForRun,
       objective,
     });
   };
@@ -306,22 +363,53 @@ export function OptimizerPage({
         <div style={{ color: T.textMuted, fontSize: 11 }}>Objetivo</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 8 }}>
           {OBJECTIVES.map(([id, label, desc]) => (
-            <button
-              key={id}
-              onClick={() => setObjective(id)}
-              style={{
-                background: objective === id ? T.surfaceEl : 'transparent',
-                border: `1px solid ${objective === id ? T.primary : T.border}`,
-                color: objective === id ? T.primary : T.textSecondary,
-                borderRadius: 10,
-                padding: '10px 12px',
-                textAlign: 'left',
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>{label}</div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{desc}</div>
-            </button>
+            (() => {
+              const isActive = objective === id;
+              const isPrimary = id === 'minRuin';
+              const background = isPrimary
+                ? isActive
+                  ? T.primary
+                  : 'rgba(91, 140, 255, 0.14)'
+                : isActive
+                  ? T.surfaceEl
+                  : 'transparent';
+              const borderColor = isPrimary ? T.primary : isActive ? T.primary : T.border;
+              const titleColor = isPrimary ? (isActive ? '#FFFFFF' : T.primary) : isActive ? T.textPrimary : T.textSecondary;
+              const descColor = isPrimary ? (isActive ? 'rgba(255,255,255,0.82)' : T.textSecondary) : T.textMuted;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setObjective(id)}
+                  style={{
+                    background,
+                    border: `1px solid ${borderColor}`,
+                    color: titleColor,
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ fontWeight: 700 }}>{label}</div>
+                    {isPrimary && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '2px 7px',
+                          borderRadius: 999,
+                          border: `1px solid ${isActive ? 'rgba(255,255,255,0.6)' : 'rgba(91, 140, 255, 0.45)'}`,
+                          color: isActive ? '#FFFFFF' : T.primary,
+                        }}
+                      >
+                        Principal
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ color: descColor, fontSize: 11, marginTop: 4 }}>{desc}</div>
+                </button>
+              );
+            })()
           ))}
         </div>
       </div>
@@ -334,9 +422,9 @@ export function OptimizerPage({
         />
         <RiskBar summary={riskCurrent} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginTop: 10 }}>
-          <Stat label="Exito actual" value={currentSuccess === null ? 'Aun no calculado' : formatPercent(currentSuccess)} />
-          <Stat label="Ruina actual" value={currentProbRuin === null ? 'Aun no calculado' : formatPercent(currentProbRuin)} />
-          <Stat label="P50 actual" value={currentP50 === null ? 'Aun no calculado' : formatMoneyCompact(currentP50)} />
+          <Stat label="Exito actual" value={currentSuccess === null ? 'Calculando...' : formatPercent(currentSuccess)} />
+          <Stat label="Ruina actual" value={currentProbRuin === null ? 'Calculando...' : formatPercent(currentProbRuin)} />
+          <Stat label="P50 actual" value={currentP50 === null ? 'Calculando...' : formatMoneyCompact(currentP50)} />
           <Stat label="Capital base" value={formatMoneyCompact(activeParams.capitalInitial)} />
         </div>
       </div>

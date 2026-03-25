@@ -20,6 +20,19 @@ type TriMotorResult = {
   prudent: SimulationResults | null;
 };
 
+type OptimizerBaselineSnapshot = {
+  probRuin: number;
+  terminalP50: number;
+};
+
+function toOptimizerBaselineSnapshot(result: SimulationResults | null): OptimizerBaselineSnapshot | null {
+  if (!result) return null;
+  return {
+    probRuin: result.probRuin,
+    terminalP50: result.terminalWealthPercentiles[50] ?? 0,
+  };
+}
+
 function cloneParams(p: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(p));
 }
@@ -77,6 +90,7 @@ export default function App() {
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
+  const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
   const [simWorking, setSimWorking] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
@@ -167,6 +181,12 @@ export default function App() {
     };
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
 
+  useEffect(() => {
+    if (simulationActive) return;
+    const snapshot = toOptimizerBaselineSnapshot(simResult.central);
+    if (snapshot) setBaseOptimizerSnapshot(snapshot);
+  }, [simulationActive, simResult.central]);
+
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
       const next = updateByPath(prev, path, value);
@@ -243,6 +263,10 @@ export default function App() {
     () => applySimulationOverrides(simParams, simOverrides),
     [simOverrides, simParams],
   );
+  const simulationOptimizerSnapshot = useMemo(
+    () => (simulationActive ? toOptimizerBaselineSnapshot(simResult.central) : null),
+    [simulationActive, simResult.central],
+  );
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
@@ -271,6 +295,8 @@ export default function App() {
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
+      preloadedBaseStats={baseOptimizerSnapshot}
+      preloadedSimulationStats={simulationOptimizerSnapshot}
     />
   );
 

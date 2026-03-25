@@ -4,12 +4,18 @@ import type { ModelParameters, OptimizerObjective, OptimizerResult } from '../mo
 import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../model/defaults';
 import { evaluateOptimizerPoint, runOptimizer } from './gridSearch';
 
-type StartMessage = {
-  type: 'start';
-  runId: number;
-  params: ModelParameters;
-  objective: OptimizerObjective;
-};
+type StartMessage =
+  | {
+      type: 'start';
+      runId: number;
+      params: ModelParameters;
+      objective: OptimizerObjective;
+    }
+  | {
+      type: 'baseline-only';
+      runId: number;
+      params: ModelParameters;
+    };
 
 type WorkerMessage =
   | {
@@ -61,7 +67,29 @@ function buildBaseline(params: ModelParameters) {
 }
 
 self.onmessage = (event: MessageEvent<StartMessage>) => {
-  if (event.data?.type !== 'start') return;
+  if (!event.data) return;
+
+  if (event.data.type === 'baseline-only') {
+    const { runId, params } = event.data;
+    try {
+      const baseline = buildBaseline(params);
+      post({
+        type: 'baseline',
+        runId,
+        probRuin: baseline.probRuin,
+        terminalP50: baseline.terminalP50,
+      });
+    } catch (error) {
+      post({
+        type: 'error',
+        runId,
+        message: error instanceof Error ? error.message : 'optimizer_worker_failed',
+      });
+    }
+    return;
+  }
+
+  if (event.data.type !== 'start') return;
 
   const { runId, params, objective } = event.data;
   let baselineProbRuin: number | undefined;
