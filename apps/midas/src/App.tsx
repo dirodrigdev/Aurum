@@ -266,7 +266,12 @@ export default function App() {
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : (
-    <OptimizerPage params={simParams} stateLabel={stateLabel} />
+    <OptimizerPage
+      baseParams={baseParams}
+      simulationParams={simParams}
+      simulationActive={simulationActive}
+      simulationLabel={stateLabel}
+    />
   );
 
   return (
