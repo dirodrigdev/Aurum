@@ -94,8 +94,12 @@ export function OptimizerPage({
     if (Number.isFinite(fromAurum) && Number(fromAurum) > 0) return Number(fromAurum);
     return totalCapital;
   }, [optimizableBaseReference.amountClp, totalCapital]);
+  const hasOfficialOptimizableBase = useMemo(() => {
+    const fromAurum = optimizableBaseReference.amountClp;
+    return Number.isFinite(fromAurum) && Number(fromAurum) > 0;
+  }, [optimizableBaseReference.amountClp]);
   const decisionShare = useMemo(() => {
-    if (!(totalCapital > 0)) return 1;
+    if (!(totalCapital > 0)) return 0;
     return clamp01(optimizationBaseCapital / totalCapital);
   }, [optimizationBaseCapital, totalCapital]);
   const activeBaseline = baselineBySource[activeSource];
@@ -470,10 +474,15 @@ export function OptimizerPage({
           <Stat label="Exito actual" value={currentSuccess === null ? 'Calculando...' : formatPercent(currentSuccess)} />
           <Stat label="Ruina actual" value={currentProbRuin === null ? 'Calculando...' : formatPercent(currentProbRuin)} />
           <Stat label="P50 actual" value={currentP50 === null ? 'Calculando...' : formatMoneyCompact(currentP50)} />
-          <Stat label="Patrimonio total (simulacion)" value={formatMoneyCompact(totalCapital)} />
-          <Stat label="Universo optimizable" value={formatMoneyCompact(optimizationBaseCapital)} />
+          <Stat label="Patrimonio total evaluado" value={formatMoneyCompact(totalCapital)} />
+          <Stat label={hasOfficialOptimizableBase ? 'Universo optimizable' : 'Universo optimizable (fallback)'} value={formatMoneyCompact(optimizationBaseCapital)} />
           <Stat label="Porcion movible" value={formatPercent(decisionShare)} />
         </div>
+        {!hasOfficialOptimizableBase && (
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 8 }}>
+            Sin referencia oficial de inversiones optimizables: temporalmente se usa 100% del patrimonio como universo de decision.
+          </div>
+        )}
       </div>
 
       {isOptimizing ? (
