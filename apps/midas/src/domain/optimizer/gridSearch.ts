@@ -5,7 +5,7 @@ import type {
   ModelParameters, PortfolioWeights,
   OptimizerConstraints, OptimizerObjective, OptimizerResult
 } from '../model/types';
-import { runSimulationCentral } from '../simulation/engineCentral';
+import { runMidasSimulation } from '../simulation/policy';
 
 type GridPoint = {
   weights: PortfolioWeights;
@@ -117,7 +117,7 @@ export function evaluateOptimizerPoint(
   weights: PortfolioWeights,
   nSimPerPoint: number,
 ): SimulationPoint {
-  const result = runSimulationCentral(buildOptimizerParams(baseParams, weights, nSimPerPoint));
+  const result = runMidasSimulation(buildOptimizerParams(baseParams, weights, nSimPerPoint), 'primary');
   return {
     probRuin: result.probRuin,
     terminalP50: result.terminalWealthPercentiles[50] || 0,

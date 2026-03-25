@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { ModelParameters } from '../domain/model/types';
-import { runSimulation } from '../domain/simulation/engine';
 import { SENSITIVITY_PARAMS } from '../domain/model/defaults';
+import { runMidasSimulation } from '../domain/simulation/policy';
 import { T, css } from './theme';
 
 const PARAM_LABELS: Record<string, string> = {
@@ -33,7 +33,7 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
           let obj = p as unknown as Record<string, unknown>;
           for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]] as Record<string, unknown>;
           obj[parts[parts.length - 1]] = val;
-          const r = runSimulation(p);
+          const r = runMidasSimulation(p, 'primary');
           return { label: sp.valueLabels[idx], probRuin: r.probRuin, p50: r.terminalWealthPercentiles[50] || 0 };
         });
       }

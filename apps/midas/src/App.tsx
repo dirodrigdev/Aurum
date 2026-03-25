@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CashflowEvent, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
-import { applyScenarioVariant, runSimulation } from './domain/simulation/engine';
-import { runSimulationCentral } from './domain/simulation/engineCentral';
-import { runSimulationRobust } from './domain/simulation/engineRobust';
+import { applyScenarioVariant } from './domain/simulation/engine';
+import { runMidasTriSimulation } from './domain/simulation/policy';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -110,11 +109,7 @@ export default function App() {
     [selectVariant],
   );
 
-  const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => ({
-    central: runSimulationCentral(params),
-    favorable: runSimulation(params),
-    prudent: runSimulationRobust(params),
-  }), []);
+  const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => runMidasTriSimulation(params), []);
 
   const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
     clearCalculationTimer();
