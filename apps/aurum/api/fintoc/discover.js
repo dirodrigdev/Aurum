@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { getAdminDb } from '../_firestoreAdmin.js';
 import { requireFirebaseAuth } from '../_firebaseAuth.js';
 
 const FINTOC_BASE_URL = process.env.FINTOC_BASE_URL || 'https://api.fintoc.com/v1';
@@ -12,6 +14,8 @@ const asNumber = (value) => {
 };
 
 const normalizeCurrency = (value) => String(value || '').trim().toUpperCase();
+const hashLinkToken = (linkToken) =>
+  crypto.createHash('sha256').update(String(linkToken || '')).digest('hex');
 
 const readBalance = (account) => {
   if (!account || typeof account !== 'object') return 0;
@@ -100,7 +104,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Método no permitido' });
   }
 
-  if (!(await requireFirebaseAuth(req, res))) return;
+  const auth = await requireFirebaseAuth(req, res);
+  if (!auth) return;
 
   const secretKey = process.env.FINTOC_SECRET_KEY;
   if (!secretKey) {
@@ -112,11 +117,47 @@ export default async function handler(req, res) {
     req.body?.debug === true;
 
   const linkToken = String(req.body?.link_token || '').trim();
+  const refreshIntentId = String(req.body?.refresh_intent_id || '').trim();
   if (!linkToken) {
     return res.status(400).json({ ok: false, error: 'Debes enviar link_token' });
   }
 
   try {
+    let refreshDocRef = null;
+    if (refreshIntentId) {
+      const db = getAdminDb();
+      refreshDocRef = db.collection('fintoc_refresh_intents').doc(refreshIntentId);
+      const refreshDoc = await refreshDocRef.get();
+      if (!refreshDoc.exists) {
+        return res.status(404).json({ ok: false, error: 'Refresh Intent no encontrado para discover.' });
+      }
+      const refreshData = refreshDoc.data() || {};
+      if (String(refreshData.uid || '') !== String(auth.uid || '')) {
+        return res.status(403).json({ ok: false, error: 'No autorizado para este Refresh Intent.' });
+      }
+      if (String(refreshData.linkTokenHash || '') !== hashLinkToken(linkToken)) {
+        return res.status(409).json({ ok: false, error: 'El link_token no coincide con el Refresh Intent.' });
+      }
+      if (String(refreshData.status || '').toLowerCase() !== 'succeeded') {
+        await refreshDocRef.update({
+          discoverStatus: 'blocked',
+          updatedAt: new Date().toISOString(),
+          lastEventType: 'discover.blocked',
+          lastEventAt: new Date().toISOString(),
+          lastError: 'Discover intentó correr antes de que el refresh quedara succeeded.',
+        });
+        return res.status(409).json({ ok: false, error: 'El refresh todavía no está confirmado.' });
+      }
+      await refreshDocRef.update({
+        discoverStatus: 'running',
+        discoverStartedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastEventType: 'discover.started',
+        lastEventAt: new Date().toISOString(),
+        lastError: null,
+      });
+    }
+
     const probes = [];
 
     const linkProbe = await probeEndpoint(`/links/${encodeURIComponent(linkToken)}`, secretKey);
@@ -236,11 +277,45 @@ export default async function handler(req, res) {
       };
     }
 
+    if (refreshDocRef) {
+      await refreshDocRef.update({
+        discoverStatus: 'completed',
+        discoverCompletedAt: new Date().toISOString(),
+        discoverSummary: {
+          institution: responsePayload.summary.institution,
+          accounts: responsePayload.summary.accounts,
+          clp: responsePayload.summary.clp,
+          usd: responsePayload.summary.usd,
+          movements: responsePayload.summary.movements,
+        },
+        updatedAt: new Date().toISOString(),
+        lastEventType: 'discover.completed',
+        lastEventAt: new Date().toISOString(),
+        lastEventStatus: 'completed',
+        lastError: null,
+      });
+    }
+
     return res.status(200).json(responsePayload);
-  } catch {
+  } catch (error) {
+    if (refreshIntentId) {
+      try {
+        await getAdminDb().collection('fintoc_refresh_intents').doc(refreshIntentId).update({
+          discoverStatus: 'failed',
+          discoverCompletedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastEventType: 'discover.failed',
+          lastEventAt: new Date().toISOString(),
+          lastEventStatus: 'failed',
+          lastError: error?.message || 'Error explorando Fintoc.',
+        });
+      } catch {
+        // ignore secondary trace errors
+      }
+    }
     return res.status(500).json({
       ok: false,
-      error: 'Error explorando Fintoc.',
+      error: error?.message || 'Error explorando Fintoc.',
     });
   }
 }

@@ -59,8 +59,14 @@ export interface FintocRefreshIntentResponse {
 export interface FintocRefreshStatusResponse {
   ok: boolean;
   status?: string;
+  upstream_status?: string | null;
   requires_mfa?: { widget_token: string } | null;
   updated_at?: string | null;
+  last_event_type?: string | null;
+  last_event_status?: string | null;
+  last_error?: string | null;
+  webhook_received_at?: string | null;
+  discover_status?: string | null;
   error?: string;
 }
 
@@ -142,12 +148,21 @@ export const getFintocRefreshStatus = async (
   return {
     ok: true,
     status: payload?.status ? String(payload.status) : undefined,
+    upstream_status: payload?.upstream_status ? String(payload.upstream_status) : null,
     requires_mfa: payload?.requires_mfa || null,
     updated_at: payload?.updated_at ? String(payload.updated_at) : null,
+    last_event_type: payload?.last_event_type ? String(payload.last_event_type) : null,
+    last_event_status: payload?.last_event_status ? String(payload.last_event_status) : null,
+    last_error: payload?.last_error ? String(payload.last_error) : null,
+    webhook_received_at: payload?.webhook_received_at ? String(payload.webhook_received_at) : null,
+    discover_status: payload?.discover_status ? String(payload.discover_status) : null,
   };
 };
 
-export const discoverFintocData = async (linkToken: string): Promise<FintocDiscoverResponse> => {
+export const discoverFintocData = async (
+  linkToken: string,
+  options?: { refreshIntentId?: string },
+): Promise<FintocDiscoverResponse> => {
   const headers = await getAuthHeaders();
   if (!headers) {
     return {
@@ -170,6 +185,7 @@ export const discoverFintocData = async (linkToken: string): Promise<FintocDisco
     },
     body: JSON.stringify({
       link_token: linkToken,
+      ...(options?.refreshIntentId ? { refresh_intent_id: options.refreshIntentId } : {}),
       ...(debugFintoc ? { debug: true } : {}),
     }),
   });

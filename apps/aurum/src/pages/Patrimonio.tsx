@@ -2217,7 +2217,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
   const runFintocDiscovery = async (
     bankId: BankProviderId,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; refreshIntentId?: string },
   ): Promise<FintocReadOutcome | null> => {
     if (section !== 'bank') return;
     const silent = !!options?.silent;
@@ -2232,7 +2232,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     }
 
     try {
-      const result = await discoverFintocData(linkToken);
+      const result = await discoverFintocData(linkToken, {
+        refreshIntentId: options?.refreshIntentId,
+      });
       if (fintocDebugEnabled) {
         console.groupCollapsed(`[Fintoc Debug] Respuesta cruda · ${bankName}`);
         console.log('summary', result.summary);
@@ -2430,6 +2432,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       const statusResult = await getFintocRefreshStatus(refreshIntentId);
       if (statusResult.ok) {
         const status = String(statusResult.status || '').toLowerCase();
+        if (statusResult.requires_mfa?.widget_token) {
+          return { status: 'uncertain' as const, bankLabel: bank.label };
+        }
         if (status === 'succeeded' || status === 'failed' || status === 'rejected') {
           finalStatus = status as 'succeeded' | 'failed' | 'rejected';
           break;
@@ -2438,11 +2443,15 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
+    if (finalStatus === 'failed' || finalStatus === 'rejected') {
+      return { status: 'error' as const, bankLabel: bank.label };
+    }
+
     if (finalStatus !== 'succeeded') {
       return { status: 'uncertain' as const, bankLabel: bank.label };
     }
 
-    const outcome = await runFintocDiscovery(bank.id, { silent: true });
+    const outcome = await runFintocDiscovery(bank.id, { silent: true, refreshIntentId });
     return outcome || { status: 'error' as const, bankLabel: bank.label };
   };
 

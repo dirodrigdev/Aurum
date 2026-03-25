@@ -35,8 +35,14 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       status: String(data.status || 'pending'),
+      upstream_status: data.upstreamStatus ? String(data.upstreamStatus) : null,
       requires_mfa: data.requiresMfa || null,
       updated_at: data.updatedAt || null,
+      last_event_type: data.lastEventType ? String(data.lastEventType) : null,
+      last_event_status: data.lastEventStatus ? String(data.lastEventStatus) : null,
+      last_error: data.lastError ? String(data.lastError) : null,
+      webhook_received_at: data.webhookReceivedAt || null,
+      discover_status: data.discoverStatus ? String(data.discoverStatus) : null,
     });
   } catch (error) {
     return res.status(500).json({

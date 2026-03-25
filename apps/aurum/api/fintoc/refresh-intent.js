@@ -39,6 +39,14 @@ const parseArrayPayload = (payload) => {
 const hashLinkToken = (linkToken) =>
   crypto.createHash('sha256').update(String(linkToken || '')).digest('hex');
 
+const normalizeRefreshStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'succeeded') return 'succeeded';
+  if (normalized === 'failed') return 'failed';
+  if (normalized === 'rejected') return 'rejected';
+  return 'pending';
+};
+
 export default async function handler(req, res) {
   setSharedHeaders(res);
   if (req.method !== 'POST') {
@@ -76,6 +84,8 @@ export default async function handler(req, res) {
     if (!refreshIntentId) {
       return res.status(502).json({ ok: false, error: 'Respuesta inválida de Refresh Intent.' });
     }
+    const upstreamStatus = String(refreshIntent?.status || 'created');
+    const normalizedStatus = normalizeRefreshStatus(upstreamStatus);
 
     const accountsResponse = await requestFintoc(
       `/accounts?link_token=${encodeURIComponent(linkToken)}`,
@@ -84,6 +94,7 @@ export default async function handler(req, res) {
     );
     const accounts = accountsResponse.ok ? parseArrayPayload(accountsResponse.json) : [];
     const accountIds = accounts.map((acc) => String(acc?.id || '')).filter(Boolean);
+    const accountStatus = Object.fromEntries(accountIds.map((accountId) => [accountId, 'pending']));
 
     const db = getAdminDb();
     const now = new Date().toISOString();
@@ -91,13 +102,26 @@ export default async function handler(req, res) {
       id: refreshIntentId,
       uid: auth.uid,
       linkTokenHash: hashLinkToken(linkToken),
-      status: String(refreshIntent?.status || 'created'),
+      status: normalizedStatus,
+      upstreamStatus,
       requiresMfa: refreshIntent?.requires_mfa || null,
       refreshedObject: String(refreshIntent?.refreshed_object || 'link'),
       refreshedObjectId: String(refreshIntent?.refreshed_object_id || ''),
       type: String(refreshIntent?.type || ''),
       accountIds,
-      accountStatus: {},
+      accountStatus,
+      lastEventType: 'refresh_intent.created',
+      lastEventAt: now,
+      lastEventStatus: normalizedStatus,
+      lastCorrelationMethod: 'refresh_intent_id',
+      lastCorrelationValue: refreshIntentId,
+      webhookReceivedAt: null,
+      webhookEventCount: 0,
+      discoverStatus: 'idle',
+      discoverStartedAt: null,
+      discoverCompletedAt: null,
+      discoverSummary: null,
+      lastError: accountsResponse.ok ? null : 'No pude listar cuentas al crear el intent.',
       createdAt: now,
       updatedAt: now,
     });
@@ -105,7 +129,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       refresh_intent_id: refreshIntentId,
-      status: String(refreshIntent?.status || 'created'),
+      status: normalizedStatus,
       requires_mfa: refreshIntent?.requires_mfa || null,
     });
   } catch (error) {
