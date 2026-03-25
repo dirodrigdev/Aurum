@@ -44,11 +44,9 @@ type WorkerMessage =
       quickResult?: OptimizerResult;
     };
 
-const QUICK_STEP = 0.2;
-const FULL_STEP = 0.1;
-const BASELINE_SIM_COUNT = 140;
-const QUICK_SIM_COUNT = 48;
-const FULL_SIM_COUNT = 96;
+const QUICK_STEP = 0.15;
+const QUICK_SIM_COUNT = 96;
+const FULL_SIM_COUNT = 220;
 
 function post(message: WorkerMessage) {
   self.postMessage(message);
@@ -83,7 +81,7 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
 
     const quickConstraints = {
       ...DEFAULT_OPTIMIZER_CONSTRAINTS,
-      step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 4, QUICK_STEP),
+      step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 3, QUICK_STEP),
     };
 
     quickResult = runOptimizer(params, quickConstraints, objective, QUICK_SIM_COUNT, (pct) => {
@@ -104,7 +102,7 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
 
     const fullConstraints = {
       ...DEFAULT_OPTIMIZER_CONSTRAINTS,
-      step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 2, FULL_STEP),
+      step: DEFAULT_OPTIMIZER_CONSTRAINTS.step,
     };
 
     const fullResult = runOptimizer(params, fullConstraints, objective, FULL_SIM_COUNT, (pct) => {
