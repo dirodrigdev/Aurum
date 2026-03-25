@@ -277,6 +277,8 @@ export default function App() {
     sourceLabel: 'Aurum · último cierre confirmado',
     status: 'pending',
   });
+  const [aurumSnapshotStatus, setAurumSnapshotStatus] = useState<'available' | 'pending' | 'missing' | 'error'>('pending');
+  const [aurumSnapshotLabel, setAurumSnapshotLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,7 +289,13 @@ export default function App() {
         if (cancelled) return;
         setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
         const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
-        if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) return;
+        if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
+          setAurumSnapshotStatus('missing');
+          setAurumSnapshotLabel(null);
+          return;
+        }
+        setAurumSnapshotStatus('available');
+        setAurumSnapshotLabel(snapshot?.snapshotLabel || 'último cierre confirmado');
 
         setBaseParams((prev) => {
           if (Math.round(prev.capitalInitial) === Math.round(aurumNetWorth)) return prev;
@@ -323,6 +331,8 @@ export default function App() {
           sourceLabel: 'Aurum · último cierre confirmado',
           status: 'pending',
         });
+        setAurumSnapshotStatus('error');
+        setAurumSnapshotLabel(null);
       }
     })();
 
@@ -342,6 +352,8 @@ export default function App() {
       simWorking={simWorking}
       simulationPreset={simulationPreset}
       stateLabel={stateLabel}
+      aurumSnapshotStatus={aurumSnapshotStatus}
+      aurumSnapshotLabel={aurumSnapshotLabel}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}

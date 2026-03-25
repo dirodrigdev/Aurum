@@ -65,6 +65,8 @@ export function SimulationPage({
   simWorking,
   simulationPreset,
   stateLabel,
+  aurumSnapshotStatus,
+  aurumSnapshotLabel,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -80,6 +82,8 @@ export function SimulationPage({
   simWorking: boolean;
   simulationPreset: SimulationPreset;
   stateLabel: string;
+  aurumSnapshotStatus: 'available' | 'pending' | 'missing' | 'error';
+  aurumSnapshotLabel: string | null;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -91,6 +95,15 @@ export function SimulationPage({
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const prevSimActive = useRef(false);
+  const hasAurumSnapshot = aurumSnapshotStatus === 'available';
+  const aurumStatusCopy =
+    aurumSnapshotStatus === 'available'
+      ? `Base Aurum · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`
+      : aurumSnapshotStatus === 'pending'
+        ? 'Base Aurum pendiente'
+        : aurumSnapshotStatus === 'missing'
+          ? 'Base Aurum no disponible'
+          : 'Base Aurum con error';
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
@@ -251,6 +264,24 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div
+        style={{
+          background: hasAurumSnapshot ? 'rgba(61, 212, 141, 0.12)' : 'rgba(255, 176, 32, 0.12)',
+          border: `1px solid ${hasAurumSnapshot ? 'rgba(61, 212, 141, 0.45)' : 'rgba(255, 176, 32, 0.45)'}`,
+          borderRadius: 12,
+          padding: '10px 12px',
+          color: hasAurumSnapshot ? T.positive : T.warning,
+          fontSize: 12,
+          fontWeight: 700,
+        }}
+      >
+        {aurumStatusCopy}
+      </div>
+      {!hasAurumSnapshot && (
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          Mostrando un capital local por defecto. Cuando Aurum publique el cierre, se reemplazará automáticamente.
+        </div>
+      )}
       <div style={{ position: 'relative' }}>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
