@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters } from '../domain/model/types';
 import { SENSITIVITY_PARAMS } from '../domain/model/defaults';
-import { runMidasSimulation } from '../domain/simulation/policy';
 import { T, css } from './theme';
 
 const PARAM_LABELS: Record<string, string> = {
@@ -16,34 +15,115 @@ const PARAM_LABELS: Record<string, string> = {
 };
 
 export function SensitivityPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
-  const [results, setResults] = useState<Record<string, Array<{ label: string; probRuin: number; p50: number }>>>({});
+  const [results, setResults] = useState<
+    Record<
+      string,
+      Array<{
+        label: string;
+        probRuin: number;
+        p50: number;
+        probRuinDelta: number;
+        p50Delta: number;
+      }>
+    >
+  >({});
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ pct: number; detail: string } | null>(null);
+  const [error, setError] = useState('');
+  const [baseline, setBaseline] = useState<{ probRuin: number; p50: number } | null>(null);
   const ACTIVE_PARAMS = SENSITIVITY_PARAMS.filter((p) => p.paramPath !== 'simulation.blockLength');
   const [active, setActive] = useState(ACTIVE_PARAMS[0].id);
+  const workerRef = useRef<Worker | null>(null);
+  const runIdRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   const run = () => {
+    workerRef.current?.terminate();
+    const worker = new Worker(new URL('../domain/analysis/scenario.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    workerRef.current = worker;
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
     setRunning(true);
-    setTimeout(() => {
-      const out: typeof results = {};
-      for (const sp of ACTIVE_PARAMS) {
-        out[sp.id] = sp.values.map((val, idx) => {
-          const p = JSON.parse(JSON.stringify(params)) as ModelParameters;
-          p.simulation.nSim = 1500; p.simulation.seed = 42;
-          const parts = sp.paramPath.split('.');
-          let obj = p as unknown as Record<string, unknown>;
-          for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]] as Record<string, unknown>;
-          obj[parts[parts.length - 1]] = val;
-          const r = runMidasSimulation(p, 'primary');
-          return { label: sp.valueLabels[idx], probRuin: r.probRuin, p50: r.terminalWealthPercentiles[50] || 0 };
-        });
+    setError('');
+    setProgress({ pct: 0, detail: 'Preparando sensibilidad' });
+
+    worker.onmessage = (event) => {
+      const data = event.data as
+        | {
+            type: 'progress';
+            runId: number;
+            pct: number;
+            detail: string;
+          }
+        | {
+            type: 'sensitivity-done';
+            runId: number;
+            baseline: { probRuin: number; p50: number };
+            groups: Array<{
+              id: string;
+              points: Array<{
+                label: string;
+                probRuin: number;
+                p50: number;
+                probRuinDelta: number;
+                p50Delta: number;
+              }>;
+            }>;
+          }
+        | { type: 'error'; runId: number; message: string };
+      if (!data || data.runId !== runIdRef.current) return;
+      if (data.type === 'progress') {
+        setProgress({ pct: data.pct, detail: data.detail });
+        return;
       }
-      setResults(out);
+      if (data.type === 'sensitivity-done') {
+        const out: typeof results = {};
+        data.groups.forEach((group) => {
+          out[group.id] = group.points;
+        });
+        setBaseline(data.baseline);
+        setResults(out);
+        setProgress({ pct: 100, detail: 'Sensibilidades listas' });
+        setRunning(false);
+        return;
+      }
+      if (data.type === 'error') {
+        setError('No pude ejecutar sensibilidades. Reintenta.');
+        setRunning(false);
+        setProgress(null);
+      }
+    };
+
+    worker.onerror = () => {
+      setError('No pude ejecutar sensibilidades. Reintenta.');
       setRunning(false);
-    }, 30);
+      setProgress(null);
+    };
+
+    worker.postMessage({
+      type: 'sensitivity-start',
+      runId,
+      params,
+    });
   };
 
   const curr = results[active] || [];
   const maxRuin = Math.max(...curr.map((r) => r.probRuin), 0.01);
+  const activeLabel = useMemo(
+    () => ACTIVE_PARAMS.find((param) => param.id === active)?.label || '',
+    [ACTIVE_PARAMS, active],
+  );
+
+  const formatDeltaPp = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} pp`;
+  const formatDeltaMm = (value: number) => `${value >= 0 ? '+' : ''}$${(value / 1e6).toFixed(0)}MM`;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -72,6 +152,52 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
         </button>
       </div>
 
+      {baseline && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>Base actual · Ruina</div>
+            <div style={{ ...css.mono, color: T.textPrimary, fontSize: 24, fontWeight: 700, marginTop: 4 }}>
+              {(baseline.probRuin * 100).toFixed(1)}%
+            </div>
+          </div>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>Base actual · P50</div>
+            <div style={{ ...css.mono, color: T.textPrimary, fontSize: 24, fontWeight: 700, marginTop: 4 }}>
+              ${(baseline.p50 / 1e6).toFixed(0)}MM
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(running || progress) && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+            <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ejecución</div>
+            <div style={{ color: T.textSecondary }}>{progress?.pct ?? 0}%</div>
+          </div>
+          <div style={{ marginTop: 8, height: 6, background: T.surfaceEl, borderRadius: 999 }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${progress?.pct ?? 0}%`,
+                background: T.primary,
+                borderRadius: 999,
+                transition: 'width 180ms ease',
+              }}
+            />
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>
+            {progress?.detail || 'Procesando'}
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: 12, padding: 12, color: '#be123c', fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
         {SENSITIVITY_PARAMS.map((sp) => (
           <button
@@ -98,7 +224,11 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
       </div>
 
       {curr.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Comparando contra la base actual. Parámetro activo: <span style={{ color: T.textPrimary }}>{activeLabel}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10 }}>
           {curr.map((r) => (
             <div key={r.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>{r.label}</div>
@@ -113,7 +243,13 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
               >
                 {(r.probRuin * 100).toFixed(1)}%
               </div>
+              <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 6 }}>
+                vs base: <span style={{ ...css.mono }}>{formatDeltaPp(r.probRuinDelta)}</span>
+              </div>
               <div style={{ ...css.mono, color: T.textSecondary, fontSize: 11, marginTop: 6 }}>P50: ${(r.p50 / 1e6).toFixed(0)}MM</div>
+              <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 4 }}>
+                vs base: <span style={{ ...css.mono }}>{formatDeltaMm(r.p50Delta)}</span>
+              </div>
               <div style={{ marginTop: 8, height: 4, background: T.surfaceEl, borderRadius: 2 }}>
                 <div
                   style={{
@@ -126,10 +262,11 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
               </div>
             </div>
           ))}
+          </div>
         </div>
       ) : (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 32, textAlign: 'center', color: T.textMuted }}>
-          Ejecuta para ver resultados
+          Ejecuta para ver sensibilidad contra la base actual
         </div>
       )}
     </div>
