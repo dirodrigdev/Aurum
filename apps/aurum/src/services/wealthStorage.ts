@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
+import { publishAurumOptimizableInvestmentsSnapshot } from './midasPublished';
 
 export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
 
@@ -2535,6 +2536,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         }),
         { merge: true },
       );
+      await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch(() => {});
       markLastRemoteUpdatedAt(mergedUpdatedAt);
 
       if (
@@ -2737,6 +2739,8 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameStringList(mergedDeletedRecordIds, remoteDeletedRecordIds) ||
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
+
+    await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch(() => {});
 
     if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
 

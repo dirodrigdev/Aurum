@@ -40,6 +40,25 @@ export interface AurumWealthSnapshot {
 }
 
 /**
+ * Snapshot público y explícito de inversiones optimizables.
+ * Midas lo usa solo como referencia oficial para la base instrumental.
+ * Firestore path: aurum_published/optimizableInvestments
+ */
+export interface AurumOptimizableInvestmentsSnapshot {
+  version: 1;
+  publishedAt: string;
+  snapshotMonth: string;
+  snapshotLabel: string;
+  currency: 'CLP';
+  optimizableInvestmentsCLP: number;
+  optimizableInvestmentsWithRiskCLP?: number;
+  source: {
+    app: 'aurum';
+    basis: 'latest_confirmed_closure';
+  };
+}
+
+/**
  * Resumen de proyección publicado por Midas para Aurum.
  * Aurum puede mostrar esto en su dashboard como contexto.
  * Firestore path: users/{uid}/midas/published/latestProjection

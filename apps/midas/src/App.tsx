@@ -12,6 +12,8 @@ import { OptimizerPage } from './components/OptimizerPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import type { OptimizableBaseReference } from './domain/instrumentBase';
+import { optimizableSnapshotToReference } from './integrations/aurum/adapters';
+import { loadPublishedOptimizableInvestmentsSnapshot } from './integrations/aurum/optimizableSnapshot';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -269,15 +271,36 @@ export default function App() {
     () => (simulationActive ? toOptimizerBaselineSnapshot(simResult.central) : null),
     [simulationActive, simResult.central],
   );
-  const optimizableBaseReference = useMemo<OptimizableBaseReference>(
-    () => ({
-      amountClp: null,
-      asOf: null,
-      sourceLabel: 'Aurum · último cierre confirmado',
-      status: 'pending',
-    }),
-    [],
-  );
+  const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
+    amountClp: null,
+    asOf: null,
+    sourceLabel: 'Aurum · último cierre confirmado',
+    status: 'pending',
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const snapshot = await loadPublishedOptimizableInvestmentsSnapshot();
+        if (cancelled) return;
+        setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
+      } catch {
+        if (cancelled) return;
+        setOptimizableBaseReference({
+          amountClp: null,
+          asOf: null,
+          sourceLabel: 'Aurum · último cierre confirmado',
+          status: 'pending',
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const content = activeTab === 'sim' ? (
     <SimulationPage

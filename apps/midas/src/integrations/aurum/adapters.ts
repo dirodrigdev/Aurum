@@ -2,9 +2,10 @@
 // Convierte snapshots de Aurum en parámetros de Midas
 // Esta capa evita coupling directo entre dominios
 
-import type { AurumWealthSnapshot } from './types';
+import type { AurumOptimizableInvestmentsSnapshot, AurumWealthSnapshot } from './types';
 import type { ModelParameters, PortfolioWeights } from '../../domain/model/types';
 import { DEFAULT_PARAMETERS } from '../../domain/model/defaults';
+import type { OptimizableBaseReference } from '../../domain/instrumentBase';
 
 /**
  * Convierte un snapshot de Aurum en parámetros de Midas.
@@ -73,4 +74,24 @@ export function validateSnapshot(snapshot: AurumWealthSnapshot): {
     warnings.push(`Snapshot tiene ${Math.round(daysOld)} días — considerar actualizar`);
 
   return { valid: warnings.length === 0, warnings };
+}
+
+export function optimizableSnapshotToReference(
+  snapshot: AurumOptimizableInvestmentsSnapshot | null,
+): OptimizableBaseReference {
+  if (!snapshot || !Number.isFinite(snapshot.optimizableInvestmentsCLP)) {
+    return {
+      amountClp: null,
+      asOf: null,
+      sourceLabel: 'Aurum · último cierre confirmado',
+      status: 'pending',
+    };
+  }
+
+  return {
+    amountClp: snapshot.optimizableInvestmentsCLP,
+    asOf: snapshot.publishedAt,
+    sourceLabel: `Aurum · ${snapshot.snapshotLabel}`,
+    status: 'available',
+  };
 }
