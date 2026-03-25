@@ -502,7 +502,7 @@ export function OptimizerPage({
                       textAlign: 'right',
                     }}
                   >
-                    {formatSignedMoney(move.amount)}
+                    {formatSignedMoneyClp(move.amount)}
                   </span>
                 </div>
               ))}
@@ -517,7 +517,7 @@ export function OptimizerPage({
                 }}
               >
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Neto total</span>
-                <span style={{ ...css.mono, color: T.textSecondary, fontSize: 12 }}>{formatSignedMoney(movementNetAmount)}</span>
+                <span style={{ ...css.mono, color: T.textSecondary, fontSize: 12 }}>{formatSignedMoneyClp(movementNetAmount)}</span>
               </div>
               {movementAmounts.length === 0 && (
                 <p style={{ color: T.textMuted, fontSize: 12, margin: 0 }}>
@@ -661,8 +661,8 @@ function AllocationCompareCard({
 function RiskBar({ summary }: { summary: { rv: number; rf: number } }) {
   return (
     <div style={{ height: 14, background: T.surfaceEl, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
-      <div style={{ width: `${summary.rf * 100}%`, background: T.secondary }} />
       <div style={{ width: `${summary.rv * 100}%`, background: T.primary }} />
+      <div style={{ width: `${summary.rf * 100}%`, background: T.secondary }} />
     </div>
   );
 }
@@ -723,14 +723,16 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 function summarizeRisk(weights: PortfolioWeights) {
-  const rv = clamp01(weights.rvGlobal + weights.rvChile);
-  const rf = clamp01(weights.rfGlobal + weights.rfChile);
+  const normalized = normalizeWeights(weights);
+  const rv = clamp01(normalized.rvGlobal + normalized.rvChile);
+  const rf = clamp01(normalized.rfGlobal + normalized.rfChile);
   return { rv, rf };
 }
 
 function summarizeWithinBlock(weights: PortfolioWeights, block: 'rv' | 'rf') {
-  const globalValue = block === 'rv' ? weights.rvGlobal : weights.rfGlobal;
-  const localValue = block === 'rv' ? weights.rvChile : weights.rfChile;
+  const normalized = normalizeWeights(weights);
+  const globalValue = block === 'rv' ? normalized.rvGlobal : normalized.rfGlobal;
+  const localValue = block === 'rv' ? normalized.rvChile : normalized.rfChile;
   const total = Math.max(0, globalValue + localValue);
   if (total <= 0) return { global: 0, local: 0, total: 0 };
   return {
@@ -741,23 +743,46 @@ function summarizeWithinBlock(weights: PortfolioWeights, block: 'rv' | 'rf') {
 }
 
 function buildMoveAmounts(currentWeights: PortfolioWeights, optimizedWeights: PortfolioWeights, capitalInitial: number) {
+  const safeCapital = Number.isFinite(capitalInitial) ? Math.max(0, capitalInitial) : 0;
+  if (safeCapital <= 0) return [];
+  const current = normalizeWeights(currentWeights);
+  const optimized = normalizeWeights(optimizedWeights);
+
   const sleeves: Array<{ sleeve: string; current: number; optimized: number }> = [
-    { sleeve: 'RV Global', current: currentWeights.rvGlobal, optimized: optimizedWeights.rvGlobal },
-    { sleeve: 'RF Global', current: currentWeights.rfGlobal, optimized: optimizedWeights.rfGlobal },
-    { sleeve: 'RV Chile', current: currentWeights.rvChile, optimized: optimizedWeights.rvChile },
-    { sleeve: 'RF Chile UF', current: currentWeights.rfChile, optimized: optimizedWeights.rfChile },
+    { sleeve: 'RV Global', current: current.rvGlobal, optimized: optimized.rvGlobal },
+    { sleeve: 'RF Global', current: current.rfGlobal, optimized: optimized.rfGlobal },
+    { sleeve: 'RV Chile', current: current.rvChile, optimized: optimized.rvChile },
+    { sleeve: 'RF Chile UF', current: current.rfChile, optimized: optimized.rfChile },
   ];
 
-  return sleeves
+  const moves = sleeves
     .map((item) => {
       const deltaPp = (item.optimized - item.current) * 100;
       return {
         sleeve: item.sleeve,
         deltaPp,
         direction: (deltaPp >= 0 ? 'up' : 'down') as 'up' | 'down',
-        amount: (deltaPp / 100) * capitalInitial,
+        amount: Math.round((deltaPp / 100) * safeCapital),
       };
     })
+    // Evita deriva visual por redondeo en CLP: fuerza neto exactamente 0 en el desglose mostrado.
+    .map((move) => ({ ...move, amount: Number.isFinite(move.amount) ? move.amount : 0 }));
+
+  const residual = moves.reduce((sum, move) => sum + move.amount, 0);
+  if (Math.abs(residual) >= 1) {
+    let largestIndex = -1;
+    let largestAmount = -1;
+    for (let i = 0; i < moves.length; i += 1) {
+      const amount = Math.abs(moves[i].amount);
+      if (amount > largestAmount) {
+        largestAmount = amount;
+        largestIndex = i;
+      }
+    }
+    if (largestIndex >= 0) moves[largestIndex].amount -= residual;
+  }
+
+  return moves
     .filter((move) => Math.abs(move.deltaPp) >= 0.01 || Math.abs(move.amount) >= 1)
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
 }
@@ -798,6 +823,28 @@ function formatMoneyCompact(value: number) {
 function formatSignedMoney(value: number) {
   const safeValue = Math.abs(value) < 1 ? 0 : value;
   return `${safeValue >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(safeValue))}`;
+}
+
+function formatSignedMoneyClp(value: number) {
+  const rounded = Math.abs(value) < 1 ? 0 : Math.round(value);
+  return `${rounded >= 0 ? '+' : '-'}$${Math.abs(rounded).toLocaleString('es-CL')}`;
+}
+
+function normalizeWeights(weights: PortfolioWeights): PortfolioWeights {
+  const rvGlobal = clamp01(Number.isFinite(weights.rvGlobal) ? weights.rvGlobal : 0);
+  const rfGlobal = clamp01(Number.isFinite(weights.rfGlobal) ? weights.rfGlobal : 0);
+  const rvChile = clamp01(Number.isFinite(weights.rvChile) ? weights.rvChile : 0);
+  const rfChile = clamp01(Number.isFinite(weights.rfChile) ? weights.rfChile : 0);
+  const sum = rvGlobal + rfGlobal + rvChile + rfChile;
+  if (sum <= 0) {
+    return { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  }
+  return {
+    rvGlobal: rvGlobal / sum,
+    rfGlobal: rfGlobal / sum,
+    rvChile: rvChile / sum,
+    rfChile: rfChile / sum,
+  };
 }
 
 function clamp01(value: number) {
