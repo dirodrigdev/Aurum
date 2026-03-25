@@ -1,45 +1,207 @@
-import React, { useState } from 'react';
+import React, { startTransition, useEffect, useRef, useState } from 'react';
 import type { ModelParameters, OptimizerResult, OptimizerObjective } from '../domain/model/types';
-import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../domain/model/defaults';
-import { runOptimizer } from '../domain/optimizer/gridSearch';
-import { runSimulation } from '../domain/simulation/engine';
 import { T, css } from './theme';
+
+type OptimizerWorkerMessage =
+  | {
+      type: 'baseline';
+      runId: number;
+      probRuin: number;
+      terminalP50: number;
+    }
+  | {
+      type: 'progress';
+      runId: number;
+      phase: 'quick' | 'full';
+      pct: number;
+      detail: string;
+    }
+  | {
+      type: 'quick-result';
+      runId: number;
+      result: OptimizerResult;
+    }
+  | {
+      type: 'done';
+      runId: number;
+      result: OptimizerResult;
+    }
+  | {
+      type: 'error';
+      runId: number;
+      message: string;
+      baselineProbRuin?: number;
+      baselineP50?: number;
+      quickResult?: OptimizerResult;
+    };
+
+const OPTIMIZER_TIMEOUT_MS = 45_000;
 
 export function OptimizerPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
   const [result, setResult] = useState<OptimizerResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [objective, setObjective] = useState<OptimizerObjective>('minRuin');
   const [progress, setProgress] = useState(0);
+  const [progressDetail, setProgressDetail] = useState('');
   const [currentProbRuin, setCurrentProbRuin] = useState<number | null>(null);
   const [currentP50, setCurrentP50] = useState<number | null>(null);
   const [phase, setPhase] = useState<'idle' | 'quick' | 'full'>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const runIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const workerRef = useRef<Worker | null>(null);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      stopWorker();
+    };
+  }, []);
+
+  const stopWorker = () => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  };
+
+  const finishRun = (runId: number) => {
+    if (!isMountedRef.current || runIdRef.current !== runId) return;
+    stopWorker();
+    setIsOptimizing(false);
+    setPhase('idle');
+  };
 
   const handleOptimize = () => {
+    if (isOptimizing) return;
+    if (typeof Worker === 'undefined') {
+      setErrorMessage('Este navegador no soporta el modo estable del optimizador.');
+      startTransition(() => {
+        setResult(buildFallbackResult(params, null, null));
+      });
+      return;
+    }
+
+    const runId = Date.now();
+    runIdRef.current = runId;
+    stopWorker();
     setIsOptimizing(true);
     setResult(null);
     setProgress(0);
+    setProgressDetail('Inicializando cálculo en segundo plano...');
+    setErrorMessage(null);
     setPhase('quick');
-    window.setTimeout(() => {
-      window.setTimeout(() => {
-        // TODO: mover a Web Worker si el grid search sigue bloqueando UI.
-        const baseline = runSimulation({
-          ...params,
-          simulation: { ...params.simulation, nSim: 500, seed: 42 },
+    let quickResult: OptimizerResult | null = null;
+    let baselineP50: number | null = null;
+    let baselineRuin: number | null = null;
+
+    const worker = new Worker(new URL('../domain/optimizer/optimizer.worker.ts', import.meta.url), { type: 'module' });
+    workerRef.current = worker;
+
+    timeoutRef.current = window.setTimeout(() => {
+      if (!isMountedRef.current || runIdRef.current !== runId || workerRef.current !== worker) return;
+      stopWorker();
+      startTransition(() => {
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(params, baselineRuin, baselineP50), params));
+      });
+      setErrorMessage('La optimización tardó demasiado. Dejé un resultado de respaldo para que la app siga usable.');
+      setProgressDetail('Tiempo máximo alcanzado');
+      setProgress((prev) => Math.max(prev, 100));
+      setIsOptimizing(false);
+      setPhase('idle');
+    }, OPTIMIZER_TIMEOUT_MS);
+
+    worker.onmessage = (event: MessageEvent<OptimizerWorkerMessage>) => {
+      const message = event.data;
+      if (!message || message.runId !== runId || !isMountedRef.current || runIdRef.current !== runId) return;
+
+      if (message.type === 'baseline') {
+        baselineRuin = message.probRuin;
+        baselineP50 = message.terminalP50;
+        setCurrentProbRuin(message.probRuin);
+        setCurrentP50(message.terminalP50);
+        setProgressDetail('Simulación base lista');
+        return;
+      }
+
+      if (message.type === 'progress') {
+        setPhase(message.phase);
+        setProgress((prev) => Math.max(prev, Math.max(0, Math.min(99, message.pct))));
+        setProgressDetail(message.detail);
+        return;
+      }
+
+      if (message.type === 'quick-result') {
+        quickResult = sanitizeResult(message.result, params);
+        setProgress((prev) => Math.max(prev, 35));
+        return;
+      }
+
+      if (message.type === 'done') {
+        startTransition(() => {
+          setResult(sanitizeResult(message.result, params));
         });
-        setCurrentProbRuin(baseline.probRuin);
-        setCurrentP50(baseline.terminalWealthPercentiles[50] || 0);
+        setProgress(100);
+        setProgressDetail('Optimización completada');
+        setErrorMessage(null);
+        finishRun(runId);
+        return;
+      }
 
-        const quickConstraints = { ...DEFAULT_OPTIMIZER_CONSTRAINTS, step: Math.max(DEFAULT_OPTIMIZER_CONSTRAINTS.step * 2, 0.1) };
-        const quick = runOptimizer(params, quickConstraints, objective, 150, setProgress);
-        setResult(quick);
-        setPhase('full');
+      if (message.type === 'error') {
+        baselineRuin = message.baselineProbRuin ?? baselineRuin;
+        baselineP50 = message.baselineP50 ?? baselineP50;
+        quickResult = message.quickResult ? sanitizeResult(message.quickResult, params) : quickResult;
+        startTransition(() => {
+          setResult(sanitizeResult(quickResult ?? buildFallbackResult(params, baselineRuin, baselineP50), params));
+        });
+        setErrorMessage(
+          'No pude completar la optimización. Te dejo un resultado de respaldo para que no pierdas continuidad.',
+        );
+        setProgressDetail('Optimización interrumpida');
+        setProgress((prev) => Math.max(prev, 100));
+        finishRun(runId);
+      }
+    };
 
-        const r = runOptimizer(params, DEFAULT_OPTIMIZER_CONSTRAINTS, objective, 500, setProgress);
-        setResult(r);
-        setIsOptimizing(false);
-        setPhase('idle');
-      }, 50);
-    }, 0);
+    worker.onerror = () => {
+      if (!isMountedRef.current || runIdRef.current !== runId) return;
+      stopWorker();
+      startTransition(() => {
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(params, baselineRuin, baselineP50), params));
+      });
+      setErrorMessage('El cálculo falló en segundo plano. Dejé un resultado de respaldo para mantener la app estable.');
+      setProgressDetail('Error en optimización');
+      setProgress((prev) => Math.max(prev, 100));
+      setIsOptimizing(false);
+      setPhase('idle');
+    };
+
+    worker.onmessageerror = () => {
+      if (!isMountedRef.current || runIdRef.current !== runId) return;
+      stopWorker();
+      startTransition(() => {
+        setResult(sanitizeResult(quickResult ?? buildFallbackResult(params, baselineRuin, baselineP50), params));
+      });
+      setErrorMessage('No pude leer la respuesta del optimizador. Te dejo un resultado de respaldo.');
+      setProgressDetail('Error de comunicación');
+      setProgress((prev) => Math.max(prev, 100));
+      setIsOptimizing(false);
+      setPhase('idle');
+    };
+
+    worker.postMessage({
+      type: 'start',
+      runId,
+      params,
+      objective,
+    });
   };
 
   const OBJECTIVES: Array<[OptimizerObjective, string, string]> = [
@@ -55,6 +217,7 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
   const rvTotalOptim = optimizedWeights.rvGlobal + optimizedWeights.rvChile;
   const rfTotalOptim = optimizedWeights.rfGlobal + optimizedWeights.rfChile;
   const instrumentSuggestions = result ? buildInstrumentSuggestions(result.moves) : [];
+  const visibleResult = !isOptimizing ? result : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -106,7 +269,27 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
             {phase === 'quick' ? 'Estimación rápida en curso…' : 'Refinando con más iteraciones…'}
           </div>
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>Evaluando combinaciones de pesos · puede tardar 30–60 segundos</div>
-          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>La app sigue activa — puedes navegar a otras secciones</div>
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{progressDetail || 'Procesando...'}</div>
+          <div
+            style={{
+              marginTop: 10,
+              height: 8,
+              borderRadius: 999,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.max(0, Math.min(100, progress))}%`,
+                height: '100%',
+                background: T.primary,
+                transition: 'width 140ms linear',
+              }}
+            />
+          </div>
+          <div style={{ ...css.mono, color: T.textSecondary, fontSize: 12, marginTop: 6 }}>{progress}%</div>
         </div>
       ) : (
         <button
@@ -127,7 +310,22 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
         </button>
       )}
 
-      {result && (
+      {errorMessage && (
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.warning}`,
+            borderRadius: 10,
+            padding: 12,
+            color: T.textSecondary,
+            fontSize: 12,
+          }}
+        >
+          {errorMessage}
+        </div>
+      )}
+
+      {visibleResult && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
             <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
@@ -157,7 +355,7 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
             <p style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', marginBottom: 12 }}>
               Movimientos recomendados
             </p>
-            {result.moves.map((m) => (
+            {visibleResult.moves.map((m) => (
               <div key={m.sleeve} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <span style={{ fontSize: 18, color: m.direction === 'up' ? T.positive : T.negative }}>
                   {m.direction === 'up' ? '↑' : '↓'}
@@ -176,7 +374,7 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
                 </span>
               </div>
             ))}
-            {result.moves.length === 0 && (
+            {visibleResult.moves.length === 0 && (
               <p style={{ color: T.textMuted, fontSize: 12 }}>El portafolio actual ya es óptimo para este objetivo.</p>
             )}
           </div>
@@ -200,20 +398,20 @@ export function OptimizerPage({ params, stateLabel }: { params: ModelParameters;
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{ color: T.textSecondary, fontSize: 12 }}>Prob. ruina óptima</span>
               <span style={{ ...css.mono, color: T.positive, fontSize: 13 }}>
-                {(result.probRuin * 100).toFixed(1)}%
+                {(visibleResult.probRuin * 100).toFixed(1)}%
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ color: T.textSecondary, fontSize: 12 }}>Mejora</span>
               <span style={{ ...css.mono, color: T.positive, fontSize: 13, fontWeight: 700 }}>
-                {(result.vsCurrentRuin * 100).toFixed(1)}pp ▼
+                {(visibleResult.vsCurrentRuin * 100).toFixed(1)}pp ▼
               </span>
             </div>
             <div style={{ height: 1, background: T.border, marginBottom: 12 }} />
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: T.textSecondary, fontSize: 12 }}>Patrimonio P50</span>
               <span style={{ ...css.mono, color: T.primary, fontSize: 13 }}>
-                ${(result.terminalP50 / 1e6).toFixed(0)}MM
+                ${(visibleResult.terminalP50 / 1e6).toFixed(0)}MM
               </span>
             </div>
           </div>
@@ -255,6 +453,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 function AllocationBar({ weights }: { weights: ModelParameters['weights'] }) {
   const total = weights.rvGlobal + weights.rfGlobal + weights.rvChile + weights.rfChile;
+  const safeTotal = total > 0 ? total : 1;
   const slices: Array<[number, string]> = [
     [weights.rvGlobal, T.primary],
     [weights.rfGlobal, T.secondary],
@@ -264,7 +463,7 @@ function AllocationBar({ weights }: { weights: ModelParameters['weights'] }) {
   return (
     <div style={{ height: 12, background: T.surfaceEl, borderRadius: 10, overflow: 'hidden', display: 'flex' }}>
       {slices.map(([v, c], idx) => (
-        <div key={idx} style={{ width: `${(v / total) * 100}%`, background: c }} />
+        <div key={idx} style={{ width: `${Math.max(0, (v / safeTotal) * 100)}%`, background: c }} />
       ))}
     </div>
   );
@@ -298,4 +497,42 @@ function buildInstrumentSuggestions(moves: OptimizerResult['moves']): string[] {
     .map((m) => map[m.sleeve])
     .filter((m): m is string => Boolean(m));
   return Array.from(new Set(picks));
+}
+
+function buildFallbackResult(
+  params: ModelParameters,
+  baselineProbRuin: number | null,
+  baselineP50: number | null,
+): OptimizerResult {
+  return {
+    weights: params.weights,
+    probRuin: baselineProbRuin ?? 0,
+    terminalP50: baselineP50 ?? 0,
+    terminalP10: 0,
+    vsCurrentRuin: 0,
+    vsCurrentP50: 0,
+    moves: [],
+  };
+}
+
+function sanitizeResult(raw: OptimizerResult, params: ModelParameters): OptimizerResult {
+  const safeWeight = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+  const safeMoves = Array.isArray(raw.moves)
+    ? raw.moves.filter((move) => Number.isFinite(move.delta) && (move.direction === 'up' || move.direction === 'down'))
+    : [];
+
+  return {
+    weights: {
+      rvGlobal: safeWeight(raw.weights?.rvGlobal, params.weights.rvGlobal),
+      rfGlobal: safeWeight(raw.weights?.rfGlobal, params.weights.rfGlobal),
+      rvChile: safeWeight(raw.weights?.rvChile, params.weights.rvChile),
+      rfChile: safeWeight(raw.weights?.rfChile, params.weights.rfChile),
+    },
+    probRuin: Number.isFinite(raw.probRuin) ? raw.probRuin : 0,
+    terminalP50: Number.isFinite(raw.terminalP50) ? raw.terminalP50 : 0,
+    terminalP10: Number.isFinite(raw.terminalP10) ? raw.terminalP10 : 0,
+    vsCurrentRuin: Number.isFinite(raw.vsCurrentRuin) ? raw.vsCurrentRuin : 0,
+    vsCurrentP50: Number.isFinite(raw.vsCurrentP50) ? raw.vsCurrentP50 : 0,
+    moves: safeMoves,
+  };
 }
