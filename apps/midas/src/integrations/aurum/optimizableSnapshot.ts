@@ -14,6 +14,8 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
 
   const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot> | undefined;
   if (!data || !Number.isFinite(Number(data.optimizableInvestmentsCLP))) return null;
+  const totalNetWorthClp =
+    Number.isFinite(Number(data.totalNetWorthCLP)) ? Number(data.totalNetWorthCLP) : null;
 
   return {
     version: 1,
@@ -21,6 +23,10 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
     snapshotMonth: String(data.snapshotMonth || ''),
     snapshotLabel: String(data.snapshotLabel || ''),
     currency: 'CLP',
+    totalNetWorthCLP: totalNetWorthClp ?? 0,
+    ...(Number.isFinite(Number(data.totalNetWorthWithRiskCLP))
+      ? { totalNetWorthWithRiskCLP: Number(data.totalNetWorthWithRiskCLP) }
+      : {}),
     optimizableInvestmentsCLP: Number(data.optimizableInvestmentsCLP),
     ...(Number.isFinite(Number(data.optimizableInvestmentsWithRiskCLP))
       ? { optimizableInvestmentsWithRiskCLP: Number(data.optimizableInvestmentsWithRiskCLP) }

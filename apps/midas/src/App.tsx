@@ -86,7 +86,7 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
 }
 
 export default function App() {
-  const [baseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
+  const [baseParams, setBaseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
@@ -286,6 +286,35 @@ export default function App() {
         const snapshot = await loadPublishedOptimizableInvestmentsSnapshot();
         if (cancelled) return;
         setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
+        const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+        if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) return;
+
+        setBaseParams((prev) => {
+          if (Math.round(prev.capitalInitial) === Math.round(aurumNetWorth)) return prev;
+          return {
+            ...prev,
+            capitalInitial: aurumNetWorth,
+            label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
+          };
+        });
+
+        // Solo aplicamos el capital oficial automáticamente cuando no hay una simulación activa.
+        if (!simulationActive && !simOverrides?.active) {
+          let nextParamsForRun: ModelParameters | null = null;
+          setSimParams((prev) => {
+            if (Math.round(prev.capitalInitial) === Math.round(aurumNetWorth)) return prev;
+            const next = {
+              ...prev,
+              capitalInitial: aurumNetWorth,
+              label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
+            };
+            nextParamsForRun = next;
+            return next;
+          });
+          if (nextParamsForRun) {
+            setSimResult(computeTriMotor(nextParamsForRun));
+          }
+        }
       } catch {
         if (cancelled) return;
         setOptimizableBaseReference({
@@ -300,7 +329,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [computeTriMotor, simOverrides?.active, simulationActive]);
 
   const content = activeTab === 'sim' ? (
     <SimulationPage

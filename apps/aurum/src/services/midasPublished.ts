@@ -9,6 +9,8 @@ export type AurumOptimizableInvestmentsSnapshot = {
   snapshotMonth: string;
   snapshotLabel: string;
   currency: 'CLP';
+  totalNetWorthCLP: number;
+  totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
   source: {
@@ -40,6 +42,10 @@ export const buildAurumOptimizableInvestmentsSnapshot = (
   const withoutRisk = asFiniteOrNull(latest.summary?.investmentClp);
   if (withoutRisk === null) return null;
   const withRisk = asFiniteOrNull(latest.summary?.investmentClpWithRisk);
+  const totalNetWorth = asFiniteOrNull(latest.summary?.netClp) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
+  if (totalNetWorth === null) return null;
+  const totalNetWorthWithRisk =
+    asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
 
   return {
     version: 1,
@@ -47,6 +53,8 @@ export const buildAurumOptimizableInvestmentsSnapshot = (
     snapshotMonth: latest.monthKey,
     snapshotLabel: `Cierre ${formatMonthLabel(latest.monthKey)}`,
     currency: 'CLP',
+    totalNetWorthCLP: Math.round(totalNetWorth),
+    ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: Math.round(totalNetWorthWithRisk) } : {}),
     optimizableInvestmentsCLP: Math.round(withoutRisk),
     ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
     source: {

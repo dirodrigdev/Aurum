@@ -1,12 +1,11 @@
 // integrations/aurum/types.ts
-// Contrato entre Midas y Aurum — solo lectura, solo snapshots publicados
-// Aurum escribe aquí. Midas solo lee.
-// Firestore path: users/{uid}/aurum/published/wealthSnapshot
+// Contrato entre Midas y Aurum — solo lectura, solo snapshots publicados.
+// Aurum escribe snapshots publicados; Midas solo consume esos snapshots.
 
 /**
- * Snapshot patrimonial publicado por Aurum.
- * Midas NO debe leer colecciones internas de Aurum.
- * Midas solo consume este documento explícitamente publicado.
+ * Snapshot legacy de composición patrimonial.
+ * Se mantiene por compatibilidad del contrato histórico.
+ * Path histórico: users/{uid}/aurum/published/wealthSnapshot
  */
 export interface AurumWealthSnapshot {
   version:       string;       // "1.0"
@@ -50,6 +49,8 @@ export interface AurumOptimizableInvestmentsSnapshot {
   snapshotMonth: string;
   snapshotLabel: string;
   currency: 'CLP';
+  totalNetWorthCLP: number;
+  totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
   source: {
