@@ -1,4 +1,4 @@
-import { WealthMonthlyClosure } from './wealthStorage';
+import { WealthMonthlyClosure, resolveClosureNetClp } from './wealthStorage';
 
 export type FinancialFreedomStatus =
   | 'ok'
@@ -64,18 +64,6 @@ const DEFAULT_COVERAGE_CURVE_CAP_MONTHS = 60 * 12;
 
 const isFinitePositive = (value: number) => Number.isFinite(value) && value > 0;
 
-const summaryNetClp = (
-  closure: WealthMonthlyClosure,
-  includeRiskCapitalInTotals: boolean,
-): number | null => {
-  if (includeRiskCapitalInTotals && Number.isFinite(closure.summary?.netClpWithRisk)) {
-    return Number(closure.summary.netClpWithRisk);
-  }
-  if (Number.isFinite(closure.summary?.netClp)) return Number(closure.summary.netClp);
-  if (Number.isFinite(closure.summary?.netConsolidatedClp)) return Number(closure.summary.netConsolidatedClp);
-  return null;
-};
-
 export const addMonthsToMonthKey = (monthKey: string, monthsToAdd: number): string | null => {
   const [yearRaw, monthRaw] = String(monthKey || '').split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw) || monthRaw < 1 || monthRaw > 12) return null;
@@ -100,7 +88,7 @@ export const resolveFinancialFreedomBase = (
   const latest = [...closures]
     .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
     .find((closure) => {
-      const net = summaryNetClp(closure, includeRiskCapitalInTotals);
+      const net = resolveClosureNetClp(closure, includeRiskCapitalInTotals);
       return net !== null && Number.isFinite(net) && net > 0;
     }) || null;
 
@@ -116,7 +104,7 @@ export const resolveFinancialFreedomBase = (
 
   return {
     status: 'ok',
-    patrimonioBaseClp: Number(summaryNetClp(latest, includeRiskCapitalInTotals)),
+    patrimonioBaseClp: Number(resolveClosureNetClp(latest, includeRiskCapitalInTotals)),
     sourceMonthKey: latest.monthKey,
     sourceClosureId: latest.id,
     message: null,

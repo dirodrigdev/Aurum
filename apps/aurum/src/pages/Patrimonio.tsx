@@ -37,6 +37,7 @@ import {
   defaultFxRates,
   applyMortgageAutoCalculation,
   buildWealthNetBreakdown,
+  resolveClosureNetClp,
   computeWealthBankLiquiditySnapshot,
   computeWealthHomeSectionAmounts,
   isAggregateNonMortgageDebtRecord,
@@ -531,23 +532,6 @@ const fromClp = (amountClp: number, currency: WealthCurrency, usdClp: number, eu
 const average = (arr: number[]) => {
   if (!arr.length) return null;
   return arr.reduce((sum, n) => sum + n, 0) / arr.length;
-};
-
-const closureNetForTotals = (
-  closure: WealthMonthlyClosure,
-  includeRiskCapital: boolean,
-  fallbackFx: { usdClp: number; eurClp: number; ufClp: number },
-) => {
-  if (closure.records?.length) {
-    const resolved = resolveRiskCapitalRecordsForTotals(closure.records, includeRiskCapital);
-    return buildWealthNetBreakdown(resolved.recordsForTotals, closure.fxRates || fallbackFx).netClp;
-  }
-  if (includeRiskCapital) {
-    if (Number.isFinite(closure.summary.netClpWithRisk)) return Number(closure.summary.netClpWithRisk);
-  } else if (Number.isFinite(closure.summary.netClp)) {
-    return Number(closure.summary.netClp);
-  }
-  return closure.summary.netConsolidatedClp;
 };
 
 const emptyBankLiquiditySnapshot = () => ({
@@ -4022,7 +4006,10 @@ export const Patrimonio: React.FC = () => {
   const closureNetByMonth = useMemo(() => {
     const map = new Map<string, number>();
     closures.forEach((closure) => {
-      map.set(closure.monthKey, closureNetForTotals(closure, includeRiskCapitalInTotals, fx));
+      const net = resolveClosureNetClp(closure, includeRiskCapitalInTotals, fx);
+      if (net !== null) {
+        map.set(closure.monthKey, net);
+      }
     });
     return map;
   }, [closures, includeRiskCapitalInTotals, fx]);
@@ -4161,11 +4148,11 @@ export const Patrimonio: React.FC = () => {
       if (Number.isFinite(summaryNetWithRisk) && (!hasRiskRecord || summaryNetWithRisk !== summaryNet)) {
         return summaryNetWithRisk;
       }
-      if (hasRecords) return closureNetForTotals(closure, true, fx);
+      if (hasRecords) return resolveClosureNetClp(closure, true, fx) ?? closure.summary.netConsolidatedClp;
       if (Number.isFinite(summaryNetWithRisk)) return summaryNetWithRisk;
     } else {
       if (Number.isFinite(summaryNet)) return summaryNet;
-      if (hasRecords) return closureNetForTotals(closure, false, fx);
+      if (hasRecords) return resolveClosureNetClp(closure, false, fx) ?? closure.summary.netConsolidatedClp;
     }
     return closure.summary.netConsolidatedClp;
   };

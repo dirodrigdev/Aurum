@@ -2301,6 +2301,31 @@ export const buildWealthNetBreakdown = (
   };
 };
 
+export const resolveClosureNetClp = (
+  closure: WealthMonthlyClosure,
+  includeRiskCapitalInTotals: boolean,
+  fallbackFx: WealthFxRates = defaultFxRates,
+): number | null => {
+  if (closure.records?.length) {
+    const resolved = resolveRiskCapitalRecordsForTotals(closure.records, includeRiskCapitalInTotals);
+    return buildWealthNetBreakdown(resolved.recordsForTotals, closure.fxRates || fallbackFx).netClp;
+  }
+
+  if (includeRiskCapitalInTotals && Number.isFinite(closure.summary?.netClpWithRisk)) {
+    return Number(closure.summary.netClpWithRisk);
+  }
+
+  if (Number.isFinite(closure.summary?.netClp)) {
+    return Number(closure.summary.netClp);
+  }
+
+  if (Number.isFinite(closure.summary?.netConsolidatedClp)) {
+    return Number(closure.summary.netConsolidatedClp);
+  }
+
+  return null;
+};
+
 export const loadClosures = (): WealthMonthlyClosure[] => {
   try {
     const raw = localStorage.getItem(CLOSURES_KEY);
