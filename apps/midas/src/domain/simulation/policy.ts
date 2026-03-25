@@ -6,6 +6,14 @@ import { runSimulationRobust } from './engineRobust';
 export type MidasSimulationChannel = 'primary' | 'favorable' | 'prudent';
 export type MidasEngineId = 'central' | 'historical' | 'robust';
 
+/**
+ * Single source of truth for simulation engine routing in Midas.
+ *
+ * Product rule:
+ * - `primary` is the only official baseline engine and must stay `central`.
+ * - `historical` and `robust` are auxiliary engines for range/comparison only.
+ * - No principal screen should silently use auxiliary engines as baseline.
+ */
 export const MIDAS_SIMULATION_POLICY: Record<MidasSimulationChannel, MidasEngineId> = {
   primary: 'central',
   favorable: 'historical',
