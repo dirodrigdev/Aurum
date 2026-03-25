@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  classifyCoverageQuality,
   clearInstrumentBaseSnapshot,
   loadInstrumentBaseSnapshot,
   type OptimizableBaseReference,
@@ -39,18 +40,15 @@ const formatDateTime = (iso: string | null) => {
 };
 
 const placeholderJson = `{
-  "version": 1,
-  "instruments": [
+  "instrumentos": [
     {
-      "name": "Fondo A",
-      "manager": "BTG",
-      "currentAmountCLP": 350000000,
-      "exposure": {
-        "rv": 0.60,
-        "rf": 0.40,
-        "global": 0.75,
-        "local": 0.25
-      }
+      "administradora": "SURA",
+      "instrumento": "Multiactivo",
+      "monto_clp_eq": 350000000,
+      "porcentaje_rv": 60,
+      "porcentaje_rf": 40,
+      "porcentaje_global": 75,
+      "porcentaje_local": 25
     }
   ]
 }`;
@@ -139,6 +137,7 @@ export function SettingsPage({ optimizableBaseReference }: { optimizableBaseRefe
     () => summarizeInstrumentBase(savedSnapshot, optimizableBaseReference.amountClp),
     [savedSnapshot, optimizableBaseReference.amountClp],
   );
+  const coverageQuality = classifyCoverageQuality(savedSummary?.coverageVsOptimizableBaseRatio ?? null);
 
   const runValidation = () => {
     const next = validateInstrumentBaseJson(editorValue, optimizableBaseReference.amountClp);
@@ -231,7 +230,15 @@ export function SettingsPage({ optimizableBaseReference }: { optimizableBaseRefe
               <SummaryCard
                 title="Cobertura"
                 value={formatPct(savedSummary.coverageVsOptimizableBaseRatio)}
-                subtitle={`Diferencia vs base optimizable: ${formatMoneyClp(savedSummary.differenceVsOptimizableBaseClp)}`}
+                subtitle={`Calidad: ${
+                  coverageQuality === 'high'
+                    ? 'alta'
+                    : coverageQuality === 'partial'
+                      ? 'parcial'
+                      : coverageQuality === 'insufficient'
+                        ? 'insuficiente'
+                        : 'sin referencia'
+                } · Diferencia: ${formatMoneyClp(savedSummary.differenceVsOptimizableBaseClp)}`}
               />
             </div>
             <ExposureSummary summary={savedSummary} />
@@ -255,7 +262,7 @@ export function SettingsPage({ optimizableBaseReference }: { optimizableBaseRefe
               Pegar JSON
             </div>
             <div style={{ marginTop: 6, color: T.textSecondary, fontSize: 13 }}>
-              Soporta arreglo directo o objeto con `instruments`.
+              Soporta arreglo directo o objeto con `instruments` / `instrumentos` (incluye campos en español).
             </div>
           </div>
           {savedSnapshot && (

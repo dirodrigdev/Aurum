@@ -362,6 +362,7 @@ export default function App() {
       simulationLabel={stateLabel}
       preloadedBaseStats={baseOptimizerSnapshot}
       preloadedSimulationStats={simulationOptimizerSnapshot}
+      optimizableBaseReference={optimizableBaseReference}
     />
   );
 

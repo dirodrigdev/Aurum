@@ -1,6 +1,14 @@
-import React, { startTransition, useEffect, useRef, useState } from 'react';
+import React, { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters, OptimizerObjective, OptimizerResult, PortfolioWeights } from '../domain/model/types';
 import { T, css } from './theme';
+import {
+  classifyCoverageQuality,
+  inferImplicitMixFromInstrumentBase,
+  loadInstrumentBaseSnapshot,
+  summarizeInstrumentBase,
+  type CoverageQuality,
+  type OptimizableBaseReference,
+} from '../domain/instrumentBase';
 
 type OptimizerSourceMode = 'base' | 'simulation';
 type BaselineSnapshot = { probRuin: number; terminalP50: number };
@@ -48,6 +56,7 @@ export function OptimizerPage({
   simulationLabel,
   preloadedBaseStats,
   preloadedSimulationStats,
+  optimizableBaseReference,
 }: {
   baseParams: ModelParameters;
   simulationParams: ModelParameters;
@@ -55,6 +64,7 @@ export function OptimizerPage({
   simulationLabel?: string;
   preloadedBaseStats?: BaselineSnapshot | null;
   preloadedSimulationStats?: BaselineSnapshot | null;
+  optimizableBaseReference: OptimizableBaseReference;
 }) {
   const [result, setResult] = useState<OptimizerResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -68,6 +78,7 @@ export function OptimizerPage({
   const [phase, setPhase] = useState<'idle' | 'quick' | 'full'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sourceMode, setSourceMode] = useState<OptimizerSourceMode>('base');
+  const [instrumentBaseSnapshot, setInstrumentBaseSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const runIdRef = useRef(0);
   const isMountedRef = useRef(true);
   const workerRef = useRef<Worker | null>(null);
@@ -101,6 +112,15 @@ export function OptimizerPage({
       simulation: preloadedSimulationStats ?? prev.simulation,
     }));
   }, [preloadedBaseStats, preloadedSimulationStats]);
+
+  useEffect(() => {
+    const refreshSnapshot = () => setInstrumentBaseSnapshot(loadInstrumentBaseSnapshot());
+    refreshSnapshot();
+    window.addEventListener('focus', refreshSnapshot);
+    return () => {
+      window.removeEventListener('focus', refreshSnapshot);
+    };
+  }, []);
 
   useEffect(() => {
     if (baselineBySource[activeSource]) return;
@@ -316,6 +336,18 @@ export function OptimizerPage({
   const movementAmounts = visibleResult ? buildMoveAmounts(currentWeights, optimizedWeights, activeParams.capitalInitial) : [];
   const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
   const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
+  const instrumentBaseSummary = useMemo(
+    () => summarizeInstrumentBase(instrumentBaseSnapshot, optimizableBaseReference.amountClp),
+    [instrumentBaseSnapshot, optimizableBaseReference.amountClp],
+  );
+  const implicitMix = useMemo(
+    () => inferImplicitMixFromInstrumentBase(instrumentBaseSnapshot),
+    [instrumentBaseSnapshot],
+  );
+  const coverageQuality = classifyCoverageQuality(instrumentBaseSummary?.coverageVsOptimizableBaseRatio ?? null);
+  const theoreticalMix = normalizeWeights(optimizedWeights);
+  const theoreticalRisk = summarizeRisk(theoreticalMix);
+  const theoreticalGeo = summarizeGlobalLocalFromWeights(theoreticalMix);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -549,6 +581,73 @@ export function OptimizerPage({
               <BlockSplitCard title="Dentro de renta variable" current={rvSplitCurrent} optimized={rvSplitOptimized} />
               <BlockSplitCard title="Dentro de renta fija" current={rfSplitCurrent} optimized={rfSplitOptimized} />
             </div>
+          </div>
+
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}>
+            <SectionTitle
+              eyebrow="Fase Instrumental"
+              title="Mix inferido de instrumentos vs optimizado teorico"
+              subtitle="El mix actual se infiere desde exposiciones por instrumento. Aun no es una propuesta final de movimientos."
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 12 }}>
+              <Stat
+                label="Base instrumental cargada"
+                value={instrumentBaseSummary ? formatMoneyCompact(instrumentBaseSummary.totalAmountCLP) : 'No cargada'}
+              />
+              <Stat
+                label="Base optimizable oficial"
+                value={optimizableBaseReference.amountClp ? formatMoneyCompact(optimizableBaseReference.amountClp) : 'Pendiente'}
+              />
+              <Stat
+                label="Cobertura"
+                value={formatCoverageRatio(instrumentBaseSummary?.coverageVsOptimizableBaseRatio ?? null)}
+                accent={coverageToneColor(coverageQuality)}
+              />
+              <div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Calidad cobertura</div>
+                <div style={{ marginTop: 4 }}>
+                  <CoverageBadge quality={coverageQuality} />
+                </div>
+              </div>
+            </div>
+
+            {!implicitMix ? (
+              <div
+                style={{
+                  border: `1px dashed ${T.border}`,
+                  borderRadius: 10,
+                  padding: 12,
+                  color: T.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                No hay base instrumental util para inferir el mix actual. Carga JSON en Ajustes para habilitar esta comparacion.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                  <PairGapCard
+                    title="RV / RF"
+                    currentLeft={implicitMix.rv}
+                    currentRight={implicitMix.rf}
+                    targetLeft={theoreticalRisk.rv}
+                    targetRight={theoreticalRisk.rf}
+                    leftLabel="RV"
+                    rightLabel="RF"
+                  />
+                  <PairGapCard
+                    title="Global / Local"
+                    currentLeft={implicitMix.global}
+                    currentRight={implicitMix.local}
+                    targetLeft={theoreticalGeo.global}
+                    targetRight={theoreticalGeo.local}
+                    leftLabel="Global"
+                    rightLabel="Local"
+                  />
+                </div>
+                <SleeveGapTable current={implicitMix.sleeves} target={theoreticalMix} />
+              </div>
+            )}
           </div>
 
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}>
@@ -801,6 +900,127 @@ function SplitBar({ globalShare, localShare }: { globalShare: number; localShare
   );
 }
 
+function CoverageBadge({ quality }: { quality: CoverageQuality }) {
+  const config =
+    quality === 'high'
+      ? { label: 'Alta', color: T.positive, border: 'rgba(61, 212, 141, 0.4)', bg: 'rgba(61, 212, 141, 0.1)' }
+      : quality === 'partial'
+        ? { label: 'Parcial', color: T.warning, border: 'rgba(255, 176, 32, 0.45)', bg: 'rgba(255, 176, 32, 0.12)' }
+        : quality === 'insufficient'
+          ? { label: 'Insuficiente', color: T.negative, border: 'rgba(255, 90, 90, 0.45)', bg: 'rgba(255, 90, 90, 0.1)' }
+          : { label: 'Sin referencia', color: T.textMuted, border: T.border, bg: T.surfaceEl };
+
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '4px 9px',
+        borderRadius: 999,
+        border: `1px solid ${config.border}`,
+        background: config.bg,
+        color: config.color,
+        fontSize: 11,
+        fontWeight: 700,
+      }}
+    >
+      {config.label}
+    </span>
+  );
+}
+
+function PairGapCard({
+  title,
+  currentLeft,
+  currentRight,
+  targetLeft,
+  targetRight,
+  leftLabel,
+  rightLabel,
+}: {
+  title: string;
+  currentLeft: number;
+  currentRight: number;
+  targetLeft: number;
+  targetRight: number;
+  leftLabel: string;
+  rightLabel: string;
+}) {
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+      <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{title}</div>
+      <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>Inferido actual vs objetivo teorico</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+        <Stat label={`${leftLabel} actual`} value={formatPercent(currentLeft)} />
+        <Stat label={`${leftLabel} teorico`} value={formatPercent(targetLeft)} />
+        <Stat label={`${rightLabel} actual`} value={formatPercent(currentRight)} />
+        <Stat label={`${rightLabel} teorico`} value={formatPercent(targetRight)} />
+      </div>
+      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Stat
+          label={`Brecha ${leftLabel}`}
+          value={formatSignedPp(targetLeft - currentLeft)}
+          accent={targetLeft - currentLeft >= 0 ? T.positive : T.negative}
+        />
+        <Stat
+          label={`Brecha ${rightLabel}`}
+          value={formatSignedPp(targetRight - currentRight)}
+          accent={targetRight - currentRight >= 0 ? T.positive : T.negative}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SleeveGapTable({
+  current,
+  target,
+}: {
+  current: { rvGlobal: number; rvChile: number; rfGlobal: number; rfChile: number };
+  target: PortfolioWeights;
+}) {
+  const rows: Array<{ key: keyof PortfolioWeights; label: string }> = [
+    { key: 'rvGlobal', label: 'RV Global' },
+    { key: 'rvChile', label: 'RV Chile' },
+    { key: 'rfGlobal', label: 'RF Global' },
+    { key: 'rfChile', label: 'RF Chile UF' },
+  ];
+
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+      <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Brecha por 4 sleeves (inferido)</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {rows.map((row) => {
+          const currentValue = current[row.key];
+          const targetValue = target[row.key];
+          const delta = targetValue - currentValue;
+          return (
+            <div
+              key={row.key}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(90px, 1fr) minmax(64px, auto) minmax(64px, auto) minmax(64px, auto)',
+                gap: 10,
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ color: T.textSecondary, fontSize: 12 }}>{row.label}</span>
+              <span style={{ ...css.mono, color: T.textMuted, fontSize: 12 }}>{formatPercent(currentValue)}</span>
+              <span style={{ ...css.mono, color: T.textPrimary, fontSize: 12 }}>{formatPercent(targetValue)}</span>
+              <span style={{ ...css.mono, color: delta >= 0 ? T.positive : T.negative, fontSize: 12 }}>
+                {formatSignedPp(delta)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
+        Nota: este mix actual es inferido desde exposiciones por instrumento; puede no replicar exactamente el mix teorico.
+      </div>
+    </div>
+  );
+}
+
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div>
@@ -895,6 +1115,11 @@ function formatPercent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatCoverageRatio(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 function formatSignedPp(value: number) {
   const pp = Math.abs(value) < 0.00005 ? 0 : value * 100;
   return `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}pp`;
@@ -916,6 +1141,21 @@ function formatSignedMoney(value: number) {
 function formatSignedMoneyClp(value: number) {
   const rounded = Math.abs(value) < 1 ? 0 : Math.round(value);
   return `${rounded >= 0 ? '+' : '-'}$${Math.abs(rounded).toLocaleString('es-CL')}`;
+}
+
+function summarizeGlobalLocalFromWeights(weights: PortfolioWeights) {
+  const normalized = normalizeWeights(weights);
+  return {
+    global: clamp01(normalized.rvGlobal + normalized.rfGlobal),
+    local: clamp01(normalized.rvChile + normalized.rfChile),
+  };
+}
+
+function coverageToneColor(quality: CoverageQuality) {
+  if (quality === 'high') return T.positive;
+  if (quality === 'partial') return T.warning;
+  if (quality === 'insufficient') return T.negative;
+  return T.textMuted;
 }
 
 function normalizeWeights(weights: PortfolioWeights): PortfolioWeights {

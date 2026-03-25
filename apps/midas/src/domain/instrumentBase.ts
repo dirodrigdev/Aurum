@@ -29,6 +29,21 @@ export type InstrumentBaseSummary = {
   differenceVsOptimizableBaseClp: number | null;
 };
 
+export type CoverageQuality = 'high' | 'partial' | 'insufficient' | 'unknown';
+
+export type InstrumentImplicitMix = {
+  rv: number;
+  rf: number;
+  global: number;
+  local: number;
+  sleeves: {
+    rvGlobal: number;
+    rvChile: number;
+    rfGlobal: number;
+    rfChile: number;
+  };
+};
+
 export type OptimizableBaseReference = {
   amountClp: number | null;
   asOf: string | null;
@@ -52,6 +67,8 @@ const asFiniteNumber = (value: unknown): number | null => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 const toId = (value: string) =>
   value
@@ -135,10 +152,54 @@ const buildSummary = (
 
 const parseRootArray = (parsed: unknown): unknown[] | null => {
   if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { instruments?: unknown[] }).instruments)) {
-    return (parsed as { instruments: unknown[] }).instruments;
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    (Array.isArray((parsed as { instruments?: unknown[] }).instruments) ||
+      Array.isArray((parsed as { instrumentos?: unknown[] }).instrumentos))
+  ) {
+    if (Array.isArray((parsed as { instruments?: unknown[] }).instruments)) {
+      return (parsed as { instruments: unknown[] }).instruments;
+    }
+    return (parsed as { instrumentos: unknown[] }).instrumentos;
   }
   return null;
+};
+
+const resolveName = (source: Record<string, unknown>) =>
+  String(source.name || source.instrumento || source.instrument || '').trim();
+
+const resolveManager = (source: Record<string, unknown>) =>
+  String(source.manager || source.provider || source.administradora || '').trim();
+
+const resolveCurrentAmountClp = (source: Record<string, unknown>) =>
+  asFiniteNumber(source.currentAmountCLP ?? source.monto_clp_eq ?? source.montoCLP ?? null);
+
+const resolveExposurePairValues = (
+  source: Record<string, unknown>,
+): {
+  rvRaw: unknown;
+  rfRaw: unknown;
+  globalRaw: unknown;
+  localRaw: unknown;
+} => {
+  const exposure = source.exposure;
+  if (exposure && typeof exposure === 'object') {
+    const typed = exposure as Record<string, unknown>;
+    return {
+      rvRaw: typed.rv,
+      rfRaw: typed.rf,
+      globalRaw: typed.global,
+      localRaw: typed.local,
+    };
+  }
+
+  return {
+    rvRaw: source.porcentaje_rv ?? source.rv,
+    rfRaw: source.porcentaje_rf ?? source.rf,
+    globalRaw: source.porcentaje_global ?? source.global,
+    localRaw: source.porcentaje_local ?? source.local,
+  };
 };
 
 export const validateInstrumentBaseJson = (
@@ -173,7 +234,7 @@ export const validateInstrumentBaseJson = (
   if (!rows) {
     return {
       ok: false,
-      errors: ['El JSON debe ser un arreglo o un objeto con la propiedad "instruments".'],
+      errors: ['El JSON debe ser un arreglo o un objeto con la propiedad "instruments" o "instrumentos".'],
       warnings: [],
       snapshot: null,
       summary: null,
@@ -191,30 +252,26 @@ export const validateInstrumentBaseJson = (
     }
 
     const source = row as Record<string, unknown>;
-    const name = String(source.name || '').trim();
-    const manager = String(source.manager || source.provider || '').trim();
-    const currentAmountCLP = asFiniteNumber(source.currentAmountCLP);
-    const exposure = source.exposure;
+    const name = resolveName(source);
+    const manager = resolveManager(source);
+    const currentAmountCLP = resolveCurrentAmountClp(source);
+    const { rvRaw, rfRaw, globalRaw, localRaw } = resolveExposurePairValues(source);
 
-    if (!name) errors.push(`Fila ${index + 1}: falta "name".`);
-    if (!manager) errors.push(`Fila ${index + 1}: falta "manager" o "provider".`);
+    if (!name) errors.push(`Fila ${index + 1}: falta "name" o "instrumento".`);
+    if (!manager) errors.push(`Fila ${index + 1}: falta "manager", "provider" o "administradora".`);
     if (currentAmountCLP === null || currentAmountCLP < 0) {
-      errors.push(`Fila ${index + 1}: "currentAmountCLP" debe ser un número >= 0.`);
-    }
-    if (!exposure || typeof exposure !== 'object') {
-      errors.push(`Fila ${index + 1}: falta "exposure".`);
-      return;
+      errors.push(`Fila ${index + 1}: "currentAmountCLP" o "monto_clp_eq" debe ser un número >= 0.`);
     }
 
     const rvRf = normalizePair(
-      (exposure as Record<string, unknown>).rv,
-      (exposure as Record<string, unknown>).rf,
+      rvRaw,
+      rfRaw,
       'rv',
       'rf',
     );
     const globalLocal = normalizePair(
-      (exposure as Record<string, unknown>).global,
-      (exposure as Record<string, unknown>).local,
+      globalRaw,
+      localRaw,
       'global',
       'local',
     );
@@ -299,4 +356,48 @@ export const summarizeInstrumentBase = (
 ): InstrumentBaseSummary | null => {
   if (!snapshot) return null;
   return buildSummary(snapshot, optimizableBaseClp);
+};
+
+export const classifyCoverageQuality = (coverageRatio: number | null): CoverageQuality => {
+  if (coverageRatio === null || !Number.isFinite(coverageRatio)) return 'unknown';
+  if (coverageRatio >= 0.9 && coverageRatio <= 1.1) return 'high';
+  if (coverageRatio >= 0.6 && coverageRatio < 0.9) return 'partial';
+  if (coverageRatio > 1.1) return 'partial';
+  return 'insufficient';
+};
+
+export const inferImplicitMixFromInstrumentBase = (
+  snapshot: InstrumentBaseSnapshot | null,
+): InstrumentImplicitMix | null => {
+  if (!snapshot) return null;
+  const summary = buildSummary(snapshot);
+  if (!summary.weightedExposure) return null;
+
+  const rv = clamp01(summary.weightedExposure.rv);
+  const rf = clamp01(summary.weightedExposure.rf);
+  const global = clamp01(summary.weightedExposure.global);
+  const local = clamp01(summary.weightedExposure.local);
+
+  const rawSleeves = {
+    rvGlobal: rv * global,
+    rvChile: rv * local,
+    rfGlobal: rf * global,
+    rfChile: rf * local,
+  };
+
+  const sleeveSum = rawSleeves.rvGlobal + rawSleeves.rvChile + rawSleeves.rfGlobal + rawSleeves.rfChile;
+  if (sleeveSum <= 0) return null;
+
+  return {
+    rv,
+    rf,
+    global,
+    local,
+    sleeves: {
+      rvGlobal: rawSleeves.rvGlobal / sleeveSum,
+      rvChile: rawSleeves.rvChile / sleeveSum,
+      rfGlobal: rawSleeves.rfGlobal / sleeveSum,
+      rfChile: rawSleeves.rfChile / sleeveSum,
+    },
+  };
 };
