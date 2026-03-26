@@ -136,6 +136,7 @@ export interface SimulationCompositionDiagnostics {
   compositionGapCLP: number;
   compositionGapPct: number;
   notes: string[];
+  diagnosticWarnings?: string[];
   saleTriggeredMonth?: number;
   saleExecutedMonth?: number;
   terminalAdjustmentApplied?: boolean;
@@ -144,6 +145,7 @@ export interface SimulationCompositionDiagnostics {
   bucketBeforeRebalance?: number;
   bucketAfterRebalance?: number;
   rebalanceMonth?: number;
+  lastRebalanceMonth?: number;
 }
 
 export interface SimulationCompositionInput {

@@ -2,6 +2,7 @@ import type {
   ModelParameters,
   SimulationResults,
   FanChartPoint,
+  MortgageProjectionStatus,
 } from '../model/types';
 import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 import { applyExpenseWaterfall, applySleeveReturns, buildInitialLiquidState, captureBlockSnapshot, getBaseExpenseForMonth, runAnnualRebalance } from './blockState';
@@ -65,6 +66,23 @@ function percentile(sorted: number[], p: number): number {
 }
 
 const clampNonNegative = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
+
+function normalizeDiagnosticWarnings(notes: string[], status: MortgageProjectionStatus): string[] {
+  const warnings: string[] = [];
+  for (const note of notes) {
+    if (note.startsWith('warn-and-run:')) {
+      warnings.push(`mortgage:${note.slice('warn-and-run:'.length)}`);
+      continue;
+    }
+    if (note.startsWith('mortgage-uf-')) {
+      warnings.push(`mortgage:${note.slice('mortgage-uf-'.length)}`);
+    }
+  }
+  if (status === 'fallback_incomplete') {
+    warnings.push('mortgage:fallback-incomplete');
+  }
+  return Array.from(new Set(warnings));
+}
 
 function applyCashflowEvents(
   sl: number[],
@@ -367,6 +385,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const realEstateInput = composition?.nonOptimizable?.realEstate;
   const mortgageProjection = buildMortgageProjection(realEstateInput, T);
   const amortizationScheduleUF = mortgageProjection.amortizationUF;
+  const diagnosticWarnings = normalizeDiagnosticWarnings(mortgageProjection.notes, mortgageProjection.status);
   const ufSnapshotCLP = clampNonNegative(realEstateInput?.ufSnapshotCLP ?? 0);
   const equityCLP0 = clampNonNegative(realEstateInput?.realEstateEquityCLP ?? 0);
   const equityUF0 = ufSnapshotCLP > 0 ? equityCLP0 / ufSnapshotCLP : 0;
@@ -668,6 +687,10 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                   notes: [],
                 }),
                 mode: compositionMode,
+                diagnosticWarnings: [
+                  ...(params.simulationComposition.diagnostics?.diagnosticWarnings ?? []),
+                  ...diagnosticWarnings,
+                ],
                 saleTriggeredMonth:
                   saleTriggeredMonths.length > 0
                     ? Math.round(percentile([...saleTriggeredMonths].sort((a, b) => a - b), 50))
@@ -693,6 +716,10 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                 rebalanceMonth:
                   rebalanceMonths.length > 0
                     ? Math.round(percentile([...rebalanceMonths].sort((a, b) => a - b), 50))
+                    : undefined,
+                lastRebalanceMonth:
+                  rebalanceMonths.length > 0
+                    ? Math.max(...rebalanceMonths)
                     : undefined,
                 notes: [
                   ...(params.simulationComposition.diagnostics?.notes ?? []),

@@ -332,13 +332,18 @@ export function buildMortgageProjection(
   const horizon = Math.max(0, Math.floor(horizonMonths));
   const amortizationUF = Array.from({ length: horizon }, () => 0);
 
+  const equityCLP = asFiniteOrNull(input?.realEstateEquityCLP);
   const ufSnapshotCLP = asFiniteOrNull(input?.ufSnapshotCLP);
   const snapshotMonth = typeof input?.snapshotMonth === 'string' ? input?.snapshotMonth.trim() : '';
-  if (!ufSnapshotCLP || ufSnapshotCLP <= 0 || !snapshotMonth) {
+  if (equityCLP === null || equityCLP < 0) notes.push('mortgage-uf-missing-equity');
+  if (!ufSnapshotCLP || ufSnapshotCLP <= 0) notes.push('mortgage-uf-missing-uf');
+  if (!snapshotMonth) notes.push('mortgage-uf-missing-snapshot-month');
+  if (notes.length > 0) {
+    notes.push('mortgage-uf-missing-inputs');
     return {
       status: 'fallback_incomplete',
       amortizationUF,
-      notes: ['mortgage-uf-missing-inputs'],
+      notes,
     };
   }
 
