@@ -176,6 +176,14 @@ export default function App() {
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
 
+  const formatRuntimeError = useCallback((label: string, payload: unknown) => {
+    if (payload instanceof Error) {
+      const stack = payload.stack ? `\n${payload.stack}` : '';
+      return `${label}: ${payload.name}: ${payload.message}${stack}`;
+    }
+    return `${label}: ${String(payload)}`;
+  }, []);
+
   useEffect(() => {
     baseParamsRef.current = baseParams;
   }, [baseParams]);
@@ -211,8 +219,7 @@ export default function App() {
     };
 
     const report = (label: string, payload: unknown) => {
-      const message = payload instanceof Error ? payload.stack || payload.message : String(payload);
-      const entry = `${label}: ${message}`;
+      const entry = formatRuntimeError(label, payload);
       setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
       const panel = ensureOverlay();
       panel.textContent = entry;
@@ -232,7 +239,7 @@ export default function App() {
       window.removeEventListener('error', onError);
       window.removeEventListener('unhandledrejection', onRejection);
     };
-  }, []);
+  }, [formatRuntimeError]);
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current !== null) {
@@ -402,12 +409,21 @@ export default function App() {
 
   const applyPendingSnapshot = useCallback(() => {
     if (!pendingSnapshot || !pendingSnapshotSignature) return;
-    lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
-    applySnapshotNow(pendingSnapshot);
-    setPendingSnapshot(null);
-    setPendingSnapshotLabel(null);
-    setPendingSnapshotSignature(null);
-  }, [applySnapshotNow, pendingSnapshot, pendingSnapshotSignature]);
+    try {
+      setSimUiError(null);
+      setSimUiState('recalculating');
+      lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
+      applySnapshotNow(pendingSnapshot);
+      setPendingSnapshot(null);
+      setPendingSnapshotLabel(null);
+      setPendingSnapshotSignature(null);
+    } catch (error: unknown) {
+      const entry = formatRuntimeError('applyPendingSnapshot', error);
+      setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
+      setSimUiState('error');
+      setSimUiError(error instanceof Error ? error.message : 'Error aplicando snapshot.');
+    }
+  }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
