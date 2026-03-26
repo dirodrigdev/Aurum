@@ -168,6 +168,7 @@ export default function App() {
   const [pendingSnapshot, setPendingSnapshot] = useState<AurumOptimizableInvestmentsSnapshot | null>(null);
   const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
+  const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -175,6 +176,7 @@ export default function App() {
   const simParamsRef = useRef<ModelParameters>(simParams);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
+  const applyingSnapshotRef = useRef(false);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -286,8 +288,9 @@ export default function App() {
     ].join('|');
   }, []);
 
-  const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null) => {
+  const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
+    const shouldRecalculate = options?.recalc ?? true;
     try {
       const composition = snapshotToSimulationComposition(snapshot);
       const compositionMode = composition?.mode ?? 'legacy';
@@ -340,7 +343,7 @@ export default function App() {
           simulationComposition: nextSimComposition,
         };
         setSimParams(nextSimParams);
-        if (shouldApplyCapital) {
+        if (shouldApplyCapital && shouldRecalculate) {
           try {
             setSimUiError(null);
             setSimUiState('recalculating');
@@ -409,21 +412,42 @@ export default function App() {
 
   const applyPendingSnapshot = useCallback(() => {
     if (!pendingSnapshot || !pendingSnapshotSignature) return;
+    if (applyingSnapshotRef.current) return;
     try {
+      applyingSnapshotRef.current = true;
+      setPendingSnapshotApplying(true);
       setSimUiError(null);
-      setSimUiState('recalculating');
       lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
-      applySnapshotNow(pendingSnapshot);
+      applySnapshotNow(pendingSnapshot, { recalc: false });
       setPendingSnapshot(null);
       setPendingSnapshotLabel(null);
       setPendingSnapshotSignature(null);
+      setBaseUpdatePending(true);
     } catch (error: unknown) {
       const entry = formatRuntimeError('applyPendingSnapshot', error);
       setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
       setSimUiState('error');
       setSimUiError(error instanceof Error ? error.message : 'Error aplicando snapshot.');
+    } finally {
+      applyingSnapshotRef.current = false;
+      setPendingSnapshotApplying(false);
     }
   }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
+
+  const handleManualRecalculate = useCallback(() => {
+    try {
+      setSimUiError(null);
+      setSimUiState('recalculating');
+      const base = applySimulationOverrides(simParamsRef.current, simOverrides);
+      setSimResult(computeTriMotor(base));
+      setSimUiState('ready');
+      setBaseUpdatePending(false);
+    } catch (error: any) {
+      console.error('[Midas] Error recalculando simulación', error);
+      setSimUiState('error');
+      setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+    }
+  }, [computeTriMotor, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -718,7 +742,9 @@ export default function App() {
       aurumSnapshotLabel={aurumSnapshotLabel}
       baseUpdatePending={baseUpdatePending}
       pendingSnapshotLabel={pendingSnapshotLabel}
+      pendingSnapshotApplying={pendingSnapshotApplying}
       onApplyPendingSnapshot={applyPendingSnapshot}
+      onManualRecalculate={handleManualRecalculate}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}

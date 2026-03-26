@@ -71,7 +71,9 @@ export function SimulationPage({
   aurumSnapshotLabel,
   baseUpdatePending,
   pendingSnapshotLabel,
+  pendingSnapshotApplying,
   onApplyPendingSnapshot,
+  onManualRecalculate,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -93,7 +95,9 @@ export function SimulationPage({
   aurumSnapshotLabel: string | null;
   baseUpdatePending: boolean;
   pendingSnapshotLabel: string | null;
+  pendingSnapshotApplying: boolean;
   onApplyPendingSnapshot: () => void;
+  onManualRecalculate: () => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -600,9 +604,42 @@ export function SimulationPage({
           Mostrando un capital local por defecto. Cuando Aurum publique el cierre, se reemplazará automáticamente.
         </div>
       )}
-      {baseUpdatePending && (
-        <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Resultado principal oculto hasta recalcular con la base Aurum nueva.
+      {baseUpdatePending && !pendingSnapshotLabel && (
+        <div
+          style={{
+            background: 'rgba(255, 199, 61, 0.12)',
+            border: '1px solid rgba(255, 199, 61, 0.45)',
+            borderRadius: 12,
+            padding: '10px 12px',
+            color: T.textPrimary,
+            fontSize: 12,
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+          }}
+        >
+          <span>Base Aurum aplicada. Resultado pendiente de recalcular.</span>
+          <button
+            type="button"
+            onClick={onManualRecalculate}
+            disabled={simWorking || simUiState === 'recalculating'}
+            style={{
+              background: T.primary,
+              border: 'none',
+              color: '#fff',
+              borderRadius: 10,
+              padding: '6px 10px',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: simWorking || simUiState === 'recalculating' ? 'not-allowed' : 'pointer',
+              opacity: simWorking || simUiState === 'recalculating' ? 0.6 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Recalcular simulación
+          </button>
         </div>
       )}
       {pendingSnapshotLabel && (
@@ -625,6 +662,7 @@ export function SimulationPage({
           <button
             type="button"
             onClick={onApplyPendingSnapshot}
+            disabled={pendingSnapshotApplying}
             style={{
               background: T.primary,
               border: 'none',
@@ -633,11 +671,12 @@ export function SimulationPage({
               padding: '6px 10px',
               fontSize: 11,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: pendingSnapshotApplying ? 'not-allowed' : 'pointer',
+              opacity: pendingSnapshotApplying ? 0.6 : 1,
               whiteSpace: 'nowrap',
             }}
           >
-            Aplicar y recalcular
+            {pendingSnapshotApplying ? 'Aplicando base...' : 'Aplicar base'}
           </button>
         </div>
       )}
