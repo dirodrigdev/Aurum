@@ -109,7 +109,11 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
   let mortgageDebtOutstandingCLP = 0;
   let monthlyMortgagePaymentCLP = 0;
   let nonMortgageDebtFromRecords = 0;
-  const ufSnapshotCLP = asFiniteOrNull(closure.fxRates?.ufClp);
+  const ufSnapshotCLP = asFiniteOrNull(
+    (closure.fxRates as { ufClp?: number; uf_clp?: number; ufCLP?: number } | undefined)?.ufClp ??
+      (closure.fxRates as { ufClp?: number; uf_clp?: number; ufCLP?: number } | undefined)?.uf_clp ??
+      (closure.fxRates as { ufClp?: number; uf_clp?: number; ufCLP?: number } | undefined)?.ufCLP,
+  );
 
   for (const record of records) {
     const label = normalizeText(record.label || '');

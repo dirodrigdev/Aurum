@@ -970,10 +970,14 @@ const compareClosureVersionsByClosedAtDesc = (
 
 const normalizeClosureFxRates = (raw: any): WealthFxRates | undefined => {
   if (!raw) return undefined;
+  const rawFx = raw ?? {};
+  const usdClp = rawFx.usdClp ?? rawFx.usd_clp ?? rawFx.usdCLP;
+  const eurClp = rawFx.eurClp ?? rawFx.eur_clp ?? rawFx.eurCLP;
+  const ufClp = rawFx.ufClp ?? rawFx.uf_clp ?? rawFx.ufCLP;
   return {
-    usdClp: Math.max(1, toNumber(raw?.usdClp, defaultFxRates.usdClp)),
-    eurClp: Math.max(1, toNumber(raw?.eurClp, defaultFxRates.eurClp)),
-    ufClp: Math.max(1, toNumber(raw?.ufClp, defaultFxRates.ufClp)),
+    usdClp: Math.max(1, toNumber(usdClp, defaultFxRates.usdClp)),
+    eurClp: Math.max(1, toNumber(eurClp, defaultFxRates.eurClp)),
+    ufClp: Math.max(1, toNumber(ufClp, defaultFxRates.ufClp)),
   };
 };
 
