@@ -99,6 +99,16 @@ export default function App() {
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
+  const baseParamsRef = useRef<ModelParameters>(baseParams);
+  const simParamsRef = useRef<ModelParameters>(simParams);
+
+  useEffect(() => {
+    baseParamsRef.current = baseParams;
+  }, [baseParams]);
+
+  useEffect(() => {
+    simParamsRef.current = simParams;
+  }, [simParams]);
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current !== null) {
@@ -302,38 +312,39 @@ export default function App() {
         setAurumSnapshotStatus('available');
         setAurumSnapshotLabel(snapshot?.snapshotLabel || 'último cierre confirmado');
 
-        setBaseParams((prev) => {
-          const sameCapital = Math.round(prev.capitalInitial) === Math.round(aurumNetWorth);
-          const sameComposition = JSON.stringify(prev.simulationComposition) === JSON.stringify(composition ?? prev.simulationComposition);
-          if (sameCapital && sameComposition) return prev;
-          return {
-            ...prev,
+        const currentBase = baseParamsRef.current;
+        const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
+        const nextBaseComposition = composition ?? currentBase.simulationComposition;
+        const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
+        if (!sameBaseCapital || !sameBaseComposition) {
+          setBaseParams({
+            ...currentBase,
             capitalInitial: aurumNetWorth,
             label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
-            ...(composition ? { simulationComposition: composition } : {}),
-          };
-        });
+            simulationComposition: nextBaseComposition,
+          });
+        }
 
-        let nextParamsForRun: ModelParameters | null = null;
-        setSimParams((prev) => {
-          const shouldApplyCapital = !simulationActive && !simOverrides?.active;
-          const targetCapital = shouldApplyCapital ? aurumNetWorth : prev.capitalInitial;
-          const sameCapital = Math.round(prev.capitalInitial) === Math.round(targetCapital);
-          const sameComposition = JSON.stringify(prev.simulationComposition) === JSON.stringify(composition ?? prev.simulationComposition);
-          if (sameCapital && sameComposition) return prev;
-          const next = {
-            ...prev,
+        const currentSim = simParamsRef.current;
+        const shouldApplyCapital = !simulationActive && !simOverrides?.active;
+        const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
+        const nextSimComposition = composition ?? currentSim.simulationComposition;
+        const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
+        const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
+
+        if (!sameSimCapital || !sameSimComposition) {
+          const nextSimParams: ModelParameters = {
+            ...currentSim,
             capitalInitial: targetCapital,
             label: shouldApplyCapital
               ? `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`
-              : prev.label,
-            ...(composition ? { simulationComposition: composition } : {}),
+              : currentSim.label,
+            simulationComposition: nextSimComposition,
           };
-          nextParamsForRun = next;
-          return next;
-        });
-        if (nextParamsForRun && !simulationActive && !simOverrides?.active) {
-          setSimResult(computeTriMotor(nextParamsForRun));
+          setSimParams(nextSimParams);
+          if (shouldApplyCapital) {
+            setSimResult(computeTriMotor(nextSimParams));
+          }
         }
       } catch {
         if (cancelled) return;
