@@ -63,6 +63,8 @@ export function SimulationPage({
   simOverrides,
   simActive,
   simWorking,
+  simUiState,
+  simUiError,
   simulationPreset,
   stateLabel,
   aurumSnapshotStatus,
@@ -80,6 +82,8 @@ export function SimulationPage({
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
   simWorking: boolean;
+  simUiState: 'idle' | 'recalculating' | 'ready' | 'error';
+  simUiError: string | null;
   simulationPreset: SimulationPreset;
   stateLabel: string;
   aurumSnapshotStatus: 'available' | 'pending' | 'missing' | 'error';
@@ -109,6 +113,38 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
+  const simStatusVisual = useMemo(() => {
+    if (simUiState === 'recalculating') {
+      return {
+        bg: 'rgba(91, 140, 255, 0.14)',
+        border: 'rgba(91, 140, 255, 0.45)',
+        color: T.primary,
+        copy: 'Actualizando simulación...',
+      };
+    }
+    if (simUiState === 'error') {
+      return {
+        bg: 'rgba(255, 92, 92, 0.12)',
+        border: 'rgba(255, 92, 92, 0.45)',
+        color: T.negative,
+        copy: simUiError || 'No pude recalcular la simulación.',
+      };
+    }
+    if (simUiState === 'ready') {
+      return {
+        bg: 'rgba(61, 212, 141, 0.12)',
+        border: 'rgba(61, 212, 141, 0.4)',
+        color: T.positive,
+        copy: 'Simulación lista',
+      };
+    }
+    return {
+      bg: 'rgba(148, 163, 184, 0.12)',
+      border: 'rgba(148, 163, 184, 0.35)',
+      color: T.textMuted,
+      copy: simActive ? 'Esperando recálculo' : 'Estado base en espera',
+    };
+  }, [simActive, simUiError, simUiState]);
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
@@ -292,6 +328,32 @@ export function SimulationPage({
       </div>
       <div
         style={{
+          background: simStatusVisual.bg,
+          border: `1px solid ${simStatusVisual.border}`,
+          borderRadius: 12,
+          padding: '9px 12px',
+          color: simStatusVisual.color,
+          fontSize: 12,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: simStatusVisual.color,
+            opacity: simUiState === 'recalculating' ? 0.7 : 1,
+            animation: simUiState === 'recalculating' ? 'midasPulse 1s ease-in-out infinite' : 'none',
+          }}
+        />
+        <span>{simStatusVisual.copy}</span>
+      </div>
+      <div
+        style={{
           background: 'rgba(91, 140, 255, 0.12)',
           border: `1px solid rgba(91, 140, 255, 0.45)`,
           borderRadius: 12,
@@ -330,6 +392,12 @@ export function SimulationPage({
         </div>
       )}
       <div style={{ position: 'relative' }}>
+        <style>{`
+          @keyframes midasPulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.25); opacity: 1; }
+          }
+        `}</style>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={probSuccess}

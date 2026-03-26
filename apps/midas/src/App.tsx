@@ -23,6 +23,7 @@ type TriMotorResult = {
   favorable: SimulationResults | null;
   prudent: SimulationResults | null;
 };
+type SimulationUiState = 'idle' | 'recalculating' | 'ready' | 'error';
 
 type OptimizerBaselineSnapshot = {
   probRuin: number;
@@ -96,6 +97,8 @@ export default function App() {
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
   const [simWorking, setSimWorking] = useState(false);
+  const [simUiState, setSimUiState] = useState<SimulationUiState>('idle');
+  const [simUiError, setSimUiError] = useState<string | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -142,10 +145,20 @@ export default function App() {
   const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
     clearCalculationTimer();
     setSimWorking(true);
+    setSimUiState('recalculating');
+    setSimUiError(null);
     calculationTimerRef.current = window.setTimeout(() => {
-      setSimResult(computeTriMotor(params));
-      setSimWorking(false);
-      calculationTimerRef.current = null;
+      try {
+        setSimResult(computeTriMotor(params));
+        setSimUiState('ready');
+      } catch (error: any) {
+        console.error('[Midas] Error recalculando simulación', error);
+        setSimUiState('error');
+        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+      } finally {
+        setSimWorking(false);
+        calculationTimerRef.current = null;
+      }
     }, 0);
   }, [clearCalculationTimer, computeTriMotor]);
 
@@ -157,7 +170,15 @@ export default function App() {
     setSimOverrides(null);
     const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
     setSimParams(next);
-    setSimResult(computeTriMotor(next));
+    try {
+      setSimUiError(null);
+      setSimResult(computeTriMotor(next));
+      setSimUiState('ready');
+    } catch (error: any) {
+      console.error('[Midas] Error recalculando simulación', error);
+      setSimUiState('error');
+      setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+    }
     setSimWorking(false);
     setParamSheetOpen(false);
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
@@ -182,7 +203,15 @@ export default function App() {
     if (!simResult.central) {
       const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
       setSimParams(next);
-      setSimResult(computeTriMotor(next));
+      try {
+        setSimUiError(null);
+        setSimResult(computeTriMotor(next));
+        setSimUiState('ready');
+      } catch (error: any) {
+        console.error('[Midas] Error recalculando simulación', error);
+        setSimUiState('error');
+        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+      }
     }
     scheduleInactivityReset();
     const handler = () => scheduleInactivityReset();
@@ -343,7 +372,16 @@ export default function App() {
           };
           setSimParams(nextSimParams);
           if (shouldApplyCapital) {
-            setSimResult(computeTriMotor(nextSimParams));
+            try {
+              setSimUiError(null);
+              setSimUiState('recalculating');
+              setSimResult(computeTriMotor(nextSimParams));
+              setSimUiState('ready');
+            } catch (error: any) {
+              console.error('[Midas] Error recalculando simulación', error);
+              setSimUiState('error');
+              setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+            }
           }
         }
       } catch {
@@ -401,6 +439,8 @@ export default function App() {
       simOverrides={simOverrides}
       simActive={simulationActive}
       simWorking={simWorking}
+      simUiState={simUiState}
+      simUiError={simUiError}
       simulationPreset={simulationPreset}
       stateLabel={stateLabel}
       aurumSnapshotStatus={aurumSnapshotStatus}
