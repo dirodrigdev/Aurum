@@ -69,6 +69,7 @@ export function SimulationPage({
   stateLabel,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
+  baseUpdatePending,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -88,6 +89,7 @@ export function SimulationPage({
   stateLabel: string;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
+  baseUpdatePending: boolean;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -160,13 +162,41 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
-  const compositionMode = params.simulationComposition?.mode ?? 'legacy';
+  const compositionSource = resultCentral?.params.simulationComposition ?? params.simulationComposition;
+  const compositionMode = compositionSource?.mode ?? 'legacy';
+  const compositionNotes = compositionSource?.diagnostics?.notes ?? [];
   const compositionHasFallback =
-    params.simulationComposition?.mortgageProjectionStatus === 'fallback_incomplete' ||
-    (params.simulationComposition?.diagnostics?.notes ?? []).some((note) => {
+    compositionSource?.mortgageProjectionStatus === 'fallback_incomplete' ||
+    compositionNotes.some((note) => {
       const normalized = String(note || '').toLowerCase();
       return normalized.includes('fallback') || normalized.includes('warn-and-run');
     });
+  const mortgageWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const add = (value: string) => {
+      if (!warnings.includes(value)) warnings.push(value);
+    };
+    if (compositionSource?.mortgageProjectionStatus === 'fallback_incomplete') {
+      add('Hipoteca: faltan datos UF/snapshot, usando fallback');
+    }
+    for (const note of compositionNotes) {
+      const normalized = String(note || '').toLowerCase();
+      if (normalized.includes('amortization-first-month-mismatch')) {
+        add('Tabla UF desalineada con snapshot (mes inicial)');
+      } else if (normalized.includes('amortization-missing-months')) {
+        add('Tabla UF con meses faltantes (se aplicó fallback)');
+      } else if (normalized.includes('amortization-ended')) {
+        add('Tabla UF terminó: amortización=0 desde ese mes');
+      } else if (normalized.includes('mortgage-uf-empty-table')) {
+        add('Tabla UF vacía (sin amortización)');
+      } else if (normalized.includes('mortgage-uf-invalid-table')) {
+        add('Tabla UF inválida (revisar formato)');
+      } else if (normalized.includes('mortgage-uf-invalid-snapshot-month')) {
+        add('snapshotMonth inválido para hipoteca');
+      }
+    }
+    return warnings;
+  }, [compositionNotes, compositionSource?.mortgageProjectionStatus]);
   const compositionStatusVisual = useMemo(() => {
     if (compositionMode === 'full' && !compositionHasFallback) {
       return {
@@ -422,6 +452,43 @@ export function SimulationPage({
         <span style={{ fontSize: 12, fontWeight: 700 }}>{compositionStatusVisual.copy}</span>
         <span style={{ fontSize: 11, opacity: 0.92 }}>{compositionStatusVisual.detail}</span>
       </div>
+      {baseUpdatePending && (
+        <div
+          style={{
+            background: 'rgba(255, 176, 32, 0.12)',
+            border: '1px solid rgba(255, 176, 32, 0.45)',
+            borderRadius: 12,
+            padding: '9px 12px',
+            color: T.warning,
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          Base Aurum actualizada. Resultado pendiente de recalcular.
+        </div>
+      )}
+      {mortgageWarnings.length > 0 && (
+        <div
+          style={{
+            background: 'rgba(255, 176, 32, 0.10)',
+            border: '1px solid rgba(255, 176, 32, 0.35)',
+            borderRadius: 12,
+            padding: '9px 12px',
+            color: T.warning,
+            fontSize: 11,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <span style={{ fontWeight: 700 }}>Hipoteca · warnings</span>
+          {mortgageWarnings.slice(0, 3).map((warning) => (
+            <span key={warning} style={{ opacity: 0.92 }}>
+              {warning}
+            </span>
+          ))}
+        </div>
+      )}
       <div
         style={{
           background: simStatusVisual.bg,

@@ -325,6 +325,7 @@ export default function App() {
     aurumIntegrationConfigured ? 'loading' : 'unconfigured',
   );
   const [aurumSnapshotLabel, setAurumSnapshotLabel] = useState<string | null>(null);
+  const [baseUpdatePending, setBaseUpdatePending] = useState(false);
 
   useEffect(() => {
     if (!aurumIntegrationConfigured) {
@@ -391,6 +392,7 @@ export default function App() {
       if (!snapshot) {
         setAurumIntegrationStatus('missing');
         setAurumSnapshotLabel(null);
+        setBaseUpdatePending(false);
         return;
       }
 
@@ -401,6 +403,7 @@ export default function App() {
           setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
           setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
         }
+        setBaseUpdatePending(false);
         return;
       }
 
@@ -442,11 +445,15 @@ export default function App() {
             setSimUiState('recalculating');
             setSimResult(computeTriMotor(nextSimParams));
             setSimUiState('ready');
+            setBaseUpdatePending(false);
           } catch (error: any) {
             console.error('[Midas] Error recalculando simulación', error);
             setSimUiState('error');
             setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+            setBaseUpdatePending(true);
           }
+        } else {
+          setBaseUpdatePending(true);
         }
       }
     };
@@ -482,6 +489,12 @@ export default function App() {
     };
   }, [computeTriMotor, simOverrides?.active, simulationActive]);
 
+  useEffect(() => {
+    if (!simulationActive && !simOverrides?.active) {
+      setBaseUpdatePending(false);
+    }
+  }, [simOverrides?.active, simulationActive]);
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult.central}
@@ -497,6 +510,7 @@ export default function App() {
       stateLabel={stateLabel}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
+      baseUpdatePending={baseUpdatePending}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
