@@ -169,6 +169,7 @@ export default function App() {
   const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
+  const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -491,10 +492,11 @@ export default function App() {
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
 
   useEffect(() => {
+    if (baseUpdatePending) return;
     const baseFromAurum = applyScenarioEconomics(cloneParams(baseParams), 'base');
     const tri = computeTriMotor(baseFromAurum);
     setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(tri.central));
-  }, [applyScenarioEconomics, baseParams, computeTriMotor]);
+  }, [applyScenarioEconomics, baseParams, baseUpdatePending, computeTriMotor]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     setSimParams((prev) => {
@@ -586,7 +588,6 @@ export default function App() {
     aurumIntegrationConfigured ? 'loading' : 'unconfigured',
   );
   const [aurumSnapshotLabel, setAurumSnapshotLabel] = useState<string | null>(null);
-  const [baseUpdatePending, setBaseUpdatePending] = useState(false);
 
   useEffect(() => {
     if (!aurumIntegrationConfigured) {
