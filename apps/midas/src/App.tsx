@@ -35,6 +35,66 @@ type OptimizerBaselineSnapshot = {
   terminalP50: number;
 };
 
+class MidasErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  state = { hasError: false, message: '' };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : 'Error inesperado.',
+    };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('[Midas][ErrorBoundary]', error);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div style={{ ...css.app, padding: 24 }}>
+        <div
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.surface,
+            borderRadius: 20,
+            padding: 18,
+            color: T.textPrimary,
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.16em', color: T.textMuted }}>
+            Midas
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>Se produjo un error al renderizar</div>
+          <div style={{ color: T.textSecondary, fontSize: 14 }}>
+            {this.state.message || 'Intenta recargar la página o reintentar la sincronización.'}
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 6,
+              alignSelf: 'start',
+              borderRadius: 10,
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              color: T.textPrimary,
+              padding: '8px 12px',
+              cursor: 'pointer',
+            }}
+          >
+            Recargar
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 function toOptimizerBaselineSnapshot(result: SimulationResults | null): OptimizerBaselineSnapshot | null {
   if (!result) return null;
   return {
@@ -380,81 +440,89 @@ export default function App() {
 
     const applySnapshot = (snapshot: AurumOptimizableInvestmentsSnapshot | null) => {
       if (cancelled) return;
-      setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
-      const composition = snapshotToSimulationComposition(snapshot);
-      const compositionMode = composition?.mode ?? 'legacy';
-      const hasFallbackFlags =
-        composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
-        (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
-      const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
-      const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+      try {
+        setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
+        const composition = snapshotToSimulationComposition(snapshot);
+        const compositionMode = composition?.mode ?? 'legacy';
+        const hasFallbackFlags =
+          composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
+          (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
+        const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
+        const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
 
-      if (!snapshot) {
-        setAurumIntegrationStatus('missing');
-        setAurumSnapshotLabel(null);
-        setBaseUpdatePending(false);
-        return;
-      }
-
-      setAurumSnapshotLabel(snapshot.snapshotLabel || 'último cierre confirmado');
-      if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
-        setAurumIntegrationStatus('partial');
-        if (composition) {
-          setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
-          setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
+        if (!snapshot) {
+          setAurumIntegrationStatus('missing');
+          setAurumSnapshotLabel(null);
+          setBaseUpdatePending(false);
+          return;
         }
-        setBaseUpdatePending(false);
-        return;
-      }
 
-      setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
+        setAurumSnapshotLabel(snapshot.snapshotLabel || 'último cierre confirmado');
+        if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
+          setAurumIntegrationStatus('partial');
+          if (composition) {
+            setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
+            setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
+          }
+          setBaseUpdatePending(false);
+          return;
+        }
 
-      const currentBase = baseParamsRef.current;
-      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
-      const nextBaseComposition = composition ?? currentBase.simulationComposition;
-      const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
-      if (!sameBaseCapital || !sameBaseComposition) {
-        setBaseParams({
-          ...currentBase,
-          capitalInitial: aurumNetWorth,
-          label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
-          simulationComposition: nextBaseComposition,
-        });
-      }
+        setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
 
-      const currentSim = simParamsRef.current;
-      const shouldApplyCapital = !simulationActive && !simOverrides?.active;
-      const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
-      const nextSimComposition = composition ?? currentSim.simulationComposition;
-      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
-      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
+        const currentBase = baseParamsRef.current;
+        const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
+        const nextBaseComposition = composition ?? currentBase.simulationComposition;
+        const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
+        if (!sameBaseCapital || !sameBaseComposition) {
+          setBaseParams({
+            ...currentBase,
+            capitalInitial: aurumNetWorth,
+            label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
+            simulationComposition: nextBaseComposition,
+          });
+        }
 
-      if (!sameSimCapital || !sameSimComposition) {
-        const nextSimParams: ModelParameters = {
-          ...currentSim,
-          capitalInitial: targetCapital,
-          label: shouldApplyCapital
-            ? `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`
-            : currentSim.label,
-          simulationComposition: nextSimComposition,
-        };
-        setSimParams(nextSimParams);
-        if (shouldApplyCapital) {
-          try {
-            setSimUiError(null);
-            setSimUiState('recalculating');
-            setSimResult(computeTriMotor(nextSimParams));
-            setSimUiState('ready');
-            setBaseUpdatePending(false);
-          } catch (error: any) {
-            console.error('[Midas] Error recalculando simulación', error);
-            setSimUiState('error');
-            setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+        const currentSim = simParamsRef.current;
+        const shouldApplyCapital = !simulationActive && !simOverrides?.active;
+        const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
+        const nextSimComposition = composition ?? currentSim.simulationComposition;
+        const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
+        const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
+
+        if (!sameSimCapital || !sameSimComposition) {
+          const nextSimParams: ModelParameters = {
+            ...currentSim,
+            capitalInitial: targetCapital,
+            label: shouldApplyCapital
+              ? `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`
+              : currentSim.label,
+            simulationComposition: nextSimComposition,
+          };
+          setSimParams(nextSimParams);
+          if (shouldApplyCapital) {
+            try {
+              setSimUiError(null);
+              setSimUiState('recalculating');
+              setSimResult(computeTriMotor(nextSimParams));
+              setSimUiState('ready');
+              setBaseUpdatePending(false);
+            } catch (error: any) {
+              console.error('[Midas] Error recalculando simulación', error);
+              setSimUiState('error');
+              setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+              setBaseUpdatePending(true);
+            }
+          } else {
             setBaseUpdatePending(true);
           }
-        } else {
-          setBaseUpdatePending(true);
         }
+      } catch (error: any) {
+        console.error('[Midas] Error aplicando snapshot Aurum', error);
+        setAurumIntegrationStatus('error');
+        setSimUiState('error');
+        setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
+        setBaseUpdatePending(true);
       }
     };
 
@@ -539,83 +607,85 @@ export default function App() {
   );
 
   return (
-    <div style={{ ...css.app, position: 'relative', overflow: 'hidden' }}>
-      {simulationActive && (
-        <>
-          <style>{`
-            @keyframes midasAmbientPulse {
-              0%, 100% { opacity: 0.6; transform: scale(1); }
-              50% { opacity: 1; transform: scale(1.004); }
-            }
-          `}</style>
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'fixed',
-              inset: 8,
-              borderRadius: 28,
-              pointerEvents: 'none',
-              border: `1px solid rgba(91, 140, 255, 0.34)`,
-              boxShadow: 'inset 0 0 0 1px rgba(91, 140, 255, 0.12), 0 0 28px rgba(91, 140, 255, 0.12)',
-              animation: 'midasAmbientPulse 2.8s ease-in-out infinite',
-              zIndex: 8,
-            }}
-          />
-        </>
-      )}
-      <Header statusColor={statusColor} />
-      <main
-        style={{
-          padding: '12px 16px 90px',
-          marginTop: 48,
-          maxWidth: 960,
-          marginLeft: 'auto',
-          marginRight: 'auto',
-        }}
-      >
-        {content}
-      </main>
+    <MidasErrorBoundary>
+      <div style={{ ...css.app, position: 'relative', overflow: 'hidden' }}>
+        {simulationActive && (
+          <>
+            <style>{`
+              @keyframes midasAmbientPulse {
+                0%, 100% { opacity: 0.6; transform: scale(1); }
+                50% { opacity: 1; transform: scale(1.004); }
+              }
+            `}</style>
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'fixed',
+                inset: 8,
+                borderRadius: 28,
+                pointerEvents: 'none',
+                border: `1px solid rgba(91, 140, 255, 0.34)`,
+                boxShadow: 'inset 0 0 0 1px rgba(91, 140, 255, 0.12), 0 0 28px rgba(91, 140, 255, 0.12)',
+                animation: 'midasAmbientPulse 2.8s ease-in-out infinite',
+                zIndex: 8,
+              }}
+            />
+          </>
+        )}
+        <Header statusColor={statusColor} />
+        <main
+          style={{
+            padding: '12px 16px 90px',
+            marginTop: 48,
+            maxWidth: 960,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          {content}
+        </main>
 
-      <button
-        onClick={() => setParamSheetOpen(true)}
-        style={{
-          position: 'fixed',
-          bottom: 80,
-          right: 16,
-          width: 52,
-          height: 52,
-          borderRadius: '50%',
-          border: `1px solid ${T.metalBase}`,
-          background: T.surfaceEl,
-          color: T.textPrimary,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          zIndex: 25,
-          boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
-        }}
-        aria-label="Abrir parámetros"
-      >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-          <path d="M12 4.5 13.2 6h2.3l.3 2 1.7 1-.9 1.9.9 1.9-1.7 1-.3 2h-2.3L12 19.5 10.8 18H8.5l-.3-2-1.7-1 .9-1.9-.9-1.9 1.7-1 .3-2h2.3L12 4.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          <circle cx="12" cy="12" r="2.2" fill="currentColor" />
-        </svg>
-      </button>
+        <button
+          onClick={() => setParamSheetOpen(true)}
+          style={{
+            position: 'fixed',
+            bottom: 80,
+            right: 16,
+            width: 52,
+            height: 52,
+            borderRadius: '50%',
+            border: `1px solid ${T.metalBase}`,
+            background: T.surfaceEl,
+            color: T.textPrimary,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            zIndex: 25,
+            boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
+          }}
+          aria-label="Abrir parámetros"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path d="M12 4.5 13.2 6h2.3l.3 2 1.7 1-.9 1.9.9 1.9-1.7 1-.3 2h-2.3L12 19.5 10.8 18H8.5l-.3-2-1.7-1 .9-1.9-.9-1.9 1.7-1 .3-2h2.3L12 4.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+          </svg>
+        </button>
 
-      <BottomNav active={activeTab} onChange={handleTabChange} />
+        <BottomNav active={activeTab} onChange={handleTabChange} />
 
-      <ParamSheet
-        open={paramSheetOpen}
-        onClose={() => setParamSheetOpen(false)}
-        params={simParams}
-        onUpdate={updateSimParam}
-        cashflowEvents={simParams.cashflowEvents}
-        onCashflowEventsChange={handleCashflowEventsChange}
-        onReset={resetSimulationSession}
-        onRun={runSim}
-      />
-    </div>
+        <ParamSheet
+          open={paramSheetOpen}
+          onClose={() => setParamSheetOpen(false)}
+          params={simParams}
+          onUpdate={updateSimParam}
+          cashflowEvents={simParams.cashflowEvents}
+          onCashflowEventsChange={handleCashflowEventsChange}
+          onReset={resetSimulationSession}
+          onRun={runSim}
+        />
+      </div>
+    </MidasErrorBoundary>
   );
 }
 
