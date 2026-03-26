@@ -163,40 +163,50 @@ export function SimulationPage({
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const compositionSource = resultCentral?.params.simulationComposition ?? params.simulationComposition;
+  const compositionDiagnostics = compositionSource?.diagnostics;
   const compositionMode = compositionSource?.mode ?? 'legacy';
-  const compositionNotes = compositionSource?.diagnostics?.notes ?? [];
+  const diagnosticWarnings = compositionDiagnostics?.diagnosticWarnings ?? [];
+  const lastRebalanceMonth = compositionDiagnostics?.lastRebalanceMonth;
   const compositionHasFallback =
     compositionSource?.mortgageProjectionStatus === 'fallback_incomplete' ||
-    compositionNotes.some((note) => {
-      const normalized = String(note || '').toLowerCase();
-      return normalized.includes('fallback') || normalized.includes('warn-and-run');
-    });
-  const mortgageWarnings = useMemo(() => {
+    diagnosticWarnings.length > 0;
+  const motorWarnings = useMemo(() => {
     const warnings: string[] = [];
     const add = (value: string) => {
       if (!warnings.includes(value)) warnings.push(value);
     };
-    if (compositionSource?.mortgageProjectionStatus === 'fallback_incomplete') {
-      add('Hipoteca: faltan datos UF/snapshot, usando fallback');
-    }
-    for (const note of compositionNotes) {
-      const normalized = String(note || '').toLowerCase();
-      if (normalized.includes('amortization-first-month-mismatch')) {
-        add('Tabla UF desalineada con snapshot (mes inicial)');
-      } else if (normalized.includes('amortization-missing-months')) {
-        add('Tabla UF con meses faltantes (se aplicó fallback)');
-      } else if (normalized.includes('amortization-ended')) {
-        add('Tabla UF terminó: amortización=0 desde ese mes');
-      } else if (normalized.includes('mortgage-uf-empty-table')) {
-        add('Tabla UF vacía (sin amortización)');
-      } else if (normalized.includes('mortgage-uf-invalid-table')) {
-        add('Tabla UF inválida (revisar formato)');
-      } else if (normalized.includes('mortgage-uf-invalid-snapshot-month')) {
-        add('snapshotMonth inválido para hipoteca');
+    for (const entry of diagnosticWarnings) {
+      const raw = String(entry || '');
+      if (raw.startsWith('mortgage:')) {
+        const code = raw.replace('mortgage:', '').split(':')[0];
+        if (code === 'fallback-incomplete') {
+          add('Hipoteca en modo aproximado');
+        } else if (code === 'missing-inputs' || code === 'missing-uf' || code === 'missing-snapshot-month' || code === 'missing-equity') {
+          add('Hipoteca: faltan datos base (UF/snapshot/equity)');
+        } else if (code === 'amortization-first-month-mismatch') {
+          add('Tabla UF desalineada con snapshot');
+        } else if (code === 'amortization-missing-months') {
+          add('Tabla UF con meses faltantes (fallback aplicado)');
+        } else if (code === 'amortization-ended') {
+          add('Tabla UF terminó: amortización=0 desde ese mes');
+        } else if (code === 'empty-table') {
+          add('Tabla UF vacía (sin amortización)');
+        } else if (code === 'invalid-table') {
+          add('Tabla UF inválida (revisar formato)');
+        } else if (code === 'invalid-snapshot-month') {
+          add('snapshotMonth inválido para hipoteca');
+        } else {
+          add(raw);
+        }
+      } else if (raw) {
+        add(raw);
       }
     }
+    if (compositionSource?.mortgageProjectionStatus === 'fallback_incomplete') {
+      add('Hipoteca en modo aproximado');
+    }
     return warnings;
-  }, [compositionNotes, compositionSource?.mortgageProjectionStatus]);
+  }, [diagnosticWarnings, compositionSource?.mortgageProjectionStatus]);
   const compositionStatusVisual = useMemo(() => {
     if (compositionMode === 'full' && !compositionHasFallback) {
       return {
@@ -467,7 +477,7 @@ export function SimulationPage({
           Base Aurum actualizada. Resultado pendiente de recalcular.
         </div>
       )}
-      {mortgageWarnings.length > 0 && (
+      {motorWarnings.length > 0 && (
         <div
           style={{
             background: 'rgba(255, 176, 32, 0.10)',
@@ -481,12 +491,28 @@ export function SimulationPage({
             gap: 4,
           }}
         >
-          <span style={{ fontWeight: 700 }}>Hipoteca · warnings</span>
-          {mortgageWarnings.slice(0, 3).map((warning) => (
-            <span key={warning} style={{ opacity: 0.92 }}>
-              {warning}
+          <span style={{ fontWeight: 700 }}>Motor · warnings</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {motorWarnings.slice(0, 4).map((warning) => (
+              <span
+                key={warning}
+                style={{
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  background: 'rgba(255, 176, 32, 0.16)',
+                  border: '1px solid rgba(255, 176, 32, 0.45)',
+                  fontSize: 10,
+                }}
+              >
+                {warning}
+              </span>
+            ))}
+          </div>
+          {lastRebalanceMonth ? (
+            <span style={{ opacity: 0.85 }}>
+              Último rebalanceo anual: mes {lastRebalanceMonth}
             </span>
-          ))}
+          ) : null}
         </div>
       )}
       <div
