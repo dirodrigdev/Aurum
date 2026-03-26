@@ -82,6 +82,30 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     useHistoricalData: true,
   },
 
+  simulationComposition: {
+    mode: 'legacy',
+    totalNetWorthCLP: 1_401_000_000,
+    optimizableInvestmentsCLP: 1_401_000_000,
+    nonOptimizable: {
+      banksCLP: 0,
+      nonMortgageDebtCLP: 0,
+    },
+    diagnostics: {
+      sourceVersion: 1,
+      mode: 'legacy',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: ['legacy-default'],
+    },
+  },
+
+  realEstatePolicy: {
+    enabled: true,
+    triggerRunwayMonths: 36,
+    saleDelayMonths: 12,
+    saleCostPct: 0,
+  },
+
   ruinThresholdMonths: 3,
 };
 

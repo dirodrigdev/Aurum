@@ -5,6 +5,11 @@ import type { AurumOptimizableInvestmentsSnapshot } from './types';
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
 
+const asFiniteOrNull = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
@@ -13,27 +18,95 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot> | undefined;
-  if (!data || !Number.isFinite(Number(data.optimizableInvestmentsCLP))) return null;
-  const totalNetWorthClp =
-    Number.isFinite(Number(data.totalNetWorthCLP)) ? Number(data.totalNetWorthCLP) : null;
+  if (!data) return null;
+  const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
+  if (optimizable === null) return null;
+
+  const version = Number((data as { version?: unknown }).version) === 2 ? 2 : 1;
+  const totalNetWorthClp = asFiniteOrNull((data as { totalNetWorthCLP?: unknown }).totalNetWorthCLP);
+  const totalNetWorthWithRisk = asFiniteOrNull((data as { totalNetWorthWithRiskCLP?: unknown }).totalNetWorthWithRiskCLP);
+  const optimizableWithRisk = asFiniteOrNull((data as { optimizableInvestmentsWithRiskCLP?: unknown }).optimizableInvestmentsWithRiskCLP);
+
+  const base = {
+    version,
+    publishedAt: String((data as { publishedAt?: unknown }).publishedAt || ''),
+    snapshotMonth: String((data as { snapshotMonth?: unknown }).snapshotMonth || ''),
+    snapshotLabel: String((data as { snapshotLabel?: unknown }).snapshotLabel || ''),
+    currency: 'CLP' as const,
+    totalNetWorthCLP: totalNetWorthClp ?? 0,
+    ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: totalNetWorthWithRisk } : {}),
+    optimizableInvestmentsCLP: optimizable,
+    ...(optimizableWithRisk !== null ? { optimizableInvestmentsWithRiskCLP: optimizableWithRisk } : {}),
+    source: {
+      app: 'aurum' as const,
+      basis: 'latest_confirmed_closure' as const,
+    },
+  };
+
+  if (version !== 2) {
+    return {
+      ...base,
+      version: 1,
+    };
+  }
+
+  const nonOptimizableRaw = (data as { nonOptimizable?: unknown }).nonOptimizable;
+  const nonOptimizableObj = (nonOptimizableRaw && typeof nonOptimizableRaw === 'object')
+    ? (nonOptimizableRaw as Record<string, unknown>)
+    : null;
+  const realEstateRaw = (nonOptimizableObj?.realEstate && typeof nonOptimizableObj.realEstate === 'object')
+    ? (nonOptimizableObj.realEstate as Record<string, unknown>)
+    : null;
+
+  const banksCLP = asFiniteOrNull(nonOptimizableObj?.banksCLP);
+  const nonMortgageDebtCLP = asFiniteOrNull(nonOptimizableObj?.nonMortgageDebtCLP);
+  const propertyValueCLP = asFiniteOrNull(realEstateRaw?.propertyValueCLP);
+  const realEstateEquityCLP = asFiniteOrNull(realEstateRaw?.realEstateEquityCLP);
+  const mortgageDebtOutstandingCLP = asFiniteOrNull(realEstateRaw?.mortgageDebtOutstandingCLP);
+  const monthlyMortgagePaymentCLP = asFiniteOrNull(realEstateRaw?.monthlyMortgagePaymentCLP);
+  const mortgageRate = asFiniteOrNull(realEstateRaw?.mortgageRate);
+  const mortgageEndDate = typeof realEstateRaw?.mortgageEndDate === 'string' ? realEstateRaw.mortgageEndDate : undefined;
+  const amortizationSystem = typeof realEstateRaw?.amortizationSystem === 'string' ? realEstateRaw.amortizationSystem : undefined;
+  const scheduleRaw = Array.isArray(realEstateRaw?.mortgageScheduleCLP) ? realEstateRaw?.mortgageScheduleCLP : null;
+  const mortgageScheduleCLP = scheduleRaw
+    ? scheduleRaw
+      .map((point) => {
+        const pointObj = point && typeof point === 'object' ? (point as Record<string, unknown>) : null;
+        const month = asFiniteOrNull(pointObj?.month);
+        const debtCLP = asFiniteOrNull(pointObj?.debtCLP);
+        if (month === null || debtCLP === null) return null;
+        return {
+          month: Math.max(1, Math.round(month)),
+          debtCLP: Math.max(0, debtCLP),
+        };
+      })
+      .filter((point): point is { month: number; debtCLP: number } => point !== null)
+    : null;
 
   return {
-    version: 1,
-    publishedAt: String(data.publishedAt || ''),
-    snapshotMonth: String(data.snapshotMonth || ''),
-    snapshotLabel: String(data.snapshotLabel || ''),
-    currency: 'CLP',
-    totalNetWorthCLP: totalNetWorthClp ?? 0,
-    ...(Number.isFinite(Number(data.totalNetWorthWithRiskCLP))
-      ? { totalNetWorthWithRiskCLP: Number(data.totalNetWorthWithRiskCLP) }
+    ...base,
+    version: 2,
+    ...(nonOptimizableObj
+      ? {
+          nonOptimizable: {
+            ...(banksCLP !== null ? { banksCLP } : {}),
+            ...(nonMortgageDebtCLP !== null ? { nonMortgageDebtCLP } : {}),
+            ...(realEstateRaw
+              ? {
+                  realEstate: {
+                    ...(propertyValueCLP !== null ? { propertyValueCLP } : {}),
+                    ...(realEstateEquityCLP !== null ? { realEstateEquityCLP } : {}),
+                    ...(mortgageDebtOutstandingCLP !== null ? { mortgageDebtOutstandingCLP } : {}),
+                    ...(monthlyMortgagePaymentCLP !== null ? { monthlyMortgagePaymentCLP } : {}),
+                    ...(mortgageRate !== null ? { mortgageRate } : {}),
+                    ...(mortgageEndDate ? { mortgageEndDate } : {}),
+                    ...(amortizationSystem ? { amortizationSystem } : {}),
+                    ...(mortgageScheduleCLP && mortgageScheduleCLP.length > 0 ? { mortgageScheduleCLP } : {}),
+                  },
+                }
+              : {}),
+          },
+        }
       : {}),
-    optimizableInvestmentsCLP: Number(data.optimizableInvestmentsCLP),
-    ...(Number.isFinite(Number(data.optimizableInvestmentsWithRiskCLP))
-      ? { optimizableInvestmentsWithRiskCLP: Number(data.optimizableInvestmentsWithRiskCLP) }
-      : {}),
-    source: {
-      app: 'aurum',
-      basis: 'latest_confirmed_closure',
-    },
   };
 }

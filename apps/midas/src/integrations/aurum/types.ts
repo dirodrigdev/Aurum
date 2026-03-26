@@ -43,7 +43,7 @@ export interface AurumWealthSnapshot {
  * Midas lo usa solo como referencia oficial para la base instrumental.
  * Firestore path: aurum_published/optimizableInvestments
  */
-export interface AurumOptimizableInvestmentsSnapshot {
+export interface AurumOptimizableInvestmentsSnapshotV1 {
   version: 1;
   publishedAt: string;
   snapshotMonth: string;
@@ -58,6 +58,42 @@ export interface AurumOptimizableInvestmentsSnapshot {
     basis: 'latest_confirmed_closure';
   };
 }
+
+export interface AurumRealEstateSnapshot {
+  propertyValueCLP?: number;
+  realEstateEquityCLP?: number;
+  mortgageDebtOutstandingCLP?: number;
+  monthlyMortgagePaymentCLP?: number;
+  mortgageEndDate?: string;
+  mortgageRate?: number;
+  amortizationSystem?: 'french' | 'constant' | string;
+  mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
+}
+
+export interface AurumOptimizableInvestmentsSnapshotV2 {
+  version: 2;
+  publishedAt: string;
+  snapshotMonth: string;
+  snapshotLabel: string;
+  currency: 'CLP';
+  totalNetWorthCLP: number;
+  totalNetWorthWithRiskCLP?: number;
+  optimizableInvestmentsCLP: number;
+  optimizableInvestmentsWithRiskCLP?: number;
+  nonOptimizable?: {
+    banksCLP?: number;
+    nonMortgageDebtCLP?: number;
+    realEstate?: AurumRealEstateSnapshot;
+  };
+  source: {
+    app: 'aurum';
+    basis: 'latest_confirmed_closure';
+  };
+}
+
+export type AurumOptimizableInvestmentsSnapshot =
+  | AurumOptimizableInvestmentsSnapshotV1
+  | AurumOptimizableInvestmentsSnapshotV2;
 
 /**
  * Resumen de proyección publicado por Midas para Aurum.

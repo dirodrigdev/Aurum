@@ -4,6 +4,8 @@ import type {
   FanChartPoint,
 } from '../model/types';
 import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
+import { applyExpenseWaterfall, applySleeveReturns, buildInitialLiquidState, captureBlockSnapshot } from './blockState';
+import { buildMortgageProjection } from './mortgageProjection';
 
 type ParametricAuditResults = {
   probRuin: number;
@@ -95,7 +97,7 @@ function applyCashflowEvents(
   }
 }
 
-function runSimulationParametricInternal(params: ModelParameters): ParametricCoreAudit {
+function runSimulationParametricLegacyInternal(params: ModelParameters): ParametricCoreAudit {
   const t0 = Date.now();
   const {
     capitalInitial: W0,
@@ -314,6 +316,295 @@ function runSimulationParametricInternal(params: ModelParameters): ParametricCor
     cutMonths,
     totalMonths,
   };
+}
+
+function runSimulationParametricBlocksInternal(params: ModelParameters): ParametricCoreAudit {
+  const t0 = Date.now();
+  const {
+    spendingPhases,
+    spendingRule,
+    returns: ret,
+    inflation: inf,
+    fx,
+    simulation: sim,
+    ruinThresholdMonths,
+  } = params;
+  const composition = params.simulationComposition;
+  const compositionMode = composition?.mode ?? 'legacy';
+
+  const T = sim.horizonMonths;
+  const N = sim.nSim;
+  const phi = Math.exp(-Math.log(2) / (fx.mrHalfLifeYears * 12));
+
+  const m4 = [
+    (1 + ret.rvGlobalAnnual) ** (1 / 12) - 1,
+    (1 + ret.rfGlobalAnnual) ** (1 / 12) - 1,
+    (1 + ret.rvChileAnnual) ** (1 / 12) - 1,
+    (1 + ret.rfChileUFAnnual) ** (1 / 12) - 1,
+  ];
+  const v4 = [
+    ret.rvGlobalVolAnnual,
+    ret.rfGlobalVolAnnual,
+    ret.rvChileVolAnnual,
+    ret.rfChileVolAnnual,
+  ].map((x) => x / Math.sqrt(12));
+  const L4 = cholesky(ret.correlationMatrix);
+  const rng = seededRNG(sim.seed);
+
+  const ipcMean = (1 + inf.ipcChileAnnual) ** (1 / 12) - 1;
+  const ipcStd = inf.ipcChileVolAnnual / Math.sqrt(12);
+  const hicpMean = (1 + inf.hipcEurAnnual) ** (1 / 12) - 1;
+  const hicpStd = inf.hipcEurVolAnnual / Math.sqrt(12);
+  const dLogClpUsdMean = BASE_ECONOMIC_ASSUMPTIONS.clpUsdDriftAnnual / 12;
+  const dLogClpUsdStd = 0.094 / Math.sqrt(12);
+  const dLogEurUsdMean = BASE_ECONOMIC_ASSUMPTIONS.eurUsdDriftAnnual / 12;
+  const dLogEurUsdStd = 0.093 / Math.sqrt(12);
+  const bankAnnual = Math.max(0, Math.min(ret.rfGlobalAnnual, ret.rfChileUFAnnual));
+  const bankMonthly = (1 + bankAnnual) ** (1 / 12) - 1;
+
+  const mortgageProjection = buildMortgageProjection(
+    composition?.nonOptimizable?.realEstate,
+    T,
+    ipcMean,
+  );
+  const projectionPoints = mortgageProjection.points;
+
+  let nRuin = 0;
+  const terminalW: number[] = [];
+  const maxDDs: number[] = [];
+  const ruinMonths: number[] = [];
+  const spRatios: number[] = [];
+  let cutMonths = 0;
+  let totalMonths = 0;
+  const FAN_RES = 3;
+  const fanLen = Math.floor(T / FAN_RES);
+  const wMatrix = new Float32Array(N * fanLen);
+
+  const generateSleeveReturns = (): number[] => {
+    const z = Array.from({ length: 4 }, () => randn(rng));
+    const c = new Array(4).fill(0);
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j <= i; j++) c[i] += L4[i][j] * z[j];
+    }
+    return c.map((ci, i) => m4[i] + v4[i] * ci);
+  };
+
+  for (let s = 0; s < N; s++) {
+    const liquidState = buildInitialLiquidState(params);
+    let cumCL = 1;
+    let cumEUR = 1;
+    let logCPU = Math.log(fx.clpUsdInitial);
+    let logCPUr = 0;
+    let logEURUSD = Math.log(fx.usdEurFixed);
+    let hwm = Math.max(1, liquidState.banks + liquidState.sleeves.rvGlobal + liquidState.sleeves.rfGlobal + liquidState.sleeves.rvChile + liquidState.sleeves.rfChile);
+    let smult = 1;
+    let cnt15 = 0;
+    let cnt25 = 0;
+    let maxDD = 0;
+    let gEff = 0;
+    let gPlan = 0;
+    let ruined = false;
+
+    for (let t = 0; t < T; t++) {
+      const [rRVg, rRFg, rRVcl, rRFclReal] = generateSleeveReturns();
+      const ipcM = ipcMean + (ipcStd * randn(rng));
+      const hicpM = hicpMean + (hicpStd * randn(rng));
+      const dLogFX = dLogClpUsdMean + (dLogClpUsdStd * randn(rng));
+      const dLogEURUSD = dLogEurUsdMean + (dLogEurUsdStd * randn(rng));
+      const rRFcl = ((1 + rRFclReal) * (1 + ipcM)) - 1;
+
+      cumCL *= 1 + ipcM;
+      cumEUR *= 1 + hicpM;
+
+      const logLT = Math.log(fx.tcrealLT / fx.clpUsdInitial);
+      const uPrev = logCPUr - logLT;
+      logCPU += dLogFX + (phi * uPrev - uPrev);
+      logCPUr = logCPU - Math.log(cumCL);
+      const CPU_t = Math.exp(logCPU);
+      logEURUSD += dLogEURUSD;
+      const EURUSDt = Math.exp(logEURUSD);
+      const dFX = Math.exp(dLogFX) - 1;
+
+      applySleeveReturns(liquidState, {
+        rvGlobal: rRVg + dFX + rRVg * dFX,
+        rfGlobal: rRFg + dFX,
+        rvChile: rRVcl,
+        rfChile: rRFcl,
+        banks: bankMonthly,
+      });
+
+      const investBeforeFee =
+        liquidState.sleeves.rvGlobal +
+        liquidState.sleeves.rfGlobal +
+        liquidState.sleeves.rvChile +
+        liquidState.sleeves.rfChile;
+      if (investBeforeFee > 0) {
+        const ff = (investBeforeFee - investBeforeFee * (params.feeAnnual / 12)) / investBeforeFee;
+        liquidState.sleeves.rvGlobal *= ff;
+        liquidState.sleeves.rfGlobal *= ff;
+        liquidState.sleeves.rvChile *= ff;
+        liquidState.sleeves.rfChile *= ff;
+      }
+
+      const sleevesArray = [
+        liquidState.sleeves.rvGlobal,
+        liquidState.sleeves.rfGlobal,
+        liquidState.sleeves.rvChile,
+        liquidState.sleeves.rfChile,
+      ];
+      applyCashflowEvents(sleevesArray, params.cashflowEvents, t + 1, CPU_t, EURUSDt);
+      liquidState.sleeves.rvGlobal = Math.max(0, sleevesArray[0]);
+      liquidState.sleeves.rfGlobal = Math.max(0, sleevesArray[1]);
+      liquidState.sleeves.rvChile = Math.max(0, sleevesArray[2]);
+      liquidState.sleeves.rfChile = Math.max(0, sleevesArray[3]);
+
+      const mortgagePoint = projectionPoints[t] ?? projectionPoints[projectionPoints.length - 1] ?? {
+        month: t + 1,
+        propertyValueCLP: 0,
+        mortgageDebtCLP: 0,
+        realEstateEquityCLP: 0,
+      };
+      const monthSnapshot = captureBlockSnapshot(t + 1, liquidState, params, CPU_t, EURUSDt, cumCL, mortgagePoint);
+      const totalGross = monthSnapshot.liquidCapital + monthSnapshot.realEstateEquityCLP;
+      const Wr = totalGross / cumCL;
+      if (Wr > hwm) hwm = Wr;
+      const dd = (Wr - hwm) / hwm;
+      if (dd < maxDD) maxDD = dd;
+
+      cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
+      cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
+      let tgt = 1;
+      if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
+      else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
+      smult += spendingRule.adjustmentAlpha * (tgt - smult);
+
+      const GB = monthSnapshot.expense;
+      const G = GB * smult;
+      gPlan += GB;
+      gEff += G;
+      totalMonths += 1;
+      if (smult < 0.999) cutMonths += 1;
+
+      if (monthSnapshot.liquidCapital <= ruinThresholdMonths * G) {
+        ruined = true;
+        nRuin += 1;
+        ruinMonths.push(t + 1);
+        const fi = Math.floor(t / FAN_RES);
+        for (let f = fi; f < fanLen; f++) wMatrix[s * fanLen + f] = 0;
+        break;
+      }
+
+      const flow = applyExpenseWaterfall(liquidState, G, monthSnapshot.expense * 36);
+      if (flow.shortfall > 0) {
+        ruined = true;
+        nRuin += 1;
+        ruinMonths.push(t + 1);
+        const fi = Math.floor(t / FAN_RES);
+        for (let f = fi; f < fanLen; f++) wMatrix[s * fanLen + f] = 0;
+        break;
+      }
+
+      if (t % FAN_RES === 0) {
+        const fi = Math.floor(t / FAN_RES);
+        if (fi < fanLen) {
+          const postSnapshot = captureBlockSnapshot(t + 1, liquidState, params, CPU_t, EURUSDt, cumCL, mortgagePoint);
+          const postTotal = postSnapshot.liquidCapital + postSnapshot.realEstateEquityCLP;
+          wMatrix[s * fanLen + fi] = postTotal / cumCL;
+        }
+      }
+    }
+
+    const finalPoint = projectionPoints[Math.max(0, Math.min(T - 1, projectionPoints.length - 1))];
+    const finalRealEstateEquity = finalPoint ? finalPoint.realEstateEquityCLP : 0;
+    const finalLiquid =
+      liquidState.banks +
+      liquidState.sleeves.rvGlobal +
+      liquidState.sleeves.rfGlobal +
+      liquidState.sleeves.rvChile +
+      liquidState.sleeves.rfChile;
+    if (!ruined) terminalW.push(finalLiquid + finalRealEstateEquity);
+    maxDDs.push(maxDD);
+    if (gPlan > 0) spRatios.push(gEff / gPlan);
+  }
+
+  const pcts = [5, 10, 25, 50, 75, 90, 95];
+  const sortTW = [...terminalW].sort((a, b) => a - b);
+  const twPct: Record<number, number> = {};
+  pcts.forEach((p) => { twPct[p] = percentile(sortTW, p); });
+
+  const sortDD = [...maxDDs].sort((a, b) => a - b);
+  const ddPct: Record<number, number> = {};
+  pcts.forEach((p) => { ddPct[p] = percentile(sortDD, p); });
+
+  const sortRM = [...ruinMonths].sort((a, b) => a - b);
+  const fanData: FanChartPoint[] = [];
+  const colBuf = new Float32Array(N);
+  for (let fi = 0; fi < fanLen; fi++) {
+    for (let s = 0; s < N; s++) colBuf[s] = wMatrix[s * fanLen + fi];
+    const sorted = Array.from(colBuf).sort((a, b) => a - b);
+    const yr = Math.round((((fi * FAN_RES) + 1) / 12) * 10) / 10;
+    fanData.push({
+      year: yr,
+      p5: percentile(sorted, 5) / 1e6,
+      p10: percentile(sorted, 10) / 1e6,
+      p25: percentile(sorted, 25) / 1e6,
+      p50: percentile(sorted, 50) / 1e6,
+      p75: percentile(sorted, 75) / 1e6,
+      p90: percentile(sorted, 90) / 1e6,
+      p95: percentile(sorted, 95) / 1e6,
+    });
+  }
+
+  return {
+    results: {
+      probRuin: nRuin / N,
+      nRuin,
+      nTotal: N,
+      uncertaintyBand: {
+        low: Math.max(0, (nRuin / N) - 0.06),
+        high: Math.min(1, (nRuin / N) + 0.06),
+      },
+      scenarioComparison: undefined,
+      terminalWealthPercentiles: twPct,
+      terminalWealthAll: sortTW,
+      maxDrawdownPercentiles: ddPct,
+      ruinTimingMedian: percentile(sortRM, 50),
+      ruinTimingP25: percentile(sortRM, 25),
+      ruinTimingP75: percentile(sortRM, 75),
+      fanChartData: fanData,
+      spendingRatioMedian: percentile([...spRatios].sort((a, b) => a - b), 50),
+      computedAt: new Date(),
+      durationMs: Date.now() - t0,
+      params: {
+        ...params,
+        simulationComposition: params.simulationComposition
+          ? {
+              ...params.simulationComposition,
+              mortgageProjectionStatus: mortgageProjection.status,
+              diagnostics: params.simulationComposition.diagnostics
+                ? {
+                    ...params.simulationComposition.diagnostics,
+                    notes: [
+                      ...(params.simulationComposition.diagnostics.notes ?? []),
+                      `blocks-mode:${compositionMode}`,
+                    ],
+                  }
+                : undefined,
+            }
+          : undefined,
+      },
+    },
+    ruinMonths,
+    cutMonths,
+    totalMonths,
+  };
+}
+
+function runSimulationParametricInternal(params: ModelParameters): ParametricCoreAudit {
+  if (params.simulationComposition?.mode && params.simulationComposition.mode !== 'legacy') {
+    return runSimulationParametricBlocksInternal(params);
+  }
+  return runSimulationParametricLegacyInternal(params);
 }
 
 export function runSimulationParametric(params: ModelParameters): SimulationResults {

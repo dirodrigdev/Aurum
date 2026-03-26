@@ -3,7 +3,13 @@
 // Esta capa evita coupling directo entre dominios
 
 import type { AurumOptimizableInvestmentsSnapshot, AurumWealthSnapshot } from './types';
-import type { ModelParameters, PortfolioWeights } from '../../domain/model/types';
+import type {
+  CompositionMode,
+  ModelParameters,
+  PortfolioWeights,
+  SimulationCompositionInput,
+  SimulationCompositionDiagnostics,
+} from '../../domain/model/types';
 import { DEFAULT_PARAMETERS } from '../../domain/model/defaults';
 import type { OptimizableBaseReference } from '../../domain/instrumentBase';
 
@@ -93,5 +99,133 @@ export function optimizableSnapshotToReference(
     asOf: snapshot.publishedAt,
     sourceLabel: `Aurum · ${snapshot.snapshotLabel}`,
     status: 'available',
+  };
+}
+
+const asFiniteOrZero = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+function computeCompositionDiagnostics(
+  sourceVersion: 1 | 2,
+  mode: CompositionMode,
+  totalNetWorthCLP: number,
+  optimizableInvestmentsCLP: number,
+  banksCLP: number,
+  realEstateEquityCLP: number,
+  nonMortgageDebtCLP: number,
+): SimulationCompositionDiagnostics {
+  const debtAbs = Math.abs(nonMortgageDebtCLP);
+  const modeledNet = optimizableInvestmentsCLP + banksCLP + realEstateEquityCLP - debtAbs;
+  const compositionGapCLP = Math.round(totalNetWorthCLP - modeledNet);
+  const denom = Math.max(1, Math.abs(totalNetWorthCLP));
+  const compositionGapPct = compositionGapCLP / denom;
+  const notes: string[] = [];
+  if (mode === 'legacy') notes.push('legacy-v1');
+  if (mode === 'partial') notes.push('partial-v2');
+  if (Math.abs(compositionGapCLP) > 1_000) notes.push('warn-and-run:composition-gap');
+  return {
+    sourceVersion,
+    mode,
+    compositionGapCLP,
+    compositionGapPct,
+    notes,
+  };
+}
+
+export function snapshotToSimulationComposition(
+  snapshot: AurumOptimizableInvestmentsSnapshot | null,
+): SimulationCompositionInput | null {
+  if (!snapshot) return null;
+  const totalNetWorthCLP = asFiniteOrZero(snapshot.totalNetWorthCLP);
+  const optimizableInvestmentsCLP = asFiniteOrZero(snapshot.optimizableInvestmentsCLP);
+  if (optimizableInvestmentsCLP <= 0) return null;
+
+  const isV2 = snapshot.version === 2;
+  const snapshotV2 = isV2 ? snapshot : null;
+  const banksCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.banksCLP) : 0;
+  const nonMortgageDebtCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.nonMortgageDebtCLP) : 0;
+  const propertyValueCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) : 0;
+  const mortgageDebtOutstandingCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) : 0;
+  const realEstateEquityDerived = Math.max(0, propertyValueCLP - mortgageDebtOutstandingCLP);
+  const realEstateEquityFromSnapshot = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.realEstateEquityCLP) : 0;
+  const realEstateEquityCLP = realEstateEquityFromSnapshot > 0 ? realEstateEquityFromSnapshot : realEstateEquityDerived;
+
+  const hasMortgageCore =
+    isV2 &&
+    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) &&
+    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP);
+  const hasAnyV2Block =
+    isV2 &&
+    (banksCLP > 0 ||
+      nonMortgageDebtCLP !== 0 ||
+      propertyValueCLP > 0 ||
+      mortgageDebtOutstandingCLP > 0 ||
+      realEstateEquityCLP > 0);
+
+  const mode: CompositionMode = !isV2 ? 'legacy' : hasMortgageCore ? 'full' : hasAnyV2Block ? 'partial' : 'legacy';
+  const sourceVersion: 1 | 2 = isV2 ? 2 : 1;
+  const diagnostics = computeCompositionDiagnostics(
+    sourceVersion,
+    mode,
+    totalNetWorthCLP,
+    optimizableInvestmentsCLP,
+    banksCLP,
+    realEstateEquityCLP,
+    nonMortgageDebtCLP,
+  );
+
+  const hasSchedule =
+    Array.isArray(snapshotV2?.nonOptimizable?.realEstate?.mortgageScheduleCLP) &&
+    snapshotV2.nonOptimizable?.realEstate?.mortgageScheduleCLP.length > 0;
+  const hasReconstructibleMortgage =
+    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) &&
+    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.monthlyMortgagePaymentCLP) &&
+    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageRate) &&
+    Boolean(snapshotV2?.nonOptimizable?.realEstate?.amortizationSystem);
+  const mortgageProjectionStatus = !isV2
+    ? undefined
+    : hasSchedule
+      ? 'schedule'
+      : hasReconstructibleMortgage
+        ? 'reconstructed'
+        : hasAnyV2Block
+          ? 'fallback_incomplete'
+          : undefined;
+
+  return {
+    mode,
+    totalNetWorthCLP,
+    optimizableInvestmentsCLP,
+    ...(mortgageProjectionStatus ? { mortgageProjectionStatus } : {}),
+    nonOptimizable: {
+      banksCLP,
+      nonMortgageDebtCLP,
+      ...(hasAnyV2Block
+        ? {
+            realEstate: {
+              propertyValueCLP,
+              realEstateEquityCLP,
+              ...(Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP)
+                ? { mortgageDebtOutstandingCLP }
+                : {}),
+              ...(Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.monthlyMortgagePaymentCLP)
+                ? { monthlyMortgagePaymentCLP: asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.monthlyMortgagePaymentCLP) }
+                : {}),
+              ...(Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageRate)
+                ? { mortgageRate: asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.mortgageRate) }
+                : {}),
+              ...(snapshotV2?.nonOptimizable?.realEstate?.mortgageEndDate
+                ? { mortgageEndDate: snapshotV2.nonOptimizable.realEstate.mortgageEndDate }
+                : {}),
+              ...(snapshotV2?.nonOptimizable?.realEstate?.amortizationSystem
+                ? { amortizationSystem: snapshotV2.nonOptimizable.realEstate.amortizationSystem }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    diagnostics,
   };
 }

@@ -12,7 +12,7 @@ import { OptimizerPage } from './components/OptimizerPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import type { OptimizableBaseReference } from './domain/instrumentBase';
-import { optimizableSnapshotToReference } from './integrations/aurum/adapters';
+import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import { loadPublishedOptimizableInvestmentsSnapshot } from './integrations/aurum/optimizableSnapshot';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -288,40 +288,52 @@ export default function App() {
         const snapshot = await loadPublishedOptimizableInvestmentsSnapshot();
         if (cancelled) return;
         setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
+        const composition = snapshotToSimulationComposition(snapshot);
         const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
         if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
           setAurumSnapshotStatus('missing');
           setAurumSnapshotLabel(null);
+          if (composition) {
+            setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
+            setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
+          }
           return;
         }
         setAurumSnapshotStatus('available');
         setAurumSnapshotLabel(snapshot?.snapshotLabel || 'último cierre confirmado');
 
         setBaseParams((prev) => {
-          if (Math.round(prev.capitalInitial) === Math.round(aurumNetWorth)) return prev;
+          const sameCapital = Math.round(prev.capitalInitial) === Math.round(aurumNetWorth);
+          const sameComposition = JSON.stringify(prev.simulationComposition) === JSON.stringify(composition ?? prev.simulationComposition);
+          if (sameCapital && sameComposition) return prev;
           return {
             ...prev,
             capitalInitial: aurumNetWorth,
             label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
+            ...(composition ? { simulationComposition: composition } : {}),
           };
         });
 
-        // Solo aplicamos el capital oficial automáticamente cuando no hay una simulación activa.
-        if (!simulationActive && !simOverrides?.active) {
-          let nextParamsForRun: ModelParameters | null = null;
-          setSimParams((prev) => {
-            if (Math.round(prev.capitalInitial) === Math.round(aurumNetWorth)) return prev;
-            const next = {
-              ...prev,
-              capitalInitial: aurumNetWorth,
-              label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
-            };
-            nextParamsForRun = next;
-            return next;
-          });
-          if (nextParamsForRun) {
-            setSimResult(computeTriMotor(nextParamsForRun));
-          }
+        let nextParamsForRun: ModelParameters | null = null;
+        setSimParams((prev) => {
+          const shouldApplyCapital = !simulationActive && !simOverrides?.active;
+          const targetCapital = shouldApplyCapital ? aurumNetWorth : prev.capitalInitial;
+          const sameCapital = Math.round(prev.capitalInitial) === Math.round(targetCapital);
+          const sameComposition = JSON.stringify(prev.simulationComposition) === JSON.stringify(composition ?? prev.simulationComposition);
+          if (sameCapital && sameComposition) return prev;
+          const next = {
+            ...prev,
+            capitalInitial: targetCapital,
+            label: shouldApplyCapital
+              ? `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`
+              : prev.label,
+            ...(composition ? { simulationComposition: composition } : {}),
+          };
+          nextParamsForRun = next;
+          return next;
+        });
+        if (nextParamsForRun && !simulationActive && !simOverrides?.active) {
+          setSimResult(computeTriMotor(nextParamsForRun));
         }
       } catch {
         if (cancelled) return;
@@ -331,6 +343,34 @@ export default function App() {
           sourceLabel: 'Aurum · último cierre confirmado',
           status: 'pending',
         });
+        setBaseParams((prev) => ({
+          ...prev,
+          simulationComposition: {
+            ...(prev.simulationComposition ?? DEFAULT_PARAMETERS.simulationComposition!),
+            mode: 'legacy',
+            diagnostics: {
+              sourceVersion: 1,
+              mode: 'legacy',
+              compositionGapCLP: 0,
+              compositionGapPct: 0,
+              notes: ['fallback-after-snapshot-error'],
+            },
+          },
+        }));
+        setSimParams((prev) => ({
+          ...prev,
+          simulationComposition: {
+            ...(prev.simulationComposition ?? DEFAULT_PARAMETERS.simulationComposition!),
+            mode: 'legacy',
+            diagnostics: {
+              sourceVersion: 1,
+              mode: 'legacy',
+              compositionGapCLP: 0,
+              compositionGapPct: 0,
+              notes: ['fallback-after-snapshot-error'],
+            },
+          },
+        }));
         setAurumSnapshotStatus('error');
         setAurumSnapshotLabel(null);
       }

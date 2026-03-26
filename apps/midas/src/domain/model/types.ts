@@ -107,6 +107,51 @@ export interface SimulationConfig {
   useHistoricalData: boolean;
 }
 
+export type CompositionMode = 'legacy' | 'partial' | 'full';
+
+export type MortgageProjectionStatus = 'schedule' | 'reconstructed' | 'fallback_incomplete';
+
+export interface RealEstateInput {
+  propertyValueCLP: number;
+  realEstateEquityCLP?: number;
+  mortgageDebtOutstandingCLP?: number;
+  monthlyMortgagePaymentCLP?: number;
+  mortgageEndDate?: string;
+  mortgageRate?: number;
+  amortizationSystem?: 'french' | 'constant' | string;
+  mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
+}
+
+export interface NonOptimizableBlocksInput {
+  banksCLP: number;
+  nonMortgageDebtCLP: number;
+  realEstate?: RealEstateInput;
+}
+
+export interface SimulationCompositionDiagnostics {
+  sourceVersion: 1 | 2;
+  mode: CompositionMode;
+  compositionGapCLP: number;
+  compositionGapPct: number;
+  notes: string[];
+}
+
+export interface SimulationCompositionInput {
+  mode: CompositionMode;
+  totalNetWorthCLP: number;
+  optimizableInvestmentsCLP: number;
+  nonOptimizable: NonOptimizableBlocksInput;
+  mortgageProjectionStatus?: MortgageProjectionStatus;
+  diagnostics?: SimulationCompositionDiagnostics;
+}
+
+export interface RealEstatePolicy {
+  enabled: boolean;
+  triggerRunwayMonths: number;
+  saleDelayMonths: number;
+  saleCostPct: number;
+}
+
 export interface ModelParameters {
   label:                string;
   capitalInitial:       number;
@@ -120,6 +165,8 @@ export interface ModelParameters {
   inflation:            InflationAssumptions;
   fx:                   FXAssumptions;
   simulation:           SimulationConfig;
+  simulationComposition?: SimulationCompositionInput;
+  realEstatePolicy?: RealEstatePolicy;
   ruinThresholdMonths:  number;
 }
 

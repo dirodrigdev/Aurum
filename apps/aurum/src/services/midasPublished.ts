@@ -4,7 +4,7 @@ import type { WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
 export type AurumOptimizableInvestmentsSnapshot = {
-  version: 1;
+  version: 1 | 2;
   publishedAt: string;
   snapshotMonth: string;
   snapshotLabel: string;
@@ -13,6 +13,20 @@ export type AurumOptimizableInvestmentsSnapshot = {
   totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
+  nonOptimizable?: {
+    banksCLP?: number;
+    nonMortgageDebtCLP?: number;
+    realEstate?: {
+      propertyValueCLP?: number;
+      realEstateEquityCLP?: number;
+      mortgageDebtOutstandingCLP?: number;
+      monthlyMortgagePaymentCLP?: number;
+      mortgageEndDate?: string;
+      mortgageRate?: number;
+      amortizationSystem?: 'french' | 'constant' | string;
+      mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
+    };
+  };
   source: {
     app: 'aurum';
     basis: 'latest_confirmed_closure';
@@ -28,6 +42,93 @@ const compareClosuresByMonthDesc = (a: WealthMonthlyClosure, b: WealthMonthlyClo
 const asFiniteOrNull = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeText = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const toClp = (amount: number, currency: string, fxRates?: WealthMonthlyClosure['fxRates']) => {
+  if (!Number.isFinite(amount)) return null;
+  const rounded = Number(amount);
+  if (currency === 'CLP') return rounded;
+  if (currency === 'USD') {
+    const usdClp = asFiniteOrNull(fxRates?.usdClp);
+    return usdClp === null ? null : rounded * usdClp;
+  }
+  if (currency === 'EUR') {
+    const eurClp = asFiniteOrNull(fxRates?.eurClp);
+    return eurClp === null ? null : rounded * eurClp;
+  }
+  if (currency === 'UF') {
+    const ufClp = asFiniteOrNull(fxRates?.ufClp);
+    return ufClp === null ? null : rounded * ufClp;
+  }
+  return null;
+};
+
+const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
+  const summary = closure.summary as WealthMonthlyClosure['summary'] & {
+    bankClp?: number;
+    nonMortgageDebtClp?: number;
+  };
+  const records = Array.isArray(closure.records) ? closure.records : [];
+
+  const summaryBankClp =
+    asFiniteOrNull(summary.bankClp) ??
+    asFiniteOrNull(summary.byBlock?.bank?.CLP) ??
+    0;
+
+  const summaryNonMortgageDebtClp = asFiniteOrNull(summary.nonMortgageDebtClp);
+
+  let propertyValueCLP = 0;
+  let mortgageDebtOutstandingCLP = 0;
+  let monthlyMortgagePaymentCLP = 0;
+  let nonMortgageDebtFromRecords = 0;
+
+  for (const record of records) {
+    const label = normalizeText(record.label || '');
+    const clp = toClp(Math.abs(Number(record.amount || 0)), record.currency, closure.fxRates);
+    if (clp === null) continue;
+
+    if (record.block === 'real_estate' && label.includes('valor propiedad')) {
+      propertyValueCLP += clp;
+      continue;
+    }
+    if (record.block !== 'debt') continue;
+
+    if (label.includes('saldo deuda hipotecaria')) {
+      mortgageDebtOutstandingCLP += clp;
+      continue;
+    }
+    if (label.includes('dividendo hipotecario')) {
+      monthlyMortgagePaymentCLP += clp;
+      continue;
+    }
+    if (label.includes('tarjeta')) {
+      nonMortgageDebtFromRecords += clp;
+    }
+  }
+
+  const nonMortgageDebtCLP = summaryNonMortgageDebtClp ?? nonMortgageDebtFromRecords;
+  const realEstateEquityCLP = Math.max(0, propertyValueCLP - mortgageDebtOutstandingCLP);
+
+  return {
+    banksCLP: Math.round(Math.max(0, summaryBankClp)),
+    nonMortgageDebtCLP: Math.round(Math.abs(nonMortgageDebtCLP)),
+    realEstate:
+      propertyValueCLP > 0 || mortgageDebtOutstandingCLP > 0 || monthlyMortgagePaymentCLP > 0
+        ? {
+            propertyValueCLP: Math.round(Math.max(0, propertyValueCLP)),
+            realEstateEquityCLP: Math.round(Math.max(0, realEstateEquityCLP)),
+            mortgageDebtOutstandingCLP: Math.round(Math.max(0, mortgageDebtOutstandingCLP)),
+            monthlyMortgagePaymentCLP: Math.round(Math.max(0, monthlyMortgagePaymentCLP)),
+          }
+        : undefined,
+  };
 };
 
 export const buildAurumOptimizableInvestmentsSnapshot = (
@@ -48,7 +149,7 @@ export const buildAurumOptimizableInvestmentsSnapshot = (
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
 
   return {
-    version: 1,
+    version: 2,
     publishedAt: new Date().toISOString(),
     snapshotMonth: latest.monthKey,
     snapshotLabel: `Cierre ${formatMonthLabel(latest.monthKey)}`,
@@ -57,6 +158,7 @@ export const buildAurumOptimizableInvestmentsSnapshot = (
     ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: Math.round(totalNetWorthWithRisk) } : {}),
     optimizableInvestmentsCLP: Math.round(withoutRisk),
     ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
+    nonOptimizable: extractNonOptimizable(latest),
     source: {
       app: 'aurum',
       basis: 'latest_confirmed_closure',
