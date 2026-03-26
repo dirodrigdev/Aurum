@@ -24,6 +24,14 @@ export type BlockSnapshot = {
   realEstateEquityCLP: number;
 };
 
+export type AnnualRebalanceResult = {
+  bucketTarget: number;
+  bucketBeforeRebalance: number;
+  bucketAfterRebalance: number;
+  usedBanksForBucket: number;
+  equitySoldForBucket: number;
+};
+
 const clamp = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
 function normalizeWeights(weights: PortfolioWeights): PortfolioWeights {
@@ -97,6 +105,14 @@ function splitRf(sleeves: LiquidPathState['sleeves'], bucketTarget: number) {
   return { rfTotal, bucketRF, otherRF };
 }
 
+function sumRf(sleeves: LiquidPathState['sleeves']): number {
+  return clamp(sleeves.rfGlobal) + clamp(sleeves.rfChile);
+}
+
+function sumEquity(sleeves: LiquidPathState['sleeves']): number {
+  return clamp(sleeves.rvGlobal) + clamp(sleeves.rvChile);
+}
+
 function withdrawFromRfProRata(sleeves: LiquidPathState['sleeves'], amount: number): number {
   let remaining = Math.max(0, amount);
   const rfTotal = clamp(sleeves.rfGlobal) + clamp(sleeves.rfChile);
@@ -150,6 +166,57 @@ export function applyExpenseWaterfall(
   return {
     paid: before - remaining,
     shortfall: remaining,
+  };
+}
+
+export function runAnnualRebalance(
+  state: LiquidPathState,
+  params: ModelParameters,
+  bucketTarget: number,
+): AnnualRebalanceResult {
+  const normalized = normalizeWeights(params.weights);
+  const target = clamp(bucketTarget);
+  const rfBefore = sumRf(state.sleeves);
+  const bucketBeforeRebalance = Math.min(rfBefore, target);
+
+  let deficit = Math.max(0, target - rfBefore);
+  let usedBanksForBucket = 0;
+  let equitySoldForBucket = 0;
+
+  if (deficit > 0) {
+    usedBanksForBucket = Math.min(deficit, clamp(state.banks));
+    state.banks = Math.max(0, state.banks - usedBanksForBucket);
+    state.sleeves.rfChile += usedBanksForBucket;
+    deficit -= usedBanksForBucket;
+  }
+
+  if (deficit > 0) {
+    const missingBeforeEquitySell = deficit;
+    deficit = withdrawFromEquityProRata(state.sleeves, deficit);
+    equitySoldForBucket = Math.max(0, missingBeforeEquitySell - deficit);
+    state.sleeves.rfChile += equitySoldForBucket;
+  }
+
+  const rfAfterBucketFill = sumRf(state.sleeves);
+  const bucketReserve = Math.min(target, rfAfterBucketFill);
+  const totalInvestable =
+    sumRf(state.sleeves) +
+    sumEquity(state.sleeves);
+  const allocatable = Math.max(0, totalInvestable - bucketReserve);
+
+  state.sleeves.rvGlobal = allocatable * normalized.rvGlobal;
+  state.sleeves.rvChile = allocatable * normalized.rvChile;
+  state.sleeves.rfGlobal = allocatable * normalized.rfGlobal;
+  state.sleeves.rfChile = bucketReserve + allocatable * normalized.rfChile;
+
+  const bucketAfterRebalance = Math.min(sumRf(state.sleeves), target);
+
+  return {
+    bucketTarget: target,
+    bucketBeforeRebalance,
+    bucketAfterRebalance,
+    usedBanksForBucket,
+    equitySoldForBucket,
   };
 }
 

@@ -4,7 +4,7 @@ import type {
   FanChartPoint,
 } from '../model/types';
 import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
-import { applyExpenseWaterfall, applySleeveReturns, buildInitialLiquidState, captureBlockSnapshot, getBaseExpenseForMonth } from './blockState';
+import { applyExpenseWaterfall, applySleeveReturns, buildInitialLiquidState, captureBlockSnapshot, getBaseExpenseForMonth, runAnnualRebalance } from './blockState';
 import { buildMortgageProjection } from './mortgageProjection';
 
 type ParametricAuditResults = {
@@ -383,6 +383,10 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const ruinMonths: number[] = [];
   const saleTriggeredMonths: number[] = [];
   const saleExecutedMonths: number[] = [];
+  const rebalanceMonths: number[] = [];
+  const bucketTargets: number[] = [];
+  const bucketBeforeRebalances: number[] = [];
+  const bucketAfterRebalances: number[] = [];
   const spRatios: number[] = [];
   let cutMonths = 0;
   let totalMonths = 0;
@@ -542,6 +546,14 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
         break;
       }
 
+      if (month % 12 === 0) {
+        const rebalanceResult = runAnnualRebalance(liquidState, params, G * 36);
+        rebalanceMonths.push(month);
+        bucketTargets.push(rebalanceResult.bucketTarget);
+        bucketBeforeRebalances.push(rebalanceResult.bucketBeforeRebalance);
+        bucketAfterRebalances.push(rebalanceResult.bucketAfterRebalance);
+      }
+
       if (t % FAN_RES === 0) {
         const fi = Math.floor(t / FAN_RES);
         if (fi < fanLen) {
@@ -648,10 +660,27 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                     : undefined,
                 terminalAdjustmentApplied,
                 terminalAdjustmentCLP: terminalAdjustmentApplied ? terminalAdjustment : 0,
+                bucketTarget:
+                  bucketTargets.length > 0
+                    ? percentile([...bucketTargets].sort((a, b) => a - b), 50)
+                    : undefined,
+                bucketBeforeRebalance:
+                  bucketBeforeRebalances.length > 0
+                    ? percentile([...bucketBeforeRebalances].sort((a, b) => a - b), 50)
+                    : undefined,
+                bucketAfterRebalance:
+                  bucketAfterRebalances.length > 0
+                    ? percentile([...bucketAfterRebalances].sort((a, b) => a - b), 50)
+                    : undefined,
+                rebalanceMonth:
+                  rebalanceMonths.length > 0
+                    ? Math.round(percentile([...rebalanceMonths].sort((a, b) => a - b), 50))
+                    : undefined,
                 notes: [
                   ...(params.simulationComposition.diagnostics?.notes ?? []),
                   `blocks-mode:${compositionMode}`,
                   `real-estate-sale:${saleEnabled ? 'enabled' : 'disabled'}`,
+                  ...(rebalanceMonths.length > 0 ? ['annual-rebalance:enabled'] : []),
                   ...(terminalAdjustmentApplied ? ['terminal-adjustment:non-mortgage-debt'] : []),
                 ],
               },

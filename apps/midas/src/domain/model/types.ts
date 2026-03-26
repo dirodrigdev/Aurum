@@ -138,6 +138,10 @@ export interface SimulationCompositionDiagnostics {
   saleExecutedMonth?: number;
   terminalAdjustmentApplied?: boolean;
   terminalAdjustmentCLP?: number;
+  bucketTarget?: number;
+  bucketBeforeRebalance?: number;
+  bucketAfterRebalance?: number;
+  rebalanceMonth?: number;
 }
 
 export interface SimulationCompositionInput {
