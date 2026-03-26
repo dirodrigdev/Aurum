@@ -116,6 +116,7 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
   const mortgageDebtOutstandingCLP = asFiniteOrNull(realEstateRaw?.mortgageDebtOutstandingCLP);
   const monthlyMortgagePaymentCLP = asFiniteOrNull(realEstateRaw?.monthlyMortgagePaymentCLP);
   const mortgageRate = asFiniteOrNull(realEstateRaw?.mortgageRate);
+  const ufSnapshotCLP = asFiniteOrNull(realEstateRaw?.ufSnapshotCLP);
   const mortgageEndDate = typeof realEstateRaw?.mortgageEndDate === 'string' ? realEstateRaw.mortgageEndDate : undefined;
   const amortizationSystem = typeof realEstateRaw?.amortizationSystem === 'string' ? realEstateRaw.amortizationSystem : undefined;
   const scheduleRaw = Array.isArray(realEstateRaw?.mortgageScheduleCLP) ? realEstateRaw?.mortgageScheduleCLP : null;
@@ -147,6 +148,7 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
                   realEstate: {
                     ...(propertyValueCLP !== null ? { propertyValueCLP } : {}),
                     ...(realEstateEquityCLP !== null ? { realEstateEquityCLP } : {}),
+                    ...(ufSnapshotCLP !== null ? { ufSnapshotCLP } : {}),
                     ...(mortgageDebtOutstandingCLP !== null ? { mortgageDebtOutstandingCLP } : {}),
                     ...(monthlyMortgagePaymentCLP !== null ? { monthlyMortgagePaymentCLP } : {}),
                     ...(mortgageRate !== null ? { mortgageRate } : {}),

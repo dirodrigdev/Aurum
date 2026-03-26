@@ -148,14 +148,16 @@ export function snapshotToSimulationComposition(
   const nonMortgageDebtCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.nonMortgageDebtCLP) : 0;
   const propertyValueCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) : 0;
   const mortgageDebtOutstandingCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) : 0;
+  const ufSnapshotCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.ufSnapshotCLP) : 0;
   const realEstateEquityDerived = Math.max(0, propertyValueCLP - mortgageDebtOutstandingCLP);
   const realEstateEquityFromSnapshot = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.realEstateEquityCLP) : 0;
   const realEstateEquityCLP = realEstateEquityFromSnapshot > 0 ? realEstateEquityFromSnapshot : realEstateEquityDerived;
 
   const hasMortgageCore =
     isV2 &&
-    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) &&
-    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP);
+    realEstateEquityCLP > 0 &&
+    ufSnapshotCLP > 0 &&
+    Boolean(snapshotV2?.snapshotMonth);
   const hasAnyV2Block =
     isV2 &&
     (banksCLP > 0 ||
@@ -176,23 +178,14 @@ export function snapshotToSimulationComposition(
     nonMortgageDebtCLP,
   );
 
-  const hasSchedule =
-    Array.isArray(snapshotV2?.nonOptimizable?.realEstate?.mortgageScheduleCLP) &&
-    snapshotV2.nonOptimizable?.realEstate?.mortgageScheduleCLP.length > 0;
-  const hasReconstructibleMortgage =
-    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) &&
-    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.monthlyMortgagePaymentCLP) &&
-    Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageRate) &&
-    Boolean(snapshotV2?.nonOptimizable?.realEstate?.amortizationSystem);
+  const hasUfSnapshot = ufSnapshotCLP > 0 && Boolean(snapshotV2?.snapshotMonth);
   const mortgageProjectionStatus = !isV2
     ? undefined
-    : hasSchedule
-      ? 'schedule'
-      : hasReconstructibleMortgage
-        ? 'reconstructed'
-        : hasAnyV2Block
-          ? 'fallback_incomplete'
-          : undefined;
+    : hasUfSnapshot
+      ? 'uf_schedule'
+      : hasAnyV2Block
+        ? 'fallback_incomplete'
+        : undefined;
 
   return {
     mode,
@@ -207,6 +200,8 @@ export function snapshotToSimulationComposition(
             realEstate: {
               propertyValueCLP,
               realEstateEquityCLP,
+              ...(ufSnapshotCLP > 0 ? { ufSnapshotCLP } : {}),
+              ...(snapshotV2?.snapshotMonth ? { snapshotMonth: snapshotV2.snapshotMonth } : {}),
               ...(Number.isFinite(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP)
                 ? { mortgageDebtOutstandingCLP }
                 : {}),

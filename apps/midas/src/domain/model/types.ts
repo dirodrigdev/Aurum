@@ -109,7 +109,7 @@ export interface SimulationConfig {
 
 export type CompositionMode = 'legacy' | 'partial' | 'full';
 
-export type MortgageProjectionStatus = 'schedule' | 'reconstructed' | 'fallback_incomplete';
+export type MortgageProjectionStatus = 'uf_schedule' | 'fallback_incomplete';
 
 export interface RealEstateInput {
   propertyValueCLP: number;
@@ -120,6 +120,8 @@ export interface RealEstateInput {
   mortgageRate?: number;
   amortizationSystem?: 'french' | 'constant' | string;
   mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
+  ufSnapshotCLP?: number;
+  snapshotMonth?: string;
 }
 
 export interface NonOptimizableBlocksInput {

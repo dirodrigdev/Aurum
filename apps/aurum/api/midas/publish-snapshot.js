@@ -22,6 +22,7 @@ const normalizeRealEstate = (value) => {
   const mortgageDebtOutstandingCLP = asFiniteOrNull(realEstate.mortgageDebtOutstandingCLP);
   const monthlyMortgagePaymentCLP = asFiniteOrNull(realEstate.monthlyMortgagePaymentCLP);
   const mortgageRate = asFiniteOrNull(realEstate.mortgageRate);
+  const ufSnapshotCLP = asFiniteOrNull(realEstate.ufSnapshotCLP);
   const mortgageEndDate =
     typeof realEstate.mortgageEndDate === 'string' && realEstate.mortgageEndDate.trim()
       ? realEstate.mortgageEndDate.trim()
@@ -55,6 +56,7 @@ const normalizeRealEstate = (value) => {
       ? { monthlyMortgagePaymentCLP: Math.round(monthlyMortgagePaymentCLP) }
       : {}),
     ...(mortgageRate !== null ? { mortgageRate } : {}),
+    ...(ufSnapshotCLP !== null ? { ufSnapshotCLP: Math.round(ufSnapshotCLP) } : {}),
     ...(mortgageEndDate ? { mortgageEndDate } : {}),
     ...(amortizationSystem ? { amortizationSystem } : {}),
     ...(mortgageScheduleCLP && mortgageScheduleCLP.length > 0 ? { mortgageScheduleCLP } : {}),

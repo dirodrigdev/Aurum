@@ -62,6 +62,7 @@ export interface AurumOptimizableInvestmentsSnapshotV1 {
 export interface AurumRealEstateSnapshot {
   propertyValueCLP?: number;
   realEstateEquityCLP?: number;
+  ufSnapshotCLP?: number;
   mortgageDebtOutstandingCLP?: number;
   monthlyMortgagePaymentCLP?: number;
   mortgageEndDate?: string;

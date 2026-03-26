@@ -64,6 +64,8 @@ function percentile(sorted: number[], p: number): number {
   return lo === hi ? sorted[lo] : sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
 }
 
+const clampNonNegative = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
+
 function applyCashflowEvents(
   sl: number[],
   cashflowEvents: ModelParameters['cashflowEvents'],
@@ -362,12 +364,12 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const bankAnnual = Math.max(0, Math.min(ret.rfGlobalAnnual, ret.rfChileUFAnnual));
   const bankMonthly = (1 + bankAnnual) ** (1 / 12) - 1;
 
-  const mortgageProjection = buildMortgageProjection(
-    composition?.nonOptimizable?.realEstate,
-    T,
-    ipcMean,
-  );
-  const projectionPoints = mortgageProjection.points;
+  const realEstateInput = composition?.nonOptimizable?.realEstate;
+  const mortgageProjection = buildMortgageProjection(realEstateInput, T);
+  const amortizationScheduleUF = mortgageProjection.amortizationUF;
+  const ufSnapshotCLP = clampNonNegative(realEstateInput?.ufSnapshotCLP ?? 0);
+  const equityCLP0 = clampNonNegative(realEstateInput?.realEstateEquityCLP ?? 0);
+  const equityUF0 = ufSnapshotCLP > 0 ? equityCLP0 / ufSnapshotCLP : 0;
   const salePolicy = params.realEstatePolicy;
   const saleEnabled = salePolicy?.enabled ?? true;
   const triggerRunwayMonths = Math.max(1, Math.round(salePolicy?.triggerRunwayMonths ?? 36));
@@ -421,6 +423,9 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
     let saleTriggeredMonth: number | null = null;
     let saleScheduledMonth: number | null = null;
     let saleExecutedMonth: number | null = null;
+    let equityUF = equityUF0;
+    let ufCLP = ufSnapshotCLP;
+    let equityCLP = equityCLP0;
 
     for (let t = 0; t < T; t++) {
       const month = t + 1;
@@ -433,6 +438,19 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
 
       cumCL *= 1 + ipcM;
       cumEUR *= 1 + hicpM;
+
+      const soldAlready = saleExecutedMonth !== null && month >= saleExecutedMonth;
+      if (ufCLP > 0) {
+        ufCLP = ufCLP * (1 + ipcM);
+      }
+      if (!soldAlready) {
+        const amortizationUF = amortizationScheduleUF[t] ?? 0;
+        equityUF += amortizationUF;
+        equityCLP = ufCLP > 0 ? equityUF * ufCLP : 0;
+      } else {
+        equityUF = 0;
+        equityCLP = 0;
+      }
 
       const logLT = Math.log(fx.tcrealLT / fx.clpUsdInitial);
       const uPrev = logCPUr - logLT;
@@ -476,16 +494,19 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
       liquidState.sleeves.rvChile = Math.max(0, sleevesArray[2]);
       liquidState.sleeves.rfChile = Math.max(0, sleevesArray[3]);
 
-      const projectedMortgagePoint = projectionPoints[t] ?? projectionPoints[projectionPoints.length - 1] ?? {
+      const projectedEquityCLP = clampNonNegative(equityCLP);
+      const projectedMortgagePoint = {
         month,
-        propertyValueCLP: 0,
+        propertyValueCLP: projectedEquityCLP,
         mortgageDebtCLP: 0,
-        realEstateEquityCLP: 0,
+        realEstateEquityCLP: projectedEquityCLP,
       };
       if (saleScheduledMonth !== null && saleExecutedMonth === null && month >= saleScheduledMonth) {
         const netSellableEquity = Math.max(0, projectedMortgagePoint.realEstateEquityCLP) * (1 - saleCostPct);
         liquidState.banks += Math.max(0, netSellableEquity);
         saleExecutedMonth = month;
+        equityUF = 0;
+        equityCLP = 0;
       }
 
       const sold = saleExecutedMonth !== null && month >= saleExecutedMonth;
@@ -567,13 +588,10 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
     if (saleTriggeredMonth !== null) saleTriggeredMonths.push(saleTriggeredMonth);
     if (saleExecutedMonth !== null) saleExecutedMonths.push(saleExecutedMonth);
 
-    const finalPoint = projectionPoints[Math.max(0, Math.min(T - 1, projectionPoints.length - 1))];
     const finalRealEstateEquity =
       saleExecutedMonth !== null && saleExecutedMonth <= T
         ? 0
-        : finalPoint
-          ? finalPoint.realEstateEquityCLP
-          : 0;
+        : clampNonNegative(equityCLP);
     const finalLiquid =
       liquidState.banks +
       liquidState.sleeves.rvGlobal +
@@ -678,6 +696,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                     : undefined,
                 notes: [
                   ...(params.simulationComposition.diagnostics?.notes ?? []),
+                  ...mortgageProjection.notes,
                   `blocks-mode:${compositionMode}`,
                   `real-estate-sale:${saleEnabled ? 'enabled' : 'disabled'}`,
                   ...(rebalanceMonths.length > 0 ? ['annual-rebalance:enabled'] : []),

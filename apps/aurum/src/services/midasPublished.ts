@@ -24,6 +24,7 @@ export type AurumOptimizableInvestmentsSnapshot = {
       mortgageRate?: number;
       amortizationSystem?: 'french' | 'constant' | string;
       mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
+      ufSnapshotCLP?: number;
     };
   };
   source: {
@@ -108,6 +109,7 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
   let mortgageDebtOutstandingCLP = 0;
   let monthlyMortgagePaymentCLP = 0;
   let nonMortgageDebtFromRecords = 0;
+  const ufSnapshotCLP = asFiniteOrNull(closure.fxRates?.ufClp);
 
   for (const record of records) {
     const label = normalizeText(record.label || '');
@@ -146,6 +148,7 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
             realEstateEquityCLP: Math.round(Math.max(0, realEstateEquityCLP)),
             mortgageDebtOutstandingCLP: Math.round(Math.max(0, mortgageDebtOutstandingCLP)),
             monthlyMortgagePaymentCLP: Math.round(Math.max(0, monthlyMortgagePaymentCLP)),
+            ...(ufSnapshotCLP !== null ? { ufSnapshotCLP: Math.round(ufSnapshotCLP) } : {}),
           }
         : undefined,
   };
