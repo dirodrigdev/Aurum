@@ -436,19 +436,10 @@ export default function App() {
   }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
 
   const handleManualRecalculate = useCallback(() => {
-    try {
-      setSimUiError(null);
-      setSimUiState('recalculating');
-      const base = applySimulationOverrides(simParamsRef.current, simOverrides);
-      setSimResult(computeTriMotor(base));
-      setSimUiState('ready');
-      setBaseUpdatePending(false);
-    } catch (error: any) {
-      console.error('[Midas] Error recalculando simulación', error);
-      setSimUiState('error');
-      setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
-    }
-  }, [computeTriMotor, simOverrides]);
+    const base = applySimulationOverrides(simParamsRef.current, simOverrides);
+    setBaseUpdatePending(false);
+    queueTriMotorCalculation(base);
+  }, [queueTriMotorCalculation, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
