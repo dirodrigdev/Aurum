@@ -66,6 +66,8 @@ function percentile(sorted: number[], p: number): number {
 }
 
 const clampNonNegative = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
+const maxOf = (values: number[]) =>
+  values.length ? values.reduce((acc, value) => (value > acc ? value : acc), values[0]) : -Infinity;
 
 function normalizeDiagnosticWarnings(notes: string[], status: MortgageProjectionStatus): string[] {
   const warnings: string[] = [];
@@ -719,7 +721,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                     : undefined,
                 lastRebalanceMonth:
                   rebalanceMonths.length > 0
-                    ? Math.max(...rebalanceMonths)
+                    ? maxOf(rebalanceMonths)
                     : undefined,
                 notes: [
                   ...(params.simulationComposition.diagnostics?.notes ?? []),
