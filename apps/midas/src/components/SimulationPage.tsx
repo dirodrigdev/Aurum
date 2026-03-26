@@ -67,7 +67,7 @@ export function SimulationPage({
   simUiError,
   simulationPreset,
   stateLabel,
-  aurumSnapshotStatus,
+  aurumIntegrationStatus,
   aurumSnapshotLabel,
   onSimulationTouch,
   onScenarioChange,
@@ -86,7 +86,7 @@ export function SimulationPage({
   simUiError: string | null;
   simulationPreset: SimulationPreset;
   stateLabel: string;
-  aurumSnapshotStatus: 'available' | 'pending' | 'missing' | 'error';
+  aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
@@ -99,20 +99,101 @@ export function SimulationPage({
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const prevSimActive = useRef(false);
-  const hasAurumSnapshot = aurumSnapshotStatus === 'available';
-  const aurumStatusCopy =
-    aurumSnapshotStatus === 'available'
-      ? `Base Aurum · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`
-      : aurumSnapshotStatus === 'pending'
-        ? 'Base Aurum pendiente'
-        : aurumSnapshotStatus === 'missing'
-          ? 'Base Aurum no disponible'
-          : 'Base Aurum con error';
+  const aurumStatusVisual = useMemo(() => {
+    if (aurumIntegrationStatus === 'available') {
+      return {
+        copy: `Base Aurum · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`,
+        bg: 'rgba(61, 212, 141, 0.12)',
+        border: 'rgba(61, 212, 141, 0.45)',
+        color: T.positive,
+      };
+    }
+    if (aurumIntegrationStatus === 'partial') {
+      return {
+        copy: `Base Aurum parcial · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`,
+        bg: 'rgba(255, 176, 32, 0.12)',
+        border: 'rgba(255, 176, 32, 0.45)',
+        color: T.warning,
+      };
+    }
+    if (aurumIntegrationStatus === 'refreshing') {
+      return {
+        copy: `Actualizando base Aurum...`,
+        bg: 'rgba(91, 140, 255, 0.14)',
+        border: 'rgba(91, 140, 255, 0.45)',
+        color: T.primary,
+      };
+    }
+    if (aurumIntegrationStatus === 'loading') {
+      return {
+        copy: 'Sincronizando base Aurum...',
+        bg: 'rgba(91, 140, 255, 0.14)',
+        border: 'rgba(91, 140, 255, 0.45)',
+        color: T.primary,
+      };
+    }
+    if (aurumIntegrationStatus === 'missing') {
+      return {
+        copy: 'Base Aurum no disponible',
+        bg: 'rgba(255, 176, 32, 0.12)',
+        border: 'rgba(255, 176, 32, 0.45)',
+        color: T.warning,
+      };
+    }
+    if (aurumIntegrationStatus === 'unconfigured') {
+      return {
+        copy: 'Base Aurum no configurada',
+        bg: 'rgba(148, 163, 184, 0.14)',
+        border: 'rgba(148, 163, 184, 0.42)',
+        color: T.textMuted,
+      };
+    }
+    return {
+      copy: 'Base Aurum con error',
+      bg: 'rgba(255, 92, 92, 0.12)',
+      border: 'rgba(255, 92, 92, 0.45)',
+      color: T.negative,
+    };
+  }, [aurumIntegrationStatus, aurumSnapshotLabel]);
 
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
+  const compositionMode = params.simulationComposition?.mode ?? 'legacy';
+  const compositionHasFallback =
+    params.simulationComposition?.mortgageProjectionStatus === 'fallback_incomplete' ||
+    (params.simulationComposition?.diagnostics?.notes ?? []).some((note) => {
+      const normalized = String(note || '').toLowerCase();
+      return normalized.includes('fallback') || normalized.includes('warn-and-run');
+    });
+  const compositionStatusVisual = useMemo(() => {
+    if (compositionMode === 'full' && !compositionHasFallback) {
+      return {
+        copy: 'Composición: full',
+        detail: 'Bloques patrimoniales completos activos',
+        color: T.positive,
+        border: 'rgba(61, 212, 141, 0.45)',
+        bg: 'rgba(61, 212, 141, 0.12)',
+      };
+    }
+    if (compositionMode === 'partial' || compositionHasFallback) {
+      return {
+        copy: 'Composición: partial',
+        detail: 'Con fallback/limitaciones en parte de los bloques',
+        color: T.warning,
+        border: 'rgba(255, 176, 32, 0.45)',
+        bg: 'rgba(255, 176, 32, 0.12)',
+      };
+    }
+    return {
+      copy: 'Composición: legacy',
+      detail: 'Modo histórico sin bloques patrimoniales completos',
+      color: T.textMuted,
+      border: 'rgba(148, 163, 184, 0.35)',
+      bg: 'rgba(148, 163, 184, 0.12)',
+    };
+  }, [compositionHasFallback, compositionMode]);
   const simStatusVisual = useMemo(() => {
     if (simUiState === 'recalculating') {
       return {
@@ -315,16 +396,31 @@ export function SimulationPage({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
         style={{
-          background: hasAurumSnapshot ? 'rgba(61, 212, 141, 0.12)' : 'rgba(255, 176, 32, 0.12)',
-          border: `1px solid ${hasAurumSnapshot ? 'rgba(61, 212, 141, 0.45)' : 'rgba(255, 176, 32, 0.45)'}`,
+          background: aurumStatusVisual.bg,
+          border: `1px solid ${aurumStatusVisual.border}`,
           borderRadius: 12,
           padding: '10px 12px',
-          color: hasAurumSnapshot ? T.positive : T.warning,
+          color: aurumStatusVisual.color,
           fontSize: 12,
           fontWeight: 700,
         }}
       >
-        {aurumStatusCopy}
+        {aurumStatusVisual.copy}
+      </div>
+      <div
+        style={{
+          background: compositionStatusVisual.bg,
+          border: `1px solid ${compositionStatusVisual.border}`,
+          borderRadius: 12,
+          padding: '9px 12px',
+          color: compositionStatusVisual.color,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 700 }}>{compositionStatusVisual.copy}</span>
+        <span style={{ fontSize: 11, opacity: 0.92 }}>{compositionStatusVisual.detail}</span>
       </div>
       <div
         style={{
@@ -386,7 +482,7 @@ export function SimulationPage({
           {liquidarDeptoEnabled ? 'Desactivar' : 'Activar'}
         </button>
       </div>
-      {!hasAurumSnapshot && (
+      {(aurumIntegrationStatus === 'missing' || aurumIntegrationStatus === 'unconfigured') && (
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           Mostrando un capital local por defecto. Cuando Aurum publique el cierre, se reemplazará automáticamente.
         </div>

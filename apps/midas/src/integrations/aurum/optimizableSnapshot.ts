@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuth } from './firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './types';
 
@@ -18,6 +18,57 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot> | undefined;
+  return normalizeSnapshotData(data);
+}
+
+export type PublishedSnapshotListener = {
+  onValue: (snapshot: AurumOptimizableInvestmentsSnapshot | null) => void;
+  onError?: (error: unknown) => void;
+};
+
+export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: PublishedSnapshotListener): () => void {
+  if (!aurumIntegrationConfigured || !aurumDb) {
+    listener.onValue(null);
+    return () => {};
+  }
+
+  const ref = doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID);
+  let unsubscribe: (() => void) | null = null;
+  let cancelled = false;
+
+  void ensureAurumIntegrationAuth()
+    .then(() => {
+      if (cancelled) return;
+      unsubscribe = onSnapshot(
+        ref,
+        (snap) => {
+          if (cancelled) return;
+          if (!snap.exists()) {
+            listener.onValue(null);
+            return;
+          }
+          const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot>;
+          const normalized = normalizeSnapshotData(data);
+          listener.onValue(normalized);
+        },
+        (error: FirestoreError) => {
+          if (cancelled) return;
+          listener.onError?.(error);
+        },
+      );
+    })
+    .catch((error) => {
+      if (cancelled) return;
+      listener.onError?.(error);
+    });
+
+  return () => {
+    cancelled = true;
+    if (unsubscribe) unsubscribe();
+  };
+}
+
+function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined) {
   if (!data) return null;
   const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
   if (optimizable === null) return null;
@@ -46,7 +97,7 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
   if (version !== 2) {
     return {
       ...base,
-      version: 1,
+      version: 1 as const,
     };
   }
 
@@ -85,7 +136,7 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
 
   return {
     ...base,
-    version: 2,
+    version: 2 as const,
     ...(nonOptimizableObj
       ? {
           nonOptimizable: {

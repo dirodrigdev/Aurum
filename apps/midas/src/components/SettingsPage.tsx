@@ -11,6 +11,7 @@ import {
   type InstrumentBaseValidation,
 } from '../domain/instrumentBase';
 import { T, css } from './theme';
+type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 
 const formatMoneyClp = (value: number | null) => {
   if (value === null || !Number.isFinite(value)) return '—';
@@ -119,7 +120,26 @@ function ExposureSummary({ summary }: { summary: InstrumentBaseSummary | null })
   );
 }
 
-export function SettingsPage({ optimizableBaseReference }: { optimizableBaseReference: OptimizableBaseReference }) {
+function aurumBaseSubtitle(status: AurumIntegrationStatus, optimizableBaseReference: OptimizableBaseReference) {
+  if (status === 'available' || status === 'partial' || status === 'refreshing') {
+    const prefix = status === 'partial' ? 'Fuente parcial' : 'Fuente';
+    return `${prefix}: ${optimizableBaseReference.sourceLabel}${
+      optimizableBaseReference.asOf ? ` · ${formatDateTime(optimizableBaseReference.asOf)}` : ''
+    }`;
+  }
+  if (status === 'loading') return 'Sincronizando base Aurum...';
+  if (status === 'missing') return `Sin snapshot publicado en ${optimizableBaseReference.sourceLabel}`;
+  if (status === 'error') return `Error leyendo ${optimizableBaseReference.sourceLabel}`;
+  return 'Integración Aurum no configurada';
+}
+
+export function SettingsPage({
+  optimizableBaseReference,
+  aurumIntegrationStatus,
+}: {
+  optimizableBaseReference: OptimizableBaseReference;
+  aurumIntegrationStatus: AurumIntegrationStatus;
+}) {
   const [savedSnapshot, setSavedSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const [editorValue, setEditorValue] = useState(() => loadInstrumentBaseSnapshot()?.rawJson || '');
   const [validation, setValidation] = useState<InstrumentBaseValidation | null>(null);
@@ -208,11 +228,7 @@ export function SettingsPage({ optimizableBaseReference }: { optimizableBaseRefe
         <SummaryCard
           title="Inversiones optimizables"
           value={formatMoneyClp(optimizableBaseReference.amountClp)}
-          subtitle={
-            optimizableBaseReference.status === 'available'
-              ? `Fuente: ${optimizableBaseReference.sourceLabel}${optimizableBaseReference.asOf ? ` · ${formatDateTime(optimizableBaseReference.asOf)}` : ''}`
-              : `Pendiente de conexión con ${optimizableBaseReference.sourceLabel}`
-          }
+          subtitle={aurumBaseSubtitle(aurumIntegrationStatus, optimizableBaseReference)}
         />
         {savedSummary && (
           <>
