@@ -70,6 +70,8 @@ export function SimulationPage({
   aurumIntegrationStatus,
   aurumSnapshotLabel,
   baseUpdatePending,
+  pendingSnapshotLabel,
+  onApplyPendingSnapshot,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -90,6 +92,8 @@ export function SimulationPage({
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   baseUpdatePending: boolean;
+  pendingSnapshotLabel: string | null;
+  onApplyPendingSnapshot: () => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -599,6 +603,42 @@ export function SimulationPage({
       {baseUpdatePending && (
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           Resultado principal oculto hasta recalcular con la base Aurum nueva.
+        </div>
+      )}
+      {pendingSnapshotLabel && (
+        <div
+          style={{
+            background: 'rgba(91, 140, 255, 0.12)',
+            border: '1px solid rgba(91, 140, 255, 0.45)',
+            borderRadius: 12,
+            padding: '10px 12px',
+            color: T.textPrimary,
+            fontSize: 12,
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+          }}
+        >
+          <span>Nueva base Aurum disponible · {pendingSnapshotLabel}</span>
+          <button
+            type="button"
+            onClick={onApplyPendingSnapshot}
+            style={{
+              background: T.primary,
+              border: 'none',
+              color: '#fff',
+              borderRadius: 10,
+              padding: '6px 10px',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Aplicar y recalcular
+          </button>
         </div>
       )}
       {!hideResultBlocks ? (

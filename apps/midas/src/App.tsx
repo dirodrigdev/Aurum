@@ -165,12 +165,16 @@ export default function App() {
   const [simUiState, setSimUiState] = useState<SimulationUiState>('idle');
   const [simUiError, setSimUiError] = useState<string | null>(null);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
+  const [pendingSnapshot, setPendingSnapshot] = useState<AurumOptimizableInvestmentsSnapshot | null>(null);
+  const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
+  const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
+  const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     baseParamsRef.current = baseParams;
@@ -259,6 +263,102 @@ export default function App() {
 
   const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => runMidasTriSimulation(params), []);
 
+  const getSnapshotSignature = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
+    const ufSnapshotClp =
+      snapshot.version === 2
+        ? snapshot.nonOptimizable?.realEstate?.ufSnapshotCLP ?? ''
+        : '';
+    return [
+      snapshot.version,
+      snapshot.publishedAt,
+      snapshot.snapshotMonth,
+      snapshot.snapshotLabel,
+      snapshot.totalNetWorthCLP,
+      snapshot.optimizableInvestmentsCLP,
+      ufSnapshotClp,
+    ].join('|');
+  }, []);
+
+  const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null) => {
+    if (!snapshot) return;
+    try {
+      const composition = snapshotToSimulationComposition(snapshot);
+      const compositionMode = composition?.mode ?? 'legacy';
+      const hasFallbackFlags =
+        composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
+        (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
+      const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
+      const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+
+      setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
+        setAurumIntegrationStatus('partial');
+        if (composition) {
+          setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
+          setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
+        }
+        setBaseUpdatePending(false);
+        return;
+      }
+
+      setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
+
+      const currentBase = baseParamsRef.current;
+      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
+      const nextBaseComposition = composition ?? currentBase.simulationComposition;
+      const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
+      if (!sameBaseCapital || !sameBaseComposition) {
+        setBaseParams({
+          ...currentBase,
+          capitalInitial: aurumNetWorth,
+          label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
+          simulationComposition: nextBaseComposition,
+        });
+      }
+
+      const currentSim = simParamsRef.current;
+      const shouldApplyCapital = !simulationActive && !simOverrides?.active;
+      const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
+      const nextSimComposition = composition ?? currentSim.simulationComposition;
+      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
+      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
+
+      if (!sameSimCapital || !sameSimComposition) {
+        const nextSimParams: ModelParameters = {
+          ...currentSim,
+          capitalInitial: targetCapital,
+          label: shouldApplyCapital
+            ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
+            : currentSim.label,
+          simulationComposition: nextSimComposition,
+        };
+        setSimParams(nextSimParams);
+        if (shouldApplyCapital) {
+          try {
+            setSimUiError(null);
+            setSimUiState('recalculating');
+            setSimResult(computeTriMotor(nextSimParams));
+            setSimUiState('ready');
+            setBaseUpdatePending(false);
+          } catch (error: any) {
+            console.error('[Midas] Error recalculando simulacion', error);
+            setSimUiState('error');
+            setSimUiError(String(error?.message || 'No pude recalcular la simulacion.'));
+            setBaseUpdatePending(true);
+          }
+        } else {
+          setBaseUpdatePending(true);
+        }
+      }
+    } catch (error: any) {
+      console.error('[Midas] Error aplicando snapshot Aurum', error);
+      setAurumIntegrationStatus('error');
+      setSimUiState('error');
+      setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
+      setBaseUpdatePending(true);
+    }
+  }, [computeTriMotor, simOverrides?.active, simulationActive]);
+
   const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
     clearCalculationTimer();
     setSimWorking(true);
@@ -299,6 +399,15 @@ export default function App() {
     setSimWorking(false);
     setParamSheetOpen(false);
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
+
+  const applyPendingSnapshot = useCallback(() => {
+    if (!pendingSnapshot || !pendingSnapshotSignature) return;
+    lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
+    applySnapshotNow(pendingSnapshot);
+    setPendingSnapshot(null);
+    setPendingSnapshotLabel(null);
+    setPendingSnapshotSignature(null);
+  }, [applySnapshotNow, pendingSnapshot, pendingSnapshotSignature]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -492,113 +601,43 @@ export default function App() {
 
     const applySnapshot = (snapshot: AurumOptimizableInvestmentsSnapshot | null) => {
       if (cancelled) return;
-      try {
-        setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
-        const composition = snapshotToSimulationComposition(snapshot);
-        const compositionMode = composition?.mode ?? 'legacy';
-        const hasFallbackFlags =
-          composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
-          (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
-        const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
-        const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+      setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
 
-        if (!snapshot) {
-          setAurumIntegrationStatus('missing');
-          setAurumSnapshotLabel(null);
-          setBaseUpdatePending(false);
-          lastSnapshotSignatureRef.current = null;
-          return;
-        }
-
-        setAurumSnapshotLabel(snapshot.snapshotLabel || 'último cierre confirmado');
-        if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
-          setAurumIntegrationStatus('partial');
-          if (composition) {
-            setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
-            setSimParams((prev) => ({ ...prev, simulationComposition: composition }));
-          }
-          setBaseUpdatePending(false);
-          return;
-        }
-
-        setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
-
-        const ufSnapshotClp =
-          snapshot.version === 2
-            ? snapshot.nonOptimizable?.realEstate?.ufSnapshotCLP ?? ''
-            : '';
-        const snapshotSignature = [
-          snapshot.version,
-          snapshot.publishedAt,
-          snapshot.snapshotMonth,
-          snapshot.snapshotLabel,
-          snapshot.totalNetWorthCLP,
-          snapshot.optimizableInvestmentsCLP,
-          ufSnapshotClp,
-        ].join('|');
-        if (snapshotSignature === lastSnapshotSignatureRef.current) {
-          setAurumIntegrationStatus((prev) => {
-            if (prev === 'refreshing') return isPartialComposition ? 'partial' : 'available';
-            return prev;
-          });
-          return;
-        }
-        lastSnapshotSignatureRef.current = snapshotSignature;
-
-        const currentBase = baseParamsRef.current;
-        const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
-        const nextBaseComposition = composition ?? currentBase.simulationComposition;
-        const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
-        if (!sameBaseCapital || !sameBaseComposition) {
-          setBaseParams({
-            ...currentBase,
-            capitalInitial: aurumNetWorth,
-            label: `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`,
-            simulationComposition: nextBaseComposition,
-          });
-        }
-
-        const currentSim = simParamsRef.current;
-        const shouldApplyCapital = !simulationActive && !simOverrides?.active;
-        const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
-        const nextSimComposition = composition ?? currentSim.simulationComposition;
-        const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
-        const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
-
-        if (!sameSimCapital || !sameSimComposition) {
-          const nextSimParams: ModelParameters = {
-            ...currentSim,
-            capitalInitial: targetCapital,
-            label: shouldApplyCapital
-              ? `Desde Aurum · ${snapshot?.snapshotLabel || 'último cierre confirmado'}`
-              : currentSim.label,
-            simulationComposition: nextSimComposition,
-          };
-          setSimParams(nextSimParams);
-          if (shouldApplyCapital) {
-            try {
-              setSimUiError(null);
-              setSimUiState('recalculating');
-              setSimResult(computeTriMotor(nextSimParams));
-              setSimUiState('ready');
-              setBaseUpdatePending(false);
-            } catch (error: any) {
-              console.error('[Midas] Error recalculando simulación', error);
-              setSimUiState('error');
-              setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
-              setBaseUpdatePending(true);
-            }
-          } else {
-            setBaseUpdatePending(true);
-          }
-        }
-      } catch (error: any) {
-        console.error('[Midas] Error aplicando snapshot Aurum', error);
-        setAurumIntegrationStatus('error');
-        setSimUiState('error');
-        setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
-        setBaseUpdatePending(true);
+      if (!snapshot) {
+        setAurumIntegrationStatus('missing');
+        setAurumSnapshotLabel(null);
+        setBaseUpdatePending(false);
+        setPendingSnapshot(null);
+        setPendingSnapshotLabel(null);
+        setPendingSnapshotSignature(null);
+        lastSnapshotSignatureRef.current = null;
+        return;
       }
+
+      const composition = snapshotToSimulationComposition(snapshot);
+      const compositionMode = composition?.mode ?? 'legacy';
+      const hasFallbackFlags =
+        composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
+        (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
+      const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
+      setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
+      setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+
+      const snapshotSignature = getSnapshotSignature(snapshot);
+      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
+      lastSnapshotSignatureRef.current = snapshotSignature;
+
+      if (snapshotSignature === lastAppliedSnapshotSignatureRef.current) {
+        setPendingSnapshot(null);
+        setPendingSnapshotLabel(null);
+        setPendingSnapshotSignature(null);
+        return;
+      }
+
+      setPendingSnapshot(snapshot);
+      setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setPendingSnapshotSignature(snapshotSignature);
+      setBaseUpdatePending(false);
     };
 
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
@@ -662,6 +701,8 @@ export default function App() {
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
       baseUpdatePending={baseUpdatePending}
+      pendingSnapshotLabel={pendingSnapshotLabel}
+      onApplyPendingSnapshot={applyPendingSnapshot}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
