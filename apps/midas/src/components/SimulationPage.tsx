@@ -162,6 +162,8 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
+  const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
+  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
@@ -237,6 +239,14 @@ export function SimulationPage({
     };
   }, [compositionHasFallback, compositionMode]);
   const simStatusVisual = useMemo(() => {
+    if (baseUpdatePending || aurumSyncing) {
+      return {
+        bg: 'rgba(91, 140, 255, 0.14)',
+        border: 'rgba(91, 140, 255, 0.45)',
+        color: T.primary,
+        copy: 'Recalculando con base Aurum actualizada...',
+      };
+    }
     if (simUiState === 'recalculating') {
       return {
         bg: 'rgba(91, 140, 255, 0.14)',
@@ -267,7 +277,7 @@ export function SimulationPage({
       color: T.textMuted,
       copy: simActive ? 'Esperando recálculo' : 'Estado base en espera',
     };
-  }, [simActive, simUiError, simUiState]);
+  }, [aurumSyncing, baseUpdatePending, simActive, simUiError, simUiState]);
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
@@ -289,7 +299,7 @@ export function SimulationPage({
     }
   }, [simActive]);
 
-  const displayResult = baseUpdatePending ? null : resultCentral;
+  const displayResult = hideResultBlocks ? null : resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
@@ -591,6 +601,7 @@ export function SimulationPage({
           Resultado principal oculto hasta recalcular con la base Aurum nueva.
         </div>
       )}
+      {!hideResultBlocks ? (
       <div style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
@@ -707,8 +718,21 @@ export function SimulationPage({
           </div>
         )}
       </div>
+      ) : (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 16 }}>
+        <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+          SIMULACION
+        </div>
+        <div style={{ color: T.textPrimary, marginTop: 8, fontWeight: 700 }}>
+          Resultado en recálculo
+        </div>
+        <div style={{ color: T.textSecondary, marginTop: 6, fontSize: 13 }}>
+          Esperando resultado coherente con la base Aurum actual.
+        </div>
+      </div>
+      )}
 
-      {displayResult && probSuccess !== null && (
+      {!hideResultBlocks && displayResult && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
           <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
@@ -963,6 +987,7 @@ export function SimulationPage({
         )}
       </div>
 
+      {!hideResultBlocks && (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
         <InfoCard
           label="Gasto modelado / planificado"
@@ -973,8 +998,9 @@ export function SimulationPage({
           value={p50 !== null ? `$${formatMillionsMM(p50 / 1e6)}` : '—'}
         />
       </div>
+      )}
 
-      {displayResult && (
+      {!hideResultBlocks && displayResult && (
         <>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
