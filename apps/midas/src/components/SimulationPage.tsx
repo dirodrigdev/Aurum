@@ -289,7 +289,7 @@ export function SimulationPage({
     }
   }, [simActive]);
 
-  const displayResult = resultCentral;
+  const displayResult = baseUpdatePending ? null : resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
@@ -584,6 +584,11 @@ export function SimulationPage({
       {(aurumIntegrationStatus === 'missing' || aurumIntegrationStatus === 'unconfigured') && (
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           Mostrando un capital local por defecto. Cuando Aurum publique el cierre, se reemplazará automáticamente.
+        </div>
+      )}
+      {baseUpdatePending && (
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          Resultado principal oculto hasta recalcular con la base Aurum nueva.
         </div>
       )}
       <div style={{ position: 'relative' }}>
