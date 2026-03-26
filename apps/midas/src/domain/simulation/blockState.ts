@@ -41,7 +41,13 @@ function normalizeWeights(weights: PortfolioWeights): PortfolioWeights {
   };
 }
 
-function getExpenseForMonth(params: ModelParameters, month: number, CPU_t: number, EURUSDt: number, cumCL: number): number {
+export function getBaseExpenseForMonth(
+  params: ModelParameters,
+  month: number,
+  CPU_t: number,
+  EURUSDt: number,
+  cumCL: number,
+): number {
   let phaseStart = 0;
   for (const phase of params.spendingPhases) {
     if (month <= phaseStart + phase.durationMonths) {
@@ -150,13 +156,9 @@ export function applyExpenseWaterfall(
 export function captureBlockSnapshot(
   month: number,
   state: LiquidPathState,
-  params: ModelParameters,
-  CPU_t: number,
-  EURUSDt: number,
-  cumCL: number,
+  expense: number,
   mortgagePoint: MortgageProjectionPoint,
 ): BlockSnapshot {
-  const expense = getExpenseForMonth(params, month, CPU_t, EURUSDt, cumCL);
   const rfSplit = splitRf(state.sleeves, expense * 36);
   const equityAssets = clamp(state.sleeves.rvGlobal) + clamp(state.sleeves.rvChile);
   const liquidCapital = clamp(state.banks) + rfSplit.rfTotal + equityAssets;

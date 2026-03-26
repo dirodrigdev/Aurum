@@ -134,6 +134,10 @@ export interface SimulationCompositionDiagnostics {
   compositionGapCLP: number;
   compositionGapPct: number;
   notes: string[];
+  saleTriggeredMonth?: number;
+  saleExecutedMonth?: number;
+  terminalAdjustmentApplied?: boolean;
+  terminalAdjustmentCLP?: number;
 }
 
 export interface SimulationCompositionInput {
