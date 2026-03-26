@@ -108,6 +108,7 @@ export function SimulationPage({
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
+  const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
@@ -262,6 +263,18 @@ export function SimulationPage({
     }
   };
 
+  const toggleLiquidarDepto = () => {
+    onUpdateParams((prev) => ({
+      ...prev,
+      realEstatePolicy: {
+        enabled: !(prev.realEstatePolicy?.enabled ?? true),
+        triggerRunwayMonths: prev.realEstatePolicy?.triggerRunwayMonths ?? 36,
+        saleDelayMonths: prev.realEstatePolicy?.saleDelayMonths ?? 12,
+        saleCostPct: prev.realEstatePolicy?.saleCostPct ?? 0,
+      },
+    }));
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
@@ -276,6 +289,40 @@ export function SimulationPage({
         }}
       >
         {aurumStatusCopy}
+      </div>
+      <div
+        style={{
+          background: 'rgba(91, 140, 255, 0.12)',
+          border: `1px solid rgba(91, 140, 255, 0.45)`,
+          borderRadius: 12,
+          padding: '10px 12px',
+          color: T.textPrimary,
+          fontSize: 12,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <span>Supuesto activo: {liquidarDeptoEnabled ? 'Liquidar depto ON' : 'Liquidar depto OFF'}</span>
+        <button
+          type="button"
+          onClick={toggleLiquidarDepto}
+          style={{
+            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.2)' : 'rgba(255, 176, 32, 0.2)',
+            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : 'rgba(255, 176, 32, 0.55)'}`,
+            borderRadius: 999,
+            color: liquidarDeptoEnabled ? T.positive : T.warning,
+            fontSize: 11,
+            fontWeight: 700,
+            padding: '6px 10px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {liquidarDeptoEnabled ? 'Desactivar' : 'Activar'}
+        </button>
       </div>
       {!hasAurumSnapshot && (
         <div style={{ color: T.textMuted, fontSize: 12 }}>
@@ -507,6 +554,48 @@ export function SimulationPage({
                     />
                   </label>
                 ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Política inmobiliaria</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '9px 10px',
+                }}
+              >
+                <div>
+                  <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>Liquidar depto</div>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>
+                    {liquidarDeptoEnabled
+                      ? 'Activado: el motor puede vender el inmueble según runway'
+                      : 'Desactivado: el inmueble no se liquida en la simulación'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleLiquidarDepto}
+                  style={{
+                    background: liquidarDeptoEnabled ? T.positive : T.surface,
+                    border: `1px solid ${liquidarDeptoEnabled ? T.positive : T.border}`,
+                    color: liquidarDeptoEnabled ? '#00150a' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '6px 10px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+                </button>
               </div>
             </div>
 
