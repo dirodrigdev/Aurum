@@ -162,7 +162,9 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
-  const compositionSource = resultCentral?.params.simulationComposition ?? params.simulationComposition;
+  const compositionSource = (baseUpdatePending
+    ? params.simulationComposition
+    : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
   const compositionDiagnostics = compositionSource?.diagnostics;
   const compositionMode = compositionSource?.mode ?? 'legacy';
   const diagnosticWarnings = compositionDiagnostics?.diagnosticWarnings ?? [];
@@ -294,18 +296,22 @@ export function SimulationPage({
   const plausibleHigh = resultFavorable ? ruinToSuccessPct(resultFavorable.probRuin) : null;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
-  const fanChartData: FanChartDatum[] = displayResult
-    ? displayResult.fanChartData.map((point) => ({
-        ...point,
-        outerBase: point.p5,
-        outerSpan: Math.max(0, point.p95 - point.p5),
-        innerBase: point.p25,
-        innerSpan: Math.max(0, point.p75 - point.p25),
-      }))
+  const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
+    ? displayResult.fanChartData
     : [];
+  const fanChartData: FanChartDatum[] = rawFanChart.map((point) => ({
+    ...point,
+    outerBase: point.p5,
+    outerSpan: Math.max(0, point.p95 - point.p5),
+    innerBase: point.p25,
+    innerSpan: Math.max(0, point.p75 - point.p25),
+  }));
   const percentileRows = [10, 25, 50, 75, 90] as const;
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
-  const fanChartYears = displayResult ? Math.max(5, Math.ceil((displayResult.fanChartData.at(-1)?.year ?? 40) / 5) * 5) : 40;
+  const rawFanYears = rawFanChart.at(-1)?.year ?? 40;
+  const fanChartYears = Number.isFinite(rawFanYears)
+    ? Math.max(5, Math.ceil(rawFanYears / 5) * 5)
+    : 40;
   const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
   const successValues = [
     plausibleLow,
