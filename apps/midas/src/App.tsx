@@ -514,12 +514,19 @@ export default function App() {
     setSimulationPreset(next);
     scheduleInactivityReset();
     setSimParams((prev) => {
-      const nextParams = applyScenarioEconomics(prev, next);
+      const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
+      const nextParams: ModelParameters = {
+        ...prev,
+        activeScenario: next,
+        returns: scenarioBase.returns,
+        inflation: scenarioBase.inflation,
+        fx: scenarioBase.fx,
+      };
       const base = applySimulationOverrides(nextParams, simOverrides);
       queueTriMotorCalculation(base);
       return nextParams;
     });
-  }, [applyScenarioEconomics, queueTriMotorCalculation, scheduleInactivityReset, simOverrides]);
+  }, [applyScenarioEconomics, baseParams, queueTriMotorCalculation, scheduleInactivityReset, simOverrides]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);

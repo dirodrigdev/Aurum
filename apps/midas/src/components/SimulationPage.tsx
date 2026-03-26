@@ -171,7 +171,7 @@ export function SimulationPage({
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
-  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error';
+  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error' || simUiState === 'recalculating';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
