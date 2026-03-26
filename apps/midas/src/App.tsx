@@ -164,11 +164,13 @@ export default function App() {
   const [simWorking, setSimWorking] = useState(false);
   const [simUiState, setSimUiState] = useState<SimulationUiState>('idle');
   const [simUiError, setSimUiError] = useState<string | null>(null);
+  const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
+  const lastSnapshotSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     baseParamsRef.current = baseParams;
@@ -177,6 +179,56 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
+
+  useEffect(() => {
+    const ensureOverlay = () => {
+      let panel = document.getElementById('midas-runtime-errors');
+      if (panel) return panel;
+      panel = document.createElement('div');
+      panel.id = 'midas-runtime-errors';
+      panel.style.position = 'fixed';
+      panel.style.left = '12px';
+      panel.style.right = '12px';
+      panel.style.bottom = '86px';
+      panel.style.zIndex = '9999';
+      panel.style.background = 'rgba(255, 92, 92, 0.14)';
+      panel.style.border = `1px solid ${T.negative}`;
+      panel.style.borderRadius = '12px';
+      panel.style.padding = '10px 12px';
+      panel.style.color = T.textPrimary;
+      panel.style.fontSize = '12px';
+      panel.style.fontFamily = 'SF Mono, Menlo, monospace';
+      panel.style.whiteSpace = 'pre-wrap';
+      panel.style.maxHeight = '40vh';
+      panel.style.overflow = 'auto';
+      panel.style.display = 'none';
+      document.body.appendChild(panel);
+      return panel;
+    };
+
+    const report = (label: string, payload: unknown) => {
+      const message = payload instanceof Error ? payload.stack || payload.message : String(payload);
+      const entry = `${label}: ${message}`;
+      setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
+      const panel = ensureOverlay();
+      panel.textContent = entry;
+      panel.style.display = 'block';
+    };
+
+    const onError = (event: ErrorEvent) => {
+      report('window.onerror', event.error || event.message);
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      report('unhandledrejection', event.reason);
+    };
+
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
 
   const clearSimulationTimer = useCallback(() => {
     if (simulationTimerRef.current !== null) {
@@ -454,6 +506,7 @@ export default function App() {
           setAurumIntegrationStatus('missing');
           setAurumSnapshotLabel(null);
           setBaseUpdatePending(false);
+          lastSnapshotSignatureRef.current = null;
           return;
         }
 
@@ -469,6 +522,28 @@ export default function App() {
         }
 
         setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
+
+        const ufSnapshotClp =
+          snapshot.version === 2
+            ? snapshot.nonOptimizable?.realEstate?.ufSnapshotCLP ?? ''
+            : '';
+        const snapshotSignature = [
+          snapshot.version,
+          snapshot.publishedAt,
+          snapshot.snapshotMonth,
+          snapshot.snapshotLabel,
+          snapshot.totalNetWorthCLP,
+          snapshot.optimizableInvestmentsCLP,
+          ufSnapshotClp,
+        ].join('|');
+        if (snapshotSignature === lastSnapshotSignatureRef.current) {
+          setAurumIntegrationStatus((prev) => {
+            if (prev === 'refreshing') return isPartialComposition ? 'partial' : 'available';
+            return prev;
+          });
+          return;
+        }
+        lastSnapshotSignatureRef.current = snapshotSignature;
 
         const currentBase = baseParamsRef.current;
         const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
@@ -563,6 +638,14 @@ export default function App() {
     }
   }, [simOverrides?.active, simulationActive]);
 
+  useEffect(() => {
+    if (activeTab !== 'sim') return;
+    if (simulationActive || simOverrides?.active) return;
+    setBaseUpdatePending(false);
+    setSimUiError(null);
+    setSimUiState(simResult.central ? 'ready' : 'idle');
+  }, [activeTab, simOverrides?.active, simulationActive, simResult.central]);
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult.central}
@@ -642,6 +725,23 @@ export default function App() {
             marginRight: 'auto',
           }}
         >
+          {runtimeErrors.length > 0 && (
+            <div
+              style={{
+                background: 'rgba(255, 92, 92, 0.12)',
+                border: `1px solid ${T.negative}`,
+                borderRadius: 12,
+                padding: '10px 12px',
+                color: T.textPrimary,
+                fontSize: 12,
+                marginBottom: 12,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              <strong>Runtime error</strong>
+              {`\n${runtimeErrors[0]}`}
+            </div>
+          )}
           {content}
         </main>
 
