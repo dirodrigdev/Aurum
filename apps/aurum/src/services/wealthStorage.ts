@@ -2536,7 +2536,11 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         }),
         { merge: true },
       );
-      await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch(() => {});
+      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
+        ok: false as const,
+        reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
+        snapshot: null,
+      }));
       markLastRemoteUpdatedAt(mergedUpdatedAt);
 
       if (
@@ -2563,6 +2567,20 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent(FX_RATES_UPDATED_EVENT, { detail: loadFxRates() }));
         }
+      }
+
+      if (publishResult.ok === false) {
+        const publishReason = publishResult.reason;
+        const publishMessage = `midas_publish_error ${publishReason}`.trim();
+        console.error('[Aurum→Midas publish]', publishReason);
+        setLastWealthSyncIssue(publishMessage);
+        saveWealthSyncUiState({
+          status: 'synced',
+          at: nowIso(),
+          message: 'Patrimonio sincronizado, pero no pude publicar el snapshot para Midas.',
+        });
+        setFirestoreOk();
+        return true;
       }
 
       setLastWealthSyncIssue('');
@@ -2740,7 +2758,19 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
-    await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch(() => {});
+    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
+      ok: false as const,
+      reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
+      snapshot: null,
+    }));
+    if (publishResult.ok === false) {
+      const publishReason = publishResult.reason;
+      const publishMessage = `midas_publish_error ${publishReason}`.trim();
+      console.error('[Aurum→Midas publish]', publishReason);
+      setLastWealthSyncIssue(publishMessage);
+    } else {
+      setLastWealthSyncIssue('');
+    }
 
     if (cloudNeedsUpdate) scheduleWealthCloudSync(10);
 

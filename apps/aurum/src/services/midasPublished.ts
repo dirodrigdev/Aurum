@@ -1,5 +1,4 @@
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth } from './firebase';
 import type { WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
@@ -35,6 +34,27 @@ export type AurumOptimizableInvestmentsSnapshot = {
 
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
+
+export type AurumOptimizableSnapshotBuildResult =
+  | {
+      ok: true;
+      snapshot: AurumOptimizableInvestmentsSnapshot;
+    }
+  | {
+      ok: false;
+      reason: string;
+    };
+
+export type AurumOptimizableSnapshotPublishResult =
+  | {
+      ok: true;
+      snapshot: AurumOptimizableInvestmentsSnapshot;
+    }
+  | {
+      ok: false;
+      reason: string;
+      snapshot: AurumOptimizableInvestmentsSnapshot | null;
+    };
 
 const compareClosuresByMonthDesc = (a: WealthMonthlyClosure, b: WealthMonthlyClosure) =>
   b.monthKey.localeCompare(a.monthKey);
@@ -134,43 +154,120 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
 ): AurumOptimizableInvestmentsSnapshot | null => {
+  const result = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  return result.ok ? result.snapshot : null;
+};
+
+export const prepareAurumOptimizableInvestmentsSnapshot = (
+  closures: WealthMonthlyClosure[],
+): AurumOptimizableSnapshotBuildResult => {
   const latest = [...closures]
     .sort(compareClosuresByMonthDesc)
     .find((closure) => asFiniteOrNull(closure.summary?.investmentClp) !== null);
 
-  if (!latest) return null;
+  if (!latest) {
+    return {
+      ok: false,
+      reason: 'No encontré un cierre confirmado con summary.investmentClp válido.',
+    };
+  }
 
   const withoutRisk = asFiniteOrNull(latest.summary?.investmentClp);
-  if (withoutRisk === null) return null;
+  if (withoutRisk === null) {
+    return {
+      ok: false,
+      reason: `El cierre ${latest.monthKey} no tiene summary.investmentClp válido.`,
+    };
+  }
   const withRisk = asFiniteOrNull(latest.summary?.investmentClpWithRisk);
   const totalNetWorth = asFiniteOrNull(latest.summary?.netClp) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
-  if (totalNetWorth === null) return null;
+  if (totalNetWorth === null) {
+    return {
+      ok: false,
+      reason: `El cierre ${latest.monthKey} no tiene summary.netClp ni summary.netConsolidatedClp válidos.`,
+    };
+  }
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
 
   return {
-    version: 2,
-    publishedAt: new Date().toISOString(),
-    snapshotMonth: latest.monthKey,
-    snapshotLabel: `Cierre ${formatMonthLabel(latest.monthKey)}`,
-    currency: 'CLP',
-    totalNetWorthCLP: Math.round(totalNetWorth),
-    ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: Math.round(totalNetWorthWithRisk) } : {}),
-    optimizableInvestmentsCLP: Math.round(withoutRisk),
-    ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
-    nonOptimizable: extractNonOptimizable(latest),
-    source: {
-      app: 'aurum',
-      basis: 'latest_confirmed_closure',
+    ok: true,
+    snapshot: {
+      version: 2,
+      publishedAt: new Date().toISOString(),
+      snapshotMonth: latest.monthKey,
+      snapshotLabel: `Cierre ${formatMonthLabel(latest.monthKey)}`,
+      currency: 'CLP',
+      totalNetWorthCLP: Math.round(totalNetWorth),
+      ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: Math.round(totalNetWorthWithRisk) } : {}),
+      optimizableInvestmentsCLP: Math.round(withoutRisk),
+      ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
+      nonOptimizable: extractNonOptimizable(latest),
+      source: {
+        app: 'aurum',
+        basis: 'latest_confirmed_closure',
+      },
     },
   };
 };
 
 export const publishAurumOptimizableInvestmentsSnapshot = async (
   closures: WealthMonthlyClosure[],
-): Promise<boolean> => {
-  const snapshot = buildAurumOptimizableInvestmentsSnapshot(closures);
-  if (!snapshot) return false;
-  await setDoc(doc(db, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID), snapshot, { merge: true });
-  return true;
+): Promise<AurumOptimizableSnapshotPublishResult> => {
+  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  if (prepared.ok === false) {
+    return {
+      ok: false,
+      reason: prepared.reason,
+      snapshot: null,
+    };
+  }
+
+  const snapshot = prepared.snapshot;
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    return {
+      ok: false,
+      reason: 'No hay sesión Firebase activa para publicar el snapshot de integración.',
+      snapshot,
+    };
+  }
+
+  const idToken = await currentUser.getIdToken();
+  if (!idToken) {
+    return {
+      ok: false,
+      reason: 'No pude obtener el token Firebase del usuario actual para publicar el snapshot.',
+      snapshot,
+    };
+  }
+
+  const response = await fetch('/api/midas/publish-snapshot', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ snapshot }),
+  });
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || !payload?.ok) {
+    return {
+      ok: false,
+      reason: String(payload?.error || 'No pude publicar el snapshot de integración en Firestore.'),
+      snapshot,
+    };
+  }
+
+  return {
+    ok: true,
+    snapshot,
+  };
 };
