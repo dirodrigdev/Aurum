@@ -432,7 +432,8 @@ export default function App() {
       }
 
       const currentSim = simParamsRef.current;
-      const shouldApplyCapital = !simulationActive && !simOverrides?.active;
+      const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
+      const shouldApplyCapital = !hasCapitalOverride;
       const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
       const nextSimComposition = composition ?? currentSim.simulationComposition;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
@@ -448,7 +449,7 @@ export default function App() {
           simulationComposition: nextSimComposition,
         };
         setSimParams(nextSimParams);
-        if (shouldApplyCapital && shouldRecalculate) {
+        if (shouldRecalculate) {
           try {
             setSimUiError(null);
             setSimUiState('recalculating');
@@ -472,7 +473,7 @@ export default function App() {
       setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
       setBaseUpdatePending(true);
     }
-  }, [computeTriMotor, simOverrides?.active, simulationActive]);
+  }, [computeTriMotor, simOverrides?.active, simOverrides?.capital, simulationActive]);
 
   const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
     clearCalculationTimer();
@@ -584,11 +585,15 @@ export default function App() {
       cashflowEvents: mergedEvents,
     };
     setSimParams(next);
-    if (!baseUpdatePending) {
+    const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
+    if (canRecalculateNow) {
+      if (baseUpdatePending) {
+        setBaseUpdatePending(false);
+      }
       const base = applySimulationOverrides(next, simOverrides);
       queueTriMotorCalculation(base);
     }
-  }, [baseUpdatePending, manualAdjustmentImpact, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, simOverrides]);
+  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
