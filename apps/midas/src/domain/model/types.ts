@@ -142,6 +142,7 @@ export interface RiskCapitalInput {
   usd?: number;
   usdTotal?: number;
   usdSnapshotCLP?: number;
+  profile?: 'conservative' | 'base' | 'aggressive';
   source?: string;
 }
 
