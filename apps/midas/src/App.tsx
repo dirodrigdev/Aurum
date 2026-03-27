@@ -676,11 +676,11 @@ export default function App() {
       setPendingSnapshotApplying(true);
       setSimUiError(null);
       lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
-      applySnapshotNow(pendingSnapshot, { recalc: false });
+      applySnapshotNow(pendingSnapshot, { recalc: true });
       setPendingSnapshot(null);
       setPendingSnapshotLabel(null);
       setPendingSnapshotSignature(null);
-      setBaseUpdatePending(true);
+      setBaseUpdatePending(false);
     } catch (error: unknown) {
       const entry = formatRuntimeError('applyPendingSnapshot', error);
       setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
@@ -1057,11 +1057,6 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-      setAurumSnapshotMonth(snapshot.snapshotMonth || null);
-      const riskExposure = computeRiskCapital(snapshot);
-      setRiskCapitalCLP(riskExposure.visibleCLP);
-      setRiskCapitalUsdTotal(riskExposure.usdTotal);
-      setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
 
       const snapshotSignature = getSnapshotSignature(snapshot);
       if (snapshotSignature === lastSnapshotSignatureRef.current) return;

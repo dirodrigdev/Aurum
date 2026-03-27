@@ -772,7 +772,7 @@ export function SimulationPage({
               whiteSpace: 'nowrap',
             }}
           >
-            {pendingSnapshotApplying ? 'Aplicando base...' : 'Aplicar base'}
+            {pendingSnapshotApplying ? 'Aplicando Aurum...' : 'Aplicar Aurum'}
           </button>
         </div>
       )}
