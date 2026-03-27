@@ -138,7 +138,7 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
     simulation: {
       ...p.simulation,
       horizonMonths,
-      nSim: Math.min(1200, p.simulation.nSim),
+      nSim: Math.min(1000, p.simulation.nSim),
       seed: 42,
     },
     returns: {

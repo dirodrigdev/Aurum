@@ -77,7 +77,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   },
 
   simulation: {
-    nSim: 5_000, horizonMonths: 480,
+    nSim: 1_000, horizonMonths: 480,
     blockLength: 12, seed: 42,
     useHistoricalData: true,
   },
