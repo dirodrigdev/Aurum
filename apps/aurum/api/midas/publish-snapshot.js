@@ -65,6 +65,29 @@ const normalizeRealEstate = (value) => {
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
+const normalizeRiskCapital = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  const risk = value;
+  const totalCLP = asFiniteOrNull(risk.totalCLP ?? risk.totalClp ?? risk.clpTotal);
+  const clp = asFiniteOrNull(risk.clp);
+  const usd = asFiniteOrNull(risk.usd);
+  const source =
+    typeof risk.source === 'string' && risk.source.trim()
+      ? risk.source.trim()
+      : undefined;
+
+  if (totalCLP === null || totalCLP <= 0) return undefined;
+
+  const normalized = {
+    totalCLP: Math.round(totalCLP),
+    ...(clp !== null ? { clp: Math.round(Math.max(0, clp)) } : {}),
+    ...(usd !== null ? { usd: Math.round(Math.max(0, usd) * 100) / 100 } : {}),
+    ...(source ? { source } : {}),
+  };
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+};
+
 const normalizeSnapshotPayload = (raw) => {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'Debes enviar snapshot en el body.' };
@@ -94,6 +117,7 @@ const normalizeSnapshotPayload = (raw) => {
 
   const totalNetWorthWithRiskCLP = asFiniteOrNull(snapshot.totalNetWorthWithRiskCLP);
   const optimizableInvestmentsWithRiskCLP = asFiniteOrNull(snapshot.optimizableInvestmentsWithRiskCLP);
+  const riskCapital = normalizeRiskCapital(snapshot.riskCapital);
   const nonOptimizable =
     snapshot.nonOptimizable && typeof snapshot.nonOptimizable === 'object'
       ? {
@@ -125,6 +149,7 @@ const normalizeSnapshotPayload = (raw) => {
       ...(optimizableInvestmentsWithRiskCLP !== null
         ? { optimizableInvestmentsWithRiskCLP: Math.round(optimizableInvestmentsWithRiskCLP) }
         : {}),
+      ...(riskCapital ? { riskCapital } : {}),
       ...(nonOptimizable && Object.keys(nonOptimizable).length > 0 ? { nonOptimizable } : {}),
       source: {
         app: 'aurum',

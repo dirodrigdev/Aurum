@@ -12,6 +12,12 @@ export type AurumOptimizableInvestmentsSnapshot = {
   totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
+  riskCapital?: {
+    totalCLP: number;
+    clp?: number;
+    usd?: number;
+    source?: 'summary_riskCapitalClp' | 'analysis_delta' | 'usd_only';
+  };
   nonOptimizable?: {
     banksCLP?: number;
     nonMortgageDebtCLP?: number;
@@ -64,6 +70,8 @@ const asFiniteOrNull = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
+
+const roundUsd = (value: number) => Math.round(value * 100) / 100;
 
 const normalizeText = (value: string) =>
   value
@@ -158,6 +166,50 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
   };
 };
 
+const extractRiskCapital = (closure: WealthMonthlyClosure) => {
+  const summary = closure.summary as WealthMonthlyClosure['summary'] & {
+    analysisByCurrency?: {
+      clpWithRisk?: number;
+      clpWithoutRisk?: number;
+      usdWithRisk?: number;
+      usdWithoutRisk?: number;
+    };
+  };
+  const riskCapitalFromSummary = asFiniteOrNull(summary?.riskCapitalClp);
+  const clpWithRisk = asFiniteOrNull(summary?.analysisByCurrency?.clpWithRisk);
+  const clpWithoutRisk = asFiniteOrNull(summary?.analysisByCurrency?.clpWithoutRisk);
+  const usdWithRisk = asFiniteOrNull(summary?.analysisByCurrency?.usdWithRisk);
+  const usdWithoutRisk = asFiniteOrNull(summary?.analysisByCurrency?.usdWithoutRisk);
+  const usdDelta = usdWithRisk !== null && usdWithoutRisk !== null
+    ? Math.max(0, usdWithRisk - usdWithoutRisk)
+    : null;
+  const clpDelta = clpWithRisk !== null && clpWithoutRisk !== null
+    ? Math.max(0, clpWithRisk - clpWithoutRisk)
+    : null;
+  const usdClp = asFiniteOrNull(closure.fxRates?.usdClp);
+  const usdComponentClp = usdDelta !== null && usdClp !== null ? usdDelta * usdClp : null;
+  const totalCLP = riskCapitalFromSummary ?? clpDelta ?? usdComponentClp;
+  if (totalCLP === null || totalCLP <= 0) return undefined;
+
+  let clpComponent: number | null = null;
+  if (clpDelta !== null && usdComponentClp !== null) {
+    clpComponent = Math.max(0, clpDelta - usdComponentClp);
+  } else if (usdDelta !== null && usdComponentClp !== null) {
+    clpComponent = Math.max(0, totalCLP - usdComponentClp);
+  }
+
+  return {
+    totalCLP: Math.round(totalCLP),
+    ...(clpComponent !== null ? { clp: Math.round(clpComponent) } : {}),
+    ...(usdDelta !== null ? { usd: roundUsd(usdDelta) } : {}),
+    ...(riskCapitalFromSummary !== null
+      ? { source: 'summary_riskCapitalClp' as const }
+      : clpDelta !== null
+        ? { source: 'analysis_delta' as const }
+        : { source: 'usd_only' as const }),
+  };
+};
+
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
 ): AurumOptimizableInvestmentsSnapshot | null => {
@@ -196,6 +248,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   }
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
+  const riskCapital = extractRiskCapital(latest);
 
   return {
     ok: true,
@@ -209,6 +262,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
       ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: Math.round(totalNetWorthWithRisk) } : {}),
       optimizableInvestmentsCLP: Math.round(withoutRisk),
       ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
+      ...(riskCapital ? { riskCapital } : {}),
       nonOptimizable: extractNonOptimizable(latest),
       source: {
         app: 'aurum',
