@@ -78,9 +78,7 @@ export function SimulationPage({
   onApplyPendingSnapshot,
   onManualRecalculate,
   onToggleRiskCapital,
-  onAddManualCapitalAdjustment,
-  onUpdateManualCapitalAdjustment,
-  onDeleteManualCapitalAdjustment,
+  onCommitManualCapitalAdjustments,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -109,9 +107,7 @@ export function SimulationPage({
   onApplyPendingSnapshot: () => void;
   onManualRecalculate: () => void;
   onToggleRiskCapital: () => void;
-  onAddManualCapitalAdjustment: (next: ManualCapitalAdjustment) => void;
-  onUpdateManualCapitalAdjustment: (next: ManualCapitalAdjustment) => void;
-  onDeleteManualCapitalAdjustment: (id: string) => void;
+  onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -124,6 +120,7 @@ export function SimulationPage({
   const [advancedOpen, setAdvancedOpen] = useState(riskCapitalEnabled || riskCapitalCLP > 0);
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
+  const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
@@ -140,6 +137,25 @@ export function SimulationPage({
     { value: 'risk', label: 'Capital de riesgo' },
     { value: 'other', label: 'Otros' },
   ];
+  const openCapitalLedger = useCallback(() => {
+    setDraftManualAdjustments(manualCapitalAdjustments);
+    setCapitalLedgerOpen(true);
+    setSavingMovement(false);
+    setEditingMovementId(null);
+    setMovementForm({
+      direction: 'add',
+      amount: '',
+      currency: 'CLP',
+      effectiveDate: new Date().toISOString().slice(0, 7),
+      destination: 'liquidity',
+      note: '',
+    });
+  }, [manualCapitalAdjustments]);
+  const closeCapitalLedger = useCallback(() => {
+    setCapitalLedgerOpen(false);
+    setSavingMovement(false);
+    setEditingMovementId(null);
+  }, []);
   const aurumStatusVisual = useMemo(() => {
     if (aurumIntegrationStatus === 'available') {
       return {
@@ -333,8 +349,8 @@ export function SimulationPage({
     return amount * usdToClp * usdToEur;
   }, [params.fx]);
   const manualAdjustmentsSorted = useMemo(
-    () => [...manualCapitalAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
-    [manualCapitalAdjustments],
+    () => [...draftManualAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
+    [draftManualAdjustments],
   );
   const manualNetClp = useMemo(
     () => manualAdjustmentsSorted.reduce((acc, adj) => {
@@ -368,7 +384,6 @@ export function SimulationPage({
   const handleSaveMovement = useCallback(() => {
     const amount = Number(movementForm.amount);
     if (!Number.isFinite(amount) || amount <= 0) return;
-    setSavingMovement(true);
     const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
     const next: ManualCapitalAdjustment = {
       id: editingMovementId ?? `manual-${Date.now()}`,
@@ -379,24 +394,40 @@ export function SimulationPage({
       destination: movementForm.destination,
       note: movementForm.note?.trim() || undefined,
     };
-    if (editingMovementId) {
-      onUpdateManualCapitalAdjustment(next);
-    } else {
-      onAddManualCapitalAdjustment(next);
-    }
+    setDraftManualAdjustments((prev) => {
+      if (editingMovementId) {
+        return prev.map((item) => (item.id === next.id ? next : item));
+      }
+      return [next, ...prev];
+    });
     resetMovementForm();
-    window.setTimeout(() => setSavingMovement(false), 200);
-  }, [editingMovementId, movementForm, onAddManualCapitalAdjustment, onUpdateManualCapitalAdjustment, resetMovementForm]);
+  }, [editingMovementId, movementForm, resetMovementForm]);
   const handleSaveAndClose = useCallback(() => {
     const amount = Number(movementForm.amount);
-    if (Number.isFinite(amount) && amount > 0) {
-      handleSaveMovement();
-    }
+    setSavingMovement(true);
     window.setTimeout(() => {
-      setSavingMovement(false);
-      setCapitalLedgerOpen(false);
+      const ledgerToCommit = Number.isFinite(amount) && amount > 0
+        ? (() => {
+            const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
+            const next: ManualCapitalAdjustment = {
+              id: editingMovementId ?? `manual-${Date.now()}`,
+              direction: movementForm.direction,
+              amount,
+              currency: movementForm.currency,
+              effectiveDate,
+              destination: movementForm.destination,
+              note: movementForm.note?.trim() || undefined,
+            };
+            if (editingMovementId) {
+              return draftManualAdjustments.map((item) => (item.id === next.id ? next : item));
+            }
+            return [next, ...draftManualAdjustments];
+          })()
+        : draftManualAdjustments;
+      onCommitManualCapitalAdjustments(ledgerToCommit);
+      closeCapitalLedger();
     }, 0);
-  }, [handleSaveMovement, movementForm.amount]);
+  }, [closeCapitalLedger, draftManualAdjustments, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
 
   useEffect(() => {
     if (riskCapitalEnabled || riskCapitalCLP > 0) {
@@ -777,7 +808,7 @@ export function SimulationPage({
                   type="button"
                   onClick={() => {
                     resetMovementForm();
-                    setCapitalLedgerOpen(true);
+                    openCapitalLedger();
                   }}
                   style={{
                     background: T.primary,
@@ -1441,7 +1472,7 @@ export function SimulationPage({
         <div
           role="dialog"
           aria-modal="true"
-          onClick={() => setCapitalLedgerOpen(false)}
+          onClick={closeCapitalLedger}
           style={{
             position: 'fixed',
             inset: 0,
@@ -1526,7 +1557,12 @@ export function SimulationPage({
                         </button>
                         <button
                           type="button"
-                          onClick={() => onDeleteManualCapitalAdjustment(adj.id)}
+                          onClick={() => {
+                            setDraftManualAdjustments((prev) => prev.filter((item) => item.id !== adj.id));
+                            if (editingMovementId === adj.id) {
+                              resetMovementForm();
+                            }
+                          }}
                           style={{
                             background: 'transparent',
                             border: `1px solid ${T.negative}`,
@@ -1636,7 +1672,7 @@ export function SimulationPage({
               </button>
               <button
                 type="button"
-                onClick={() => setCapitalLedgerOpen(false)}
+                onClick={closeCapitalLedger}
                 disabled={savingMovement}
                 style={{
                   background: 'transparent',

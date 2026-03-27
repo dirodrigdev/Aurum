@@ -702,16 +702,8 @@ export default function App() {
     setRiskCapitalEnabled((prev) => !prev);
   }, []);
 
-  const addManualCapitalAdjustment = useCallback((next: ManualCapitalAdjustment) => {
-    setManualCapitalAdjustments((prev) => [next, ...prev]);
-  }, []);
-
-  const updateManualCapitalAdjustment = useCallback((next: ManualCapitalAdjustment) => {
-    setManualCapitalAdjustments((prev) => prev.map((item) => (item.id === next.id ? next : item)));
-  }, []);
-
-  const deleteManualCapitalAdjustment = useCallback((id: string) => {
-    setManualCapitalAdjustments((prev) => prev.filter((item) => item.id !== id));
+  const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
+    setManualCapitalAdjustments(next);
   }, []);
 
   useEffect(() => {
@@ -1161,9 +1153,7 @@ export default function App() {
       onApplyPendingSnapshot={applyPendingSnapshot}
       onManualRecalculate={handleManualRecalculate}
       onToggleRiskCapital={toggleRiskCapital}
-      onAddManualCapitalAdjustment={addManualCapitalAdjustment}
-      onUpdateManualCapitalAdjustment={updateManualCapitalAdjustment}
-      onDeleteManualCapitalAdjustment={deleteManualCapitalAdjustment}
+      onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
