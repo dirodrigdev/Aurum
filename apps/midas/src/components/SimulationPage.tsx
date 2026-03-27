@@ -243,6 +243,10 @@ export function SimulationPage({
           add(raw);
         }
       } else if (raw) {
+        if (raw === 'risk-capital-without-load-bearing-block') {
+          add('Capital de riesgo pendiente: requiere bloque load-bearing dedicado');
+          continue;
+        }
         add(raw);
       }
     }

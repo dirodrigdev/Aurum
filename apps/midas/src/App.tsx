@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CashflowEvent, ManualCapitalAdjustment, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
+import type {
+  CashflowEvent,
+  ManualCapitalAdjustment,
+  ModelParameters,
+  ScenarioVariant,
+  ScenarioVariantId,
+  SimulationCompositionInput,
+  SimulationResults,
+} from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { runMidasTriSimulation } from './domain/simulation/policy';
@@ -151,6 +159,22 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
   };
 }
 
+function isBlocksCompositionMode(params: ModelParameters): boolean {
+  const mode = params.simulationComposition?.mode;
+  return mode === 'full' || mode === 'partial';
+}
+
+function deriveVisibleCapitalFromComposition(composition?: SimulationCompositionInput): number | null {
+  if (!composition) return null;
+  const optimizable = Number(composition.optimizableInvestmentsCLP ?? 0);
+  const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
+  const realEstateEquity = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
+  const nonMortgageDebt = Math.abs(Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
+  const total = optimizable + banks + realEstateEquity - nonMortgageDebt;
+  if (!Number.isFinite(total)) return null;
+  return Math.max(1, total);
+}
+
 export default function App() {
   const [baseParams, setBaseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
@@ -194,7 +218,6 @@ export default function App() {
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
-  const manualDeltaRef = useRef(0);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -325,18 +348,25 @@ export default function App() {
     if (destination === 'liquidity') return 'rfChile' as const;
     if (destination === 'investments') return 'rvGlobal' as const;
     if (destination === 'risk') return 'rvGlobal' as const;
+    if (destination === 'other') return 'rfChile' as const;
     return undefined;
   }, []);
 
   const manualAdjustmentImpact = useMemo(() => {
-    let currentDelta = 0;
+    let currentLiquidityDelta = 0;
+    let currentInvestmentsDelta = 0;
+    let currentRiskDelta = 0;
+    let currentOtherDelta = 0;
     const futureEvents: CashflowEvent[] = [];
     const todayKey = new Date().toISOString().slice(0, 7);
     manualCapitalAdjustments.forEach((adj) => {
       const amountClp = toClp(adj.amount, adj.currency);
       const signed = adj.direction === 'add' ? amountClp : -amountClp;
       if (adj.effectiveDate <= todayKey) {
-        currentDelta += signed;
+        if (adj.destination === 'liquidity') currentLiquidityDelta += signed;
+        if (adj.destination === 'investments') currentInvestmentsDelta += signed;
+        if (adj.destination === 'risk') currentRiskDelta += signed;
+        if (adj.destination === 'other') currentOtherDelta += signed;
         return;
       }
       const month = resolveMonthIndex(adj.effectiveDate);
@@ -350,21 +380,18 @@ export default function App() {
         sleeve: mapDestinationToSleeve(adj.destination),
       });
     });
-    return { currentDelta, futureEvents };
+    const currentBanksDelta = currentLiquidityDelta + currentOtherDelta;
+    const currentTotalDelta = currentBanksDelta + currentInvestmentsDelta + currentRiskDelta;
+    return {
+      currentTotalDelta,
+      currentBanksDelta,
+      currentInvestmentsDelta,
+      currentRiskDelta,
+      futureEvents,
+    };
   }, [manualCapitalAdjustments, mapDestinationToSleeve, resolveMonthIndex, toClp]);
 
-  const manualOptimizableDelta = useMemo(() => {
-    let delta = 0;
-    const todayKey = new Date().toISOString().slice(0, 7);
-    manualCapitalAdjustments.forEach((adj) => {
-      if (adj.destination !== 'investments') return;
-      if (adj.effectiveDate > todayKey) return;
-      const amountClp = toClp(adj.amount, adj.currency);
-      const signed = adj.direction === 'add' ? amountClp : -amountClp;
-      delta += signed;
-    });
-    return delta;
-  }, [manualCapitalAdjustments, toClp]);
+  const manualOptimizableDelta = manualAdjustmentImpact.currentInvestmentsDelta;
 
   const getSnapshotSignature = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
     const ufSnapshotClp =
@@ -419,13 +446,15 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
 
       const currentBase = baseParamsRef.current;
-      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(aurumNetWorth);
       const nextBaseComposition = composition ?? currentBase.simulationComposition;
+      const baseCapitalFromComposition = deriveVisibleCapitalFromComposition(nextBaseComposition);
+      const baseTargetCapital = baseCapitalFromComposition ?? aurumNetWorth;
+      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
       const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
       if (!sameBaseCapital || !sameBaseComposition) {
         setBaseParams({
           ...currentBase,
-          capitalInitial: aurumNetWorth,
+          capitalInitial: baseTargetCapital,
           label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
           simulationComposition: nextBaseComposition,
         });
@@ -434,8 +463,10 @@ export default function App() {
       const currentSim = simParamsRef.current;
       const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
       const shouldApplyCapital = !hasCapitalOverride;
-      const targetCapital = shouldApplyCapital ? aurumNetWorth : currentSim.capitalInitial;
       const nextSimComposition = composition ?? currentSim.simulationComposition;
+      const simCapitalFromComposition = deriveVisibleCapitalFromComposition(nextSimComposition);
+      const baseSimCapital = simCapitalFromComposition ?? aurumNetWorth;
+      const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
       const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
 
@@ -563,27 +594,83 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const baseCapital = baseParamsRef.current.capitalInitial;
-    const riskDelta = riskCapitalEnabled ? riskCapitalCLP : 0;
-    const nextDelta = manualAdjustmentImpact.currentDelta + riskDelta;
-    const targetCapital = Math.max(1, baseCapital + nextDelta);
+    const baseParamsCurrent = baseParamsRef.current;
+    const currentSimParams = simParamsRef.current;
     const mergedEvents = [
-      ...(baseParamsRef.current.cashflowEvents ?? []),
+      ...(baseParamsCurrent.cashflowEvents ?? []),
       ...manualAdjustmentImpact.futureEvents,
     ];
-    const deltaChange = nextDelta - manualDeltaRef.current;
+    const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
+
+    let next: ModelParameters = {
+      ...currentSimParams,
+      cashflowEvents: mergedEvents,
+    };
+
+    if (blocksMode && baseParamsCurrent.simulationComposition) {
+      const baseComposition = JSON.parse(
+        JSON.stringify(baseParamsCurrent.simulationComposition),
+      ) as SimulationCompositionInput;
+      const nextOptimizable = Math.max(
+        0,
+        Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualAdjustmentImpact.currentInvestmentsDelta,
+      );
+      const nextBanks = Math.max(
+        0,
+        Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
+      );
+      const riskPending =
+        Math.abs(manualAdjustmentImpact.currentRiskDelta) > 0.0001 ||
+        (riskCapitalEnabled && riskCapitalCLP > 0);
+      const diagnosticWarnings = baseComposition.diagnostics?.diagnosticWarnings ?? [];
+      const warningToken = 'risk-capital-without-load-bearing-block';
+      const nextWarnings = riskPending
+        ? [...new Set([...diagnosticWarnings, warningToken])]
+        : diagnosticWarnings.filter((warning) => warning !== warningToken);
+      const nextComposition: SimulationCompositionInput = {
+        ...baseComposition,
+        optimizableInvestmentsCLP: nextOptimizable,
+        nonOptimizable: {
+          ...baseComposition.nonOptimizable,
+          banksCLP: nextBanks,
+        },
+        diagnostics: baseComposition.diagnostics
+          ? {
+              ...baseComposition.diagnostics,
+              diagnosticWarnings: nextWarnings,
+            }
+          : {
+              sourceVersion: baseComposition.mode === 'legacy' ? 1 : 2,
+              mode: baseComposition.mode,
+              compositionGapCLP: 0,
+              compositionGapPct: 0,
+              notes: [],
+              diagnosticWarnings: nextWarnings,
+            },
+      };
+      next = {
+        ...next,
+        simulationComposition: nextComposition,
+        capitalInitial: deriveVisibleCapitalFromComposition(nextComposition) ?? currentSimParams.capitalInitial,
+      };
+    } else {
+      const riskDelta = riskCapitalEnabled ? riskCapitalCLP : 0;
+      const nextDelta = manualAdjustmentImpact.currentTotalDelta + riskDelta;
+      const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
+      next = {
+        ...next,
+        capitalInitial: targetCapital,
+      };
+    }
+
+    const deltaChange = next.capitalInitial - currentSimParams.capitalInitial;
     if (Math.abs(deltaChange) > 0.0001 && simOverrides?.active && typeof simOverrides.capital === 'number') {
       setSimOverrides((prev) => {
         if (!prev || !prev.active || typeof prev.capital !== 'number') return prev;
         return { ...prev, capital: Math.max(1, prev.capital + deltaChange) };
       });
     }
-    manualDeltaRef.current = nextDelta;
-    const next: ModelParameters = {
-      ...simParamsRef.current,
-      capitalInitial: targetCapital,
-      cashflowEvents: mergedEvents,
-    };
+
     setSimParams(next);
     const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
     if (canRecalculateNow) {
