@@ -694,12 +694,6 @@ export default function App() {
     }, 0);
   }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
 
-  const handleManualRecalculate = useCallback(() => {
-    const base = applySimulationOverrides(simParamsRef.current, simOverrides);
-    setBaseUpdatePending(false);
-    queueTriMotorCalculation(base);
-  }, [queueTriMotorCalculation, simOverrides]);
-
   const toggleRiskCapital = useCallback(() => {
     setRiskCapitalEnabled((prev) => !prev);
   }, []);
@@ -1148,7 +1142,6 @@ export default function App() {
       riskCapitalEnabled={riskCapitalEnabled}
       riskCapitalCLP={riskCapitalCLP}
       onApplyPendingSnapshot={applyPendingSnapshot}
-      onManualRecalculate={handleManualRecalculate}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
       onSimulationTouch={touchSimulation}

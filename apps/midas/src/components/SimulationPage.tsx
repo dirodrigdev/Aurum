@@ -76,7 +76,6 @@ export function SimulationPage({
   riskCapitalEnabled,
   riskCapitalCLP,
   onApplyPendingSnapshot,
-  onManualRecalculate,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
   onSimulationTouch,
@@ -105,7 +104,6 @@ export function SimulationPage({
   riskCapitalEnabled: boolean;
   riskCapitalCLP: number;
   onApplyPendingSnapshot: () => void;
-  onManualRecalculate: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
@@ -156,69 +154,28 @@ export function SimulationPage({
     setSavingMovement(false);
     setEditingMovementId(null);
   }, []);
-  const aurumStatusVisual = useMemo(() => {
-    if (aurumIntegrationStatus === 'available') {
-      return {
-        copy: `Base Aurum · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`,
-        bg: 'rgba(61, 212, 141, 0.12)',
-        border: 'rgba(61, 212, 141, 0.45)',
-        color: T.positive,
-      };
-    }
-    if (aurumIntegrationStatus === 'partial') {
-      return {
-        copy: `Base Aurum parcial · ${aurumSnapshotLabel ?? 'último cierre confirmado'}`,
-        bg: 'rgba(255, 176, 32, 0.12)',
-        border: 'rgba(255, 176, 32, 0.45)',
-        color: T.warning,
-      };
-    }
-    if (aurumIntegrationStatus === 'refreshing') {
-      return {
-        copy: `Actualizando base Aurum...`,
-        bg: 'rgba(91, 140, 255, 0.14)',
-        border: 'rgba(91, 140, 255, 0.45)',
-        color: T.primary,
-      };
-    }
-    if (aurumIntegrationStatus === 'loading') {
-      return {
-        copy: 'Sincronizando base Aurum...',
-        bg: 'rgba(91, 140, 255, 0.14)',
-        border: 'rgba(91, 140, 255, 0.45)',
-        color: T.primary,
-      };
-    }
-    if (aurumIntegrationStatus === 'missing') {
-      return {
-        copy: 'Base Aurum no disponible',
-        bg: 'rgba(255, 176, 32, 0.12)',
-        border: 'rgba(255, 176, 32, 0.45)',
-        color: T.warning,
-      };
-    }
-    if (aurumIntegrationStatus === 'unconfigured') {
-      return {
-        copy: 'Base Aurum no configurada',
-        bg: 'rgba(148, 163, 184, 0.14)',
-        border: 'rgba(148, 163, 184, 0.42)',
-        color: T.textMuted,
-      };
-    }
-    return {
-      copy: 'Base Aurum con error',
-      bg: 'rgba(255, 92, 92, 0.12)',
-      border: 'rgba(255, 92, 92, 0.45)',
-      color: T.negative,
-    };
-  }, [aurumIntegrationStatus, aurumSnapshotLabel]);
-
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
+  const aurumTechnicalLabel = aurumSnapshotLabel
+    ? `Aurum: ${aurumSnapshotLabel}`
+    : aurumIntegrationStatus === 'missing'
+      ? 'Aurum: snapshot no disponible'
+      : aurumIntegrationStatus === 'unconfigured'
+        ? 'Aurum: no configurado'
+        : aurumIntegrationStatus === 'error'
+          ? 'Aurum: error de integración'
+          : 'Aurum: en espera';
   const isRecalculating = simUiState === 'recalculating' || baseUpdatePending || aurumSyncing;
+  const simTechnicalLabel = isRecalculating
+    ? 'Simulación: recalculando'
+    : simUiState === 'ready'
+      ? 'Simulación: lista'
+      : simUiState === 'error'
+        ? `Simulación: error (${simUiError || 'sin detalle'})`
+        : 'Simulación: en espera';
   const hideResultBlocks = simUiState === 'error';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
@@ -298,46 +255,6 @@ export function SimulationPage({
       bg: 'rgba(148, 163, 184, 0.12)',
     };
   }, [compositionHasFallback, compositionMode]);
-  const simStatusVisual = useMemo(() => {
-    if (baseUpdatePending || aurumSyncing) {
-      return {
-        bg: 'rgba(91, 140, 255, 0.14)',
-        border: 'rgba(91, 140, 255, 0.45)',
-        color: T.primary,
-        copy: 'Recalculando con base Aurum actualizada...',
-      };
-    }
-    if (simUiState === 'recalculating') {
-      return {
-        bg: 'rgba(91, 140, 255, 0.14)',
-        border: 'rgba(91, 140, 255, 0.45)',
-        color: T.primary,
-        copy: 'Actualizando simulación...',
-      };
-    }
-    if (simUiState === 'error') {
-      return {
-        bg: 'rgba(255, 92, 92, 0.12)',
-        border: 'rgba(255, 92, 92, 0.45)',
-        color: T.negative,
-        copy: simUiError || 'No pude recalcular la simulación.',
-      };
-    }
-    if (simUiState === 'ready') {
-      return {
-        bg: 'rgba(61, 212, 141, 0.12)',
-        border: 'rgba(61, 212, 141, 0.4)',
-        color: T.positive,
-        copy: 'Simulación lista',
-      };
-    }
-    return {
-      bg: 'rgba(148, 163, 184, 0.12)',
-      border: 'rgba(148, 163, 184, 0.35)',
-      color: T.textMuted,
-      copy: simActive ? 'Esperando recálculo' : 'Estado base en espera',
-    };
-  }, [aurumSyncing, baseUpdatePending, simActive, simUiError, simUiState]);
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
@@ -456,6 +373,12 @@ export function SimulationPage({
   const showGhostResult = Boolean(isRecalculating && displayResult);
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
+  const ruinP25 = displayResult?.ruinTimingP25 ?? null;
+  const ruinP75 = displayResult?.ruinTimingP75 ?? null;
+  const ruinWindowLabel = ruinP25 !== null && ruinP75 !== null
+    ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)}`
+    : '—';
+  const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)}` : '—';
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
   const plausibleHigh = resultFavorable ? ruinToSuccessPct(resultFavorable.probRuin) : null;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
@@ -610,146 +533,46 @@ export function SimulationPage({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
         style={{
-          background: aurumStatusVisual.bg,
-          border: `1px solid ${aurumStatusVisual.border}`,
+          position: 'sticky',
+          top: 0,
+          zIndex: 35,
+          background: 'rgba(11, 16, 24, 0.92)',
+          border: `1px solid ${T.border}`,
           borderRadius: 12,
-          padding: '10px 12px',
-          color: aurumStatusVisual.color,
-          fontSize: 12,
-          fontWeight: 700,
+          padding: '8px 10px',
+          backdropFilter: 'blur(6px)',
         }}
       >
-        {aurumStatusVisual.copy}
+        {isRecalculating ? (
+          <div style={{ color: T.primary, fontSize: 12, fontWeight: 700 }}>Calculando…</div>
+        ) : displayResult && probSuccess !== null ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(probSuccess * 100).toFixed(1)}%</div>
+            </div>
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina {ruinWindowLabel}</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(100 - (probSuccess * 100)).toFixed(1)}%</div>
+            </div>
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinTypicalLabel}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>Simulación en espera</div>
+        )}
       </div>
-      {baseUpdatePending && (
-        <div
-          style={{
-            background: 'rgba(255, 176, 32, 0.12)',
-            border: '1px solid rgba(255, 176, 32, 0.45)',
-            borderRadius: 12,
-            padding: '9px 12px',
-            color: T.warning,
-            fontSize: 12,
-            fontWeight: 700,
-          }}
-        >
-          Base Aurum actualizada. Resultado pendiente de recalcular.
-        </div>
-      )}
-      <div
-        style={{
-          background: simStatusVisual.bg,
-          border: `1px solid ${simStatusVisual.border}`,
-          borderRadius: 12,
-          padding: '9px 12px',
-          color: simStatusVisual.color,
-          fontSize: 12,
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: simStatusVisual.color,
-            opacity: simUiState === 'recalculating' ? 0.7 : 1,
-            animation: simUiState === 'recalculating' ? 'midasPulse 1s ease-in-out infinite' : 'none',
-          }}
-        />
-        <span>{simStatusVisual.copy}</span>
-      </div>
-      <div
-        style={{
-          background: 'rgba(91, 140, 255, 0.12)',
-          border: `1px solid rgba(91, 140, 255, 0.45)`,
-          borderRadius: 12,
-          padding: '10px 12px',
-          color: T.textPrimary,
-          fontSize: 12,
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
-        <span>Supuesto activo: {liquidarDeptoEnabled ? 'Liquidar depto ON' : 'Liquidar depto OFF'}</span>
-        <button
-          type="button"
-          onClick={toggleLiquidarDepto}
-          disabled={isRecalculating}
-          style={{
-            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.2)' : 'rgba(255, 176, 32, 0.2)',
-            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : 'rgba(255, 176, 32, 0.55)'}`,
-            borderRadius: 999,
-            color: liquidarDeptoEnabled ? T.positive : T.warning,
-            fontSize: 11,
-            fontWeight: 700,
-            padding: '6px 10px',
-            cursor: isRecalculating ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating ? 0.6 : 1,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {liquidarDeptoEnabled ? 'Desactivar' : 'Activar'}
-        </button>
-      </div>
-      {(aurumIntegrationStatus === 'missing' || aurumIntegrationStatus === 'unconfigured') && (
-        <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Mostrando un capital local por defecto. Cuando Aurum publique el cierre, se reemplazará automáticamente.
-        </div>
-      )}
-      {baseUpdatePending && !pendingSnapshotLabel && (
-        <div
-          style={{
-            background: 'rgba(255, 199, 61, 0.12)',
-            border: '1px solid rgba(255, 199, 61, 0.45)',
-            borderRadius: 12,
-            padding: '10px 12px',
-            color: T.textPrimary,
-            fontSize: 12,
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 10,
-          }}
-        >
-          <span>Base Aurum aplicada. Resultado pendiente de recalcular.</span>
-          <button
-            type="button"
-            onClick={onManualRecalculate}
-            disabled={simWorking || simUiState === 'recalculating'}
-            style={{
-              background: T.primary,
-              border: 'none',
-              color: '#fff',
-              borderRadius: 10,
-              padding: '6px 10px',
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: simWorking || simUiState === 'recalculating' ? 'not-allowed' : 'pointer',
-              opacity: simWorking || simUiState === 'recalculating' ? 0.6 : 1,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Recalcular simulación
-          </button>
-        </div>
-      )}
       {pendingSnapshotLabel && (
         <div
           style={{
-            background: 'rgba(91, 140, 255, 0.12)',
+            background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
             borderRadius: 12,
-            padding: '10px 12px',
+            padding: '8px 10px',
             color: T.textPrimary,
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
@@ -779,6 +602,83 @@ export function SimulationPage({
           </button>
         </div>
       )}
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          padding: 10,
+          display: 'grid',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+            const active = simulationPreset === variant.id;
+            return (
+              <button
+                key={variant.id}
+                type="button"
+                onClick={() => onScenarioChange(variant.id)}
+                disabled={isRecalculating}
+                style={{
+                  background: active ? T.primary : T.surfaceEl,
+                  border: `1px solid ${active ? T.primary : T.border}`,
+                  color: active ? '#fff' : T.textSecondary,
+                  borderRadius: 999,
+                  padding: '6px 11px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                  opacity: isRecalculating ? 0.65 : 1,
+                }}
+              >
+                {variant.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+          <button
+            type="button"
+            onClick={toggleLiquidarDepto}
+            disabled={isRecalculating}
+            style={{
+              background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
+              border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+              color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+              borderRadius: 10,
+              padding: '8px 10px',
+              fontSize: 11,
+              fontWeight: 700,
+              textAlign: 'left',
+              cursor: isRecalculating ? 'not-allowed' : 'pointer',
+              opacity: isRecalculating ? 0.65 : 1,
+            }}
+          >
+            Incluir venta de departamento · {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleRiskCapital}
+            disabled={isRecalculating}
+            style={{
+              background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
+              border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+              color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+              borderRadius: 10,
+              padding: '8px 10px',
+              fontSize: 11,
+              fontWeight: 700,
+              textAlign: 'left',
+              cursor: isRecalculating ? 'not-allowed' : 'pointer',
+              opacity: isRecalculating ? 0.65 : 1,
+            }}
+          >
+            Incluir capital de riesgo · {riskCapitalEnabled ? 'ON' : 'OFF'}
+          </button>
+        </div>
+      </div>
       <div style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
@@ -960,11 +860,8 @@ export function SimulationPage({
                 const left = mapSuccessPct(successPct);
                 const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
                 return (
-                  <button
+                  <span
                     key={variant.id}
-                    type="button"
-                    onClick={() => onScenarioChange(variant.id)}
-                    disabled={isRecalculating}
                     title={`${variant.label}: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
@@ -976,9 +873,8 @@ export function SimulationPage({
                       borderRadius: '50%',
                       border: `2px solid ${zoneColor}`,
                       background: active ? zoneColor : T.surface,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.7 : 1,
-                      padding: 0,
+                      opacity: 0.95,
+                      display: 'block',
                     }}
                   />
                 );
@@ -1012,7 +908,7 @@ export function SimulationPage({
             fontWeight: 700,
           }}
         >
-          <span>Otros ajustes de simulación</span>
+          <span>Otros parámetros</span>
           <span style={{ color: T.textMuted }}>{advancedOpen ? '▴' : '▾'}</span>
         </button>
         {advancedOpen && (
@@ -1040,96 +936,6 @@ export function SimulationPage({
                     />
                   </label>
                 ))}
-              </div>
-            </div>
-
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Política inmobiliaria</div>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '9px 10px',
-                }}
-              >
-                <div>
-                  <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>Liquidar depto</div>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>
-                    {liquidarDeptoEnabled
-                      ? 'Activado: el motor puede vender el inmueble según runway'
-                      : 'Desactivado: el inmueble no se liquida en la simulación'}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleLiquidarDepto}
-                  disabled={isRecalculating}
-                  style={{
-                    background: liquidarDeptoEnabled ? T.positive : T.surface,
-                    border: `1px solid ${liquidarDeptoEnabled ? T.positive : T.border}`,
-                    color: liquidarDeptoEnabled ? '#00150a' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.6 : 1,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {liquidarDeptoEnabled ? 'ON' : 'OFF'}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Capital de riesgo</div>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '9px 10px',
-                }}
-              >
-                <div>
-                  <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                    Considerar capital de riesgo
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>
-                    {riskCapitalCLP > 0
-                      ? `Disponible: ${formatCapital(riskCapitalCLP)}`
-                      : 'Sin capital de riesgo informado por Aurum'}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={onToggleRiskCapital}
-                  disabled={isRecalculating}
-                  style={{
-                    background: riskCapitalEnabled ? T.warning : T.surface,
-                    border: `1px solid ${riskCapitalEnabled ? T.warning : T.border}`,
-                    color: riskCapitalEnabled ? '#2b1a00' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.6 : 1,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {riskCapitalEnabled ? 'ON' : 'OFF'}
-                </button>
               </div>
             </div>
 
@@ -1253,47 +1059,17 @@ export function SimulationPage({
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', flex: 1 }}>
-                {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-                  const isBase = variant.id === 'base';
-                  const active = simulationPreset === variant.id;
-                  const custom = simulationPreset === 'custom';
-                  const highlightedReset = isBase && custom;
-                  const working = active && simWorking;
-                  return (
-                    <button
-                      key={variant.id}
-                      type="button"
-                      onClick={() => onScenarioChange(variant.id)}
-                      disabled={isRecalculating}
-                      style={{
-                        background: active
-                          ? T.primary
-                          : highlightedReset
-                            ? 'rgba(91, 140, 255, 0.12)'
-                            : T.surfaceEl,
-                        border: highlightedReset
-                          ? `2px solid rgba(91, 140, 255, 0.72)`
-                          : `1px solid ${active ? T.primary : T.border}`,
-                        color: active || highlightedReset ? T.textPrimary : T.textSecondary,
-                        fontSize: 11,
-                        padding: '5px 10px',
-                        borderRadius: 999,
-                        cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                        opacity: custom && !isBase ? 0.45 : 1,
-                        boxShadow: highlightedReset
-                          ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)'
-                          : working
-                            ? '0 0 0 2px rgba(91, 140, 255, 0.28)'
-                            : 'none',
-                        transition: 'opacity 0.2s, transform 0.2s',
-                        transform: working ? 'scale(0.99)' : 'scale(1)',
-                      }}
-                    >
-                      {variant.label}
-                    </button>
-                  );
-                })}
+              <div
+                style={{
+                  color: T.textSecondary,
+                  fontSize: 11,
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 999,
+                  padding: '5px 10px',
+                }}
+              >
+                Escenario activo: {stateLabel}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
@@ -1439,7 +1215,7 @@ export function SimulationPage({
         </>
       )}
 
-      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth) && (
+      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending) && (
         <details
           style={{
             marginTop: 12,
@@ -1455,6 +1231,8 @@ export function SimulationPage({
             Detalles técnicos
           </summary>
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
+            <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
             <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
             <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
             {motorWarnings.length > 0 && (
