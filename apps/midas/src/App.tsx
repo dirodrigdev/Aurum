@@ -166,6 +166,9 @@ function isBlocksCompositionMode(params: ModelParameters): boolean {
 }
 
 type NormalizedRiskCapitalExposure = {
+  baseWithoutRiskCLP: number;
+  baseWithRiskCLP: number;
+  riskTotalCLP: number;
   usdTotal: number;
   usdSnapshotCLP: number;
   visibleCLP: number;
@@ -175,7 +178,17 @@ type NormalizedRiskCapitalExposure = {
 function normalizeRiskCapitalExposure(
   risk: RiskCapitalInput | null | undefined,
   fallbackUsdSnapshotCLP: number,
+  totalWithoutRiskCLP?: number,
+  totalWithRiskCLP?: number,
 ): NormalizedRiskCapitalExposure {
+  const rawTotalWithoutRisk = Number(totalWithoutRiskCLP ?? 0);
+  const rawTotalWithRisk = Number(totalWithRiskCLP ?? 0);
+  const baseWithoutRiskCLP = Number.isFinite(rawTotalWithoutRisk) && rawTotalWithoutRisk > 0 ? rawTotalWithoutRisk : 0;
+  const baseWithRiskCLP = Number.isFinite(rawTotalWithRisk) && rawTotalWithRisk > 0 ? rawTotalWithRisk : 0;
+  const riskFromTotals =
+    baseWithoutRiskCLP > 0 && baseWithRiskCLP > baseWithoutRiskCLP
+      ? baseWithRiskCLP - baseWithoutRiskCLP
+      : 0;
   const rawTotalCLP = Number(risk?.totalCLP ?? 0);
   const rawCLP = Number(risk?.clp ?? 0);
   const rawUSD = Number(risk?.usd ?? 0);
@@ -186,13 +199,23 @@ function normalizeRiskCapitalExposure(
   const usdComponent = Number.isFinite(rawUSD) && rawUSD > 0 ? rawUSD : 0;
   const totalClpComponent = Number.isFinite(rawTotalCLP) && rawTotalCLP > 0 ? rawTotalCLP : 0;
   const usdTotalFromRaw = usdComponent + (clpComponent / safeUsdSnapshotCLP);
-  const usdTotalFromTotalClp = totalClpComponent / safeUsdSnapshotCLP;
+  const totalClpForExposure = Math.max(totalClpComponent, riskFromTotals);
+  const usdTotalFromTotalClp = totalClpForExposure / safeUsdSnapshotCLP;
   const usdTotalFromInput = Number.isFinite(rawUsdTotal) && rawUsdTotal > 0 ? rawUsdTotal : 0;
   const usdTotal = Math.max(0, usdTotalFromInput, usdTotalFromRaw, usdTotalFromTotalClp);
+  const riskTotalCLP = totalClpForExposure > 0 ? totalClpForExposure : usdTotal * safeUsdSnapshotCLP;
+  const finalWithRisk = baseWithoutRiskCLP > 0
+    ? baseWithoutRiskCLP + riskTotalCLP
+    : baseWithRiskCLP > 0
+      ? baseWithRiskCLP
+      : riskTotalCLP;
   return {
+    baseWithoutRiskCLP,
+    baseWithRiskCLP: finalWithRisk,
+    riskTotalCLP,
     usdTotal,
     usdSnapshotCLP: safeUsdSnapshotCLP,
-    visibleCLP: usdTotal * safeUsdSnapshotCLP,
+    visibleCLP: riskTotalCLP,
     ...(risk?.source ? { source: risk.source } : {}),
   };
 }
@@ -466,20 +489,26 @@ export default function App() {
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
     const fallbackUsdSnapshotCLP = Number(baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial);
-    const riskFallbackFromTotals =
-      Number.isFinite(snapshot.totalNetWorthWithRiskCLP) && Number.isFinite(snapshot.totalNetWorthCLP)
-        ? Math.max(0, Number(snapshot.totalNetWorthWithRiskCLP) - Number(snapshot.totalNetWorthCLP))
-        : Number.isFinite(snapshot.optimizableInvestmentsWithRiskCLP) && Number.isFinite(snapshot.optimizableInvestmentsCLP)
+    const exposure = normalizeRiskCapitalExposure(
+      snapshot.version === 2 ? snapshot.riskCapital : undefined,
+      fallbackUsdSnapshotCLP,
+      Number(snapshot.totalNetWorthCLP ?? 0),
+      Number(snapshot.totalNetWorthWithRiskCLP ?? 0),
+    );
+    if (exposure.riskTotalCLP <= 0) {
+      const fallbackFromOptimizable =
+        Number.isFinite(snapshot.optimizableInvestmentsWithRiskCLP) && Number.isFinite(snapshot.optimizableInvestmentsCLP)
           ? Math.max(0, Number(snapshot.optimizableInvestmentsWithRiskCLP) - Number(snapshot.optimizableInvestmentsCLP))
           : 0;
-    const exposure = normalizeRiskCapitalExposure(
-      snapshot.version === 2
-        ? (snapshot.riskCapital ?? (riskFallbackFromTotals > 0 ? { totalCLP: riskFallbackFromTotals } : undefined))
-        : riskFallbackFromTotals > 0
-          ? { totalCLP: riskFallbackFromTotals }
-          : undefined,
-      fallbackUsdSnapshotCLP,
-    );
+      if (fallbackFromOptimizable > 0) {
+        return normalizeRiskCapitalExposure(
+          { totalCLP: fallbackFromOptimizable },
+          fallbackUsdSnapshotCLP,
+          Number(snapshot.totalNetWorthCLP ?? 0),
+          Number(snapshot.totalNetWorthCLP ?? 0) + fallbackFromOptimizable,
+        );
+      }
+    }
     return exposure;
   }, []);
 
@@ -495,10 +524,14 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
       const riskExposure = computeRiskCapital(snapshot);
+      const aurumNetWorthWithRisk =
+        Number.isFinite(riskExposure.baseWithRiskCLP) && riskExposure.baseWithRiskCLP > 0
+          ? riskExposure.baseWithRiskCLP
+          : aurumNetWorth + riskExposure.riskTotalCLP;
 
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumSnapshotMonth(snapshot.snapshotMonth || null);
-      setRiskCapitalCLP(riskExposure.visibleCLP);
+      setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
@@ -515,8 +548,7 @@ export default function App() {
 
       const currentBase = baseParamsRef.current;
       const nextBaseComposition = composition ?? currentBase.simulationComposition;
-      const baseCapitalFromComposition = deriveVisibleCapitalFromComposition(nextBaseComposition, false);
-      const baseTargetCapital = baseCapitalFromComposition ?? aurumNetWorth;
+      const baseTargetCapital = aurumNetWorth;
       const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
       const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
       if (!sameBaseCapital || !sameBaseComposition) {
@@ -532,8 +564,7 @@ export default function App() {
       const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
       const shouldApplyCapital = !hasCapitalOverride;
       const nextSimComposition = composition ?? currentSim.simulationComposition;
-      const simCapitalFromComposition = deriveVisibleCapitalFromComposition(nextSimComposition, riskCapitalEnabled);
-      const baseSimCapital = simCapitalFromComposition ?? aurumNetWorth;
+      const baseSimCapital = riskCapitalEnabled ? aurumNetWorthWithRisk : aurumNetWorth;
       const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
       const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
@@ -679,25 +710,50 @@ export default function App() {
       const baseComposition = JSON.parse(
         JSON.stringify(baseParamsCurrent.simulationComposition),
       ) as SimulationCompositionInput;
-      const nextOptimizable = Math.max(
+      let nextOptimizable = Math.max(
         0,
         Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualAdjustmentImpact.currentInvestmentsDelta,
       );
-      const nextBanks = Math.max(
+      let nextBanks = Math.max(
         0,
         Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
       );
       const baseRiskExposure = normalizeRiskCapitalExposure(
         baseComposition.nonOptimizable?.riskCapital,
         riskCapitalUsdSnapshotCLP || baseParamsCurrent.fx.clpUsdInitial || DEFAULT_PARAMETERS.fx.clpUsdInitial,
+        Number(baseComposition.totalNetWorthCLP ?? 0),
+        Number(baseComposition.totalNetWorthCLP ?? 0) + Number(riskCapitalCLP ?? 0),
       );
       const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
-      const riskUsdBase = Math.max(0, riskCapitalUsdTotal || baseRiskExposure.usdTotal);
-      const riskUsdManualDelta = riskUsdSnapshot > 0
-        ? manualAdjustmentImpact.currentRiskDelta / riskUsdSnapshot
+      const riskBaseClp = Math.max(0, riskCapitalCLP || baseRiskExposure.riskTotalCLP);
+      const riskManualClp = manualAdjustmentImpact.currentRiskDelta;
+      const riskEnabledClpTotal = Math.max(0, riskBaseClp + riskManualClp);
+      const riskUsdEnabledTotal = riskUsdSnapshot > 0
+        ? riskEnabledClpTotal / riskUsdSnapshot
         : 0;
-      const riskUsdEnabledTotal = Math.max(0, riskUsdBase + riskUsdManualDelta);
       const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
+      const riskClpApplied = riskCapitalEnabled
+        ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
+        : 0;
+
+      const realEstateEquity = Math.max(0, Number(baseComposition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0));
+      const nonMortgageDebt = Math.abs(Number(baseComposition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
+      const targetWithoutRisk = Math.max(
+        1,
+        Number(baseComposition.totalNetWorthCLP ?? 0) +
+          manualAdjustmentImpact.currentBanksDelta +
+          manualAdjustmentImpact.currentInvestmentsDelta,
+      );
+      const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
+      let gap = targetWithoutRisk - modeledWithoutRisk;
+      if (Math.abs(gap) > 0.5) {
+        nextBanks = Math.max(0, nextBanks + gap);
+        const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt);
+        if (Math.abs(remainingGap) > 0.5) {
+          nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
+        }
+      }
+
       const nextComposition: SimulationCompositionInput = {
         ...baseComposition,
         optimizableInvestmentsCLP: nextOptimizable,
@@ -709,7 +765,7 @@ export default function App() {
             usdSnapshotCLP: riskUsdSnapshot,
             usdTotal: riskUsdApplied,
             usd: riskUsdApplied,
-            totalCLP: Math.max(0, riskUsdApplied * riskUsdSnapshot),
+            totalCLP: riskClpApplied,
           },
         },
       };
