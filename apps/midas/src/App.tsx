@@ -578,18 +578,16 @@ export default function App() {
       });
     }
     manualDeltaRef.current = nextDelta;
-    setSimParams((prev) => {
-      const next: ModelParameters = {
-        ...prev,
-        capitalInitial: targetCapital,
-        cashflowEvents: mergedEvents,
-      };
-      if (!baseUpdatePending) {
-        const base = applySimulationOverrides(next, simOverrides);
-        queueTriMotorCalculation(base);
-      }
-      return next;
-    });
+    const next: ModelParameters = {
+      ...simParamsRef.current,
+      capitalInitial: targetCapital,
+      cashflowEvents: mergedEvents,
+    };
+    setSimParams(next);
+    if (!baseUpdatePending) {
+      const base = applySimulationOverrides(next, simOverrides);
+      queueTriMotorCalculation(base);
+    }
   }, [baseUpdatePending, manualAdjustmentImpact, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {

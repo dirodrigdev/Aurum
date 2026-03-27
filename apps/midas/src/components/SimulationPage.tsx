@@ -121,7 +121,8 @@ export function SimulationPage({
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(riskCapitalEnabled || riskCapitalCLP > 0);
+  const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
@@ -363,6 +364,7 @@ export function SimulationPage({
   const handleSaveMovement = useCallback(() => {
     const amount = Number(movementForm.amount);
     if (!Number.isFinite(amount) || amount <= 0) return;
+    setSavingMovement(true);
     const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
     const next: ManualCapitalAdjustment = {
       id: editingMovementId ?? `manual-${Date.now()}`,
@@ -379,14 +381,24 @@ export function SimulationPage({
       onAddManualCapitalAdjustment(next);
     }
     resetMovementForm();
+    window.setTimeout(() => setSavingMovement(false), 200);
   }, [editingMovementId, movementForm, onAddManualCapitalAdjustment, onUpdateManualCapitalAdjustment, resetMovementForm]);
   const handleSaveAndClose = useCallback(() => {
     const amount = Number(movementForm.amount);
     if (Number.isFinite(amount) && amount > 0) {
       handleSaveMovement();
     }
-    setCapitalLedgerOpen(false);
+    window.setTimeout(() => {
+      setSavingMovement(false);
+      setCapitalLedgerOpen(false);
+    }, 0);
   }, [handleSaveMovement, movementForm.amount]);
+
+  useEffect(() => {
+    if (riskCapitalEnabled || riskCapitalCLP > 0) {
+      setAdvancedOpen(true);
+    }
+  }, [riskCapitalEnabled, riskCapitalCLP]);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -1453,6 +1465,7 @@ export function SimulationPage({
               <button
                 type="button"
                 onClick={handleSaveAndClose}
+                disabled={savingMovement}
                 style={{
                   background: 'transparent',
                   border: `1px solid ${T.border}`,
@@ -1460,10 +1473,11 @@ export function SimulationPage({
                   padding: '6px 10px',
                   color: T.textSecondary,
                   fontSize: 12,
-                  cursor: 'pointer',
+                  cursor: savingMovement ? 'not-allowed' : 'pointer',
+                  opacity: savingMovement ? 0.6 : 1,
                 }}
               >
-                Guardar y salir
+                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
               </button>
             </div>
 
@@ -1602,6 +1616,7 @@ export function SimulationPage({
               <button
                 type="button"
                 onClick={handleSaveMovement}
+                disabled={savingMovement}
                 style={{
                   background: T.primary,
                   border: 'none',
@@ -1609,21 +1624,24 @@ export function SimulationPage({
                   borderRadius: 10,
                   padding: '8px 14px',
                   fontWeight: 700,
-                  cursor: 'pointer',
+                  cursor: savingMovement ? 'not-allowed' : 'pointer',
+                  opacity: savingMovement ? 0.7 : 1,
                 }}
               >
-                {editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+                {savingMovement ? 'Guardando...' : editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
               </button>
               <button
                 type="button"
                 onClick={() => setCapitalLedgerOpen(false)}
+                disabled={savingMovement}
                 style={{
                   background: 'transparent',
                   border: `1px solid ${T.border}`,
                   color: T.textSecondary,
                   borderRadius: 10,
                   padding: '8px 14px',
-                  cursor: 'pointer',
+                  cursor: savingMovement ? 'not-allowed' : 'pointer',
+                  opacity: savingMovement ? 0.6 : 1,
                 }}
               >
                 Cancelar
