@@ -120,6 +120,7 @@ export function SimulationPage({
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [hasVisibleResultInSession, setHasVisibleResultInSession] = useState(false);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
     amount: '',
@@ -370,7 +371,13 @@ export function SimulationPage({
   }, [simActive]);
 
   const displayResult = hideResultBlocks ? null : resultCentral;
-  const showGhostResult = Boolean(isRecalculating && displayResult);
+  useEffect(() => {
+    if (!isRecalculating && simUiState === 'ready' && displayResult) {
+      setHasVisibleResultInSession(true);
+    }
+  }, [displayResult, isRecalculating, simUiState]);
+  const showGhostResult = Boolean(isRecalculating && hasVisibleResultInSession && displayResult);
+  const showBootPlaceholder = Boolean(isRecalculating && !hasVisibleResultInSession);
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
@@ -688,7 +695,7 @@ export function SimulationPage({
         `}</style>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
-          valuePct={probSuccess}
+          valuePct={showBootPlaceholder ? null : probSuccess}
           stale={showGhostResult}
           subtitle={
             isRecalculating
