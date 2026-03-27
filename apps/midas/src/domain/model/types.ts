@@ -8,6 +8,18 @@ export interface PortfolioWeights {
   rfChile:  number;
 }
 
+export type ManualCapitalDestination = 'liquidity' | 'investments' | 'risk' | 'other';
+
+export interface ManualCapitalAdjustment {
+  id: string;
+  direction: 'add' | 'remove';
+  amount: number;
+  currency: 'CLP' | 'USD' | 'EUR';
+  effectiveDate: string; // YYYY-MM
+  destination: ManualCapitalDestination;
+  note?: string;
+}
+
 export interface CashflowEvent {
   id:          string;
   description: string;

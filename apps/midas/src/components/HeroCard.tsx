@@ -13,7 +13,7 @@ export function HeroCard({
   valuePct: number | null;
   subtitle?: string;
   ruinCopy?: string;
-  chips?: Array<{ id: string; value: string; onClick: () => void }>;
+  chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode }>;
   mode?: 'real' | 'sim';
 }) {
   const pct = valuePct === null ? null : valuePct * 100;
@@ -58,24 +58,26 @@ export function HeroCard({
         {chips && chips.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {chips.map((chip) => (
-              <button
-                key={chip.id}
-                onClick={chip.onClick}
-                style={{
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  padding: '6px 10px',
-                  borderRadius: 999,
-                  cursor: 'pointer',
-                  minWidth: 96,
-                  textAlign: 'center',
-                }}
-              >
-                {chip.value}
-              </button>
+              <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={chip.onClick}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    color: T.textSecondary,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    padding: '6px 10px',
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                    minWidth: 96,
+                    textAlign: 'center',
+                  }}
+                >
+                  {chip.value}
+                </button>
+                {chip.accessory}
+              </div>
             ))}
           </div>
         )}

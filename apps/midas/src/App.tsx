@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CashflowEvent, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
+import type { CashflowEvent, ManualCapitalAdjustment, ModelParameters, ScenarioVariant, ScenarioVariantId, SimulationResults } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { runMidasTriSimulation } from './domain/simulation/policy';
@@ -170,6 +170,22 @@ export default function App() {
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
+  const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
+  const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
+  const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const raw = window.localStorage.getItem('midas:riskCapitalEnabled');
+    return raw === 'true';
+  });
+  const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem('midas:manualCapitalAdjustments');
+      return raw ? (JSON.parse(raw) as ManualCapitalAdjustment[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const simulationTimerRef = useRef<number | null>(null);
   const calculationTimerRef = useRef<number | null>(null);
   const activityHandlerRef = useRef<() => void>();
@@ -194,6 +210,16 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('midas:riskCapitalEnabled', String(riskCapitalEnabled));
+  }, [riskCapitalEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('midas:manualCapitalAdjustments', JSON.stringify(manualCapitalAdjustments));
+  }, [manualCapitalAdjustments]);
 
   useEffect(() => {
     const ensureOverlay = () => {
@@ -272,6 +298,58 @@ export default function App() {
   );
 
   const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => runMidasTriSimulation(params), []);
+  const parseYearMonth = useCallback((value: string) => {
+    const [yearRaw, monthRaw] = value.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+    return { year, month };
+  }, []);
+  const resolveMonthIndex = useCallback((effectiveDate: string) => {
+    const base = aurumSnapshotMonth ? parseYearMonth(aurumSnapshotMonth) : null;
+    const target = parseYearMonth(effectiveDate);
+    if (!base || !target) return 1;
+    const diff = (target.year - base.year) * 12 + (target.month - base.month) + 1;
+    const capped = Math.min(Math.max(1, diff), baseParams.simulation.horizonMonths);
+    return capped;
+  }, [aurumSnapshotMonth, baseParams.simulation.horizonMonths, parseYearMonth]);
+  const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
+    if (currency === 'CLP') return amount;
+    const usdToClp = baseParams.fx?.clpUsdInitial ?? 1;
+    const usdToEur = baseParams.fx?.usdEurFixed ?? 1;
+    if (currency === 'USD') return amount * usdToClp;
+    return amount * usdToClp * usdToEur;
+  }, [baseParams.fx]);
+  const mapDestinationToSleeve = useCallback((destination: ManualCapitalAdjustment['destination']) => {
+    if (destination === 'liquidity') return 'rfChile' as const;
+    if (destination === 'investments') return 'rvGlobal' as const;
+    if (destination === 'risk') return 'rvGlobal' as const;
+    return undefined;
+  }, []);
+
+  const manualAdjustmentImpact = useMemo(() => {
+    let currentDelta = 0;
+    const futureEvents: CashflowEvent[] = [];
+    manualCapitalAdjustments.forEach((adj) => {
+      const amountClp = toClp(adj.amount, adj.currency);
+      const signed = adj.direction === 'add' ? amountClp : -amountClp;
+      const month = resolveMonthIndex(adj.effectiveDate);
+      if (month <= 1) {
+        currentDelta += signed;
+        return;
+      }
+      futureEvents.push({
+        id: `manual-${adj.id}`,
+        description: adj.note ?? adj.destination,
+        month,
+        type: signed > 0 ? 'inflow' : 'outflow',
+        amount: Math.abs(amountClp),
+        currency: 'CLP',
+        sleeve: mapDestinationToSleeve(adj.destination),
+      });
+    });
+    return { currentDelta, futureEvents };
+  }, [manualCapitalAdjustments, mapDestinationToSleeve, resolveMonthIndex, toClp]);
 
   const getSnapshotSignature = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
     const ufSnapshotClp =
@@ -288,6 +366,15 @@ export default function App() {
       ufSnapshotClp,
     ].join('|');
   }, []);
+  const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
+    const total = Number(snapshot.totalNetWorthCLP ?? 0);
+    const totalWithRisk = Number(snapshot.totalNetWorthWithRiskCLP ?? NaN);
+    const optimizable = Number(snapshot.optimizableInvestmentsCLP ?? 0);
+    const optimizableWithRisk = Number(snapshot.optimizableInvestmentsWithRiskCLP ?? NaN);
+    const deltaTotal = Number.isFinite(totalWithRisk) ? totalWithRisk - total : 0;
+    const deltaOptimizable = Number.isFinite(optimizableWithRisk) ? optimizableWithRisk - optimizable : 0;
+    return Math.max(0, deltaTotal, deltaOptimizable);
+  }, []);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
@@ -302,6 +389,8 @@ export default function App() {
       const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
 
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumSnapshotMonth(snapshot.snapshotMonth || null);
+      setRiskCapitalCLP(computeRiskCapital(snapshot));
       if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
@@ -440,6 +529,44 @@ export default function App() {
     setBaseUpdatePending(false);
     queueTriMotorCalculation(base);
   }, [queueTriMotorCalculation, simOverrides]);
+
+  const toggleRiskCapital = useCallback(() => {
+    setRiskCapitalEnabled((prev) => !prev);
+  }, []);
+
+  const addManualCapitalAdjustment = useCallback((next: ManualCapitalAdjustment) => {
+    setManualCapitalAdjustments((prev) => [next, ...prev]);
+  }, []);
+
+  const updateManualCapitalAdjustment = useCallback((next: ManualCapitalAdjustment) => {
+    setManualCapitalAdjustments((prev) => prev.map((item) => (item.id === next.id ? next : item)));
+  }, []);
+
+  const deleteManualCapitalAdjustment = useCallback((id: string) => {
+    setManualCapitalAdjustments((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  useEffect(() => {
+    const baseCapital = baseParamsRef.current.capitalInitial;
+    const riskDelta = riskCapitalEnabled ? riskCapitalCLP : 0;
+    const targetCapital = Math.max(1, baseCapital + manualAdjustmentImpact.currentDelta + riskDelta);
+    const mergedEvents = [
+      ...(baseParamsRef.current.cashflowEvents ?? []),
+      ...manualAdjustmentImpact.futureEvents,
+    ];
+    setSimParams((prev) => {
+      const next: ModelParameters = {
+        ...prev,
+        capitalInitial: targetCapital,
+        cashflowEvents: mergedEvents,
+      };
+      if (!baseUpdatePending) {
+        const base = applySimulationOverrides(next, simOverrides);
+        queueTriMotorCalculation(base);
+      }
+      return next;
+    });
+  }, [baseUpdatePending, manualAdjustmentImpact, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -645,6 +772,8 @@ export default function App() {
       if (!snapshot) {
         setAurumIntegrationStatus('missing');
         setAurumSnapshotLabel(null);
+        setAurumSnapshotMonth(null);
+        setRiskCapitalCLP(0);
         setBaseUpdatePending(false);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -661,6 +790,8 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumSnapshotMonth(snapshot.snapshotMonth || null);
+      setRiskCapitalCLP(computeRiskCapital(snapshot));
 
       const snapshotSignature = getSnapshotSignature(snapshot);
       if (snapshotSignature === lastSnapshotSignatureRef.current) return;
@@ -701,6 +832,8 @@ export default function App() {
         applyLegacyFallback();
         setAurumIntegrationStatus('error');
         setAurumSnapshotLabel(null);
+        setAurumSnapshotMonth(null);
+        setRiskCapitalCLP(0);
       },
     });
 
@@ -742,8 +875,15 @@ export default function App() {
       baseUpdatePending={baseUpdatePending}
       pendingSnapshotLabel={pendingSnapshotLabel}
       pendingSnapshotApplying={pendingSnapshotApplying}
+      manualCapitalAdjustments={manualCapitalAdjustments}
+      riskCapitalEnabled={riskCapitalEnabled}
+      riskCapitalCLP={riskCapitalCLP}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onManualRecalculate={handleManualRecalculate}
+      onToggleRiskCapital={toggleRiskCapital}
+      onAddManualCapitalAdjustment={addManualCapitalAdjustment}
+      onUpdateManualCapitalAdjustment={updateManualCapitalAdjustment}
+      onDeleteManualCapitalAdjustment={deleteManualCapitalAdjustment}
       onSimulationTouch={touchSimulation}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}

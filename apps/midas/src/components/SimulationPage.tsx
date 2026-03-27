@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ManualCapitalAdjustment, ManualCapitalDestination, ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
@@ -72,8 +72,15 @@ export function SimulationPage({
   baseUpdatePending,
   pendingSnapshotLabel,
   pendingSnapshotApplying,
+  manualCapitalAdjustments,
+  riskCapitalEnabled,
+  riskCapitalCLP,
   onApplyPendingSnapshot,
   onManualRecalculate,
+  onToggleRiskCapital,
+  onAddManualCapitalAdjustment,
+  onUpdateManualCapitalAdjustment,
+  onDeleteManualCapitalAdjustment,
   onSimulationTouch,
   onScenarioChange,
   onSimOverridesChange,
@@ -96,8 +103,15 @@ export function SimulationPage({
   baseUpdatePending: boolean;
   pendingSnapshotLabel: string | null;
   pendingSnapshotApplying: boolean;
+  manualCapitalAdjustments: ManualCapitalAdjustment[];
+  riskCapitalEnabled: boolean;
+  riskCapitalCLP: number;
   onApplyPendingSnapshot: () => void;
   onManualRecalculate: () => void;
+  onToggleRiskCapital: () => void;
+  onAddManualCapitalAdjustment: (next: ManualCapitalAdjustment) => void;
+  onUpdateManualCapitalAdjustment: (next: ManualCapitalAdjustment) => void;
+  onDeleteManualCapitalAdjustment: (id: string) => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
@@ -108,7 +122,23 @@ export function SimulationPage({
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
+  const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [movementForm, setMovementForm] = useState({
+    direction: 'add' as 'add' | 'remove',
+    amount: '',
+    currency: 'CLP' as 'CLP' | 'USD' | 'EUR',
+    effectiveDate: '',
+    destination: 'liquidity' as ManualCapitalDestination,
+    note: '',
+  });
   const prevSimActive = useRef(false);
+  const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
+    { value: 'liquidity', label: 'Liquidez / Bancos' },
+    { value: 'investments', label: 'Inversiones financieras' },
+    { value: 'risk', label: 'Capital de riesgo' },
+    { value: 'other', label: 'Otros' },
+  ];
   const aurumStatusVisual = useMemo(() => {
     if (aurumIntegrationStatus === 'available') {
       return {
@@ -289,6 +319,66 @@ export function SimulationPage({
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
   const effectiveCapital = simOverrides?.capital ?? baseCapital;
+  const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
+    if (currency === 'CLP') return amount;
+    const usdToClp = params.fx?.clpUsdInitial ?? 1;
+    const usdToEur = params.fx?.usdEurFixed ?? 1;
+    if (currency === 'USD') return amount * usdToClp;
+    return amount * usdToClp * usdToEur;
+  }, [params.fx]);
+  const manualAdjustmentsSorted = useMemo(
+    () => [...manualCapitalAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
+    [manualCapitalAdjustments],
+  );
+  const manualNetClp = useMemo(
+    () => manualAdjustmentsSorted.reduce((acc, adj) => {
+      const signed = adj.direction === 'add' ? 1 : -1;
+      return acc + signed * toClp(adj.amount, adj.currency);
+    }, 0),
+    [manualAdjustmentsSorted, toClp],
+  );
+  const resetMovementForm = useCallback(() => {
+    setEditingMovementId(null);
+    setMovementForm({
+      direction: 'add',
+      amount: '',
+      currency: 'CLP',
+      effectiveDate: new Date().toISOString().slice(0, 7),
+      destination: 'liquidity',
+      note: '',
+    });
+  }, []);
+  const startEditMovement = useCallback((movement: ManualCapitalAdjustment) => {
+    setEditingMovementId(movement.id);
+    setMovementForm({
+      direction: movement.direction,
+      amount: String(movement.amount),
+      currency: movement.currency,
+      effectiveDate: movement.effectiveDate,
+      destination: movement.destination,
+      note: movement.note ?? '',
+    });
+  }, []);
+  const handleSaveMovement = useCallback(() => {
+    const amount = Number(movementForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
+    const next: ManualCapitalAdjustment = {
+      id: editingMovementId ?? `manual-${Date.now()}`,
+      direction: movementForm.direction,
+      amount,
+      currency: movementForm.currency,
+      effectiveDate,
+      destination: movementForm.destination,
+      note: movementForm.note?.trim() || undefined,
+    };
+    if (editingMovementId) {
+      onUpdateManualCapitalAdjustment(next);
+    } else {
+      onAddManualCapitalAdjustment(next);
+    }
+    resetMovementForm();
+  }, [editingMovementId, movementForm, onAddManualCapitalAdjustment, onUpdateManualCapitalAdjustment, resetMovementForm]);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -377,6 +467,10 @@ export function SimulationPage({
 
   const formatCLP = (value: number) =>
     value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
+  const formatMovementAmount = (amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
+    if (currency === 'CLP') return `$${formatCLP(Math.round(amount))} CLP`;
+    return `${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;
+  };
   const parseCLP = (raw: string) => {
     const cleaned = raw.replace(/\./g, '').replace(/,/g, '').trim();
     const parsed = Number(cleaned);
@@ -702,7 +796,32 @@ export function SimulationPage({
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
             { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
             { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
-            { id: 'capital', value: formatCapital(effectiveCapital), onClick: () => openChip('capital') },
+            {
+              id: 'capital',
+              value: formatCapital(effectiveCapital),
+              onClick: () => openChip('capital'),
+              accessory: (
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetMovementForm();
+                    setCapitalLedgerOpen(true);
+                  }}
+                  style={{
+                    background: T.primary,
+                    border: 'none',
+                    color: '#fff',
+                    borderRadius: 999,
+                    padding: '4px 8px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  +
+                </button>
+              ),
+            },
           ]}
         />
         {showSimToast && (
@@ -966,6 +1085,50 @@ export function SimulationPage({
                   }}
                 >
                   {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Capital de riesgo</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '9px 10px',
+                }}
+              >
+                <div>
+                  <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                    Considerar capital de riesgo
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>
+                    {riskCapitalCLP > 0
+                      ? `Disponible: ${formatCapital(riskCapitalCLP)}`
+                      : 'Sin capital de riesgo informado por Aurum'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onToggleRiskCapital}
+                  style={{
+                    background: riskCapitalEnabled ? T.warning : T.surface,
+                    border: `1px solid ${riskCapitalEnabled ? T.warning : T.border}`,
+                    color: riskCapitalEnabled ? '#2b1a00' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '6px 10px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {riskCapitalEnabled ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
@@ -1267,6 +1430,220 @@ export function SimulationPage({
             </div>
           </div>
         </>
+      )}
+
+      {capitalLedgerOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setCapitalLedgerOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(6, 10, 24, 0.65)',
+            zIndex: 60,
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 520,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 16,
+              padding: 16,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes manuales de capital</div>
+              <button
+                type="button"
+                onClick={() => setCapitalLedgerOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  color: T.textSecondary,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
+              Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
+            </div>
+
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflow: 'auto' }}>
+              {manualAdjustmentsSorted.length === 0 ? (
+                <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                  No hay movimientos cargados.
+                </div>
+              ) : (
+                manualAdjustmentsSorted.map((adj) => {
+                  const sign = adj.direction === 'add' ? '+' : '-';
+                  const destinationLabel = destinationOptions.find((d) => d.value === adj.destination)?.label ?? 'Otros';
+                  return (
+                    <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
+                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                        {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
+                      </div>
+                      {adj.note && (
+                        <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                          {adj.note}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => startEditMovement(adj)}
+                          style={{
+                            background: 'transparent',
+                            border: `1px solid ${T.border}`,
+                            color: T.textSecondary,
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteManualCapitalAdjustment(adj.id)}
+                          style={{
+                            background: 'transparent',
+                            border: `1px solid ${T.negative}`,
+                            color: T.negative,
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Borrar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
+                <select
+                  value={movementForm.direction}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, direction: e.target.value as 'add' | 'remove' }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                >
+                  <option value="add">Sumar</option>
+                  <option value="remove">Restar</option>
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
+                <input
+                  type="number"
+                  value={movementForm.amount}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Moneda</span>
+                <select
+                  value={movementForm.currency}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, currency: e.target.value as 'CLP' | 'USD' | 'EUR' }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                >
+                  <option value="CLP">CLP</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Fecha efectiva</span>
+                <input
+                  type="month"
+                  value={movementForm.effectiveDate}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                />
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Destino</span>
+                <select
+                  value={movementForm.destination}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, destination: e.target.value as ManualCapitalDestination }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                >
+                  {destinationOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Nota</span>
+                <input
+                  type="text"
+                  value={movementForm.note}
+                  onChange={(e) => setMovementForm((prev) => ({ ...prev, note: e.target.value }))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={handleSaveMovement}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 10,
+                  padding: '8px 14px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+              </button>
+              {editingMovementId && (
+                <button
+                  type="button"
+                  onClick={resetMovementForm}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${T.border}`,
+                    color: T.textSecondary,
+                    borderRadius: 10,
+                    padding: '8px 14px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancelar edición
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <button
