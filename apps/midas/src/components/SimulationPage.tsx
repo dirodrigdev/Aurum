@@ -201,7 +201,8 @@ export function SimulationPage({
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
-  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error' || simUiState === 'recalculating';
+  const isRecalculating = simUiState === 'recalculating' || baseUpdatePending || aurumSyncing;
+  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
@@ -397,7 +398,7 @@ export function SimulationPage({
     }
   }, [simActive]);
 
-  const displayResult = hideResultBlocks ? null : resultCentral;
+  const displayResult = hideResultBlocks || isRecalculating ? null : resultCentral;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
@@ -453,10 +454,10 @@ export function SimulationPage({
     }
     const next: SimulationOverrides = {
       active: true,
-      returnPct: simOverrides?.returnPct ?? baseReturn,
-      horizonYears: simOverrides?.horizonYears ?? baseYears,
-      capital: simOverrides?.capital ?? baseCapital,
       preset: 'custom',
+      ...(simOverrides?.returnPct !== undefined ? { returnPct: simOverrides.returnPct } : {}),
+      ...(simOverrides?.horizonYears !== undefined ? { horizonYears: simOverrides.horizonYears } : {}),
+      ...(simOverrides?.capital !== undefined ? { capital: simOverrides.capital } : {}),
     };
     if (activeChip === 'return') next.returnPct = parsed / 100;
     if (activeChip === 'years') next.horizonYears = Math.max(1, Math.round(parsed));
@@ -565,21 +566,6 @@ export function SimulationPage({
       >
         {aurumStatusVisual.copy}
       </div>
-      <div
-        style={{
-          background: compositionStatusVisual.bg,
-          border: `1px solid ${compositionStatusVisual.border}`,
-          borderRadius: 12,
-          padding: '9px 12px',
-          color: compositionStatusVisual.color,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 700 }}>{compositionStatusVisual.copy}</span>
-        <span style={{ fontSize: 11, opacity: 0.92 }}>{compositionStatusVisual.detail}</span>
-      </div>
       {baseUpdatePending && (
         <div
           style={{
@@ -593,44 +579,6 @@ export function SimulationPage({
           }}
         >
           Base Aurum actualizada. Resultado pendiente de recalcular.
-        </div>
-      )}
-      {motorWarnings.length > 0 && (
-        <div
-          style={{
-            background: 'rgba(255, 176, 32, 0.10)',
-            border: '1px solid rgba(255, 176, 32, 0.35)',
-            borderRadius: 12,
-            padding: '9px 12px',
-            color: T.warning,
-            fontSize: 11,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
-        >
-          <span style={{ fontWeight: 700 }}>Motor · warnings</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {motorWarnings.slice(0, 4).map((warning) => (
-              <span
-                key={warning}
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 999,
-                  background: 'rgba(255, 176, 32, 0.16)',
-                  border: '1px solid rgba(255, 176, 32, 0.45)',
-                  fontSize: 10,
-                }}
-              >
-                {warning}
-              </span>
-            ))}
-          </div>
-          {lastRebalanceMonth ? (
-            <span style={{ opacity: 0.85 }}>
-              Último rebalanceo anual: mes {lastRebalanceMonth}
-            </span>
-          ) : null}
         </div>
       )}
       <div
@@ -774,7 +722,6 @@ export function SimulationPage({
           </button>
         </div>
       )}
-      {!hideResultBlocks ? (
       <div style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
@@ -786,9 +733,11 @@ export function SimulationPage({
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={probSuccess}
           subtitle={
-            displayResult
-              ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
-              : 'Corre una simulación para ver resultados'
+            isRecalculating
+              ? 'Calculando simulación...'
+              : displayResult
+                ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
+                : 'Corre una simulación para ver resultados'
           }
           ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
           mode={simActive ? 'sim' : 'real'}
@@ -916,19 +865,6 @@ export function SimulationPage({
           </div>
         )}
       </div>
-      ) : (
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 16 }}>
-        <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-          SIMULACION
-        </div>
-        <div style={{ color: T.textPrimary, marginTop: 8, fontWeight: 700 }}>
-          Resultado en recálculo
-        </div>
-        <div style={{ color: T.textSecondary, marginTop: 6, fontSize: 13 }}>
-          Esperando resultado coherente con la base Aurum actual.
-        </div>
-      </div>
-      )}
 
       {!hideResultBlocks && displayResult && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
@@ -1432,6 +1368,52 @@ export function SimulationPage({
         </>
       )}
 
+      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth) && (
+        <details
+          style={{
+            marginTop: 12,
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+            color: T.textSecondary,
+            fontSize: 11,
+          }}
+        >
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
+            Detalles técnicos
+          </summary>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
+            <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
+            {motorWarnings.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {motorWarnings.map((warning) => (
+                  <span
+                    key={warning}
+                    style={{
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: 'rgba(255, 176, 32, 0.16)',
+                      border: '1px solid rgba(255, 176, 32, 0.45)',
+                      color: T.warning,
+                      fontSize: 10,
+                    }}
+                  >
+                    {warning}
+                  </span>
+                ))}
+              </div>
+            )}
+            {lastRebalanceMonth ? (
+              <span style={{ color: T.textMuted }}>
+                Último rebalanceo anual: mes {lastRebalanceMonth}
+              </span>
+            ) : null}
+          </div>
+        </details>
+      )}
+
       {capitalLedgerOpen && (
         <div
           role="dialog"
@@ -1474,7 +1456,7 @@ export function SimulationPage({
                   cursor: 'pointer',
                 }}
               >
-                Cerrar
+                Cancelar
               </button>
             </div>
 
@@ -1623,7 +1605,7 @@ export function SimulationPage({
                   cursor: 'pointer',
                 }}
               >
-                {editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+                {editingMovementId ? 'Guardar cambios' : 'Guardar movimiento'}
               </button>
               {editingMovementId && (
                 <button

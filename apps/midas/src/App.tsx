@@ -330,14 +330,15 @@ export default function App() {
   const manualAdjustmentImpact = useMemo(() => {
     let currentDelta = 0;
     const futureEvents: CashflowEvent[] = [];
+    const todayKey = new Date().toISOString().slice(0, 7);
     manualCapitalAdjustments.forEach((adj) => {
       const amountClp = toClp(adj.amount, adj.currency);
       const signed = adj.direction === 'add' ? amountClp : -amountClp;
-      const month = resolveMonthIndex(adj.effectiveDate);
-      if (month <= 1) {
+      if (adj.effectiveDate <= todayKey) {
         currentDelta += signed;
         return;
       }
+      const month = resolveMonthIndex(adj.effectiveDate);
       futureEvents.push({
         id: `manual-${adj.id}`,
         description: adj.note ?? adj.destination,
