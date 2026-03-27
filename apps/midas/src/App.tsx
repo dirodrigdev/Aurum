@@ -534,6 +534,22 @@ export default function App() {
         Number.isFinite(riskExposure.baseWithRiskCLP) && riskExposure.baseWithRiskCLP > 0
           ? riskExposure.baseWithRiskCLP
           : aurumNetWorth + riskExposure.riskTotalCLP;
+      const compositionWithToggle = composition
+        ? {
+            ...composition,
+            nonOptimizable: {
+              ...composition.nonOptimizable,
+              riskCapital: {
+                ...(composition.nonOptimizable?.riskCapital ?? {}),
+                source: composition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
+                usdSnapshotCLP: riskExposure.usdSnapshotCLP,
+                usdTotal: riskCapitalEnabled ? riskExposure.usdTotal : 0,
+                usd: riskCapitalEnabled ? riskExposure.usdTotal : 0,
+                totalCLP: riskCapitalEnabled ? riskExposure.riskTotalCLP : 0,
+              },
+            },
+          }
+        : composition;
 
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumSnapshotMonth(snapshot.snapshotMonth || null);
@@ -553,7 +569,7 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
 
       const currentBase = baseParamsRef.current;
-      const nextBaseComposition = composition ?? currentBase.simulationComposition;
+      const nextBaseComposition = compositionWithToggle ?? currentBase.simulationComposition;
       const baseTargetCapital = aurumNetWorth;
       const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
       const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
@@ -569,7 +585,7 @@ export default function App() {
       const currentSim = simParamsRef.current;
       const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
       const shouldApplyCapital = !hasCapitalOverride;
-      const nextSimComposition = composition ?? currentSim.simulationComposition;
+      const nextSimComposition = compositionWithToggle ?? currentSim.simulationComposition;
       const baseSimCapital = riskCapitalEnabled ? aurumNetWorthWithRisk : aurumNetWorth;
       const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
