@@ -191,10 +191,13 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
   const totalCLP = riskCapitalFromSummary ?? clpDelta ?? usdComponentClp;
   if (totalCLP === null || totalCLP <= 0) return undefined;
 
+  // `analysisByCurrency.clpWithRisk - clpWithoutRisk` representa el tramo CLP real.
+  // No debe descontar la porción USD convertida.
   let clpComponent: number | null = null;
-  if (clpDelta !== null && usdComponentClp !== null) {
-    clpComponent = Math.max(0, clpDelta - usdComponentClp);
+  if (clpDelta !== null) {
+    clpComponent = Math.max(0, clpDelta);
   } else if (usdDelta !== null && usdComponentClp !== null) {
+    // Fallback cuando no hay desglose CLP explícito.
     clpComponent = Math.max(0, totalCLP - usdComponentClp);
   }
 
