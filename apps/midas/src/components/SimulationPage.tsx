@@ -219,7 +219,7 @@ export function SimulationPage({
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
   const isRecalculating = simUiState === 'recalculating' || baseUpdatePending || aurumSyncing;
-  const hideResultBlocks = baseUpdatePending || aurumSyncing || simUiState === 'error';
+  const hideResultBlocks = simUiState === 'error';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
@@ -452,7 +452,8 @@ export function SimulationPage({
     }
   }, [simActive]);
 
-  const displayResult = hideResultBlocks || isRecalculating ? null : resultCentral;
+  const displayResult = hideResultBlocks ? null : resultCentral;
+  const showGhostResult = Boolean(isRecalculating && displayResult);
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
@@ -680,6 +681,7 @@ export function SimulationPage({
         <button
           type="button"
           onClick={toggleLiquidarDepto}
+          disabled={isRecalculating}
           style={{
             background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.2)' : 'rgba(255, 176, 32, 0.2)',
             border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : 'rgba(255, 176, 32, 0.55)'}`,
@@ -688,7 +690,8 @@ export function SimulationPage({
             fontSize: 11,
             fontWeight: 700,
             padding: '6px 10px',
-            cursor: 'pointer',
+            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating ? 0.6 : 1,
             whiteSpace: 'nowrap',
           }}
         >
@@ -786,6 +789,7 @@ export function SimulationPage({
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={probSuccess}
+          stale={showGhostResult}
           subtitle={
             isRecalculating
               ? 'Calculando simulación...'
@@ -921,7 +925,17 @@ export function SimulationPage({
       </div>
 
       {!hideResultBlocks && displayResult && probSuccess !== null && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 14,
+            padding: 14,
+            opacity: showGhostResult ? 0.58 : 1,
+            filter: showGhostResult ? 'grayscale(0.2)' : 'none',
+            transition: 'opacity 180ms ease, filter 180ms ease',
+          }}
+        >
           <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
               <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
@@ -960,6 +974,7 @@ export function SimulationPage({
                     key={variant.id}
                     type="button"
                     onClick={() => onScenarioChange(variant.id)}
+                    disabled={isRecalculating}
                     title={`${variant.label}: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
@@ -971,7 +986,8 @@ export function SimulationPage({
                       borderRadius: '50%',
                       border: `2px solid ${zoneColor}`,
                       background: active ? zoneColor : T.surface,
-                      cursor: 'pointer',
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.7 : 1,
                       padding: 0,
                     }}
                   />
@@ -1062,6 +1078,7 @@ export function SimulationPage({
                 <button
                   type="button"
                   onClick={toggleLiquidarDepto}
+                  disabled={isRecalculating}
                   style={{
                     background: liquidarDeptoEnabled ? T.positive : T.surface,
                     border: `1px solid ${liquidarDeptoEnabled ? T.positive : T.border}`,
@@ -1070,7 +1087,8 @@ export function SimulationPage({
                     padding: '6px 10px',
                     fontSize: 11,
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.6 : 1,
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -1106,6 +1124,7 @@ export function SimulationPage({
                 <button
                   type="button"
                   onClick={onToggleRiskCapital}
+                  disabled={isRecalculating}
                   style={{
                     background: riskCapitalEnabled ? T.warning : T.surface,
                     border: `1px solid ${riskCapitalEnabled ? T.warning : T.border}`,
@@ -1114,7 +1133,8 @@ export function SimulationPage({
                     padding: '6px 10px',
                     fontSize: 11,
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.6 : 1,
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -1220,7 +1240,16 @@ export function SimulationPage({
       </div>
 
       {!hideResultBlocks && (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
+          gap: 10,
+          opacity: showGhostResult ? 0.58 : 1,
+          filter: showGhostResult ? 'grayscale(0.2)' : 'none',
+          transition: 'opacity 180ms ease, filter 180ms ease',
+        }}
+      >
         <InfoCard
           label="Gasto modelado / planificado"
           value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
@@ -1234,7 +1263,17 @@ export function SimulationPage({
 
       {!hideResultBlocks && displayResult && (
         <>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+          <div
+            style={{
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              padding: 14,
+              opacity: showGhostResult ? 0.58 : 1,
+              filter: showGhostResult ? 'grayscale(0.2)' : 'none',
+              transition: 'opacity 180ms ease, filter 180ms ease',
+            }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', flex: 1 }}>
@@ -1249,6 +1288,7 @@ export function SimulationPage({
                       key={variant.id}
                       type="button"
                       onClick={() => onScenarioChange(variant.id)}
+                      disabled={isRecalculating}
                       style={{
                         background: active
                           ? T.primary
@@ -1262,7 +1302,7 @@ export function SimulationPage({
                         fontSize: 11,
                         padding: '5px 10px',
                         borderRadius: 999,
-                        cursor: 'pointer',
+                        cursor: isRecalculating ? 'not-allowed' : 'pointer',
                         opacity: custom && !isBase ? 0.45 : 1,
                         boxShadow: highlightedReset
                           ? 'inset 0 0 0 1px rgba(91, 140, 255, 0.25)'

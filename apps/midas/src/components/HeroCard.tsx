@@ -8,6 +8,7 @@ export function HeroCard({
   ruinCopy,
   chips,
   mode = 'real',
+  stale = false,
 }: {
   label: string;
   valuePct: number | null;
@@ -15,6 +16,7 @@ export function HeroCard({
   ruinCopy?: string;
   chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode }>;
   mode?: 'real' | 'sim';
+  stale?: boolean;
 }) {
   const pct = valuePct === null ? null : valuePct * 100;
   const tone =
@@ -33,6 +35,9 @@ export function HeroCard({
         border: simMode ? `1px solid ${T.primary}` : `1px solid ${T.border}`,
         borderRadius: 16,
         padding: 16,
+        opacity: stale ? 0.58 : 1,
+        filter: stale ? 'grayscale(0.22)' : 'none',
+        transition: 'opacity 180ms ease, filter 180ms ease',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
