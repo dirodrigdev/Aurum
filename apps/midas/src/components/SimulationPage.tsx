@@ -380,6 +380,13 @@ export function SimulationPage({
     }
     resetMovementForm();
   }, [editingMovementId, movementForm, onAddManualCapitalAdjustment, onUpdateManualCapitalAdjustment, resetMovementForm]);
+  const handleSaveAndClose = useCallback(() => {
+    const amount = Number(movementForm.amount);
+    if (Number.isFinite(amount) && amount > 0) {
+      handleSaveMovement();
+    }
+    setCapitalLedgerOpen(false);
+  }, [handleSaveMovement, movementForm.amount]);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -1445,7 +1452,7 @@ export function SimulationPage({
               <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes manuales de capital</div>
               <button
                 type="button"
-                onClick={() => setCapitalLedgerOpen(false)}
+                onClick={handleSaveAndClose}
                 style={{
                   background: 'transparent',
                   border: `1px solid ${T.border}`,
@@ -1456,7 +1463,7 @@ export function SimulationPage({
                   cursor: 'pointer',
                 }}
               >
-                Cancelar
+                Guardar y salir
               </button>
             </div>
 
@@ -1605,7 +1612,21 @@ export function SimulationPage({
                   cursor: 'pointer',
                 }}
               >
-                {editingMovementId ? 'Guardar cambios' : 'Guardar movimiento'}
+                {editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCapitalLedgerOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  borderRadius: 10,
+                  padding: '8px 14px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
               </button>
               {editingMovementId && (
                 <button

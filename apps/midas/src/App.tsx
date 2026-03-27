@@ -194,6 +194,7 @@ export default function App() {
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
+  const manualDeltaRef = useRef(0);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -351,6 +352,19 @@ export default function App() {
     });
     return { currentDelta, futureEvents };
   }, [manualCapitalAdjustments, mapDestinationToSleeve, resolveMonthIndex, toClp]);
+
+  const manualOptimizableDelta = useMemo(() => {
+    let delta = 0;
+    const todayKey = new Date().toISOString().slice(0, 7);
+    manualCapitalAdjustments.forEach((adj) => {
+      if (adj.destination !== 'investments') return;
+      if (adj.effectiveDate > todayKey) return;
+      const amountClp = toClp(adj.amount, adj.currency);
+      const signed = adj.direction === 'add' ? amountClp : -amountClp;
+      delta += signed;
+    });
+    return delta;
+  }, [manualCapitalAdjustments, toClp]);
 
   const getSnapshotSignature = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
     const ufSnapshotClp =
@@ -550,11 +564,20 @@ export default function App() {
   useEffect(() => {
     const baseCapital = baseParamsRef.current.capitalInitial;
     const riskDelta = riskCapitalEnabled ? riskCapitalCLP : 0;
-    const targetCapital = Math.max(1, baseCapital + manualAdjustmentImpact.currentDelta + riskDelta);
+    const nextDelta = manualAdjustmentImpact.currentDelta + riskDelta;
+    const targetCapital = Math.max(1, baseCapital + nextDelta);
     const mergedEvents = [
       ...(baseParamsRef.current.cashflowEvents ?? []),
       ...manualAdjustmentImpact.futureEvents,
     ];
+    const deltaChange = nextDelta - manualDeltaRef.current;
+    if (Math.abs(deltaChange) > 0.0001 && simOverrides?.active && typeof simOverrides.capital === 'number') {
+      setSimOverrides((prev) => {
+        if (!prev || !prev.active || typeof prev.capital !== 'number') return prev;
+        return { ...prev, capital: Math.max(1, prev.capital + deltaChange) };
+      });
+    }
+    manualDeltaRef.current = nextDelta;
     setSimParams((prev) => {
       const next: ModelParameters = {
         ...prev,
@@ -710,6 +733,13 @@ export default function App() {
     sourceLabel: 'Aurum · último cierre confirmado',
     status: 'pending',
   });
+  const optimizableBaseAdjusted = useMemo<OptimizableBaseReference>(() => {
+    if (!optimizableBaseReference.amountClp) return optimizableBaseReference;
+    return {
+      ...optimizableBaseReference,
+      amountClp: Math.max(0, optimizableBaseReference.amountClp + manualOptimizableDelta),
+    };
+  }, [manualOptimizableDelta, optimizableBaseReference]);
   const [aurumIntegrationStatus, setAurumIntegrationStatus] = useState<AurumIntegrationStatus>(
     aurumIntegrationConfigured ? 'loading' : 'unconfigured',
   );
@@ -897,7 +927,7 @@ export default function App() {
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'settings' ? (
     <SettingsPage
-      optimizableBaseReference={optimizableBaseReference}
+      optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
     />
   ) : (
@@ -908,7 +938,7 @@ export default function App() {
       simulationLabel={stateLabel}
       preloadedBaseStats={baseOptimizerSnapshot}
       preloadedSimulationStats={simulationOptimizerSnapshot}
-      optimizableBaseReference={optimizableBaseReference}
+      optimizableBaseReference={optimizableBaseAdjusted}
     />
   );
 
