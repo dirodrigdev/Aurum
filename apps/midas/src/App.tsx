@@ -671,25 +671,27 @@ export default function App() {
   const applyPendingSnapshot = useCallback(() => {
     if (!pendingSnapshot || !pendingSnapshotSignature) return;
     if (applyingSnapshotRef.current) return;
-    try {
-      applyingSnapshotRef.current = true;
-      setPendingSnapshotApplying(true);
-      setSimUiError(null);
-      lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
-      applySnapshotNow(pendingSnapshot, { recalc: true });
-      setPendingSnapshot(null);
-      setPendingSnapshotLabel(null);
-      setPendingSnapshotSignature(null);
-      setBaseUpdatePending(false);
-    } catch (error: unknown) {
-      const entry = formatRuntimeError('applyPendingSnapshot', error);
-      setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
-      setSimUiState('error');
-      setSimUiError(error instanceof Error ? error.message : 'Error aplicando snapshot.');
-    } finally {
-      applyingSnapshotRef.current = false;
-      setPendingSnapshotApplying(false);
-    }
+    applyingSnapshotRef.current = true;
+    setPendingSnapshotApplying(true);
+    setSimUiError(null);
+    window.setTimeout(() => {
+      try {
+        lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
+        applySnapshotNow(pendingSnapshot, { recalc: true });
+        setPendingSnapshot(null);
+        setPendingSnapshotLabel(null);
+        setPendingSnapshotSignature(null);
+        setBaseUpdatePending(false);
+      } catch (error: unknown) {
+        const entry = formatRuntimeError('applyPendingSnapshot', error);
+        setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
+        setSimUiState('error');
+        setSimUiError(error instanceof Error ? error.message : 'Error aplicando snapshot.');
+      } finally {
+        applyingSnapshotRef.current = false;
+        setPendingSnapshotApplying(false);
+      }
+    }, 0);
   }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
 
   const handleManualRecalculate = useCallback(() => {

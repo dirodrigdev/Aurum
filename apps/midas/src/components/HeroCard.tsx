@@ -27,6 +27,7 @@ export function HeroCard({
         : pct >= 85
           ? T.warning
           : T.negative;
+  const valueTone = stale ? 'rgba(178, 187, 201, 0.68)' : tone;
   const simMode = mode === 'sim';
   return (
     <div
@@ -35,9 +36,6 @@ export function HeroCard({
         border: simMode ? `1px solid ${T.primary}` : `1px solid ${T.border}`,
         borderRadius: 16,
         padding: 16,
-        opacity: stale ? 0.58 : 1,
-        filter: stale ? 'grayscale(0.22)' : 'none',
-        transition: 'opacity 180ms ease, filter 180ms ease',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -53,9 +51,10 @@ export function HeroCard({
             fontSize: 72,
             fontWeight: 700,
             lineHeight: 1,
-            color: tone,
+            color: valueTone,
             minWidth: 0,
             flex: 1,
+            transition: 'color 180ms ease',
           }}
         >
           {pct === null ? '—' : `${pct.toFixed(1)}%`}

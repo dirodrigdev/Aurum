@@ -925,17 +925,7 @@ export function SimulationPage({
       </div>
 
       {!hideResultBlocks && displayResult && probSuccess !== null && (
-        <div
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 14,
-            padding: 14,
-            opacity: showGhostResult ? 0.58 : 1,
-            filter: showGhostResult ? 'grayscale(0.2)' : 'none',
-            transition: 'opacity 180ms ease, filter 180ms ease',
-          }}
-        >
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
           <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
               <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
@@ -1245,9 +1235,6 @@ export function SimulationPage({
           display: 'grid',
           gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
           gap: 10,
-          opacity: showGhostResult ? 0.58 : 1,
-          filter: showGhostResult ? 'grayscale(0.2)' : 'none',
-          transition: 'opacity 180ms ease, filter 180ms ease',
         }}
       >
         <InfoCard
@@ -1263,17 +1250,7 @@ export function SimulationPage({
 
       {!hideResultBlocks && displayResult && (
         <>
-          <div
-            style={{
-              background: T.surface,
-              border: `1px solid ${T.border}`,
-              borderRadius: 12,
-              padding: 14,
-              opacity: showGhostResult ? 0.58 : 1,
-              filter: showGhostResult ? 'grayscale(0.2)' : 'none',
-              transition: 'opacity 180ms ease, filter 180ms ease',
-            }}
-          >
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', flex: 1 }}>
