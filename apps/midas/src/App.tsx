@@ -190,6 +190,10 @@ function normalizeRiskCapitalExposure(
       ? baseWithRiskCLP - baseWithoutRiskCLP
       : 0;
   const rawTotalCLP = Number(risk?.totalCLP ?? 0);
+  const hasExplicitTotalCLP =
+    risk != null &&
+    Object.prototype.hasOwnProperty.call(risk, 'totalCLP') &&
+    Number.isFinite(rawTotalCLP);
   const rawCLP = Number(risk?.clp ?? 0);
   const rawUSD = Number(risk?.usd ?? 0);
   const rawUsdTotal = Number(risk?.usdTotal ?? 0);
@@ -199,10 +203,12 @@ function normalizeRiskCapitalExposure(
   const usdComponent = Number.isFinite(rawUSD) && rawUSD > 0 ? rawUSD : 0;
   const totalClpComponent = Number.isFinite(rawTotalCLP) && rawTotalCLP > 0 ? rawTotalCLP : 0;
   const usdTotalFromRaw = usdComponent + (clpComponent / safeUsdSnapshotCLP);
-  const totalClpForExposure = Math.max(totalClpComponent, riskFromTotals);
+  const totalClpForExposure = hasExplicitTotalCLP ? Math.max(0, rawTotalCLP) : Math.max(totalClpComponent, riskFromTotals);
   const usdTotalFromTotalClp = totalClpForExposure / safeUsdSnapshotCLP;
   const usdTotalFromInput = Number.isFinite(rawUsdTotal) && rawUsdTotal > 0 ? rawUsdTotal : 0;
-  const usdTotal = Math.max(0, usdTotalFromInput, usdTotalFromRaw, usdTotalFromTotalClp);
+  const usdTotal = hasExplicitTotalCLP
+    ? Math.max(0, usdTotalFromTotalClp)
+    : Math.max(0, usdTotalFromInput, usdTotalFromRaw, usdTotalFromTotalClp);
   const riskTotalCLP = totalClpForExposure > 0 ? totalClpForExposure : usdTotal * safeUsdSnapshotCLP;
   const finalWithRisk = baseWithoutRiskCLP > 0
     ? baseWithoutRiskCLP + riskTotalCLP
@@ -754,6 +760,10 @@ export default function App() {
         }
       }
 
+      const targetVisibleCapital = riskCapitalEnabled
+        ? targetWithoutRisk + riskClpApplied
+        : targetWithoutRisk;
+
       const nextComposition: SimulationCompositionInput = {
         ...baseComposition,
         optimizableInvestmentsCLP: nextOptimizable,
@@ -761,7 +771,7 @@ export default function App() {
           ...baseComposition.nonOptimizable,
           banksCLP: nextBanks,
           riskCapital: {
-            ...(baseComposition.nonOptimizable?.riskCapital ?? {}),
+            source: baseComposition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
             usdSnapshotCLP: riskUsdSnapshot,
             usdTotal: riskUsdApplied,
             usd: riskUsdApplied,
@@ -772,7 +782,7 @@ export default function App() {
       next = {
         ...next,
         simulationComposition: nextComposition,
-        capitalInitial: deriveVisibleCapitalFromComposition(nextComposition, true) ?? currentSimParams.capitalInitial,
+        capitalInitial: Math.max(1, targetVisibleCapital),
       };
     } else {
       const riskDelta = riskCapitalEnabled
