@@ -433,7 +433,15 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
     let logCPU = Math.log(fx.clpUsdInitial);
     let logCPUr = 0;
     let logEURUSD = Math.log(fx.usdEurFixed);
-    let hwm = Math.max(1, liquidState.banks + liquidState.sleeves.rvGlobal + liquidState.sleeves.rfGlobal + liquidState.sleeves.rvChile + liquidState.sleeves.rfChile);
+    let hwm = Math.max(
+      1,
+      liquidState.banks +
+        liquidState.riskUsdCLP +
+        liquidState.sleeves.rvGlobal +
+        liquidState.sleeves.rfGlobal +
+        liquidState.sleeves.rvChile +
+        liquidState.sleeves.rfChile,
+    );
     let smult = 1;
     let cnt15 = 0;
     let cnt25 = 0;
@@ -488,6 +496,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
         rvChile: rRVcl,
         rfChile: rRFcl,
         banks: bankMonthly,
+        riskUsd: rRVg + dFX + rRVg * dFX,
       });
 
       const investBeforeFee =
@@ -615,6 +624,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
         : clampNonNegative(equityCLP);
     const finalLiquid =
       liquidState.banks +
+      liquidState.riskUsdCLP +
       liquidState.sleeves.rvGlobal +
       liquidState.sleeves.rfGlobal +
       liquidState.sleeves.rvChile +

@@ -3,6 +3,7 @@ import type { MortgageProjectionPoint } from './mortgageProjection';
 
 export type LiquidPathState = {
   banks: number;
+  riskUsdCLP: number;
   sleeves: {
     rvGlobal: number;
     rfGlobal: number;
@@ -14,6 +15,7 @@ export type LiquidPathState = {
 export type BlockSnapshot = {
   month: number;
   banks: number;
+  riskCapitalCLP: number;
   bucketRF: number;
   otherRF: number;
   equityAssets: number;
@@ -73,8 +75,18 @@ export function buildInitialLiquidState(params: ModelParameters): LiquidPathStat
   const normalized = normalizeWeights(params.weights);
   const optimizable = clamp(composition?.optimizableInvestmentsCLP ?? params.capitalInitial);
   const banks = clamp(composition?.nonOptimizable?.banksCLP ?? 0);
+  const riskCapital = composition?.nonOptimizable?.riskCapital;
+  const usdSnapshotCLP = clamp(riskCapital?.usdSnapshotCLP ?? params.fx?.clpUsdInitial ?? 0);
+  const usdTotal = clamp(
+    riskCapital?.usdTotal ??
+      (clamp(riskCapital?.usd ?? 0) + (usdSnapshotCLP > 0 ? clamp(riskCapital?.clp ?? 0) / usdSnapshotCLP : 0)),
+  );
+  const riskUsdCLP = usdTotal > 0
+    ? usdTotal * (usdSnapshotCLP > 0 ? usdSnapshotCLP : 1)
+    : clamp(riskCapital?.totalCLP ?? 0);
   return {
     banks,
+    riskUsdCLP,
     sleeves: {
       rvGlobal: normalized.rvGlobal * optimizable,
       rfGlobal: normalized.rfGlobal * optimizable,
@@ -90,12 +102,14 @@ export function applySleeveReturns(state: LiquidPathState, monthlyReturns: {
   rvChile: number;
   rfChile: number;
   banks: number;
+  riskUsd: number;
 }): void {
   state.sleeves.rvGlobal *= 1 + monthlyReturns.rvGlobal;
   state.sleeves.rfGlobal *= 1 + monthlyReturns.rfGlobal;
   state.sleeves.rvChile *= 1 + monthlyReturns.rvChile;
   state.sleeves.rfChile *= 1 + monthlyReturns.rfChile;
   state.banks *= 1 + monthlyReturns.banks;
+  state.riskUsdCLP *= 1 + monthlyReturns.riskUsd;
 }
 
 function splitRf(sleeves: LiquidPathState['sleeves'], bucketTarget: number) {
@@ -141,6 +155,14 @@ function withdrawFromEquityProRata(sleeves: LiquidPathState['sleeves'], amount: 
   return remaining;
 }
 
+function withdrawFromRisk(state: LiquidPathState, amount: number): number {
+  let remaining = Math.max(0, amount);
+  const take = Math.min(remaining, clamp(state.riskUsdCLP));
+  state.riskUsdCLP = Math.max(0, state.riskUsdCLP - take);
+  remaining -= take;
+  return remaining;
+}
+
 export function applyExpenseWaterfall(
   state: LiquidPathState,
   monthlyExpense: number,
@@ -162,6 +184,7 @@ export function applyExpenseWaterfall(
   remaining = withdrawFromRfProRata(state.sleeves, otherTake);
 
   remaining = withdrawFromEquityProRata(state.sleeves, remaining);
+  remaining = withdrawFromRisk(state, remaining);
 
   return {
     paid: before - remaining,
@@ -228,10 +251,12 @@ export function captureBlockSnapshot(
 ): BlockSnapshot {
   const rfSplit = splitRf(state.sleeves, expense * 36);
   const equityAssets = clamp(state.sleeves.rvGlobal) + clamp(state.sleeves.rvChile);
-  const liquidCapital = clamp(state.banks) + rfSplit.rfTotal + equityAssets;
+  const riskCapitalCLP = clamp(state.riskUsdCLP);
+  const liquidCapital = clamp(state.banks) + rfSplit.rfTotal + equityAssets + riskCapitalCLP;
   return {
     month,
     banks: clamp(state.banks),
+    riskCapitalCLP,
     bucketRF: rfSplit.bucketRF,
     otherRF: rfSplit.otherRF,
     equityAssets,

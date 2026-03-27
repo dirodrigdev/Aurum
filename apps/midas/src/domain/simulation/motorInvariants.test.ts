@@ -299,6 +299,7 @@ test('bucket rebalance does not create magic capital', () => {
   const params = makeBaseParams();
   const stateA = {
     banks: 0,
+    riskUsdCLP: 0,
     sleeves: {
       rvGlobal: 0,
       rvChile: 0,
@@ -311,6 +312,7 @@ test('bucket rebalance does not create magic capital', () => {
 
   const stateB = {
     banks: 0,
+    riskUsdCLP: 0,
     sleeves: {
       rvGlobal: 0,
       rvChile: 100,

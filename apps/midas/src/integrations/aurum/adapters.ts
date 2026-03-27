@@ -149,6 +149,10 @@ export function snapshotToSimulationComposition(
   const propertyValueCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) : 0;
   const mortgageDebtOutstandingCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) : 0;
   const ufSnapshotCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.ufSnapshotCLP) : 0;
+  const riskCapitalTotalCLP = isV2 ? asFiniteOrZero(snapshotV2?.riskCapital?.totalCLP) : 0;
+  const riskCapitalCLP = isV2 ? asFiniteOrZero(snapshotV2?.riskCapital?.clp) : 0;
+  const riskCapitalUSD = isV2 ? asFiniteOrZero(snapshotV2?.riskCapital?.usd) : 0;
+  const riskCapitalUsdSnapshotCLP = isV2 ? asFiniteOrZero(snapshotV2?.riskCapital?.usdSnapshotCLP) : 0;
   const realEstateEquityDerived = Math.max(0, propertyValueCLP - mortgageDebtOutstandingCLP);
   const realEstateEquityFromSnapshot = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.realEstateEquityCLP) : 0;
   const realEstateEquityCLP = realEstateEquityFromSnapshot > 0 ? realEstateEquityFromSnapshot : realEstateEquityDerived;
@@ -217,6 +221,17 @@ export function snapshotToSimulationComposition(
               ...(snapshotV2?.nonOptimizable?.realEstate?.amortizationSystem
                 ? { amortizationSystem: snapshotV2.nonOptimizable.realEstate.amortizationSystem }
                 : {}),
+            },
+          }
+        : {}),
+      ...(riskCapitalTotalCLP > 0 || riskCapitalCLP > 0 || riskCapitalUSD > 0
+        ? {
+            riskCapital: {
+              ...(riskCapitalTotalCLP > 0 ? { totalCLP: riskCapitalTotalCLP } : {}),
+              ...(riskCapitalCLP > 0 ? { clp: riskCapitalCLP } : {}),
+              ...(riskCapitalUSD > 0 ? { usd: riskCapitalUSD } : {}),
+              ...(riskCapitalUsdSnapshotCLP > 0 ? { usdSnapshotCLP: riskCapitalUsdSnapshotCLP } : {}),
+              ...(snapshotV2?.riskCapital?.source ? { source: snapshotV2.riskCapital.source } : {}),
             },
           }
         : {}),

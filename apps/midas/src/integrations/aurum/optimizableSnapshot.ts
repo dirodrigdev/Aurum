@@ -77,6 +77,16 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
   const totalNetWorthClp = asFiniteOrNull((data as { totalNetWorthCLP?: unknown }).totalNetWorthCLP);
   const totalNetWorthWithRisk = asFiniteOrNull((data as { totalNetWorthWithRiskCLP?: unknown }).totalNetWorthWithRiskCLP);
   const optimizableWithRisk = asFiniteOrNull((data as { optimizableInvestmentsWithRiskCLP?: unknown }).optimizableInvestmentsWithRiskCLP);
+  const riskCapitalRaw = (data as { riskCapital?: unknown }).riskCapital;
+  const riskCapitalObj =
+    riskCapitalRaw && typeof riskCapitalRaw === 'object'
+      ? (riskCapitalRaw as Record<string, unknown>)
+      : null;
+  const riskCapitalTotalCLP = asFiniteOrNull(riskCapitalObj?.totalCLP);
+  const riskCapitalCLP = asFiniteOrNull(riskCapitalObj?.clp);
+  const riskCapitalUSD = asFiniteOrNull(riskCapitalObj?.usd);
+  const riskCapitalUsdSnapshotCLP = asFiniteOrNull(riskCapitalObj?.usdSnapshotCLP);
+  const riskCapitalSource = typeof riskCapitalObj?.source === 'string' ? riskCapitalObj.source : undefined;
 
   const base = {
     version,
@@ -88,6 +98,17 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
     ...(totalNetWorthWithRisk !== null ? { totalNetWorthWithRiskCLP: totalNetWorthWithRisk } : {}),
     optimizableInvestmentsCLP: optimizable,
     ...(optimizableWithRisk !== null ? { optimizableInvestmentsWithRiskCLP: optimizableWithRisk } : {}),
+    ...(riskCapitalTotalCLP !== null
+      ? {
+          riskCapital: {
+            totalCLP: riskCapitalTotalCLP,
+            ...(riskCapitalCLP !== null ? { clp: riskCapitalCLP } : {}),
+            ...(riskCapitalUSD !== null ? { usd: riskCapitalUSD } : {}),
+            ...(riskCapitalUsdSnapshotCLP !== null ? { usdSnapshotCLP: riskCapitalUsdSnapshotCLP } : {}),
+            ...(riskCapitalSource ? { source: riskCapitalSource } : {}),
+          },
+        }
+      : {}),
     source: {
       app: 'aurum' as const,
       basis: 'latest_confirmed_closure' as const,

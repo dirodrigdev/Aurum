@@ -53,6 +53,7 @@ export interface AurumOptimizableInvestmentsSnapshotV1 {
   totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
+  riskCapital?: AurumRiskCapitalSnapshot;
   source: {
     app: 'aurum';
     basis: 'latest_confirmed_closure';
@@ -71,6 +72,14 @@ export interface AurumRealEstateSnapshot {
   mortgageScheduleCLP?: Array<{ month: number; debtCLP: number }>;
 }
 
+export interface AurumRiskCapitalSnapshot {
+  totalCLP: number;
+  clp?: number;
+  usd?: number;
+  usdSnapshotCLP?: number;
+  source?: 'summary_riskCapitalClp' | 'analysis_delta' | 'usd_only' | string;
+}
+
 export interface AurumOptimizableInvestmentsSnapshotV2 {
   version: 2;
   publishedAt: string;
@@ -81,6 +90,7 @@ export interface AurumOptimizableInvestmentsSnapshotV2 {
   totalNetWorthWithRiskCLP?: number;
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
+  riskCapital?: AurumRiskCapitalSnapshot;
   nonOptimizable?: {
     banksCLP?: number;
     nonMortgageDebtCLP?: number;

@@ -136,10 +136,20 @@ export interface RealEstateInput {
   snapshotMonth?: string;
 }
 
+export interface RiskCapitalInput {
+  totalCLP?: number;
+  clp?: number;
+  usd?: number;
+  usdTotal?: number;
+  usdSnapshotCLP?: number;
+  source?: string;
+}
+
 export interface NonOptimizableBlocksInput {
   banksCLP: number;
   nonMortgageDebtCLP: number;
   realEstate?: RealEstateInput;
+  riskCapital?: RiskCapitalInput;
 }
 
 export interface SimulationCompositionDiagnostics {

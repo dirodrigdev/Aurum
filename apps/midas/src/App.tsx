@@ -3,6 +3,7 @@ import type {
   CashflowEvent,
   ManualCapitalAdjustment,
   ModelParameters,
+  RiskCapitalInput,
   ScenarioVariant,
   ScenarioVariantId,
   SimulationCompositionInput,
@@ -164,13 +165,51 @@ function isBlocksCompositionMode(params: ModelParameters): boolean {
   return mode === 'full' || mode === 'partial';
 }
 
-function deriveVisibleCapitalFromComposition(composition?: SimulationCompositionInput): number | null {
+type NormalizedRiskCapitalExposure = {
+  usdTotal: number;
+  usdSnapshotCLP: number;
+  visibleCLP: number;
+  source?: string;
+};
+
+function normalizeRiskCapitalExposure(
+  risk: RiskCapitalInput | null | undefined,
+  fallbackUsdSnapshotCLP: number,
+): NormalizedRiskCapitalExposure {
+  const rawTotalCLP = Number(risk?.totalCLP ?? 0);
+  const rawCLP = Number(risk?.clp ?? 0);
+  const rawUSD = Number(risk?.usd ?? 0);
+  const rawUsdTotal = Number(risk?.usdTotal ?? 0);
+  const usdSnapshotCLP = Number(risk?.usdSnapshotCLP ?? fallbackUsdSnapshotCLP);
+  const safeUsdSnapshotCLP = Number.isFinite(usdSnapshotCLP) && usdSnapshotCLP > 0 ? usdSnapshotCLP : 1;
+  const clpComponent = Number.isFinite(rawCLP) && rawCLP > 0 ? rawCLP : 0;
+  const usdComponent = Number.isFinite(rawUSD) && rawUSD > 0 ? rawUSD : 0;
+  const totalClpComponent = Number.isFinite(rawTotalCLP) && rawTotalCLP > 0 ? rawTotalCLP : 0;
+  const usdTotalFromRaw = usdComponent + (clpComponent / safeUsdSnapshotCLP);
+  const usdTotalFromTotalClp = totalClpComponent / safeUsdSnapshotCLP;
+  const usdTotalFromInput = Number.isFinite(rawUsdTotal) && rawUsdTotal > 0 ? rawUsdTotal : 0;
+  const usdTotal = Math.max(0, usdTotalFromInput, usdTotalFromRaw, usdTotalFromTotalClp);
+  return {
+    usdTotal,
+    usdSnapshotCLP: safeUsdSnapshotCLP,
+    visibleCLP: usdTotal * safeUsdSnapshotCLP,
+    ...(risk?.source ? { source: risk.source } : {}),
+  };
+}
+
+function deriveVisibleCapitalFromComposition(
+  composition?: SimulationCompositionInput,
+  includeRiskCapital = false,
+): number | null {
   if (!composition) return null;
   const optimizable = Number(composition.optimizableInvestmentsCLP ?? 0);
   const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
   const realEstateEquity = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
   const nonMortgageDebt = Math.abs(Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
-  const total = optimizable + banks + realEstateEquity - nonMortgageDebt;
+  const riskCapital = includeRiskCapital
+    ? normalizeRiskCapitalExposure(composition.nonOptimizable?.riskCapital, 1).visibleCLP
+    : 0;
+  const total = optimizable + banks + realEstateEquity + riskCapital - nonMortgageDebt;
   if (!Number.isFinite(total)) return null;
   return Math.max(1, total);
 }
@@ -196,6 +235,8 @@ export default function App() {
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
+  const [riskCapitalUsdTotal, setRiskCapitalUsdTotal] = useState(0);
+  const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(() => {
     if (typeof window === 'undefined') return false;
     const raw = window.localStorage.getItem('midas:riskCapitalEnabled');
@@ -398,6 +439,18 @@ export default function App() {
       snapshot.version === 2
         ? snapshot.nonOptimizable?.realEstate?.ufSnapshotCLP ?? ''
         : '';
+    const riskTotalClp =
+      snapshot.version === 2
+        ? snapshot.riskCapital?.totalCLP ?? ''
+        : '';
+    const riskClp =
+      snapshot.version === 2
+        ? snapshot.riskCapital?.clp ?? ''
+        : '';
+    const riskUsd =
+      snapshot.version === 2
+        ? snapshot.riskCapital?.usd ?? ''
+        : '';
     return [
       snapshot.version,
       snapshot.publishedAt,
@@ -406,16 +459,28 @@ export default function App() {
       snapshot.totalNetWorthCLP,
       snapshot.optimizableInvestmentsCLP,
       ufSnapshotClp,
+      riskTotalClp,
+      riskClp,
+      riskUsd,
     ].join('|');
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
-    const total = Number(snapshot.totalNetWorthCLP ?? 0);
-    const totalWithRisk = Number(snapshot.totalNetWorthWithRiskCLP ?? NaN);
-    const optimizable = Number(snapshot.optimizableInvestmentsCLP ?? 0);
-    const optimizableWithRisk = Number(snapshot.optimizableInvestmentsWithRiskCLP ?? NaN);
-    const deltaTotal = Number.isFinite(totalWithRisk) ? totalWithRisk - total : 0;
-    const deltaOptimizable = Number.isFinite(optimizableWithRisk) ? optimizableWithRisk - optimizable : 0;
-    return Math.max(0, deltaTotal, deltaOptimizable);
+    const fallbackUsdSnapshotCLP = Number(baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial);
+    const riskFallbackFromTotals =
+      Number.isFinite(snapshot.totalNetWorthWithRiskCLP) && Number.isFinite(snapshot.totalNetWorthCLP)
+        ? Math.max(0, Number(snapshot.totalNetWorthWithRiskCLP) - Number(snapshot.totalNetWorthCLP))
+        : Number.isFinite(snapshot.optimizableInvestmentsWithRiskCLP) && Number.isFinite(snapshot.optimizableInvestmentsCLP)
+          ? Math.max(0, Number(snapshot.optimizableInvestmentsWithRiskCLP) - Number(snapshot.optimizableInvestmentsCLP))
+          : 0;
+    const exposure = normalizeRiskCapitalExposure(
+      snapshot.version === 2
+        ? (snapshot.riskCapital ?? (riskFallbackFromTotals > 0 ? { totalCLP: riskFallbackFromTotals } : undefined))
+        : riskFallbackFromTotals > 0
+          ? { totalCLP: riskFallbackFromTotals }
+          : undefined,
+      fallbackUsdSnapshotCLP,
+    );
+    return exposure;
   }, []);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
@@ -429,10 +494,13 @@ export default function App() {
         (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+      const riskExposure = computeRiskCapital(snapshot);
 
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumSnapshotMonth(snapshot.snapshotMonth || null);
-      setRiskCapitalCLP(computeRiskCapital(snapshot));
+      setRiskCapitalCLP(riskExposure.visibleCLP);
+      setRiskCapitalUsdTotal(riskExposure.usdTotal);
+      setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
@@ -447,7 +515,7 @@ export default function App() {
 
       const currentBase = baseParamsRef.current;
       const nextBaseComposition = composition ?? currentBase.simulationComposition;
-      const baseCapitalFromComposition = deriveVisibleCapitalFromComposition(nextBaseComposition);
+      const baseCapitalFromComposition = deriveVisibleCapitalFromComposition(nextBaseComposition, false);
       const baseTargetCapital = baseCapitalFromComposition ?? aurumNetWorth;
       const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
       const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
@@ -464,7 +532,7 @@ export default function App() {
       const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
       const shouldApplyCapital = !hasCapitalOverride;
       const nextSimComposition = composition ?? currentSim.simulationComposition;
-      const simCapitalFromComposition = deriveVisibleCapitalFromComposition(nextSimComposition);
+      const simCapitalFromComposition = deriveVisibleCapitalFromComposition(nextSimComposition, riskCapitalEnabled);
       const baseSimCapital = simCapitalFromComposition ?? aurumNetWorth;
       const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
@@ -504,7 +572,7 @@ export default function App() {
       setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
       setBaseUpdatePending(true);
     }
-  }, [computeTriMotor, simOverrides?.active, simOverrides?.capital, simulationActive]);
+  }, [computeRiskCapital, computeTriMotor, riskCapitalEnabled, simOverrides?.active, simOverrides?.capital]);
 
   const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
     clearCalculationTimer();
@@ -619,43 +687,42 @@ export default function App() {
         0,
         Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
       );
-      const riskPending =
-        Math.abs(manualAdjustmentImpact.currentRiskDelta) > 0.0001 ||
-        (riskCapitalEnabled && riskCapitalCLP > 0);
-      const diagnosticWarnings = baseComposition.diagnostics?.diagnosticWarnings ?? [];
-      const warningToken = 'risk-capital-without-load-bearing-block';
-      const nextWarnings = riskPending
-        ? [...new Set([...diagnosticWarnings, warningToken])]
-        : diagnosticWarnings.filter((warning) => warning !== warningToken);
+      const baseRiskExposure = normalizeRiskCapitalExposure(
+        baseComposition.nonOptimizable?.riskCapital,
+        riskCapitalUsdSnapshotCLP || baseParamsCurrent.fx.clpUsdInitial || DEFAULT_PARAMETERS.fx.clpUsdInitial,
+      );
+      const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
+      const riskUsdBase = Math.max(0, riskCapitalUsdTotal || baseRiskExposure.usdTotal);
+      const riskUsdManualDelta = riskUsdSnapshot > 0
+        ? manualAdjustmentImpact.currentRiskDelta / riskUsdSnapshot
+        : 0;
+      const riskUsdEnabledTotal = Math.max(0, riskUsdBase + riskUsdManualDelta);
+      const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
       const nextComposition: SimulationCompositionInput = {
         ...baseComposition,
         optimizableInvestmentsCLP: nextOptimizable,
         nonOptimizable: {
           ...baseComposition.nonOptimizable,
           banksCLP: nextBanks,
+          riskCapital: {
+            ...(baseComposition.nonOptimizable?.riskCapital ?? {}),
+            usdSnapshotCLP: riskUsdSnapshot,
+            usdTotal: riskUsdApplied,
+            usd: riskUsdApplied,
+            totalCLP: Math.max(0, riskUsdApplied * riskUsdSnapshot),
+          },
         },
-        diagnostics: baseComposition.diagnostics
-          ? {
-              ...baseComposition.diagnostics,
-              diagnosticWarnings: nextWarnings,
-            }
-          : {
-              sourceVersion: baseComposition.mode === 'legacy' ? 1 : 2,
-              mode: baseComposition.mode,
-              compositionGapCLP: 0,
-              compositionGapPct: 0,
-              notes: [],
-              diagnosticWarnings: nextWarnings,
-            },
       };
       next = {
         ...next,
         simulationComposition: nextComposition,
-        capitalInitial: deriveVisibleCapitalFromComposition(nextComposition) ?? currentSimParams.capitalInitial,
+        capitalInitial: deriveVisibleCapitalFromComposition(nextComposition, true) ?? currentSimParams.capitalInitial,
       };
     } else {
-      const riskDelta = riskCapitalEnabled ? riskCapitalCLP : 0;
-      const nextDelta = manualAdjustmentImpact.currentTotalDelta + riskDelta;
+      const riskDelta = riskCapitalEnabled
+        ? manualAdjustmentImpact.currentRiskDelta + riskCapitalCLP
+        : 0;
+      const nextDelta = manualAdjustmentImpact.currentBanksDelta + manualAdjustmentImpact.currentInvestmentsDelta + riskDelta;
       const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
       next = {
         ...next,
@@ -680,7 +747,7 @@ export default function App() {
       const base = applySimulationOverrides(next, simOverrides);
       queueTriMotorCalculation(base);
     }
-  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, simOverrides]);
+  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP, riskCapitalUsdTotal, simOverrides]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -839,6 +906,9 @@ export default function App() {
     if (!aurumIntegrationConfigured) {
       setAurumIntegrationStatus('unconfigured');
       setAurumSnapshotLabel(null);
+      setRiskCapitalCLP(0);
+      setRiskCapitalUsdTotal(0);
+      setRiskCapitalUsdSnapshotCLP(0);
       setOptimizableBaseReference({
         amountClp: null,
         asOf: null,
@@ -895,6 +965,8 @@ export default function App() {
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
         setRiskCapitalCLP(0);
+        setRiskCapitalUsdTotal(0);
+        setRiskCapitalUsdSnapshotCLP(0);
         setBaseUpdatePending(false);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -912,7 +984,10 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumSnapshotMonth(snapshot.snapshotMonth || null);
-      setRiskCapitalCLP(computeRiskCapital(snapshot));
+      const riskExposure = computeRiskCapital(snapshot);
+      setRiskCapitalCLP(riskExposure.visibleCLP);
+      setRiskCapitalUsdTotal(riskExposure.usdTotal);
+      setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
 
       const snapshotSignature = getSnapshotSignature(snapshot);
       if (snapshotSignature === lastSnapshotSignatureRef.current) return;
@@ -955,6 +1030,8 @@ export default function App() {
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
         setRiskCapitalCLP(0);
+        setRiskCapitalUsdTotal(0);
+        setRiskCapitalUsdSnapshotCLP(0);
       },
     });
 
@@ -962,7 +1039,7 @@ export default function App() {
       cancelled = true;
       unsubscribe();
     };
-  }, [computeTriMotor, simOverrides?.active, simulationActive]);
+  }, [computeRiskCapital, getSnapshotSignature]);
 
   useEffect(() => {
     if (!simulationActive && !simOverrides?.active) {
