@@ -298,8 +298,6 @@ export default function App() {
   const activityHandlerRef = useRef<() => void>();
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
-  const simResultRef = useRef<TriMotorResult>(simResult);
-  const simulationActiveRef = useRef<boolean>(simulationActive);
   const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
@@ -322,14 +320,6 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
-
-  useEffect(() => {
-    simResultRef.current = simResult;
-  }, [simResult]);
-
-  useEffect(() => {
-    simulationActiveRef.current = simulationActive;
-  }, [simulationActive]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -549,7 +539,7 @@ export default function App() {
     setSimWorking(true);
     setSimUiError(null);
     const hasStableResult = Boolean(lastStableCentralRef.current);
-    const shouldStale = hasStableResult && simulationActiveRef.current;
+    const shouldStale = hasStableResult && cause !== 'boot-init';
     setSimUiState(shouldStale ? 'stale' : 'boot');
     setHeroPhase(shouldStale ? 'stale' : 'boot');
   }, []);
@@ -569,7 +559,7 @@ export default function App() {
       } catch (error: any) {
         console.error('[Midas] Error recalculando simulación', error);
         setSimUiState('error');
-        const fallbackPhase = lastStableCentralRef.current && simulationActiveRef.current ? 'stale' : 'boot';
+        const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
         setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
       } finally {

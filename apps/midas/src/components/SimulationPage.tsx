@@ -739,6 +739,23 @@ export function SimulationPage({
             },
           ]}
         />
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            background: 'rgba(15, 22, 34, 0.72)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 999,
+            padding: '3px 8px',
+            color: T.textMuted,
+            fontSize: 10,
+            fontFamily: 'SF Mono, Menlo, monospace',
+            pointerEvents: 'none',
+          }}
+        >
+          {`phase=${heroPhase} | cause=${lastRecalcCause ?? 'none'}`}
+        </div>
         {showSimToast && (
           <div
             style={{
@@ -1244,6 +1261,29 @@ export function SimulationPage({
             {lastRecalcCause ? (
               <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
             ) : null}
+            <div
+              style={{
+                marginTop: 2,
+                background: 'rgba(91, 140, 255, 0.08)',
+                border: '1px dashed rgba(91, 140, 255, 0.45)',
+                borderRadius: 8,
+                padding: '6px 8px',
+                fontFamily: 'SF Mono, Menlo, monospace',
+                fontSize: 10,
+                color: T.textMuted,
+                display: 'grid',
+                gap: 2,
+              }}
+            >
+              <div>heroPhase: {heroPhase}</div>
+              <div>simUiState: {simUiState}</div>
+              <div>lastRecalcCause: {lastRecalcCause ?? 'none'}</div>
+              <div>displayResult present: {displayResult ? 'yes' : 'no'}</div>
+              <div>lastStableCentral present: {lastStableCentral ? 'yes' : 'no'}</div>
+              <div>pendingSnapshotApplying: {pendingSnapshotApplying ? 'yes' : 'no'}</div>
+              <div>baseUpdatePending: {baseUpdatePending ? 'yes' : 'no'}</div>
+              <div>simWorking: {simWorking ? 'yes' : 'no'}</div>
+            </div>
             <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
             <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
             {motorWarnings.length > 0 && (
