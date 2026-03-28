@@ -193,6 +193,14 @@ function updateByPath(target: ModelParameters, path: string, value: number): Mod
   return next;
 }
 
+function isScenarioVariantId(value: unknown): value is ScenarioVariantId {
+  return value === 'base' || value === 'pessimistic' || value === 'optimistic';
+}
+
+function resolveScenarioVariantId(value: unknown): ScenarioVariantId {
+  return isScenarioVariantId(value) ? value : 'base';
+}
+
 function computeWeightedReturn(p: ModelParameters) {
   return (
     p.weights.rvGlobal * p.returns.rvGlobalAnnual +
@@ -706,6 +714,7 @@ export default function App() {
           requestId: runId,
           scope: 'recalc',
           workerInstanceId,
+          activeScenario: resolveScenarioVariantId(params.activeScenario),
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -857,6 +866,7 @@ export default function App() {
           requestId: runId,
           scope: traceScope,
           workerInstanceId,
+          activeScenario: resolveScenarioVariantId(params.activeScenario),
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -1003,6 +1013,7 @@ export default function App() {
   const summarizeParams = useCallback((params: ModelParameters) => {
     const composition = params.simulationComposition;
     return {
+      activeScenario: resolveScenarioVariantId(params.activeScenario),
       capitalInitial: Number(params.capitalInitial ?? 0),
       compositionMode: composition?.mode ?? 'legacy',
       banksCLP: Number(composition?.nonOptimizable?.banksCLP ?? 0),
@@ -1502,8 +1513,10 @@ export default function App() {
 
   const markSimulationInteraction = useCallback(
     (nextPreset: SimulationPreset = 'custom') => {
+      const inferredPreset = resolveScenarioVariantId(simParamsRef.current.activeScenario);
+      const resolvedPreset = nextPreset === 'custom' ? inferredPreset : nextPreset;
       setSimulationActive(true);
-      setSimulationPreset(nextPreset);
+      setSimulationPreset(resolvedPreset);
       scheduleInactivityReset();
     },
     [scheduleInactivityReset],
@@ -1519,7 +1532,7 @@ export default function App() {
     });
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
     window.setTimeout(() => {
       try {
         lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
@@ -1801,13 +1814,13 @@ export default function App() {
   const toggleRiskCapital = useCallback(() => {
     pendingRecalcCauseRef.current = 'risk-toggle';
     setRiskCapitalEnabled((prev) => !prev);
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
   }, [markSimulationInteraction]);
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
     setManualCapitalAdjustments(next);
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
   }, [markSimulationInteraction]);
 
   useEffect(() => {
@@ -1931,13 +1944,13 @@ export default function App() {
   }, [simOverrides, startRecalculation]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
     const next = updateByPath(simParamsRef.current, path, value);
     commitSimParamsAndRecalc(next, 'params-change');
   }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
     const updated = { ...simParamsRef.current, cashflowEvents: next };
     commitSimParamsAndRecalc(updated, 'params-change');
   }, [commitSimParamsAndRecalc, markSimulationInteraction]);
@@ -1957,37 +1970,31 @@ export default function App() {
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
     const base = applySimulationOverrides(simParamsRef.current, next);
     startRecalculation('params-change', () => base);
   }, [markSimulationInteraction, startRecalculation]);
 
   const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
-    markSimulationInteraction('custom');
+    markSimulationInteraction();
     const next = patcher(simParamsRef.current);
     commitSimParamsAndRecalc(next, 'params-change');
   }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const runSim = useCallback(() => {
-    markSimulationInteraction(simulationPreset);
+    markSimulationInteraction(resolveScenarioVariantId(simParams.activeScenario));
     const base = applySimulationOverrides(simParams, simOverrides);
     startRecalculation('manual-run', () => base);
     setActiveTab('sim');
-  }, [markSimulationInteraction, simOverrides, simParams, simulationPreset, startRecalculation]);
+  }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
     setActiveTab(tab);
   }, []);
 
   const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
-  const stateLabel =
-    simulationActive && simulationPreset !== 'base'
-      ? simulationPreset === 'optimistic'
-        ? 'SIMULACIÓN · O'
-        : simulationPreset === 'pessimistic'
-          ? 'SIMULACIÓN · P'
-          : 'SIMULACIÓN · C'
-      : 'BASE';
+  const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
+  const stateLabel = selectVariant(activeScenario).label;
 
   const optimizerSimulationParams = useMemo(
     () => applySimulationOverrides(simParams, simOverrides),

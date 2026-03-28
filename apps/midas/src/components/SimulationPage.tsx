@@ -182,6 +182,21 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
+  const scenarioFromParamsRaw = params.activeScenario as unknown;
+  const activeScenarioForUi: ScenarioVariantId =
+    scenarioFromParamsRaw === 'base' || scenarioFromParamsRaw === 'pessimistic' || scenarioFromParamsRaw === 'optimistic'
+      ? scenarioFromParamsRaw
+      : 'base';
+  const hasInvalidScenarioInParams =
+    scenarioFromParamsRaw != null &&
+    scenarioFromParamsRaw !== 'base' &&
+    scenarioFromParamsRaw !== 'pessimistic' &&
+    scenarioFromParamsRaw !== 'optimistic';
+  const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
+  const scenarioFromResult =
+    scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
+      ? scenarioFromResultRaw
+      : null;
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -645,7 +660,7 @@ export function SimulationPage({
       >
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-            const active = simulationPreset === variant.id;
+            const active = activeScenarioForUi === variant.id;
             return (
               <button
                 key={variant.id}
@@ -1252,6 +1267,14 @@ export function SimulationPage({
             <div style={{ color: T.textMuted }}>
               riskEnabled={riskCapitalEnabled ? 'yes' : 'no'} · riskEffective={riskCapitalEffective ? 'yes' : 'no'}
             </div>
+            <div style={{ color: T.textMuted }}>
+              scenarioUI={activeScenarioForUi} · scenarioParams={String(params.activeScenario ?? '—')} · scenarioResult={scenarioFromResult ?? '—'}
+            </div>
+            {hasInvalidScenarioInParams ? (
+              <div style={{ color: T.warning }}>
+                Escenario inválido en params: {String(scenarioFromParamsRaw)} (fallback UI: base)
+              </div>
+            ) : null}
             <div style={{ color: T.textMuted }}>
               simResult={resultCentral ? 'present' : 'missing'} · lastStable={lastStableCentral ? 'present' : 'missing'}
             </div>
