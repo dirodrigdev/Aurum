@@ -298,11 +298,7 @@ export default function App() {
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [riskCapitalUsdTotal, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
-  const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    const raw = window.localStorage.getItem('midas:riskCapitalEnabled');
-    return raw === 'true';
-  });
+  const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
@@ -346,11 +342,6 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('midas:riskCapitalEnabled', String(riskCapitalEnabled));
-  }, [riskCapitalEnabled]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -729,6 +720,29 @@ export default function App() {
     };
   }, [bootReadyPending]);
 
+  useEffect(() => {
+    if (heroPhase !== 'stale') return;
+    if (pendingSnapshotApplying) return;
+    if (simWorking) return;
+    if (recalcWorkerStatus === 'queued' || recalcWorkerStatus === 'running') return;
+    if (activeRecalcRequestId !== null && appliedRecalcRequestId === activeRecalcRequestId && simResult) {
+      setSimUiState('ready');
+      setHeroPhase('ready');
+      return;
+    }
+    setSimUiState('error');
+    setSimUiError((prev) => prev ?? 'No se pudo consolidar el recálculo. Reintenta "Aplicar Aurum".');
+    setRecalcWorkerStatus('error');
+  }, [
+    activeRecalcRequestId,
+    appliedRecalcRequestId,
+    heroPhase,
+    pendingSnapshotApplying,
+    recalcWorkerStatus,
+    simResult,
+    simWorking,
+  ]);
+
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
     const shouldRecalculate = options?.recalc ?? true;
@@ -836,8 +850,20 @@ export default function App() {
     clearCalculationTimer();
     setSimulationActive(false);
     setSimulationPreset('base');
+    setRiskCapitalEnabled(false);
     setSimOverrides(null);
-    const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
+    const next = applyScenarioEconomics(
+      {
+        ...cloneParams(baseParams),
+        realEstatePolicy: {
+          enabled: true,
+          triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
+          saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
+          saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
+        },
+      },
+      'base',
+    );
     setSimParams(next);
     startRecalculation('session-reset', () => next);
     setParamSheetOpen(false);
@@ -1024,7 +1050,20 @@ export default function App() {
 
   useEffect(() => {
     if (!simResult) {
-      const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
+      setSimulationPreset('base');
+      setRiskCapitalEnabled(false);
+      const next = applyScenarioEconomics(
+        {
+          ...cloneParams(baseParams),
+          realEstatePolicy: {
+            enabled: true,
+            triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
+            saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
+            saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
+          },
+        },
+        'base',
+      );
       setSimParams(next);
       startRecalculation('boot-init', () => next);
     }

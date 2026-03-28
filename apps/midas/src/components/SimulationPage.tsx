@@ -382,11 +382,7 @@ export function SimulationPage({
   const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
   const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
   const showBootPlaceholder = heroPhase === 'boot';
-  const riskToggleCopy = !riskCapitalEnabled
-    ? 'OFF'
-    : riskCapitalEffective
-      ? 'ON'
-      : 'ON pendiente';
+  const riskToggleCopy = riskCapitalEnabled ? 'ON' : 'OFF';
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
@@ -680,7 +676,7 @@ export function SimulationPage({
               background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
               border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
               color: riskCapitalEnabled
-                ? (riskCapitalEffective ? '#f6d38d' : '#ffd699')
+                ? '#f6d38d'
                 : T.textSecondary,
               borderRadius: 10,
               padding: '8px 10px',
