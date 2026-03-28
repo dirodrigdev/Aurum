@@ -11,6 +11,7 @@ import type {
 } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant } from './domain/simulation/engine';
+import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -44,7 +45,7 @@ type RecalcCause =
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 type RecalcOwner = 'apply-aurum' | null;
-type WorkerTraceScope = 'recalc' | 'baseline-optimizer';
+type WorkerTraceScope = 'recalc' | 'baseline-optimizer' | 'bootstrap-control';
 type RuntimeTimelineEntry = {
   atMs: number;
   event: string;
@@ -78,10 +79,20 @@ type OptimizerBaselineSnapshot = {
   terminalP50: number;
 };
 
+type ControlConcordance = {
+  status: 'green' | 'yellow' | 'red' | 'pending' | 'na';
+  message: string | null;
+  diffAbsPp: number | null;
+  centralProbRuin: number | null;
+  controlProbRuin: number | null;
+  centralZone: string | null;
+  controlZone: string | null;
+};
+
 type CentralWorkerStartMessage = {
   type: 'central-start';
   runId: number;
-  channel: 'primary';
+  channel: 'primary' | 'bootstrap-control';
   params: ModelParameters;
 };
 
@@ -346,6 +357,8 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
+  const [bootstrapControlResult, setBootstrapControlResult] = useState<SimulationResults | null>(null);
+  const [bootstrapControlStatus, setBootstrapControlStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [simWorking, setSimWorking] = useState(false);
   const [simUiState, setSimUiState] = useState<SimulationUiState>('boot');
   const [heroPhase, setHeroPhase] = useState<HeroPhase>('boot');
@@ -407,6 +420,7 @@ export default function App() {
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
   const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
+  const controlRequestIdRef = useRef(0);
   const timelineStartRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const workerPayloadByRequestRef = useRef<Map<string, ModelParameters>>(new Map());
   const workerInstanceSeqRef = useRef(0);
@@ -773,10 +787,11 @@ export default function App() {
     (
       params: ModelParameters,
       runId: number,
-      options?: { traceScope?: WorkerTraceScope },
+      options?: { traceScope?: WorkerTraceScope; channel?: 'primary' | 'bootstrap-control' },
     ): Promise<SimulationResults> =>
       new Promise<SimulationResults>((resolve, reject) => {
         const traceScope = options?.traceScope ?? 'recalc';
+        const channel = options?.channel ?? 'primary';
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
           type: 'module',
         });
@@ -878,7 +893,7 @@ export default function App() {
         const message: CentralWorkerStartMessage = {
           type: 'central-start',
           runId,
-          channel: 'primary',
+          channel,
           params,
         };
         appendRuntimeTimeline('worker_request_sent', {
@@ -903,6 +918,27 @@ export default function App() {
       }),
     [appendRuntimeTimeline],
   );
+
+  const runBootstrapControl = useCallback((params: ModelParameters) => {
+    const requestId = controlRequestIdRef.current + 1;
+    controlRequestIdRef.current = requestId;
+    setBootstrapControlStatus('running');
+    void runCentralSimulationInWorker(params, requestId, {
+      traceScope: 'bootstrap-control',
+      channel: 'bootstrap-control',
+    })
+      .then((result) => {
+        if (requestId !== controlRequestIdRef.current) return;
+        setBootstrapControlResult(result);
+        setBootstrapControlStatus('done');
+      })
+      .catch((error) => {
+        if (requestId !== controlRequestIdRef.current) return;
+        if (String((error as Error)?.message || '') === 'simulation_cancelled') return;
+        console.error('[Midas] Error en motor de control bootstrap', error);
+        setBootstrapControlStatus('error');
+      });
+  }, [runCentralSimulationInWorker]);
 
   const parseYearMonth = useCallback((value: string) => {
     const [yearRaw, monthRaw] = value.split('-');
@@ -1267,6 +1303,7 @@ export default function App() {
           simulationSeed,
           ...summarizeResult(nextResult),
         });
+        runBootstrapControl(params);
         if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
           activeRecalcOwnerRef.current = null;
           setActiveRecalcOwner(null);
@@ -1315,6 +1352,7 @@ export default function App() {
     runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
+    runBootstrapControl,
   ]);
 
   useEffect(() => {
@@ -1533,6 +1571,7 @@ export default function App() {
           triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
           saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
           saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
+          realAppreciationAnnual: baseParams.realEstatePolicy?.realAppreciationAnnual ?? 0,
         },
       },
       'base',
@@ -1909,6 +1948,7 @@ export default function App() {
             triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
             saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
             saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
+            realAppreciationAnnual: baseParams.realEstatePolicy?.realAppreciationAnnual ?? 0,
           },
         },
         'base',
@@ -2220,6 +2260,30 @@ export default function App() {
     return riskCapitalEnabled && riskInComposition > 0;
   }, [riskCapitalEnabled, simParams.simulationComposition]);
 
+  const controlConcordance = useMemo<ControlConcordance>(() => {
+    if (!simResult || !bootstrapControlResult) {
+      return {
+        status: bootstrapControlStatus === 'running' ? 'pending' : 'na',
+        message: null,
+        diffAbsPp: null,
+        centralProbRuin: simResult?.probRuin ?? null,
+        controlProbRuin: bootstrapControlResult?.probRuin ?? null,
+        centralZone: null,
+        controlZone: null,
+      };
+    }
+    const report = evaluateConcordance(simResult.probRuin, bootstrapControlResult.probRuin);
+    return {
+      status: report.status,
+      message: report.status === 'red' ? 'Divergencia relevante entre métodos' : null,
+      diffAbsPp: report.diffAbsPp,
+      centralProbRuin: simResult.probRuin,
+      controlProbRuin: bootstrapControlResult.probRuin,
+      centralZone: report.centralZone,
+      controlZone: report.controlZone,
+    };
+  }, [bootstrapControlResult, bootstrapControlStatus, simResult]);
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
@@ -2251,6 +2315,9 @@ export default function App() {
       appliedRecalcSeed={appliedRecalcSeed}
       activeRecalcOwner={activeRecalcOwner}
       runtimeTimeline={runtimeTimeline}
+      bootstrapControlStatus={bootstrapControlStatus}
+      bootstrapControlResult={bootstrapControlResult}
+      controlConcordance={controlConcordance}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}

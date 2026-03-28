@@ -2,11 +2,12 @@
 
 import type { ModelParameters, SimulationResults } from '../model/types';
 import { runMidasSimulation } from './policy';
+import { runSimulationCore } from './engine';
 
 type CentralWorkerStartMessage = {
   type: 'central-start';
   runId: number;
-  channel: 'primary';
+  channel: 'primary' | 'bootstrap-control';
   params: ModelParameters;
 };
 
@@ -67,7 +68,10 @@ self.onmessage = (event: MessageEvent<CentralWorkerStartMessage>) => {
   emitTrace('worker_message_received', { includeSummary: true });
   try {
     emitTrace('worker_compute_started');
-    const result = runMidasSimulation(params, 'primary');
+    const result =
+      event.data.channel === 'bootstrap-control'
+        ? runSimulationCore(params)
+        : runMidasSimulation(params, 'primary');
     emitTrace('worker_compute_finished');
     emitTrace('worker_post_done');
     const payload: CentralWorkerDoneMessage = {

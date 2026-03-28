@@ -7,6 +7,7 @@ import type {
 import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 import { applyExpenseWaterfall, applySleeveReturns, buildInitialLiquidState, captureBlockSnapshot, getBaseExpenseForMonth, runAnnualRebalance } from './blockState';
 import { buildMortgageProjection } from './mortgageProjection';
+import { getSpendingTarget, updateSpendingMultiplier } from './spendingMultiplier';
 
 type ParametricAuditResults = {
   probRuin: number;
@@ -344,10 +345,8 @@ function runSimulationParametricLegacyInternal(params: ModelParameters): Paramet
 
       cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
       cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
-      let tgt = 1;
-      if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
-      else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
-      smult += spendingRule.adjustmentAlpha * (tgt - smult);
+      const tgt = getSpendingTarget(cnt15, cnt25, spendingRule);
+      smult = updateSpendingMultiplier(smult, tgt, spendingRule);
 
       const mes = t + 1;
       let GB = 0;
@@ -512,6 +511,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const triggerRunwayMonths = Math.max(1, Math.round(salePolicy?.triggerRunwayMonths ?? 36));
   const saleDelayMonths = Math.max(0, Math.round(salePolicy?.saleDelayMonths ?? 12));
   const saleCostPct = Math.max(0, Math.min(1, salePolicy?.saleCostPct ?? 0));
+  const realAppreciationMonthly = Math.max(-0.99, salePolicy?.realAppreciationAnnual ?? 0) / 12;
   const terminalAdjustment = 0.7 * Math.abs(composition?.nonOptimizable?.nonMortgageDebtCLP ?? 0);
   const terminalAdjustmentApplied = terminalAdjustment > 0;
   const postSaleExpenseFloorClp = 6_000_000;
@@ -588,7 +588,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
       const soldAlready = saleExecutedMonth !== null && month >= saleExecutedMonth;
       if (!soldAlready) {
         if (hasUfSchedule && ufCLP > 0) {
-          ufCLP = ufCLP * (1 + ipcM);
+          ufCLP = ufCLP * (1 + ipcM) * (1 + realAppreciationMonthly);
           const amortizationUF = amortizationScheduleUF[t] ?? 0;
           equityUF += amortizationUF;
           equityCLP = ufCLP > 0 ? equityUF * ufCLP : 0;
@@ -683,10 +683,8 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
 
       cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
       cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
-      let tgt = 1;
-      if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
-      else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
-      smult += spendingRule.adjustmentAlpha * (tgt - smult);
+      const tgt = getSpendingTarget(cnt15, cnt25, spendingRule);
+      smult = updateSpendingMultiplier(smult, tgt, spendingRule);
 
       const GB = monthSnapshot.expense;
       const G = GB * smult;

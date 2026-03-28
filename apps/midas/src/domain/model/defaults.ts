@@ -12,6 +12,8 @@ import { BASE_ECONOMIC_ASSUMPTIONS } from './economicAssumptions';
 // Con 12 anos, los bloques 2020-2026 siguen pesando mas, pero el bloque 2000-2009
 // mantiene una presencia material para stress historico.
 export const WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS = 12;
+export const REAL_ESTATE_REAL_APPRECIATION_BASE = 0;
+export const REAL_ESTATE_REAL_APPRECIATION_SENSITIVITY = [0, 0.005, 0.01] as const;
 
 export const DEFAULT_PARAMETERS: ModelParameters = {
   label: 'Portafolio Real — V1.4',
@@ -42,6 +44,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     dd15Threshold: 0.15, dd25Threshold: 0.25,
     consecutiveMonths: 3, softCut: 0.90, hardCut: 0.80,
     adjustmentAlpha: 0.20,
+    recoveryAlpha: 0.80,
   },
 
   // Calibrado con datos reales hasta 2026-02
@@ -104,6 +107,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     triggerRunwayMonths: 36,
     saleDelayMonths: 12,
     saleCostPct: 0,
+    realAppreciationAnnual: REAL_ESTATE_REAL_APPRECIATION_BASE,
   },
 
   ruinThresholdMonths: 3,

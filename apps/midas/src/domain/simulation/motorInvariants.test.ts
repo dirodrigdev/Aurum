@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import { runSimulationParametric } from './engineParametric';
+import { runSimulationCore } from './engine';
 import { buildMortgageProjection } from './mortgageProjection';
 import { runAnnualRebalance } from './blockState';
+import { updateSpendingMultiplier } from './spendingMultiplier';
+import { evaluateConcordance } from './concordance';
+import { snapshotToParams } from '../../integrations/aurum/adapters';
 
 type TestFn = () => void;
 
@@ -97,6 +101,7 @@ const makeBaseParams = (): ModelParameters => {
     triggerRunwayMonths: 36,
     saleDelayMonths: 12,
     saleCostPct: 0,
+    realAppreciationAnnual: 0,
   };
   params.ruinThresholdMonths = 0;
   return params;
@@ -260,6 +265,7 @@ test('sale before year 20 keeps expense at 6MM', () => {
     triggerRunwayMonths: 36,
     saleDelayMonths: 0,
     saleCostPct: 0,
+    realAppreciationAnnual: 0,
   };
   const realEstate = params.simulationComposition?.nonOptimizable.realEstate;
   assert.ok(realEstate);
@@ -282,6 +288,7 @@ test('sale after year 20 lifts expense from 4MM to 6MM', () => {
     triggerRunwayMonths: 36,
     saleDelayMonths: 0,
     saleCostPct: 0,
+    realAppreciationAnnual: 0,
   };
   const realEstate = params.simulationComposition?.nonOptimizable.realEstate;
   assert.ok(realEstate);
@@ -306,6 +313,7 @@ test('no double count on sale month', () => {
     triggerRunwayMonths: 36,
     saleDelayMonths: 0,
     saleCostPct: 0,
+    realAppreciationAnnual: 0,
   };
   const result = runSimulationParametric(params);
   const actual = result.terminalWealthPercentiles[50];
@@ -332,6 +340,7 @@ test('non-mortgage debt only affects terminal wealth', () => {
     triggerRunwayMonths: 36,
     saleDelayMonths: 12,
     saleCostPct: 0,
+    realAppreciationAnnual: 0,
   };
   const result = runSimulationParametric(params);
   const actual = result.terminalWealthPercentiles[50];
@@ -367,6 +376,84 @@ test('bucket rebalance does not create magic capital', () => {
   };
   const resultB = runAnnualRebalance(stateB, params, 800);
   assert.ok(resultB.bucketAfterRebalance < 800);
+});
+
+test('aurum adapter maps cash/other conservatively to rfChile', () => {
+  const params = snapshotToParams({
+    version: '1.0',
+    snapshotDate: '2026-02-28',
+    publishedAt: '2026-03-01',
+    totalCapitalCLP: 1_000_000_000,
+    allocation: {
+      rvGlobal: 0.20,
+      rfGlobal: 0.15,
+      rvChile: 0.10,
+      rfChile: 0.25,
+      cash: 0.20,
+      other: 0.10,
+    },
+    fxReference: {
+      clpUsd: 1000,
+      usdEur: 1.05,
+      clpEur: 952,
+    },
+    source: 'test',
+  } as any, cloneParams(DEFAULT_PARAMETERS));
+  approxEqual(params.weights.rvGlobal, 0.2);
+  approxEqual(params.weights.rfGlobal, 0.15);
+  approxEqual(params.weights.rvChile, 0.10);
+  approxEqual(params.weights.rfChile, 0.55);
+});
+
+test('real estate appreciation base 0% with sensitivities 0.5% and 1.0% is monotonic', () => {
+  const mk = (realAppreciationAnnual: number) => {
+    const params = makeBaseParams();
+    params.simulation.horizonMonths = 24;
+    params.inflation.ipcChileAnnual = 0;
+    params.realEstatePolicy = {
+      ...params.realEstatePolicy!,
+      enabled: false,
+      realAppreciationAnnual,
+    };
+    return runSimulationParametric(params).p50TerminalAllPaths ?? 0;
+  };
+  const p0 = mk(0);
+  const p05 = mk(0.005);
+  const p10 = mk(0.01);
+  assert.ok(p05 >= p0, '0.5% real should not underperform 0% real');
+  assert.ok(p10 >= p05, '1.0% real should not underperform 0.5% real');
+});
+
+test('spending multiplier recovers in <=2 months after stress release', () => {
+  const rule = {
+    ...DEFAULT_PARAMETERS.spendingRule,
+    adjustmentAlpha: 0.2,
+    recoveryAlpha: 0.8,
+  };
+  const month1 = updateSpendingMultiplier(0.8, 1, rule);
+  const month2 = updateSpendingMultiplier(month1, 1, rule);
+  assert.ok(month2 >= 0.99, `expected recovery >=0.99 in 2 months, got ${month2}`);
+});
+
+test('bootstrap control motor runs and returns bounded probRuin', () => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.simulation = { ...params.simulation, nSim: 200, seed: 99, useHistoricalData: true };
+  const result = runSimulationCore(params);
+  assert.ok(result.probRuin >= 0 && result.probRuin <= 1);
+});
+
+test('concordance semaphore classifies green/yellow/red as defined', () => {
+  const green = evaluateConcordance(0.12, 0.135);
+  assert.equal(green.status, 'green');
+
+  const yellow = evaluateConcordance(0.12, 0.17);
+  assert.equal(yellow.status, 'yellow');
+
+  const redByDiff = evaluateConcordance(0.08, 0.18);
+  assert.equal(redByDiff.status, 'red');
+
+  const redByZoneJump = evaluateConcordance(0.08, 0.36);
+  assert.equal(redByZoneJump.status, 'red');
 });
 
 const failures: string[] = [];

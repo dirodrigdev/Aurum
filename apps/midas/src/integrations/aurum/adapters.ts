@@ -24,17 +24,18 @@ export function snapshotToParams(
 ): ModelParameters {
   const { allocation, totalCapitalCLP, fxReference } = snapshot;
 
-  // Redistribuir "other" y "cash" proporcionalmente entre los sleeves
-  const knownSum = allocation.rvGlobal + allocation.rfGlobal +
-                   allocation.rvChile  + allocation.rfChile;
-  const remainder = 1 - knownSum;
+  // Politica conservadora explicitada para MIDAS:
+  // - cash y other NO se redistribuyen a RV por defecto.
+  // - cash y other se asignan al bucket conservador local (rfChile).
+  const conservativeRemainder = Math.max(0, (allocation.cash ?? 0) + (allocation.other ?? 0));
+  const knownSum = allocation.rvGlobal + allocation.rfGlobal + allocation.rvChile + allocation.rfChile + conservativeRemainder;
   const scale = knownSum > 0 ? 1 / knownSum : 1;
 
   const weights: PortfolioWeights = {
-    rvGlobal: (allocation.rvGlobal + remainder * 0.3) * scale,
-    rfGlobal: (allocation.rfGlobal + remainder * 0.2) * scale,
-    rvChile:  (allocation.rvChile  + remainder * 0.3) * scale,
-    rfChile:  (allocation.rfChile  + remainder * 0.2) * scale,
+    rvGlobal: allocation.rvGlobal * scale,
+    rfGlobal: allocation.rfGlobal * scale,
+    rvChile: allocation.rvChile * scale,
+    rfChile: (allocation.rfChile + conservativeRemainder) * scale,
   };
 
   // Normalizar a 1.0

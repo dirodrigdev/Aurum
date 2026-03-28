@@ -6,6 +6,7 @@ export function HeroCard({
   valuePct,
   subtitle,
   ruinCopy,
+  labelAccessory,
   chips,
   mode = 'real',
   stale = false,
@@ -14,6 +15,7 @@ export function HeroCard({
   valuePct: number | null;
   subtitle?: string;
   ruinCopy?: string;
+  labelAccessory?: React.ReactNode;
   chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode }>;
   mode?: 'real' | 'sim';
   stale?: boolean;
@@ -42,6 +44,7 @@ export function HeroCard({
         <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
           {label}
         </div>
+        {labelAccessory}
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'flex-start' }}>

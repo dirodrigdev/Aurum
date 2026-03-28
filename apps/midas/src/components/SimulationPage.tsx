@@ -83,6 +83,9 @@ export function SimulationPage({
   appliedRecalcSeed,
   activeRecalcOwner,
   runtimeTimeline,
+  bootstrapControlStatus,
+  bootstrapControlResult,
+  controlConcordance,
   applyAurumHarness,
   onApplyPendingSnapshot,
   onRunApplyAurumHarness,
@@ -123,6 +126,17 @@ export function SimulationPage({
   appliedRecalcSeed: number | null;
   activeRecalcOwner: 'apply-aurum' | null;
   runtimeTimeline: Array<{ atMs: number; event: string; payload: string }>;
+  bootstrapControlStatus: 'idle' | 'running' | 'done' | 'error';
+  bootstrapControlResult: SimulationResults | null;
+  controlConcordance: {
+    status: 'green' | 'yellow' | 'red' | 'pending' | 'na';
+    message: string | null;
+    diffAbsPp: number | null;
+    centralProbRuin: number | null;
+    controlProbRuin: number | null;
+    centralZone: string | null;
+    controlZone: string | null;
+  };
   applyAurumHarness: {
     status: 'idle' | 'running' | 'pass' | 'fail';
     startedAtMs: number | null;
@@ -436,6 +450,20 @@ export function SimulationPage({
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
+  const concordanceColor =
+    controlConcordance.status === 'green'
+      ? '#4ade80'
+      : controlConcordance.status === 'yellow'
+        ? '#facc15'
+        : controlConcordance.status === 'red'
+          ? '#f87171'
+          : T.textMuted;
+  const concordanceLabel =
+    controlConcordance.status === 'pending'
+      ? 'Concordancia: calculando'
+      : controlConcordance.status === 'na'
+        ? 'Concordancia: —'
+        : `Concordancia: ${controlConcordance.status.toUpperCase()}`;
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
@@ -576,6 +604,7 @@ export function SimulationPage({
         triggerRunwayMonths: prev.realEstatePolicy?.triggerRunwayMonths ?? 36,
         saleDelayMonths: prev.realEstatePolicy?.saleDelayMonths ?? 12,
         saleCostPct: prev.realEstatePolicy?.saleCostPct ?? 0,
+        realAppreciationAnnual: prev.realEstatePolicy?.realAppreciationAnnual ?? 0,
       },
     }));
   };
@@ -743,6 +772,20 @@ export function SimulationPage({
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={showBootPlaceholder ? null : heroProbSuccess}
           stale={showGhostResult}
+          labelAccessory={(
+            <span
+              title={concordanceLabel}
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: '999px',
+                background: concordanceColor,
+                border: `1px solid ${T.border}`,
+                boxShadow: `0 0 0 2px rgba(15, 23, 42, 0.45)`,
+                flexShrink: 0,
+              }}
+            />
+          )}
           subtitle={
             simUiState === 'error'
               ? `Error de recálculo: ${simUiError || 'reintenta'}`
@@ -786,6 +829,18 @@ export function SimulationPage({
             },
           ]}
         />
+        {controlConcordance.message ? (
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              color: T.negative,
+            }}
+          >
+            {controlConcordance.message}
+          </div>
+        ) : null}
         {showSimToast && (
           <div
             style={{
@@ -1354,6 +1409,34 @@ export function SimulationPage({
             ) : null}
             {lastRecalcCause ? (
               <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
+            ) : null}
+            <div style={{ color: T.textMuted }}>
+              Supuesto inmueble (real anual): {((params.realEstatePolicy?.realAppreciationAnnual ?? 0) * 100).toFixed(2)}%
+              {' '}· sensibilidad técnica: 0.50% / 1.00%
+            </div>
+            <div style={{ color: T.textMuted }}>
+              Motor control bootstrap: {bootstrapControlStatus}
+            </div>
+            {bootstrapControlResult ? (
+              <div style={{ color: T.textMuted }}>
+                Bootstrap control · Ruina {(bootstrapControlResult.probRuin * 100).toFixed(1)}% ·
+                P50 ${formatMillionsMM((bootstrapControlResult.p50TerminalAllPaths ?? 0) / 1e6)}
+              </div>
+            ) : null}
+            {controlConcordance.centralProbRuin !== null && controlConcordance.controlProbRuin !== null ? (
+              <>
+                <div style={{ color: T.textMuted }}>
+                  Concordancia central vs bootstrap: {controlConcordance.status.toUpperCase()}
+                </div>
+                <div style={{ color: T.textMuted }}>
+                  Ruina central={(controlConcordance.centralProbRuin * 100).toFixed(1)}% ·
+                  bootstrap={(controlConcordance.controlProbRuin * 100).toFixed(1)}% ·
+                  Δ={controlConcordance.diffAbsPp?.toFixed(1)} pp
+                </div>
+                <div style={{ color: T.textMuted }}>
+                  Zona central={controlConcordance.centralZone ?? '—'} · zona bootstrap={controlConcordance.controlZone ?? '—'}
+                </div>
+              </>
             ) : null}
             <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
             <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>

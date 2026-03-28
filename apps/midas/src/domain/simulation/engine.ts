@@ -9,6 +9,7 @@ import { SCENARIO_VARIANTS, WEIGHTED_BOOTSTRAP_HALF_LIFE_YEARS } from '../model/
 import { BASE_ECONOMIC_ASSUMPTIONS } from '../model/economicAssumptions';
 import { loadHistoricalData } from './historicalData';
 import { preprocessHistoricalData } from './preprocessData';
+import { getSpendingTarget, updateSpendingMultiplier } from './spendingMultiplier';
 
 // ── Utilidades ────────────────────────────────────────────────
 
@@ -340,10 +341,8 @@ function runSimulationCoreInternal(
 
       cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
       cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
-      let tgt = 1;
-      if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
-      else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
-      smult += spendingRule.adjustmentAlpha * (tgt - smult);
+      const tgt = getSpendingTarget(cnt15, cnt25, spendingRule);
+      smult = updateSpendingMultiplier(smult, tgt, spendingRule);
 
       const mes = t + 1;
       let GB = 0, phaseStart = 0;
@@ -509,10 +508,8 @@ export function runStressTest(params: ModelParameters, scenario: StressScenario)
     cnt15 = dd <= -0.15 ? cnt15 + 1 : 0;
     cnt25 = dd <= -0.25 ? cnt25 + 1 : 0;
 
-    let tgt = 1;
-    if (cnt25 >= spendingRule.consecutiveMonths) tgt = spendingRule.hardCut;
-    else if (cnt15 >= spendingRule.consecutiveMonths) tgt = spendingRule.softCut;
-    smult += spendingRule.adjustmentAlpha * (tgt - smult);
+    const tgt = getSpendingTarget(cnt15, cnt25, spendingRule);
+    smult = updateSpendingMultiplier(smult, tgt, spendingRule);
     if (smult < minSmult) minSmult = smult;
 
     let GB = 0, phaseStart = 0;

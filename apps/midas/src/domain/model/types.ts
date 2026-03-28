@@ -83,6 +83,9 @@ export interface SpendingRule {
   softCut:            number;
   hardCut:            number;
   adjustmentAlpha:    number;
+  // Velocidad de recuperación cuando el target vuelve a 1.
+  // Default de producto: recuperación casi inmediata (1-2 meses).
+  recoveryAlpha?:     number;
 }
 
 export interface ReturnAssumptions {
@@ -185,6 +188,9 @@ export interface RealEstatePolicy {
   triggerRunwayMonths: number;
   saleDelayMonths: number;
   saleCostPct: number;
+  // Supuesto estructural del modelo: base conservadora 0% real anual.
+  // Sensibilidad tecnica recomendada: 0.5% y 1.0% real anual.
+  realAppreciationAnnual: number;
 }
 
 export interface ModelParameters {
