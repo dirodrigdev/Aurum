@@ -50,6 +50,13 @@ type RuntimeTimelineEntry = {
   event: string;
   payload: string;
 };
+type ActiveRecalcWorkerHandle = {
+  worker: Worker;
+  reject: (error: Error) => void;
+  workerInstanceId: number;
+  requestId: number;
+  scope: WorkerTraceScope;
+};
 type ApplyAurumHarnessState = {
   status: 'idle' | 'running' | 'pass' | 'fail';
   startedAtMs: number | null;
@@ -376,10 +383,8 @@ export default function App() {
   const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
   const timelineStartRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const workerPayloadByRequestRef = useRef<Map<string, ModelParameters>>(new Map());
-  const activeRecalcWorkerRef = useRef<{
-    worker: Worker;
-    reject: (error: Error) => void;
-  } | null>(null);
+  const workerInstanceSeqRef = useRef(0);
+  const activeRecalcWorkerRef = useRef<ActiveRecalcWorkerHandle | null>(null);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -523,12 +528,21 @@ export default function App() {
     [selectVariant],
   );
 
-  const cancelActiveRecalcWorker = useCallback((reason: string = 'cancelled') => {
+  const cancelActiveRecalcWorker = useCallback((
+    reason: string = 'cancelled',
+    caller: string = 'unknown',
+  ) => {
     const active = activeRecalcWorkerRef.current;
     if (!active) return;
     activeRecalcWorkerRef.current = null;
     active.worker.terminate();
-    appendRuntimeTimeline('worker_cancelled', { reason });
+    appendRuntimeTimeline('worker_cancelled', {
+      reason,
+      caller,
+      cancelTargetRequestId: active.requestId,
+      workerInstanceId: active.workerInstanceId,
+      scope: active.scope,
+    });
     active.reject(new Error('simulation_cancelled'));
   }, [appendRuntimeTimeline]);
 
@@ -541,13 +555,21 @@ export default function App() {
       new Promise<SimulationResults>((resolve, reject) => {
         const traceScope = options?.traceScope ?? 'recalc';
         if (options?.cancelPreviousRecalc) {
-          cancelActiveRecalcWorker('superseded_by_new_recalc');
+          cancelActiveRecalcWorker('superseded_by_new_recalc', 'runCentralSimulationInWorker');
         }
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
           type: 'module',
         });
+        const workerInstanceId = workerInstanceSeqRef.current + 1;
+        workerInstanceSeqRef.current = workerInstanceId;
         if (options?.cancelPreviousRecalc) {
-          activeRecalcWorkerRef.current = { worker, reject };
+          activeRecalcWorkerRef.current = {
+            worker,
+            reject,
+            workerInstanceId,
+            requestId: runId,
+            scope: traceScope,
+          };
         }
         let settled = false;
         const clearActiveIfNeeded = () => {
@@ -566,6 +588,7 @@ export default function App() {
           appendRuntimeTimeline('worker_message_main_received', {
             requestId: payload.runId,
             scope: traceScope,
+            workerInstanceId,
             type: payload.type,
             ...(payload.type === 'trace'
               ? {
@@ -580,6 +603,7 @@ export default function App() {
             appendRuntimeTimeline(payload.event, {
               requestId: payload.runId,
               scope: traceScope,
+              workerInstanceId,
               workerAtMs: payload.atMs,
               ...(payload.summary ?? {}),
               ...(payload.message ? { message: payload.message } : {}),
@@ -592,6 +616,7 @@ export default function App() {
             appendRuntimeTimeline('worker_done', {
               requestId: payload.runId,
               scope: traceScope,
+              workerInstanceId,
               probRuin: Number(payload.result.probRuin ?? 0),
               p50TerminalAllPaths: Number(payload.result.p50TerminalAllPaths ?? 0),
               ruinMedianYear: payload.result.ruinTimingMedian != null
@@ -601,6 +626,7 @@ export default function App() {
             appendRuntimeTimeline('worker_done_main_applied', {
               requestId: payload.runId,
               scope: traceScope,
+              workerInstanceId,
             });
             resolve(payload.result);
             return;
@@ -608,11 +634,13 @@ export default function App() {
           appendRuntimeTimeline('worker_error', {
             requestId: payload.runId,
             scope: traceScope,
+            workerInstanceId,
             message: payload.message || 'simulation_worker_error',
           });
           appendRuntimeTimeline('worker_error_main_applied', {
             requestId: payload.runId,
             scope: traceScope,
+            workerInstanceId,
             message: payload.message || 'simulation_worker_error',
           });
           reject(new Error(payload.message || 'simulation_worker_error'));
@@ -624,6 +652,7 @@ export default function App() {
           appendRuntimeTimeline('worker_error', {
             requestId: runId,
             scope: traceScope,
+            workerInstanceId,
             message: event.message || 'simulation_worker_error',
           });
           reject(new Error(event.message || 'simulation_worker_error'));
@@ -635,6 +664,7 @@ export default function App() {
           appendRuntimeTimeline('worker_error', {
             requestId: runId,
             scope: traceScope,
+            workerInstanceId,
             message: 'simulation_worker_message_error',
           });
           reject(new Error('simulation_worker_message_error'));
@@ -649,6 +679,7 @@ export default function App() {
         appendRuntimeTimeline('worker_request_sent', {
           requestId: runId,
           scope: traceScope,
+          workerInstanceId,
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -1008,7 +1039,7 @@ export default function App() {
         recalcWatchdogRef.current = window.setTimeout(() => {
           if (requestId !== recalcRequestIdRef.current) return;
           appendRuntimeTimeline('worker_timeout_fired', { requestId, cause });
-          cancelActiveRecalcWorker('watchdog_timeout');
+          cancelActiveRecalcWorker('watchdog_timeout', 'recalc_watchdog');
           if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
             activeRecalcOwnerRef.current = null;
             setActiveRecalcOwner(null);
@@ -1693,12 +1724,10 @@ export default function App() {
       clearSimulationTimer();
       clearCalculationTimer();
       clearRecalcWatchdog();
-      cancelActiveRecalcWorker();
     };
   }, [
     applyScenarioEconomics,
     baseParams,
-    cancelActiveRecalcWorker,
     clearCalculationTimer,
     clearRecalcWatchdog,
     clearSimulationTimer,
@@ -1706,6 +1735,10 @@ export default function App() {
     simResult,
     startRecalculation,
   ]);
+
+  useEffect(() => () => {
+    cancelActiveRecalcWorker('unmount_cleanup', 'app_unmount');
+  }, [cancelActiveRecalcWorker]);
 
   useEffect(() => {
     const recalcInFlight =
