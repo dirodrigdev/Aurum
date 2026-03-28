@@ -267,6 +267,7 @@ export default function App() {
   const [simWorking, setSimWorking] = useState(false);
   const [simUiState, setSimUiState] = useState<SimulationUiState>('boot');
   const [heroPhase, setHeroPhase] = useState<HeroPhase>('boot');
+  const [bootReadyPending, setBootReadyPending] = useState(false);
   const [simUiError, setSimUiError] = useState<string | null>(null);
   const [lastRecalcCause, setLastRecalcCause] = useState<RecalcCause | null>(null);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
@@ -538,6 +539,7 @@ export default function App() {
     setLastRecalcCause(cause);
     setSimWorking(true);
     setSimUiError(null);
+    setBootReadyPending(false);
     const hasStableResult = Boolean(lastStableCentralRef.current);
     const shouldStale = hasStableResult && cause !== 'boot-init';
     setSimUiState(shouldStale ? 'stale' : 'boot');
@@ -554,8 +556,14 @@ export default function App() {
         setSimResult(nextResult);
         lastStableCentralRef.current = nextResult.central;
         setLastStableCentral(nextResult.central);
-        setSimUiState('ready');
-        setHeroPhase('ready');
+        if (cause === 'boot-init') {
+          setSimUiState('boot');
+          setHeroPhase('boot');
+          setBootReadyPending(true);
+        } else {
+          setSimUiState('ready');
+          setHeroPhase('ready');
+        }
       } catch (error: any) {
         console.error('[Midas] Error recalculando simulación', error);
         setSimUiState('error');
@@ -568,6 +576,23 @@ export default function App() {
       }
     }, 0);
   }, [beginRecalculationVisual, clearCalculationTimer, computeTriMotor]);
+
+  useEffect(() => {
+    if (!bootReadyPending) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        setSimUiState('ready');
+        setHeroPhase('ready');
+        setBootReadyPending(false);
+      });
+    });
+    return () => {
+      if (raf1) window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+    };
+  }, [bootReadyPending]);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
@@ -1129,12 +1154,13 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== 'sim') return;
     if (simulationActive || simOverrides?.active) return;
+    if (bootReadyPending) return;
     setBaseUpdatePending(false);
     setSimUiError(null);
     const nextPhase: HeroPhase = simResult.central ? 'ready' : 'boot';
     setSimUiState(nextPhase);
     setHeroPhase(nextPhase);
-  }, [activeTab, simOverrides?.active, simulationActive, simResult.central]);
+  }, [activeTab, bootReadyPending, simOverrides?.active, simulationActive, simResult.central]);
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
