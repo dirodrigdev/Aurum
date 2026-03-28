@@ -673,6 +673,7 @@ export default function App() {
     if (applyingSnapshotRef.current) return;
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
+    setSimulationActive(true);
     setSimUiError(null);
     window.setTimeout(() => {
       try {
@@ -696,10 +697,12 @@ export default function App() {
 
   const toggleRiskCapital = useCallback(() => {
     setRiskCapitalEnabled((prev) => !prev);
+    setSimulationActive(true);
   }, []);
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     setManualCapitalAdjustments(next);
+    setSimulationActive(true);
   }, []);
 
   useEffect(() => {

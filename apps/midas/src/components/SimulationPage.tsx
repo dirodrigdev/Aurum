@@ -376,8 +376,13 @@ export function SimulationPage({
       setHasVisibleResultInSession(true);
     }
   }, [displayResult, isRecalculating, simUiState]);
-  const showGhostResult = Boolean(isRecalculating && hasVisibleResultInSession && displayResult);
-  const showBootPlaceholder = Boolean(isRecalculating && !hasVisibleResultInSession);
+  const showGhostResult = Boolean(
+    isRecalculating &&
+    hasVisibleResultInSession &&
+    displayResult &&
+    (simActive || pendingSnapshotApplying),
+  );
+  const showBootPlaceholder = Boolean(isRecalculating && !showGhostResult);
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
