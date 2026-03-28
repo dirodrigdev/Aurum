@@ -79,6 +79,8 @@ export function SimulationPage({
   recalcWorkerStatus,
   activeRecalcRequestId,
   appliedRecalcRequestId,
+  activeRecalcSeed,
+  appliedRecalcSeed,
   activeRecalcOwner,
   runtimeTimeline,
   applyAurumHarness,
@@ -117,6 +119,8 @@ export function SimulationPage({
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
   activeRecalcRequestId: number | null;
   appliedRecalcRequestId: number | null;
+  activeRecalcSeed: number | null;
+  appliedRecalcSeed: number | null;
   activeRecalcOwner: 'apply-aurum' | null;
   runtimeTimeline: Array<{ atMs: number; event: string; payload: string }>;
   applyAurumHarness: {
@@ -197,6 +201,7 @@ export function SimulationPage({
     scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
       ? scenarioFromResultRaw
       : null;
+  const resultSeed = resultCentral?.params?.simulation?.seed ?? null;
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -1257,6 +1262,9 @@ export function SimulationPage({
             </div>
             <div style={{ color: T.textMuted }}>
               requestId activo={activeRecalcRequestId ?? '—'} · aplicado={appliedRecalcRequestId ?? '—'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              seed activa={activeRecalcSeed ?? '—'} · seed aplicada={appliedRecalcSeed ?? '—'} · seed resultado={resultSeed ?? '—'}
             </div>
             <div style={{ color: T.textMuted }}>
               owner={activeRecalcOwner ?? 'none'}

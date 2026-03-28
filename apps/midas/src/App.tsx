@@ -201,6 +201,22 @@ function resolveScenarioVariantId(value: unknown): ScenarioVariantId {
   return isScenarioVariantId(value) ? value : 'base';
 }
 
+function nextSimulationSeed(): number {
+  if (typeof window !== 'undefined') {
+    const fixedSeedRaw = window.localStorage.getItem('midas:debug-fixed-seed');
+    const fixedSeed = Number(fixedSeedRaw);
+    if (Number.isInteger(fixedSeed) && fixedSeed > 0) {
+      return fixedSeed;
+    }
+    if (window.crypto?.getRandomValues) {
+      const buffer = new Uint32Array(1);
+      window.crypto.getRandomValues(buffer);
+      return (buffer[0] % 2_147_483_646) + 1;
+    }
+  }
+  return Math.floor(Math.random() * 2_147_483_646) + 1;
+}
+
 function computeWeightedReturn(p: ModelParameters) {
   return (
     p.weights.rvGlobal * p.returns.rvGlobalAnnual +
@@ -347,6 +363,8 @@ export default function App() {
   const [recalcWorkerStatus, setRecalcWorkerStatus] = useState<RecalcWorkerStatus>('idle');
   const [activeRecalcRequestId, setActiveRecalcRequestId] = useState<number | null>(null);
   const [appliedRecalcRequestId, setAppliedRecalcRequestId] = useState<number | null>(null);
+  const [activeRecalcSeed, setActiveRecalcSeed] = useState<number | null>(null);
+  const [appliedRecalcSeed, setAppliedRecalcSeed] = useState<number | null>(null);
   const [activeRecalcOwner, setActiveRecalcOwner] = useState<RecalcOwner>(null);
   const [applyAurumHarness, setApplyAurumHarness] = useState<ApplyAurumHarnessState>({
     status: 'idle',
@@ -715,6 +733,7 @@ export default function App() {
           scope: 'recalc',
           workerInstanceId,
           activeScenario: resolveScenarioVariantId(params.activeScenario),
+          simulationSeed: Number(params.simulation?.seed ?? 0),
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -867,6 +886,7 @@ export default function App() {
           scope: traceScope,
           workerInstanceId,
           activeScenario: resolveScenarioVariantId(params.activeScenario),
+          simulationSeed: Number(params.simulation?.seed ?? 0),
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -1014,6 +1034,7 @@ export default function App() {
     const composition = params.simulationComposition;
     return {
       activeScenario: resolveScenarioVariantId(params.activeScenario),
+      simulationSeed: Number(params.simulation?.seed ?? 0),
       capitalInitial: Number(params.capitalInitial ?? 0),
       compositionMode: composition?.mode ?? 'legacy',
       banksCLP: Number(composition?.nonOptimizable?.banksCLP ?? 0),
@@ -1206,18 +1227,28 @@ export default function App() {
     clearRecalcWatchdog();
     beginRecalculationVisual(cause);
     const requestId = recalcRequestIdRef.current + 1;
+    const simulationSeed = nextSimulationSeed();
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
+    setActiveRecalcSeed(simulationSeed);
     appendRuntimeTimeline('start_recalculation', {
       cause,
       requestId,
+      simulationSeed,
       heroPhase: heroPhaseRef.current,
       owner: ownerForRun ?? 'none',
     });
     calculationTimerRef.current = window.setTimeout(async () => {
       try {
         setRecalcWorkerStatus('running');
-        const params = run();
+        const paramsBase = run();
+        const params: ModelParameters = {
+          ...paramsBase,
+          simulation: {
+            ...paramsBase.simulation,
+            seed: simulationSeed,
+          },
+        };
         appendRuntimeTimeline('start_recalculation_params', {
           cause,
           requestId,
@@ -1229,9 +1260,11 @@ export default function App() {
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
+        setAppliedRecalcSeed(simulationSeed);
         setRecalcWorkerStatus('done');
         appendRuntimeTimeline('sim_result_applied', {
           requestId,
+          simulationSeed,
           ...summarizeResult(nextResult),
         });
         if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
@@ -1263,6 +1296,11 @@ export default function App() {
           setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
         }
         setRecalcWorkerStatus('error');
+        appendRuntimeTimeline('sim_result_error', {
+          requestId,
+          simulationSeed,
+          message: String(error?.message || 'simulation_error'),
+        });
       } finally {
         if (requestId === recalcRequestIdRef.current) {
           setSimWorking(false);
@@ -2209,6 +2247,8 @@ export default function App() {
       recalcWorkerStatus={recalcWorkerStatus}
       activeRecalcRequestId={activeRecalcRequestId}
       appliedRecalcRequestId={appliedRecalcRequestId}
+      activeRecalcSeed={activeRecalcSeed}
+      appliedRecalcSeed={appliedRecalcSeed}
       activeRecalcOwner={activeRecalcOwner}
       runtimeTimeline={runtimeTimeline}
       applyAurumHarness={applyAurumHarness}
