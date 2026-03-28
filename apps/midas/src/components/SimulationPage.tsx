@@ -71,9 +71,14 @@ export function SimulationPage({
   baseUpdatePending,
   pendingSnapshotLabel,
   pendingSnapshotApplying,
+  snapshotApplied,
   manualCapitalAdjustments,
   riskCapitalEnabled,
+  riskCapitalEffective,
   riskCapitalCLP,
+  recalcWorkerStatus,
+  activeRecalcRequestId,
+  appliedRecalcRequestId,
   onApplyPendingSnapshot,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
@@ -100,9 +105,14 @@ export function SimulationPage({
   baseUpdatePending: boolean;
   pendingSnapshotLabel: string | null;
   pendingSnapshotApplying: boolean;
+  snapshotApplied: boolean;
   manualCapitalAdjustments: ManualCapitalAdjustment[];
   riskCapitalEnabled: boolean;
+  riskCapitalEffective: boolean;
   riskCapitalCLP: number;
+  recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
+  activeRecalcRequestId: number | null;
+  appliedRecalcRequestId: number | null;
   onApplyPendingSnapshot: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
@@ -167,7 +177,7 @@ export function SimulationPage({
         : aurumIntegrationStatus === 'error'
           ? 'Aurum: error de integración'
           : 'Aurum: en espera';
-  const isRecalculating = heroPhase === 'boot' || heroPhase === 'stale';
+  const isRecalculating = simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
   const simTechnicalLabel = isRecalculating
     ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
     : simUiState === 'ready'
@@ -370,8 +380,13 @@ export function SimulationPage({
 
   const displayResult = hideResultBlocks ? null : resultCentral;
   const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
-  const showGhostResult = heroPhase === 'stale';
+  const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
   const showBootPlaceholder = heroPhase === 'boot';
+  const riskToggleCopy = !riskCapitalEnabled
+    ? 'OFF'
+    : riskCapitalEffective
+      ? 'ON'
+      : 'ON pendiente';
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
@@ -664,7 +679,9 @@ export function SimulationPage({
             style={{
               background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
               border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-              color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+              color: riskCapitalEnabled
+                ? (riskCapitalEffective ? '#f6d38d' : '#ffd699')
+                : T.textSecondary,
               borderRadius: 10,
               padding: '8px 10px',
               fontSize: 11,
@@ -674,7 +691,7 @@ export function SimulationPage({
               opacity: isRecalculating ? 0.65 : 1,
             }}
           >
-            Incluir capital de riesgo · {riskCapitalEnabled ? 'ON' : 'OFF'}
+            Incluir capital de riesgo · {riskToggleCopy}
           </button>
         </div>
       </div>
@@ -690,7 +707,9 @@ export function SimulationPage({
           valuePct={showBootPlaceholder ? null : heroProbSuccess}
           stale={showGhostResult}
           subtitle={
-            heroPhase !== 'ready'
+            simUiState === 'error'
+              ? `Error de recálculo: ${simUiError || 'reintenta'}`
+              : heroPhase !== 'ready'
               ? 'Calculando simulación...'
               : displayResult
                 ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
@@ -1201,6 +1220,24 @@ export function SimulationPage({
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
             <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
+            <div style={{ color: T.textMuted }}>
+              heroPhase={heroPhase} · simUiState={simUiState} · worker={recalcWorkerStatus}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              requestId activo={activeRecalcRequestId ?? '—'} · aplicado={appliedRecalcRequestId ?? '—'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              snapshotApplied={snapshotApplied ? 'yes' : 'no'} · pendingSnapshotApplying={pendingSnapshotApplying ? 'yes' : 'no'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              riskEnabled={riskCapitalEnabled ? 'yes' : 'no'} · riskEffective={riskCapitalEffective ? 'yes' : 'no'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              simResult={resultCentral ? 'present' : 'missing'} · lastStable={lastStableCentral ? 'present' : 'missing'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              capitalVisible={formatCapital(effectiveCapital)}
+            </div>
             {lastRecalcCause ? (
               <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
             ) : null}

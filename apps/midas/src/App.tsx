@@ -42,6 +42,7 @@ type RecalcCause =
   | 'manual-run'
   | 'session-reset';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
+type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 
 type OptimizerBaselineSnapshot = {
   probRuin: number;
@@ -289,6 +290,10 @@ export default function App() {
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
+  const [snapshotApplied, setSnapshotApplied] = useState(false);
+  const [recalcWorkerStatus, setRecalcWorkerStatus] = useState<RecalcWorkerStatus>('idle');
+  const [activeRecalcRequestId, setActiveRecalcRequestId] = useState<number | null>(null);
+  const [appliedRecalcRequestId, setAppliedRecalcRequestId] = useState<number | null>(null);
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [riskCapitalUsdTotal, setRiskCapitalUsdTotal] = useState(0);
@@ -320,6 +325,7 @@ export default function App() {
   const skipNextAutoRecalcRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
   const baseSnapshotRequestIdRef = useRef(0);
+  const recalcWatchdogRef = useRef<number | null>(null);
   const activeRecalcWorkerRef = useRef<{
     worker: Worker;
     reject: (error: Error) => void;
@@ -411,6 +417,13 @@ export default function App() {
     if (calculationTimerRef.current !== null) {
       window.clearTimeout(calculationTimerRef.current);
       calculationTimerRef.current = null;
+    }
+  }, []);
+
+  const clearRecalcWatchdog = useCallback(() => {
+    if (recalcWatchdogRef.current !== null) {
+      window.clearTimeout(recalcWatchdogRef.current);
+      recalcWatchdogRef.current = null;
     }
   }, []);
 
@@ -627,6 +640,7 @@ export default function App() {
     setLastRecalcCause(cause);
     setSimWorking(true);
     setSimUiError(null);
+    setRecalcWorkerStatus('queued');
     setBootReadyPending(false);
     const hasStableResult = Boolean(lastStableCentralRef.current);
     const shouldStale = hasStableResult && cause !== 'boot-init';
@@ -636,17 +650,34 @@ export default function App() {
 
   const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
     clearCalculationTimer();
+    clearRecalcWatchdog();
     beginRecalculationVisual(cause);
     const requestId = recalcRequestIdRef.current + 1;
     recalcRequestIdRef.current = requestId;
+    setActiveRecalcRequestId(requestId);
     calculationTimerRef.current = window.setTimeout(async () => {
       try {
+        setRecalcWorkerStatus('running');
         const params = run();
+        clearRecalcWatchdog();
+        recalcWatchdogRef.current = window.setTimeout(() => {
+          if (requestId !== recalcRequestIdRef.current) return;
+          cancelActiveRecalcWorker();
+          setSimUiState('error');
+          setHeroPhase(lastStableCentralRef.current ? 'stale' : 'boot');
+          setSimUiError('La simulación tardó demasiado. Reintenta el recálculo.');
+          setRecalcWorkerStatus('error');
+          setSimWorking(false);
+          calculationTimerRef.current = null;
+        }, 30_000);
         const nextResult = await runCentralSimulationInWorker(params, requestId, { cancelPreviousRecalc: true });
         if (requestId !== recalcRequestIdRef.current) return;
+        clearRecalcWatchdog();
         setSimResult(nextResult);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
+        setAppliedRecalcRequestId(requestId);
+        setRecalcWorkerStatus('done');
         if (cause === 'boot-init') {
           setSimUiState('boot');
           setHeroPhase('boot');
@@ -657,20 +688,29 @@ export default function App() {
         }
       } catch (error: any) {
         if (requestId !== recalcRequestIdRef.current) return;
+        clearRecalcWatchdog();
         if (String(error?.message || '') === 'simulation_cancelled') return;
         console.error('[Midas] Error recalculando simulación', error);
         setSimUiState('error');
         const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
         setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+        setRecalcWorkerStatus('error');
       } finally {
         if (requestId === recalcRequestIdRef.current) {
           setSimWorking(false);
+          clearRecalcWatchdog();
           calculationTimerRef.current = null;
         }
       }
     }, 0);
-  }, [beginRecalculationVisual, clearCalculationTimer, runCentralSimulationInWorker]);
+  }, [
+    beginRecalculationVisual,
+    cancelActiveRecalcWorker,
+    clearCalculationTimer,
+    clearRecalcWatchdog,
+    runCentralSimulationInWorker,
+  ]);
 
   useEffect(() => {
     if (!bootReadyPending) return;
@@ -761,24 +801,26 @@ export default function App() {
       const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
       const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
       const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
+      const simParamsForRecalc: ModelParameters = !sameSimCapital || !sameSimComposition
+        ? {
+            ...currentSim,
+            capitalInitial: targetCapital,
+            label: shouldApplyCapital
+              ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
+              : currentSim.label,
+            simulationComposition: nextSimComposition,
+          }
+        : currentSim;
 
       if (!sameSimCapital || !sameSimComposition) {
-        const nextSimParams: ModelParameters = {
-          ...currentSim,
-          capitalInitial: targetCapital,
-          label: shouldApplyCapital
-            ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
-            : currentSim.label,
-          simulationComposition: nextSimComposition,
-        };
-        setSimParams(nextSimParams);
-        if (shouldRecalculate) {
-          setBaseUpdatePending(false);
-          skipNextAutoRecalcRef.current = true;
-          startRecalculation('apply-aurum', () => nextSimParams);
-        } else {
-          setBaseUpdatePending(true);
-        }
+        setSimParams(simParamsForRecalc);
+      }
+      if (shouldRecalculate) {
+        setBaseUpdatePending(false);
+        skipNextAutoRecalcRef.current = true;
+        startRecalculation('apply-aurum', () => simParamsForRecalc);
+      } else if (!sameSimCapital || !sameSimComposition) {
+        setBaseUpdatePending(true);
       }
     } catch (error: any) {
       console.error('[Midas] Error aplicando snapshot Aurum', error);
@@ -823,16 +865,17 @@ export default function App() {
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
     markSimulationInteraction('custom');
-    beginRecalculationVisual('apply-aurum');
     window.setTimeout(() => {
       try {
         lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
+        setSnapshotApplied(true);
         applySnapshotNow(pendingSnapshot, { recalc: true });
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
         setBaseUpdatePending(false);
       } catch (error: unknown) {
+        setSnapshotApplied(false);
         const entry = formatRuntimeError('applyPendingSnapshot', error);
         setRuntimeErrors((prev) => [entry, ...prev].slice(0, 3));
         setSimUiState('error');
@@ -842,7 +885,7 @@ export default function App() {
         setPendingSnapshotApplying(false);
       }
     }, 0);
-  }, [applySnapshotNow, beginRecalculationVisual, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
+  }, [applySnapshotNow, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
 
   const toggleRiskCapital = useCallback(() => {
     pendingRecalcCauseRef.current = 'risk-toggle';
@@ -993,6 +1036,7 @@ export default function App() {
       ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
       clearSimulationTimer();
       clearCalculationTimer();
+      clearRecalcWatchdog();
       cancelActiveRecalcWorker();
     };
   }, [
@@ -1000,6 +1044,7 @@ export default function App() {
     baseParams,
     cancelActiveRecalcWorker,
     clearCalculationTimer,
+    clearRecalcWatchdog,
     clearSimulationTimer,
     scheduleInactivityReset,
     simResult,
@@ -1135,6 +1180,7 @@ export default function App() {
     if (!aurumIntegrationConfigured) {
       setAurumIntegrationStatus('unconfigured');
       setAurumSnapshotLabel(null);
+      setSnapshotApplied(false);
       setRiskCapitalCLP(0);
       setRiskCapitalUsdTotal(0);
       setRiskCapitalUsdSnapshotCLP(0);
@@ -1193,6 +1239,7 @@ export default function App() {
         setAurumIntegrationStatus('missing');
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
+        setSnapshotApplied(false);
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
@@ -1218,12 +1265,14 @@ export default function App() {
       lastSnapshotSignatureRef.current = snapshotSignature;
 
       if (snapshotSignature === lastAppliedSnapshotSignatureRef.current) {
+        setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
         return;
       }
 
+      setSnapshotApplied(false);
       setPendingSnapshot(snapshot);
       setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setPendingSnapshotSignature(snapshotSignature);
@@ -1282,6 +1331,11 @@ export default function App() {
     setHeroPhase(nextPhase);
   }, [activeTab, bootReadyPending, simOverrides?.active, simulationActive, simResult]);
 
+  const riskCapitalEffective = useMemo(() => {
+    const riskInComposition = Number(simParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0);
+    return riskCapitalEnabled && riskInComposition > 0;
+  }, [riskCapitalEnabled, simParams.simulationComposition]);
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
@@ -1301,9 +1355,14 @@ export default function App() {
       baseUpdatePending={baseUpdatePending}
       pendingSnapshotLabel={pendingSnapshotLabel}
       pendingSnapshotApplying={pendingSnapshotApplying}
+      snapshotApplied={snapshotApplied}
       manualCapitalAdjustments={manualCapitalAdjustments}
       riskCapitalEnabled={riskCapitalEnabled}
+      riskCapitalEffective={riskCapitalEffective}
       riskCapitalCLP={riskCapitalCLP}
+      recalcWorkerStatus={recalcWorkerStatus}
+      activeRecalcRequestId={activeRecalcRequestId}
+      appliedRecalcRequestId={appliedRecalcRequestId}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
