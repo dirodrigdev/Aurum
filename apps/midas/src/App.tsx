@@ -49,6 +49,13 @@ type RuntimeTimelineEntry = {
   event: string;
   payload: string;
 };
+type ApplyAurumHarnessState = {
+  status: 'idle' | 'running' | 'pass' | 'fail';
+  startedAtMs: number | null;
+  finishedAtMs: number | null;
+  failureStep: string | null;
+  details: string | null;
+};
 type ManualAdjustmentImpact = {
   currentTotalDelta: number;
   currentBanksDelta: number;
@@ -309,6 +316,13 @@ export default function App() {
   const [activeRecalcRequestId, setActiveRecalcRequestId] = useState<number | null>(null);
   const [appliedRecalcRequestId, setAppliedRecalcRequestId] = useState<number | null>(null);
   const [activeRecalcOwner, setActiveRecalcOwner] = useState<RecalcOwner>(null);
+  const [applyAurumHarness, setApplyAurumHarness] = useState<ApplyAurumHarnessState>({
+    status: 'idle',
+    startedAtMs: null,
+    finishedAtMs: null,
+    failureStep: null,
+    details: null,
+  });
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [, setRiskCapitalUsdTotal] = useState(0);
@@ -328,6 +342,12 @@ export default function App() {
   const activityHandlerRef = useRef<() => void>();
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
+  const simResultRef = useRef<SimulationResults | null>(simResult);
+  const simUiStateRef = useRef<SimulationUiState>(simUiState);
+  const heroPhaseRef = useRef<HeroPhase>(heroPhase);
+  const runtimeTimelineRef = useRef<RuntimeTimelineEntry[]>(runtimeTimeline);
+  const activeRecalcRequestIdRef = useRef<number | null>(activeRecalcRequestId);
+  const appliedRecalcRequestIdRef = useRef<number | null>(appliedRecalcRequestId);
   const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
@@ -362,7 +382,7 @@ export default function App() {
         : '';
     setRuntimeTimeline((prev) => {
       const next = [...prev, { atMs, event, payload: payloadString }];
-      return next.slice(-15);
+      return next.slice(-60);
     });
   }, []);
 
@@ -373,6 +393,30 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
+
+  useEffect(() => {
+    simResultRef.current = simResult;
+  }, [simResult]);
+
+  useEffect(() => {
+    simUiStateRef.current = simUiState;
+  }, [simUiState]);
+
+  useEffect(() => {
+    heroPhaseRef.current = heroPhase;
+  }, [heroPhase]);
+
+  useEffect(() => {
+    runtimeTimelineRef.current = runtimeTimeline;
+  }, [runtimeTimeline]);
+
+  useEffect(() => {
+    activeRecalcRequestIdRef.current = activeRecalcRequestId;
+  }, [activeRecalcRequestId]);
+
+  useEffect(() => {
+    appliedRecalcRequestIdRef.current = appliedRecalcRequestId;
+  }, [appliedRecalcRequestId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -704,6 +748,15 @@ export default function App() {
     p50TerminalAllPaths: Number(result.p50TerminalAllPaths ?? 0),
     ruinMedianYear: result.ruinTimingMedian != null ? Number(result.ruinTimingMedian / 12) : null,
   }), []);
+
+  const parseTimelinePayload = useCallback((payload: string): Record<string, unknown> | null => {
+    if (!payload || !payload.trim().startsWith('{')) return null;
+    try {
+      return JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const buildCanonicalSimParams = useCallback(
     (
@@ -1218,6 +1271,201 @@ export default function App() {
     simUiState,
   ]);
 
+  const runApplyAurumHarness = useCallback(() => {
+    if (applyAurumHarness.status === 'running') return;
+    if (!pendingSnapshot || !pendingSnapshotSignature) {
+      setApplyAurumHarness({
+        status: 'fail',
+        startedAtMs: Date.now(),
+        finishedAtMs: Date.now(),
+        failureStep: 'pending_snapshot_missing',
+        details: 'No hay snapshot Aurum pendiente. El harness requiere estado pre-Apply con snapshot detectado.',
+      });
+      return;
+    }
+    const startedAtMs = Date.now();
+    const initialCapital = Number(simParamsRef.current.capitalInitial ?? 0);
+    const initialSourceResult = simResultRef.current ?? lastStableCentralRef.current;
+    const initialSuccess = initialSourceResult ? Number((1 - initialSourceResult.probRuin).toFixed(6)) : null;
+
+    timelineStartRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    runtimeTimelineRef.current = [];
+    setRuntimeTimeline([]);
+    setApplyAurumHarness({
+      status: 'running',
+      startedAtMs,
+      finishedAtMs: null,
+      failureStep: null,
+      details: null,
+    });
+    appendRuntimeTimeline('harness_start', {
+      initialCapital,
+      initialSuccess,
+      pendingSnapshotLabel: pendingSnapshotLabel ?? 'none',
+    });
+
+    const finalize = (status: 'pass' | 'fail', failureStep: string | null, details: string) => {
+      setApplyAurumHarness({
+        status,
+        startedAtMs,
+        finishedAtMs: Date.now(),
+        failureStep,
+        details,
+      });
+    };
+
+    const findEvent = (
+      name: string,
+      matcher?: (payload: Record<string, unknown> | null) => boolean,
+    ): { event: RuntimeTimelineEntry; payload: Record<string, unknown> | null } | null => {
+      for (let i = runtimeTimelineRef.current.length - 1; i >= 0; i -= 1) {
+        const event = runtimeTimelineRef.current[i];
+        if (event.event !== name) continue;
+        const payload = parseTimelinePayload(event.payload);
+        if (!matcher || matcher(payload)) {
+          return { event, payload };
+        }
+      }
+      return null;
+    };
+
+    const maxWaitMs = 20_000;
+    const intervalMs = 120;
+    const timer = window.setInterval(() => {
+      const elapsedMs = Date.now() - startedAtMs;
+      const terminal = elapsedMs >= maxWaitMs;
+      const applyStart = findEvent('start_recalculation', (payload) => payload?.cause === 'apply-aurum');
+      const applyRequestId = Number(applyStart?.payload?.requestId ?? NaN);
+      const requestKnown = Number.isFinite(applyRequestId);
+      const snapshotAppliedEvent = findEvent('snapshot_applied');
+      const capitalEvent = findEvent('capital_visible_updated', (payload) => {
+        const capital = Number(payload?.capitalVisible ?? NaN);
+        return Number.isFinite(capital) && Math.abs(capital - initialCapital) > 0.5;
+      });
+      const staleEvent = findEvent('hero_phase_changed', (payload) => payload?.heroPhase === 'stale');
+      const startParams = requestKnown
+        ? findEvent('start_recalculation_params', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        : null;
+      const workerRequest = requestKnown
+        ? findEvent('worker_request_sent', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        : null;
+      const workerDone = requestKnown
+        ? findEvent('worker_done', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        : null;
+      const workerError = requestKnown
+        ? findEvent('worker_error', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        : null;
+      const resultApplied = requestKnown
+        ? findEvent('sim_result_applied', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        : null;
+      const renderFromSimResult = findEvent('hero_render_source_changed', (payload) => payload?.source === 'simResult');
+
+      if (startParams?.payload && workerRequest?.payload) {
+        const startCapital = Number(startParams.payload.capitalInitial ?? NaN);
+        const workerCapital = Number(workerRequest.payload.capitalInitial ?? NaN);
+        const startMode = String(startParams.payload.compositionMode ?? '');
+        const workerMode = String(workerRequest.payload.compositionMode ?? '');
+        const startBanks = Number(startParams.payload.banksCLP ?? NaN);
+        const workerBanks = Number(workerRequest.payload.banksCLP ?? NaN);
+        const startOptimizable = Number(startParams.payload.optimizableInvestmentsCLP ?? NaN);
+        const workerOptimizable = Number(workerRequest.payload.optimizableInvestmentsCLP ?? NaN);
+        const mismatch =
+          Math.abs(startCapital - workerCapital) > 0.5 ||
+          startMode !== workerMode ||
+          Math.abs(startBanks - workerBanks) > 0.5 ||
+          Math.abs(startOptimizable - workerOptimizable) > 0.5;
+        if (mismatch) {
+          window.clearInterval(timer);
+          finalize(
+            'fail',
+            'params_ui_worker_mismatch',
+            `Mismatch Apply Aurum params: start(cap=${startCapital}, mode=${startMode}, banks=${startBanks}, opt=${startOptimizable}) vs worker(cap=${workerCapital}, mode=${workerMode}, banks=${workerBanks}, opt=${workerOptimizable}).`,
+          );
+          return;
+        }
+      }
+
+      if (workerError) {
+        window.clearInterval(timer);
+        finalize('fail', 'worker_error', `Worker error en request ${applyRequestId}: ${workerError.payload?.message ?? 'sin detalle'}`);
+        return;
+      }
+
+      const isReady = heroPhaseRef.current === 'ready' && simUiStateRef.current === 'ready';
+      const hasResult = Boolean(simResultRef.current);
+      if (requestKnown && snapshotAppliedEvent && capitalEvent && staleEvent && workerDone && resultApplied && isReady && hasResult) {
+        const finalResult = simResultRef.current!;
+        const finalSuccess = Number((1 - finalResult.probRuin).toFixed(6));
+        const finalCapital = Number(simParamsRef.current.capitalInitial ?? 0);
+        if (Math.abs(finalCapital - initialCapital) <= 0.5) {
+          window.clearInterval(timer);
+          finalize(
+            'fail',
+            'capital_not_updated',
+            `Apply Aurum no cambió capital visible: initial=${initialCapital}, final=${finalCapital}.`,
+          );
+          return;
+        }
+        if (initialSuccess !== null && Math.abs(finalSuccess - initialSuccess) < 0.00001) {
+          window.clearInterval(timer);
+          finalize(
+            'fail',
+            'hero_value_unchanged',
+            `Resultado aplicado pero hero sin cambio relevante: success inicial=${initialSuccess}, final=${finalSuccess}.`,
+          );
+          return;
+        }
+        if (activeRecalcRequestIdRef.current !== null && appliedRecalcRequestIdRef.current !== activeRecalcRequestIdRef.current) {
+          window.clearInterval(timer);
+          finalize(
+            'fail',
+            'request_not_converged',
+            `Request aplicado (${appliedRecalcRequestIdRef.current ?? '—'}) distinto al activo (${activeRecalcRequestIdRef.current ?? '—'}).`,
+          );
+          return;
+        }
+        window.clearInterval(timer);
+        finalize(
+          'pass',
+          null,
+          `PASS: request=${applyRequestId}, capital ${initialCapital} -> ${finalCapital}, success ${initialSuccess ?? 'n/a'} -> ${finalSuccess}, source=${renderFromSimResult ? 'simResult' : 'unknown'}.`,
+        );
+        return;
+      }
+
+      if (!terminal) return;
+
+      window.clearInterval(timer);
+      const failureStep =
+        !findEvent('apply_aurum_click') ? 'apply_click_missing'
+          : !snapshotAppliedEvent ? 'snapshot_not_applied'
+            : !capitalEvent ? 'capital_not_updated'
+              : !applyStart ? 'start_recalc_missing'
+                : !staleEvent ? 'hero_not_stale'
+                  : !startParams ? 'start_params_missing'
+                    : !workerRequest ? 'worker_request_missing'
+                      : !workerDone ? 'worker_done_missing'
+                        : !resultApplied ? 'sim_result_not_applied'
+                          : heroPhaseRef.current !== 'ready' ? 'hero_not_ready'
+                            : !renderFromSimResult ? 'hero_not_rendering_sim_result'
+                              : 'unknown_timeout';
+      finalize(
+        'fail',
+        failureStep,
+        `Timeout ${maxWaitMs}ms. request=${requestKnown ? applyRequestId : '—'} heroPhase=${heroPhaseRef.current} simUiState=${simUiStateRef.current} worker=${recalcWorkerStatus}.`,
+      );
+    }, intervalMs);
+  }, [
+    applyAurumHarness.status,
+    applyPendingSnapshot,
+    appendRuntimeTimeline,
+    parseTimelinePayload,
+    pendingSnapshot,
+    pendingSnapshotLabel,
+    pendingSnapshotSignature,
+    recalcWorkerStatus,
+  ]);
+
   const toggleRiskCapital = useCallback(() => {
     pendingRecalcCauseRef.current = 'risk-toggle';
     setRiskCapitalEnabled((prev) => !prev);
@@ -1626,7 +1874,9 @@ export default function App() {
       appliedRecalcRequestId={appliedRecalcRequestId}
       activeRecalcOwner={activeRecalcOwner}
       runtimeTimeline={runtimeTimeline}
+      applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
+      onRunApplyAurumHarness={runApplyAurumHarness}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
       onSimulationTouch={markSimulationInteraction}

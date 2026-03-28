@@ -81,7 +81,9 @@ export function SimulationPage({
   appliedRecalcRequestId,
   activeRecalcOwner,
   runtimeTimeline,
+  applyAurumHarness,
   onApplyPendingSnapshot,
+  onRunApplyAurumHarness,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
   onSimulationTouch,
@@ -117,7 +119,15 @@ export function SimulationPage({
   appliedRecalcRequestId: number | null;
   activeRecalcOwner: 'apply-aurum' | null;
   runtimeTimeline: Array<{ atMs: number; event: string; payload: string }>;
+  applyAurumHarness: {
+    status: 'idle' | 'running' | 'pass' | 'fail';
+    startedAtMs: number | null;
+    finishedAtMs: number | null;
+    failureStep: string | null;
+    details: string | null;
+  };
   onApplyPendingSnapshot: () => void;
+  onRunApplyAurumHarness: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
@@ -387,6 +397,13 @@ export function SimulationPage({
   const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
   const showBootPlaceholder = heroPhase === 'boot';
   const riskToggleCopy = riskCapitalEnabled ? 'ON' : 'OFF';
+  const harnessRunning = applyAurumHarness.status === 'running';
+  const harnessStatusColor =
+    applyAurumHarness.status === 'pass'
+      ? T.positive
+      : applyAurumHarness.status === 'fail'
+        ? T.negative
+        : T.textMuted;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
@@ -1202,7 +1219,7 @@ export function SimulationPage({
         </>
       )}
 
-      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending || Boolean(lastRecalcCause)) && (
+      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending || Boolean(lastRecalcCause) || Boolean(pendingSnapshotLabel) || applyAurumHarness.status !== 'idle') && (
         <details
           style={{
             marginTop: 12,
@@ -1241,6 +1258,43 @@ export function SimulationPage({
             <div style={{ color: T.textMuted }}>
               capitalVisible={formatCapital(effectiveCapital)}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={onRunApplyAurumHarness}
+                disabled={harnessRunning || !pendingSnapshotLabel}
+                style={{
+                  background: harnessRunning ? T.surfaceEl : 'rgba(91, 140, 255, 0.16)',
+                  border: `1px solid ${harnessRunning ? T.border : 'rgba(91, 140, 255, 0.55)'}`,
+                  color: harnessRunning ? T.textMuted : T.textPrimary,
+                  borderRadius: 8,
+                  padding: '5px 8px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: harnessRunning || !pendingSnapshotLabel ? 'not-allowed' : 'pointer',
+                  opacity: harnessRunning || !pendingSnapshotLabel ? 0.7 : 1,
+                }}
+              >
+                {harnessRunning ? 'Harness corriendo…' : 'Run Apply Aurum Harness'}
+              </button>
+              <span style={{ color: harnessStatusColor }}>
+                harness={applyAurumHarness.status}
+                {applyAurumHarness.failureStep ? ` · step=${applyAurumHarness.failureStep}` : ''}
+              </span>
+            </div>
+            {applyAurumHarness.details ? (
+              <div style={{ color: T.textMuted }}>
+                {applyAurumHarness.details}
+              </div>
+            ) : null}
+            {applyAurumHarness.startedAtMs ? (
+              <div style={{ color: T.textMuted }}>
+                harnessStarted={new Date(applyAurumHarness.startedAtMs).toLocaleTimeString('es-ES')}
+                {applyAurumHarness.finishedAtMs
+                  ? ` · duration=${Math.max(0, applyAurumHarness.finishedAtMs - applyAurumHarness.startedAtMs)}ms`
+                  : ''}
+              </div>
+            ) : null}
             {runtimeTimeline.length > 0 ? (
               <div
                 style={{
