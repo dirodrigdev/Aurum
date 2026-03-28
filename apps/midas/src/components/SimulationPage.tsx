@@ -53,12 +53,8 @@ const formatCapital = (value: number) => {
 const formatNumber = (value: number) =>
   value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-const ruinToSuccessPct = (probRuin: number) => (1 - probRuin) * 100;
-
 export function SimulationPage({
   resultCentral,
-  resultFavorable,
-  resultPrudent,
   params,
   simOverrides,
   simActive,
@@ -88,8 +84,6 @@ export function SimulationPage({
   onResetSim,
 }: {
   resultCentral: SimulationResults | null;
-  resultFavorable: SimulationResults | null;
-  resultPrudent: SimulationResults | null;
   params: ModelParameters;
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
@@ -387,8 +381,6 @@ export function SimulationPage({
     ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)}`
     : '—';
   const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)}` : '—';
-  const plausibleLow = resultPrudent ? ruinToSuccessPct(resultPrudent.probRuin) : null;
-  const plausibleHigh = resultFavorable ? ruinToSuccessPct(resultFavorable.probRuin) : null;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
@@ -409,8 +401,6 @@ export function SimulationPage({
     : 40;
   const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
   const successValues = [
-    plausibleLow,
-    plausibleHigh,
     probSuccess !== null ? probSuccess * 100 : null,
   ].filter((value): value is number => Number.isFinite(value));
   const axisMinCandidate = successValues.length
@@ -838,64 +828,31 @@ export function SimulationPage({
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
               <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
             <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {plausibleLow !== null && plausibleHigh !== null && (() => {
-                const left = mapSuccessPct(plausibleLow);
-                const right = mapSuccessPct(plausibleHigh);
-                return (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${Math.min(left, right)}%`,
-                      width: `${Math.max(0, Math.abs(right - left))}%`,
-                      top: 0,
-                      bottom: 0,
-                      background: 'rgba(91, 140, 255, 0.22)',
-                      borderRadius: 999,
-                    }}
-                  />
-                );
-              })()}
-              {SCENARIO_VARIANTS.map((variant) => {
-                const active = simulationPreset !== 'custom' && variant.id === simulationPreset;
-                const successPct =
-                  variant.id === 'pessimistic'
-                    ? plausibleLow ?? 0
-                    : variant.id === 'optimistic'
-                      ? plausibleHigh ?? 0
-                      : probSuccess !== null
-                        ? probSuccess * 100
-                        : 0;
+              {probSuccess !== null && (() => {
+                const successPct = probSuccess * 100;
                 const left = mapSuccessPct(successPct);
                 const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
                 return (
                   <span
-                    key={variant.id}
-                    title={`${variant.label}: ${successPct.toFixed(1)}%`}
+                    title={`Éxito: ${successPct.toFixed(1)}%`}
                     style={{
                       position: 'absolute',
                       left: `${left}%`,
                       top: '50%',
                       transform: 'translate(-50%, -50%)',
-                      width: active ? 14 : 12,
-                      height: active ? 14 : 12,
+                      width: 14,
+                      height: 14,
                       borderRadius: '50%',
                       border: `2px solid ${zoneColor}`,
-                      background: active ? zoneColor : T.surface,
+                      background: zoneColor,
                       opacity: 0.95,
                       display: 'block',
                     }}
                   />
                 );
-              })}
+              })()}
             </div>
             <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
-          </div>
-          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 10 }}>
-            Rango plausible:{' '}
-            {plausibleLow !== null && plausibleHigh !== null
-              ? `${Math.min(plausibleLow, plausibleHigh).toFixed(0)}% — ${Math.max(plausibleLow, plausibleHigh).toFixed(0)}%`
-              : '—'}{' '}
-            <span style={{ color: T.textMuted }}>Favorable ↔ Prudente</span>
           </div>
         </div>
       )}

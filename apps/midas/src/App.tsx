@@ -11,7 +11,7 @@ import type {
 } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant } from './domain/simulation/engine';
-import { runMidasTriSimulation } from './domain/simulation/policy';
+import { runMidasSimulation } from './domain/simulation/policy';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -31,11 +31,6 @@ import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/t
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
-type TriMotorResult = {
-  central: SimulationResults | null;
-  favorable: SimulationResults | null;
-  prudent: SimulationResults | null;
-};
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
 type HeroPhase = 'boot' | 'stale' | 'ready';
 type RecalcCause =
@@ -258,7 +253,7 @@ export default function App() {
   const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
-  const [simResult, setSimResult] = useState<TriMotorResult>({ central: null, favorable: null, prudent: null });
+  const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
   const [simulationActive, setSimulationActive] = useState(false);
@@ -408,7 +403,10 @@ export default function App() {
     [selectVariant],
   );
 
-  const computeTriMotor = useCallback((params: ModelParameters): TriMotorResult => runMidasTriSimulation(params), []);
+  const computeCentralSimulation = useCallback(
+    (params: ModelParameters): SimulationResults => runMidasSimulation(params, 'primary'),
+    [],
+  );
   const parseYearMonth = useCallback((value: string) => {
     const [yearRaw, monthRaw] = value.split('-');
     const year = Number(yearRaw);
@@ -552,10 +550,10 @@ export default function App() {
     calculationTimerRef.current = window.setTimeout(() => {
       try {
         const params = run();
-        const nextResult = computeTriMotor(params);
+        const nextResult = computeCentralSimulation(params);
         setSimResult(nextResult);
-        lastStableCentralRef.current = nextResult.central;
-        setLastStableCentral(nextResult.central);
+        lastStableCentralRef.current = nextResult;
+        setLastStableCentral(nextResult);
         if (cause === 'boot-init') {
           setSimUiState('boot');
           setHeroPhase('boot');
@@ -575,7 +573,7 @@ export default function App() {
         calculationTimerRef.current = null;
       }
     }, 0);
-  }, [beginRecalculationVisual, clearCalculationTimer, computeTriMotor]);
+  }, [beginRecalculationVisual, clearCalculationTimer, computeCentralSimulation]);
 
   useEffect(() => {
     if (!bootReadyPending) return;
@@ -885,7 +883,7 @@ export default function App() {
   }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP, riskCapitalUsdTotal, simOverrides, startRecalculation]);
 
   useEffect(() => {
-    if (!simResult.central) {
+    if (!simResult) {
       const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
       setSimParams(next);
       startRecalculation('boot-init', () => next);
@@ -904,9 +902,9 @@ export default function App() {
   useEffect(() => {
     if (baseUpdatePending) return;
     const baseFromAurum = applyScenarioEconomics(cloneParams(baseParams), 'base');
-    const tri = computeTriMotor(baseFromAurum);
-    setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(tri.central));
-  }, [applyScenarioEconomics, baseParams, baseUpdatePending, computeTriMotor]);
+    const result = computeCentralSimulation(baseFromAurum);
+    setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(result));
+  }, [applyScenarioEconomics, baseParams, baseUpdatePending, computeCentralSimulation]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     markSimulationInteraction('custom');
@@ -975,7 +973,7 @@ export default function App() {
     setActiveTab(tab);
   }, []);
 
-  const statusColor = simulationActive ? T.primary : simResult.central ? T.positive : T.textMuted;
+  const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
   const stateLabel =
     simulationActive && simulationPreset !== 'base'
       ? simulationPreset === 'optimistic'
@@ -990,8 +988,8 @@ export default function App() {
     [simOverrides, simParams],
   );
   const simulationOptimizerSnapshot = useMemo(
-    () => (simulationActive ? toOptimizerBaselineSnapshot(simResult.central) : null),
-    [simulationActive, simResult.central],
+    () => (simulationActive ? toOptimizerBaselineSnapshot(simResult) : null),
+    [simulationActive, simResult],
   );
   const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
     amountClp: null,
@@ -1157,16 +1155,14 @@ export default function App() {
     if (bootReadyPending) return;
     setBaseUpdatePending(false);
     setSimUiError(null);
-    const nextPhase: HeroPhase = simResult.central ? 'ready' : 'boot';
+    const nextPhase: HeroPhase = simResult ? 'ready' : 'boot';
     setSimUiState(nextPhase);
     setHeroPhase(nextPhase);
-  }, [activeTab, bootReadyPending, simOverrides?.active, simulationActive, simResult.central]);
+  }, [activeTab, bootReadyPending, simOverrides?.active, simulationActive, simResult]);
 
   const content = activeTab === 'sim' ? (
     <SimulationPage
-      resultCentral={simResult.central}
-      resultFavorable={simResult.favorable}
-      resultPrudent={simResult.prudent}
+      resultCentral={simResult}
       params={simParams}
       simOverrides={simOverrides}
       simActive={simulationActive}

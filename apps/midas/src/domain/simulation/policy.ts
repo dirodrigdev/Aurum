@@ -1,23 +1,20 @@
 import type { ModelParameters, SimulationResults } from '../model/types';
-import { runSimulation } from './engine';
 import { runSimulationCentral } from './engineCentral';
-import { runSimulationRobust } from './engineRobust';
 
 export type MidasSimulationChannel = 'primary' | 'favorable' | 'prudent';
-export type MidasEngineId = 'central' | 'historical' | 'robust';
+export type MidasEngineId = 'central';
 
 /**
  * Single source of truth for simulation engine routing in Midas.
  *
- * Product rule:
- * - `primary` is the only official baseline engine and must stay `central`.
- * - `historical` and `robust` are auxiliary engines for range/comparison only.
- * - No principal screen should silently use auxiliary engines as baseline.
+ * Product rule (active flow):
+ * - Runtime product simulation uses only the central engine.
+ * - Auxiliary engines remain in repository for reference, outside active flow.
  */
 export const MIDAS_SIMULATION_POLICY: Record<MidasSimulationChannel, MidasEngineId> = {
   primary: 'central',
-  favorable: 'historical',
-  prudent: 'robust',
+  favorable: 'central',
+  prudent: 'central',
 };
 
 export function getMidasEngineFor(channel: MidasSimulationChannel): MidasEngineId {
@@ -26,23 +23,17 @@ export function getMidasEngineFor(channel: MidasSimulationChannel): MidasEngineI
 
 export function runMidasSimulation(
   params: ModelParameters,
-  channel: MidasSimulationChannel = 'primary',
+  _channel: MidasSimulationChannel = 'primary',
 ): SimulationResults {
-  const engine = getMidasEngineFor(channel);
-  switch (engine) {
-    case 'central':
-      return runSimulationCentral(params);
-    case 'historical':
-      return runSimulation(params);
-    case 'robust':
-      return runSimulationRobust(params);
-  }
+  return runSimulationCentral(params);
 }
 
 export function runMidasTriSimulation(params: ModelParameters) {
+  // Compatibility wrapper. Active product flow should consume only `central`.
+  const central = runMidasSimulation(params, 'primary');
   return {
-    central: runMidasSimulation(params, 'primary'),
-    favorable: runMidasSimulation(params, 'favorable'),
-    prudent: runMidasSimulation(params, 'prudent'),
+    central,
+    favorable: null,
+    prudent: null,
   };
 }
