@@ -11,7 +11,6 @@ import type {
 } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
 import { applyScenarioVariant } from './domain/simulation/engine';
-import { runMidasSimulation } from './domain/simulation/policy';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
@@ -48,6 +47,25 @@ type OptimizerBaselineSnapshot = {
   probRuin: number;
   terminalP50: number;
 };
+
+type CentralWorkerStartMessage = {
+  type: 'central-start';
+  runId: number;
+  channel: 'primary';
+  params: ModelParameters;
+};
+
+type CentralWorkerMessage =
+  | {
+      type: 'done';
+      runId: number;
+      result: SimulationResults;
+    }
+  | {
+      type: 'error';
+      runId: number;
+      message: string;
+    };
 
 class MidasErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -300,6 +318,12 @@ export default function App() {
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
   const skipNextAutoRecalcRef = useRef(false);
+  const recalcRequestIdRef = useRef(0);
+  const baseSnapshotRequestIdRef = useRef(0);
+  const activeRecalcWorkerRef = useRef<{
+    worker: Worker;
+    reject: (error: Error) => void;
+  } | null>(null);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -403,10 +427,76 @@ export default function App() {
     [selectVariant],
   );
 
-  const computeCentralSimulation = useCallback(
-    (params: ModelParameters): SimulationResults => runMidasSimulation(params, 'primary'),
-    [],
+  const cancelActiveRecalcWorker = useCallback(() => {
+    const active = activeRecalcWorkerRef.current;
+    if (!active) return;
+    activeRecalcWorkerRef.current = null;
+    active.worker.terminate();
+    active.reject(new Error('simulation_cancelled'));
+  }, []);
+
+  const runCentralSimulationInWorker = useCallback(
+    (
+      params: ModelParameters,
+      runId: number,
+      options?: { cancelPreviousRecalc?: boolean },
+    ): Promise<SimulationResults> =>
+      new Promise<SimulationResults>((resolve, reject) => {
+        if (options?.cancelPreviousRecalc) {
+          cancelActiveRecalcWorker();
+        }
+        const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
+          type: 'module',
+        });
+        if (options?.cancelPreviousRecalc) {
+          activeRecalcWorkerRef.current = { worker, reject };
+        }
+        let settled = false;
+        const clearActiveIfNeeded = () => {
+          if (activeRecalcWorkerRef.current?.worker === worker) {
+            activeRecalcWorkerRef.current = null;
+          }
+        };
+        const finalize = () => {
+          clearActiveIfNeeded();
+          worker.terminate();
+        };
+
+        worker.onmessage = (event: MessageEvent<CentralWorkerMessage>) => {
+          const payload = event.data;
+          if (!payload || payload.runId !== runId) return;
+          settled = true;
+          finalize();
+          if (payload.type === 'done') {
+            resolve(payload.result);
+            return;
+          }
+          reject(new Error(payload.message || 'simulation_worker_error'));
+        };
+        worker.onerror = (event) => {
+          if (settled) return;
+          settled = true;
+          finalize();
+          reject(new Error(event.message || 'simulation_worker_error'));
+        };
+        worker.onmessageerror = () => {
+          if (settled) return;
+          settled = true;
+          finalize();
+          reject(new Error('simulation_worker_message_error'));
+        };
+
+        const message: CentralWorkerStartMessage = {
+          type: 'central-start',
+          runId,
+          channel: 'primary',
+          params,
+        };
+        worker.postMessage(message);
+      }),
+    [cancelActiveRecalcWorker],
   );
+
   const parseYearMonth = useCallback((value: string) => {
     const [yearRaw, monthRaw] = value.split('-');
     const year = Number(yearRaw);
@@ -547,10 +637,13 @@ export default function App() {
   const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
     clearCalculationTimer();
     beginRecalculationVisual(cause);
-    calculationTimerRef.current = window.setTimeout(() => {
+    const requestId = recalcRequestIdRef.current + 1;
+    recalcRequestIdRef.current = requestId;
+    calculationTimerRef.current = window.setTimeout(async () => {
       try {
         const params = run();
-        const nextResult = computeCentralSimulation(params);
+        const nextResult = await runCentralSimulationInWorker(params, requestId, { cancelPreviousRecalc: true });
+        if (requestId !== recalcRequestIdRef.current) return;
         setSimResult(nextResult);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
@@ -563,17 +656,21 @@ export default function App() {
           setHeroPhase('ready');
         }
       } catch (error: any) {
+        if (requestId !== recalcRequestIdRef.current) return;
+        if (String(error?.message || '') === 'simulation_cancelled') return;
         console.error('[Midas] Error recalculando simulación', error);
         setSimUiState('error');
         const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
         setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
       } finally {
-        setSimWorking(false);
-        calculationTimerRef.current = null;
+        if (requestId === recalcRequestIdRef.current) {
+          setSimWorking(false);
+          calculationTimerRef.current = null;
+        }
       }
     }, 0);
-  }, [beginRecalculationVisual, clearCalculationTimer, computeCentralSimulation]);
+  }, [beginRecalculationVisual, clearCalculationTimer, runCentralSimulationInWorker]);
 
   useEffect(() => {
     if (!bootReadyPending) return;
@@ -896,15 +993,40 @@ export default function App() {
       ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
       clearSimulationTimer();
       clearCalculationTimer();
+      cancelActiveRecalcWorker();
     };
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, scheduleInactivityReset, simResult, startRecalculation]);
+  }, [
+    applyScenarioEconomics,
+    baseParams,
+    cancelActiveRecalcWorker,
+    clearCalculationTimer,
+    clearSimulationTimer,
+    scheduleInactivityReset,
+    simResult,
+    startRecalculation,
+  ]);
 
   useEffect(() => {
     if (baseUpdatePending) return;
+    const requestId = baseSnapshotRequestIdRef.current + 1;
+    baseSnapshotRequestIdRef.current = requestId;
+    let cancelled = false;
     const baseFromAurum = applyScenarioEconomics(cloneParams(baseParams), 'base');
-    const result = computeCentralSimulation(baseFromAurum);
-    setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(result));
-  }, [applyScenarioEconomics, baseParams, baseUpdatePending, computeCentralSimulation]);
+    void runCentralSimulationInWorker(baseFromAurum, requestId)
+      .then((result) => {
+        if (cancelled || requestId !== baseSnapshotRequestIdRef.current) return;
+        setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(result));
+      })
+      .catch((error) => {
+        if (cancelled || requestId !== baseSnapshotRequestIdRef.current) return;
+        if (String((error as Error)?.message || '') === 'simulation_cancelled') return;
+        console.error('[Midas] Error calculando baseline del optimizador', error);
+        setBaseOptimizerSnapshot(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applyScenarioEconomics, baseParams, baseUpdatePending, runCentralSimulationInWorker]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     markSimulationInteraction('custom');
