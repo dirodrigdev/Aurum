@@ -65,6 +65,59 @@ function percentile(sorted: number[], p: number): number {
   return lo === hi ? sorted[lo] : sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
 }
 
+function validateCorrelationMatrix(correlationMatrix: number[][]): string[] {
+  const issues: string[] = [];
+  if (!Array.isArray(correlationMatrix) || correlationMatrix.length !== 4) {
+    issues.push('correlationMatrix must be 4x4');
+    return issues;
+  }
+  for (let i = 0; i < 4; i += 1) {
+    const row = correlationMatrix[i];
+    if (!Array.isArray(row) || row.length !== 4) {
+      issues.push(`correlationMatrix row ${i} must have length 4`);
+      continue;
+    }
+    for (let j = 0; j < 4; j += 1) {
+      const value = row[j];
+      if (!Number.isFinite(value)) {
+        issues.push(`correlationMatrix[${i}][${j}] is not finite`);
+        continue;
+      }
+      if (Math.abs(value) > 1.000001) {
+        issues.push(`correlationMatrix[${i}][${j}] must be between -1 and 1`);
+      }
+      if (i === j && Math.abs(value - 1) > 1e-6) {
+        issues.push(`correlationMatrix diagonal at [${i}][${j}] must be 1`);
+      }
+      if (j > i) {
+        const symmetric = correlationMatrix[j]?.[i];
+        if (!Number.isFinite(symmetric) || Math.abs(value - symmetric) > 1e-6) {
+          issues.push(`correlationMatrix must be symmetric at [${i}][${j}]`);
+        }
+      }
+    }
+  }
+  return issues;
+}
+
+function validateSimulationInputs(params: ModelParameters): void {
+  const issues: string[] = [];
+  if (!Number.isFinite(params.simulation.nSim) || params.simulation.nSim <= 0 || !Number.isInteger(params.simulation.nSim)) {
+    issues.push('simulation.nSim must be a positive integer');
+  }
+  if (
+    !Number.isFinite(params.simulation.horizonMonths) ||
+    params.simulation.horizonMonths <= 0 ||
+    !Number.isInteger(params.simulation.horizonMonths)
+  ) {
+    issues.push('simulation.horizonMonths must be a positive integer');
+  }
+  issues.push(...validateCorrelationMatrix(params.returns.correlationMatrix));
+  if (issues.length > 0) {
+    throw new Error(`invalid_simulation_input: ${Array.from(new Set(issues)).join(' | ')}`);
+  }
+}
+
 const clampNonNegative = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
 const maxOf = (values: number[]) =>
   values.length ? values.reduce((acc, value) => (value > acc ? value : acc), values[0]) : -Infinity;
@@ -217,7 +270,8 @@ function runSimulationParametricLegacyInternal(params: ModelParameters): Paramet
   const w = [weights.rvGlobal, weights.rfGlobal, weights.rvChile, weights.rfChile];
 
   let nRuin = 0;
-  const terminalW: number[] = [];
+  const terminalWSurvivors: number[] = [];
+  const terminalWAllPaths: number[] = [];
   const maxDDs: number[] = [];
   const ruinMonths: number[] = [];
   const spRatios: number[] = [];
@@ -329,13 +383,16 @@ function runSimulationParametricLegacyInternal(params: ModelParameters): Paramet
       }
     }
 
-    if (!ruined) terminalW.push(sl.reduce((a, b) => a + b, 0));
+    const finalTerminalWealth = ruined ? 0 : sl.reduce((a, b) => a + b, 0);
+    if (!ruined) terminalWSurvivors.push(finalTerminalWealth);
+    terminalWAllPaths.push(finalTerminalWealth);
     maxDDs.push(maxDD);
     if (gPlan > 0) spRatios.push(gEff / gPlan);
   }
 
   const pcts = [5, 10, 25, 50, 75, 90, 95];
-  const sortTW = [...terminalW].sort((a, b) => a - b);
+  const sortTW = [...terminalWSurvivors].sort((a, b) => a - b);
+  const sortTWAll = [...terminalWAllPaths].sort((a, b) => a - b);
   const twPct: Record<number, number> = {};
   pcts.forEach(p => { twPct[p] = percentile(sortTW, p); });
 
@@ -374,6 +431,9 @@ function runSimulationParametricLegacyInternal(params: ModelParameters): Paramet
       scenarioComparison: undefined,
       terminalWealthPercentiles: twPct,
       terminalWealthAll: sortTW,
+      terminalWealthAllPaths: sortTWAll,
+      p50TerminalAllPaths: percentile(sortTWAll, 50),
+      p50TerminalSurvivors: percentile(sortTW, 50),
       maxDrawdownPercentiles: ddPct,
       ruinTimingMedian: percentile(sortRM, 50),
       ruinTimingP25: percentile(sortRM, 25),
@@ -438,9 +498,14 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const realEstateInput = composition?.nonOptimizable?.realEstate;
   const mortgageProjection = buildMortgageProjection(realEstateInput, T);
   const amortizationScheduleUF = mortgageProjection.amortizationUF;
+  const preserveFallbackEquity = mortgageProjection.status === 'fallback_incomplete' && (realEstateInput?.realEstateEquityCLP ?? 0) > 0;
   const diagnosticWarnings = normalizeDiagnosticWarnings(mortgageProjection.notes, mortgageProjection.status);
+  if (preserveFallbackEquity) {
+    diagnosticWarnings.push('mortgage:fallback-preserve-equity-clp');
+  }
   const ufSnapshotCLP = clampNonNegative(realEstateInput?.ufSnapshotCLP ?? 0);
   const equityCLP0 = clampNonNegative(realEstateInput?.realEstateEquityCLP ?? 0);
+  const hasUfSchedule = mortgageProjection.status === 'uf_schedule';
   const equityUF0 = ufSnapshotCLP > 0 ? equityCLP0 / ufSnapshotCLP : 0;
   const salePolicy = params.realEstatePolicy;
   const saleEnabled = salePolicy?.enabled ?? true;
@@ -452,7 +517,8 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
   const postSaleExpenseFloorClp = 6_000_000;
 
   let nRuin = 0;
-  const terminalW: number[] = [];
+  const terminalWSurvivors: number[] = [];
+  const terminalWAllPaths: number[] = [];
   const maxDDs: number[] = [];
   const ruinMonths: number[] = [];
   const saleTriggeredMonths: number[] = [];
@@ -520,13 +586,18 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
       cumEUR *= 1 + hicpM;
 
       const soldAlready = saleExecutedMonth !== null && month >= saleExecutedMonth;
-      if (ufCLP > 0) {
-        ufCLP = ufCLP * (1 + ipcM);
-      }
       if (!soldAlready) {
-        const amortizationUF = amortizationScheduleUF[t] ?? 0;
-        equityUF += amortizationUF;
-        equityCLP = ufCLP > 0 ? equityUF * ufCLP : 0;
+        if (hasUfSchedule && ufCLP > 0) {
+          ufCLP = ufCLP * (1 + ipcM);
+          const amortizationUF = amortizationScheduleUF[t] ?? 0;
+          equityUF += amortizationUF;
+          equityCLP = ufCLP > 0 ? equityUF * ufCLP : 0;
+        } else if (preserveFallbackEquity) {
+          equityCLP = equityCLP0;
+        } else {
+          equityUF = 0;
+          equityCLP = 0;
+        }
       } else {
         equityUF = 0;
         equityCLP = 0;
@@ -684,13 +755,16 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
       liquidState.sleeves.rfChile;
     const terminalGrossWorth = finalLiquid + finalRealEstateEquity;
     const terminalNetWorth = Math.max(0, terminalGrossWorth - terminalAdjustment);
-    if (!ruined) terminalW.push(terminalNetWorth);
+    const finalTerminalWealth = ruined ? 0 : terminalNetWorth;
+    if (!ruined) terminalWSurvivors.push(finalTerminalWealth);
+    terminalWAllPaths.push(finalTerminalWealth);
     maxDDs.push(maxDD);
     if (gPlan > 0) spRatios.push(gEff / gPlan);
   }
 
   const pcts = [5, 10, 25, 50, 75, 90, 95];
-  const sortTW = [...terminalW].sort((a, b) => a - b);
+  const sortTW = [...terminalWSurvivors].sort((a, b) => a - b);
+  const sortTWAll = [...terminalWAllPaths].sort((a, b) => a - b);
   const twPct: Record<number, number> = {};
   pcts.forEach((p) => { twPct[p] = percentile(sortTW, p); });
 
@@ -729,6 +803,9 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
       scenarioComparison: undefined,
       terminalWealthPercentiles: twPct,
       terminalWealthAll: sortTW,
+      terminalWealthAllPaths: sortTWAll,
+      p50TerminalAllPaths: percentile(sortTWAll, 50),
+      p50TerminalSurvivors: percentile(sortTW, 50),
       maxDrawdownPercentiles: ddPct,
       ruinTimingMedian: percentile(sortRM, 50),
       ruinTimingP25: percentile(sortRM, 25),
@@ -789,6 +866,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
                 notes: [
                   ...(params.simulationComposition.diagnostics?.notes ?? []),
                   ...mortgageProjection.notes,
+                  ...(preserveFallbackEquity ? ['mortgage-fallback-preserve-equity-clp'] : []),
                   `blocks-mode:${compositionMode}`,
                   `real-estate-sale:${saleEnabled ? 'enabled' : 'disabled'}`,
                   ...(rebalanceMonths.length > 0 ? ['annual-rebalance:enabled'] : []),
@@ -807,6 +885,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
 }
 
 function runSimulationParametricInternal(params: ModelParameters): ParametricCoreAudit {
+  validateSimulationInputs(params);
   if (params.simulationComposition?.mode && params.simulationComposition.mode !== 'legacy') {
     return runSimulationParametricBlocksInternal(params);
   }

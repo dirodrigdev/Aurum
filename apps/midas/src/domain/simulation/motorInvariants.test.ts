@@ -204,6 +204,51 @@ test('invalid ufSnapshotCLP yields fallback status', () => {
   assert.ok(projection.notes.includes('mortgage-uf-missing-uf'));
 });
 
+test('invalid nSim throws controlled validation error', () => {
+  const params = makeBaseParams();
+  params.simulation.nSim = 0;
+  assert.throws(
+    () => runSimulationParametric(params),
+    /invalid_simulation_input: .*simulation\.nSim/,
+  );
+});
+
+test('invalid correlation matrix shape throws controlled validation error', () => {
+  const params = makeBaseParams();
+  params.returns.correlationMatrix = [[1, 0.2], [0.2, 1]] as unknown as number[][];
+  assert.throws(
+    () => runSimulationParametric(params),
+    /invalid_simulation_input: .*correlationMatrix/,
+  );
+});
+
+test('exposes p50 terminal for all paths and survivors', () => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.simulation = {
+    ...params.simulation,
+    nSim: 300,
+    seed: 42,
+    useHistoricalData: false,
+  };
+  const result = runSimulationParametric(params);
+  assert.equal(typeof result.p50TerminalAllPaths, 'number');
+  assert.equal(typeof result.p50TerminalSurvivors, 'number');
+  assert.ok((result.p50TerminalAllPaths ?? 0) <= (result.p50TerminalSurvivors ?? 0));
+});
+
+test('fallback mortgage keeps base equity instead of dropping to zero', () => {
+  const params = makeBaseParams();
+  params.simulation.horizonMonths = 1;
+  const realEstate = params.simulationComposition?.nonOptimizable.realEstate;
+  assert.ok(realEstate);
+  realEstate.realEstateEquityCLP = 500_000;
+  realEstate.ufSnapshotCLP = 0;
+  realEstate.snapshotMonth = '2026-02';
+  const result = runSimulationParametric(params);
+  const actual = result.terminalWealthPercentiles[50];
+  approxEqual(actual, 500_001, 1e-6);
+});
+
 test('sale before year 20 keeps expense at 6MM', () => {
   const params = makeBaseParams();
   params.simulation.horizonMonths = 12;

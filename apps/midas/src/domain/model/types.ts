@@ -221,8 +221,16 @@ export interface SimulationResults {
   // Mostrar siempre con label: "Banda de incertidumbre (±6pp estimado)"
   uncertaintyBand:             { low: number; high: number };
   scenarioComparison?:         ScenarioComparison;
+  // Compatibilidad histórica: percentiles sobre paths sobrevivientes (no arruinados).
   terminalWealthPercentiles:   Record<number, number>;
+  // Compatibilidad histórica: distribución terminal de sobrevivientes.
   terminalWealthAll:           number[];
+  // Nueva métrica explícita: distribución terminal incluyendo paths arruinados (en ruina se registra 0).
+  terminalWealthAllPaths?:     number[];
+  // Nueva métrica explícita: P50 sobre todos los paths.
+  p50TerminalAllPaths?:        number;
+  // Nueva métrica explícita: P50 sobre paths sobrevivientes.
+  p50TerminalSurvivors?:       number;
   maxDrawdownPercentiles:      Record<number, number>;
   ruinTimingMedian:            number;
   ruinTimingP25:               number;
