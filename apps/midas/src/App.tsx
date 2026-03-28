@@ -1582,7 +1582,11 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (baseUpdatePending) return;
+    const recalcInFlight =
+      simWorking ||
+      recalcWorkerStatus === 'queued' ||
+      recalcWorkerStatus === 'running';
+    if (baseUpdatePending || recalcInFlight) return;
     const requestId = baseSnapshotRequestIdRef.current + 1;
     baseSnapshotRequestIdRef.current = requestId;
     let cancelled = false;
@@ -1601,7 +1605,14 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyScenarioEconomics, baseParams, baseUpdatePending, runCentralSimulationInWorker]);
+  }, [
+    applyScenarioEconomics,
+    baseParams,
+    baseUpdatePending,
+    recalcWorkerStatus,
+    runCentralSimulationInWorker,
+    simWorking,
+  ]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     markSimulationInteraction('custom');
