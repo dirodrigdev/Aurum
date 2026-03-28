@@ -56,6 +56,7 @@ type ActiveRecalcWorkerHandle = {
   workerInstanceId: number;
   requestId: number;
   scope: WorkerTraceScope;
+  clearTimeout?: () => void;
 };
 type ApplyAurumHarnessState = {
   status: 'idle' | 'running' | 'pass' | 'fail';
@@ -531,10 +532,14 @@ export default function App() {
   const cancelActiveRecalcWorker = useCallback((
     reason: string = 'cancelled',
     caller: string = 'unknown',
+    target?: { requestId?: number; workerInstanceId?: number },
   ) => {
     const active = activeRecalcWorkerRef.current;
     if (!active) return;
+    if (target?.requestId != null && active.requestId !== target.requestId) return;
+    if (target?.workerInstanceId != null && active.workerInstanceId !== target.workerInstanceId) return;
     activeRecalcWorkerRef.current = null;
+    active.clearTimeout?.();
     active.worker.terminate();
     appendRuntimeTimeline('worker_cancelled', {
       reason,
@@ -546,39 +551,212 @@ export default function App() {
     active.reject(new Error('simulation_cancelled'));
   }, [appendRuntimeTimeline]);
 
-  const runCentralSimulationInWorker = useCallback(
+  const runPrimaryRecalcWorker = useCallback(
     (
       params: ModelParameters,
       runId: number,
-      options?: { cancelPreviousRecalc?: boolean; traceScope?: WorkerTraceScope },
+      cause: RecalcCause,
     ): Promise<SimulationResults> =>
       new Promise<SimulationResults>((resolve, reject) => {
-        const traceScope = options?.traceScope ?? 'recalc';
-        if (options?.cancelPreviousRecalc) {
-          cancelActiveRecalcWorker('superseded_by_new_recalc', 'runCentralSimulationInWorker');
-        }
+        cancelActiveRecalcWorker('superseded_by_new_recalc', 'runPrimaryRecalcWorker');
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
           type: 'module',
         });
         const workerInstanceId = workerInstanceSeqRef.current + 1;
         workerInstanceSeqRef.current = workerInstanceId;
-        if (options?.cancelPreviousRecalc) {
-          activeRecalcWorkerRef.current = {
-            worker,
-            reject,
-            workerInstanceId,
-            requestId: runId,
-            scope: traceScope,
-          };
-        }
         let settled = false;
-        const clearActiveIfNeeded = () => {
-          if (activeRecalcWorkerRef.current?.worker === worker) {
+        let timeoutId: number | null = null;
+
+        const clearTimeoutForHandle = () => {
+          if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+        };
+        const isCurrentActive = () => {
+          const active = activeRecalcWorkerRef.current;
+          return Boolean(
+            active &&
+            active.workerInstanceId === workerInstanceId &&
+            active.requestId === runId &&
+            active.scope === 'recalc',
+          );
+        };
+        const releaseActiveIfCurrent = () => {
+          if (isCurrentActive()) {
             activeRecalcWorkerRef.current = null;
           }
         };
         const finalize = () => {
-          clearActiveIfNeeded();
+          clearTimeoutForHandle();
+          releaseActiveIfCurrent();
+          worker.terminate();
+        };
+
+        activeRecalcWorkerRef.current = {
+          worker,
+          reject,
+          workerInstanceId,
+          requestId: runId,
+          scope: 'recalc',
+          clearTimeout: clearTimeoutForHandle,
+        };
+
+        worker.onmessage = (event: MessageEvent<CentralWorkerMessage>) => {
+          const payload = event.data;
+          if (!payload || payload.runId !== runId) return;
+          appendRuntimeTimeline('worker_message_main_received', {
+            requestId: payload.runId,
+            scope: 'recalc',
+            workerInstanceId,
+            type: payload.type,
+            ...(payload.type === 'trace'
+              ? {
+                  workerEvent: payload.event,
+                  workerAtMs: payload.atMs,
+                  ...(payload.summary ?? {}),
+                  ...(payload.message ? { message: payload.message } : {}),
+                }
+              : {}),
+          });
+          if (payload.type === 'trace') {
+            appendRuntimeTimeline(payload.event, {
+              requestId: payload.runId,
+              scope: 'recalc',
+              workerInstanceId,
+              workerAtMs: payload.atMs,
+              ...(payload.summary ?? {}),
+              ...(payload.message ? { message: payload.message } : {}),
+            });
+            return;
+          }
+          if (!isCurrentActive() || settled) return;
+          settled = true;
+          finalize();
+          if (payload.type === 'done') {
+            appendRuntimeTimeline('worker_done', {
+              requestId: payload.runId,
+              scope: 'recalc',
+              workerInstanceId,
+              probRuin: Number(payload.result.probRuin ?? 0),
+              p50TerminalAllPaths: Number(payload.result.p50TerminalAllPaths ?? 0),
+              ruinMedianYear: payload.result.ruinTimingMedian != null
+                ? Number(payload.result.ruinTimingMedian / 12)
+                : null,
+            });
+            appendRuntimeTimeline('worker_done_main_applied', {
+              requestId: payload.runId,
+              scope: 'recalc',
+              workerInstanceId,
+            });
+            resolve(payload.result);
+            return;
+          }
+          appendRuntimeTimeline('worker_error', {
+            requestId: payload.runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: payload.message || 'simulation_worker_error',
+          });
+          appendRuntimeTimeline('worker_error_main_applied', {
+            requestId: payload.runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: payload.message || 'simulation_worker_error',
+          });
+          reject(new Error(payload.message || 'simulation_worker_error'));
+        };
+        worker.onerror = (event) => {
+          if (!isCurrentActive() || settled) return;
+          settled = true;
+          finalize();
+          appendRuntimeTimeline('worker_error', {
+            requestId: runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: event.message || 'simulation_worker_error',
+          });
+          appendRuntimeTimeline('worker_error_main_applied', {
+            requestId: runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: event.message || 'simulation_worker_error',
+          });
+          reject(new Error(event.message || 'simulation_worker_error'));
+        };
+        worker.onmessageerror = () => {
+          if (!isCurrentActive() || settled) return;
+          settled = true;
+          finalize();
+          appendRuntimeTimeline('worker_error', {
+            requestId: runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: 'simulation_worker_message_error',
+          });
+          appendRuntimeTimeline('worker_error_main_applied', {
+            requestId: runId,
+            scope: 'recalc',
+            workerInstanceId,
+            message: 'simulation_worker_message_error',
+          });
+          reject(new Error('simulation_worker_message_error'));
+        };
+
+        appendRuntimeTimeline('worker_request_sent', {
+          requestId: runId,
+          scope: 'recalc',
+          workerInstanceId,
+          capitalInitial: Number(params.capitalInitial ?? 0),
+          compositionMode: params.simulationComposition?.mode ?? 'legacy',
+          banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
+          optimizableInvestmentsCLP: Number(params.simulationComposition?.optimizableInvestmentsCLP ?? 0),
+          riskBlockPresent: Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+          realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
+        });
+        workerPayloadByRequestRef.current.set(`recalc:${runId}`, cloneParams(params));
+        if (workerPayloadByRequestRef.current.size > 20) {
+          const oldestKey = workerPayloadByRequestRef.current.keys().next().value;
+          if (oldestKey) workerPayloadByRequestRef.current.delete(oldestKey);
+        }
+
+        timeoutId = window.setTimeout(() => {
+          if (!isCurrentActive() || settled) return;
+          settled = true;
+          appendRuntimeTimeline('worker_timeout_fired', { requestId: runId, cause, workerInstanceId });
+          cancelActiveRecalcWorker('watchdog_timeout', 'runPrimaryRecalcWorker', {
+            requestId: runId,
+            workerInstanceId,
+          });
+          reject(new Error('simulation_timeout'));
+        }, 30_000);
+
+        const message: CentralWorkerStartMessage = {
+          type: 'central-start',
+          runId,
+          channel: 'primary',
+          params,
+        };
+        worker.postMessage(message);
+      }),
+    [appendRuntimeTimeline, cancelActiveRecalcWorker],
+  );
+
+  const runCentralSimulationInWorker = useCallback(
+    (
+      params: ModelParameters,
+      runId: number,
+      options?: { traceScope?: WorkerTraceScope },
+    ): Promise<SimulationResults> =>
+      new Promise<SimulationResults>((resolve, reject) => {
+        const traceScope = options?.traceScope ?? 'recalc';
+        const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
+          type: 'module',
+        });
+        const workerInstanceId = workerInstanceSeqRef.current + 1;
+        workerInstanceSeqRef.current = workerInstanceId;
+        let settled = false;
+        const finalize = () => {
           worker.terminate();
         };
 
@@ -694,7 +872,7 @@ export default function App() {
         }
         worker.postMessage(message);
       }),
-    [appendRuntimeTimeline, cancelActiveRecalcWorker],
+    [appendRuntimeTimeline],
   );
 
   const parseYearMonth = useCallback((value: string) => {
@@ -1035,28 +1213,8 @@ export default function App() {
           requestId,
           ...summarizeParams(params),
         });
-        clearRecalcWatchdog();
-        recalcWatchdogRef.current = window.setTimeout(() => {
-          if (requestId !== recalcRequestIdRef.current) return;
-          appendRuntimeTimeline('worker_timeout_fired', { requestId, cause });
-          cancelActiveRecalcWorker('watchdog_timeout', 'recalc_watchdog');
-          if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
-            activeRecalcOwnerRef.current = null;
-            setActiveRecalcOwner(null);
-          }
-          setSimUiState('error');
-          setHeroPhase(lastStableCentralRef.current ? 'stale' : 'boot');
-          setSimUiError('La simulación tardó demasiado. Reintenta el recálculo.');
-          setRecalcWorkerStatus('error');
-          setSimWorking(false);
-          calculationTimerRef.current = null;
-        }, 30_000);
-        const nextResult = await runCentralSimulationInWorker(params, requestId, {
-          cancelPreviousRecalc: true,
-          traceScope: 'recalc',
-        });
+        const nextResult = await runPrimaryRecalcWorker(params, requestId, cause);
         if (requestId !== recalcRequestIdRef.current) return;
-        clearRecalcWatchdog();
         setSimResult(nextResult);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
@@ -1080,7 +1238,6 @@ export default function App() {
         }
       } catch (error: any) {
         if (requestId !== recalcRequestIdRef.current) return;
-        clearRecalcWatchdog();
         if (String(error?.message || '') === 'simulation_cancelled') return;
         console.error('[Midas] Error recalculando simulación', error);
         if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
@@ -1090,12 +1247,15 @@ export default function App() {
         setSimUiState('error');
         const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
-        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+        if (String(error?.message || '') === 'simulation_timeout') {
+          setSimUiError('La simulación tardó demasiado. Reintenta el recálculo.');
+        } else {
+          setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+        }
         setRecalcWorkerStatus('error');
       } finally {
         if (requestId === recalcRequestIdRef.current) {
           setSimWorking(false);
-          clearRecalcWatchdog();
           calculationTimerRef.current = null;
         }
       }
@@ -1104,10 +1264,8 @@ export default function App() {
     activeRecalcOwner,
     appendRuntimeTimeline,
     beginRecalculationVisual,
-    cancelActiveRecalcWorker,
     clearCalculationTimer,
-    clearRecalcWatchdog,
-    runCentralSimulationInWorker,
+    runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
     heroPhase,
