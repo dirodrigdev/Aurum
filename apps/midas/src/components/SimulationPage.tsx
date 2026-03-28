@@ -382,7 +382,8 @@ export function SimulationPage({
     : '—';
   const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)}` : '—';
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
-  const p50 = displayResult?.terminalWealthPercentiles[50] ?? null;
+  const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
+  const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
@@ -1013,8 +1014,8 @@ export function SimulationPage({
           value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
         />
         <InfoCard
-          label="Patrimonio P50"
-          value={p50 !== null ? `$${formatMillionsMM(p50 / 1e6)}` : '—'}
+          label="Patrimonio P50 (todos los paths)"
+          value={p50AllPaths !== null ? `$${formatMillionsMM(p50AllPaths / 1e6)}` : '—'}
         />
       </div>
       )}
@@ -1124,7 +1125,9 @@ export function SimulationPage({
             </div>
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PERCENTILES</div>
+            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
+              PERCENTILES (sobrevivientes)
+            </div>
             <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
               <div
                 style={{
@@ -1203,6 +1206,16 @@ export function SimulationPage({
             ) : null}
             <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
             <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
+            {displayResult ? (
+              <>
+                <div style={{ color: T.textMuted }}>
+                  P50 terminal (todos los paths): ${formatMillionsMM((displayResult.p50TerminalAllPaths ?? 0) / 1e6)}
+                </div>
+                <div style={{ color: T.textMuted }}>
+                  P50 terminal (solo sobrevivientes): ${formatMillionsMM((displayResult.p50TerminalSurvivors ?? 0) / 1e6)}
+                </div>
+              </>
+            ) : null}
             {motorWarnings.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                 {motorWarnings.map((warning) => (
