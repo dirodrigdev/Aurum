@@ -36,7 +36,16 @@ type TriMotorResult = {
   favorable: SimulationResults | null;
   prudent: SimulationResults | null;
 };
-type SimulationUiState = 'idle' | 'recalculating' | 'ready' | 'error';
+type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
+type RecalcCause =
+  | 'boot-init'
+  | 'apply-aurum'
+  | 'scenario'
+  | 'risk-toggle'
+  | 'ledger-commit'
+  | 'params-change'
+  | 'manual-run'
+  | 'session-reset';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 
 type OptimizerBaselineSnapshot = {
@@ -254,8 +263,9 @@ export default function App() {
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
   const [simWorking, setSimWorking] = useState(false);
-  const [simUiState, setSimUiState] = useState<SimulationUiState>('idle');
+  const [simUiState, setSimUiState] = useState<SimulationUiState>('boot');
   const [simUiError, setSimUiError] = useState<string | null>(null);
+  const [lastRecalcCause, setLastRecalcCause] = useState<RecalcCause | null>(null);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
   const [pendingSnapshot, setPendingSnapshot] = useState<AurumOptimizableInvestmentsSnapshot | null>(null);
   const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
@@ -285,9 +295,13 @@ export default function App() {
   const activityHandlerRef = useRef<() => void>();
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
+  const simResultRef = useRef<TriMotorResult>(simResult);
+  const simUiStateRef = useRef<SimulationUiState>(simUiState);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
+  const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
+  const skipNextAutoRecalcRef = useRef(false);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -304,6 +318,14 @@ export default function App() {
   useEffect(() => {
     simParamsRef.current = simParams;
   }, [simParams]);
+
+  useEffect(() => {
+    simResultRef.current = simResult;
+  }, [simResult]);
+
+  useEffect(() => {
+    simUiStateRef.current = simUiState;
+  }, [simUiState]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -518,6 +540,29 @@ export default function App() {
     return exposure;
   }, []);
 
+  const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
+    clearCalculationTimer();
+    setLastRecalcCause(cause);
+    setSimWorking(true);
+    setSimUiError(null);
+    const hadReadyResult = Boolean(simResultRef.current.central) && simUiStateRef.current === 'ready';
+    setSimUiState(hadReadyResult ? 'stale' : 'boot');
+    calculationTimerRef.current = window.setTimeout(() => {
+      try {
+        const params = run();
+        setSimResult(computeTriMotor(params));
+        setSimUiState('ready');
+      } catch (error: any) {
+        console.error('[Midas] Error recalculando simulación', error);
+        setSimUiState('error');
+        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
+      } finally {
+        setSimWorking(false);
+        calculationTimerRef.current = null;
+      }
+    }, 0);
+  }, [clearCalculationTimer, computeTriMotor]);
+
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
     const shouldRecalculate = options?.recalc ?? true;
@@ -602,18 +647,9 @@ export default function App() {
         };
         setSimParams(nextSimParams);
         if (shouldRecalculate) {
-          try {
-            setSimUiError(null);
-            setSimUiState('recalculating');
-            setSimResult(computeTriMotor(nextSimParams));
-            setSimUiState('ready');
-            setBaseUpdatePending(false);
-          } catch (error: any) {
-            console.error('[Midas] Error recalculando simulacion', error);
-            setSimUiState('error');
-            setSimUiError(String(error?.message || 'No pude recalcular la simulacion.'));
-            setBaseUpdatePending(true);
-          }
+          setBaseUpdatePending(false);
+          skipNextAutoRecalcRef.current = true;
+          startRecalculation('apply-aurum', () => nextSimParams);
         } else {
           setBaseUpdatePending(true);
         }
@@ -625,27 +661,7 @@ export default function App() {
       setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
       setBaseUpdatePending(true);
     }
-  }, [computeRiskCapital, computeTriMotor, riskCapitalEnabled, simOverrides?.active, simOverrides?.capital]);
-
-  const queueTriMotorCalculation = useCallback((params: ModelParameters) => {
-    clearCalculationTimer();
-    setSimWorking(true);
-    setSimUiState('recalculating');
-    setSimUiError(null);
-    calculationTimerRef.current = window.setTimeout(() => {
-      try {
-        setSimResult(computeTriMotor(params));
-        setSimUiState('ready');
-      } catch (error: any) {
-        console.error('[Midas] Error recalculando simulación', error);
-        setSimUiState('error');
-        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
-      } finally {
-        setSimWorking(false);
-        calculationTimerRef.current = null;
-      }
-    }, 0);
-  }, [clearCalculationTimer, computeTriMotor]);
+  }, [computeRiskCapital, riskCapitalEnabled, simOverrides?.active, simOverrides?.capital, startRecalculation]);
 
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
@@ -655,26 +671,36 @@ export default function App() {
     setSimOverrides(null);
     const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
     setSimParams(next);
-    try {
-      setSimUiError(null);
-      setSimResult(computeTriMotor(next));
-      setSimUiState('ready');
-    } catch (error: any) {
-      console.error('[Midas] Error recalculando simulación', error);
-      setSimUiState('error');
-      setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
-    }
-    setSimWorking(false);
+    startRecalculation('session-reset', () => next);
     setParamSheetOpen(false);
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor]);
+  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
+
+  const scheduleInactivityReset = useCallback(() => {
+    clearSimulationTimer();
+    simulationTimerRef.current = window.setTimeout(() => {
+      resetSimulationSession();
+    }, SIMULATION_TIMEOUT_MS);
+  }, [clearSimulationTimer, resetSimulationSession]);
+
+  const markSimulationInteraction = useCallback(
+    (nextPreset: SimulationPreset = 'custom') => {
+      setSimulationActive(true);
+      setSimulationPreset(nextPreset);
+      scheduleInactivityReset();
+    },
+    [scheduleInactivityReset],
+  );
 
   const applyPendingSnapshot = useCallback(() => {
     if (!pendingSnapshot || !pendingSnapshotSignature) return;
     if (applyingSnapshotRef.current) return;
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
-    setSimulationActive(true);
+    markSimulationInteraction('custom');
     setSimUiError(null);
+    setLastRecalcCause('apply-aurum');
+    const hadReadyResult = Boolean(simResultRef.current.central) && simUiStateRef.current === 'ready';
+    setSimUiState(hadReadyResult ? 'stale' : 'boot');
     window.setTimeout(() => {
       try {
         lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
@@ -693,17 +719,19 @@ export default function App() {
         setPendingSnapshotApplying(false);
       }
     }, 0);
-  }, [applySnapshotNow, formatRuntimeError, pendingSnapshot, pendingSnapshotSignature]);
+  }, [applySnapshotNow, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
 
   const toggleRiskCapital = useCallback(() => {
+    pendingRecalcCauseRef.current = 'risk-toggle';
     setRiskCapitalEnabled((prev) => !prev);
-    setSimulationActive(true);
-  }, []);
+    markSimulationInteraction('custom');
+  }, [markSimulationInteraction]);
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
+    pendingRecalcCauseRef.current = 'ledger-commit';
     setManualCapitalAdjustments(next);
-    setSimulationActive(true);
-  }, []);
+    markSimulationInteraction('custom');
+  }, [markSimulationInteraction]);
 
   useEffect(() => {
     const baseParamsCurrent = baseParamsRef.current;
@@ -814,43 +842,25 @@ export default function App() {
     setSimParams(next);
     const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
     if (canRecalculateNow) {
+      if (skipNextAutoRecalcRef.current) {
+        skipNextAutoRecalcRef.current = false;
+        return;
+      }
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
       }
       const base = applySimulationOverrides(next, simOverrides);
-      queueTriMotorCalculation(base);
+      const cause = pendingRecalcCauseRef.current ?? 'params-change';
+      pendingRecalcCauseRef.current = null;
+      startRecalculation(cause, () => base);
     }
-  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, queueTriMotorCalculation, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP, riskCapitalUsdTotal, simOverrides]);
-
-  const scheduleInactivityReset = useCallback(() => {
-    clearSimulationTimer();
-    simulationTimerRef.current = window.setTimeout(() => {
-      resetSimulationSession();
-    }, SIMULATION_TIMEOUT_MS);
-  }, [clearSimulationTimer, resetSimulationSession]);
-
-  const touchSimulation = useCallback(
-    (nextPreset: SimulationPreset = 'custom') => {
-      setSimulationActive(true);
-      setSimulationPreset(nextPreset);
-      scheduleInactivityReset();
-    },
-    [scheduleInactivityReset],
-  );
+  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP, riskCapitalUsdTotal, simOverrides, startRecalculation]);
 
   useEffect(() => {
     if (!simResult.central) {
       const next = applyScenarioEconomics(cloneParams(baseParams), 'base');
       setSimParams(next);
-      try {
-        setSimUiError(null);
-        setSimResult(computeTriMotor(next));
-        setSimUiState('ready');
-      } catch (error: any) {
-        console.error('[Midas] Error recalculando simulación', error);
-        setSimUiState('error');
-        setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
-      }
+      startRecalculation('boot-init', () => next);
     }
     scheduleInactivityReset();
     const handler = () => scheduleInactivityReset();
@@ -861,7 +871,7 @@ export default function App() {
       clearSimulationTimer();
       clearCalculationTimer();
     };
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, computeTriMotor, scheduleInactivityReset, simResult]);
+  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, scheduleInactivityReset, simResult, startRecalculation]);
 
   useEffect(() => {
     if (baseUpdatePending) return;
@@ -871,29 +881,27 @@ export default function App() {
   }, [applyScenarioEconomics, baseParams, baseUpdatePending, computeTriMotor]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
+    markSimulationInteraction('custom');
     setSimParams((prev) => {
       const next = updateByPath(prev, path, value);
       const base = applySimulationOverrides(next, simOverrides);
-      queueTriMotorCalculation(base);
+      startRecalculation('params-change', () => base);
       return next;
     });
-    touchSimulation('custom');
-  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
+  }, [markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
+    markSimulationInteraction('custom');
     setSimParams((prev) => {
       const updated = { ...prev, cashflowEvents: next };
       const base = applySimulationOverrides(updated, simOverrides);
-      queueTriMotorCalculation(base);
+      startRecalculation('params-change', () => base);
       return updated;
     });
-    touchSimulation('custom');
-  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
+  }, [markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
-    setSimulationActive(true);
-    setSimulationPreset(next);
-    scheduleInactivityReset();
+    markSimulationInteraction(next);
     setSimParams((prev) => {
       const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
       const nextParams: ModelParameters = {
@@ -904,36 +912,36 @@ export default function App() {
         fx: scenarioBase.fx,
       };
       const base = applySimulationOverrides(nextParams, simOverrides);
-      queueTriMotorCalculation(base);
+      startRecalculation('scenario', () => base);
       return nextParams;
     });
-  }, [applyScenarioEconomics, baseParams, queueTriMotorCalculation, scheduleInactivityReset, simOverrides]);
+  }, [applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
     if (next) {
+      markSimulationInteraction('custom');
       const base = applySimulationOverrides(simParams, next);
-      queueTriMotorCalculation(base);
-      touchSimulation('custom');
+      startRecalculation('params-change', () => base);
     }
-  }, [queueTriMotorCalculation, simParams, touchSimulation]);
+  }, [markSimulationInteraction, simParams, startRecalculation]);
 
   const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
+    markSimulationInteraction('custom');
     setSimParams((prev) => {
       const next = patcher(prev);
       const base = applySimulationOverrides(next, simOverrides);
-      queueTriMotorCalculation(base);
+      startRecalculation('params-change', () => base);
       return next;
     });
-    touchSimulation('custom');
-  }, [queueTriMotorCalculation, simOverrides, touchSimulation]);
+  }, [markSimulationInteraction, simOverrides, startRecalculation]);
 
   const runSim = useCallback(() => {
-    touchSimulation(simulationPreset);
+    markSimulationInteraction(simulationPreset);
     const base = applySimulationOverrides(simParams, simOverrides);
-    queueTriMotorCalculation(base);
+    startRecalculation('manual-run', () => base);
     setActiveTab('sim');
-  }, [queueTriMotorCalculation, simOverrides, simParams, simulationPreset, touchSimulation]);
+  }, [markSimulationInteraction, simOverrides, simParams, simulationPreset, startRecalculation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
     setActiveTab(tab);
@@ -1120,7 +1128,7 @@ export default function App() {
     if (simulationActive || simOverrides?.active) return;
     setBaseUpdatePending(false);
     setSimUiError(null);
-    setSimUiState(simResult.central ? 'ready' : 'idle');
+    setSimUiState(simResult.central ? 'ready' : 'boot');
   }, [activeTab, simOverrides?.active, simulationActive, simResult.central]);
 
   const content = activeTab === 'sim' ? (
@@ -1134,6 +1142,7 @@ export default function App() {
       simWorking={simWorking}
       simUiState={simUiState}
       simUiError={simUiError}
+      lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
       stateLabel={stateLabel}
       aurumIntegrationStatus={aurumIntegrationStatus}
@@ -1147,7 +1156,7 @@ export default function App() {
       onApplyPendingSnapshot={applyPendingSnapshot}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
-      onSimulationTouch={touchSimulation}
+      onSimulationTouch={markSimulationInteraction}
       onScenarioChange={handleScenarioChange}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}

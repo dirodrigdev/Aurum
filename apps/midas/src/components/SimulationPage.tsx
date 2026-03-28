@@ -65,6 +65,7 @@ export function SimulationPage({
   simWorking,
   simUiState,
   simUiError,
+  lastRecalcCause,
   simulationPreset,
   stateLabel,
   aurumIntegrationStatus,
@@ -91,8 +92,9 @@ export function SimulationPage({
   simOverrides: SimulationOverrides | null;
   simActive: boolean;
   simWorking: boolean;
-  simUiState: 'idle' | 'recalculating' | 'ready' | 'error';
+  simUiState: 'boot' | 'stale' | 'ready' | 'error';
   simUiError: string | null;
+  lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
   stateLabel: string;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
@@ -120,7 +122,6 @@ export function SimulationPage({
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
-  const [hasVisibleResultInSession, setHasVisibleResultInSession] = useState(false);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
     amount: '',
@@ -159,7 +160,6 @@ export function SimulationPage({
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
   const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
-  const aurumSyncing = aurumIntegrationStatus === 'loading' || aurumIntegrationStatus === 'refreshing';
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -169,14 +169,14 @@ export function SimulationPage({
         : aurumIntegrationStatus === 'error'
           ? 'Aurum: error de integración'
           : 'Aurum: en espera';
-  const isRecalculating = simUiState === 'recalculating' || baseUpdatePending || aurumSyncing;
+  const isRecalculating = simUiState === 'boot' || simUiState === 'stale';
   const simTechnicalLabel = isRecalculating
-    ? 'Simulación: recalculando'
+    ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
     : simUiState === 'ready'
       ? 'Simulación: lista'
       : simUiState === 'error'
         ? `Simulación: error (${simUiError || 'sin detalle'})`
-        : 'Simulación: en espera';
+        : 'Simulación: inicial';
   const hideResultBlocks = simUiState === 'error';
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
@@ -371,18 +371,8 @@ export function SimulationPage({
   }, [simActive]);
 
   const displayResult = hideResultBlocks ? null : resultCentral;
-  useEffect(() => {
-    if (!isRecalculating && simUiState === 'ready' && displayResult) {
-      setHasVisibleResultInSession(true);
-    }
-  }, [displayResult, isRecalculating, simUiState]);
-  const showGhostResult = Boolean(
-    isRecalculating &&
-    hasVisibleResultInSession &&
-    displayResult &&
-    (simActive || pendingSnapshotApplying),
-  );
-  const showBootPlaceholder = Boolean(isRecalculating && !showGhostResult);
+  const showGhostResult = Boolean(simUiState === 'stale' && displayResult);
+  const showBootPlaceholder = Boolean(simUiState === 'boot');
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
@@ -1227,7 +1217,7 @@ export function SimulationPage({
         </>
       )}
 
-      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending) && (
+      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending || Boolean(lastRecalcCause)) && (
         <details
           style={{
             marginTop: 12,
@@ -1245,6 +1235,9 @@ export function SimulationPage({
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
             <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
+            {lastRecalcCause ? (
+              <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
+            ) : null}
             <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
             <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
             {motorWarnings.length > 0 && (
