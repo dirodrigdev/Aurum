@@ -1200,7 +1200,7 @@ export default function App() {
     appendRuntimeTimeline('start_recalculation', {
       cause,
       requestId,
-      heroPhase,
+      heroPhase: heroPhaseRef.current,
       owner: ownerForRun ?? 'none',
     });
     calculationTimerRef.current = window.setTimeout(async () => {
@@ -1260,14 +1260,12 @@ export default function App() {
       }
     }, 0);
   }, [
-    activeRecalcOwner,
     appendRuntimeTimeline,
     beginRecalculationVisual,
     clearCalculationTimer,
     runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
-    heroPhase,
   ]);
 
   useEffect(() => {
@@ -1874,14 +1872,10 @@ export default function App() {
     return () => {
       ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((ev) => window.removeEventListener(ev, handler));
       clearSimulationTimer();
-      clearCalculationTimer();
-      clearRecalcWatchdog();
     };
   }, [
     applyScenarioEconomics,
     baseParams,
-    clearCalculationTimer,
-    clearRecalcWatchdog,
     clearSimulationTimer,
     scheduleInactivityReset,
     simResult,
@@ -1889,8 +1883,10 @@ export default function App() {
   ]);
 
   useEffect(() => () => {
+    clearCalculationTimer();
+    clearRecalcWatchdog();
     cancelActiveRecalcWorker('unmount_cleanup', 'app_unmount');
-  }, [cancelActiveRecalcWorker]);
+  }, [cancelActiveRecalcWorker, clearCalculationTimer, clearRecalcWatchdog]);
 
   useEffect(() => {
     const recalcInFlight =
