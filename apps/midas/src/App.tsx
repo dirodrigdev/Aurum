@@ -43,6 +43,7 @@ type RecalcCause =
   | 'session-reset';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
+type RecalcOwner = 'apply-aurum' | null;
 
 type OptimizerBaselineSnapshot = {
   probRuin: number;
@@ -294,6 +295,7 @@ export default function App() {
   const [recalcWorkerStatus, setRecalcWorkerStatus] = useState<RecalcWorkerStatus>('idle');
   const [activeRecalcRequestId, setActiveRecalcRequestId] = useState<number | null>(null);
   const [appliedRecalcRequestId, setAppliedRecalcRequestId] = useState<number | null>(null);
+  const [activeRecalcOwner, setActiveRecalcOwner] = useState<RecalcOwner>(null);
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [riskCapitalUsdTotal, setRiskCapitalUsdTotal] = useState(0);
@@ -322,6 +324,7 @@ export default function App() {
   const recalcRequestIdRef = useRef(0);
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
+  const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
   const activeRecalcWorkerRef = useRef<{
     worker: Worker;
     reject: (error: Error) => void;
@@ -640,6 +643,14 @@ export default function App() {
   }, []);
 
   const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
+    if (activeRecalcOwnerRef.current === 'apply-aurum' && cause !== 'apply-aurum') {
+      return;
+    }
+    const ownerForRun: RecalcOwner = cause === 'apply-aurum' ? 'apply-aurum' : null;
+    if (ownerForRun) {
+      activeRecalcOwnerRef.current = ownerForRun;
+      setActiveRecalcOwner(ownerForRun);
+    }
     clearCalculationTimer();
     clearRecalcWatchdog();
     beginRecalculationVisual(cause);
@@ -654,6 +665,10 @@ export default function App() {
         recalcWatchdogRef.current = window.setTimeout(() => {
           if (requestId !== recalcRequestIdRef.current) return;
           cancelActiveRecalcWorker();
+          if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
+            activeRecalcOwnerRef.current = null;
+            setActiveRecalcOwner(null);
+          }
           setSimUiState('error');
           setHeroPhase(lastStableCentralRef.current ? 'stale' : 'boot');
           setSimUiError('La simulación tardó demasiado. Reintenta el recálculo.');
@@ -669,6 +684,10 @@ export default function App() {
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
         setRecalcWorkerStatus('done');
+        if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
+          activeRecalcOwnerRef.current = null;
+          setActiveRecalcOwner(null);
+        }
         if (cause === 'boot-init') {
           setSimUiState('boot');
           setHeroPhase('boot');
@@ -682,6 +701,10 @@ export default function App() {
         clearRecalcWatchdog();
         if (String(error?.message || '') === 'simulation_cancelled') return;
         console.error('[Midas] Error recalculando simulación', error);
+        if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
+          activeRecalcOwnerRef.current = null;
+          setActiveRecalcOwner(null);
+        }
         setSimUiState('error');
         const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
@@ -696,6 +719,7 @@ export default function App() {
       }
     }, 0);
   }, [
+    activeRecalcOwner,
     beginRecalculationVisual,
     cancelActiveRecalcWorker,
     clearCalculationTimer,
@@ -1402,6 +1426,7 @@ export default function App() {
       recalcWorkerStatus={recalcWorkerStatus}
       activeRecalcRequestId={activeRecalcRequestId}
       appliedRecalcRequestId={appliedRecalcRequestId}
+      activeRecalcOwner={activeRecalcOwner}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}

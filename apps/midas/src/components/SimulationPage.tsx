@@ -79,6 +79,7 @@ export function SimulationPage({
   recalcWorkerStatus,
   activeRecalcRequestId,
   appliedRecalcRequestId,
+  activeRecalcOwner,
   onApplyPendingSnapshot,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
@@ -113,6 +114,7 @@ export function SimulationPage({
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
   activeRecalcRequestId: number | null;
   appliedRecalcRequestId: number | null;
+  activeRecalcOwner: 'apply-aurum' | null;
   onApplyPendingSnapshot: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
@@ -1221,6 +1223,9 @@ export function SimulationPage({
             </div>
             <div style={{ color: T.textMuted }}>
               requestId activo={activeRecalcRequestId ?? '—'} · aplicado={appliedRecalcRequestId ?? '—'}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              owner={activeRecalcOwner ?? 'none'}
             </div>
             <div style={{ color: T.textMuted }}>
               snapshotApplied={snapshotApplied ? 'yes' : 'no'} · pendingSnapshotApplying={pendingSnapshotApplying ? 'yes' : 'no'}
