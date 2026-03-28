@@ -87,6 +87,21 @@ type CentralWorkerMessage =
       type: 'error';
       runId: number;
       message: string;
+    }
+  | {
+      type: 'trace';
+      runId: number;
+      event: 'worker_message_received' | 'worker_compute_started' | 'worker_compute_finished' | 'worker_post_done' | 'worker_post_error';
+      atMs: number;
+      summary?: {
+        capitalInitial: number;
+        compositionMode: string;
+        banksCLP: number;
+        optimizableInvestmentsCLP: number;
+        riskBlockPresent: boolean;
+        realEstateEnabled: boolean;
+      };
+      message?: string;
     };
 
 class MidasErrorBoundary extends React.Component<
@@ -360,6 +375,7 @@ export default function App() {
   const recalcWatchdogRef = useRef<number | null>(null);
   const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
   const timelineStartRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const workerPayloadByRequestRef = useRef<Map<string, ModelParameters>>(new Map());
   const activeRecalcWorkerRef = useRef<{
     worker: Worker;
     reject: (error: Error) => void;
@@ -507,13 +523,14 @@ export default function App() {
     [selectVariant],
   );
 
-  const cancelActiveRecalcWorker = useCallback(() => {
+  const cancelActiveRecalcWorker = useCallback((reason: string = 'cancelled') => {
     const active = activeRecalcWorkerRef.current;
     if (!active) return;
     activeRecalcWorkerRef.current = null;
     active.worker.terminate();
+    appendRuntimeTimeline('worker_cancelled', { reason });
     active.reject(new Error('simulation_cancelled'));
-  }, []);
+  }, [appendRuntimeTimeline]);
 
   const runCentralSimulationInWorker = useCallback(
     (
@@ -524,7 +541,7 @@ export default function App() {
       new Promise<SimulationResults>((resolve, reject) => {
         const traceScope = options?.traceScope ?? 'recalc';
         if (options?.cancelPreviousRecalc) {
-          cancelActiveRecalcWorker();
+          cancelActiveRecalcWorker('superseded_by_new_recalc');
         }
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
           type: 'module',
@@ -546,6 +563,29 @@ export default function App() {
         worker.onmessage = (event: MessageEvent<CentralWorkerMessage>) => {
           const payload = event.data;
           if (!payload || payload.runId !== runId) return;
+          appendRuntimeTimeline('worker_message_main_received', {
+            requestId: payload.runId,
+            scope: traceScope,
+            type: payload.type,
+            ...(payload.type === 'trace'
+              ? {
+                  workerEvent: payload.event,
+                  workerAtMs: payload.atMs,
+                  ...(payload.summary ?? {}),
+                  ...(payload.message ? { message: payload.message } : {}),
+                }
+              : {}),
+          });
+          if (payload.type === 'trace') {
+            appendRuntimeTimeline(payload.event, {
+              requestId: payload.runId,
+              scope: traceScope,
+              workerAtMs: payload.atMs,
+              ...(payload.summary ?? {}),
+              ...(payload.message ? { message: payload.message } : {}),
+            });
+            return;
+          }
           settled = true;
           finalize();
           if (payload.type === 'done') {
@@ -558,10 +598,19 @@ export default function App() {
                 ? Number(payload.result.ruinTimingMedian / 12)
                 : null,
             });
+            appendRuntimeTimeline('worker_done_main_applied', {
+              requestId: payload.runId,
+              scope: traceScope,
+            });
             resolve(payload.result);
             return;
           }
           appendRuntimeTimeline('worker_error', {
+            requestId: payload.runId,
+            scope: traceScope,
+            message: payload.message || 'simulation_worker_error',
+          });
+          appendRuntimeTimeline('worker_error_main_applied', {
             requestId: payload.runId,
             scope: traceScope,
             message: payload.message || 'simulation_worker_error',
@@ -607,6 +656,11 @@ export default function App() {
           riskBlockPresent: Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
           realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
         });
+        workerPayloadByRequestRef.current.set(`${traceScope}:${runId}`, cloneParams(params));
+        if (workerPayloadByRequestRef.current.size > 20) {
+          const oldestKey = workerPayloadByRequestRef.current.keys().next().value;
+          if (oldestKey) workerPayloadByRequestRef.current.delete(oldestKey);
+        }
         worker.postMessage(message);
       }),
     [appendRuntimeTimeline, cancelActiveRecalcWorker],
@@ -765,6 +819,37 @@ export default function App() {
     }
   }, []);
 
+  const runDirectSimulationDiagnostic = useCallback(async (requestId: number) => {
+    const key = `recalc:${requestId}`;
+    const payload = workerPayloadByRequestRef.current.get(key);
+    if (!payload) {
+      appendRuntimeTimeline('direct_compare_missing_payload', { requestId, key });
+      return { status: 'missing' as const, message: `No payload cached for ${key}` };
+    }
+    appendRuntimeTimeline('direct_compare_started', {
+      requestId,
+      ...summarizeParams(payload),
+    });
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    try {
+      const { runMidasSimulation } = await import('./domain/simulation/policy');
+      appendRuntimeTimeline('direct_compute_started', { requestId });
+      const result = runMidasSimulation(payload, 'primary');
+      const elapsedMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt);
+      appendRuntimeTimeline('direct_compute_finished', {
+        requestId,
+        elapsedMs,
+        ...summarizeResult(result),
+      });
+      return { status: 'ok' as const, elapsedMs, result };
+    } catch (error: unknown) {
+      const elapsedMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt);
+      const message = error instanceof Error ? error.message : String(error);
+      appendRuntimeTimeline('direct_compute_error', { requestId, elapsedMs, message });
+      return { status: 'error' as const, elapsedMs, message };
+    }
+  }, [appendRuntimeTimeline, summarizeParams, summarizeResult]);
+
   const buildCanonicalSimParams = useCallback(
     (
       baseParamsCurrent: ModelParameters,
@@ -922,7 +1007,8 @@ export default function App() {
         clearRecalcWatchdog();
         recalcWatchdogRef.current = window.setTimeout(() => {
           if (requestId !== recalcRequestIdRef.current) return;
-          cancelActiveRecalcWorker();
+          appendRuntimeTimeline('worker_timeout_fired', { requestId, cause });
+          cancelActiveRecalcWorker('watchdog_timeout');
           if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
             activeRecalcOwnerRef.current = null;
             setActiveRecalcOwner(null);
@@ -1374,6 +1460,30 @@ export default function App() {
           (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
         )
         : null;
+      const workerMessageReceived = requestKnown
+        ? findEvent(
+          'worker_message_received',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
+        : null;
+      const workerComputeStarted = requestKnown
+        ? findEvent(
+          'worker_compute_started',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
+        : null;
+      const workerComputeFinished = requestKnown
+        ? findEvent(
+          'worker_compute_finished',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
+        : null;
+      const workerPostDone = requestKnown
+        ? findEvent(
+          'worker_post_done',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
+        : null;
       const resultApplied = requestKnown
         ? findEvent('sim_result_applied', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
         : null;
@@ -1470,11 +1580,26 @@ export default function App() {
                           : heroPhaseRef.current !== 'ready' ? 'hero_not_ready'
                             : !renderFromSimResult ? 'hero_not_rendering_sim_result'
                               : 'unknown_timeout';
-      finalize(
-        'fail',
-        failureStep,
-        `Timeout ${maxWaitMs}ms. request=${requestKnown ? applyRequestId : '—'} heroPhase=${heroPhaseRef.current} simUiState=${simUiStateRef.current} worker=${recalcWorkerStatus}.`,
-      );
+      const workerProgress = [
+        workerMessageReceived ? 'message_received' : null,
+        workerComputeStarted ? 'compute_started' : null,
+        workerComputeFinished ? 'compute_finished' : null,
+        workerPostDone ? 'post_done' : null,
+      ].filter(Boolean).join('>');
+      const baseDetail = `Timeout ${maxWaitMs}ms. request=${requestKnown ? applyRequestId : '—'} heroPhase=${heroPhaseRef.current} simUiState=${simUiStateRef.current} worker=${recalcWorkerStatus} progress=${workerProgress || 'none'}.`;
+      if (failureStep === 'worker_done_missing' && requestKnown) {
+        void runDirectSimulationDiagnostic(applyRequestId).then((direct) => {
+          const directDetail =
+            direct.status === 'ok'
+              ? ` direct=ok elapsed=${direct.elapsedMs}ms`
+              : direct.status === 'error'
+                ? ` direct=error elapsed=${direct.elapsedMs}ms msg=${direct.message}`
+                : ` direct=missing msg=${direct.message}`;
+          finalize('fail', failureStep, `${baseDetail}${directDetail}`);
+        });
+        return;
+      }
+      finalize('fail', failureStep, baseDetail);
     }, intervalMs);
   }, [
     applyAurumHarness.status,
@@ -1484,6 +1609,7 @@ export default function App() {
     pendingSnapshot,
     pendingSnapshotLabel,
     pendingSnapshotSignature,
+    runDirectSimulationDiagnostic,
     recalcWorkerStatus,
   ]);
 
