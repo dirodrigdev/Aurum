@@ -377,7 +377,6 @@ export default function App() {
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
-  const skipNextAutoRecalcRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
@@ -1450,7 +1449,6 @@ export default function App() {
       }
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
-        skipNextAutoRecalcRef.current = true;
         startRecalculation('apply-aurum', () => nextSimParamsFinal);
       } else if (!sameSimCapital || !sameSimComposition) {
         setBaseUpdatePending(true);
@@ -1840,10 +1838,6 @@ export default function App() {
     }
     const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
     if (canRecalculateNow && simChanged) {
-      if (skipNextAutoRecalcRef.current) {
-        skipNextAutoRecalcRef.current = false;
-        return;
-      }
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
       }
@@ -1931,61 +1925,52 @@ export default function App() {
     simWorking,
   ]);
 
+  const commitSimParamsAndRecalc = useCallback((
+    nextParams: ModelParameters,
+    cause: RecalcCause,
+  ) => {
+    setSimParams(nextParams);
+    const base = applySimulationOverrides(nextParams, simOverrides);
+    startRecalculation(cause, () => base);
+  }, [simOverrides, startRecalculation]);
+
   const updateSimParam = useCallback((path: string, value: number) => {
     markSimulationInteraction('custom');
-    setSimParams((prev) => {
-      const next = updateByPath(prev, path, value);
-      const base = applySimulationOverrides(next, simOverrides);
-      startRecalculation('params-change', () => base);
-      return next;
-    });
-  }, [markSimulationInteraction, simOverrides, startRecalculation]);
+    const next = updateByPath(simParamsRef.current, path, value);
+    commitSimParamsAndRecalc(next, 'params-change');
+  }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const handleCashflowEventsChange = useCallback((next: CashflowEvent[]) => {
     markSimulationInteraction('custom');
-    setSimParams((prev) => {
-      const updated = { ...prev, cashflowEvents: next };
-      const base = applySimulationOverrides(updated, simOverrides);
-      startRecalculation('params-change', () => base);
-      return updated;
-    });
-  }, [markSimulationInteraction, simOverrides, startRecalculation]);
+    const updated = { ...simParamsRef.current, cashflowEvents: next };
+    commitSimParamsAndRecalc(updated, 'params-change');
+  }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     markSimulationInteraction(next);
-    setSimParams((prev) => {
-      const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
-      const nextParams: ModelParameters = {
-        ...prev,
-        activeScenario: next,
-        returns: scenarioBase.returns,
-        inflation: scenarioBase.inflation,
-        fx: scenarioBase.fx,
-      };
-      const base = applySimulationOverrides(nextParams, simOverrides);
-      startRecalculation('scenario', () => base);
-      return nextParams;
-    });
-  }, [applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
+    const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
+    const nextParams: ModelParameters = {
+      ...simParamsRef.current,
+      activeScenario: next,
+      returns: scenarioBase.returns,
+      inflation: scenarioBase.inflation,
+      fx: scenarioBase.fx,
+    };
+    commitSimParamsAndRecalc(nextParams, 'scenario');
+  }, [applyScenarioEconomics, baseParams, commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
-    if (next) {
-      markSimulationInteraction('custom');
-      const base = applySimulationOverrides(simParams, next);
-      startRecalculation('params-change', () => base);
-    }
-  }, [markSimulationInteraction, simParams, startRecalculation]);
+    markSimulationInteraction('custom');
+    const base = applySimulationOverrides(simParamsRef.current, next);
+    startRecalculation('params-change', () => base);
+  }, [markSimulationInteraction, startRecalculation]);
 
   const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
     markSimulationInteraction('custom');
-    setSimParams((prev) => {
-      const next = patcher(prev);
-      const base = applySimulationOverrides(next, simOverrides);
-      startRecalculation('params-change', () => base);
-      return next;
-    });
-  }, [markSimulationInteraction, simOverrides, startRecalculation]);
+    const next = patcher(simParamsRef.current);
+    commitSimParamsAndRecalc(next, 'params-change');
+  }, [commitSimParamsAndRecalc, markSimulationInteraction]);
 
   const runSim = useCallback(() => {
     markSimulationInteraction(simulationPreset);
