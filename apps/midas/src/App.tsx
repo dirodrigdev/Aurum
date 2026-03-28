@@ -44,6 +44,7 @@ type RecalcCause =
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 type RecalcOwner = 'apply-aurum' | null;
+type WorkerTraceScope = 'recalc' | 'baseline-optimizer';
 type RuntimeTimelineEntry = {
   atMs: number;
   event: string;
@@ -518,9 +519,10 @@ export default function App() {
     (
       params: ModelParameters,
       runId: number,
-      options?: { cancelPreviousRecalc?: boolean },
+      options?: { cancelPreviousRecalc?: boolean; traceScope?: WorkerTraceScope },
     ): Promise<SimulationResults> =>
       new Promise<SimulationResults>((resolve, reject) => {
+        const traceScope = options?.traceScope ?? 'recalc';
         if (options?.cancelPreviousRecalc) {
           cancelActiveRecalcWorker();
         }
@@ -549,6 +551,7 @@ export default function App() {
           if (payload.type === 'done') {
             appendRuntimeTimeline('worker_done', {
               requestId: payload.runId,
+              scope: traceScope,
               probRuin: Number(payload.result.probRuin ?? 0),
               p50TerminalAllPaths: Number(payload.result.p50TerminalAllPaths ?? 0),
               ruinMedianYear: payload.result.ruinTimingMedian != null
@@ -560,6 +563,7 @@ export default function App() {
           }
           appendRuntimeTimeline('worker_error', {
             requestId: payload.runId,
+            scope: traceScope,
             message: payload.message || 'simulation_worker_error',
           });
           reject(new Error(payload.message || 'simulation_worker_error'));
@@ -570,6 +574,7 @@ export default function App() {
           finalize();
           appendRuntimeTimeline('worker_error', {
             requestId: runId,
+            scope: traceScope,
             message: event.message || 'simulation_worker_error',
           });
           reject(new Error(event.message || 'simulation_worker_error'));
@@ -580,6 +585,7 @@ export default function App() {
           finalize();
           appendRuntimeTimeline('worker_error', {
             requestId: runId,
+            scope: traceScope,
             message: 'simulation_worker_message_error',
           });
           reject(new Error('simulation_worker_message_error'));
@@ -593,6 +599,7 @@ export default function App() {
         };
         appendRuntimeTimeline('worker_request_sent', {
           requestId: runId,
+          scope: traceScope,
           capitalInitial: Number(params.capitalInitial ?? 0),
           compositionMode: params.simulationComposition?.mode ?? 'legacy',
           banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
@@ -927,7 +934,10 @@ export default function App() {
           setSimWorking(false);
           calculationTimerRef.current = null;
         }, 30_000);
-        const nextResult = await runCentralSimulationInWorker(params, requestId, { cancelPreviousRecalc: true });
+        const nextResult = await runCentralSimulationInWorker(params, requestId, {
+          cancelPreviousRecalc: true,
+          traceScope: 'recalc',
+        });
         if (requestId !== recalcRequestIdRef.current) return;
         clearRecalcWatchdog();
         setSimResult(nextResult);
@@ -1347,13 +1357,22 @@ export default function App() {
         ? findEvent('start_recalculation_params', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
         : null;
       const workerRequest = requestKnown
-        ? findEvent('worker_request_sent', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        ? findEvent(
+          'worker_request_sent',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
         : null;
       const workerDone = requestKnown
-        ? findEvent('worker_done', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        ? findEvent(
+          'worker_done',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
         : null;
       const workerError = requestKnown
-        ? findEvent('worker_error', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
+        ? findEvent(
+          'worker_error',
+          (payload) => Number(payload?.requestId ?? NaN) === applyRequestId && payload?.scope === 'recalc',
+        )
         : null;
       const resultApplied = requestKnown
         ? findEvent('sim_result_applied', (payload) => Number(payload?.requestId ?? NaN) === applyRequestId)
@@ -1369,17 +1388,19 @@ export default function App() {
         const workerBanks = Number(workerRequest.payload.banksCLP ?? NaN);
         const startOptimizable = Number(startParams.payload.optimizableInvestmentsCLP ?? NaN);
         const workerOptimizable = Number(workerRequest.payload.optimizableInvestmentsCLP ?? NaN);
+        const capitalVisible = Number(capitalEvent?.payload?.capitalVisible ?? NaN);
         const mismatch =
           Math.abs(startCapital - workerCapital) > 0.5 ||
           startMode !== workerMode ||
           Math.abs(startBanks - workerBanks) > 0.5 ||
-          Math.abs(startOptimizable - workerOptimizable) > 0.5;
+          Math.abs(startOptimizable - workerOptimizable) > 0.5 ||
+          (Number.isFinite(capitalVisible) && Math.abs(capitalVisible - workerCapital) > 0.5);
         if (mismatch) {
           window.clearInterval(timer);
           finalize(
             'fail',
             'params_ui_worker_mismatch',
-            `Mismatch Apply Aurum params: start(cap=${startCapital}, mode=${startMode}, banks=${startBanks}, opt=${startOptimizable}) vs worker(cap=${workerCapital}, mode=${workerMode}, banks=${workerBanks}, opt=${workerOptimizable}).`,
+            `Mismatch Apply Aurum params: start(cap=${startCapital}, mode=${startMode}, banks=${startBanks}, opt=${startOptimizable}) vs worker(cap=${workerCapital}, mode=${workerMode}, banks=${workerBanks}, opt=${workerOptimizable}) vs visible(cap=${Number.isFinite(capitalVisible) ? capitalVisible : 'n/a'}).`,
           );
           return;
         }
@@ -1566,7 +1587,7 @@ export default function App() {
     baseSnapshotRequestIdRef.current = requestId;
     let cancelled = false;
     const baseFromAurum = applyScenarioEconomics(cloneParams(baseParams), 'base');
-    void runCentralSimulationInWorker(baseFromAurum, requestId)
+    void runCentralSimulationInWorker(baseFromAurum, requestId, { traceScope: 'baseline-optimizer' })
       .then((result) => {
         if (cancelled || requestId !== baseSnapshotRequestIdRef.current) return;
         setBaseOptimizerSnapshot(toOptimizerBaselineSnapshot(result));
