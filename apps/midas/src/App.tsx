@@ -49,6 +49,13 @@ type RuntimeTimelineEntry = {
   event: string;
   payload: string;
 };
+type ManualAdjustmentImpact = {
+  currentTotalDelta: number;
+  currentBanksDelta: number;
+  currentInvestmentsDelta: number;
+  currentRiskDelta: number;
+  futureEvents: CashflowEvent[];
+};
 
 type OptimizerBaselineSnapshot = {
   probRuin: number;
@@ -304,7 +311,7 @@ export default function App() {
   const [activeRecalcOwner, setActiveRecalcOwner] = useState<RecalcOwner>(null);
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
-  const [riskCapitalUsdTotal, setRiskCapitalUsdTotal] = useState(0);
+  const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
@@ -584,7 +591,7 @@ export default function App() {
     return undefined;
   }, []);
 
-  const manualAdjustmentImpact = useMemo(() => {
+  const manualAdjustmentImpact = useMemo<ManualAdjustmentImpact>(() => {
     let currentLiquidityDelta = 0;
     let currentInvestmentsDelta = 0;
     let currentRiskDelta = 0;
@@ -697,6 +704,114 @@ export default function App() {
     p50TerminalAllPaths: Number(result.p50TerminalAllPaths ?? 0),
     ruinMedianYear: result.ruinTimingMedian != null ? Number(result.ruinTimingMedian / 12) : null,
   }), []);
+
+  const buildCanonicalSimParams = useCallback(
+    (
+      baseParamsCurrent: ModelParameters,
+      currentSimParams: ModelParameters,
+      options?: {
+        applyCapital?: boolean;
+      },
+    ): ModelParameters => {
+      const applyCapital = options?.applyCapital ?? true;
+      const mergedEvents = [
+        ...(baseParamsCurrent.cashflowEvents ?? []),
+        ...manualAdjustmentImpact.futureEvents,
+      ];
+      const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
+      let next: ModelParameters = {
+        ...currentSimParams,
+        cashflowEvents: mergedEvents,
+      };
+
+      if (blocksMode && baseParamsCurrent.simulationComposition) {
+        const baseComposition = JSON.parse(
+          JSON.stringify(baseParamsCurrent.simulationComposition),
+        ) as SimulationCompositionInput;
+        let nextOptimizable = Math.max(
+          0,
+          Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualAdjustmentImpact.currentInvestmentsDelta,
+        );
+        let nextBanks = Math.max(
+          0,
+          Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
+        );
+        const baseRiskExposure = normalizeRiskCapitalExposure(
+          baseComposition.nonOptimizable?.riskCapital,
+          riskCapitalUsdSnapshotCLP || baseParamsCurrent.fx.clpUsdInitial || DEFAULT_PARAMETERS.fx.clpUsdInitial,
+          Number(baseComposition.totalNetWorthCLP ?? 0),
+          Number(baseComposition.totalNetWorthCLP ?? 0) + Number(riskCapitalCLP ?? 0),
+        );
+        const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
+        const riskBaseClp = Math.max(0, riskCapitalCLP || baseRiskExposure.riskTotalCLP);
+        const riskManualClp = manualAdjustmentImpact.currentRiskDelta;
+        const riskEnabledClpTotal = Math.max(0, riskBaseClp + riskManualClp);
+        const riskUsdEnabledTotal = riskUsdSnapshot > 0
+          ? riskEnabledClpTotal / riskUsdSnapshot
+          : 0;
+        const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
+        const riskClpApplied = riskCapitalEnabled
+          ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
+          : 0;
+
+        const realEstateEquity = Math.max(0, Number(baseComposition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0));
+        const nonMortgageDebt = Math.abs(Number(baseComposition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
+        const targetWithoutRisk = Math.max(
+          1,
+          Number(baseComposition.totalNetWorthCLP ?? 0) +
+            manualAdjustmentImpact.currentBanksDelta +
+            manualAdjustmentImpact.currentInvestmentsDelta,
+        );
+        const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
+        let gap = targetWithoutRisk - modeledWithoutRisk;
+        if (Math.abs(gap) > 0.5) {
+          nextBanks = Math.max(0, nextBanks + gap);
+          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt);
+          if (Math.abs(remainingGap) > 0.5) {
+            nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
+          }
+        }
+
+        const targetVisibleCapital = riskCapitalEnabled
+          ? targetWithoutRisk + riskClpApplied
+          : targetWithoutRisk;
+
+        const nextComposition: SimulationCompositionInput = {
+          ...baseComposition,
+          optimizableInvestmentsCLP: nextOptimizable,
+          nonOptimizable: {
+            ...baseComposition.nonOptimizable,
+            banksCLP: nextBanks,
+            riskCapital: {
+              source: baseComposition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
+              usdSnapshotCLP: riskUsdSnapshot,
+              usdTotal: riskUsdApplied,
+              usd: riskUsdApplied,
+              totalCLP: riskClpApplied,
+            },
+          },
+        };
+        next = {
+          ...next,
+          simulationComposition: nextComposition,
+          capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : currentSimParams.capitalInitial,
+        };
+      } else {
+        const riskDelta = riskCapitalEnabled
+          ? manualAdjustmentImpact.currentRiskDelta + riskCapitalCLP
+          : 0;
+        const nextDelta = manualAdjustmentImpact.currentBanksDelta + manualAdjustmentImpact.currentInvestmentsDelta + riskDelta;
+        const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
+        next = {
+          ...next,
+          capitalInitial: applyCapital ? targetCapital : currentSimParams.capitalInitial,
+        };
+      }
+
+      return next;
+    },
+    [manualAdjustmentImpact, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP],
+  );
 
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
     setLastRecalcCause(cause);
@@ -966,34 +1081,39 @@ export default function App() {
       const shouldApplyCapital = !hasCapitalOverride;
       const nextSimComposition = compositionWithToggle ?? currentSim.simulationComposition;
       const baseSimCapital = riskCapitalEnabled ? aurumNetWorthWithRisk : aurumNetWorth;
-      const targetCapital = shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial;
-      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(targetCapital);
-      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimComposition);
-      const simParamsForRecalc: ModelParameters = !sameSimCapital || !sameSimComposition
-        ? {
-            ...currentSim,
-            capitalInitial: targetCapital,
-            label: shouldApplyCapital
-              ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
-              : currentSim.label,
-            simulationComposition: nextSimComposition,
-          }
-        : currentSim;
+      const baseForCanonical: ModelParameters = {
+        ...currentBase,
+        capitalInitial: baseTargetCapital,
+        simulationComposition: nextBaseComposition,
+      };
+      const simSeed: ModelParameters = {
+        ...currentSim,
+        capitalInitial: shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial,
+        label: shouldApplyCapital
+          ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
+          : currentSim.label,
+        simulationComposition: nextSimComposition,
+      };
+      const nextSimParamsFinal = buildCanonicalSimParams(baseForCanonical, simSeed, {
+        applyCapital: shouldApplyCapital,
+      });
+      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(nextSimParamsFinal.capitalInitial);
+      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimParamsFinal.simulationComposition);
 
       appendRuntimeTimeline('snapshot_applied', {
         snapshotApplied: true,
-        targetCapital,
+        targetCapital: Number(nextSimParamsFinal.capitalInitial ?? 0),
         shouldRecalculate,
-        ...summarizeParams(simParamsForRecalc),
+        ...summarizeParams(nextSimParamsFinal),
       });
 
       if (!sameSimCapital || !sameSimComposition) {
-        setSimParams(simParamsForRecalc);
+        setSimParams(nextSimParamsFinal);
       }
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
         skipNextAutoRecalcRef.current = true;
-        startRecalculation('apply-aurum', () => simParamsForRecalc);
+        startRecalculation('apply-aurum', () => nextSimParamsFinal);
       } else if (!sameSimCapital || !sameSimComposition) {
         setBaseUpdatePending(true);
       }
@@ -1011,6 +1131,7 @@ export default function App() {
     simOverrides?.active,
     simOverrides?.capital,
     startRecalculation,
+    buildCanonicalSimParams,
     summarizeParams,
   ]);
 
@@ -1110,102 +1231,17 @@ export default function App() {
   }, [markSimulationInteraction]);
 
   useEffect(() => {
+    if (activeRecalcOwnerRef.current === 'apply-aurum') {
+      return;
+    }
     const baseParamsCurrent = baseParamsRef.current;
     const currentSimParams = simParamsRef.current;
-    const mergedEvents = [
-      ...(baseParamsCurrent.cashflowEvents ?? []),
-      ...manualAdjustmentImpact.futureEvents,
-    ];
-    const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
-
-    let next: ModelParameters = {
-      ...currentSimParams,
-      cashflowEvents: mergedEvents,
-    };
-
-    if (blocksMode && baseParamsCurrent.simulationComposition) {
-      const baseComposition = JSON.parse(
-        JSON.stringify(baseParamsCurrent.simulationComposition),
-      ) as SimulationCompositionInput;
-      let nextOptimizable = Math.max(
-        0,
-        Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualAdjustmentImpact.currentInvestmentsDelta,
-      );
-      let nextBanks = Math.max(
-        0,
-        Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
-      );
-      const baseRiskExposure = normalizeRiskCapitalExposure(
-        baseComposition.nonOptimizable?.riskCapital,
-        riskCapitalUsdSnapshotCLP || baseParamsCurrent.fx.clpUsdInitial || DEFAULT_PARAMETERS.fx.clpUsdInitial,
-        Number(baseComposition.totalNetWorthCLP ?? 0),
-        Number(baseComposition.totalNetWorthCLP ?? 0) + Number(riskCapitalCLP ?? 0),
-      );
-      const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
-      const riskBaseClp = Math.max(0, riskCapitalCLP || baseRiskExposure.riskTotalCLP);
-      const riskManualClp = manualAdjustmentImpact.currentRiskDelta;
-      const riskEnabledClpTotal = Math.max(0, riskBaseClp + riskManualClp);
-      const riskUsdEnabledTotal = riskUsdSnapshot > 0
-        ? riskEnabledClpTotal / riskUsdSnapshot
-        : 0;
-      const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
-      const riskClpApplied = riskCapitalEnabled
-        ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
-        : 0;
-
-      const realEstateEquity = Math.max(0, Number(baseComposition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0));
-      const nonMortgageDebt = Math.abs(Number(baseComposition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
-      const targetWithoutRisk = Math.max(
-        1,
-        Number(baseComposition.totalNetWorthCLP ?? 0) +
-          manualAdjustmentImpact.currentBanksDelta +
-          manualAdjustmentImpact.currentInvestmentsDelta,
-      );
-      const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
-      let gap = targetWithoutRisk - modeledWithoutRisk;
-      if (Math.abs(gap) > 0.5) {
-        nextBanks = Math.max(0, nextBanks + gap);
-        const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt);
-        if (Math.abs(remainingGap) > 0.5) {
-          nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
-        }
-      }
-
-      const targetVisibleCapital = riskCapitalEnabled
-        ? targetWithoutRisk + riskClpApplied
-        : targetWithoutRisk;
-
-      const nextComposition: SimulationCompositionInput = {
-        ...baseComposition,
-        optimizableInvestmentsCLP: nextOptimizable,
-        nonOptimizable: {
-          ...baseComposition.nonOptimizable,
-          banksCLP: nextBanks,
-          riskCapital: {
-            source: baseComposition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
-            usdSnapshotCLP: riskUsdSnapshot,
-            usdTotal: riskUsdApplied,
-            usd: riskUsdApplied,
-            totalCLP: riskClpApplied,
-          },
-        },
-      };
-      next = {
-        ...next,
-        simulationComposition: nextComposition,
-        capitalInitial: Math.max(1, targetVisibleCapital),
-      };
-    } else {
-      const riskDelta = riskCapitalEnabled
-        ? manualAdjustmentImpact.currentRiskDelta + riskCapitalCLP
-        : 0;
-      const nextDelta = manualAdjustmentImpact.currentBanksDelta + manualAdjustmentImpact.currentInvestmentsDelta + riskDelta;
-      const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
-      next = {
-        ...next,
-        capitalInitial: targetCapital,
-      };
-    }
+    const next = buildCanonicalSimParams(baseParamsCurrent, currentSimParams, {
+      applyCapital: true,
+    });
+    const currentSignature = JSON.stringify(currentSimParams);
+    const nextSignature = JSON.stringify(next);
+    const simChanged = currentSignature !== nextSignature;
 
     const deltaChange = next.capitalInitial - currentSimParams.capitalInitial;
     if (Math.abs(deltaChange) > 0.0001 && simOverrides?.active && typeof simOverrides.capital === 'number') {
@@ -1215,9 +1251,11 @@ export default function App() {
       });
     }
 
-    setSimParams(next);
+    if (simChanged) {
+      setSimParams(next);
+    }
     const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
-    if (canRecalculateNow) {
+    if (canRecalculateNow && simChanged) {
       if (skipNextAutoRecalcRef.current) {
         skipNextAutoRecalcRef.current = false;
         return;
@@ -1230,7 +1268,7 @@ export default function App() {
       pendingRecalcCauseRef.current = null;
       startRecalculation(cause, () => base);
     }
-  }, [baseUpdatePending, manualAdjustmentImpact, pendingSnapshotApplying, pendingSnapshotLabel, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP, riskCapitalUsdTotal, simOverrides, startRecalculation]);
+  }, [baseUpdatePending, buildCanonicalSimParams, pendingSnapshotApplying, pendingSnapshotLabel, simOverrides, startRecalculation]);
 
   useEffect(() => {
     if (!simResult) {
