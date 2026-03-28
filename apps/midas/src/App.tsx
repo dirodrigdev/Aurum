@@ -44,6 +44,11 @@ type RecalcCause =
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 type RecalcOwner = 'apply-aurum' | null;
+type RuntimeTimelineEntry = {
+  atMs: number;
+  event: string;
+  payload: string;
+};
 
 type OptimizerBaselineSnapshot = {
   probRuin: number;
@@ -286,6 +291,7 @@ export default function App() {
   const [simUiError, setSimUiError] = useState<string | null>(null);
   const [lastRecalcCause, setLastRecalcCause] = useState<RecalcCause | null>(null);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
+  const [runtimeTimeline, setRuntimeTimeline] = useState<RuntimeTimelineEntry[]>([]);
   const [pendingSnapshot, setPendingSnapshot] = useState<AurumOptimizableInvestmentsSnapshot | null>(null);
   const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState<string | null>(null);
   const [pendingSnapshotSignature, setPendingSnapshotSignature] = useState<string | null>(null);
@@ -325,6 +331,7 @@ export default function App() {
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
   const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
+  const timelineStartRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const activeRecalcWorkerRef = useRef<{
     worker: Worker;
     reject: (error: Error) => void;
@@ -336,6 +343,20 @@ export default function App() {
       return `${label}: ${payload.name}: ${payload.message}${stack}`;
     }
     return `${label}: ${String(payload)}`;
+  }, []);
+
+  const appendRuntimeTimeline = useCallback((event: string, payload?: Record<string, unknown> | string) => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const atMs = Math.max(0, Math.round(now - timelineStartRef.current));
+    const payloadString = typeof payload === 'string'
+      ? payload
+      : payload
+        ? JSON.stringify(payload)
+        : '';
+    setRuntimeTimeline((prev) => {
+      const next = [...prev, { atMs, event, payload: payloadString }];
+      return next.slice(-15);
+    });
   }, []);
 
   useEffect(() => {
@@ -475,21 +496,41 @@ export default function App() {
           settled = true;
           finalize();
           if (payload.type === 'done') {
+            appendRuntimeTimeline('worker_done', {
+              requestId: payload.runId,
+              probRuin: Number(payload.result.probRuin ?? 0),
+              p50TerminalAllPaths: Number(payload.result.p50TerminalAllPaths ?? 0),
+              ruinMedianYear: payload.result.ruinTimingMedian != null
+                ? Number(payload.result.ruinTimingMedian / 12)
+                : null,
+            });
             resolve(payload.result);
             return;
           }
+          appendRuntimeTimeline('worker_error', {
+            requestId: payload.runId,
+            message: payload.message || 'simulation_worker_error',
+          });
           reject(new Error(payload.message || 'simulation_worker_error'));
         };
         worker.onerror = (event) => {
           if (settled) return;
           settled = true;
           finalize();
+          appendRuntimeTimeline('worker_error', {
+            requestId: runId,
+            message: event.message || 'simulation_worker_error',
+          });
           reject(new Error(event.message || 'simulation_worker_error'));
         };
         worker.onmessageerror = () => {
           if (settled) return;
           settled = true;
           finalize();
+          appendRuntimeTimeline('worker_error', {
+            requestId: runId,
+            message: 'simulation_worker_message_error',
+          });
           reject(new Error('simulation_worker_message_error'));
         };
 
@@ -499,9 +540,18 @@ export default function App() {
           channel: 'primary',
           params,
         };
+        appendRuntimeTimeline('worker_request_sent', {
+          requestId: runId,
+          capitalInitial: Number(params.capitalInitial ?? 0),
+          compositionMode: params.simulationComposition?.mode ?? 'legacy',
+          banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
+          optimizableInvestmentsCLP: Number(params.simulationComposition?.optimizableInvestmentsCLP ?? 0),
+          riskBlockPresent: Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+          realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
+        });
         worker.postMessage(message);
       }),
-    [cancelActiveRecalcWorker],
+    [appendRuntimeTimeline, cancelActiveRecalcWorker],
   );
 
   const parseYearMonth = useCallback((value: string) => {
@@ -630,6 +680,24 @@ export default function App() {
     return exposure;
   }, []);
 
+  const summarizeParams = useCallback((params: ModelParameters) => {
+    const composition = params.simulationComposition;
+    return {
+      capitalInitial: Number(params.capitalInitial ?? 0),
+      compositionMode: composition?.mode ?? 'legacy',
+      banksCLP: Number(composition?.nonOptimizable?.banksCLP ?? 0),
+      optimizableInvestmentsCLP: Number(composition?.optimizableInvestmentsCLP ?? 0),
+      riskBlockPresent: Number(composition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+      realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
+    };
+  }, []);
+
+  const summarizeResult = useCallback((result: SimulationResults) => ({
+    probRuin: Number(result.probRuin ?? 0),
+    p50TerminalAllPaths: Number(result.p50TerminalAllPaths ?? 0),
+    ruinMedianYear: result.ruinTimingMedian != null ? Number(result.ruinTimingMedian / 12) : null,
+  }), []);
+
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
     setLastRecalcCause(cause);
     setSimWorking(true);
@@ -644,6 +712,10 @@ export default function App() {
 
   const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
     if (activeRecalcOwnerRef.current === 'apply-aurum' && cause !== 'apply-aurum') {
+      appendRuntimeTimeline('start_recalculation_blocked', {
+        cause,
+        owner: activeRecalcOwnerRef.current,
+      });
       return;
     }
     const ownerForRun: RecalcOwner = cause === 'apply-aurum' ? 'apply-aurum' : null;
@@ -657,10 +729,21 @@ export default function App() {
     const requestId = recalcRequestIdRef.current + 1;
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
+    appendRuntimeTimeline('start_recalculation', {
+      cause,
+      requestId,
+      heroPhase,
+      owner: ownerForRun ?? 'none',
+    });
     calculationTimerRef.current = window.setTimeout(async () => {
       try {
         setRecalcWorkerStatus('running');
         const params = run();
+        appendRuntimeTimeline('start_recalculation_params', {
+          cause,
+          requestId,
+          ...summarizeParams(params),
+        });
         clearRecalcWatchdog();
         recalcWatchdogRef.current = window.setTimeout(() => {
           if (requestId !== recalcRequestIdRef.current) return;
@@ -684,6 +767,10 @@ export default function App() {
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
         setRecalcWorkerStatus('done');
+        appendRuntimeTimeline('sim_result_applied', {
+          requestId,
+          ...summarizeResult(nextResult),
+        });
         if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
           activeRecalcOwnerRef.current = null;
           setActiveRecalcOwner(null);
@@ -720,11 +807,15 @@ export default function App() {
     }, 0);
   }, [
     activeRecalcOwner,
+    appendRuntimeTimeline,
     beginRecalculationVisual,
     cancelActiveRecalcWorker,
     clearCalculationTimer,
     clearRecalcWatchdog,
     runCentralSimulationInWorker,
+    summarizeParams,
+    summarizeResult,
+    heroPhase,
   ]);
 
   useEffect(() => {
@@ -766,6 +857,45 @@ export default function App() {
     simResult,
     simWorking,
   ]);
+
+  useEffect(() => {
+    appendRuntimeTimeline('capital_visible_updated', {
+      capitalVisible: Number(simParams.capitalInitial ?? 0),
+      snapshotApplied,
+    });
+  }, [appendRuntimeTimeline, simParams.capitalInitial, snapshotApplied]);
+
+  useEffect(() => {
+    appendRuntimeTimeline('hero_phase_changed', {
+      heroPhase,
+      simUiState,
+      lastRecalcCause: lastRecalcCause ?? 'none',
+    });
+  }, [appendRuntimeTimeline, heroPhase, lastRecalcCause, simUiState]);
+
+  useEffect(() => {
+    const source =
+      heroPhase === 'ready'
+        ? 'simResult'
+        : heroPhase === 'stale'
+          ? 'lastStableCentral'
+          : 'none';
+    const visibleValue =
+      source === 'simResult'
+        ? simResult
+          ? 1 - simResult.probRuin
+          : null
+        : source === 'lastStableCentral'
+          ? lastStableCentral
+            ? 1 - lastStableCentral.probRuin
+            : null
+          : null;
+    appendRuntimeTimeline('hero_render_source_changed', {
+      source,
+      heroPhase,
+      visibleValuePct: visibleValue != null ? Number((visibleValue * 100).toFixed(2)) : null,
+    });
+  }, [appendRuntimeTimeline, heroPhase, lastStableCentral, simResult]);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
@@ -850,6 +980,13 @@ export default function App() {
           }
         : currentSim;
 
+      appendRuntimeTimeline('snapshot_applied', {
+        snapshotApplied: true,
+        targetCapital,
+        shouldRecalculate,
+        ...summarizeParams(simParamsForRecalc),
+      });
+
       if (!sameSimCapital || !sameSimComposition) {
         setSimParams(simParamsForRecalc);
       }
@@ -867,7 +1004,15 @@ export default function App() {
       setSimUiError(String(error?.message || 'Error aplicando base Aurum.'));
       setBaseUpdatePending(true);
     }
-  }, [computeRiskCapital, riskCapitalEnabled, simOverrides?.active, simOverrides?.capital, startRecalculation]);
+  }, [
+    appendRuntimeTimeline,
+    computeRiskCapital,
+    riskCapitalEnabled,
+    simOverrides?.active,
+    simOverrides?.capital,
+    startRecalculation,
+    summarizeParams,
+  ]);
 
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
@@ -912,6 +1057,11 @@ export default function App() {
   const applyPendingSnapshot = useCallback(() => {
     if (!pendingSnapshot || !pendingSnapshotSignature) return;
     if (applyingSnapshotRef.current) return;
+    appendRuntimeTimeline('apply_aurum_click', {
+      pendingSnapshotLabel: pendingSnapshotLabel ?? 'none',
+      heroPhase,
+      simUiState,
+    });
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
     markSimulationInteraction('custom');
@@ -935,7 +1085,17 @@ export default function App() {
         setPendingSnapshotApplying(false);
       }
     }, 0);
-  }, [applySnapshotNow, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
+  }, [
+    appendRuntimeTimeline,
+    applySnapshotNow,
+    formatRuntimeError,
+    heroPhase,
+    markSimulationInteraction,
+    pendingSnapshot,
+    pendingSnapshotLabel,
+    pendingSnapshotSignature,
+    simUiState,
+  ]);
 
   const toggleRiskCapital = useCallback(() => {
     pendingRecalcCauseRef.current = 'risk-toggle';
@@ -1427,6 +1587,7 @@ export default function App() {
       activeRecalcRequestId={activeRecalcRequestId}
       appliedRecalcRequestId={appliedRecalcRequestId}
       activeRecalcOwner={activeRecalcOwner}
+      runtimeTimeline={runtimeTimeline}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onToggleRiskCapital={toggleRiskCapital}
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}

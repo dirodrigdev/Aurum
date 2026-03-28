@@ -80,6 +80,7 @@ export function SimulationPage({
   activeRecalcRequestId,
   appliedRecalcRequestId,
   activeRecalcOwner,
+  runtimeTimeline,
   onApplyPendingSnapshot,
   onToggleRiskCapital,
   onCommitManualCapitalAdjustments,
@@ -115,6 +116,7 @@ export function SimulationPage({
   activeRecalcRequestId: number | null;
   appliedRecalcRequestId: number | null;
   activeRecalcOwner: 'apply-aurum' | null;
+  runtimeTimeline: Array<{ atMs: number; event: string; payload: string }>;
   onApplyPendingSnapshot: () => void;
   onToggleRiskCapital: () => void;
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
@@ -1239,6 +1241,32 @@ export function SimulationPage({
             <div style={{ color: T.textMuted }}>
               capitalVisible={formatCapital(effectiveCapital)}
             </div>
+            {runtimeTimeline.length > 0 ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  background: 'rgba(2, 6, 23, 0.55)',
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  padding: 8,
+                  fontFamily: 'SF Mono, Menlo, monospace',
+                  fontSize: 10,
+                  color: '#9fb2d9',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  maxHeight: 180,
+                  overflow: 'auto',
+                }}
+              >
+                {runtimeTimeline.map((entry, idx) => (
+                  <div key={`${entry.atMs}-${idx}`}>
+                    +{entry.atMs}ms · {entry.event}
+                    {entry.payload ? ` · ${entry.payload}` : ''}
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {lastRecalcCause ? (
               <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
             ) : null}
