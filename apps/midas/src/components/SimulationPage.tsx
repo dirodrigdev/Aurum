@@ -64,6 +64,8 @@ export function SimulationPage({
   simActive,
   simWorking,
   simUiState,
+  heroPhase,
+  lastStableCentral,
   simUiError,
   lastRecalcCause,
   simulationPreset,
@@ -93,6 +95,8 @@ export function SimulationPage({
   simActive: boolean;
   simWorking: boolean;
   simUiState: 'boot' | 'stale' | 'ready' | 'error';
+  heroPhase: 'boot' | 'stale' | 'ready';
+  lastStableCentral: SimulationResults | null;
   simUiError: string | null;
   lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
@@ -169,7 +173,7 @@ export function SimulationPage({
         : aurumIntegrationStatus === 'error'
           ? 'Aurum: error de integración'
           : 'Aurum: en espera';
-  const isRecalculating = simUiState === 'boot' || simUiState === 'stale';
+  const isRecalculating = heroPhase === 'boot' || heroPhase === 'stale';
   const simTechnicalLabel = isRecalculating
     ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
     : simUiState === 'ready'
@@ -371,9 +375,11 @@ export function SimulationPage({
   }, [simActive]);
 
   const displayResult = hideResultBlocks ? null : resultCentral;
-  const showGhostResult = Boolean(simUiState === 'stale' && displayResult);
-  const showBootPlaceholder = Boolean(simUiState === 'boot');
+  const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
+  const showGhostResult = heroPhase === 'stale';
+  const showBootPlaceholder = heroPhase === 'boot';
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
+  const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
   const ruinP75 = displayResult?.ruinTimingP75 ?? null;
@@ -690,10 +696,10 @@ export function SimulationPage({
         `}</style>
         <HeroCard
           label="¿LLEGARÁS AL AÑO 40?"
-          valuePct={showBootPlaceholder ? null : probSuccess}
+          valuePct={showBootPlaceholder ? null : heroProbSuccess}
           stale={showGhostResult}
           subtitle={
-            isRecalculating
+            heroPhase !== 'ready'
               ? 'Calculando simulación...'
               : displayResult
                 ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`

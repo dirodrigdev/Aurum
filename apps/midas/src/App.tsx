@@ -37,6 +37,7 @@ type TriMotorResult = {
   prudent: SimulationResults | null;
 };
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
+type HeroPhase = 'boot' | 'stale' | 'ready';
 type RecalcCause =
   | 'boot-init'
   | 'apply-aurum'
@@ -258,12 +259,14 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<TriMotorResult>({ central: null, favorable: null, prudent: null });
+  const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
   const [simWorking, setSimWorking] = useState(false);
   const [simUiState, setSimUiState] = useState<SimulationUiState>('boot');
+  const [heroPhase, setHeroPhase] = useState<HeroPhase>('boot');
   const [simUiError, setSimUiError] = useState<string | null>(null);
   const [lastRecalcCause, setLastRecalcCause] = useState<RecalcCause | null>(null);
   const [runtimeErrors, setRuntimeErrors] = useState<string[]>([]);
@@ -296,7 +299,8 @@ export default function App() {
   const baseParamsRef = useRef<ModelParameters>(baseParams);
   const simParamsRef = useRef<ModelParameters>(simParams);
   const simResultRef = useRef<TriMotorResult>(simResult);
-  const simUiStateRef = useRef<SimulationUiState>(simUiState);
+  const simulationActiveRef = useRef<boolean>(simulationActive);
+  const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
@@ -324,8 +328,8 @@ export default function App() {
   }, [simResult]);
 
   useEffect(() => {
-    simUiStateRef.current = simUiState;
-  }, [simUiState]);
+    simulationActiveRef.current = simulationActive;
+  }, [simulationActive]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -540,28 +544,40 @@ export default function App() {
     return exposure;
   }, []);
 
-  const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
-    clearCalculationTimer();
+  const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
     setLastRecalcCause(cause);
     setSimWorking(true);
     setSimUiError(null);
-    const hadReadyResult = Boolean(simResultRef.current.central) && simUiStateRef.current === 'ready';
-    setSimUiState(hadReadyResult ? 'stale' : 'boot');
+    const hasStableResult = Boolean(lastStableCentralRef.current);
+    const shouldStale = hasStableResult && simulationActiveRef.current;
+    setSimUiState(shouldStale ? 'stale' : 'boot');
+    setHeroPhase(shouldStale ? 'stale' : 'boot');
+  }, []);
+
+  const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
+    clearCalculationTimer();
+    beginRecalculationVisual(cause);
     calculationTimerRef.current = window.setTimeout(() => {
       try {
         const params = run();
-        setSimResult(computeTriMotor(params));
+        const nextResult = computeTriMotor(params);
+        setSimResult(nextResult);
+        lastStableCentralRef.current = nextResult.central;
+        setLastStableCentral(nextResult.central);
         setSimUiState('ready');
+        setHeroPhase('ready');
       } catch (error: any) {
         console.error('[Midas] Error recalculando simulación', error);
         setSimUiState('error');
+        const fallbackPhase = lastStableCentralRef.current && simulationActiveRef.current ? 'stale' : 'boot';
+        setHeroPhase(fallbackPhase);
         setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
       } finally {
         setSimWorking(false);
         calculationTimerRef.current = null;
       }
     }, 0);
-  }, [clearCalculationTimer, computeTriMotor]);
+  }, [beginRecalculationVisual, clearCalculationTimer, computeTriMotor]);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
@@ -697,10 +713,7 @@ export default function App() {
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
     markSimulationInteraction('custom');
-    setSimUiError(null);
-    setLastRecalcCause('apply-aurum');
-    const hadReadyResult = Boolean(simResultRef.current.central) && simUiStateRef.current === 'ready';
-    setSimUiState(hadReadyResult ? 'stale' : 'boot');
+    beginRecalculationVisual('apply-aurum');
     window.setTimeout(() => {
       try {
         lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
@@ -719,7 +732,7 @@ export default function App() {
         setPendingSnapshotApplying(false);
       }
     }, 0);
-  }, [applySnapshotNow, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
+  }, [applySnapshotNow, beginRecalculationVisual, formatRuntimeError, markSimulationInteraction, pendingSnapshot, pendingSnapshotSignature]);
 
   const toggleRiskCapital = useCallback(() => {
     pendingRecalcCauseRef.current = 'risk-toggle';
@@ -1128,7 +1141,9 @@ export default function App() {
     if (simulationActive || simOverrides?.active) return;
     setBaseUpdatePending(false);
     setSimUiError(null);
-    setSimUiState(simResult.central ? 'ready' : 'boot');
+    const nextPhase: HeroPhase = simResult.central ? 'ready' : 'boot';
+    setSimUiState(nextPhase);
+    setHeroPhase(nextPhase);
   }, [activeTab, simOverrides?.active, simulationActive, simResult.central]);
 
   const content = activeTab === 'sim' ? (
@@ -1141,6 +1156,8 @@ export default function App() {
       simActive={simulationActive}
       simWorking={simWorking}
       simUiState={simUiState}
+      heroPhase={heroPhase}
+      lastStableCentral={lastStableCentral}
       simUiError={simUiError}
       lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
