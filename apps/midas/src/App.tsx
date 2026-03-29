@@ -1204,7 +1204,6 @@ export default function App() {
         : '';
     return [
       snapshot.version,
-      snapshot.publishedAt,
       snapshot.snapshotMonth,
       snapshot.snapshotLabel,
       snapshot.totalNetWorthCLP,
