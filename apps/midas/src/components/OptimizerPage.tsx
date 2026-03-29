@@ -54,6 +54,7 @@ export function OptimizerPage({
   simulationParams,
   simulationActive,
   simulationLabel,
+  weightsSourceLabel,
   preloadedBaseStats,
   preloadedSimulationStats,
   optimizableBaseReference,
@@ -62,6 +63,7 @@ export function OptimizerPage({
   simulationParams: ModelParameters;
   simulationActive: boolean;
   simulationLabel?: string;
+  weightsSourceLabel: string;
   preloadedBaseStats?: BaselineSnapshot | null;
   preloadedSimulationStats?: BaselineSnapshot | null;
   optimizableBaseReference: OptimizableBaseReference;
@@ -351,6 +353,10 @@ export function OptimizerPage({
   const rfSplitCurrent = summarizeWithinBlock(currentWeights, 'rf');
   const rfSplitOptimized = summarizeWithinBlock(optimizedWeights, 'rf');
   const movementAmounts = visibleResult ? buildMoveAmounts(currentWeights, optimizedWeights, optimizationBaseCapital) : [];
+  const sleeveComparisonRows = useMemo(
+    () => (visibleResult ? buildSleeveComparisonRows(currentWeights, optimizedWeights, optimizationBaseCapital) : []),
+    [currentWeights, optimizedWeights, optimizationBaseCapital, visibleResult],
+  );
   const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
   const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
   const instrumentBaseSummary = useMemo(
@@ -477,6 +483,7 @@ export function OptimizerPage({
           <Stat label="Patrimonio total evaluado" value={formatMoneyCompact(totalCapital)} />
           <Stat label={hasOfficialOptimizableBase ? 'Universo optimizable' : 'Universo optimizable (fallback)'} value={formatMoneyCompact(optimizationBaseCapital)} />
           <Stat label="Porcion movible" value={formatPercent(decisionShare)} />
+          <Stat label="Origen weights activo" value={weightsSourceLabel} />
         </div>
         {!hasOfficialOptimizableBase && (
           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 8 }}>
@@ -697,6 +704,52 @@ export function OptimizerPage({
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(98px,1fr) minmax(64px,auto) minmax(74px,auto) minmax(74px,auto) minmax(96px,auto)',
+                    gap: 8,
+                    alignItems: 'center',
+                    color: T.textMuted,
+                    fontSize: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                    marginBottom: 8,
+                  }}
+                >
+                  <span>Sleeve</span>
+                  <span style={{ textAlign: 'right' }}>Actual</span>
+                  <span style={{ textAlign: 'right' }}>Sugerido</span>
+                  <span style={{ textAlign: 'right' }}>Cambio</span>
+                  <span style={{ textAlign: 'right' }}>Monto</span>
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {sleeveComparisonRows.map((row) => (
+                    <div
+                      key={row.sleeve}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(98px,1fr) minmax(64px,auto) minmax(74px,auto) minmax(74px,auto) minmax(96px,auto)',
+                        gap: 8,
+                        alignItems: 'center',
+                        color: T.textSecondary,
+                        fontSize: 12,
+                      }}
+                    >
+                      <span>{row.sleeve}</span>
+                      <span style={{ ...css.mono, textAlign: 'right' }}>{formatPercent(row.current)}</span>
+                      <span style={{ ...css.mono, textAlign: 'right', color: T.textPrimary }}>{formatPercent(row.optimized)}</span>
+                      <span style={{ ...css.mono, textAlign: 'right', color: row.delta >= 0 ? T.positive : T.negative }}>
+                        {formatSignedPp(row.delta)}
+                      </span>
+                      <span style={{ ...css.mono, textAlign: 'right', color: row.delta >= 0 ? T.positive : T.negative }}>
+                        {formatSignedMoneyClp(row.amount)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
               {movementAmounts.map((move) => (
                 <div key={move.sleeve} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <span style={{ fontSize: 18, color: move.direction === 'up' ? T.positive : T.negative }}>
@@ -1117,6 +1170,26 @@ function buildMoveAmounts(currentWeights: PortfolioWeights, optimizedWeights: Po
   return moves
     .filter((move) => Math.abs(move.deltaPp) >= 0.01 || Math.abs(move.amount) >= 1)
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+}
+
+function buildSleeveComparisonRows(currentWeights: PortfolioWeights, optimizedWeights: PortfolioWeights, capitalBase: number) {
+  const current = normalizeWeights(currentWeights);
+  const optimized = normalizeWeights(optimizedWeights);
+  const safeCapital = Number.isFinite(capitalBase) ? Math.max(0, capitalBase) : 0;
+
+  return [
+    { sleeve: 'RV Global', current: current.rvGlobal, optimized: optimized.rvGlobal },
+    { sleeve: 'RF Global', current: current.rfGlobal, optimized: optimized.rfGlobal },
+    { sleeve: 'RV Chile', current: current.rvChile, optimized: optimized.rvChile },
+    { sleeve: 'RF Chile UF', current: current.rfChile, optimized: optimized.rfChile },
+  ].map((row) => {
+    const delta = row.optimized - row.current;
+    return {
+      ...row,
+      delta,
+      amount: Math.round(delta * safeCapital),
+    };
+  });
 }
 
 function renderInsight(

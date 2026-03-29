@@ -2713,6 +2713,7 @@ export default function App() {
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
+      weightsSourceLabel={weightsSourceLabel}
       preloadedBaseStats={baseOptimizerSnapshot}
       preloadedSimulationStats={simulationOptimizerSnapshot}
       optimizableBaseReference={optimizableBaseAdjusted}

@@ -11,6 +11,7 @@ import {
 } from '../model/officialDistribution';
 import { runSimulationParametric } from './engineParametric';
 import { applyScenarioVariant, runSimulationCore } from './engine';
+import { evaluateOptimizerPoint } from '../optimizer/gridSearch';
 import { buildMortgageProjection } from './mortgageProjection';
 import { runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
@@ -801,6 +802,100 @@ test('active distribution parity can be enforced consistently across consumer pa
   approxEqual(nextBase.weights.rfGlobal, nextOptimizer.weights.rfGlobal);
   approxEqual(nextBase.weights.rvChile, nextOptimizer.weights.rvChile);
   approxEqual(nextBase.weights.rfChile, nextOptimizer.weights.rfChile);
+});
+
+test('optimizer decision share 0 keeps current mix outcome', () => {
+  const params = makeBaseParams();
+  params.simulation.horizonMonths = 12;
+  params.weights = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  params.returns = {
+    ...params.returns,
+    rvGlobalAnnual: 0.24,
+    rfGlobalAnnual: 0,
+    rvChileAnnual: 0,
+    rfChileUFAnnual: 0,
+    rvGlobalVolAnnual: 0,
+    rfGlobalVolAnnual: 0,
+    rvChileVolAnnual: 0,
+    rfChileVolAnnual: 0,
+    correlationMatrix: identityMatrix(),
+  };
+  params.inflation = {
+    ipcChileAnnual: 0,
+    ipcChileVolAnnual: 0,
+    hipcEurAnnual: 0,
+    hipcEurVolAnnual: 0,
+  };
+  params.fx = {
+    ...params.fx,
+    clpUsdInitial: 1,
+    usdEurFixed: 1,
+    tcrealLT: 1,
+    mrHalfLifeYears: 1,
+  };
+  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    optimizableInvestmentsCLP: 100,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      banksCLP: 0,
+    },
+  };
+  const candidate = { rvGlobal: 1, rfGlobal: 0, rvChile: 0, rfChile: 0 };
+
+  const currentPoint = evaluateOptimizerPoint(params, params.weights, 1, { decisionShare: 1 });
+  const lockedPoint = evaluateOptimizerPoint(params, candidate, 1, { decisionShare: 0 });
+  approxEqual(lockedPoint.probRuin, currentPoint.probRuin);
+  approxEqual(lockedPoint.terminalP50, currentPoint.terminalP50);
+});
+
+test('optimizer decision share 1 applies candidate mix impact', () => {
+  const params = makeBaseParams();
+  params.simulation.horizonMonths = 12;
+  params.weights = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  params.returns = {
+    ...params.returns,
+    rvGlobalAnnual: 0.24,
+    rfGlobalAnnual: 0,
+    rvChileAnnual: 0,
+    rfChileUFAnnual: 0,
+    rvGlobalVolAnnual: 0,
+    rfGlobalVolAnnual: 0,
+    rvChileVolAnnual: 0,
+    rfChileVolAnnual: 0,
+    correlationMatrix: identityMatrix(),
+  };
+  params.inflation = {
+    ipcChileAnnual: 0,
+    ipcChileVolAnnual: 0,
+    hipcEurAnnual: 0,
+    hipcEurVolAnnual: 0,
+  };
+  params.fx = {
+    ...params.fx,
+    clpUsdInitial: 1,
+    usdEurFixed: 1,
+    tcrealLT: 1,
+    mrHalfLifeYears: 1,
+  };
+  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    optimizableInvestmentsCLP: 100,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      banksCLP: 0,
+    },
+  };
+  const candidate = { rvGlobal: 1, rfGlobal: 0, rvChile: 0, rfChile: 0 };
+
+  const currentPoint = evaluateOptimizerPoint(params, params.weights, 1, { decisionShare: 1 });
+  const fullDecisionPoint = evaluateOptimizerPoint(params, candidate, 1, { decisionShare: 1 });
+  assert.ok(
+    Math.abs(fullDecisionPoint.terminalP50 - currentPoint.terminalP50) > 0.01,
+    'candidate mix should change outcome when decisionShare=1',
+  );
 });
 
 const failures: string[] = [];
