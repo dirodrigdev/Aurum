@@ -469,6 +469,7 @@ export default function App() {
   const [weightsFallbackReason, setWeightsFallbackReason] = useState<string | null>(
     () => initialDistributionRef.current.fallbackReason,
   );
+  const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
@@ -2079,6 +2080,16 @@ export default function App() {
     markSimulationInteraction();
   }, [markSimulationInteraction]);
 
+  useEffect(() => {
+    if (pendingSnapshot) return;
+    if (pendingSnapshotLabel !== null) {
+      setPendingSnapshotLabel(null);
+    }
+    if (pendingSnapshotSignature !== null) {
+      setPendingSnapshotSignature(null);
+    }
+  }, [pendingSnapshot, pendingSnapshotLabel, pendingSnapshotSignature]);
+
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
     setManualCapitalAdjustments(next);
@@ -2122,7 +2133,7 @@ export default function App() {
     if (simChanged) {
       setSimParams(next);
     }
-    const canRecalculateNow = !pendingSnapshotApplying && !pendingSnapshotLabel;
+    const canRecalculateNow = !pendingSnapshotApplying && !hasPendingSnapshot;
     if (canRecalculateNow && simChanged) {
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
@@ -2132,7 +2143,7 @@ export default function App() {
       pendingRecalcCauseRef.current = null;
       startRecalculation(cause, () => base);
     }
-  }, [baseUpdatePending, buildCanonicalSimParams, pendingSnapshotApplying, pendingSnapshotLabel, simOverrides, startRecalculation]);
+  }, [baseUpdatePending, buildCanonicalSimParams, hasPendingSnapshot, pendingSnapshotApplying, simOverrides, startRecalculation]);
 
   useEffect(() => {
     if (!simResult) {
@@ -2638,6 +2649,7 @@ export default function App() {
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
       baseUpdatePending={baseUpdatePending}
+      hasPendingSnapshot={hasPendingSnapshot}
       pendingSnapshotLabel={pendingSnapshotLabel}
       pendingSnapshotApplying={pendingSnapshotApplying}
       snapshotApplied={snapshotApplied}

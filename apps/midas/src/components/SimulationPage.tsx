@@ -77,6 +77,7 @@ export function SimulationPage({
   aurumIntegrationStatus,
   aurumSnapshotLabel,
   baseUpdatePending,
+  hasPendingSnapshot,
   pendingSnapshotLabel,
   pendingSnapshotApplying,
   snapshotApplied,
@@ -131,6 +132,7 @@ export function SimulationPage({
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   baseUpdatePending: boolean;
+  hasPendingSnapshot: boolean;
   pendingSnapshotLabel: string | null;
   pendingSnapshotApplying: boolean;
   snapshotApplied: boolean;
@@ -710,7 +712,7 @@ export function SimulationPage({
           <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>Simulación en espera</div>
         )}
       </div>
-      {pendingSnapshotLabel && (
+      {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
             background: 'rgba(91, 140, 255, 0.10)',
@@ -1536,7 +1538,7 @@ export function SimulationPage({
               <button
                 type="button"
                 onClick={onRunApplyAurumHarness}
-                disabled={harnessRunning || !pendingSnapshotLabel}
+                disabled={harnessRunning || !hasPendingSnapshot}
                 style={{
                   background: harnessRunning ? T.surfaceEl : 'rgba(91, 140, 255, 0.16)',
                   border: `1px solid ${harnessRunning ? T.border : 'rgba(91, 140, 255, 0.55)'}`,
@@ -1545,8 +1547,8 @@ export function SimulationPage({
                   padding: '5px 8px',
                   fontSize: 10,
                   fontWeight: 700,
-                  cursor: harnessRunning || !pendingSnapshotLabel ? 'not-allowed' : 'pointer',
-                  opacity: harnessRunning || !pendingSnapshotLabel ? 0.7 : 1,
+                  cursor: harnessRunning || !hasPendingSnapshot ? 'not-allowed' : 'pointer',
+                  opacity: harnessRunning || !hasPendingSnapshot ? 0.7 : 1,
                 }}
               >
                 {harnessRunning ? 'Harness corriendo…' : 'Run Apply Aurum Harness'}
