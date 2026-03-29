@@ -498,6 +498,7 @@ export default function App() {
   const activeWeightsRef = useRef<PortfolioWeights>(activeWeights);
   const weightsSourceModeRef = useRef<WeightsSourceMode>(weightsSourceMode);
   const recalcRequestIdRef = useRef(0);
+  const activeRecalcOwnerRequestIdRef = useRef<number | null>(null);
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
   const activeRecalcOwnerRef = useRef<RecalcOwner>(null);
@@ -1429,14 +1430,15 @@ export default function App() {
       return;
     }
     const ownerForRun: RecalcOwner = cause === 'apply-aurum' ? 'apply-aurum' : null;
-    if (ownerForRun) {
-      activeRecalcOwnerRef.current = ownerForRun;
-      setActiveRecalcOwner(ownerForRun);
-    }
     clearCalculationTimer();
     clearRecalcWatchdog();
     beginRecalculationVisual(cause);
     const requestId = recalcRequestIdRef.current + 1;
+    if (ownerForRun) {
+      activeRecalcOwnerRef.current = ownerForRun;
+      activeRecalcOwnerRequestIdRef.current = requestId;
+      setActiveRecalcOwner(ownerForRun);
+    }
     const simulationSeed = nextSimulationSeed();
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
@@ -1449,6 +1451,14 @@ export default function App() {
       owner: ownerForRun ?? 'none',
     });
     calculationTimerRef.current = window.setTimeout(async () => {
+      const releaseOwnerIfCurrent = () => {
+        if (!ownerForRun) return;
+        if (activeRecalcOwnerRef.current !== ownerForRun) return;
+        if (activeRecalcOwnerRequestIdRef.current !== requestId) return;
+        activeRecalcOwnerRef.current = null;
+        activeRecalcOwnerRequestIdRef.current = null;
+        setActiveRecalcOwner(null);
+      };
       try {
         setRecalcWorkerStatus('running');
         const paramsBase = run();
@@ -1478,10 +1488,7 @@ export default function App() {
           ...summarizeResult(nextResult),
         });
         runBootstrapControl(params);
-        if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
-          activeRecalcOwnerRef.current = null;
-          setActiveRecalcOwner(null);
-        }
+        releaseOwnerIfCurrent();
         if (cause === 'boot-init') {
           setSimUiState('boot');
           setHeroPhase('boot');
@@ -1491,13 +1498,16 @@ export default function App() {
           setHeroPhase('ready');
         }
       } catch (error: any) {
-        if (requestId !== recalcRequestIdRef.current) return;
-        if (String(error?.message || '') === 'simulation_cancelled') return;
-        console.error('[Midas] Error recalculando simulación', error);
-        if (ownerForRun && activeRecalcOwnerRef.current === ownerForRun) {
-          activeRecalcOwnerRef.current = null;
-          setActiveRecalcOwner(null);
+        if (requestId !== recalcRequestIdRef.current) {
+          releaseOwnerIfCurrent();
+          return;
         }
+        if (String(error?.message || '') === 'simulation_cancelled') {
+          releaseOwnerIfCurrent();
+          return;
+        }
+        console.error('[Midas] Error recalculando simulación', error);
+        releaseOwnerIfCurrent();
         setSimUiState('error');
         const fallbackPhase = lastStableCentralRef.current ? 'stale' : 'boot';
         setHeroPhase(fallbackPhase);
@@ -1513,6 +1523,7 @@ export default function App() {
           message: String(error?.message || 'simulation_error'),
         });
       } finally {
+        releaseOwnerIfCurrent();
         if (requestId === recalcRequestIdRef.current) {
           setSimWorking(false);
           calculationTimerRef.current = null;
@@ -2470,16 +2481,16 @@ export default function App() {
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
 
       const snapshotSignature = getSnapshotSignature(snapshot);
-      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
-      lastSnapshotSignatureRef.current = snapshotSignature;
-
       if (snapshotSignature === lastAppliedSnapshotSignatureRef.current) {
         setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
+        lastSnapshotSignatureRef.current = snapshotSignature;
         return;
       }
+      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
+      lastSnapshotSignatureRef.current = snapshotSignature;
 
       setSnapshotApplied(false);
       setPendingSnapshot(snapshot);
