@@ -2,7 +2,8 @@
 
 import type { ModelParameters, SimulationResults } from '../model/types';
 import { runMidasSimulation } from './policy';
-import { runSimulationCore } from './engine';
+import { applyScenarioVariant, runSimulationCore } from './engine';
+import { SCENARIO_VARIANTS } from '../model/defaults';
 
 type CentralWorkerStartMessage = {
   type: 'central-start';
@@ -70,7 +71,12 @@ self.onmessage = (event: MessageEvent<CentralWorkerStartMessage>) => {
     emitTrace('worker_compute_started');
     const result =
       event.data.channel === 'bootstrap-control'
-        ? runSimulationCore(params)
+        ? runSimulationCore(
+            applyScenarioVariant(
+              params,
+              SCENARIO_VARIANTS.find((variant) => variant.id === params.activeScenario) ?? SCENARIO_VARIANTS[0],
+            ),
+          )
         : runMidasSimulation(params, 'primary');
     emitTrace('worker_compute_finished');
     emitTrace('worker_post_done');

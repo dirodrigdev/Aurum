@@ -10,7 +10,7 @@ import {
   shouldEnterSimulationWeightsMode,
 } from '../model/officialDistribution';
 import { runSimulationParametric } from './engineParametric';
-import { runSimulationCore } from './engine';
+import { applyScenarioVariant, runSimulationCore } from './engine';
 import { buildMortgageProjection } from './mortgageProjection';
 import { runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
@@ -476,6 +476,70 @@ test('bootstrap control motor runs and returns bounded probRuin', () => {
   params.simulation = { ...params.simulation, nSim: 200, seed: 99, useHistoricalData: true };
   const result = runSimulationCore(params);
   assert.ok(result.probRuin >= 0 && result.probRuin <= 1);
+});
+
+test('bootstrap scenario variants shift terminal wealth directionally', () => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.simulation = {
+    ...params.simulation,
+    nSim: 1,
+    horizonMonths: 12,
+    seed: 123,
+    useHistoricalData: false,
+  };
+  params.weights = { rvGlobal: 1, rfGlobal: 0, rvChile: 0, rfChile: 0 };
+  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.returns = {
+    rvGlobalAnnual: 0,
+    rfGlobalAnnual: 0,
+    rvChileAnnual: 0,
+    rfChileUFAnnual: 0,
+    rvGlobalVolAnnual: 0,
+    rfGlobalVolAnnual: 0,
+    rvChileVolAnnual: 0,
+    rfChileVolAnnual: 0,
+    correlationMatrix: identityMatrix(),
+  };
+  params.inflation = {
+    ipcChileAnnual: 0,
+    ipcChileVolAnnual: 0,
+    hipcEurAnnual: 0,
+    hipcEurVolAnnual: 0,
+  };
+  params.fx = {
+    ...params.fx,
+    clpUsdInitial: 1,
+    usdEurFixed: 1,
+    tcrealLT: 1,
+    mrHalfLifeYears: 1,
+  };
+
+  const base = { id: 'base' } as any;
+  const pessimistic = {
+    id: 'pessimistic',
+    rvGlobalAnnual: -0.05,
+    rfGlobalAnnual: 0.0,
+    rvChileAnnual: -0.05,
+    rfChileUFAnnual: 0.0,
+  } as any;
+  const optimistic = {
+    id: 'optimistic',
+    rvGlobalAnnual: 0.05,
+    rfGlobalAnnual: 0.02,
+    rvChileAnnual: 0.05,
+    rfChileUFAnnual: 0.02,
+  } as any;
+
+  const baseResult = runSimulationCore(applyScenarioVariant(params, base));
+  const pessResult = runSimulationCore(applyScenarioVariant(params, pessimistic));
+  const optResult = runSimulationCore(applyScenarioVariant(params, optimistic));
+
+  const baseP50 = baseResult.terminalWealthPercentiles[50] ?? 0;
+  const pessP50 = pessResult.terminalWealthPercentiles[50] ?? 0;
+  const optP50 = optResult.terminalWealthPercentiles[50] ?? 0;
+
+  assert.ok(pessP50 <= baseP50, 'pessimistic should not exceed base terminal wealth');
+  assert.ok(optP50 >= baseP50, 'optimistic should not underperform base terminal wealth');
 });
 
 test('bootstrap block mode includes all-paths terminal and applies non-mortgage debt adjustment', () => {
