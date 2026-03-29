@@ -479,22 +479,6 @@ export function SimulationPage({
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
-  const concordanceColor =
-    controlConcordance.status === 'green'
-      ? '#4ade80'
-      : controlConcordance.status === 'yellow'
-        ? '#facc15'
-        : controlConcordance.status === 'red'
-          ? '#f87171'
-          : controlConcordance.status === 'double-red'
-            ? '#dc2626'
-          : T.textMuted;
-  const concordanceLabel =
-    controlConcordance.status === 'pending'
-      ? 'Concordancia: calculando'
-      : controlConcordance.status === 'na'
-        ? 'Concordancia: —'
-        : `Concordancia: ${controlConcordance.status.toUpperCase()}`;
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
@@ -915,20 +899,6 @@ export function SimulationPage({
           label="¿LLEGARÁS AL AÑO 40?"
           valuePct={showBootPlaceholder ? null : heroProbSuccess}
           stale={showGhostResult}
-          labelAccessory={(
-            <span
-              title={concordanceLabel}
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: '999px',
-                background: concordanceColor,
-                border: `1px solid ${T.border}`,
-                boxShadow: `0 0 0 2px rgba(15, 23, 42, 0.45)`,
-                flexShrink: 0,
-              }}
-            />
-          )}
           subtitle={
             simUiState === 'error'
               ? `Error de recálculo: ${simUiError || 'reintenta'}`
@@ -973,18 +943,6 @@ export function SimulationPage({
             },
           ]}
         />
-        {controlConcordance.message ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              fontWeight: 700,
-              color: T.negative,
-            }}
-          >
-            {controlConcordance.message}
-          </div>
-        ) : null}
         {showSimToast && (
           <div
             style={{

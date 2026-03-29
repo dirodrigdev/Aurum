@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelParameters } from '../domain/model/types';
-import { SENSITIVITY_PARAMS } from '../domain/model/defaults';
 import { T, css } from './theme';
 
 const PARAM_LABELS: Record<string, string> = {
@@ -31,8 +30,8 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
   const [progress, setProgress] = useState<{ pct: number; detail: string } | null>(null);
   const [error, setError] = useState('');
   const [baseline, setBaseline] = useState<{ probRuin: number; p50: number } | null>(null);
-  const ACTIVE_PARAMS = SENSITIVITY_PARAMS.filter((p) => p.paramPath !== 'simulation.blockLength');
-  const [active, setActive] = useState(ACTIVE_PARAMS[0].id);
+  const [groupOrder, setGroupOrder] = useState<Array<{ id: string; label: string }>>([]);
+  const [active, setActive] = useState('');
   const workerRef = useRef<Worker | null>(null);
   const runIdRef = useRef(0);
 
@@ -69,6 +68,7 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
             baseline: { probRuin: number; p50: number };
             groups: Array<{
               id: string;
+              label: string;
               points: Array<{
                 label: string;
                 probRuin: number;
@@ -86,11 +86,16 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
       }
       if (data.type === 'sensitivity-done') {
         const out: typeof results = {};
+        const order: Array<{ id: string; label: string }> = [];
         data.groups.forEach((group) => {
           out[group.id] = group.points;
+          order.push({ id: group.id, label: group.label });
         });
         setBaseline(data.baseline);
         setResults(out);
+        setGroupOrder(order);
+        if (!active && order.length > 0) setActive(order[0].id);
+        if (active && !out[active] && order.length > 0) setActive(order[0].id);
         setProgress({ pct: 100, detail: 'Sensibilidades listas' });
         setRunning(false);
         return;
@@ -118,8 +123,8 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
   const curr = results[active] || [];
   const maxRuin = Math.max(...curr.map((r) => r.probRuin), 0.01);
   const activeLabel = useMemo(
-    () => ACTIVE_PARAMS.find((param) => param.id === active)?.label || '',
-    [ACTIVE_PARAMS, active],
+    () => groupOrder.find((param) => param.id === active)?.label || '',
+    [groupOrder, active],
   );
 
   const formatDeltaPp = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} pp`;
@@ -199,10 +204,9 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-        {SENSITIVITY_PARAMS.map((sp) => (
+        {groupOrder.map((sp) => (
           <button
             key={sp.id}
-            disabled={sp.paramPath === 'simulation.blockLength'}
             onClick={() => setActive(sp.id)}
             style={{
               background: active === sp.id ? T.surfaceEl : T.surface,
@@ -211,14 +215,12 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
               borderRadius: 10,
               padding: '10px 12px',
               textAlign: 'left',
-              cursor: sp.paramPath === 'simulation.blockLength' ? 'not-allowed' : 'pointer',
-              opacity: sp.paramPath === 'simulation.blockLength' ? 0.45 : 1,
+              cursor: 'pointer',
+              opacity: 1,
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 12 }}>{sp.label}</div>
-            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-              {sp.paramPath === 'simulation.blockLength' ? 'No aplica en el motor central' : (PARAM_LABELS[sp.id] ?? sp.label)}
-            </div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{PARAM_LABELS[sp.id] ?? sp.label}</div>
           </button>
         ))}
       </div>
