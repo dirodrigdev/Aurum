@@ -715,59 +715,64 @@ export function SimulationPage({
           borderRadius: 12,
           padding: 10,
           display: 'grid',
-          gap: 10,
+          gridTemplateColumns: 'minmax(0,1fr) minmax(0,220px)',
+          gap: 12,
+          alignItems: 'start',
         }}
       >
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-            const active = activeScenarioForUi === variant.id;
-            return (
-              <button
-                key={variant.id}
-                type="button"
-                onClick={() => onScenarioChange(variant.id)}
-                disabled={isRecalculating}
-                style={{
-                  background: active ? T.primary : T.surfaceEl,
-                  border: `1px solid ${active ? T.primary : T.border}`,
-                  color: active ? '#fff' : T.textSecondary,
-                  borderRadius: 999,
-                  padding: '6px 11px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                  opacity: isRecalculating ? 0.65 : 1,
-                }}
-              >
-                {variant.label}
-              </button>
-            );
-          })}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+              const active = activeScenarioForUi === variant.id;
+              return (
+                <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => onScenarioChange(variant.id)}
+                    disabled={isRecalculating}
+                    style={{
+                      background: active ? T.primary : T.surfaceEl,
+                      border: `1px solid ${active ? T.primary : T.border}`,
+                      color: active ? '#fff' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: '6px 11px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    {variant.label}
+                  </button>
+                  {active && isScenarioAdjusted ? (
+                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Ajustada</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={onRestoreScenarioPreset}
+              disabled={isRecalculating}
+              style={{
+                background: T.surfaceEl,
+                border: `1px solid ${T.border}`,
+                color: T.textSecondary,
+                borderRadius: 999,
+                padding: '6px 10px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                opacity: isRecalculating ? 0.6 : 1,
+              }}
+            >
+              Restaurar ajustes del escenario
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
-            {isScenarioAdjusted ? 'Ajustada' : '—'}
-          </span>
-          <button
-            type="button"
-            onClick={onRestoreScenarioPreset}
-            disabled={isRecalculating}
-            style={{
-              background: T.surfaceEl,
-              border: `1px solid ${T.border}`,
-              color: T.textSecondary,
-              borderRadius: 999,
-              padding: '6px 10px',
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: isRecalculating ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating ? 0.6 : 1,
-            }}
-          >
-            Restaurar ajustes del escenario
-          </button>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button
             type="button"
             onClick={toggleLiquidarDepto}
@@ -785,7 +790,7 @@ export function SimulationPage({
               opacity: isRecalculating ? 0.65 : 1,
             }}
           >
-            Incluir venta de departamento · {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+            Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : 'OFF'}
           </button>
           <button
             type="button"
