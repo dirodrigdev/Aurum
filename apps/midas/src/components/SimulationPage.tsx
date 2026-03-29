@@ -676,6 +676,17 @@ export function SimulationPage({
       },
     }));
   };
+  const nSimOptions = [1000, 3000, 5000] as const;
+  const currentNSim = Number(params.simulation?.nSim ?? 1000);
+  const setNSim = (nSim: number) => {
+    onUpdateParams((prev) => ({
+      ...prev,
+      simulation: {
+        ...prev.simulation,
+        nSim,
+      },
+    }));
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -855,6 +866,48 @@ export function SimulationPage({
           >
             Incluir capital de riesgo · {riskToggleCopy}
           </button>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: '8px 10px',
+            }}
+          >
+            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+              Simulaciones Monte Carlo
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {nSimOptions.map((nSimOption) => {
+                const active = currentNSim === nSimOption;
+                return (
+                  <button
+                    key={nSimOption}
+                    type="button"
+                    onClick={() => setNSim(nSimOption)}
+                    disabled={isRecalculating}
+                    style={{
+                      flex: 1,
+                      background: active ? T.primary : T.surface,
+                      border: `1px solid ${active ? T.primary : T.border}`,
+                      color: active ? '#fff' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: '6px 8px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    {nSimOption}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
       <div style={{ position: 'relative' }}>

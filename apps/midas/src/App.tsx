@@ -40,6 +40,7 @@ import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_SIMULATION_NSIM = 3000;
 const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
 
@@ -263,7 +264,7 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
     simulation: {
       ...p.simulation,
       horizonMonths,
-      nSim: Math.min(1000, p.simulation.nSim),
+      nSim: p.simulation.nSim,
       seed: 42,
     },
     returns: {
@@ -409,11 +410,21 @@ function resolveInitialDistributionState(): {
 
 export default function App() {
   const initialDistributionRef = useRef(resolveInitialDistributionState());
+  const initialModelParams = useMemo<ModelParameters>(() => {
+    const base = cloneParams(DEFAULT_PARAMETERS);
+    return {
+      ...base,
+      simulation: {
+        ...base.simulation,
+        nSim: DEFAULT_SIMULATION_NSIM,
+      },
+    };
+  }, []);
   const [baseParams, setBaseParams] = useState<ModelParameters>(() =>
-    applyActiveDistributionToParams(cloneParams(DEFAULT_PARAMETERS), initialDistributionRef.current.activeWeights),
+    applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
   const [simParams, setSimParams] = useState<ModelParameters>(() =>
-    applyActiveDistributionToParams(cloneParams(DEFAULT_PARAMETERS), initialDistributionRef.current.activeWeights),
+    applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
