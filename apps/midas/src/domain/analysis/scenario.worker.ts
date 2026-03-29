@@ -88,14 +88,45 @@ function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params));
 }
 
+function normalizeWeights(weights: ModelParameters['weights']) {
+  const rvGlobal = Number.isFinite(weights.rvGlobal) ? Math.max(0, weights.rvGlobal) : 0;
+  const rfGlobal = Number.isFinite(weights.rfGlobal) ? Math.max(0, weights.rfGlobal) : 0;
+  const rvChile = Number.isFinite(weights.rvChile) ? Math.max(0, weights.rvChile) : 0;
+  const rfChile = Number.isFinite(weights.rfChile) ? Math.max(0, weights.rfChile) : 0;
+  const sum = rvGlobal + rfGlobal + rvChile + rfChile;
+  if (sum <= 0) return { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  return {
+    rvGlobal: rvGlobal / sum,
+    rfGlobal: rfGlobal / sum,
+    rvChile: rvChile / sum,
+    rfChile: rfChile / sum,
+  };
+}
+
 function applyValueAtPath(target: ModelParameters, path: string, value: number): ModelParameters {
   const next = cloneParams(target);
   const parts = path.split('.');
   let obj: Record<string, unknown> = next as unknown as Record<string, unknown>;
   for (let i = 0; i < parts.length - 1; i += 1) {
-    obj = obj[parts[i]] as Record<string, unknown>;
+    const key = parts[i];
+    const nextKey = parts[i + 1];
+    const isIndex = Number.isFinite(Number(nextKey));
+    if (!(key in obj) || obj[key] === null) {
+      obj[key] = isIndex ? [] : {};
+    }
+    if (Array.isArray(obj[key]) && isIndex) {
+      const arr = obj[key] as unknown[];
+      const index = Number(nextKey);
+      if (!arr[index]) {
+        arr[index] = {};
+      }
+    }
+    obj = obj[key] as Record<string, unknown>;
   }
   obj[parts[parts.length - 1]] = value;
+  if (path.startsWith('weights.')) {
+    next.weights = normalizeWeights(next.weights);
+  }
   return next;
 }
 
