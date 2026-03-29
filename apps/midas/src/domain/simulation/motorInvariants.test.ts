@@ -235,6 +235,34 @@ test('invalid correlation matrix shape throws controlled validation error', () =
   );
 });
 
+test('invalid weights (sum zero) throws controlled validation error', () => {
+  const params = makeBaseParams();
+  params.weights = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 0 };
+  assert.throws(
+    () => runSimulationParametric(params),
+    /invalid_simulation_input: .*weights must sum to a positive value/,
+  );
+});
+
+test('invalid weights (NaN) throws controlled validation error', () => {
+  const params = makeBaseParams();
+  params.weights = { rvGlobal: Number.NaN, rfGlobal: 0.5, rvChile: 0.3, rfChile: 0.2 };
+  assert.throws(
+    () => runSimulationParametric(params),
+    /invalid_simulation_input: .*weights\.rvGlobal/,
+  );
+});
+
+test('invalid fee or FX throws controlled validation error', () => {
+  const params = makeBaseParams();
+  params.feeAnnual = 0.2;
+  params.fx.clpUsdInitial = 0;
+  assert.throws(
+    () => runSimulationParametric(params),
+    /invalid_simulation_input: .*feeAnnual.*fx\.clpUsdInitial/,
+  );
+});
+
 test('exposes p50 terminal for all paths and survivors', () => {
   const params = cloneParams(DEFAULT_PARAMETERS);
   params.simulation = {

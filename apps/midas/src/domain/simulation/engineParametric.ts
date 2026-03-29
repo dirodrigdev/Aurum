@@ -103,6 +103,17 @@ function validateCorrelationMatrix(correlationMatrix: number[][]): string[] {
 
 function validateSimulationInputs(params: ModelParameters): void {
   const issues: string[] = [];
+  const pushIfNotFinite = (value: number, label: string) => {
+    if (!Number.isFinite(value)) issues.push(`${label} must be finite`);
+  };
+  const pushIfNegative = (value: number, label: string) => {
+    if (Number.isFinite(value) && value < 0) issues.push(`${label} must be >= 0`);
+  };
+  const pushIfOutOfRange = (value: number, min: number, max: number, label: string) => {
+    if (!Number.isFinite(value) || value < min || value > max) {
+      issues.push(`${label} must be between ${min} and ${max}`);
+    }
+  };
   if (!Number.isFinite(params.simulation.nSim) || params.simulation.nSim <= 0 || !Number.isInteger(params.simulation.nSim)) {
     issues.push('simulation.nSim must be a positive integer');
   }
@@ -112,6 +123,64 @@ function validateSimulationInputs(params: ModelParameters): void {
     !Number.isInteger(params.simulation.horizonMonths)
   ) {
     issues.push('simulation.horizonMonths must be a positive integer');
+  }
+  if (!Number.isFinite(params.simulation.blockLength) || params.simulation.blockLength <= 0 || !Number.isInteger(params.simulation.blockLength)) {
+    issues.push('simulation.blockLength must be a positive integer');
+  }
+  if (!Number.isFinite(params.simulation.seed) || params.simulation.seed <= 0 || !Number.isInteger(params.simulation.seed)) {
+    issues.push('simulation.seed must be a positive integer');
+  }
+  pushIfOutOfRange(params.feeAnnual, 0, 0.05, 'feeAnnual');
+
+  const weights = params.weights;
+  pushIfNotFinite(weights.rvGlobal, 'weights.rvGlobal');
+  pushIfNotFinite(weights.rfGlobal, 'weights.rfGlobal');
+  pushIfNotFinite(weights.rvChile, 'weights.rvChile');
+  pushIfNotFinite(weights.rfChile, 'weights.rfChile');
+  pushIfOutOfRange(weights.rvGlobal, 0, 1, 'weights.rvGlobal');
+  pushIfOutOfRange(weights.rfGlobal, 0, 1, 'weights.rfGlobal');
+  pushIfOutOfRange(weights.rvChile, 0, 1, 'weights.rvChile');
+  pushIfOutOfRange(weights.rfChile, 0, 1, 'weights.rfChile');
+  const weightsSum = weights.rvGlobal + weights.rfGlobal + weights.rvChile + weights.rfChile;
+  if (!Number.isFinite(weightsSum) || weightsSum <= 0.0001) {
+    issues.push('weights must sum to a positive value');
+  }
+
+  const returns = params.returns;
+  pushIfNotFinite(returns.rvGlobalAnnual, 'returns.rvGlobalAnnual');
+  pushIfNotFinite(returns.rfGlobalAnnual, 'returns.rfGlobalAnnual');
+  pushIfNotFinite(returns.rvChileAnnual, 'returns.rvChileAnnual');
+  pushIfNotFinite(returns.rfChileUFAnnual, 'returns.rfChileUFAnnual');
+  pushIfNotFinite(returns.rvGlobalVolAnnual, 'returns.rvGlobalVolAnnual');
+  pushIfNotFinite(returns.rfGlobalVolAnnual, 'returns.rfGlobalVolAnnual');
+  pushIfNotFinite(returns.rvChileVolAnnual, 'returns.rvChileVolAnnual');
+  pushIfNotFinite(returns.rfChileVolAnnual, 'returns.rfChileVolAnnual');
+  pushIfNegative(returns.rvGlobalVolAnnual, 'returns.rvGlobalVolAnnual');
+  pushIfNegative(returns.rfGlobalVolAnnual, 'returns.rfGlobalVolAnnual');
+  pushIfNegative(returns.rvChileVolAnnual, 'returns.rvChileVolAnnual');
+  pushIfNegative(returns.rfChileVolAnnual, 'returns.rfChileVolAnnual');
+
+  const inflation = params.inflation;
+  pushIfNotFinite(inflation.ipcChileAnnual, 'inflation.ipcChileAnnual');
+  pushIfNotFinite(inflation.ipcChileVolAnnual, 'inflation.ipcChileVolAnnual');
+  pushIfNotFinite(inflation.hipcEurAnnual, 'inflation.hipcEurAnnual');
+  pushIfNotFinite(inflation.hipcEurVolAnnual, 'inflation.hipcEurVolAnnual');
+  pushIfNegative(inflation.ipcChileVolAnnual, 'inflation.ipcChileVolAnnual');
+  pushIfNegative(inflation.hipcEurVolAnnual, 'inflation.hipcEurVolAnnual');
+
+  const fx = params.fx;
+  pushIfOutOfRange(fx.clpUsdInitial, 1, 20000, 'fx.clpUsdInitial');
+  pushIfOutOfRange(fx.usdEurFixed, 0.3, 3, 'fx.usdEurFixed');
+  pushIfOutOfRange(fx.tcrealLT, 1, 20000, 'fx.tcrealLT');
+  pushIfOutOfRange(fx.mrHalfLifeYears, 0.1, 50, 'fx.mrHalfLifeYears');
+
+  if (!Array.isArray(params.spendingPhases) || params.spendingPhases.length === 0) {
+    issues.push('spendingPhases must be a non-empty array');
+  } else {
+    params.spendingPhases.forEach((phase, idx) => {
+      pushIfOutOfRange(phase.durationMonths, 1, 1000, `spendingPhases[${idx}].durationMonths`);
+      pushIfNegative(phase.amountReal, `spendingPhases[${idx}].amountReal`);
+    });
   }
   issues.push(...validateCorrelationMatrix(params.returns.correlationMatrix));
   if (issues.length > 0) {

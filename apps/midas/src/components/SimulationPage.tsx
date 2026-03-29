@@ -439,12 +439,6 @@ export function SimulationPage({
   }, [closeCapitalLedger, draftManualAdjustments, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
 
   useEffect(() => {
-    if (riskCapitalEnabled || riskCapitalCLP > 0) {
-      setAdvancedOpen(true);
-    }
-  }, [riskCapitalEnabled, riskCapitalCLP]);
-
-  useEffect(() => {
     if (simActive && !prevSimActive.current) {
       setShowSimToast(true);
       const timeout = window.setTimeout(() => setShowSimToast(false), 2600);
@@ -1663,7 +1657,9 @@ export function SimulationPage({
             {bootstrapControlResult ? (
               <div style={{ color: T.textMuted }}>
                 Bootstrap control · Ruina {(bootstrapControlResult.probRuin * 100).toFixed(1)}% ·
-                P50 ${formatMillionsMM((bootstrapControlResult.p50TerminalAllPaths ?? 0) / 1e6)}
+                P50 {Number.isFinite(bootstrapControlResult.p50TerminalAllPaths)
+                  ? `$${formatMillionsMM((bootstrapControlResult.p50TerminalAllPaths as number) / 1e6)}`
+                  : 'N/D'}
               </div>
             ) : null}
             {controlConcordance.centralProbRuin !== null && controlConcordance.controlProbRuin !== null ? (
