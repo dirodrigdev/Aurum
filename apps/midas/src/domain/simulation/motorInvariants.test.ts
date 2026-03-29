@@ -478,6 +478,52 @@ test('bootstrap control motor runs and returns bounded probRuin', () => {
   assert.ok(result.probRuin >= 0 && result.probRuin <= 1);
 });
 
+test('bootstrap block mode includes all-paths terminal and applies non-mortgage debt adjustment', () => {
+  const params = makeBaseParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 1,
+    horizonMonths: 1,
+    seed: 321,
+    useHistoricalData: false,
+  };
+  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 100,
+    optimizableInvestmentsCLP: 0,
+    nonOptimizable: {
+      banksCLP: 100,
+      nonMortgageDebtCLP: -100,
+      riskCapital: { totalCLP: 0 },
+      realEstate: {
+        propertyValueCLP: 0,
+        realEstateEquityCLP: 0,
+        ufSnapshotCLP: 0,
+        snapshotMonth: '',
+      },
+    },
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  params.realEstatePolicy = {
+    enabled: false,
+    triggerRunwayMonths: 36,
+    saleDelayMonths: 12,
+    saleCostPct: 0,
+    realAppreciationAnnual: 0,
+  };
+  const result = runSimulationCore(params);
+  assert.ok(Array.isArray(result.terminalWealthAllPaths));
+  const expected = Math.max(0, 100 - (0.7 * 100));
+  approxEqual(result.p50TerminalAllPaths ?? 0, expected, 1e-6);
+});
+
 test('concordance semaphore classifies green/yellow/red/double-red as defined', () => {
   const green = evaluateConcordance(0.12, 0.135);
   assert.equal(green.status, 'green');
