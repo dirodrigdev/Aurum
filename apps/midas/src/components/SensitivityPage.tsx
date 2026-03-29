@@ -129,6 +129,64 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
 
   const formatDeltaPp = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} pp`;
   const formatDeltaMm = (value: number) => `${value >= 0 ? '+' : ''}$${(value / 1e6).toFixed(0)}MM`;
+  const formatPctPoint = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1)} pp`;
+  const riskOn = (params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
+  const realEstateOn = params.realEstatePolicy?.enabled ?? true;
+  const baseSpending = params.spendingPhases[0]?.amountReal ?? 0;
+  const baseSuccess = baseline ? (1 - baseline.probRuin) * 100 : null;
+
+  const actionableRows = useMemo(() => {
+    if (!baseline) return [];
+    const TARGET_IDS = ['capitalInitial', 'spendingMonthly', 'horizon', 'scenario', 'riskCapital', 'realEstate', 'rvGlobalAnnual'];
+    const factibility: Record<string, 'más factible' | 'intermedia' | 'menos factible'> = {
+      scenario: 'más factible',
+      riskCapital: 'más factible',
+      realEstate: 'intermedia',
+      spendingMonthly: 'intermedia',
+      horizon: 'intermedia',
+      capitalInitial: 'menos factible',
+      rvGlobalAnnual: 'menos factible',
+    };
+    const labelById = new Map(groupOrder.map((group) => [group.id, group.label]));
+    const targetRuin = Math.max(0, baseline.probRuin - 0.05);
+    return TARGET_IDS
+      .map((id) => {
+        const points = results[id];
+        if (!points || points.length === 0) return null;
+        const basePoint = [...points].sort((a, b) => Math.abs(a.probRuinDelta) - Math.abs(b.probRuinDelta))[0];
+        const bestGainPoint = [...points].sort((a, b) => (b.probRuinDelta - a.probRuinDelta))[0];
+        const targetPoint = [...points]
+          .filter((point) => point.probRuin <= targetRuin)
+          .sort((a, b) => Math.abs(a.probRuinDelta) - Math.abs(b.probRuinDelta))[0];
+        const successGainPp = Math.max(0, -(bestGainPoint.probRuinDelta) * 100);
+        const effectBand = successGainPp >= 5 ? 'alta palanca' : successGainPp >= 2 ? 'palanca moderada' : 'palanca baja';
+        return {
+          id,
+          variable: labelById.get(id) ?? PARAM_LABELS[id] ?? id,
+          requiredChange: targetPoint
+            ? `${basePoint.label} -> ${targetPoint.label}`
+            : `${basePoint.label} -> ${bestGainPoint.label}`,
+          reachesTarget: Boolean(targetPoint),
+          estimatedImpactPp: successGainPp,
+          impactLabel: effectBand,
+          factibility: factibility[id] ?? 'intermedia',
+          note: targetPoint
+            ? `aproxima +5 pp de éxito`
+            : `no llega a +5 pp (mejor caso ${formatPctPoint(successGainPp)})`,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.estimatedImpactPp - a.estimatedImpactPp);
+  }, [baseline, groupOrder, results]);
+
+  const topEffective = actionableRows.slice(0, 3);
+  const topFeasible = actionableRows
+    .filter((row) => row.factibility === 'más factible')
+    .sort((a, b) => b.estimatedImpactPp - a.estimatedImpactPp)
+    .slice(0, 3);
+  const lowImpact = actionableRows
+    .filter((row) => row.estimatedImpactPp < 2)
+    .slice(0, 3);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -169,6 +227,62 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
             <div style={{ color: T.textMuted, fontSize: 11 }}>Base actual · P50</div>
             <div style={{ ...css.mono, color: T.textPrimary, fontSize: 24, fontWeight: 700, marginTop: 4 }}>
               ${(baseline.p50 / 1e6).toFixed(0)}MM
+            </div>
+          </div>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>Caso base · Escenario / Horizonte</div>
+            <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700, marginTop: 6 }}>
+              {params.activeScenario} · {Math.round(params.simulation.horizonMonths / 12)} años
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 6 }}>
+              Patrimonio ${Math.round(params.capitalInitial / 1e6)}MM · Gasto ${Math.round(baseSpending / 1e6)}MM
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 4 }}>
+              Riesgo {riskOn ? 'ON' : 'OFF'} · Inmueble {realEstateOn ? 'ON' : 'OFF'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {baseline && actionableRows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700 }}>
+            Para ganar +5 puntos de éxito, necesitarías aproximadamente...
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Base actual: {baseSuccess?.toFixed(1)}% éxito. Objetivo orientativo: {(Math.min(100, (baseSuccess ?? 0) + 5)).toFixed(1)}%.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8 }}>
+            {actionableRows.map((row) => (
+              <div key={row.id} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{row.variable}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 5 }}>Cambio requerido: {row.requiredChange}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 3 }}>Impacto estimado: {formatPctPoint(row.estimatedImpactPp)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 3 }}>{row.impactLabel} · factibilidad {row.factibility}</div>
+                <div style={{ color: row.reachesTarget ? T.positive : T.warning, fontSize: 11, marginTop: 4, fontWeight: 700 }}>
+                  {row.note}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Palancas más efectivas</div>
+              <div style={{ color: T.textPrimary, fontSize: 12, marginTop: 6 }}>
+                {topEffective.map((row) => row.variable).join(' · ') || '—'}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Palancas más factibles</div>
+              <div style={{ color: T.textPrimary, fontSize: 12, marginTop: 6 }}>
+                {topFeasible.map((row) => row.variable).join(' · ') || '—'}
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Palancas con bajo impacto</div>
+              <div style={{ color: T.textPrimary, fontSize: 12, marginTop: 6 }}>
+                {lowImpact.map((row) => row.variable).join(' · ') || '—'}
+              </div>
             </div>
           </div>
         </div>
