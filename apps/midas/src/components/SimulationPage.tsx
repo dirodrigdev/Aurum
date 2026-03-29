@@ -132,7 +132,7 @@ export function SimulationPage({
   bootstrapControlStatus: 'idle' | 'running' | 'done' | 'error';
   bootstrapControlResult: SimulationResults | null;
   controlConcordance: {
-    status: 'green' | 'yellow' | 'red' | 'pending' | 'na';
+    status: 'green' | 'yellow' | 'red' | 'double-red' | 'pending' | 'na';
     message: string | null;
     diffAbsPp: number | null;
     centralProbRuin: number | null;
@@ -161,7 +161,7 @@ export function SimulationPage({
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(riskCapitalEnabled || riskCapitalCLP > 0);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
@@ -461,6 +461,8 @@ export function SimulationPage({
         ? '#facc15'
         : controlConcordance.status === 'red'
           ? '#f87171'
+          : controlConcordance.status === 'double-red'
+            ? '#dc2626'
           : T.textMuted;
   const concordanceLabel =
     controlConcordance.status === 'pending'

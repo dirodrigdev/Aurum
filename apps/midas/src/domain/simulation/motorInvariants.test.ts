@@ -442,18 +442,18 @@ test('bootstrap control motor runs and returns bounded probRuin', () => {
   assert.ok(result.probRuin >= 0 && result.probRuin <= 1);
 });
 
-test('concordance semaphore classifies green/yellow/red as defined', () => {
+test('concordance semaphore classifies green/yellow/red/double-red as defined', () => {
   const green = evaluateConcordance(0.12, 0.135);
   assert.equal(green.status, 'green');
 
-  const yellow = evaluateConcordance(0.12, 0.17);
+  const yellow = evaluateConcordance(0.17, 0.12);
   assert.equal(yellow.status, 'yellow');
 
-  const redByDiff = evaluateConcordance(0.08, 0.18);
+  const redByDiff = evaluateConcordance(0.12, 0.17);
   assert.equal(redByDiff.status, 'red');
 
-  const redByZoneJump = evaluateConcordance(0.08, 0.36);
-  assert.equal(redByZoneJump.status, 'red');
+  const doubleRedByZoneJump = evaluateConcordance(0.08, 0.18);
+  assert.equal(doubleRedByZoneJump.status, 'double-red');
 });
 
 const failures: string[] = [];

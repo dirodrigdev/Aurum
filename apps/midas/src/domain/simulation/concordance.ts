@@ -1,5 +1,5 @@
 export type RuinZone = 'low' | 'moderate' | 'delicate' | 'high';
-export type ConcordanceStatus = 'green' | 'yellow' | 'red';
+export type ConcordanceStatus = 'green' | 'yellow' | 'red' | 'double-red';
 
 export type ConcordanceReport = {
   status: ConcordanceStatus;
@@ -29,11 +29,15 @@ export function evaluateConcordance(
   const controlZone = classifyRuinZone(controlProbRuin);
   const diffAbsPp = Math.abs(centralProbRuin - controlProbRuin) * 100;
   const distance = zoneDistance(centralZone, controlZone);
+  const moreAdverse = controlProbRuin > centralProbRuin;
 
-  if (diffAbsPp > 7 || distance > 1) {
+  if (moreAdverse && (diffAbsPp > 7 || distance > 1)) {
+    return { status: 'double-red', diffAbsPp, centralZone, controlZone };
+  }
+  if (moreAdverse && (diffAbsPp >= 3 || distance >= 1)) {
     return { status: 'red', diffAbsPp, centralZone, controlZone };
   }
-  if ((diffAbsPp >= 3 && diffAbsPp <= 7) || distance === 1) {
+  if (diffAbsPp >= 3 || distance >= 1) {
     return { status: 'yellow', diffAbsPp, centralZone, controlZone };
   }
   return { status: 'green', diffAbsPp, centralZone, controlZone };

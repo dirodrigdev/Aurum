@@ -80,7 +80,7 @@ type OptimizerBaselineSnapshot = {
 };
 
 type ControlConcordance = {
-  status: 'green' | 'yellow' | 'red' | 'pending' | 'na';
+  status: 'green' | 'yellow' | 'red' | 'double-red' | 'pending' | 'na';
   message: string | null;
   diffAbsPp: number | null;
   centralProbRuin: number | null;
@@ -2325,7 +2325,14 @@ export default function App() {
     const report = evaluateConcordance(simResult.probRuin, bootstrapControlResult.probRuin);
     return {
       status: report.status,
-      message: report.status === 'red' ? 'Divergencia relevante entre métodos' : null,
+      message:
+        report.status === 'yellow'
+          ? 'Divergencia moderada'
+          : report.status === 'red'
+            ? 'Divergencia moderada con lectura más adversa'
+            : report.status === 'double-red'
+              ? 'Divergencia fuerte con lectura más adversa'
+              : null,
       diffAbsPp: report.diffAbsPp,
       centralProbRuin: simResult.probRuin,
       controlProbRuin: bootstrapControlResult.probRuin,
