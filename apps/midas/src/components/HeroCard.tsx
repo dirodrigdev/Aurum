@@ -16,7 +16,7 @@ export function HeroCard({
   subtitle?: string;
   ruinCopy?: string;
   labelAccessory?: React.ReactNode;
-  chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode }>;
+  chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode; note?: string }>;
   mode?: 'real' | 'sim';
   stale?: boolean;
 }) {
@@ -66,23 +66,28 @@ export function HeroCard({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {chips.map((chip) => (
               <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  onClick={chip.onClick}
-                  style={{
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    cursor: 'pointer',
-                    minWidth: 96,
-                    textAlign: 'center',
-                  }}
-                >
-                  {chip.value}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <button
+                    onClick={chip.onClick}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '6px 10px',
+                      borderRadius: 999,
+                      cursor: 'pointer',
+                      minWidth: 96,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {chip.value}
+                  </button>
+                  {chip.note ? (
+                    <span style={{ color: T.textMuted, fontSize: 10 }}>{chip.note}</span>
+                  ) : null}
+                </div>
                 {chip.accessory}
               </div>
             ))}

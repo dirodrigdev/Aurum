@@ -416,6 +416,7 @@ export default function App() {
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
+  const manualCommitInFlightRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
@@ -970,14 +971,14 @@ export default function App() {
     return undefined;
   }, []);
 
-  const manualAdjustmentImpact = useMemo<ManualAdjustmentImpact>(() => {
+  const computeManualAdjustmentImpact = useCallback((adjustments: ManualCapitalAdjustment[]): ManualAdjustmentImpact => {
     let currentLiquidityDelta = 0;
     let currentInvestmentsDelta = 0;
     let currentRiskDelta = 0;
     let currentOtherDelta = 0;
     const futureEvents: CashflowEvent[] = [];
     const todayKey = new Date().toISOString().slice(0, 7);
-    manualCapitalAdjustments.forEach((adj) => {
+    adjustments.forEach((adj) => {
       const amountClp = toClp(adj.amount, adj.currency);
       const signed = adj.direction === 'add' ? amountClp : -amountClp;
       if (adj.effectiveDate <= todayKey) {
@@ -1007,7 +1008,12 @@ export default function App() {
       currentRiskDelta,
       futureEvents,
     };
-  }, [manualCapitalAdjustments, mapDestinationToSleeve, resolveMonthIndex, toClp]);
+  }, [mapDestinationToSleeve, resolveMonthIndex, toClp]);
+
+  const manualAdjustmentImpact = useMemo(
+    () => computeManualAdjustmentImpact(manualCapitalAdjustments),
+    [computeManualAdjustmentImpact, manualCapitalAdjustments],
+  );
 
   const manualOptimizableDelta = manualAdjustmentImpact.currentInvestmentsDelta;
 
@@ -1132,12 +1138,14 @@ export default function App() {
       currentSimParams: ModelParameters,
       options?: {
         applyCapital?: boolean;
+        manualImpact?: ManualAdjustmentImpact;
       },
     ): ModelParameters => {
       const applyCapital = options?.applyCapital ?? true;
+      const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
       const mergedEvents = [
         ...(baseParamsCurrent.cashflowEvents ?? []),
-        ...manualAdjustmentImpact.futureEvents,
+        ...manualImpact.futureEvents,
       ];
       const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
       let next: ModelParameters = {
@@ -1151,11 +1159,11 @@ export default function App() {
         ) as SimulationCompositionInput;
         let nextOptimizable = Math.max(
           0,
-          Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualAdjustmentImpact.currentInvestmentsDelta,
+          Number(baseComposition.optimizableInvestmentsCLP ?? 0) + manualImpact.currentInvestmentsDelta,
         );
         let nextBanks = Math.max(
           0,
-          Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualAdjustmentImpact.currentBanksDelta,
+          Number(baseComposition.nonOptimizable?.banksCLP ?? 0) + manualImpact.currentBanksDelta,
         );
         const baseRiskExposure = normalizeRiskCapitalExposure(
           baseComposition.nonOptimizable?.riskCapital,
@@ -1165,7 +1173,7 @@ export default function App() {
         );
         const riskUsdSnapshot = baseRiskExposure.usdSnapshotCLP;
         const riskBaseClp = Math.max(0, riskCapitalCLP || baseRiskExposure.riskTotalCLP);
-        const riskManualClp = manualAdjustmentImpact.currentRiskDelta;
+        const riskManualClp = manualImpact.currentRiskDelta;
         const riskEnabledClpTotal = Math.max(0, riskBaseClp + riskManualClp);
         const riskUsdEnabledTotal = riskUsdSnapshot > 0
           ? riskEnabledClpTotal / riskUsdSnapshot
@@ -1180,8 +1188,8 @@ export default function App() {
         const targetWithoutRisk = Math.max(
           1,
           Number(baseComposition.totalNetWorthCLP ?? 0) +
-            manualAdjustmentImpact.currentBanksDelta +
-            manualAdjustmentImpact.currentInvestmentsDelta,
+            manualImpact.currentBanksDelta +
+            manualImpact.currentInvestmentsDelta,
         );
         const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
         let gap = targetWithoutRisk - modeledWithoutRisk;
@@ -1219,9 +1227,9 @@ export default function App() {
         };
       } else {
         const riskDelta = riskCapitalEnabled
-          ? manualAdjustmentImpact.currentRiskDelta + riskCapitalCLP
+          ? manualImpact.currentRiskDelta + riskCapitalCLP
           : 0;
-        const nextDelta = manualAdjustmentImpact.currentBanksDelta + manualAdjustmentImpact.currentInvestmentsDelta + riskDelta;
+        const nextDelta = manualImpact.currentBanksDelta + manualImpact.currentInvestmentsDelta + riskDelta;
         const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
         next = {
           ...next,
@@ -1898,9 +1906,22 @@ export default function App() {
     pendingRecalcCauseRef.current = 'ledger-commit';
     setManualCapitalAdjustments(next);
     markSimulationInteraction();
-  }, [markSimulationInteraction]);
+    const impact = computeManualAdjustmentImpact(next);
+    manualCommitInFlightRef.current = true;
+    const nextParams = buildCanonicalSimParams(baseParamsRef.current, simParamsRef.current, {
+      applyCapital: true,
+      manualImpact: impact,
+    });
+    setSimParams(nextParams);
+    const base = applySimulationOverrides(nextParams, simOverrides);
+    startRecalculation('ledger-commit', () => base);
+  }, [buildCanonicalSimParams, computeManualAdjustmentImpact, markSimulationInteraction, simOverrides, startRecalculation]);
 
   useEffect(() => {
+    if (manualCommitInFlightRef.current) {
+      manualCommitInFlightRef.current = false;
+      return;
+    }
     if (activeRecalcOwnerRef.current === 'apply-aurum') {
       return;
     }

@@ -330,6 +330,10 @@ export function SimulationPage({
     () => [...draftManualAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
     [draftManualAdjustments],
   );
+  const hasFutureAdjustments = useMemo(() => {
+    const todayKey = new Date().toISOString().slice(0, 7);
+    return manualCapitalAdjustments.some((adj) => adj.effectiveDate > todayKey);
+  }, [manualCapitalAdjustments]);
   const manualNetClp = useMemo(
     () => manualAdjustmentsSorted.reduce((acc, adj) => {
       const signed = adj.direction === 'add' ? 1 : -1;
@@ -860,6 +864,7 @@ export function SimulationPage({
             {
               id: 'capital',
               value: formatCapital(effectiveCapital),
+              note: hasFutureAdjustments ? '+ futuros' : undefined,
               onClick: () => openChip('capital'),
               accessory: (
                 <button
