@@ -547,6 +547,22 @@ test('invalid current JSON with last known valid falls back to last known offici
   approxEqual(resolved.activeWeights.rfChile, 0.1);
 });
 
+test('valid current JSON takes precedence as official source', () => {
+  const jsonOfficial = { rvGlobal: 0.15, rfGlobal: 0.35, rvChile: 0.25, rfChile: 0.25 };
+  const lastKnown = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
+  const resolved = resolveOfficialDistributionState({
+    jsonOfficialWeights: jsonOfficial,
+    lastKnownOfficialWeights: lastKnown,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+  });
+  assert.equal(resolved.weightsSourceMode, 'json-official');
+  assert.equal(resolved.fallbackReason, null);
+  approxEqual(resolved.officialWeights?.rvGlobal ?? 0, jsonOfficial.rvGlobal);
+  approxEqual(resolved.lastKnownOfficialWeights?.rfGlobal ?? 0, jsonOfficial.rfGlobal);
+  approxEqual(resolved.activeWeights.rvChile, jsonOfficial.rvChile);
+  approxEqual(resolved.activeWeights.rfChile, jsonOfficial.rfChile);
+});
+
 test('without current or last known JSON uses explicit system defaults', () => {
   const resolved = resolveOfficialDistributionState({
     jsonOfficialWeights: null,
@@ -572,6 +588,68 @@ test('manual weight edit enters simulation mode and restore can return to offici
   approxEqual(backToOfficial.weights.rfGlobal, official.rfGlobal);
   approxEqual(backToOfficial.weights.rvChile, official.rvChile);
   approxEqual(backToOfficial.weights.rfChile, official.rfChile);
+});
+
+test('active distribution updates only financial weights and keeps non-optimizable blocks/events intact', () => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.cashflowEvents = [
+    {
+      id: 'cf-1',
+      description: 'inflow clp',
+      month: 12,
+      type: 'inflow',
+      amount: 5_000_000,
+      currency: 'CLP',
+      sleeve: 'rfChile',
+    },
+    {
+      id: 'cf-2',
+      description: 'outflow eur',
+      month: 24,
+      type: 'outflow',
+      amount: 2_000,
+      currency: 'EUR',
+    },
+  ];
+  params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 500_000_000,
+    nonOptimizable: {
+      banksCLP: 120_000_000,
+      nonMortgageDebtCLP: 35_000_000,
+      riskCapital: { totalCLP: 90_000_000, usdTotal: 100_000, usdSnapshotCLP: 900 },
+      realEstate: {
+        propertyValueCLP: 400_000_000,
+        realEstateEquityCLP: 245_000_000,
+        ufSnapshotCLP: 35_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+
+  const next = applyActiveDistributionToParams(
+    params,
+    { rvGlobal: 0.55, rfGlobal: 0.1, rvChile: 0.2, rfChile: 0.15 },
+  );
+  approxEqual(next.weights.rvGlobal, 0.55);
+  approxEqual(next.weights.rfGlobal, 0.1);
+  approxEqual(next.weights.rvChile, 0.2);
+  approxEqual(next.weights.rfChile, 0.15);
+
+  assert.deepEqual(next.cashflowEvents, params.cashflowEvents);
+  assert.equal(next.simulationComposition?.optimizableInvestmentsCLP, 500_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.banksCLP, 120_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.nonMortgageDebtCLP, 35_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP, 90_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.realEstate?.realEstateEquityCLP, 245_000_000);
 });
 
 test('active distribution parity can be enforced consistently across consumer params', () => {
