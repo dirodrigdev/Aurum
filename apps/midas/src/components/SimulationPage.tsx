@@ -66,6 +66,7 @@ export function SimulationPage({
   lastRecalcCause,
   simulationPreset,
   stateLabel,
+  isScenarioAdjusted,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
   baseUpdatePending,
@@ -93,6 +94,7 @@ export function SimulationPage({
   onCommitManualCapitalAdjustments,
   onSimulationTouch,
   onScenarioChange,
+  onRestoreScenarioPreset,
   onSimOverridesChange,
   onUpdateParams,
   onResetSim,
@@ -109,6 +111,7 @@ export function SimulationPage({
   lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
   stateLabel: string;
+  isScenarioAdjusted: boolean;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   baseUpdatePending: boolean;
@@ -150,6 +153,7 @@ export function SimulationPage({
   onCommitManualCapitalAdjustments: (next: ManualCapitalAdjustment[]) => void;
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
+  onRestoreScenarioPreset: () => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
@@ -503,6 +507,28 @@ export function SimulationPage({
     if (chip === 'capital') setDraftValue(String(Math.round(effectiveCapital)));
   };
 
+  const restoreFieldFromScenario = useCallback((field: 'return' | 'years') => {
+    if (!simOverrides?.active) return;
+    const next: SimulationOverrides = { ...simOverrides };
+    if (field === 'return') delete next.returnPct;
+    if (field === 'years') delete next.horizonYears;
+    const hasAnyOverride =
+      next.returnPct !== undefined ||
+      next.horizonYears !== undefined ||
+      next.capital !== undefined;
+    if (!hasAnyOverride) {
+      onSimOverridesChange(null);
+      return;
+    }
+    onSimOverridesChange({
+      active: true,
+      preset: next.preset,
+      ...(next.returnPct !== undefined ? { returnPct: next.returnPct } : {}),
+      ...(next.horizonYears !== undefined ? { horizonYears: next.horizonYears } : {}),
+      ...(next.capital !== undefined ? { capital: next.capital } : {}),
+    });
+  }, [onSimOverridesChange, simOverrides]);
+
   const applyChip = () => {
     const parsed = Number(draftValue);
     if (!Number.isFinite(parsed)) {
@@ -718,6 +744,29 @@ export function SimulationPage({
             );
           })}
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
+            {isScenarioAdjusted ? 'Ajustada' : '—'}
+          </span>
+          <button
+            type="button"
+            onClick={onRestoreScenarioPreset}
+            disabled={isRecalculating}
+            style={{
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              color: T.textSecondary,
+              borderRadius: 999,
+              padding: '6px 10px',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: isRecalculating ? 'not-allowed' : 'pointer',
+              opacity: isRecalculating ? 0.6 : 1,
+            }}
+          >
+            Restaurar ajustes del escenario
+          </button>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
           <button
             type="button"
@@ -925,6 +974,42 @@ export function SimulationPage({
                 Cancelar
               </button>
             </div>
+            {(activeChip === 'return' || activeChip === 'years') && (
+              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => restoreFieldFromScenario(activeChip)}
+                  disabled={
+                    !simOverrides?.active ||
+                    (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                    (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                  }
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    color: T.textSecondary,
+                    borderRadius: 10,
+                    padding: '6px 10px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor:
+                      !simOverrides?.active ||
+                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                        ? 'not-allowed'
+                        : 'pointer',
+                    opacity:
+                      !simOverrides?.active ||
+                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                        ? 0.6
+                        : 1,
+                  }}
+                >
+                  Volver al valor del escenario
+                </button>
+              </div>
+            )}
           </div>
         )}
         {simWorking && simActive && (

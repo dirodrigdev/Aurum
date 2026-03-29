@@ -2035,6 +2035,18 @@ export default function App() {
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     markSimulationInteraction(next);
+    const nextOverrides = simOverrides?.active
+      ? {
+          active: true,
+          preset: simOverrides.preset,
+          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
+        }
+      : null;
+    const sanitizedOverrides =
+      nextOverrides && typeof nextOverrides.capital === 'number'
+        ? nextOverrides
+        : null;
+    setSimOverrides(sanitizedOverrides);
     const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
     const nextParams: ModelParameters = {
       ...simParamsRef.current,
@@ -2043,8 +2055,10 @@ export default function App() {
       inflation: scenarioBase.inflation,
       fx: scenarioBase.fx,
     };
-    commitSimParamsAndRecalc(nextParams, 'scenario');
-  }, [applyScenarioEconomics, baseParams, commitSimParamsAndRecalc, markSimulationInteraction]);
+    setSimParams(nextParams);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    startRecalculation('scenario', () => base);
+  }, [applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
@@ -2052,6 +2066,33 @@ export default function App() {
     const base = applySimulationOverrides(simParamsRef.current, next);
     startRecalculation('params-change', () => base);
   }, [markSimulationInteraction, startRecalculation]);
+
+  const restoreScenarioPreset = useCallback(() => {
+    const scenarioId = resolveScenarioVariantId(simParamsRef.current.activeScenario);
+    const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), scenarioId);
+    const nextParams: ModelParameters = {
+      ...simParamsRef.current,
+      activeScenario: scenarioId,
+      returns: scenarioBase.returns,
+      inflation: scenarioBase.inflation,
+      fx: scenarioBase.fx,
+    };
+    const nextOverrides = simOverrides?.active
+      ? {
+          active: true,
+          preset: simOverrides.preset,
+          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
+        }
+      : null;
+    const sanitizedOverrides =
+      nextOverrides && typeof nextOverrides.capital === 'number'
+        ? nextOverrides
+        : null;
+    setSimOverrides(sanitizedOverrides);
+    setSimParams(nextParams);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    startRecalculation('scenario', () => base);
+  }, [applyScenarioEconomics, baseParams, simOverrides, startRecalculation]);
 
   const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
     markSimulationInteraction();
@@ -2073,6 +2114,15 @@ export default function App() {
   const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
   const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
   const stateLabel = selectVariant(activeScenario).label;
+  const isScenarioAdjusted = useMemo(() => {
+    const baseScenarioParams = applyScenarioEconomics(cloneParams(baseParams), activeScenario);
+    const scenarioDiff =
+      JSON.stringify(baseScenarioParams.returns) !== JSON.stringify(simParams.returns) ||
+      JSON.stringify(baseScenarioParams.inflation) !== JSON.stringify(simParams.inflation) ||
+      JSON.stringify(baseScenarioParams.fx) !== JSON.stringify(simParams.fx);
+    const overridesDiff = Boolean(simOverrides?.active && (simOverrides.returnPct !== undefined || simOverrides.horizonYears !== undefined));
+    return scenarioDiff || overridesDiff;
+  }, [activeScenario, applyScenarioEconomics, baseParams, simOverrides, simParams.fx, simParams.inflation, simParams.returns]);
 
   const optimizerSimulationParams = useMemo(
     () => applySimulationOverrides(simParams, simOverrides),
@@ -2298,6 +2348,7 @@ export default function App() {
       lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
       stateLabel={stateLabel}
+      isScenarioAdjusted={isScenarioAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
       baseUpdatePending={baseUpdatePending}
@@ -2325,6 +2376,7 @@ export default function App() {
       onCommitManualCapitalAdjustments={commitManualCapitalAdjustments}
       onSimulationTouch={markSimulationInteraction}
       onScenarioChange={handleScenarioChange}
+      onRestoreScenarioPreset={restoreScenarioPreset}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
       onResetSim={resetSimulationSession}
