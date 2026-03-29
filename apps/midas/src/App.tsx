@@ -2133,7 +2133,7 @@ export default function App() {
     if (simChanged) {
       setSimParams(next);
     }
-    const canRecalculateNow = !pendingSnapshotApplying && !hasPendingSnapshot;
+    const canRecalculateNow = !pendingSnapshotApplying;
     if (canRecalculateNow && simChanged) {
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
@@ -2143,7 +2143,7 @@ export default function App() {
       pendingRecalcCauseRef.current = null;
       startRecalculation(cause, () => base);
     }
-  }, [baseUpdatePending, buildCanonicalSimParams, hasPendingSnapshot, pendingSnapshotApplying, simOverrides, startRecalculation]);
+  }, [baseUpdatePending, buildCanonicalSimParams, pendingSnapshotApplying, simOverrides, startRecalculation]);
 
   useEffect(() => {
     if (!simResult) {
