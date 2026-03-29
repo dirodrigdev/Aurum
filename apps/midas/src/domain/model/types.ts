@@ -305,6 +305,36 @@ export interface OptimizerConstraints {
 
 export type OptimizerObjective = 'minRuin' | 'maxP50' | 'balanced';
 
+export interface OptimizerInstrumentMove {
+  fromId: string;
+  fromName: string;
+  fromManager: string;
+  toId: string;
+  toName: string;
+  toManager: string;
+  currency: string;
+  amountClp: number;
+  fromSleeve: keyof PortfolioWeights;
+  toSleeve: keyof PortfolioWeights;
+  reason: string;
+}
+
+export interface OptimizerRealisticResult {
+  weights: PortfolioWeights;
+  probRuin: number;
+  terminalP50: number;
+  terminalP10: number;
+  moves: OptimizerInstrumentMove[];
+  quality: 'high' | 'partial' | 'low';
+  coverageRatio: number;
+  withinManagerShare: number;
+  currentMix: PortfolioWeights;
+  targetMix: PortfolioWeights;
+  proposedMix: PortfolioWeights;
+  baseTotalClp: number;
+  notes: string[];
+}
+
 export interface OptimizerResult {
   weights:         PortfolioWeights;
   probRuin:        number;
@@ -313,4 +343,5 @@ export interface OptimizerResult {
   vsCurrentRuin:   number;  // delta vs current
   vsCurrentP50:    number;
   moves:           Array<{ sleeve: string; delta: number; direction: 'up' | 'down' }>;
+  realistic?:      OptimizerRealisticResult;
 }

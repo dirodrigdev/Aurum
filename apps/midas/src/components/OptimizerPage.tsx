@@ -330,6 +330,8 @@ export function OptimizerPage({
       params: paramsForRun,
       objective,
       decisionShare: runDecisionShare,
+      instrumentBase: instrumentBaseSnapshot?.instruments ?? null,
+      optimizableBaseClp: optimizableBaseReference.amountClp ?? null,
     });
   };
 
@@ -357,6 +359,10 @@ export function OptimizerPage({
     () => (visibleResult ? buildSleeveComparisonRows(currentWeights, optimizedWeights, optimizationBaseCapital) : []),
     [currentWeights, optimizedWeights, optimizationBaseCapital, visibleResult],
   );
+  const realistic = visibleResult?.realistic ?? null;
+  const realisticSuccess = realistic ? 1 - realistic.probRuin : null;
+  const realisticDeltaPp =
+    currentSuccess !== null && realisticSuccess !== null ? (realisticSuccess - currentSuccess) * 100 : null;
   const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
   const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
   const instrumentBaseSummary = useMemo(
@@ -371,6 +377,9 @@ export function OptimizerPage({
   const theoreticalMix = normalizeWeights(optimizedWeights);
   const theoreticalRisk = summarizeRisk(theoreticalMix);
   const theoreticalGeo = summarizeGlobalLocalFromWeights(theoreticalMix);
+  const realisticRisk = realistic ? summarizeRisk(realistic.proposedMix) : null;
+  const realisticGeo = realistic ? summarizeGlobalLocalFromWeights(realistic.proposedMix) : null;
+  const realisticQuality = realistic ? formatProposalQuality(realistic.quality) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -587,6 +596,17 @@ export function OptimizerPage({
                 p50={visibleResult.terminalP50}
                 deltaPp={successDeltaPp}
               />
+              {realistic && (
+                <ResultCard
+                  title="Propuesta realista"
+                  tone="positive"
+                  sourceLabel="Ejecutable"
+                  success={realisticSuccess}
+                  ruin={realistic.probRuin}
+                  p50={realistic.terminalP50}
+                  deltaPp={realisticDeltaPp}
+                />
+              )}
             </div>
           </div>
 
@@ -680,6 +700,81 @@ export function OptimizerPage({
               </div>
             )}
           </div>
+
+          {realistic && (
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}>
+              <SectionTitle
+                eyebrow="Propuesta ejecutable"
+                title="Movimientos reales por instrumento"
+                subtitle="Prioriza misma moneda y administradora. Se recalcula el resultado con esta propuesta."
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 12 }}>
+                <Stat label="Calidad de ajuste" value={realisticQuality ?? '—'} />
+                <Stat label="Cobertura propuesta" value={formatPercent(realistic.coverageRatio)} />
+                <Stat label="Movimientos dentro de administradora" value={formatPercent(realistic.withinManagerShare)} />
+                <Stat label="Base instrumental" value={formatMoneyCompact(realistic.baseTotalClp)} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                {realisticRisk && <AllocationCompareCard title="Propuesta realista" summary={realisticRisk} />}
+                {realisticGeo && (
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>Global / Local (propuesta realista)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10, marginTop: 12 }}>
+                      <Stat label="Global" value={formatPercent(realisticGeo.global)} />
+                      <Stat label="Local" value={formatPercent(realisticGeo.local)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              {realistic.moves.length > 0 ? (
+                <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+                  {realistic.moves.map((move) => (
+                    <div
+                      key={`${move.fromId}-${move.toId}-${move.amountClp}`}
+                      style={{
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: 10,
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(140px,1fr) minmax(24px,auto) minmax(140px,1fr) minmax(96px,auto)',
+                        gap: 10,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.fromName}</div>
+                        <div style={{ color: T.textMuted, fontSize: 11 }}>
+                          {move.fromManager} · {move.currency}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center', color: T.textSecondary, fontSize: 11 }}>→</div>
+                      <div>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.toName}</div>
+                        <div style={{ color: T.textMuted, fontSize: 11 }}>
+                          {move.toManager} · {move.currency}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', ...css.mono, fontSize: 12, color: T.textPrimary }}>
+                        {formatMoneyCompact(move.amountClp)}
+                      </div>
+                      <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
+                        {move.reason}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: T.textMuted, fontSize: 12 }}>No hay movimientos significativos para proponer.</div>
+              )}
+              {realistic.notes.length > 0 && (
+                <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
+                  {realistic.notes.map((note) => (
+                    <div key={note}>- {note}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}>
             <SectionTitle
@@ -1215,6 +1310,12 @@ function formatPercent(value: number) {
 function formatCoverageRatio(value: number | null) {
   if (value === null || !Number.isFinite(value)) return '—';
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatProposalQuality(quality: 'high' | 'partial' | 'low') {
+  if (quality === 'high') return 'Ajuste alto';
+  if (quality === 'partial') return 'Ajuste parcial';
+  return 'Ajuste bajo';
 }
 
 function formatSignedPp(value: number) {

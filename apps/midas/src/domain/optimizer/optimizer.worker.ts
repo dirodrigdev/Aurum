@@ -1,8 +1,10 @@
 /// <reference lib="webworker" />
 
-import type { ModelParameters, OptimizerObjective, OptimizerResult } from '../model/types';
+import type { ModelParameters, OptimizerObjective, OptimizerRealisticResult, OptimizerResult } from '../model/types';
 import { DEFAULT_OPTIMIZER_CONSTRAINTS } from '../model/defaults';
 import { evaluateOptimizerPoint, runOptimizer } from './gridSearch';
+import type { InstrumentBaseItem } from '../instrumentBase';
+import { buildRealisticInstrumentProposal } from '../instrumentBase';
 
 type StartMessage =
   | {
@@ -11,6 +13,8 @@ type StartMessage =
       params: ModelParameters;
       objective: OptimizerObjective;
       decisionShare?: number;
+      instrumentBase?: InstrumentBaseItem[] | null;
+      optimizableBaseClp?: number | null;
     }
   | {
       type: 'baseline-only';
@@ -99,7 +103,7 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
 
   if (event.data.type !== 'start') return;
 
-  const { runId, params, objective } = event.data;
+  const { runId, params, objective, instrumentBase, optimizableBaseClp } = event.data;
   const decisionShare = clamp01(event.data.decisionShare ?? 1);
   let baselineProbRuin: number | undefined;
   let baselineP50: number | undefined;
@@ -152,10 +156,38 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
       });
     }, { decisionShare });
 
+    const realisticProposal = buildRealisticInstrumentProposal(
+      instrumentBase ?? null,
+      fullResult.weights,
+      { optimizableBaseClp },
+    );
+    let realistic: OptimizerRealisticResult | undefined;
+    if (realisticProposal) {
+      const simulated = evaluateOptimizerPoint(params, realisticProposal.proposedMix, FULL_SIM_COUNT, { decisionShare });
+      realistic = {
+        weights: realisticProposal.proposedMix,
+        probRuin: simulated.probRuin,
+        terminalP50: simulated.terminalP50,
+        terminalP10: simulated.terminalP10,
+        moves: realisticProposal.moves,
+        quality: realisticProposal.quality,
+        coverageRatio: realisticProposal.coverageRatio,
+        withinManagerShare: realisticProposal.withinManagerShare,
+        currentMix: realisticProposal.currentMix,
+        targetMix: realisticProposal.targetMix,
+        proposedMix: realisticProposal.proposedMix,
+        baseTotalClp: realisticProposal.baseTotalClp,
+        notes: realisticProposal.notes,
+      };
+    }
+
     post({
       type: 'done',
       runId,
-      result: fullResult,
+      result: {
+        ...fullResult,
+        realistic,
+      },
     });
   } catch (error) {
     post({

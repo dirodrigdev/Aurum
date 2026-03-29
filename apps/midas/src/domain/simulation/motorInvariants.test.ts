@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
-import type { InstrumentBaseSnapshot } from '../instrumentBase';
+import type { InstrumentBaseItem, InstrumentBaseSnapshot } from '../instrumentBase';
+import { buildRealisticInstrumentProposal } from '../instrumentBase';
 import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
@@ -613,6 +614,7 @@ test('official distribution weights are derived from instrument base JSON snapsh
         id: 'global-rv',
         name: 'Global RV',
         manager: 'Test',
+        currency: 'CLP',
         currentAmountCLP: 100,
         exposure: { rv: 1, rf: 0, global: 1, local: 0 },
       },
@@ -620,6 +622,7 @@ test('official distribution weights are derived from instrument base JSON snapsh
         id: 'local-rf',
         name: 'Local RF',
         manager: 'Test',
+        currency: 'CLP',
         currentAmountCLP: 100,
         exposure: { rv: 0, rf: 1, global: 0, local: 1 },
       },
@@ -896,6 +899,63 @@ test('optimizer decision share 1 applies candidate mix impact', () => {
     Math.abs(fullDecisionPoint.terminalP50 - currentPoint.terminalP50) > 0.01,
     'candidate mix should change outcome when decisionShare=1',
   );
+});
+
+test('instrument proposal keeps currency and prefers same manager', () => {
+  const instruments: InstrumentBaseItem[] = [
+    {
+      id: 'a-rvclp',
+      name: 'RV Chile',
+      manager: 'Admin A',
+      currency: 'CLP',
+      currentAmountCLP: 100,
+      exposure: { rv: 1, rf: 0, global: 0, local: 1 },
+    },
+    {
+      id: 'a-rfclp',
+      name: 'RF Chile',
+      manager: 'Admin A',
+      currency: 'CLP',
+      currentAmountCLP: 100,
+      exposure: { rv: 0, rf: 1, global: 0, local: 1 },
+    },
+    {
+      id: 'b-rvg',
+      name: 'RV Global',
+      manager: 'Admin B',
+      currency: 'CLP',
+      currentAmountCLP: 50,
+      exposure: { rv: 1, rf: 0, global: 1, local: 0 },
+    },
+    {
+      id: 'b-rfg',
+      name: 'RF Global',
+      manager: 'Admin B',
+      currency: 'CLP',
+      currentAmountCLP: 50,
+      exposure: { rv: 0, rf: 1, global: 1, local: 0 },
+    },
+    {
+      id: 'usd-rvg',
+      name: 'USD RV Global',
+      manager: 'Admin USD',
+      currency: 'USD',
+      currentAmountCLP: 80,
+      exposure: { rv: 1, rf: 0, global: 1, local: 0 },
+    },
+  ];
+
+  const target = { rvGlobal: 0.6, rfGlobal: 0.2, rvChile: 0.1, rfChile: 0.1 };
+  const proposal = buildRealisticInstrumentProposal(instruments, target, { minMoveClp: 1 });
+  assert.ok(proposal, 'proposal should be produced');
+  if (!proposal) return;
+
+  const hasUnknownCurrency = proposal.moves.some((move) => !move.currency);
+  assert.equal(hasUnknownCurrency, false);
+  const usdMoves = proposal.moves.filter((move) => move.currency === 'USD');
+  assert.equal(usdMoves.length, 0, 'USD bucket should not mix with CLP bucket');
+  const crossManagerMoves = proposal.moves.filter((move) => move.reason.includes('Entre administradoras'));
+  assert.equal(crossManagerMoves.length, 0, 'should stay within manager when possible');
 });
 
 const failures: string[] = [];

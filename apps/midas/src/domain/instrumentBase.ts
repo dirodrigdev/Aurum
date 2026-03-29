@@ -1,3 +1,5 @@
+import type { PortfolioWeights } from './model/types';
+
 export type InstrumentExposure = {
   rv: number;
   rf: number;
@@ -9,6 +11,7 @@ export type InstrumentBaseItem = {
   id: string;
   name: string;
   manager: string;
+  currency: string;
   currentAmountCLP: number;
   exposure: InstrumentExposure;
 };
@@ -49,6 +52,36 @@ export type OptimizableBaseReference = {
   asOf: string | null;
   sourceLabel: string;
   status: 'available' | 'pending';
+};
+
+export type InstrumentSleeveKey = keyof PortfolioWeights;
+
+export type InstrumentProposalQuality = 'high' | 'partial' | 'low';
+
+export type InstrumentMove = {
+  fromId: string;
+  fromName: string;
+  fromManager: string;
+  toId: string;
+  toName: string;
+  toManager: string;
+  currency: string;
+  amountClp: number;
+  fromSleeve: InstrumentSleeveKey;
+  toSleeve: InstrumentSleeveKey;
+  reason: string;
+};
+
+export type InstrumentProposal = {
+  moves: InstrumentMove[];
+  quality: InstrumentProposalQuality;
+  coverageRatio: number;
+  withinManagerShare: number;
+  currentMix: PortfolioWeights;
+  targetMix: PortfolioWeights;
+  proposedMix: PortfolioWeights;
+  baseTotalClp: number;
+  notes: string[];
 };
 
 export type InstrumentBaseValidation = {
@@ -172,6 +205,15 @@ const resolveName = (source: Record<string, unknown>) =>
 const resolveManager = (source: Record<string, unknown>) =>
   String(source.manager || source.provider || source.administradora || '').trim();
 
+const resolveCurrency = (source: Record<string, unknown>) => {
+  const raw = String(source.currency || source.moneda || source.ccy || '').trim().toUpperCase();
+  if (!raw) return 'CLP';
+  if (raw.startsWith('CLP')) return 'CLP';
+  if (raw.startsWith('USD')) return 'USD';
+  if (raw.startsWith('EUR')) return 'EUR';
+  return raw.slice(0, 6);
+};
+
 const resolveCurrentAmountClp = (source: Record<string, unknown>) =>
   asFiniteNumber(source.currentAmountCLP ?? source.monto_clp_eq ?? source.montoCLP ?? null);
 
@@ -254,6 +296,7 @@ export const validateInstrumentBaseJson = (
     const source = row as Record<string, unknown>;
     const name = resolveName(source);
     const manager = resolveManager(source);
+    const currency = resolveCurrency(source);
     const currentAmountCLP = resolveCurrentAmountClp(source);
     const { rvRaw, rfRaw, globalRaw, localRaw } = resolveExposurePairValues(source);
 
@@ -285,6 +328,7 @@ export const validateInstrumentBaseJson = (
       id: toId(`${manager}-${name}`) || `instrument-${index + 1}`,
       name,
       manager,
+      currency,
       currentAmountCLP,
       exposure: {
         rv: rvRf.left,
@@ -334,7 +378,11 @@ export const loadInstrumentBaseSnapshot = (): InstrumentBaseSnapshot | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as InstrumentBaseSnapshot | null;
     if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.instruments)) return null;
-    return parsed;
+    const instruments = parsed.instruments.map((item) => ({
+      ...item,
+      currency: item.currency ? String(item.currency) : 'CLP',
+    }));
+    return { ...parsed, instruments };
   } catch {
     return null;
   }
@@ -399,5 +447,385 @@ export const inferImplicitMixFromInstrumentBase = (
       rfGlobal: rawSleeves.rfGlobal / sleeveSum,
       rfChile: rawSleeves.rfChile / sleeveSum,
     },
+  };
+};
+
+const SLEEVE_KEYS: InstrumentSleeveKey[] = ['rvGlobal', 'rvChile', 'rfGlobal', 'rfChile'];
+
+const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
+  const rvGlobal = clamp01(weights.rvGlobal);
+  const rfGlobal = clamp01(weights.rfGlobal);
+  const rvChile = clamp01(weights.rvChile);
+  const rfChile = clamp01(weights.rfChile);
+  const sum = rvGlobal + rfGlobal + rvChile + rfChile;
+  if (sum <= 0) return { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  return {
+    rvGlobal: rvGlobal / sum,
+    rfGlobal: rfGlobal / sum,
+    rvChile: rvChile / sum,
+    rfChile: rfChile / sum,
+  };
+};
+
+const deriveSleeveWeights = (exposure: InstrumentExposure): PortfolioWeights => {
+  const rv = clamp01(exposure.rv);
+  const rf = clamp01(exposure.rf);
+  const global = clamp01(exposure.global);
+  const local = clamp01(exposure.local);
+  return normalizeWeights({
+    rvGlobal: rv * global,
+    rvChile: rv * local,
+    rfGlobal: rf * global,
+    rfChile: rf * local,
+  });
+};
+
+const dominantSleeve = (weights: PortfolioWeights): { sleeve: InstrumentSleeveKey; dominance: number } => {
+  let maxKey: InstrumentSleeveKey = 'rfChile';
+  let maxValue = -Infinity;
+  SLEEVE_KEYS.forEach((key) => {
+    const value = weights[key];
+    if (value > maxValue) {
+      maxValue = value;
+      maxKey = key;
+    }
+  });
+  return { sleeve: maxKey, dominance: maxValue };
+};
+
+const computeMixFromInstruments = (items: InstrumentBaseItem[]): PortfolioWeights => {
+  const total = items.reduce((sum, item) => sum + item.currentAmountCLP, 0);
+  if (!Number.isFinite(total) || total <= 0) {
+    return { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  }
+  const accum = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 0 };
+  items.forEach((item) => {
+    const weight = item.currentAmountCLP / total;
+    const sleeves = deriveSleeveWeights(item.exposure);
+    accum.rvGlobal += sleeves.rvGlobal * weight;
+    accum.rfGlobal += sleeves.rfGlobal * weight;
+    accum.rvChile += sleeves.rvChile * weight;
+    accum.rfChile += sleeves.rfChile * weight;
+  });
+  return normalizeWeights(accum);
+};
+
+type InstrumentWorking = InstrumentBaseItem & {
+  sleeveWeights: PortfolioWeights;
+  dominant: InstrumentSleeveKey;
+  dominance: number;
+};
+
+type InstrumentDelta = InstrumentWorking & {
+  targetAmount: number;
+  delta: number;
+};
+
+const buildInstrumentDeltas = (
+  items: InstrumentWorking[],
+  targetSleeveAmounts: Record<InstrumentSleeveKey, number>,
+): { deltas: InstrumentDelta[]; totalsBySleeve: Record<InstrumentSleeveKey, number> } => {
+  const totalsBySleeve = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
+    acc[key] = 0;
+    return acc;
+  }, {} as Record<InstrumentSleeveKey, number>);
+
+  items.forEach((item) => {
+    totalsBySleeve[item.dominant] += item.currentAmountCLP;
+  });
+
+  const deltas = items.map((item) => {
+    const sleeveTotal = totalsBySleeve[item.dominant];
+    const targetAmount =
+      sleeveTotal > 0 ? (item.currentAmountCLP / sleeveTotal) * targetSleeveAmounts[item.dominant] : 0;
+    const delta = targetAmount - item.currentAmountCLP;
+    return { ...item, targetAmount, delta };
+  });
+
+  return { deltas, totalsBySleeve };
+};
+
+const applyMovesToInstruments = (
+  items: InstrumentWorking[],
+  moves: InstrumentMove[],
+): InstrumentWorking[] => {
+  const next = items.map((item) => ({ ...item }));
+  const index = new Map(next.map((item) => [item.id, item]));
+  moves.forEach((move) => {
+    const from = index.get(move.fromId);
+    if (from) {
+      from.currentAmountCLP = Math.max(0, from.currentAmountCLP - move.amountClp);
+    }
+    const to = index.get(move.toId);
+    if (to) {
+      to.currentAmountCLP += move.amountClp;
+    } else {
+      const synthetic: InstrumentWorking = {
+        id: move.toId,
+        name: move.toName,
+        manager: move.toManager,
+        currency: move.currency,
+        currentAmountCLP: move.amountClp,
+        exposure: sleeveToExposure(move.toSleeve),
+        sleeveWeights: sleeveToWeights(move.toSleeve),
+        dominant: move.toSleeve,
+        dominance: 1,
+      };
+      index.set(move.toId, synthetic);
+      next.push(synthetic);
+    }
+  });
+  return next;
+};
+
+const sleeveToWeights = (sleeve: InstrumentSleeveKey): PortfolioWeights => {
+  switch (sleeve) {
+    case 'rvGlobal':
+      return { rvGlobal: 1, rvChile: 0, rfGlobal: 0, rfChile: 0 };
+    case 'rvChile':
+      return { rvGlobal: 0, rvChile: 1, rfGlobal: 0, rfChile: 0 };
+    case 'rfGlobal':
+      return { rvGlobal: 0, rvChile: 0, rfGlobal: 1, rfChile: 0 };
+    case 'rfChile':
+    default:
+      return { rvGlobal: 0, rvChile: 0, rfGlobal: 0, rfChile: 1 };
+  }
+};
+
+const sleeveLabel = (sleeve: InstrumentSleeveKey) => {
+  switch (sleeve) {
+    case 'rvGlobal':
+      return 'RV Global';
+    case 'rvChile':
+      return 'RV Chile';
+    case 'rfGlobal':
+      return 'RF Global';
+    case 'rfChile':
+    default:
+      return 'RF Chile';
+  }
+};
+
+const sleeveToExposure = (sleeve: InstrumentSleeveKey): InstrumentExposure => {
+  switch (sleeve) {
+    case 'rvGlobal':
+      return { rv: 1, rf: 0, global: 1, local: 0 };
+    case 'rvChile':
+      return { rv: 1, rf: 0, global: 0, local: 1 };
+    case 'rfGlobal':
+      return { rv: 0, rf: 1, global: 1, local: 0 };
+    case 'rfChile':
+    default:
+      return { rv: 0, rf: 1, global: 0, local: 1 };
+  }
+};
+
+export const buildRealisticInstrumentProposal = (
+  instruments: InstrumentBaseItem[] | null,
+  targetWeights: PortfolioWeights,
+  options?: {
+    optimizableBaseClp?: number | null;
+    minMoveClp?: number;
+    dominanceThreshold?: number;
+  },
+): InstrumentProposal | null => {
+  if (!instruments || instruments.length === 0) return null;
+  const baseTotalClp = instruments.reduce((sum, item) => sum + item.currentAmountCLP, 0);
+  if (!Number.isFinite(baseTotalClp) || baseTotalClp <= 0) return null;
+
+  const normalizedTarget = normalizeWeights(targetWeights);
+  const minMoveClp = options?.minMoveClp ?? Math.max(1_000_000, baseTotalClp * 0.003);
+  const dominanceThreshold = options?.dominanceThreshold ?? 0.5;
+  const working: InstrumentWorking[] = instruments.map((item) => {
+    const sleeveWeights = deriveSleeveWeights(item.exposure);
+    const { sleeve, dominance } = dominantSleeve(sleeveWeights);
+    return { ...item, sleeveWeights, dominant: sleeve, dominance };
+  });
+
+  const targetSleeveAmounts = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
+    acc[key] = normalizedTarget[key] * baseTotalClp;
+    return acc;
+  }, {} as Record<InstrumentSleeveKey, number>);
+
+  const currencyGroups = new Map<string, InstrumentWorking[]>();
+  working.forEach((item) => {
+    const key = item.currency || 'CLP';
+    const existing = currencyGroups.get(key) ?? [];
+    existing.push(item);
+    currencyGroups.set(key, existing);
+  });
+
+  const moves: InstrumentMove[] = [];
+  let movedWithinManager = 0;
+  let movedTotal = 0;
+  let totalDemand = 0;
+  const notes: string[] = [];
+
+  currencyGroups.forEach((currencyItems, currency) => {
+    const currencyTotal = currencyItems.reduce((sum, item) => sum + item.currentAmountCLP, 0);
+    if (currencyTotal <= 0) return;
+
+    const managers = new Map<string, InstrumentWorking[]>();
+    currencyItems.forEach((item) => {
+      const list = managers.get(item.manager) ?? [];
+      list.push(item);
+      managers.set(item.manager, list);
+    });
+
+    const residualSources: InstrumentDelta[] = [];
+    const residualTargets: InstrumentDelta[] = [];
+
+    managers.forEach((managerItems, manager) => {
+      const managerTotal = managerItems.reduce((sum, item) => sum + item.currentAmountCLP, 0);
+      const managerTargetSleeves = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
+        acc[key] = (targetSleeveAmounts[key] * managerTotal) / currencyTotal;
+        return acc;
+      }, {} as Record<InstrumentSleeveKey, number>);
+
+      const { deltas, totalsBySleeve } = buildInstrumentDeltas(managerItems, managerTargetSleeves);
+      const sources = deltas
+        .filter((item) => item.delta < -minMoveClp)
+        .sort((a, b) => a.delta - b.delta);
+      const targets = deltas
+        .filter((item) => item.delta > minMoveClp)
+        .sort((a, b) => b.delta - a.delta);
+
+      const syntheticTargets: InstrumentDelta[] = [];
+      SLEEVE_KEYS.forEach((sleeve) => {
+        if (totalsBySleeve[sleeve] > 0) return;
+        const required = managerTargetSleeves[sleeve];
+        if (!(required > minMoveClp)) return;
+        const id = toId(`${manager}-${currency}-${sleeve}-nuevo`) || `synthetic-${manager}-${sleeve}`;
+        syntheticTargets.push({
+          id,
+          name: `Nuevo instrumento ${sleeveLabel(sleeve)}`,
+          manager,
+          currency,
+          currentAmountCLP: 0,
+          exposure: sleeveToExposure(sleeve),
+          sleeveWeights: sleeveToWeights(sleeve),
+          dominant: sleeve,
+          dominance: 1,
+          targetAmount: required,
+          delta: required,
+        });
+      });
+
+      totalDemand += targets.reduce((sum, item) => sum + item.delta, 0);
+      totalDemand += syntheticTargets.reduce((sum, item) => sum + item.delta, 0);
+
+      let sourceIndex = 0;
+      [...targets, ...syntheticTargets].forEach((target) => {
+        let remaining = target.delta;
+        while (remaining > minMoveClp && sourceIndex < sources.length) {
+          const source = sources[sourceIndex];
+          const available = Math.min(-source.delta, remaining);
+          const amount = Math.max(0, Math.min(available, source.currentAmountCLP));
+          if (amount <= minMoveClp) break;
+          moves.push({
+            fromId: source.id,
+            fromName: source.name,
+            fromManager: source.manager,
+            toId: target.id,
+            toName: target.name,
+            toManager: target.manager,
+            currency,
+            amountClp: amount,
+            fromSleeve: source.dominant,
+            toSleeve: target.dominant,
+            reason: 'Dentro de la misma administradora',
+          });
+          movedWithinManager += amount;
+          movedTotal += amount;
+          remaining -= amount;
+          source.delta += amount;
+          if (Math.abs(source.delta) <= minMoveClp) {
+            sourceIndex += 1;
+          }
+        }
+
+        if (remaining > minMoveClp) {
+          residualTargets.push({ ...target, delta: remaining });
+        }
+      });
+
+      sources.forEach((source) => {
+        if (source.delta < -minMoveClp) {
+          residualSources.push(source);
+        }
+      });
+
+      if (!targets.length && sources.length) {
+        notes.push(`En ${manager} no hay instrumentos destino claros para reasignar dentro del mismo administrador.`);
+      }
+      if (!sources.length && targets.length) {
+        notes.push(`En ${manager} no hay instrumentos origen suficientes dentro del mismo administrador.`);
+      }
+    });
+
+    if (residualSources.length && residualTargets.length) {
+      let sourceIndex = 0;
+      residualTargets.forEach((target) => {
+        let remaining = target.delta;
+        while (remaining > minMoveClp && sourceIndex < residualSources.length) {
+          const source = residualSources[sourceIndex];
+          const available = Math.min(-source.delta, remaining);
+          const amount = Math.max(0, Math.min(available, source.currentAmountCLP));
+          if (amount <= minMoveClp) break;
+          moves.push({
+            fromId: source.id,
+            fromName: source.name,
+            fromManager: source.manager,
+            toId: target.id,
+            toName: target.name,
+            toManager: target.manager,
+            currency,
+            amountClp: amount,
+            fromSleeve: source.dominant,
+            toSleeve: target.dominant,
+            reason: 'Entre administradoras (insuficiente dentro de la misma)',
+          });
+          movedTotal += amount;
+          remaining -= amount;
+          source.delta += amount;
+          if (Math.abs(source.delta) <= minMoveClp) {
+            sourceIndex += 1;
+          }
+        }
+      });
+    }
+  });
+
+  const appliedMoves = moves.filter((move) => move.amountClp > minMoveClp);
+  const proposedInstruments = applyMovesToInstruments(working, appliedMoves);
+  const proposedMix = computeMixFromInstruments(proposedInstruments);
+  const currentMix = computeMixFromInstruments(working);
+  const coverageRatio = totalDemand > 0 ? movedTotal / totalDemand : 1;
+  const withinManagerShare = movedTotal > 0 ? movedWithinManager / movedTotal : 1;
+  const quality: InstrumentProposalQuality =
+    coverageRatio >= 0.85 && withinManagerShare >= 0.6
+      ? 'high'
+      : coverageRatio >= 0.6
+        ? 'partial'
+        : 'low';
+
+  if (options?.optimizableBaseClp && Math.abs(baseTotalClp - options.optimizableBaseClp) / options.optimizableBaseClp > 0.1) {
+    notes.push('La base instrumental difiere bastante de la base optimizable oficial.');
+  }
+  const weakDominance = working.filter((item) => item.dominance < dominanceThreshold).length;
+  if (weakDominance) {
+    notes.push('Hay instrumentos balanceados; la propuesta es aproximada por sleeves dominantes.');
+  }
+
+  return {
+    moves: appliedMoves,
+    quality,
+    coverageRatio: Number.isFinite(coverageRatio) ? coverageRatio : 0,
+    withinManagerShare: Number.isFinite(withinManagerShare) ? withinManagerShare : 0,
+    currentMix,
+    targetMix: normalizedTarget,
+    proposedMix,
+    baseTotalClp,
+    notes,
   };
 };
