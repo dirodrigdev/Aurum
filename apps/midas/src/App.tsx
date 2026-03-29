@@ -3,6 +3,7 @@ import type {
   CashflowEvent,
   ManualCapitalAdjustment,
   ModelParameters,
+  PortfolioWeights,
   RiskCapitalInput,
   ScenarioVariant,
   ScenarioVariantId,
@@ -20,7 +21,17 @@ import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
-import type { OptimizableBaseReference } from './domain/instrumentBase';
+import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
+import {
+  applyActiveDistributionToParams,
+  areWeightsEquivalent,
+  deriveOfficialDistributionWeights,
+  normalizePortfolioWeights,
+  resolveOfficialDistributionState,
+  sanitizePortfolioWeights,
+  shouldEnterSimulationWeightsMode,
+  type WeightsSourceMode,
+} from './domain/model/officialDistribution';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
@@ -29,6 +40,8 @@ import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
+const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
+const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
@@ -346,9 +359,62 @@ function deriveVisibleCapitalFromComposition(
   return Math.max(1, total);
 }
 
+function loadLastKnownOfficialWeights(): PortfolioWeights | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY);
+    if (!raw) return null;
+    return sanitizePortfolioWeights(JSON.parse(raw) as PortfolioWeights | null);
+  } catch {
+    return null;
+  }
+}
+
+function loadLastKnownOfficialWeightsSavedAt(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY);
+}
+
+function resolveInitialDistributionState(): {
+  officialWeights: PortfolioWeights | null;
+  lastKnownOfficialWeights: PortfolioWeights | null;
+  activeWeights: PortfolioWeights;
+  weightsSourceMode: WeightsSourceMode;
+  activeWeightsSavedAt: string | null;
+  fallbackReason: string | null;
+} {
+  const snapshot = loadInstrumentBaseSnapshot();
+  const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
+  const lastKnownOfficialWeights = loadLastKnownOfficialWeights();
+  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
+  const resolved = resolveOfficialDistributionState({
+    jsonOfficialWeights,
+    lastKnownOfficialWeights,
+    defaultWeights: defaults,
+  });
+  const activeWeightsSavedAt = resolved.weightsSourceMode === 'json-official'
+    ? snapshot?.savedAt ?? null
+    : resolved.weightsSourceMode === 'last-known-official'
+      ? loadLastKnownOfficialWeightsSavedAt()
+      : null;
+  return {
+    officialWeights: resolved.officialWeights,
+    lastKnownOfficialWeights: resolved.lastKnownOfficialWeights,
+    activeWeights: resolved.activeWeights,
+    weightsSourceMode: resolved.weightsSourceMode,
+    activeWeightsSavedAt,
+    fallbackReason: resolved.fallbackReason,
+  };
+}
+
 export default function App() {
-  const [baseParams, setBaseParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
-  const [simParams, setSimParams] = useState<ModelParameters>(() => cloneParams(DEFAULT_PARAMETERS));
+  const initialDistributionRef = useRef(resolveInitialDistributionState());
+  const [baseParams, setBaseParams] = useState<ModelParameters>(() =>
+    applyActiveDistributionToParams(cloneParams(DEFAULT_PARAMETERS), initialDistributionRef.current.activeWeights),
+  );
+  const [simParams, setSimParams] = useState<ModelParameters>(() =>
+    applyActiveDistributionToParams(cloneParams(DEFAULT_PARAMETERS), initialDistributionRef.current.activeWeights),
+  );
   const [activeTab, setActiveTab] = useState<TabId>('sim');
   const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
@@ -391,6 +457,18 @@ export default function App() {
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
+  const [officialWeights, setOfficialWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.officialWeights);
+  const [lastKnownOfficialWeights, setLastKnownOfficialWeights] = useState<PortfolioWeights | null>(
+    () => initialDistributionRef.current.lastKnownOfficialWeights,
+  );
+  const [activeWeights, setActiveWeights] = useState<PortfolioWeights>(() => initialDistributionRef.current.activeWeights);
+  const [weightsSourceMode, setWeightsSourceMode] = useState<WeightsSourceMode>(() => initialDistributionRef.current.weightsSourceMode);
+  const [activeWeightsSavedAt, setActiveWeightsSavedAt] = useState<string | null>(
+    () => initialDistributionRef.current.activeWeightsSavedAt,
+  );
+  const [weightsFallbackReason, setWeightsFallbackReason] = useState<string | null>(
+    () => initialDistributionRef.current.fallbackReason,
+  );
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
@@ -417,6 +495,8 @@ export default function App() {
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
   const manualCommitInFlightRef = useRef(false);
+  const activeWeightsRef = useRef<PortfolioWeights>(activeWeights);
+  const weightsSourceModeRef = useRef<WeightsSourceMode>(weightsSourceMode);
   const recalcRequestIdRef = useRef(0);
   const baseSnapshotRequestIdRef = useRef(0);
   const recalcWatchdogRef = useRef<number | null>(null);
@@ -449,6 +529,69 @@ export default function App() {
     });
   }, []);
 
+  const refreshOfficialDistribution = useCallback(() => {
+    const snapshot = loadInstrumentBaseSnapshot();
+    const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
+    const storedLastKnown = loadLastKnownOfficialWeights();
+    const resolved = resolveOfficialDistributionState({
+      jsonOfficialWeights,
+      lastKnownOfficialWeights: storedLastKnown,
+      defaultWeights: DEFAULT_PARAMETERS.weights,
+    });
+
+    if (typeof window !== 'undefined' && jsonOfficialWeights) {
+      window.localStorage.setItem(
+        LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY,
+        JSON.stringify(normalizePortfolioWeights(jsonOfficialWeights)),
+      );
+      if (snapshot?.savedAt) {
+        window.localStorage.setItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY, snapshot.savedAt);
+      }
+    }
+
+    setOfficialWeights(resolved.officialWeights);
+    setLastKnownOfficialWeights(resolved.lastKnownOfficialWeights);
+
+    const keepSimulationMode = weightsSourceModeRef.current === 'simulation' && sanitizePortfolioWeights(activeWeightsRef.current);
+    if (keepSimulationMode) {
+      setWeightsFallbackReason(null);
+      return;
+    }
+
+    setActiveWeights(resolved.activeWeights);
+    setWeightsSourceMode(resolved.weightsSourceMode);
+    setWeightsFallbackReason(resolved.fallbackReason);
+    setActiveWeightsSavedAt(
+      resolved.weightsSourceMode === 'json-official'
+        ? snapshot?.savedAt ?? null
+        : resolved.weightsSourceMode === 'last-known-official'
+          ? loadLastKnownOfficialWeightsSavedAt()
+          : null,
+    );
+  }, []);
+
+  useEffect(() => {
+    refreshOfficialDistribution();
+  }, [refreshOfficialDistribution, activeTab]);
+
+  useEffect(() => {
+    const handleRefresh = () => refreshOfficialDistribution();
+    window.addEventListener('focus', handleRefresh);
+    window.addEventListener('storage', handleRefresh);
+    window.addEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+    return () => {
+      window.removeEventListener('focus', handleRefresh);
+      window.removeEventListener('storage', handleRefresh);
+      window.removeEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+    };
+  }, [refreshOfficialDistribution]);
+
+  const applyActiveDistribution = useCallback(
+    (params: ModelParameters, weightsOverride?: PortfolioWeights): ModelParameters =>
+      applyActiveDistributionToParams(params, weightsOverride ?? activeWeightsRef.current),
+    [],
+  );
+
   useEffect(() => {
     baseParamsRef.current = baseParams;
   }, [baseParams]);
@@ -480,6 +623,25 @@ export default function App() {
   useEffect(() => {
     appliedRecalcRequestIdRef.current = appliedRecalcRequestId;
   }, [appliedRecalcRequestId]);
+
+  useEffect(() => {
+    activeWeightsRef.current = activeWeights;
+  }, [activeWeights]);
+
+  useEffect(() => {
+    weightsSourceModeRef.current = weightsSourceMode;
+  }, [weightsSourceMode]);
+
+  useEffect(() => {
+    setBaseParams((prev) => {
+      const next = applyActiveDistributionToParams(prev, activeWeights);
+      return areWeightsEquivalent(prev.weights, next.weights) ? prev : next;
+    });
+    setSimParams((prev) => {
+      const next = applyActiveDistributionToParams(prev, activeWeights);
+      return areWeightsEquivalent(prev.weights, next.weights) ? prev : next;
+    });
+  }, [activeWeights]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -598,6 +760,7 @@ export default function App() {
       cause: RecalcCause,
     ): Promise<SimulationResults> =>
       new Promise<SimulationResults>((resolve, reject) => {
+        const effectiveParams = applyActiveDistribution(params);
         cancelActiveRecalcWorker('superseded_by_new_recalc', 'runPrimaryRecalcWorker');
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
           type: 'module',
@@ -747,16 +910,17 @@ export default function App() {
           requestId: runId,
           scope: 'recalc',
           workerInstanceId,
-          activeScenario: resolveScenarioVariantId(params.activeScenario),
-          simulationSeed: Number(params.simulation?.seed ?? 0),
-          capitalInitial: Number(params.capitalInitial ?? 0),
-          compositionMode: params.simulationComposition?.mode ?? 'legacy',
-          banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
-          optimizableInvestmentsCLP: Number(params.simulationComposition?.optimizableInvestmentsCLP ?? 0),
-          riskBlockPresent: Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
-          realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
+          activeScenario: resolveScenarioVariantId(effectiveParams.activeScenario),
+          simulationSeed: Number(effectiveParams.simulation?.seed ?? 0),
+          capitalInitial: Number(effectiveParams.capitalInitial ?? 0),
+          compositionMode: effectiveParams.simulationComposition?.mode ?? 'legacy',
+          banksCLP: Number(effectiveParams.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
+          optimizableInvestmentsCLP: Number(effectiveParams.simulationComposition?.optimizableInvestmentsCLP ?? 0),
+          riskBlockPresent: Number(effectiveParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+          realEstateEnabled: effectiveParams.realEstatePolicy?.enabled ?? true,
+          distributionSource: weightsSourceModeRef.current,
         });
-        workerPayloadByRequestRef.current.set(`recalc:${runId}`, cloneParams(params));
+        workerPayloadByRequestRef.current.set(`recalc:${runId}`, cloneParams(effectiveParams));
         if (workerPayloadByRequestRef.current.size > 20) {
           const oldestKey = workerPayloadByRequestRef.current.keys().next().value;
           if (oldestKey) workerPayloadByRequestRef.current.delete(oldestKey);
@@ -777,11 +941,11 @@ export default function App() {
           type: 'central-start',
           runId,
           channel: 'primary',
-          params,
+          params: effectiveParams,
         };
         worker.postMessage(message);
       }),
-    [appendRuntimeTimeline, cancelActiveRecalcWorker],
+    [appendRuntimeTimeline, applyActiveDistribution, cancelActiveRecalcWorker],
   );
 
   const runCentralSimulationInWorker = useCallback(
@@ -791,6 +955,7 @@ export default function App() {
       options?: { traceScope?: WorkerTraceScope; channel?: 'primary' | 'bootstrap-control' },
     ): Promise<SimulationResults> =>
       new Promise<SimulationResults>((resolve, reject) => {
+        const effectiveParams = applyActiveDistribution(params);
         const traceScope = options?.traceScope ?? 'recalc';
         const channel = options?.channel ?? 'primary';
         const worker = new Worker(new URL('./domain/simulation/central.worker.ts', import.meta.url), {
@@ -895,29 +1060,30 @@ export default function App() {
           type: 'central-start',
           runId,
           channel,
-          params,
+          params: effectiveParams,
         };
         appendRuntimeTimeline('worker_request_sent', {
           requestId: runId,
           scope: traceScope,
           workerInstanceId,
-          activeScenario: resolveScenarioVariantId(params.activeScenario),
-          simulationSeed: Number(params.simulation?.seed ?? 0),
-          capitalInitial: Number(params.capitalInitial ?? 0),
-          compositionMode: params.simulationComposition?.mode ?? 'legacy',
-          banksCLP: Number(params.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
-          optimizableInvestmentsCLP: Number(params.simulationComposition?.optimizableInvestmentsCLP ?? 0),
-          riskBlockPresent: Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
-          realEstateEnabled: params.realEstatePolicy?.enabled ?? true,
+          activeScenario: resolveScenarioVariantId(effectiveParams.activeScenario),
+          simulationSeed: Number(effectiveParams.simulation?.seed ?? 0),
+          capitalInitial: Number(effectiveParams.capitalInitial ?? 0),
+          compositionMode: effectiveParams.simulationComposition?.mode ?? 'legacy',
+          banksCLP: Number(effectiveParams.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
+          optimizableInvestmentsCLP: Number(effectiveParams.simulationComposition?.optimizableInvestmentsCLP ?? 0),
+          riskBlockPresent: Number(effectiveParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+          realEstateEnabled: effectiveParams.realEstatePolicy?.enabled ?? true,
+          distributionSource: weightsSourceModeRef.current,
         });
-        workerPayloadByRequestRef.current.set(`${traceScope}:${runId}`, cloneParams(params));
+        workerPayloadByRequestRef.current.set(`${traceScope}:${runId}`, cloneParams(effectiveParams));
         if (workerPayloadByRequestRef.current.size > 20) {
           const oldestKey = workerPayloadByRequestRef.current.keys().next().value;
           if (oldestKey) workerPayloadByRequestRef.current.delete(oldestKey);
         }
         worker.postMessage(message);
       }),
-    [appendRuntimeTimeline],
+    [appendRuntimeTimeline, applyActiveDistribution],
   );
 
   const runBootstrapControl = useCallback((params: ModelParameters) => {
@@ -1237,9 +1403,9 @@ export default function App() {
         };
       }
 
-      return next;
+      return applyActiveDistribution(next);
     },
-    [manualAdjustmentImpact, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP],
+    [applyActiveDistribution, manualAdjustmentImpact, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP],
   );
 
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
@@ -2037,10 +2203,56 @@ export default function App() {
     nextParams: ModelParameters,
     cause: RecalcCause,
   ) => {
+    const normalizedNextWeights = normalizePortfolioWeights(nextParams.weights);
+    const shouldSwitchToSimulation = shouldEnterSimulationWeightsMode(
+      activeWeightsRef.current,
+      normalizedNextWeights,
+      1e-6,
+    );
+    if (shouldSwitchToSimulation) {
+      setActiveWeights(normalizedNextWeights);
+      setWeightsSourceMode('simulation');
+      setActiveWeightsSavedAt(null);
+      setWeightsFallbackReason(null);
+    }
+    const effectiveNextParams = applyActiveDistribution(
+      { ...nextParams, weights: normalizedNextWeights },
+      shouldSwitchToSimulation ? normalizedNextWeights : undefined,
+    );
+    setSimParams(effectiveNextParams);
+    const base = applySimulationOverrides(effectiveNextParams, simOverrides);
+    startRecalculation(cause, () => base);
+  }, [applyActiveDistribution, simOverrides, startRecalculation]);
+
+  const restoreOfficialDistribution = useCallback(() => {
+    const resolved = resolveOfficialDistributionState({
+      jsonOfficialWeights: officialWeights,
+      lastKnownOfficialWeights,
+      defaultWeights: DEFAULT_PARAMETERS.weights,
+    });
+    setActiveWeights(resolved.activeWeights);
+    setWeightsSourceMode(resolved.weightsSourceMode);
+    setWeightsFallbackReason(resolved.fallbackReason);
+    setActiveWeightsSavedAt(
+      resolved.weightsSourceMode === 'json-official'
+        ? loadInstrumentBaseSnapshot()?.savedAt ?? null
+        : resolved.weightsSourceMode === 'last-known-official'
+          ? loadLastKnownOfficialWeightsSavedAt()
+          : null,
+    );
+    markSimulationInteraction();
+    const nextParams = applyActiveDistribution(simParamsRef.current, resolved.activeWeights);
     setSimParams(nextParams);
     const base = applySimulationOverrides(nextParams, simOverrides);
-    startRecalculation(cause, () => base);
-  }, [simOverrides, startRecalculation]);
+    startRecalculation('params-change', () => base);
+  }, [
+    applyActiveDistribution,
+    lastKnownOfficialWeights,
+    markSimulationInteraction,
+    officialWeights,
+    simOverrides,
+    startRecalculation,
+  ]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
     markSimulationInteraction();
@@ -2076,10 +2288,11 @@ export default function App() {
       inflation: scenarioBase.inflation,
       fx: scenarioBase.fx,
     };
-    setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    const effectiveNextParams = applyActiveDistribution(nextParams);
+    setSimParams(effectiveNextParams);
+    const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
-  }, [applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
+  }, [applyActiveDistribution, applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
     setSimOverrides(next);
@@ -2110,10 +2323,11 @@ export default function App() {
         ? nextOverrides
         : null;
     setSimOverrides(sanitizedOverrides);
-    setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    const effectiveNextParams = applyActiveDistribution(nextParams);
+    setSimParams(effectiveNextParams);
+    const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
-  }, [applyScenarioEconomics, baseParams, simOverrides, startRecalculation]);
+  }, [applyActiveDistribution, applyScenarioEconomics, baseParams, simOverrides, startRecalculation]);
 
   const patchSimParams = useCallback((patcher: (prev: ModelParameters) => ModelParameters) => {
     markSimulationInteraction();
@@ -2362,6 +2576,39 @@ export default function App() {
     };
   }, [bootstrapControlResult, bootstrapControlStatus, simResult]);
 
+  const weightsSourceLabel = useMemo(() => {
+    if (weightsSourceMode === 'simulation') return 'Simulación';
+    if (weightsSourceMode === 'json-official') return 'JSON oficial';
+    if (weightsSourceMode === 'last-known-official') return 'Último JSON válido';
+    if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
+    return 'Error (sin distribución usable)';
+  }, [weightsSourceMode]);
+  const officialReferenceWeights = useMemo(
+    () => normalizePortfolioWeights(officialWeights ?? lastKnownOfficialWeights ?? DEFAULT_PARAMETERS.weights),
+    [lastKnownOfficialWeights, officialWeights],
+  );
+  const activeWeightsNormalized = useMemo(
+    () => normalizePortfolioWeights(activeWeights),
+    [activeWeights],
+  );
+
+  const patrimonioSourceTechnical = snapshotApplied
+    ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'})`
+    : 'Modelo base local (sin aplicar snapshot Aurum)';
+  const distributionSourceTechnical = `${weightsSourceLabel}${
+    activeWeightsSavedAt ? ` · savedAt=${activeWeightsSavedAt}` : ''
+  }${weightsFallbackReason ? ` · fallback=${weightsFallbackReason}` : ''}`;
+  const fxSpotSourceTechnical = 'params/default/manual (Aurum optimizable snapshot no publica spot FX explícito)';
+  const nonOptimizableBlocksTechnical = (() => {
+    const composition = simParams.simulationComposition;
+    if (!composition || composition.mode === 'legacy') return 'No disponible en modo legacy';
+    const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
+    const realEstate = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
+    const debt = Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0);
+    const risk = Number(composition.nonOptimizable?.riskCapital?.totalCLP ?? 0);
+    return `banks=${Math.round(banks)} · realEstateEquity=${Math.round(realEstate)} · nonMortgageDebt=${Math.round(debt)} · riskCapital=${Math.round(risk)}`;
+  })();
+
   const content = activeTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
@@ -2397,6 +2644,14 @@ export default function App() {
       bootstrapControlStatus={bootstrapControlStatus}
       bootstrapControlResult={bootstrapControlResult}
       controlConcordance={controlConcordance}
+      patrimonioSourceTechnical={patrimonioSourceTechnical}
+      distributionSourceTechnical={distributionSourceTechnical}
+      fxSpotSourceTechnical={fxSpotSourceTechnical}
+      nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
+      weightsSourceMode={weightsSourceMode}
+      weightsSourceLabel={weightsSourceLabel}
+      officialReferenceWeights={officialReferenceWeights}
+      activeWeights={activeWeightsNormalized}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}
@@ -2405,6 +2660,7 @@ export default function App() {
       onSimulationTouch={markSimulationInteraction}
       onScenarioChange={handleScenarioChange}
       onRestoreScenarioPreset={restoreScenarioPreset}
+      onRestoreOfficialDistribution={restoreOfficialDistribution}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
       onResetSim={resetSimulationSession}

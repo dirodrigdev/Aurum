@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
+import type { InstrumentBaseSnapshot } from '../instrumentBase';
+import {
+  applyActiveDistributionToParams,
+  applyOfficialDistributionToParams,
+  deriveOfficialDistributionWeights,
+  resolveOfficialDistributionState,
+  shouldEnterSimulationWeightsMode,
+} from '../model/officialDistribution';
 import { runSimulationParametric } from './engineParametric';
 import { runSimulationCore } from './engine';
 import { buildMortgageProjection } from './mortgageProjection';
@@ -454,6 +462,129 @@ test('concordance semaphore classifies green/yellow/red/double-red as defined', 
 
   const doubleRedByZoneJump = evaluateConcordance(0.08, 0.18);
   assert.equal(doubleRedByZoneJump.status, 'double-red');
+});
+
+test('official distribution weights are derived from instrument base JSON snapshot', () => {
+  const snapshot: InstrumentBaseSnapshot = {
+    version: 1,
+    savedAt: '2026-03-29T00:00:00.000Z',
+    rawJson: '[]',
+    instruments: [
+      {
+        id: 'global-rv',
+        name: 'Global RV',
+        manager: 'Test',
+        currentAmountCLP: 100,
+        exposure: { rv: 1, rf: 0, global: 1, local: 0 },
+      },
+      {
+        id: 'local-rf',
+        name: 'Local RF',
+        manager: 'Test',
+        currentAmountCLP: 100,
+        exposure: { rv: 0, rf: 1, global: 0, local: 1 },
+      },
+    ],
+  };
+  const weights = deriveOfficialDistributionWeights(snapshot);
+  assert.ok(weights, 'expected weights from valid instrument snapshot');
+  approxEqual(weights!.rvGlobal, 0.25);
+  approxEqual(weights!.rfGlobal, 0.25);
+  approxEqual(weights!.rvChile, 0.25);
+  approxEqual(weights!.rfChile, 0.25);
+});
+
+test('official distribution overrides params weights without changing capital blocks', () => {
+  const params = makeBaseParams();
+  params.weights = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
+  params.capitalInitial = 777_000_000;
+  params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 777_000_000,
+    optimizableInvestmentsCLP: 600_000_000,
+    nonOptimizable: {
+      banksCLP: 120_000_000,
+      nonMortgageDebtCLP: 20_000_000,
+      riskCapital: { totalCLP: 57_000_000 },
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        realEstateEquityCLP: 240_000_000,
+        ufSnapshotCLP: 35_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  const official = { rvGlobal: 0.1, rfGlobal: 0.2, rvChile: 0.3, rfChile: 0.4 };
+  const next = applyOfficialDistributionToParams(params, official);
+  approxEqual(next.weights.rvGlobal, 0.1);
+  approxEqual(next.weights.rfGlobal, 0.2);
+  approxEqual(next.weights.rvChile, 0.3);
+  approxEqual(next.weights.rfChile, 0.4);
+  assert.equal(next.capitalInitial, 777_000_000);
+  assert.equal(next.simulationComposition?.optimizableInvestmentsCLP, 600_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.banksCLP, 120_000_000);
+  assert.equal(next.simulationComposition?.nonOptimizable?.nonMortgageDebtCLP, 20_000_000);
+});
+
+test('invalid current JSON with last known valid falls back to last known official', () => {
+  const lastKnown = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
+  const resolved = resolveOfficialDistributionState({
+    jsonOfficialWeights: null,
+    lastKnownOfficialWeights: lastKnown,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+  });
+  assert.equal(resolved.weightsSourceMode, 'last-known-official');
+  approxEqual(resolved.activeWeights.rvGlobal, 0.4);
+  approxEqual(resolved.activeWeights.rfGlobal, 0.3);
+  approxEqual(resolved.activeWeights.rvChile, 0.2);
+  approxEqual(resolved.activeWeights.rfChile, 0.1);
+});
+
+test('without current or last known JSON uses explicit system defaults', () => {
+  const resolved = resolveOfficialDistributionState({
+    jsonOfficialWeights: null,
+    lastKnownOfficialWeights: null,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+  });
+  assert.equal(resolved.weightsSourceMode, 'system-defaults');
+  approxEqual(
+    resolved.activeWeights.rvGlobal +
+      resolved.activeWeights.rfGlobal +
+      resolved.activeWeights.rvChile +
+      resolved.activeWeights.rfChile,
+    1,
+  );
+});
+
+test('manual weight edit enters simulation mode and restore can return to official', () => {
+  const official = { rvGlobal: 0.25, rfGlobal: 0.25, rvChile: 0.25, rfChile: 0.25 };
+  const simulated = { rvGlobal: 0.5, rfGlobal: 0.1, rvChile: 0.2, rfChile: 0.2 };
+  assert.equal(shouldEnterSimulationWeightsMode(official, simulated), true);
+  const backToOfficial = applyActiveDistributionToParams(cloneParams(DEFAULT_PARAMETERS), official);
+  approxEqual(backToOfficial.weights.rvGlobal, official.rvGlobal);
+  approxEqual(backToOfficial.weights.rfGlobal, official.rfGlobal);
+  approxEqual(backToOfficial.weights.rvChile, official.rvChile);
+  approxEqual(backToOfficial.weights.rfChile, official.rfChile);
+});
+
+test('active distribution parity can be enforced consistently across consumer params', () => {
+  const active = { rvGlobal: 0.3, rfGlobal: 0.2, rvChile: 0.1, rfChile: 0.4 };
+  const baseParams = cloneParams(DEFAULT_PARAMETERS);
+  const optimizerParams = cloneParams(DEFAULT_PARAMETERS);
+  optimizerParams.weights = { rvGlobal: 0.9, rfGlobal: 0.05, rvChile: 0.03, rfChile: 0.02 };
+  const nextBase = applyActiveDistributionToParams(baseParams, active);
+  const nextOptimizer = applyActiveDistributionToParams(optimizerParams, active);
+  approxEqual(nextBase.weights.rvGlobal, nextOptimizer.weights.rvGlobal);
+  approxEqual(nextBase.weights.rfGlobal, nextOptimizer.weights.rfGlobal);
+  approxEqual(nextBase.weights.rvChile, nextOptimizer.weights.rvChile);
+  approxEqual(nextBase.weights.rfChile, nextOptimizer.weights.rfChile);
 });
 
 const failures: string[] = [];

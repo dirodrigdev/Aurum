@@ -176,12 +176,14 @@ export function SettingsPage({
       return;
     }
     saveInstrumentBaseSnapshot(next.snapshot);
+    window.dispatchEvent(new CustomEvent('midas:instrument-base-updated'));
     setSavedSnapshot(next.snapshot);
     setStatusMessage('Base instrumental guardada. Puedes reemplazarla con una nueva carga cuando quieras.');
   };
 
   const handleClearSaved = () => {
     clearInstrumentBaseSnapshot();
+    window.dispatchEvent(new CustomEvent('midas:instrument-base-updated'));
     setSavedSnapshot(null);
     setValidation(null);
     setStatusMessage('Base instrumental eliminada de este dispositivo.');
@@ -205,7 +207,7 @@ export function SettingsPage({
           </div>
           <h2 style={{ margin: '10px 0 6px', fontSize: 28, lineHeight: 1.08 }}>Base instrumental real</h2>
           <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
-            Pega una base JSON semiestática de instrumentos reales. Esta capa queda guardada aparte y todavía no alimenta el optimizador.
+            Pega una base JSON semiestática de instrumentos reales. Esta capa define la distribución oficial (weights) para simulación y optimizador.
           </div>
         </div>
 

@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ManualCapitalAdjustment, ManualCapitalDestination, ModelParameters, SimulationResults, ScenarioVariantId } from '../domain/model/types';
+import type {
+  ManualCapitalAdjustment,
+  ManualCapitalDestination,
+  ModelParameters,
+  PortfolioWeights,
+  SimulationResults,
+  ScenarioVariantId,
+} from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
@@ -87,6 +94,14 @@ export function SimulationPage({
   bootstrapControlStatus,
   bootstrapControlResult,
   controlConcordance,
+  patrimonioSourceTechnical,
+  distributionSourceTechnical,
+  fxSpotSourceTechnical,
+  nonOptimizableBlocksTechnical,
+  weightsSourceMode,
+  weightsSourceLabel,
+  officialReferenceWeights,
+  activeWeights,
   applyAurumHarness,
   onApplyPendingSnapshot,
   onRunApplyAurumHarness,
@@ -95,6 +110,7 @@ export function SimulationPage({
   onSimulationTouch,
   onScenarioChange,
   onRestoreScenarioPreset,
+  onRestoreOfficialDistribution,
   onSimOverridesChange,
   onUpdateParams,
   onResetSim,
@@ -140,6 +156,14 @@ export function SimulationPage({
     centralZone: string | null;
     controlZone: string | null;
   };
+  patrimonioSourceTechnical: string;
+  distributionSourceTechnical: string;
+  fxSpotSourceTechnical: string;
+  nonOptimizableBlocksTechnical: string;
+  weightsSourceMode: 'json-official' | 'last-known-official' | 'system-defaults' | 'simulation' | 'error';
+  weightsSourceLabel: string;
+  officialReferenceWeights: PortfolioWeights;
+  activeWeights: PortfolioWeights;
   applyAurumHarness: {
     status: 'idle' | 'running' | 'pass' | 'fail';
     startedAtMs: number | null;
@@ -154,6 +178,7 @@ export function SimulationPage({
   onSimulationTouch: (next?: SimulationPreset) => void;
   onScenarioChange: (next: ScenarioVariantId) => void;
   onRestoreScenarioPreset: () => void;
+  onRestoreOfficialDistribution: () => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
@@ -566,6 +591,15 @@ export function SimulationPage({
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  const formatWeightMix = useCallback((weights: PortfolioWeights) => {
+    const rv = Math.round((weights.rvGlobal + weights.rvChile) * 100);
+    const rf = Math.round((weights.rfGlobal + weights.rfChile) * 100);
+    const global = Math.round((weights.rvGlobal + weights.rfGlobal) * 100);
+    const local = Math.round((weights.rvChile + weights.rfChile) * 100);
+    return `RV/RF ${rv}/${rf} · Global/Local ${global}/${local}`;
+  }, []);
+  const activeWeightSummary = formatWeightMix(activeWeights);
+  const officialWeightSummary = formatWeightMix(officialReferenceWeights);
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
@@ -1114,6 +1148,48 @@ export function SimulationPage({
             </div>
 
             <div>
+              <div
+                style={{
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  marginBottom: 10,
+                  display: 'grid',
+                  gap: 4,
+                }}
+              >
+                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                  Origen weights: {weightsSourceLabel}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>
+                  Activa: {activeWeightSummary}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>
+                  Base oficial: {officialWeightSummary}
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={onRestoreOfficialDistribution}
+                    disabled={isRecalculating || weightsSourceMode !== 'simulation'}
+                    style={{
+                      marginTop: 2,
+                      background: T.surface,
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      borderRadius: 999,
+                      padding: '4px 8px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating || weightsSourceMode !== 'simulation' ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
+                    }}
+                  >
+                    Restaurar distribución oficial
+                  </button>
+                </div>
+              </div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1411,6 +1487,21 @@ export function SimulationPage({
             <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
             <div style={{ color: T.textMuted }}>
               heroPhase={heroPhase} · simUiState={simUiState} · worker={recalcWorkerStatus}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              fuentePatrimonio={patrimonioSourceTechnical}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              fuenteDistribución={distributionSourceTechnical}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              weightsSourceMode={weightsSourceMode} · weightsSourceLabel={weightsSourceLabel}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              fxSpotSource={fxSpotSourceTechnical}
+            </div>
+            <div style={{ color: T.textMuted }}>
+              bloquesNoOptimizables={nonOptimizableBlocksTechnical}
             </div>
             <div style={{ color: T.textMuted }}>
               requestId activo={activeRecalcRequestId ?? '—'} · aplicado={appliedRecalcRequestId ?? '—'}
