@@ -958,6 +958,26 @@ test('instrument proposal keeps currency and prefers same manager', () => {
   assert.equal(crossManagerMoves.length, 0, 'should stay within manager when possible');
 });
 
+test('instrument proposal flags new destination when sleeve is missing', () => {
+  const instruments: InstrumentBaseItem[] = [
+    {
+      id: 'only-rv-usd',
+      name: 'Only RV USD',
+      manager: 'Admin A',
+      currency: 'USD',
+      currentAmountCLP: 100,
+      exposure: { rv: 1, rf: 0, global: 1, local: 0 },
+    },
+  ];
+  const target = { rvGlobal: 0.2, rfGlobal: 0.8, rvChile: 0, rfChile: 0 };
+  const proposal = buildRealisticInstrumentProposal(instruments, target, { minMoveClp: 1 });
+  assert.ok(proposal, 'proposal should exist');
+  if (!proposal) return;
+  assert.ok(proposal.moves.length > 0, 'proposal should include actionable moves');
+  const needsNewDestination = proposal.moves.some((move) => move.toName.startsWith('Nuevo instrumento'));
+  assert.equal(needsNewDestination, true, 'proposal should require a new destination instrument when missing sleeve');
+});
+
 const failures: string[] = [];
 for (const entry of tests) {
   try {

@@ -363,6 +363,8 @@ export function OptimizerPage({
   const realisticSuccess = realistic ? 1 - realistic.probRuin : null;
   const realisticDeltaPp =
     currentSuccess !== null && realisticSuccess !== null ? (realisticSuccess - currentSuccess) * 100 : null;
+  const realisticVsTheoreticalPp =
+    realisticSuccess !== null && optimizedSuccess !== null ? (realisticSuccess - optimizedSuccess) * 100 : null;
   const movementNetAmount = movementAmounts.reduce((sum, move) => sum + move.amount, 0);
   const insight = visibleResult ? renderInsight(visibleResult, movementAmounts, usingSimulation) : null;
   const instrumentBaseSummary = useMemo(
@@ -714,6 +716,18 @@ export function OptimizerPage({
                 <Stat label="Movimientos dentro de administradora" value={formatPercent(realistic.withinManagerShare)} />
                 <Stat label="Base instrumental" value={formatMoneyCompact(realistic.baseTotalClp)} />
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 12 }}>
+                <Stat label="Resultado post-ejecución · Éxito" value={realisticSuccess === null ? '—' : formatPercent(realisticSuccess)} />
+                <Stat label="Resultado post-ejecución · Ruina" value={formatPercent(realistic.probRuin)} />
+                <Stat label="Resultado post-ejecución · P50" value={formatMoneyCompact(realistic.terminalP50)} />
+                <Stat
+                  label="Brecha vs óptimo teórico"
+                  value={realisticVsTheoreticalPp === null ? '—' : `${realisticVsTheoreticalPp >= 0 ? '+' : ''}${realisticVsTheoreticalPp.toFixed(1)}pp`}
+                  accent={
+                    realisticVsTheoreticalPp === null ? undefined : realisticVsTheoreticalPp >= -1 ? T.positive : T.warning
+                  }
+                />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
                 {realisticRisk && <AllocationCompareCard title="Propuesta realista" summary={realisticRisk} />}
                 {realisticGeo && (
@@ -744,21 +758,29 @@ export function OptimizerPage({
                       <div>
                         <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.fromName}</div>
                         <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          {move.fromManager} · {move.currency}
+                          {move.fromManager} · {move.currency} · {formatSleeveLabel(move.fromSleeve)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'center', color: T.textSecondary, fontSize: 11 }}>→</div>
                       <div>
                         <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.toName}</div>
                         <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          {move.toManager} · {move.currency}
+                          {move.toManager} · {move.currency} · {formatSleeveLabel(move.toSleeve)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right', ...css.mono, fontSize: 12, color: T.textPrimary }}>
                         {formatMoneyCompact(move.amountClp)}
                       </div>
                       <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
-                        {move.reason}
+                        Acción: reducir {formatSleeveLabel(move.fromSleeve)} y aumentar {formatSleeveLabel(move.toSleeve)} · {move.reason}
+                      </div>
+                      {move.toName.startsWith('Nuevo instrumento') && (
+                        <div style={{ gridColumn: '1 / -1', color: T.warning, fontSize: 10 }}>
+                          No existe destino adecuado en la base actual para esta combinación; se requiere nuevo instrumento.
+                        </div>
+                      )}
+                      <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
+                        Traspaso equivalente: vender/reducir origen y comprar/aumentar destino por el mismo monto.
                       </div>
                     </div>
                   ))}
@@ -1310,6 +1332,13 @@ function formatPercent(value: number) {
 function formatCoverageRatio(value: number | null) {
   if (value === null || !Number.isFinite(value)) return '—';
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSleeveLabel(sleeve: keyof PortfolioWeights) {
+  if (sleeve === 'rvGlobal') return 'RV Global';
+  if (sleeve === 'rvChile') return 'RV Chile';
+  if (sleeve === 'rfGlobal') return 'RF Global';
+  return 'RF Chile';
 }
 
 function formatProposalQuality(quality: 'high' | 'partial' | 'low') {
