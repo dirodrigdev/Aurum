@@ -135,6 +135,72 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
   const baseSpending = params.spendingPhases[0]?.amountReal ?? 0;
   const baseSuccess = baseline ? (1 - baseline.probRuin) * 100 : null;
 
+  const findBasePoint = (points: Array<{ label: string; probRuinDelta: number }>) => {
+    const explicit = points.find((p) => p.label.toLowerCase() === 'base');
+    if (explicit) return explicit;
+    return [...points].sort((a, b) => Math.abs(a.probRuinDelta) - Math.abs(b.probRuinDelta))[0];
+  };
+
+  const parsePercentLabel = (label: string): number | null => {
+    const match = label.match(/-?\d+(\.\d+)?/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) ? value / 100 : null;
+  };
+
+  const parseYearsLabel = (label: string): number | null => {
+    const match = label.match(/-?\d+/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const formatClp = (value: number) => `$${Math.round(value).toLocaleString('es-CL')}`;
+
+  const formatChange = (id: string, baseLabel: string, targetLabel: string) => {
+    if (id === 'capitalInitial') {
+      const base = params.capitalInitial;
+      const basePct = baseLabel.toLowerCase() === 'base' ? 0 : parsePercentLabel(baseLabel);
+      const targetPct = targetLabel.toLowerCase() === 'base' ? 0 : parsePercentLabel(targetLabel);
+      if (targetPct === null) return `${formatClp(base)} -> ${targetLabel}`;
+      const baseValue = base * (1 + (basePct ?? 0));
+      const targetValue = base * (1 + targetPct);
+      return `${formatClp(baseValue)} -> ${formatClp(targetValue)}`;
+    }
+    if (id === 'spendingMonthly') {
+      const base = baseSpending;
+      const basePct = baseLabel.toLowerCase() === 'base' ? 0 : parsePercentLabel(baseLabel);
+      const targetPct = targetLabel.toLowerCase() === 'base' ? 0 : parsePercentLabel(targetLabel);
+      if (targetPct === null) return `${formatClp(base)}/mes -> ${targetLabel}`;
+      const baseValue = base * (1 + (basePct ?? 0));
+      const targetValue = base * (1 + targetPct);
+      return `${formatClp(baseValue)}/mes -> ${formatClp(targetValue)}/mes`;
+    }
+    if (id === 'horizon') {
+      const baseYears = Math.round(params.simulation.horizonMonths / 12);
+      const targetYears = parseYearsLabel(targetLabel);
+      return targetYears ? `${baseYears} -> ${targetYears} años` : `${baseYears} años -> ${targetLabel}`;
+    }
+    if (id === 'scenario') {
+      const baseScenario = params.activeScenario ?? 'Base';
+      return `${baseScenario} -> ${targetLabel}`;
+    }
+    if (id === 'riskCapital') {
+      return `${riskOn ? 'ON' : 'OFF'} -> ${targetLabel}`;
+    }
+    if (id === 'realEstate') {
+      return `${realEstateOn ? 'ON' : 'OFF'} -> ${targetLabel}`;
+    }
+    if (id === 'rvGlobalAnnual') {
+      const basePct = params.returns.rvGlobalAnnual * 100;
+      const targetPct = parsePercentLabel(targetLabel);
+      return targetPct !== null
+        ? `${basePct.toFixed(1)}% -> ${(targetPct * 100).toFixed(1)}%`
+        : `${basePct.toFixed(1)}% -> ${targetLabel}`;
+    }
+    return `${baseLabel} -> ${targetLabel}`;
+  };
+
   const actionableRows = useMemo(() => {
     if (!baseline) return [];
     const TARGET_IDS = ['capitalInitial', 'spendingMonthly', 'horizon', 'scenario', 'riskCapital', 'realEstate', 'rvGlobalAnnual'];
@@ -153,33 +219,37 @@ export function SensitivityPage({ params, stateLabel }: { params: ModelParameter
       .map((id) => {
         const points = results[id];
         if (!points || points.length === 0) return null;
-        const basePoint = [...points].sort((a, b) => Math.abs(a.probRuinDelta) - Math.abs(b.probRuinDelta))[0];
-        const bestGainPoint = [...points].sort((a, b) => (b.probRuinDelta - a.probRuinDelta))[0];
+        const basePoint = findBasePoint(points);
+        const bestGainPoint = [...points].sort((a, b) => a.probRuin - b.probRuin)[0];
         const targetPoint = [...points]
           .filter((point) => point.probRuin <= targetRuin)
           .sort((a, b) => Math.abs(a.probRuinDelta) - Math.abs(b.probRuinDelta))[0];
-        const successGainPp = Math.max(0, -(bestGainPoint.probRuinDelta) * 100);
+        const successGainPp = Math.max(0, (baseline.probRuin - bestGainPoint.probRuin) * 100);
         const effectBand = successGainPp >= 5 ? 'alta palanca' : successGainPp >= 2 ? 'palanca moderada' : 'palanca baja';
+        const selectedPoint = targetPoint ?? bestGainPoint;
+        const requiredChange = formatChange(id, basePoint.label, selectedPoint.label);
+        const reachesTarget = Boolean(targetPoint);
+        const note = reachesTarget
+          ? `aproxima +5 pp de éxito`
+          : successGainPp < 0.1
+            ? `sin impacto material en la grilla`
+            : `no llega a +5 pp (mejor caso ${formatPctPoint(successGainPp)})`;
         return {
           id,
           variable: labelById.get(id) ?? PARAM_LABELS[id] ?? id,
-          requiredChange: targetPoint
-            ? `${basePoint.label} -> ${targetPoint.label}`
-            : `${basePoint.label} -> ${bestGainPoint.label}`,
-          reachesTarget: Boolean(targetPoint),
+          requiredChange,
+          reachesTarget,
           estimatedImpactPp: successGainPp,
           impactLabel: effectBand,
           factibility: factibility[id] ?? 'intermedia',
-          note: targetPoint
-            ? `aproxima +5 pp de éxito`
-            : `no llega a +5 pp (mejor caso ${formatPctPoint(successGainPp)})`,
+          note,
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => b.estimatedImpactPp - a.estimatedImpactPp);
   }, [baseline, groupOrder, results]);
 
-  const topEffective = actionableRows.slice(0, 3);
+  const topEffective = actionableRows.filter((row) => row.estimatedImpactPp >= 0.5).slice(0, 3);
   const topFeasible = actionableRows
     .filter((row) => row.factibility === 'más factible')
     .sort((a, b) => b.estimatedImpactPp - a.estimatedImpactPp)
