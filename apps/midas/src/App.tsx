@@ -1175,6 +1175,7 @@ export default function App() {
         type: signed > 0 ? 'inflow' : 'outflow',
         amount: Math.abs(amountClp),
         currency: 'CLP',
+        amountType: 'real',
         sleeve: mapDestinationToSleeve(adj.destination),
       });
     });

@@ -103,11 +103,18 @@ function applyCashflowEvents(
   month: number,
   CPU_t: number,
   EURUSDt: number,
+  cumCL: number,
 ): void {
   for (const ev of cashflowEvents.filter(e => e.month === month)) {
     let amountCLP = ev.amount;
-    if (ev.currency === 'USD') amountCLP *= CPU_t;
-    if (ev.currency === 'EUR') amountCLP *= EURUSDt * CPU_t;
+    const amountType = ev.amountType ?? (ev.currency === 'CLP' ? 'real' : 'nominal');
+    if (ev.currency === 'CLP') {
+      amountCLP *= amountType === 'real' ? cumCL : 1;
+    } else if (ev.currency === 'USD') {
+      amountCLP *= CPU_t;
+    } else if (ev.currency === 'EUR') {
+      amountCLP *= EURUSDt * CPU_t;
+    }
 
     if (ev.type === 'inflow') {
       const idx = ev.sleeve ? SLEEVE_KEYS.indexOf(ev.sleeve) : 3;
@@ -322,7 +329,7 @@ function runSimulationRegimeInternal(params: ModelParameters): RegimeCoreAudit {
       const W = sl.reduce((a, b) => a + b, 0);
       const ff = (W - W * feeAnnual / 12) / W;
       sl = sl.map(x => x * ff);
-      applyCashflowEvents(sl, params.cashflowEvents, t + 1, CPU_t, EURUSDt);
+      applyCashflowEvents(sl, params.cashflowEvents, t + 1, CPU_t, EURUSDt, cumCL);
       const Wp = sl.reduce((a, b) => a + b, 0);
 
       const Wr = Wp / cumCL;

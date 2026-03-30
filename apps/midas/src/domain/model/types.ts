@@ -29,6 +29,10 @@ export interface CashflowEvent {
   type:        'inflow' | 'outflow';
   amount:      number; // en moneda original, siempre positivo
   currency:    'CLP' | 'USD' | 'EUR';
+  // real: monto expresado en moneda de hoy
+  // nominal: monto fijo nominal al mes del evento
+  // Compatibilidad: si viene undefined, el motor asume CLP=real y USD/EUR=nominal.
+  amountType?: 'real' | 'nominal';
   sleeve?:     keyof PortfolioWeights;
   // Lógica de entrada/salida:
   //   inflow sin sleeve  → entra a rfChile (caja por defecto)

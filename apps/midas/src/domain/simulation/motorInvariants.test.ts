@@ -807,6 +807,127 @@ test('active distribution parity can be enforced consistently across consumer pa
   approxEqual(nextBase.weights.rfChile, nextOptimizer.weights.rfChile);
 });
 
+test('cashflow CLP nominal stays fixed while CLP real scales over time', () => {
+  const base = makeBaseParams();
+  base.capitalInitial = 0;
+  base.feeAnnual = 0;
+  base.simulation.horizonMonths = 120;
+  base.simulation.nSim = 1;
+  base.simulation.seed = 7;
+  base.weights = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  base.returns = {
+    ...base.returns,
+    rvGlobalAnnual: 0,
+    rfGlobalAnnual: 0,
+    rvChileAnnual: 0,
+    rfChileUFAnnual: 0,
+    rvGlobalVolAnnual: 0,
+    rfGlobalVolAnnual: 0,
+    rvChileVolAnnual: 0,
+    rfChileVolAnnual: 0,
+    correlationMatrix: identityMatrix(),
+  };
+  base.inflation = {
+    ...base.inflation,
+    ipcChileAnnual: 0.10,
+    ipcChileVolAnnual: 0,
+    hipcEurAnnual: 0,
+    hipcEurVolAnnual: 0,
+  };
+  base.spendingPhases = [{ durationMonths: 120, amountReal: 0, currency: 'CLP' }];
+
+  const nominal = cloneParams(base);
+  nominal.cashflowEvents = [
+    {
+      id: 'cf-nominal',
+      description: 'aporte nominal',
+      month: 120,
+      type: 'inflow',
+      amount: 10_000_000,
+      currency: 'CLP',
+      amountType: 'nominal',
+    },
+  ];
+
+  const real = cloneParams(base);
+  real.cashflowEvents = [
+    {
+      id: 'cf-real',
+      description: 'aporte real',
+      month: 120,
+      type: 'inflow',
+      amount: 10_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+
+  const nominalResult = runSimulationCore(nominal);
+  const realResult = runSimulationCore(real);
+  assert.ok(
+    (realResult.p50TerminalAllPaths ?? 0) > (nominalResult.p50TerminalAllPaths ?? 0),
+    'CLP real cashflow should be larger in nominal future terms than CLP nominal',
+  );
+});
+
+test('legacy CLP cashflow without amountType defaults to real behavior', () => {
+  const base = makeBaseParams();
+  base.capitalInitial = 0;
+  base.feeAnnual = 0;
+  base.simulation.horizonMonths = 84;
+  base.simulation.nSim = 1;
+  base.weights = { rvGlobal: 0, rfGlobal: 0, rvChile: 0, rfChile: 1 };
+  base.returns = {
+    ...base.returns,
+    rvGlobalAnnual: 0,
+    rfGlobalAnnual: 0,
+    rvChileAnnual: 0,
+    rfChileUFAnnual: 0,
+    rvGlobalVolAnnual: 0,
+    rfGlobalVolAnnual: 0,
+    rvChileVolAnnual: 0,
+    rfChileVolAnnual: 0,
+    correlationMatrix: identityMatrix(),
+  };
+  base.inflation = {
+    ...base.inflation,
+    ipcChileAnnual: 0.08,
+    ipcChileVolAnnual: 0,
+    hipcEurAnnual: 0,
+    hipcEurVolAnnual: 0,
+  };
+  base.spendingPhases = [{ durationMonths: 84, amountReal: 0, currency: 'CLP' }];
+
+  const legacy = cloneParams(base);
+  legacy.cashflowEvents = [
+    {
+      id: 'cf-legacy',
+      description: 'aporte legacy',
+      month: 84,
+      type: 'inflow',
+      amount: 8_000_000,
+      currency: 'CLP',
+    },
+  ];
+
+  const explicitReal = cloneParams(base);
+  explicitReal.cashflowEvents = [
+    {
+      id: 'cf-real',
+      description: 'aporte real',
+      month: 84,
+      type: 'inflow',
+      amount: 8_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+
+  const legacyResult = runSimulationCore(legacy);
+  const realResult = runSimulationCore(explicitReal);
+  approxEqual(legacyResult.p50TerminalAllPaths ?? 0, realResult.p50TerminalAllPaths ?? 0, 1e-6);
+});
+
 test('optimizer decision share 0 keeps current mix outcome', () => {
   const params = makeBaseParams();
   params.simulation.horizonMonths = 12;

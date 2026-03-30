@@ -83,6 +83,7 @@ export function ParamSheet({
     type: 'inflow' as CashflowEvent['type'],
     amount: 0,
     currency: 'CLP' as CashflowEvent['currency'],
+    amountType: 'real' as NonNullable<CashflowEvent['amountType']>,
   });
   const weightSum = useMemo(
     () => params.weights.rvGlobal + params.weights.rfGlobal + params.weights.rvChile + params.weights.rfChile,
@@ -99,6 +100,7 @@ export function ParamSheet({
       type: eventForm.type,
       amount: Math.abs(eventForm.amount),
       currency: eventForm.currency,
+      amountType: eventForm.currency === 'CLP' ? eventForm.amountType : 'nominal',
     };
     onCashflowEventsChange([...cashflowEvents, nextEvent]);
     setEventForm((prev) => ({ ...prev, description: '', amount: 0 }));
@@ -341,7 +343,16 @@ export function ParamSheet({
                 <span style={{ color: T.textSecondary, fontSize: 12 }}>Moneda</span>
                 <select
                   value={eventForm.currency}
-                  onChange={(e) => setEventForm((prev) => ({ ...prev, currency: e.target.value as CashflowEvent['currency'] }))}
+                  onChange={(e) =>
+                    setEventForm((prev) => {
+                      const nextCurrency = e.target.value as CashflowEvent['currency'];
+                      return {
+                        ...prev,
+                        currency: nextCurrency,
+                        amountType: nextCurrency === 'CLP' ? prev.amountType : 'nominal',
+                      };
+                    })
+                  }
                   style={{
                     background: T.surface,
                     border: `1px solid ${T.border}`,
@@ -357,7 +368,38 @@ export function ParamSheet({
                   <option value="EUR">EUR</option>
                 </select>
               </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ color: T.textSecondary, fontSize: 12 }}>Tipo de monto</span>
+                <select
+                  value={eventForm.currency === 'CLP' ? eventForm.amountType : 'nominal'}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      amountType: e.target.value as NonNullable<CashflowEvent['amountType']>,
+                    }))
+                  }
+                  disabled={eventForm.currency !== 'CLP'}
+                  style={{
+                    background: T.surface,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    color: T.textPrimary,
+                    fontSize: 14,
+                    outline: 'none',
+                    opacity: eventForm.currency === 'CLP' ? 1 : 0.7,
+                  }}
+                >
+                  <option value="real">Real (pesos de hoy)</option>
+                  <option value="nominal">Nominal (monto fijo futuro)</option>
+                </select>
+              </label>
             </div>
+            {eventForm.currency !== 'CLP' && (
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Para USD/EUR, en esta versión los eventos se tratan como nominales.
+              </div>
+            )}
             <button
               type="button"
               onClick={addCashflowEvent}
@@ -402,6 +444,9 @@ export function ParamSheet({
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 11 }}>
                           {sign}${event.amount.toLocaleString('es-CL')} {event.currency}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 11 }}>
+                          tipo: {(event.amountType ?? (event.currency === 'CLP' ? 'real' : 'nominal')) === 'real' ? 'real' : 'nominal'}
                         </div>
                       </div>
                       <button
