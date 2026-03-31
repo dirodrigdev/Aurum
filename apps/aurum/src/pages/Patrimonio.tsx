@@ -1445,37 +1445,50 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
+    const snapshotNow = visualSnapshotDate;
+    const normalizedBlock = normalizeSuggestionBlock(item.block);
     const itemLabel = normalizeForMatch(item.label);
     const existing = dedupedSectionRecords.find(
       (r) =>
-        r.block === item.block &&
+        r.block === normalizedBlock &&
         r.currency === item.currency &&
         normalizeForMatch(r.label) === itemLabel,
     );
 
     let saved = upsertRecordForVisualMonth({
       id: existing?.id,
-      block: item.block,
+      block: normalizedBlock,
       source: item.source,
       label: item.label,
       amount: item.amount,
       currency: item.currency,
       note: item.note,
-      snapshotDate: item.snapshotDate,
+      snapshotDate: snapshotNow,
     }, 'saveSuggestion');
-    if (!saved && item.snapshotDate !== visualSnapshotDate) {
+    if (!saved && item.snapshotDate !== snapshotNow) {
       saved = upsertRecordForVisualMonth({
         id: existing?.id,
-        block: item.block,
+        block: normalizedBlock,
         source: item.source,
         label: item.label,
         amount: item.amount,
         currency: item.currency,
         note: item.note,
-        snapshotDate: visualSnapshotDate,
+        snapshotDate: snapshotNow,
       }, 'saveSuggestionRetry');
     }
     if (!saved) return;
+
+    const confirmed = latestRecordsForMonth(loadWealthRecords(), monthKey).some(
+      (record) =>
+        record.block === normalizedBlock &&
+        record.currency === item.currency &&
+        normalizeForMatch(record.label) === itemLabel,
+    );
+    if (!confirmed) {
+      setOcrError('Guardado, pero no pude reflejarlo en el mes seleccionado. Reintenta.');
+      return;
+    }
 
     if (typeof idx === 'number') {
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
@@ -1492,36 +1505,38 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const saveAllSuggestions = () => {
+    const snapshotNow = visualSnapshotDate;
     let failed = false;
     for (const item of suggestions) {
+      const normalizedBlock = normalizeSuggestionBlock(item.block);
       const itemLabel = normalizeForMatch(item.label);
       const existing = dedupedSectionRecords.find(
         (r) =>
-          r.block === item.block &&
+          r.block === normalizedBlock &&
           r.currency === item.currency &&
           normalizeForMatch(r.label) === itemLabel,
       );
 
       let saved = upsertRecordForVisualMonth({
         id: existing?.id,
-        block: item.block,
+        block: normalizedBlock,
         source: item.source,
         label: item.label,
         amount: item.amount,
         currency: item.currency,
         note: item.note,
-        snapshotDate: item.snapshotDate,
+        snapshotDate: snapshotNow,
       }, 'saveAllSuggestions');
-      if (!saved && item.snapshotDate !== visualSnapshotDate) {
+      if (!saved && item.snapshotDate !== snapshotNow) {
         saved = upsertRecordForVisualMonth({
           id: existing?.id,
-          block: item.block,
+          block: normalizedBlock,
           source: item.source,
           label: item.label,
           amount: item.amount,
           currency: item.currency,
           note: item.note,
-          snapshotDate: visualSnapshotDate,
+          snapshotDate: snapshotNow,
         }, 'saveAllSuggestionsRetry');
       }
       if (!saved) {
@@ -1530,6 +1545,22 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }
     }
     if (failed) return;
+
+    const refreshed = latestRecordsForMonth(loadWealthRecords(), monthKey);
+    const confirmedAll = suggestions.every((item) => {
+      const normalizedBlock = normalizeSuggestionBlock(item.block);
+      const itemLabel = normalizeForMatch(item.label);
+      return refreshed.some(
+        (record) =>
+          record.block === normalizedBlock &&
+          record.currency === item.currency &&
+          normalizeForMatch(record.label) === itemLabel,
+      );
+    });
+    if (!confirmedAll) {
+      setOcrError('Guardado parcial: algunos valores no quedaron en el mes seleccionado. Reintenta.');
+      return;
+    }
     markOperationalRowsSaved(
       suggestions.map((item) => ({ label: item.label, currency: item.currency })),
       'Guardado ✓',
