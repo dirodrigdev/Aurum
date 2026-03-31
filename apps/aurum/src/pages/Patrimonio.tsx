@@ -72,6 +72,7 @@ import {
   upsertInvestmentInstrument,
   upsertWealthRecord,
   validateFxRange,
+  requestImmediateWealthSync,
   createWealthBackupSnapshot,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
@@ -1489,6 +1490,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setOcrError('Guardado, pero no pude reflejarlo en el mes seleccionado. Reintenta.');
       return;
     }
+    requestImmediateWealthSync();
 
     if (typeof idx === 'number') {
       setSuggestions((prev) => prev.filter((_, i) => i !== idx));
@@ -1561,6 +1563,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       setOcrError('Guardado parcial: algunos valores no quedaron en el mes seleccionado. Reintenta.');
       return;
     }
+    requestImmediateWealthSync();
     markOperationalRowsSaved(
       suggestions.map((item) => ({ label: item.label, currency: item.currency })),
       'Guardado ✓',

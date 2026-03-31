@@ -1213,6 +1213,13 @@ const isLocalStateNewerOrEqual = (localUpdatedAt: string, remoteUpdatedAt: strin
   return localMs >= remoteMs;
 };
 
+const maxCreatedAt = (records: WealthRecord[]) => {
+  return records.reduce((max, r) => {
+    const t = isoToMs(r.createdAt);
+    return Number.isFinite(t) && t > max ? t : max;
+  }, 0);
+};
+
 type MergeWealthStateInput = {
   localRecords: WealthRecord[];
   remoteRecords: WealthRecord[];
@@ -1244,7 +1251,12 @@ type MergedWealthState = {
 };
 
 const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
-  const preferLocal = isLocalStateNewerOrEqual(input.localUpdatedAt, input.remoteUpdatedAt);
+  let preferLocal = isLocalStateNewerOrEqual(input.localUpdatedAt, input.remoteUpdatedAt);
+  const localMax = maxCreatedAt(input.localRecords);
+  const remoteMax = maxCreatedAt(input.remoteRecords);
+  if (Number.isFinite(localMax) && Number.isFinite(remoteMax) && localMax > remoteMax) {
+    preferLocal = true;
+  }
 
   let deletedRecordIds = mergeDeletedRecordIds(input.localDeletedRecordIds, input.remoteDeletedRecordIds);
   let deletedRecordAssetMonthKeys = mergeDeletedRecordAssetMonthKeys(
