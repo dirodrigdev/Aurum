@@ -1141,6 +1141,42 @@ test('instrument proposal flags new destination when sleeve is missing', () => {
   assert.equal(proposal.requiresNewInstruments, true, 'proposal should require a new destination instrument when missing sleeve');
 });
 
+test('instrument proposal picks best multi-factor destination within manager and currency', () => {
+  const instruments: InstrumentBaseItem[] = [
+    {
+      id: 'a-rvg',
+      name: 'A RV Global',
+      manager: 'SURA',
+      currency: 'CLP',
+      currentAmountCLP: 100,
+      exposure: { rv: 1, rf: 0, global: 1, local: 0 },
+    },
+    {
+      id: 'b-rfg',
+      name: 'B RF Global',
+      manager: 'SURA',
+      currency: 'CLP',
+      currentAmountCLP: 10,
+      exposure: { rv: 0, rf: 1, global: 1, local: 0 },
+    },
+    {
+      id: 'c-rfch',
+      name: 'C RF Chile',
+      manager: 'SURA',
+      currency: 'CLP',
+      currentAmountCLP: 10,
+      exposure: { rv: 0, rf: 1, global: 0, local: 1 },
+    },
+  ];
+
+  const target = { rvGlobal: 0.2, rfGlobal: 0.4, rvChile: 0, rfChile: 0.4 };
+  const proposal = buildRealisticInstrumentProposal(instruments, target, { minMoveClp: 1 });
+  assert.ok(proposal, 'proposal should exist');
+  if (!proposal) return;
+  assert.ok(proposal.moves.length > 0, 'proposal should include movements');
+  assert.equal(proposal.moves[0]?.toId, 'c-rfch', 'first movement should choose the destination that improves RV/RF and Global/Local jointly');
+});
+
 const failures: string[] = [];
 for (const entry of tests) {
   try {

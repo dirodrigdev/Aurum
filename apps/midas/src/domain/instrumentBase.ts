@@ -532,6 +532,13 @@ type InstrumentDelta = InstrumentWorking & {
   delta: number;
 };
 
+type ExposureVector = {
+  rv: number;
+  rf: number;
+  global: number;
+  local: number;
+};
+
 const buildInstrumentDeltas = (
   items: InstrumentWorking[],
   targetSleeveAmounts: Record<InstrumentSleeveKey, number>,
@@ -555,6 +562,43 @@ const buildInstrumentDeltas = (
 
   return { deltas, totalsBySleeve };
 };
+
+const aggregateVector = (items: Array<{ currentAmountCLP: number; exposure: InstrumentExposure }>): ExposureVector =>
+  items.reduce<ExposureVector>(
+    (acc, item) => {
+      acc.rv += item.currentAmountCLP * item.exposure.rv;
+      acc.rf += item.currentAmountCLP * item.exposure.rf;
+      acc.global += item.currentAmountCLP * item.exposure.global;
+      acc.local += item.currentAmountCLP * item.exposure.local;
+      return acc;
+    },
+    { rv: 0, rf: 0, global: 0, local: 0 },
+  );
+
+const targetVectorFromWeights = (weights: PortfolioWeights, totalClp: number): ExposureVector => ({
+  rv: (weights.rvGlobal + weights.rvChile) * totalClp,
+  rf: (weights.rfGlobal + weights.rfChile) * totalClp,
+  global: (weights.rvGlobal + weights.rfGlobal) * totalClp,
+  local: (weights.rvChile + weights.rfChile) * totalClp,
+});
+
+const vectorDistance = (current: ExposureVector, target: ExposureVector): number =>
+  Math.abs(current.rv - target.rv) +
+  Math.abs(current.rf - target.rf) +
+  Math.abs(current.global - target.global) +
+  Math.abs(current.local - target.local);
+
+const applyTransferToVector = (
+  vector: ExposureVector,
+  source: InstrumentExposure,
+  target: InstrumentExposure,
+  amount: number,
+): ExposureVector => ({
+  rv: vector.rv - amount * source.rv + amount * target.rv,
+  rf: vector.rf - amount * source.rf + amount * target.rf,
+  global: vector.global - amount * source.global + amount * target.global,
+  local: vector.local - amount * source.local + amount * target.local,
+});
 
 const applyMovesToInstruments = (
   items: InstrumentWorking[],
@@ -653,11 +697,6 @@ export const buildRealisticInstrumentProposal = (
     return { ...item, sleeveWeights, dominant: sleeve, dominance };
   });
 
-  const targetSleeveAmounts = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
-    acc[key] = normalizedTarget[key] * baseTotalClp;
-    return acc;
-  }, {} as Record<InstrumentSleeveKey, number>);
-
   const currencyGroups = new Map<string, InstrumentWorking[]>();
   working.forEach((item) => {
     const key = item.currency || 'CLP';
@@ -676,6 +715,12 @@ export const buildRealisticInstrumentProposal = (
   currencyGroups.forEach((currencyItems, currency) => {
     const currencyTotal = currencyItems.reduce((sum, item) => sum + item.currentAmountCLP, 0);
     if (currencyTotal <= 0) return;
+    const currencyTargetSleeves = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
+      acc[key] = normalizedTarget[key] * currencyTotal;
+      return acc;
+    }, {} as Record<InstrumentSleeveKey, number>);
+    const currencyTargetVector = targetVectorFromWeights(normalizedTarget, currencyTotal);
+    let currencyCurrentVector = aggregateVector(currencyItems);
 
     const managers = new Map<string, InstrumentWorking[]>();
     currencyItems.forEach((item) => {
@@ -690,9 +735,11 @@ export const buildRealisticInstrumentProposal = (
     managers.forEach((managerItems, manager) => {
       const managerTotal = managerItems.reduce((sum, item) => sum + item.currentAmountCLP, 0);
       const managerTargetSleeves = SLEEVE_KEYS.reduce<Record<InstrumentSleeveKey, number>>((acc, key) => {
-        acc[key] = (targetSleeveAmounts[key] * managerTotal) / currencyTotal;
+        acc[key] = (currencyTargetSleeves[key] * managerTotal) / currencyTotal;
         return acc;
       }, {} as Record<InstrumentSleeveKey, number>);
+      const managerTargetVector = targetVectorFromWeights(normalizedTarget, managerTotal);
+      let managerCurrentVector = aggregateVector(managerItems);
 
       const { deltas, totalsBySleeve } = buildInstrumentDeltas(managerItems, managerTargetSleeves);
       const sources = deltas
@@ -732,38 +779,72 @@ export const buildRealisticInstrumentProposal = (
       totalDemand += targets.reduce((sum, item) => sum + item.delta, 0);
       totalDemand += syntheticTargets.reduce((sum, item) => sum + item.delta, 0);
 
-      let sourceIndex = 0;
-      [...targets].forEach((target) => {
-        let remaining = target.delta;
-        while (remaining > minMoveClp && sourceIndex < sources.length) {
-          const source = sources[sourceIndex];
-          const available = Math.min(-source.delta, remaining);
-          const amount = Math.max(0, Math.min(available, source.currentAmountCLP));
-          if (amount <= minMoveClp) break;
-          moves.push({
-            fromId: source.id,
-            fromName: source.name,
-            fromManager: source.manager,
-            toId: target.id,
-            toName: target.name,
-            toManager: target.manager,
-            currency,
-            amountClp: amount,
-            fromSleeve: source.dominant,
-            toSleeve: target.dominant,
-            reason: 'Dentro de la misma administradora',
-          });
-          movedWithinManager += amount;
-          movedTotal += amount;
-          remaining -= amount;
-          source.delta += amount;
-          if (Math.abs(source.delta) <= minMoveClp) {
-            sourceIndex += 1;
+      while (true) {
+        let bestPair:
+          | {
+              source: InstrumentDelta;
+              target: InstrumentDelta;
+              amount: number;
+              improvement: number;
+            }
+          | null = null;
+
+        const currentDistance = vectorDistance(managerCurrentVector, managerTargetVector);
+        for (const source of sources) {
+          if (!(source.delta < -minMoveClp)) continue;
+          for (const target of targets) {
+            if (!(target.delta > minMoveClp)) continue;
+            if (source.id === target.id) continue;
+            if ((source.currency || 'CLP') !== (target.currency || 'CLP')) continue;
+            const amount = Math.min(-source.delta, target.delta, source.currentAmountCLP);
+            if (!(amount > minMoveClp)) continue;
+            const nextVector = applyTransferToVector(managerCurrentVector, source.exposure, target.exposure, amount);
+            const nextDistance = vectorDistance(nextVector, managerTargetVector);
+            const improvement = currentDistance - nextDistance;
+            if (!(improvement > 0)) continue;
+            if (!bestPair || improvement > bestPair.improvement) {
+              bestPair = { source, target, amount, improvement };
+            }
           }
         }
 
-        if (remaining > minMoveClp) {
-          residualTargets.push({ ...target, delta: remaining });
+        if (!bestPair) break;
+        moves.push({
+          fromId: bestPair.source.id,
+          fromName: bestPair.source.name,
+          fromManager: bestPair.source.manager,
+          toId: bestPair.target.id,
+          toName: bestPair.target.name,
+          toManager: bestPair.target.manager,
+          currency,
+          amountClp: bestPair.amount,
+          fromSleeve: bestPair.source.dominant,
+          toSleeve: bestPair.target.dominant,
+          reason: 'Dentro de la misma administradora',
+        });
+        movedWithinManager += bestPair.amount;
+        movedTotal += bestPair.amount;
+        bestPair.source.delta += bestPair.amount;
+        bestPair.source.currentAmountCLP = Math.max(0, bestPair.source.currentAmountCLP - bestPair.amount);
+        bestPair.target.delta -= bestPair.amount;
+        bestPair.target.currentAmountCLP += bestPair.amount;
+        managerCurrentVector = applyTransferToVector(
+          managerCurrentVector,
+          bestPair.source.exposure,
+          bestPair.target.exposure,
+          bestPair.amount,
+        );
+        currencyCurrentVector = applyTransferToVector(
+          currencyCurrentVector,
+          bestPair.source.exposure,
+          bestPair.target.exposure,
+          bestPair.amount,
+        );
+      }
+
+      targets.forEach((target) => {
+        if (target.delta > minMoveClp) {
+          residualTargets.push({ ...target });
         }
       });
 
@@ -779,38 +860,79 @@ export const buildRealisticInstrumentProposal = (
       if (!sources.length && targets.length) {
         notes.push(`En ${manager} no hay instrumentos origen suficientes dentro del mismo administrador.`);
       }
+      if (targets.length && sources.length && residualTargets.some((target) => target.manager === manager)) {
+        notes.push(`En ${manager}, los destinos existentes no mejoran suficientemente el ajuste multivariable.`);
+      }
     });
 
     if (residualSources.length && residualTargets.length) {
-      let sourceIndex = 0;
-      residualTargets.forEach((target) => {
-        let remaining = target.delta;
-        while (remaining > minMoveClp && sourceIndex < residualSources.length) {
-          const source = residualSources[sourceIndex];
-          const available = Math.min(-source.delta, remaining);
-          const amount = Math.max(0, Math.min(available, source.currentAmountCLP));
-          if (amount <= minMoveClp) break;
-          moves.push({
-            fromId: source.id,
-            fromName: source.name,
-            fromManager: source.manager,
-            toId: target.id,
-            toName: target.name,
-            toManager: target.manager,
-            currency,
-            amountClp: amount,
-            fromSleeve: source.dominant,
-            toSleeve: target.dominant,
-            reason: 'Entre administradoras (insuficiente dentro de la misma)',
-          });
-          movedTotal += amount;
-          remaining -= amount;
-          source.delta += amount;
-          if (Math.abs(source.delta) <= minMoveClp) {
-            sourceIndex += 1;
+      while (true) {
+        let bestPair:
+          | {
+              source: InstrumentDelta;
+              target: InstrumentDelta;
+              amount: number;
+              improvement: number;
+            }
+          | null = null;
+        const currentDistance = vectorDistance(currencyCurrentVector, currencyTargetVector);
+        for (const source of residualSources) {
+          if (!(source.delta < -minMoveClp)) continue;
+          for (const target of residualTargets) {
+            if (!(target.delta > minMoveClp)) continue;
+            if ((source.currency || 'CLP') !== (target.currency || 'CLP')) continue;
+            const amount = Math.min(-source.delta, target.delta, source.currentAmountCLP);
+            if (!(amount > minMoveClp)) continue;
+            const nextVector = applyTransferToVector(currencyCurrentVector, source.exposure, target.exposure, amount);
+            const nextDistance = vectorDistance(nextVector, currencyTargetVector);
+            const improvement = currentDistance - nextDistance;
+            if (!(improvement > 0)) continue;
+            if (!bestPair || improvement > bestPair.improvement) {
+              bestPair = { source, target, amount, improvement };
+            }
           }
         }
+        if (!bestPair) break;
+        moves.push({
+          fromId: bestPair.source.id,
+          fromName: bestPair.source.name,
+          fromManager: bestPair.source.manager,
+          toId: bestPair.target.id,
+          toName: bestPair.target.name,
+          toManager: bestPair.target.manager,
+          currency,
+          amountClp: bestPair.amount,
+          fromSleeve: bestPair.source.dominant,
+          toSleeve: bestPair.target.dominant,
+          reason: 'Entre administradoras (insuficiente dentro de la misma)',
+        });
+        movedTotal += bestPair.amount;
+        bestPair.source.delta += bestPair.amount;
+        bestPair.source.currentAmountCLP = Math.max(0, bestPair.source.currentAmountCLP - bestPair.amount);
+        bestPair.target.delta -= bestPair.amount;
+        bestPair.target.currentAmountCLP += bestPair.amount;
+        currencyCurrentVector = applyTransferToVector(
+          currencyCurrentVector,
+          bestPair.source.exposure,
+          bestPair.target.exposure,
+          bestPair.amount,
+        );
+      }
+    }
+
+    residualTargets.forEach((target) => {
+      if (target.delta <= minMoveClp) return;
+      gaps.push({
+        manager: target.manager,
+        currency,
+        sleeve: target.dominant,
+        amountClp: target.delta,
+        reason: `No hay origen/destino ejecutable sin cruce de moneda para ${sleeveLabel(target.dominant)} en ${target.manager}.`,
       });
+    });
+
+    if (residualTargets.some((target) => target.delta > minMoveClp)) {
+      notes.push(`En ${currency}, parte del target no es ejecutable hoy sin cruzar moneda o agregar instrumentos.`);
     }
   });
 
