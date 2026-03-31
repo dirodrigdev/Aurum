@@ -1366,7 +1366,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         block: normalizeSuggestionBlock(item.block),
         snapshotDate: snapshotAtStart,
       }));
-      parsed = applyInvestmentContextToParsed(parsed, contextAtStart);
+      const resolvedContext = contextAtStart ?? activeSourceContext;
+      parsed = applyInvestmentContextToParsed(parsed, resolvedContext);
 
       // En Bienes raíces el documento de dividendo debe traer ambos valores.
       if (sectionAtStart === 'real_estate' && sourceHintAtStart === 'dividendo') {
@@ -1386,18 +1387,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
       const isSuraDualContext =
         sectionAtStart === 'investment' &&
-        !!contextAtStart &&
-        contextAtStart.labels.length > 1 &&
-        contextAtStart.labels.every((item) => isSuraInvestmentLabel(item.label));
+        !!resolvedContext &&
+        resolvedContext.labels.length > 1 &&
+        resolvedContext.labels.every((item) => isSuraInvestmentLabel(item.label));
 
       if (
         sectionAtStart === 'investment' &&
-        contextAtStart?.labels.length &&
-        parsed.length < contextAtStart.labels.length &&
+        resolvedContext?.labels.length &&
+        parsed.length < resolvedContext.labels.length &&
         !isSuraDualContext
       ) {
         setOcrError(
-          `No pude detectar todos los valores de ${contextAtStart.title}. Intenta una captura más clara o usa "Ingresar monto".`,
+          `No pude detectar todos los valores de ${resolvedContext.title}. Intenta una captura más clara o usa "Ingresar monto".`,
         );
         return;
       }
@@ -1423,8 +1424,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           setPendingSuraOcrDecision({
             parsed,
             primaryLabel:
-              contextAtStart?.primaryLabel ||
-              contextAtStart?.labels[0]?.label ||
+              resolvedContext?.primaryLabel ||
+              resolvedContext?.labels[0]?.label ||
               INVESTMENT_SURA_FIN_LABEL,
           });
           return;
@@ -1452,7 +1453,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         normalizeForMatch(r.label) === itemLabel,
     );
 
-    const saved = upsertRecordForVisualMonth({
+    let saved = upsertRecordForVisualMonth({
       id: existing?.id,
       block: item.block,
       source: item.source,
@@ -1462,6 +1463,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       note: item.note,
       snapshotDate: item.snapshotDate,
     }, 'saveSuggestion');
+    if (!saved && item.snapshotDate !== visualSnapshotDate) {
+      saved = upsertRecordForVisualMonth({
+        id: existing?.id,
+        block: item.block,
+        source: item.source,
+        label: item.label,
+        amount: item.amount,
+        currency: item.currency,
+        note: item.note,
+        snapshotDate: visualSnapshotDate,
+      }, 'saveSuggestionRetry');
+    }
     if (!saved) return;
 
     if (typeof idx === 'number') {
@@ -1489,7 +1502,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           normalizeForMatch(r.label) === itemLabel,
       );
 
-      const saved = upsertRecordForVisualMonth({
+      let saved = upsertRecordForVisualMonth({
         id: existing?.id,
         block: item.block,
         source: item.source,
@@ -1499,6 +1512,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         note: item.note,
         snapshotDate: item.snapshotDate,
       }, 'saveAllSuggestions');
+      if (!saved && item.snapshotDate !== visualSnapshotDate) {
+        saved = upsertRecordForVisualMonth({
+          id: existing?.id,
+          block: item.block,
+          source: item.source,
+          label: item.label,
+          amount: item.amount,
+          currency: item.currency,
+          note: item.note,
+          snapshotDate: visualSnapshotDate,
+        }, 'saveAllSuggestionsRetry');
+      }
       if (!saved) {
         failed = true;
         break;
