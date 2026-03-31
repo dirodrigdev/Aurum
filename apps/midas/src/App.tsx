@@ -2636,10 +2636,11 @@ export default function App() {
     const composition = simParams.simulationComposition;
     if (!composition || composition.mode === 'legacy') return 'No disponible en modo legacy';
     const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
+    const usdLiquidity = Number(composition.nonOptimizable?.usdLiquidityCLP ?? 0);
     const realEstate = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
     const debt = Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0);
     const risk = Number(composition.nonOptimizable?.riskCapital?.totalCLP ?? 0);
-    return `banks=${Math.round(banks)} · realEstateEquity=${Math.round(realEstate)} · nonMortgageDebt=${Math.round(debt)} · riskCapital=${Math.round(risk)}`;
+    return `banks=${Math.round(banks)} · usdLiquidity=${Math.round(usdLiquidity)} · realEstateEquity=${Math.round(realEstate)} · nonMortgageDebt=${Math.round(debt)} · riskCapital=${Math.round(risk)}`;
   })();
 
   const content = activeTab === 'sim' ? (

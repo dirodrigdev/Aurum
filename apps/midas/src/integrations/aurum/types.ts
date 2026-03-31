@@ -93,6 +93,7 @@ export interface AurumOptimizableInvestmentsSnapshotV2 {
   riskCapital?: AurumRiskCapitalSnapshot;
   nonOptimizable?: {
     banksCLP?: number;
+    usdLiquidityCLP?: number;
     nonMortgageDebtCLP?: number;
     realEstate?: AurumRealEstateSnapshot;
   };

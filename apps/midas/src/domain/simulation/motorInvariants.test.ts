@@ -17,7 +17,7 @@ import { buildMortgageProjection } from './mortgageProjection';
 import { applyExpenseWaterfall, runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
 import { evaluateConcordance } from './concordance';
-import { snapshotToParams } from '../../integrations/aurum/adapters';
+import { snapshotToParams, snapshotToSimulationComposition } from '../../integrations/aurum/adapters';
 
 type TestFn = () => void;
 
@@ -463,6 +463,27 @@ test('aurum adapter maps cash/other conservatively to rfChile', () => {
   approxEqual(params.weights.rfGlobal, 0.15);
   approxEqual(params.weights.rvChile, 0.10);
   approxEqual(params.weights.rfChile, 0.55);
+});
+
+test('optimizable snapshot maps usd liquidity into nonOptimizable blocks', () => {
+  const composition = snapshotToSimulationComposition({
+    version: 2,
+    publishedAt: '2026-03-01',
+    snapshotMonth: '2026-02',
+    snapshotLabel: 'test',
+    currency: 'CLP',
+    totalNetWorthCLP: 1_000_000_000,
+    optimizableInvestmentsCLP: 600_000_000,
+    riskCapital: { totalCLP: 0 },
+    nonOptimizable: {
+      banksCLP: 100_000_000,
+      usdLiquidityCLP: 50_000_000,
+      nonMortgageDebtCLP: 0,
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any);
+  assert.ok(composition);
+  assert.equal(composition.nonOptimizable.usdLiquidityCLP, 50_000_000);
 });
 
 test('real estate appreciation base 0% with sensitivities 0.5% and 1.0% is monotonic', () => {

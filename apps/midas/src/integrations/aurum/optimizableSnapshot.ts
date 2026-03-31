@@ -131,6 +131,7 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
     : null;
 
   const banksCLP = asFiniteOrNull(nonOptimizableObj?.banksCLP);
+  const usdLiquidityCLP = asFiniteOrNull(nonOptimizableObj?.usdLiquidityCLP);
   const nonMortgageDebtCLP = asFiniteOrNull(nonOptimizableObj?.nonMortgageDebtCLP);
   const propertyValueCLP = asFiniteOrNull(realEstateRaw?.propertyValueCLP);
   const realEstateEquityCLP = asFiniteOrNull(realEstateRaw?.realEstateEquityCLP);
@@ -163,6 +164,7 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
       ? {
           nonOptimizable: {
             ...(banksCLP !== null ? { banksCLP } : {}),
+            ...(usdLiquidityCLP !== null ? { usdLiquidityCLP } : {}),
             ...(nonMortgageDebtCLP !== null ? { nonMortgageDebtCLP } : {}),
             ...(realEstateRaw
               ? {

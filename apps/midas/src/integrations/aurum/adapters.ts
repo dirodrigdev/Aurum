@@ -114,11 +114,12 @@ function computeCompositionDiagnostics(
   totalNetWorthCLP: number,
   optimizableInvestmentsCLP: number,
   banksCLP: number,
+  usdLiquidityCLP: number,
   realEstateEquityCLP: number,
   nonMortgageDebtCLP: number,
 ): SimulationCompositionDiagnostics {
   const debtAbs = Math.abs(nonMortgageDebtCLP);
-  const modeledNet = optimizableInvestmentsCLP + banksCLP + realEstateEquityCLP - debtAbs;
+  const modeledNet = optimizableInvestmentsCLP + banksCLP + usdLiquidityCLP + realEstateEquityCLP - debtAbs;
   const compositionGapCLP = Math.round(totalNetWorthCLP - modeledNet);
   const denom = Math.max(1, Math.abs(totalNetWorthCLP));
   const compositionGapPct = compositionGapCLP / denom;
@@ -146,6 +147,7 @@ export function snapshotToSimulationComposition(
   const isV2 = snapshot.version === 2;
   const snapshotV2 = isV2 ? snapshot : null;
   const banksCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.banksCLP) : 0;
+  const usdLiquidityCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.usdLiquidityCLP) : 0;
   const nonMortgageDebtCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.nonMortgageDebtCLP) : 0;
   const propertyValueCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.propertyValueCLP) : 0;
   const mortgageDebtOutstandingCLP = isV2 ? asFiniteOrZero(snapshotV2?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP) : 0;
@@ -179,6 +181,7 @@ export function snapshotToSimulationComposition(
     totalNetWorthCLP,
     optimizableInvestmentsCLP,
     banksCLP,
+    usdLiquidityCLP,
     realEstateEquityCLP,
     nonMortgageDebtCLP,
   );
@@ -199,6 +202,7 @@ export function snapshotToSimulationComposition(
     ...(mortgageProjectionStatus ? { mortgageProjectionStatus } : {}),
     nonOptimizable: {
       banksCLP,
+      usdLiquidityCLP,
       nonMortgageDebtCLP,
       ...(hasAnyV2Block
         ? {
