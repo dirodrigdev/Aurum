@@ -42,6 +42,7 @@ import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/t
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
+const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
 
@@ -377,6 +378,34 @@ function loadLastKnownOfficialWeightsSavedAt(): string | null {
   return window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY);
 }
 
+function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParameters | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PERSISTED_BASE_PARAMS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ModelParameters | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const normalized = applyActiveDistributionToParams(
+      JSON.parse(JSON.stringify(parsed)) as ModelParameters,
+      activeWeights,
+    );
+    const capital = Number(normalized.capitalInitial ?? NaN);
+    if (!Number.isFinite(capital) || capital <= 0) return null;
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function persistBaseVigente(params: ModelParameters): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PERSISTED_BASE_PARAMS_STORAGE_KEY, JSON.stringify(params));
+  } catch {
+    // noop
+  }
+}
+
 function resolveInitialDistributionState(): {
   officialWeights: PortfolioWeights | null;
   lastKnownOfficialWeights: PortfolioWeights | null;
@@ -411,7 +440,13 @@ function resolveInitialDistributionState(): {
 
 export default function App() {
   const initialDistributionRef = useRef(resolveInitialDistributionState());
+  const initialPersistedBaseRef = useRef<ModelParameters | null>(
+    loadPersistedBaseVigente(initialDistributionRef.current.activeWeights),
+  );
   const initialModelParams = useMemo<ModelParameters>(() => {
+    if (initialPersistedBaseRef.current) {
+      return cloneParams(initialPersistedBaseRef.current);
+    }
     const base = cloneParams(DEFAULT_PARAMETERS);
     return {
       ...base,
@@ -647,15 +682,21 @@ export default function App() {
   }, [weightsSourceMode]);
 
   useEffect(() => {
-    setBaseParams((prev) => {
-      const next = applyActiveDistributionToParams(prev, activeWeights);
-      return areWeightsEquivalent(prev.weights, next.weights) ? prev : next;
-    });
+    if (weightsSourceModeRef.current !== 'simulation') {
+      setBaseParams((prev) => {
+        const next = applyActiveDistributionToParams(prev, activeWeights);
+        return areWeightsEquivalent(prev.weights, next.weights) ? prev : next;
+      });
+    }
     setSimParams((prev) => {
       const next = applyActiveDistributionToParams(prev, activeWeights);
       return areWeightsEquivalent(prev.weights, next.weights) ? prev : next;
     });
   }, [activeWeights]);
+
+  useEffect(() => {
+    persistBaseVigente(baseParams);
+  }, [baseParams]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1730,6 +1771,9 @@ export default function App() {
       if (!sameSimCapital || !sameSimComposition) {
         setSimParams(nextSimParamsFinal);
       }
+      setSimulationActive(false);
+      setSimulationPreset('base');
+      setSimOverrides(null);
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
         startRecalculation('apply-aurum', () => nextSimParamsFinal);
@@ -1807,7 +1851,6 @@ export default function App() {
     });
     applyingSnapshotRef.current = true;
     setPendingSnapshotApplying(true);
-    markSimulationInteraction();
     window.setTimeout(() => {
       try {
         lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
@@ -1833,7 +1876,6 @@ export default function App() {
     applySnapshotNow,
     formatRuntimeError,
     heroPhase,
-    markSimulationInteraction,
     pendingSnapshot,
     pendingSnapshotLabel,
     pendingSnapshotSignature,
