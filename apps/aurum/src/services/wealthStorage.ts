@@ -1280,7 +1280,22 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
 
   const deletedSet = new Set(deletedRecordIds);
   const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
-  const records = mergeRecords(input.localRecords, input.remoteRecords).filter(
+  const localAssetMonthKeys = new Set(
+    input.localRecords.map((record) => makeAssetMonthKey(record)).filter((key) => !!key),
+  );
+  const remoteAssetMonthKeys = new Set(
+    input.remoteRecords.map((record) => makeAssetMonthKey(record)).filter((key) => !!key),
+  );
+  const localRecordsForMerge = preferLocal
+    ? input.localRecords
+    : input.localRecords.filter((record) => !remoteAssetMonthKeys.has(makeAssetMonthKey(record)));
+  const remoteRecordsForMerge = preferLocal
+    ? input.remoteRecords.filter((record) => !localAssetMonthKeys.has(makeAssetMonthKey(record)))
+    : input.remoteRecords;
+
+  // Cuando preferimos local (ej. guardado OCR reciente), no dejamos que un snapshot
+  // remoto viejo para el mismo asset/mes rehidrate un valor anterior.
+  const records = mergeRecords(localRecordsForMerge, remoteRecordsForMerge).filter(
     (record) => !deletedSet.has(record.id) && !deletedAssetMonthSet.has(makeAssetMonthKey(record)),
   );
   const bankTokens = normalizeBankTokensFromRaw({
