@@ -1086,7 +1086,6 @@ export const makeAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'cur
   return `${record.block}::${normalizeText(record.label)}::${record.currency}`;
 };
 
-const logicalRecordKey = (record: WealthRecord) => `${makeAssetKey(record)}::${record.snapshotDate}`;
 const monthKeyFromSnapshotDate = (snapshotDate: string) => normalizeMonthKey(String(snapshotDate || '').slice(0, 7));
 const makeAssetMonthKey = (
   record: Pick<WealthRecord, 'block' | 'source' | 'label' | 'currency' | 'snapshotDate'>,
@@ -1094,6 +1093,7 @@ const makeAssetMonthKey = (
   const monthKey = monthKeyFromSnapshotDate(record.snapshotDate);
   return monthKey ? `${makeAssetKey(record)}::${monthKey}` : '';
 };
+const logicalRecordKey = (record: WealthRecord) => makeAssetMonthKey(record) || `${makeAssetKey(record)}::${record.snapshotDate}`;
 
 const recordTimestamp = (record: WealthRecord) => {
   const t = new Date(record.createdAt).getTime();

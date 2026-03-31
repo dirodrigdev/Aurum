@@ -1447,13 +1447,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const saveSuggestion = (item: EditableSuggestion, idx?: number) => {
     const snapshotNow = visualSnapshotDate;
     const normalizedBlock = normalizeSuggestionBlock(item.block);
-    const itemLabel = normalizeForMatch(item.label);
     const existing = dedupedSectionRecords.find(
       (r) =>
         r.block === normalizedBlock &&
         r.currency === item.currency &&
-        normalizeForMatch(r.label) === itemLabel,
+        sameCanonicalLabel(r.label, item.label),
     );
+    const itemLabel = normalizeForMatch(item.label);
 
     let saved = upsertRecordForVisualMonth({
       id: existing?.id,
@@ -1463,7 +1463,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       amount: item.amount,
       currency: item.currency,
       note: item.note,
-      snapshotDate: snapshotNow,
+      snapshotDate: existing?.snapshotDate || snapshotNow,
     }, 'saveSuggestion');
     if (!saved && item.snapshotDate !== snapshotNow) {
       saved = upsertRecordForVisualMonth({
@@ -1474,7 +1474,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         amount: item.amount,
         currency: item.currency,
         note: item.note,
-        snapshotDate: snapshotNow,
+        snapshotDate: existing?.snapshotDate || snapshotNow,
       }, 'saveSuggestionRetry');
     }
     if (!saved) return;
@@ -1508,13 +1508,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     let failed = false;
     for (const item of suggestions) {
       const normalizedBlock = normalizeSuggestionBlock(item.block);
-      const itemLabel = normalizeForMatch(item.label);
       const existing = dedupedSectionRecords.find(
         (r) =>
           r.block === normalizedBlock &&
           r.currency === item.currency &&
-          normalizeForMatch(r.label) === itemLabel,
+          sameCanonicalLabel(r.label, item.label),
       );
+      const itemLabel = normalizeForMatch(item.label);
 
       let saved = upsertRecordForVisualMonth({
         id: existing?.id,
@@ -1524,7 +1524,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         amount: item.amount,
         currency: item.currency,
         note: item.note,
-        snapshotDate: snapshotNow,
+        snapshotDate: existing?.snapshotDate || snapshotNow,
       }, 'saveAllSuggestions');
       if (!saved && item.snapshotDate !== snapshotNow) {
         saved = upsertRecordForVisualMonth({
@@ -1535,7 +1535,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           amount: item.amount,
           currency: item.currency,
           note: item.note,
-          snapshotDate: snapshotNow,
+          snapshotDate: existing?.snapshotDate || snapshotNow,
         }, 'saveAllSuggestionsRetry');
       }
       if (!saved) {
