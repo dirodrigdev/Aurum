@@ -19,6 +19,10 @@ type OptimizerWorkerMessage =
   | { type: 'error'; runId: number; message: string; baselineProbRuin?: number; baselineP50?: number; quickResult?: OptimizerResult };
 
 const OPTIMIZER_TIMEOUT_MS = 45_000;
+const OPT_MAX_VISIBLE_MOVES = 3;
+const OPT_MIN_MOVE_CLP_ABS = 3_000_000;
+const OPT_MIN_MOVE_SHARE = 0.01;
+const OPT_MIN_IMPROVEMENT_PP = 1.0;
 
 export function OptPage({
   baseParams,
@@ -207,6 +211,30 @@ export function OptPage({
   const theoreticalRisk = summarizeRisk(optimizedWeights);
   const theoreticalGeo = summarizeGlobalLocalFromWeights(optimizedWeights);
   const realistic = result?.realistic ?? null;
+  const realisticSuccess = realistic ? 1 - realistic.probRuin : null;
+  const minMoveClp = Math.max(OPT_MIN_MOVE_CLP_ABS, totalOptimizable * OPT_MIN_MOVE_SHARE);
+  const realisticMoves = realistic?.moves ?? [];
+  const largeMoves = realisticMoves.filter((move) => Math.abs(move.amountClp) >= minMoveClp);
+  const sortedMoves = [...largeMoves].sort((a, b) => Math.abs(b.amountClp) - Math.abs(a.amountClp));
+  const primaryMoves = sortedMoves.slice(0, OPT_MAX_VISIBLE_MOVES);
+  const extraMovesCount = Math.max(0, sortedMoves.length - primaryMoves.length);
+  const filteredSmallCount = Math.max(0, realisticMoves.length - largeMoves.length);
+  const improvementPp =
+    currentSuccess !== null && realisticSuccess !== null
+      ? (realisticSuccess - currentSuccess) * 100
+      : null;
+  const belowImprovementGate =
+    improvementPp !== null && Number.isFinite(improvementPp) && improvementPp < OPT_MIN_IMPROVEMENT_PP;
+  const hasExecutableMoves = primaryMoves.length > 0;
+  const shouldRecommend = Boolean(realistic && hasExecutableMoves && !belowImprovementGate);
+  const partialReason =
+    realistic && (realistic.requiresNewInstruments || realistic.coverageRatio < 0.95 || realistic.quality !== 'high');
+  const decisionReasons = [
+    !realistic ? 'Sin propuesta ejecutable' : null,
+    !hasExecutableMoves ? 'Movimientos debajo del ticket minimo' : null,
+    belowImprovementGate ? `Mejora ejecutable < ${OPT_MIN_IMPROVEMENT_PP.toFixed(1)}pp` : null,
+    partialReason ? 'Propuesta parcial (cobertura limitada)' : null,
+  ].filter(Boolean) as string[];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -303,15 +331,24 @@ export function OptPage({
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginTop: 8 }}>
               <Stat label="Exito actual" value={currentSuccess === null ? '—' : formatPercent(currentSuccess)} />
               <Stat label="Exito teorico" value={formatPercent(1 - result.probRuin)} />
-              <Stat label="Exito ejecutable" value={realistic ? formatPercent(1 - realistic.probRuin) : '—'} />
+              <Stat label="Exito ejecutable" value={realisticSuccess === null ? '—' : formatPercent(realisticSuccess)} />
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700 }}>
+              {shouldRecommend ? 'Se recomienda cambio' : 'No se recomienda cambio ahora'}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 11, color: T.textMuted }}>
+              {decisionReasons.length ? decisionReasons.join(' · ') : 'Condiciones operativas cumplidas'}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 11, color: T.textMuted }}>
+              Ticket minimo: {formatMoneyCompact(minMoveClp)} · Umbral mejora: {OPT_MIN_IMPROVEMENT_PP.toFixed(1)}pp
             </div>
           </div>
 
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11 }}>Propuesta de movimientos</div>
-            {realistic?.moves?.length ? (
+            {shouldRecommend && primaryMoves.length ? (
               <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                {realistic.moves.map((move) => (
+                {primaryMoves.map((move) => (
                   <div
                     key={`${move.fromId}-${move.toId}-${move.amountClp}`}
                     style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 6 }}
@@ -322,9 +359,17 @@ export function OptPage({
                     </div>
                   </div>
                 ))}
+                {(extraMovesCount > 0 || filteredSmallCount > 0) && (
+                  <div style={{ fontSize: 11, color: T.textMuted }}>
+                    {extraMovesCount > 0 ? `Movimientos adicionales no mostrados: ${extraMovesCount}.` : ''}
+                    {filteredSmallCount > 0 ? ` Movimientos debajo del minimo: ${filteredSmallCount}.` : ''}
+                  </div>
+                )}
               </div>
             ) : (
-              <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>No hay movimientos ejecutables.</div>
+              <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>
+                {realistic ? 'No se recomienda cambio ahora.' : 'No hay movimientos ejecutables.'}
+              </div>
             )}
           </div>
         </div>
