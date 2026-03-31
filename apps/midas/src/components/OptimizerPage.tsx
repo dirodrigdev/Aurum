@@ -48,6 +48,8 @@ type OptimizerWorkerMessage =
     };
 
 const OPTIMIZER_TIMEOUT_MS = 45_000;
+const BASELINE_MISMATCH_MAX_ABS_THRESHOLD = 0.05;
+const BASELINE_MISMATCH_TOTAL_ABS_THRESHOLD = 0.12;
 
 export function OptimizerPage({
   baseParams,
@@ -200,6 +202,12 @@ export function OptimizerPage({
 
   const handleOptimize = () => {
     if (isOptimizing) return;
+    if (baselineMismatch?.isMaterial) {
+      setErrorMessage(
+        'La base instrumental real difiere materialmente del mix del modelo. Revisa/sincroniza la base antes de optimizar.',
+      );
+      return;
+    }
     const runSourceMode: OptimizerSourceMode = sourceMode;
     const paramsForRun = activeParams;
     const runDecisionShare = decisionShare;
@@ -375,6 +383,33 @@ export function OptimizerPage({
     () => inferImplicitMixFromInstrumentBase(instrumentBaseSnapshot),
     [instrumentBaseSnapshot],
   );
+  const baselineMismatch = useMemo(() => {
+    if (!implicitMix) return null;
+    const modelRisk = summarizeRisk(currentWeights);
+    const modelGeo = summarizeGlobalLocalFromWeights(currentWeights);
+    const deltas = {
+      rv: implicitMix.rv - modelRisk.rv,
+      rf: implicitMix.rf - modelRisk.rf,
+      global: implicitMix.global - modelGeo.global,
+      local: implicitMix.local - modelGeo.local,
+    };
+    const maxAbs = Math.max(
+      Math.abs(deltas.rv),
+      Math.abs(deltas.rf),
+      Math.abs(deltas.global),
+      Math.abs(deltas.local),
+    );
+    const totalAbs = Math.abs(deltas.rv) + Math.abs(deltas.rf) + Math.abs(deltas.global) + Math.abs(deltas.local);
+    return {
+      model: { rv: modelRisk.rv, rf: modelRisk.rf, global: modelGeo.global, local: modelGeo.local },
+      inferred: { rv: implicitMix.rv, rf: implicitMix.rf, global: implicitMix.global, local: implicitMix.local },
+      deltas,
+      maxAbs,
+      totalAbs,
+      isMaterial: maxAbs > BASELINE_MISMATCH_MAX_ABS_THRESHOLD || totalAbs > BASELINE_MISMATCH_TOTAL_ABS_THRESHOLD,
+    };
+  }, [currentWeights, implicitMix]);
+  const optimizationBlockedByBaselineMismatch = baselineMismatch?.isMaterial ?? false;
   const coverageQuality = classifyCoverageQuality(instrumentBaseSummary?.coverageVsOptimizableBaseRatio ?? null);
   const theoreticalMix = normalizeWeights(optimizedWeights);
   const theoreticalRisk = summarizeRisk(theoreticalMix);
@@ -501,6 +536,41 @@ export function OptimizerPage({
             Sin referencia oficial de inversiones optimizables: temporalmente se usa 100% del patrimonio como universo de decision.
           </div>
         )}
+        {baselineMismatch && (
+          <div
+            style={{
+              marginTop: 10,
+              background: optimizationBlockedByBaselineMismatch ? 'rgba(255, 176, 32, 0.12)' : T.surfaceEl,
+              border: `1px solid ${optimizationBlockedByBaselineMismatch ? T.warning : T.border}`,
+              borderRadius: 10,
+              padding: 10,
+              display: 'grid',
+              gap: 6,
+            }}
+          >
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+              {optimizationBlockedByBaselineMismatch
+                ? 'Optimizacion bloqueada por mismatch de baseline'
+                : 'Baseline consistente para optimizar'}
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Modelo (RV/RF/Global/Local): {formatPercent(baselineMismatch.model.rv)} / {formatPercent(baselineMismatch.model.rf)} /{' '}
+              {formatPercent(baselineMismatch.model.global)} / {formatPercent(baselineMismatch.model.local)}
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Instrumental (RV/RF/Global/Local): {formatPercent(baselineMismatch.inferred.rv)} / {formatPercent(baselineMismatch.inferred.rf)} /{' '}
+              {formatPercent(baselineMismatch.inferred.global)} / {formatPercent(baselineMismatch.inferred.local)}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Divergencia max: {(baselineMismatch.maxAbs * 100).toFixed(1)}pp · Distancia total: {(baselineMismatch.totalAbs * 100).toFixed(1)}pp
+            </div>
+            {optimizationBlockedByBaselineMismatch && (
+              <div style={{ color: T.warning, fontSize: 11 }}>
+                La base instrumental real difiere materialmente del mix del modelo. Revisa/sincroniza la base antes de optimizar.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {isOptimizing ? (
@@ -537,19 +607,23 @@ export function OptimizerPage({
       ) : (
         <button
           onClick={handleOptimize}
+          disabled={optimizationBlockedByBaselineMismatch}
           style={{
             width: '100%',
-            background: T.primary,
-            color: '#fff',
+            background: optimizationBlockedByBaselineMismatch ? T.surfaceEl : T.primary,
+            color: optimizationBlockedByBaselineMismatch ? T.textSecondary : '#fff',
             border: 'none',
             borderRadius: 12,
             padding: '14px 0',
             fontWeight: 800,
             fontSize: 14,
-            cursor: 'pointer',
+            cursor: optimizationBlockedByBaselineMismatch ? 'not-allowed' : 'pointer',
+            opacity: optimizationBlockedByBaselineMismatch ? 0.75 : 1,
           }}
         >
-          ▶ Optimizar {usingSimulation ? 'simulacion activa' : 'cartera base'}
+          {optimizationBlockedByBaselineMismatch
+            ? 'Optimizacion bloqueada hasta sincronizar baseline'
+            : `▶ Optimizar ${usingSimulation ? 'simulacion activa' : 'cartera base'}`}
         </button>
       )}
 
