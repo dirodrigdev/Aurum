@@ -324,18 +324,29 @@ export interface OptimizerInstrumentMove {
   reason: string;
 }
 
+export interface OptimizerInstrumentGap {
+  manager: string;
+  currency: string;
+  sleeve: keyof PortfolioWeights;
+  amountClp: number;
+  reason: string;
+}
+
 export interface OptimizerRealisticResult {
   weights: PortfolioWeights;
   probRuin: number;
   terminalP50: number;
   terminalP10: number;
   moves: OptimizerInstrumentMove[];
+  gaps: OptimizerInstrumentGap[];
+  requiresNewInstruments: boolean;
   quality: 'high' | 'partial' | 'low';
   coverageRatio: number;
   withinManagerShare: number;
   currentMix: PortfolioWeights;
   targetMix: PortfolioWeights;
   proposedMix: PortfolioWeights;
+  executableMix: PortfolioWeights;
   baseTotalClp: number;
   notes: string[];
 }

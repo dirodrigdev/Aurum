@@ -72,14 +72,25 @@ export type InstrumentMove = {
   reason: string;
 };
 
+export type InstrumentGap = {
+  manager: string;
+  currency: string;
+  sleeve: InstrumentSleeveKey;
+  amountClp: number;
+  reason: string;
+};
+
 export type InstrumentProposal = {
   moves: InstrumentMove[];
+  gaps: InstrumentGap[];
+  requiresNewInstruments: boolean;
   quality: InstrumentProposalQuality;
   coverageRatio: number;
   withinManagerShare: number;
   currentMix: PortfolioWeights;
   targetMix: PortfolioWeights;
   proposedMix: PortfolioWeights;
+  executableMix: PortfolioWeights;
   baseTotalClp: number;
   notes: string[];
 };
@@ -656,6 +667,7 @@ export const buildRealisticInstrumentProposal = (
   });
 
   const moves: InstrumentMove[] = [];
+  const gaps: InstrumentGap[] = [];
   let movedWithinManager = 0;
   let movedTotal = 0;
   let totalDemand = 0;
@@ -695,10 +707,16 @@ export const buildRealisticInstrumentProposal = (
         if (totalsBySleeve[sleeve] > 0) return;
         const required = managerTargetSleeves[sleeve];
         if (!(required > minMoveClp)) return;
-        const id = toId(`${manager}-${currency}-${sleeve}-nuevo`) || `synthetic-${manager}-${sleeve}`;
+        gaps.push({
+          manager,
+          currency,
+          sleeve,
+          amountClp: required,
+          reason: `Falta un destino ${sleeveLabel(sleeve)} en ${manager}.`,
+        });
         syntheticTargets.push({
-          id,
-          name: `Nuevo instrumento ${sleeveLabel(sleeve)}`,
+          id: toId(`${manager}-${currency}-${sleeve}-gap`) || `gap-${manager}-${sleeve}`,
+          name: `Gap ${sleeveLabel(sleeve)}`,
           manager,
           currency,
           currentAmountCLP: 0,
@@ -715,7 +733,7 @@ export const buildRealisticInstrumentProposal = (
       totalDemand += syntheticTargets.reduce((sum, item) => sum + item.delta, 0);
 
       let sourceIndex = 0;
-      [...targets, ...syntheticTargets].forEach((target) => {
+      [...targets].forEach((target) => {
         let remaining = target.delta;
         while (remaining > minMoveClp && sourceIndex < sources.length) {
           const source = sources[sourceIndex];
@@ -799,11 +817,13 @@ export const buildRealisticInstrumentProposal = (
   const appliedMoves = moves.filter((move) => move.amountClp > minMoveClp);
   const proposedInstruments = applyMovesToInstruments(working, appliedMoves);
   const proposedMix = computeMixFromInstruments(proposedInstruments);
+  const executableMix = proposedMix;
   const currentMix = computeMixFromInstruments(working);
   const coverageRatio = totalDemand > 0 ? movedTotal / totalDemand : 1;
   const withinManagerShare = movedTotal > 0 ? movedWithinManager / movedTotal : 1;
+  const requiresNewInstruments = gaps.length > 0;
   const quality: InstrumentProposalQuality =
-    coverageRatio >= 0.85 && withinManagerShare >= 0.6
+    !requiresNewInstruments && coverageRatio >= 0.85 && withinManagerShare >= 0.6
       ? 'high'
       : coverageRatio >= 0.6
         ? 'partial'
@@ -819,12 +839,15 @@ export const buildRealisticInstrumentProposal = (
 
   return {
     moves: appliedMoves,
+    gaps,
+    requiresNewInstruments,
     quality,
     coverageRatio: Number.isFinite(coverageRatio) ? coverageRatio : 0,
     withinManagerShare: Number.isFinite(withinManagerShare) ? withinManagerShare : 0,
     currentMix,
     targetMix: normalizedTarget,
     proposedMix,
+    executableMix,
     baseTotalClp,
     notes,
   };

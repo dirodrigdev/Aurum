@@ -379,9 +379,9 @@ export function OptimizerPage({
   const theoreticalMix = normalizeWeights(optimizedWeights);
   const theoreticalRisk = summarizeRisk(theoreticalMix);
   const theoreticalGeo = summarizeGlobalLocalFromWeights(theoreticalMix);
-  const realisticRisk = realistic ? summarizeRisk(realistic.proposedMix) : null;
-  const realisticGeo = realistic ? summarizeGlobalLocalFromWeights(realistic.proposedMix) : null;
-  const realisticQuality = realistic ? formatProposalQuality(realistic.quality) : null;
+  const realisticRisk = realistic ? summarizeRisk(realistic.executableMix) : null;
+  const realisticGeo = realistic ? summarizeGlobalLocalFromWeights(realistic.executableMix) : null;
+  const realisticQuality = realistic ? formatProposalQuality(realistic.quality, realistic.requiresNewInstruments) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -712,7 +712,7 @@ export function OptimizerPage({
               />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 12 }}>
                 <Stat label="Calidad de ajuste" value={realisticQuality ?? '—'} />
-                <Stat label="Cobertura propuesta" value={formatPercent(realistic.coverageRatio)} />
+                <Stat label="Cobertura ejecutable" value={formatPercent(realistic.coverageRatio)} />
                 <Stat label="Movimientos dentro de administradora" value={formatPercent(realistic.withinManagerShare)} />
                 <Stat label="Base instrumental" value={formatMoneyCompact(realistic.baseTotalClp)} />
               </div>
@@ -774,11 +774,6 @@ export function OptimizerPage({
                       <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
                         Acción: reducir {formatSleeveLabel(move.fromSleeve)} y aumentar {formatSleeveLabel(move.toSleeve)} · {move.reason}
                       </div>
-                      {move.toName.startsWith('Nuevo instrumento') && (
-                        <div style={{ gridColumn: '1 / -1', color: T.warning, fontSize: 10 }}>
-                          No existe destino adecuado en la base actual para esta combinación; se requiere nuevo instrumento.
-                        </div>
-                      )}
                       <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
                         Traspaso equivalente: vender/reducir origen y comprar/aumentar destino por el mismo monto.
                       </div>
@@ -787,6 +782,41 @@ export function OptimizerPage({
                 </div>
               ) : (
                 <div style={{ color: T.textMuted, fontSize: 12 }}>No hay movimientos significativos para proponer.</div>
+              )}
+              {realistic.gaps.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                    Brechas no ejecutables con la base actual
+                  </div>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {realistic.gaps.map((gap, index) => (
+                      <div
+                        key={`${gap.manager}-${gap.currency}-${gap.sleeve}-${index}`}
+                        style={{
+                          border: `1px dashed ${T.warning}`,
+                          borderRadius: 10,
+                          padding: 10,
+                          display: 'grid',
+                          gridTemplateColumns: '1fr auto',
+                          gap: 10,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div>
+                          <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                            Falta destino {formatSleeveLabel(gap.sleeve)} en {gap.manager}
+                          </div>
+                          <div style={{ color: T.textMuted, fontSize: 11 }}>
+                            {gap.currency} · {gap.reason}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', ...css.mono, fontSize: 12, color: T.warning }}>
+                          {formatMoneyCompact(gap.amountClp)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
               {realistic.notes.length > 0 && (
                 <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
@@ -1341,10 +1371,14 @@ function formatSleeveLabel(sleeve: keyof PortfolioWeights) {
   return 'RF Chile';
 }
 
-function formatProposalQuality(quality: 'high' | 'partial' | 'low') {
-  if (quality === 'high') return 'Ajuste alto';
-  if (quality === 'partial') return 'Ajuste parcial';
-  return 'Ajuste bajo';
+function formatProposalQuality(quality: 'high' | 'partial' | 'low', requiresNewInstruments: boolean) {
+  if (requiresNewInstruments) {
+    if (quality === 'low') return 'Requiere instrumentos nuevos';
+    return 'Ejecutable parcial (faltan instrumentos)';
+  }
+  if (quality === 'high') return 'Ejecutable alto';
+  if (quality === 'partial') return 'Ejecutable parcial';
+  return 'Ejecutable bajo';
 }
 
 function formatSignedPp(value: number) {
@@ -1442,12 +1476,17 @@ function sanitizeResult(raw: OptimizerResult, params: ModelParameters): Optimize
         moves: Array.isArray(raw.realistic.moves)
           ? raw.realistic.moves.filter((move) => Number.isFinite(move.amountClp))
           : [],
+        gaps: Array.isArray(raw.realistic.gaps)
+          ? raw.realistic.gaps.filter((gap) => Number.isFinite(gap.amountClp))
+          : [],
+        requiresNewInstruments: Boolean(raw.realistic.requiresNewInstruments),
         quality: raw.realistic.quality ?? 'partial',
         coverageRatio: Number.isFinite(raw.realistic.coverageRatio) ? raw.realistic.coverageRatio : 0,
         withinManagerShare: Number.isFinite(raw.realistic.withinManagerShare) ? raw.realistic.withinManagerShare : 0,
         currentMix: safePortfolio(raw.realistic.currentMix),
         targetMix: safePortfolio(raw.realistic.targetMix),
         proposedMix: safePortfolio(raw.realistic.proposedMix),
+        executableMix: safePortfolio(raw.realistic.executableMix),
         baseTotalClp: Number.isFinite(raw.realistic.baseTotalClp) ? raw.realistic.baseTotalClp : 0,
         notes: Array.isArray(raw.realistic.notes) ? raw.realistic.notes : [],
       }

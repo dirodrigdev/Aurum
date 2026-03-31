@@ -163,19 +163,22 @@ self.onmessage = (event: MessageEvent<StartMessage>) => {
     );
     let realistic: OptimizerRealisticResult | undefined;
     if (realisticProposal) {
-      const simulated = evaluateOptimizerPoint(params, realisticProposal.proposedMix, FULL_SIM_COUNT, { decisionShare });
+      const simulated = evaluateOptimizerPoint(params, realisticProposal.executableMix, FULL_SIM_COUNT, { decisionShare });
       realistic = {
-        weights: realisticProposal.proposedMix,
+        weights: realisticProposal.executableMix,
         probRuin: simulated.probRuin,
         terminalP50: simulated.terminalP50,
         terminalP10: simulated.terminalP10,
         moves: realisticProposal.moves,
+        gaps: realisticProposal.gaps,
+        requiresNewInstruments: realisticProposal.requiresNewInstruments,
         quality: realisticProposal.quality,
         coverageRatio: realisticProposal.coverageRatio,
         withinManagerShare: realisticProposal.withinManagerShare,
         currentMix: realisticProposal.currentMix,
         targetMix: realisticProposal.targetMix,
         proposedMix: realisticProposal.proposedMix,
+        executableMix: realisticProposal.executableMix,
         baseTotalClp: realisticProposal.baseTotalClp,
         notes: realisticProposal.notes,
       };

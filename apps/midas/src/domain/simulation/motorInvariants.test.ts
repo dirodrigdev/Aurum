@@ -1137,9 +1137,8 @@ test('instrument proposal flags new destination when sleeve is missing', () => {
   const proposal = buildRealisticInstrumentProposal(instruments, target, { minMoveClp: 1 });
   assert.ok(proposal, 'proposal should exist');
   if (!proposal) return;
-  assert.ok(proposal.moves.length > 0, 'proposal should include actionable moves');
-  const needsNewDestination = proposal.moves.some((move) => move.toName.startsWith('Nuevo instrumento'));
-  assert.equal(needsNewDestination, true, 'proposal should require a new destination instrument when missing sleeve');
+  assert.ok(proposal.gaps.length > 0, 'proposal should surface gaps when sleeve is missing');
+  assert.equal(proposal.requiresNewInstruments, true, 'proposal should require a new destination instrument when missing sleeve');
 });
 
 const failures: string[] = [];
