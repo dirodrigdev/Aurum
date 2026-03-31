@@ -45,6 +45,8 @@ const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
+const AURUM_SYNC_ABS_TOLERANCE_CLP = 1_000_000;
+const AURUM_SYNC_REL_TOLERANCE = 0.005;
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
@@ -82,6 +84,8 @@ type ApplyAurumHarnessState = {
   failureStep: string | null;
   details: string | null;
 };
+
+type AurumSyncState = 'unknown' | 'synced' | 'outdated';
 type ManualAdjustmentImpact = {
   currentTotalDelta: number;
   currentBanksDelta: number;
@@ -406,6 +410,16 @@ function persistBaseVigente(params: ModelParameters): void {
   }
 }
 
+function isMaterialAurumDiff(baseOptimizable: number, latestOptimizable: number) {
+  if (!Number.isFinite(baseOptimizable) || !Number.isFinite(latestOptimizable)) {
+    return { isMaterial: false, diff: latestOptimizable - baseOptimizable, threshold: NaN };
+  }
+  const diff = latestOptimizable - baseOptimizable;
+  const abs = Math.abs(diff);
+  const threshold = Math.max(AURUM_SYNC_ABS_TOLERANCE_CLP, Math.abs(baseOptimizable) * AURUM_SYNC_REL_TOLERANCE);
+  return { isMaterial: abs >= threshold, diff, threshold };
+}
+
 function resolveInitialDistributionState(): {
   officialWeights: PortfolioWeights | null;
   lastKnownOfficialWeights: PortfolioWeights | null;
@@ -486,6 +500,10 @@ export default function App() {
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [snapshotApplied, setSnapshotApplied] = useState(false);
+  const [aurumSyncState, setAurumSyncState] = useState<AurumSyncState>('unknown');
+  const [aurumSyncDiff, setAurumSyncDiff] = useState<number | null>(null);
+  const [aurumSyncBaseOpt, setAurumSyncBaseOpt] = useState<number | null>(null);
+  const [aurumSyncLatestOpt, setAurumSyncLatestOpt] = useState<number | null>(null);
   const [recalcWorkerStatus, setRecalcWorkerStatus] = useState<RecalcWorkerStatus>('idle');
   const [activeRecalcRequestId, setActiveRecalcRequestId] = useState<number | null>(null);
   const [appliedRecalcRequestId, setAppliedRecalcRequestId] = useState<number | null>(null);
@@ -1774,6 +1792,16 @@ export default function App() {
       setSimulationActive(false);
       setSimulationPreset('base');
       setSimOverrides(null);
+      const nextBaseOptimizable = Number(nextBaseComposition?.optimizableInvestmentsCLP ?? NaN);
+      const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
+      setAurumSyncBaseOpt(Number.isFinite(nextBaseOptimizable) ? nextBaseOptimizable : null);
+      setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
+      setAurumSyncDiff(
+        Number.isFinite(nextBaseOptimizable) && Number.isFinite(latestOptimizable)
+          ? latestOptimizable - nextBaseOptimizable
+          : null,
+      );
+      setAurumSyncState('synced');
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
         startRecalculation('apply-aurum', () => nextSimParamsFinal);
@@ -2532,6 +2560,10 @@ export default function App() {
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
+        setAurumSyncState('unknown');
+        setAurumSyncDiff(null);
+        setAurumSyncBaseOpt(null);
+        setAurumSyncLatestOpt(null);
         setBaseUpdatePending(false);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -2549,8 +2581,16 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
 
+      const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
+      const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
+      const diffMeta = isMaterialAurumDiff(baseOptimizable, latestOptimizable);
+      setAurumSyncBaseOpt(Number.isFinite(baseOptimizable) ? baseOptimizable : null);
+      setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
+      setAurumSyncDiff(Number.isFinite(diffMeta.diff) ? diffMeta.diff : null);
+      setAurumSyncState(diffMeta.isMaterial ? 'outdated' : 'synced');
+
       const snapshotSignature = getSnapshotSignature(snapshot);
-      if (snapshotSignature === lastAppliedSnapshotSignatureRef.current) {
+      if (snapshotSignature === lastAppliedSnapshotSignatureRef.current && !diffMeta.isMaterial) {
         setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -2558,14 +2598,22 @@ export default function App() {
         lastSnapshotSignatureRef.current = snapshotSignature;
         return;
       }
-      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
+      if (snapshotSignature === lastSnapshotSignatureRef.current && !diffMeta.isMaterial) return;
       lastSnapshotSignatureRef.current = snapshotSignature;
 
-      setSnapshotApplied(false);
-      setPendingSnapshot(snapshot);
-      setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-      setPendingSnapshotSignature(snapshotSignature);
-      setBaseUpdatePending(false);
+      if (diffMeta.isMaterial) {
+        setSnapshotApplied(false);
+        setPendingSnapshot(snapshot);
+        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+        setPendingSnapshotSignature(snapshotSignature);
+        setBaseUpdatePending(false);
+      } else {
+        setSnapshotApplied(true);
+        setPendingSnapshot(null);
+        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+        setPendingSnapshotSignature(null);
+        setBaseUpdatePending(false);
+      }
     };
 
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
@@ -2712,6 +2760,10 @@ export default function App() {
       pendingSnapshotLabel={pendingSnapshotLabel}
       pendingSnapshotApplying={pendingSnapshotApplying}
       snapshotApplied={snapshotApplied}
+      aurumSyncState={aurumSyncState}
+      aurumSyncDiff={aurumSyncDiff}
+      aurumSyncBaseOpt={aurumSyncBaseOpt}
+      aurumSyncLatestOpt={aurumSyncLatestOpt}
       manualCapitalAdjustments={manualCapitalAdjustments}
       riskCapitalEnabled={riskCapitalEnabled}
       riskCapitalEffective={riskCapitalEffective}

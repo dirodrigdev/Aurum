@@ -59,6 +59,14 @@ const formatCapital = (value: number) => {
 };
 const formatNumber = (value: number) =>
   value.toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const formatMoneyCompact = (value: number) => {
+  if (!Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+};
 
 export function SimulationPage({
   resultCentral,
@@ -81,6 +89,10 @@ export function SimulationPage({
   pendingSnapshotLabel,
   pendingSnapshotApplying,
   snapshotApplied,
+  aurumSyncState,
+  aurumSyncDiff,
+  aurumSyncBaseOpt,
+  aurumSyncLatestOpt,
   manualCapitalAdjustments,
   riskCapitalEnabled,
   riskCapitalEffective,
@@ -136,6 +148,10 @@ export function SimulationPage({
   pendingSnapshotLabel: string | null;
   pendingSnapshotApplying: boolean;
   snapshotApplied: boolean;
+  aurumSyncState: 'unknown' | 'synced' | 'outdated';
+  aurumSyncDiff: number | null;
+  aurumSyncBaseOpt: number | null;
+  aurumSyncLatestOpt: number | null;
   manualCapitalAdjustments: ManualCapitalAdjustment[];
   riskCapitalEnabled: boolean;
   riskCapitalEffective: boolean;
@@ -208,6 +224,19 @@ export function SimulationPage({
     { value: 'risk', label: 'Capital de riesgo' },
     { value: 'other', label: 'Otros' },
   ];
+  const hasSyncBanner = aurumSyncState === 'synced' && !hasPendingSnapshot && Boolean(pendingSnapshotLabel);
+  const diffAbsLabel =
+    aurumSyncDiff !== null && Number.isFinite(aurumSyncDiff)
+      ? formatMoneyCompact(Math.abs(aurumSyncDiff))
+      : '—';
+  const baseOptLabel =
+    aurumSyncBaseOpt !== null && Number.isFinite(aurumSyncBaseOpt)
+      ? formatMoneyCompact(aurumSyncBaseOpt)
+      : '—';
+  const latestOptLabel =
+    aurumSyncLatestOpt !== null && Number.isFinite(aurumSyncLatestOpt)
+      ? formatMoneyCompact(aurumSyncLatestOpt)
+      : '—';
   const openCapitalLedger = useCallback(() => {
     setDraftManualAdjustments(manualCapitalAdjustments);
     setCapitalLedgerOpen(true);
@@ -737,6 +766,28 @@ export function SimulationPage({
           >
             {pendingSnapshotApplying ? 'Aplicando Aurum...' : 'Aplicar Aurum'}
           </button>
+        </div>
+      )}
+      {hasSyncBanner && (
+        <div
+          style={{
+            background: 'rgba(46, 204, 113, 0.12)',
+            border: '1px solid rgba(46, 204, 113, 0.45)',
+            borderRadius: 12,
+            padding: '8px 10px',
+            color: T.textPrimary,
+            fontSize: 11,
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+          }}
+        >
+          <span>
+            Aurum ya sincronizado · Base {baseOptLabel} · Aurum {latestOptLabel} · Δ {diffAbsLabel}
+          </span>
+          <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
         </div>
       )}
       <div
