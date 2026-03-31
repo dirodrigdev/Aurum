@@ -783,6 +783,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   const [openSourceMenu, setOpenSourceMenu] = useState(false);
   const [activeSourceContext, setActiveSourceContext] = useState<InvestmentSourceContext | null>(null);
   const [pendingSuraOcrDecision, setPendingSuraOcrDecision] = useState<PendingSuraOcrDecision | null>(null);
+  const ocrRunIdRef = useRef(0);
   const [openCreateInvestmentModal, setOpenCreateInvestmentModal] = useState(false);
   const [newInvestmentDraft, setNewInvestmentDraft] = useState<{
     label: string;
@@ -1277,11 +1278,14 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     return trimmed;
   };
 
-  const applyInvestmentContextToParsed = (parsed: EditableSuggestion[]): EditableSuggestion[] => {
-    if (section !== 'investment' || !activeSourceContext) return parsed;
+  const applyInvestmentContextToParsed = (
+    parsed: EditableSuggestion[],
+    context: InvestmentSourceContext | null = activeSourceContext,
+  ): EditableSuggestion[] => {
+    if (section !== 'investment' || !context) return parsed;
 
-    if (activeSourceContext.labels.length === 1) {
-      const target = activeSourceContext.labels[0];
+    if (context.labels.length === 1) {
+      const target = context.labels[0];
       const exact = parsed.find((item) => normalizeForMatch(item.label) === normalizeForMatch(target.label));
       const fallback = exact || parsed[0] || null;
       if (!fallback) return [];
@@ -1289,21 +1293,21 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         {
           ...fallback,
           block: 'investment',
-          source: activeSourceContext.source,
+          source: context.source,
           label: target.label,
           currency: target.currency,
         },
       ];
     }
 
-    return activeSourceContext.labels
+    return context.labels
       .map((target) => {
         const exact = parsed.find((item) => normalizeForMatch(item.label) === normalizeForMatch(target.label));
         if (!exact) return null;
         return {
           ...exact,
           block: 'investment' as WealthBlock,
-          source: activeSourceContext.source,
+          source: context.source,
           label: target.label,
           currency: target.currency,
         };
@@ -1329,32 +1333,47 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     });
   };
 
+  const cancelPendingOcr = () => {
+    ocrRunIdRef.current += 1;
+    setOcrProgress(null);
+  };
+
   const onUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    const runId = (ocrRunIdRef.current += 1);
+    const contextAtStart = activeSourceContext;
+    const sectionAtStart = section;
+    const sourceHintAtStart = sourceHint;
+    const snapshotAtStart = visualSnapshotDate;
 
     setOpenLoadPanel(true);
     setOcrError('');
     setOcrProgress({ pct: 0, status: 'iniciando' });
 
     try {
-      const text = await runOcrFromFile(file, sourceHint, (pct, status) => setOcrProgress({ pct, status }));
+      const text = await runOcrFromFile(file, sourceHintAtStart, (pct, status) => {
+        if (ocrRunIdRef.current !== runId) return;
+        setOcrProgress({ pct, status });
+      });
+      if (ocrRunIdRef.current !== runId) return;
       setOcrText(text);
 
-      const rawParsed = parseWealthFromOcrText(text, sourceHint);
+      const rawParsed = parseWealthFromOcrText(text, sourceHintAtStart);
       let parsed = rawParsed.map((item) => ({
         ...item,
         block: normalizeSuggestionBlock(item.block),
-        snapshotDate: visualSnapshotDate,
+        snapshotDate: snapshotAtStart,
       }));
-      parsed = applyInvestmentContextToParsed(parsed);
+      parsed = applyInvestmentContextToParsed(parsed, contextAtStart);
 
       // En Bienes raíces el documento de dividendo debe traer ambos valores.
-      if (section === 'real_estate' && sourceHint === 'dividendo') {
+      if (sectionAtStart === 'real_estate' && sourceHintAtStart === 'dividendo') {
         const strictDividendParsed = parseWealthFromOcrText(text, 'dividendo').map((item) => ({
           ...item,
           block: normalizeSuggestionBlock(item.block),
-          snapshotDate: visualSnapshotDate,
+          snapshotDate: snapshotAtStart,
         }));
         const hasDividend = strictDividendParsed.some((i) => i.label === MORTGAGE_DIVIDEND_LABEL);
         const hasDebt = strictDividendParsed.some((i) => i.label === MORTGAGE_DEBT_BALANCE_LABEL);
@@ -1366,19 +1385,19 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }
 
       const isSuraDualContext =
-        section === 'investment' &&
-        !!activeSourceContext &&
-        activeSourceContext.labels.length > 1 &&
-        activeSourceContext.labels.every((item) => isSuraInvestmentLabel(item.label));
+        sectionAtStart === 'investment' &&
+        !!contextAtStart &&
+        contextAtStart.labels.length > 1 &&
+        contextAtStart.labels.every((item) => isSuraInvestmentLabel(item.label));
 
       if (
-        section === 'investment' &&
-        activeSourceContext?.labels.length &&
-        parsed.length < activeSourceContext.labels.length &&
+        sectionAtStart === 'investment' &&
+        contextAtStart?.labels.length &&
+        parsed.length < contextAtStart.labels.length &&
         !isSuraDualContext
       ) {
         setOcrError(
-          `No pude detectar todos los valores de ${activeSourceContext.title}. Intenta una captura más clara o usa "Ingresar monto".`,
+          `No pude detectar todos los valores de ${contextAtStart.title}. Intenta una captura más clara o usa "Ingresar monto".`,
         );
         return;
       }
@@ -1389,9 +1408,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
       }
 
       const isLikelyWrongSection =
-        (section === 'investment' && rawParsed.some((r) => r.block === 'debt' || r.block === 'real_estate')) ||
-        (section === 'real_estate' && rawParsed.some((r) => r.block === 'investment' || r.block === 'bank')) ||
-        (section === 'bank' && rawParsed.some((r) => r.block !== 'bank'));
+        (sectionAtStart === 'investment' && rawParsed.some((r) => r.block === 'debt' || r.block === 'real_estate')) ||
+        (sectionAtStart === 'real_estate' && rawParsed.some((r) => r.block === 'investment' || r.block === 'bank')) ||
+        (sectionAtStart === 'bank' && rawParsed.some((r) => r.block !== 'bank'));
 
       if (isLikelyWrongSection) {
         setOcrError('La imagen parece pertenecer a otro bloque. Revisa antes de guardar.');
@@ -1404,8 +1423,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           setPendingSuraOcrDecision({
             parsed,
             primaryLabel:
-              activeSourceContext?.primaryLabel ||
-              activeSourceContext?.labels[0]?.label ||
+              contextAtStart?.primaryLabel ||
+              contextAtStart?.labels[0]?.label ||
               INVESTMENT_SURA_FIN_LABEL,
           });
           return;
@@ -1414,9 +1433,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
       appendSuggestions(parsed);
     } catch (err: any) {
+      if (ocrRunIdRef.current !== runId) return;
       setOcrError(err?.message || 'Error leyendo imagen');
     } finally {
-      setOcrProgress(null);
+      if (ocrRunIdRef.current === runId) {
+        setOcrProgress(null);
+      }
       event.target.value = '';
     }
   };
@@ -1924,6 +1946,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   };
 
   const triggerInvestmentPhotoLoad = (context: InvestmentSourceContext) => {
+    cancelPendingOcr();
     setActiveSourceContext(context);
     setSourceHint(context.sourceHint);
     setQuickFill(null);
@@ -1994,6 +2017,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   );
 
   const closeLoadPanel = () => {
+    cancelPendingOcr();
     setOpenLoadPanel(false);
     setQuickFill(null);
     setMultiQuickFill(null);
@@ -3365,6 +3389,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                 </div>
                 <Button
                   onClick={() => {
+                    cancelPendingOcr();
                     setSourceHint(activeSourceContext.sourceHint);
                     setQuickFill(null);
                     setMultiQuickFill(null);
