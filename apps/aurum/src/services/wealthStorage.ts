@@ -1264,19 +1264,9 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
     input.remoteDeletedRecordAssetMonthKeys,
   );
 
-  // Si el lado preferido ya contiene un registro activo para ese asset/mes,
-  // limpiamos tombstones contrapuestos para permitir reingresos tras borrado.
-  const preferredRecords = preferLocal ? input.localRecords : input.remoteRecords;
-  const preferredIdSet = new Set(preferredRecords.map((record) => record.id));
-  const preferredAssetMonthSet = new Set(
-    preferredRecords
-      .map((record) => makeAssetMonthKey(record))
-      .filter((key) => !!key),
-  );
-  deletedRecordIds = normalizeDeletedRecordIds(deletedRecordIds.filter((id) => !preferredIdSet.has(id)));
-  deletedRecordAssetMonthKeys = normalizeDeletedRecordAssetMonthKeys(
-    deletedRecordAssetMonthKeys.filter((key) => !preferredAssetMonthSet.has(key)),
-  );
+  // Los tombstones solo se limpian explícitamente al re-crear/editar el activo
+  // (ver `upsertWealthRecord`). No deben eliminarse automáticamente durante merge
+  // porque eso puede resucitar valores viejos desde remoto.
 
   const deletedSet = new Set(deletedRecordIds);
   const deletedAssetMonthSet = new Set(deletedRecordAssetMonthKeys);
@@ -1286,9 +1276,7 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
   const remoteAssetMonthKeys = new Set(
     input.remoteRecords.map((record) => makeAssetMonthKey(record)).filter((key) => !!key),
   );
-  const localRecordsForMerge = preferLocal
-    ? input.localRecords
-    : input.localRecords.filter((record) => !remoteAssetMonthKeys.has(makeAssetMonthKey(record)));
+  const localRecordsForMerge = input.localRecords;
   const remoteRecordsForMerge = preferLocal
     ? input.remoteRecords.filter((record) => !localAssetMonthKeys.has(makeAssetMonthKey(record)))
     : input.remoteRecords;
