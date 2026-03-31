@@ -484,6 +484,7 @@ export default function App() {
   const [simulationActive, setSimulationActive] = useState(false);
   const [simulationPreset, setSimulationPreset] = useState<SimulationPreset>('base');
   const [baseOptimizerSnapshot, setBaseOptimizerSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
+  const [liveBaseSnapshot, setLiveBaseSnapshot] = useState<OptimizerBaselineSnapshot | null>(null);
   const [bootstrapControlResult, setBootstrapControlResult] = useState<SimulationResults | null>(null);
   const [bootstrapControlStatus, setBootstrapControlStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [simWorking, setSimWorking] = useState(false);
@@ -2472,8 +2473,8 @@ export default function App() {
     [simulationActive, simResult],
   );
   const optBaseSnapshot = useMemo(
-    () => (!simulationActive && !simOverrides?.active ? toOptimizerBaselineSnapshot(simResult) : baseOptimizerSnapshot),
-    [baseOptimizerSnapshot, simOverrides?.active, simResult, simulationActive],
+    () => liveBaseSnapshot ?? baseOptimizerSnapshot ?? null,
+    [baseOptimizerSnapshot, liveBaseSnapshot],
   );
   const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
     amountClp: null,
@@ -2656,6 +2657,12 @@ export default function App() {
       setBaseUpdatePending(false);
     }
   }, [simOverrides?.active, simulationActive]);
+
+  useEffect(() => {
+    if (simulationActive || simOverrides?.active) return;
+    if (!simResult) return;
+    setLiveBaseSnapshot(toOptimizerBaselineSnapshot(simResult));
+  }, [simOverrides?.active, simResult, simulationActive]);
 
   useEffect(() => {
     if (activeTab !== 'sim') return;
