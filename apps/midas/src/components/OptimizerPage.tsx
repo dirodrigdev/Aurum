@@ -1427,19 +1427,40 @@ function sanitizeResult(raw: OptimizerResult, params: ModelParameters): Optimize
   const safeMoves = Array.isArray(raw.moves)
     ? raw.moves.filter((move) => Number.isFinite(move.delta) && (move.direction === 'up' || move.direction === 'down'))
     : [];
+  const safePortfolio = (weights?: PortfolioWeights) => ({
+    rvGlobal: safeWeight(weights?.rvGlobal ?? NaN, params.weights.rvGlobal),
+    rfGlobal: safeWeight(weights?.rfGlobal ?? NaN, params.weights.rfGlobal),
+    rvChile: safeWeight(weights?.rvChile ?? NaN, params.weights.rvChile),
+    rfChile: safeWeight(weights?.rfChile ?? NaN, params.weights.rfChile),
+  });
+  const safeRealistic = raw.realistic && typeof raw.realistic === 'object'
+    ? {
+        weights: safePortfolio(raw.realistic.weights),
+        probRuin: Number.isFinite(raw.realistic.probRuin) ? raw.realistic.probRuin : 0,
+        terminalP50: Number.isFinite(raw.realistic.terminalP50) ? raw.realistic.terminalP50 : 0,
+        terminalP10: Number.isFinite(raw.realistic.terminalP10) ? raw.realistic.terminalP10 : 0,
+        moves: Array.isArray(raw.realistic.moves)
+          ? raw.realistic.moves.filter((move) => Number.isFinite(move.amountClp))
+          : [],
+        quality: raw.realistic.quality ?? 'partial',
+        coverageRatio: Number.isFinite(raw.realistic.coverageRatio) ? raw.realistic.coverageRatio : 0,
+        withinManagerShare: Number.isFinite(raw.realistic.withinManagerShare) ? raw.realistic.withinManagerShare : 0,
+        currentMix: safePortfolio(raw.realistic.currentMix),
+        targetMix: safePortfolio(raw.realistic.targetMix),
+        proposedMix: safePortfolio(raw.realistic.proposedMix),
+        baseTotalClp: Number.isFinite(raw.realistic.baseTotalClp) ? raw.realistic.baseTotalClp : 0,
+        notes: Array.isArray(raw.realistic.notes) ? raw.realistic.notes : [],
+      }
+    : undefined;
 
   return {
-    weights: {
-      rvGlobal: safeWeight(raw.weights?.rvGlobal, params.weights.rvGlobal),
-      rfGlobal: safeWeight(raw.weights?.rfGlobal, params.weights.rfGlobal),
-      rvChile: safeWeight(raw.weights?.rvChile, params.weights.rvChile),
-      rfChile: safeWeight(raw.weights?.rfChile, params.weights.rfChile),
-    },
+    weights: safePortfolio(raw.weights),
     probRuin: Number.isFinite(raw.probRuin) ? raw.probRuin : 0,
     terminalP50: Number.isFinite(raw.terminalP50) ? raw.terminalP50 : 0,
     terminalP10: Number.isFinite(raw.terminalP10) ? raw.terminalP10 : 0,
     vsCurrentRuin: Number.isFinite(raw.vsCurrentRuin) ? raw.vsCurrentRuin : 0,
     vsCurrentP50: Number.isFinite(raw.vsCurrentP50) ? raw.vsCurrentP50 : 0,
     moves: safeMoves,
+    ...(safeRealistic ? { realistic: safeRealistic } : {}),
   };
 }
