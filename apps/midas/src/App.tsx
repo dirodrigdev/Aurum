@@ -19,6 +19,7 @@ import { SimulationPage, SimulationOverrides, SimulationPreset } from './compone
 import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
 import { OptimizerPage } from './components/OptimizerPage';
+import { OptPage } from './components/OptPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
@@ -2708,6 +2709,16 @@ export default function App() {
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
+    />
+  ) : activeTab === 'optv0' ? (
+    <OptPage
+      baseParams={baseParams}
+      simulationParams={optimizerSimulationParams}
+      simulationActive={simulationActive}
+      simulationLabel={stateLabel}
+      preloadedBaseStats={baseOptimizerSnapshot}
+      preloadedSimulationStats={simulationOptimizerSnapshot}
+      optimizableBaseReference={optimizableBaseAdjusted}
     />
   ) : (
     <OptimizerPage
