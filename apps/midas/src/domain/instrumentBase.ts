@@ -62,9 +62,11 @@ export type InstrumentMove = {
   fromId: string;
   fromName: string;
   fromManager: string;
+  fromCurrency: string;
   toId: string;
   toName: string;
   toManager: string;
+  toCurrency: string;
   currency: string;
   amountClp: number;
   fromSleeve: InstrumentSleeveKey;
@@ -216,13 +218,30 @@ const resolveName = (source: Record<string, unknown>) =>
 const resolveManager = (source: Record<string, unknown>) =>
   String(source.manager || source.provider || source.administradora || '').trim();
 
-const resolveCurrency = (source: Record<string, unknown>) => {
-  const raw = String(source.currency || source.moneda || source.ccy || '').trim().toUpperCase();
-  if (!raw) return 'CLP';
-  if (raw.startsWith('CLP')) return 'CLP';
-  if (raw.startsWith('USD')) return 'USD';
-  if (raw.startsWith('EUR')) return 'EUR';
+const normalizeCurrencyValue = (value: unknown): string => {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return '';
+  if (raw.startsWith('CLP') || raw.includes('PESO CHILENO') || raw === 'PESO' || raw === 'PESOS') return 'CLP';
+  if (raw.startsWith('USD') || raw.includes('US DOLLAR') || raw.includes('DOLAR') || raw.includes('DÓLAR')) return 'USD';
+  if (raw.startsWith('EUR') || raw.includes('EURO')) return 'EUR';
   return raw.slice(0, 6);
+};
+
+const resolveCurrency = (source: Record<string, unknown>) => {
+  const raw =
+    source.currency ??
+    source.moneda ??
+    source.ccy ??
+    source.moneda_origen ??
+    source.monedaOrigen ??
+    source.currency_origin ??
+    source.currencyOrigin;
+  const normalized = normalizeCurrencyValue(raw);
+  if (normalized) return normalized;
+
+  const nameBased = normalizeCurrencyValue(source.name ?? source.instrumento ?? source.instrument);
+  if (nameBased === 'USD' || nameBased === 'EUR') return nameBased;
+  return 'CLP';
 };
 
 const resolveCurrentAmountClp = (source: Record<string, unknown>) =>
@@ -391,7 +410,7 @@ export const loadInstrumentBaseSnapshot = (): InstrumentBaseSnapshot | null => {
     if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.instruments)) return null;
     const instruments = parsed.instruments.map((item) => ({
       ...item,
-      currency: item.currency ? String(item.currency) : 'CLP',
+      currency: normalizeCurrencyValue(item.currency) || 'CLP',
     }));
     return { ...parsed, instruments };
   } catch {
@@ -619,7 +638,7 @@ const applyMovesToInstruments = (
         id: move.toId,
         name: move.toName,
         manager: move.toManager,
-        currency: move.currency,
+        currency: move.toCurrency || move.currency,
         currentAmountCLP: move.amountClp,
         exposure: sleeveToExposure(move.toSleeve),
         sleeveWeights: sleeveToWeights(move.toSleeve),
@@ -813,9 +832,11 @@ export const buildRealisticInstrumentProposal = (
           fromId: bestPair.source.id,
           fromName: bestPair.source.name,
           fromManager: bestPair.source.manager,
+          fromCurrency: bestPair.source.currency || 'CLP',
           toId: bestPair.target.id,
           toName: bestPair.target.name,
           toManager: bestPair.target.manager,
+          toCurrency: bestPair.target.currency || 'CLP',
           currency,
           amountClp: bestPair.amount,
           fromSleeve: bestPair.source.dominant,
@@ -897,9 +918,11 @@ export const buildRealisticInstrumentProposal = (
           fromId: bestPair.source.id,
           fromName: bestPair.source.name,
           fromManager: bestPair.source.manager,
+          fromCurrency: bestPair.source.currency || 'CLP',
           toId: bestPair.target.id,
           toName: bestPair.target.name,
           toManager: bestPair.target.manager,
+          toCurrency: bestPair.target.currency || 'CLP',
           currency,
           amountClp: bestPair.amount,
           fromSleeve: bestPair.source.dominant,

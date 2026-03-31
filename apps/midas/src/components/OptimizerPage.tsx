@@ -758,14 +758,14 @@ export function OptimizerPage({
                       <div>
                         <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.fromName}</div>
                         <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          {move.fromManager} · {move.currency} · {formatSleeveLabel(move.fromSleeve)}
+                          {move.fromManager} · {move.fromCurrency || move.currency} · {formatSleeveLabel(move.fromSleeve)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'center', color: T.textSecondary, fontSize: 11 }}>→</div>
                       <div>
                         <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>{move.toName}</div>
                         <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          {move.toManager} · {move.currency} · {formatSleeveLabel(move.toSleeve)}
+                          {move.toManager} · {move.toCurrency || move.currency} · {formatSleeveLabel(move.toSleeve)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right', ...css.mono, fontSize: 12, color: T.textPrimary }}>
@@ -1474,7 +1474,13 @@ function sanitizeResult(raw: OptimizerResult, params: ModelParameters): Optimize
         terminalP50: Number.isFinite(raw.realistic.terminalP50) ? raw.realistic.terminalP50 : 0,
         terminalP10: Number.isFinite(raw.realistic.terminalP10) ? raw.realistic.terminalP10 : 0,
         moves: Array.isArray(raw.realistic.moves)
-          ? raw.realistic.moves.filter((move) => Number.isFinite(move.amountClp))
+          ? raw.realistic.moves
+              .filter((move) => Number.isFinite(move.amountClp))
+              .map((move) => ({
+                ...move,
+                fromCurrency: move.fromCurrency || move.currency || 'CLP',
+                toCurrency: move.toCurrency || move.currency || 'CLP',
+              }))
           : [],
         gaps: Array.isArray(raw.realistic.gaps)
           ? raw.realistic.gaps.filter((gap) => Number.isFinite(gap.amountClp))

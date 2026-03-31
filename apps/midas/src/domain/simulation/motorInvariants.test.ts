@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import type { InstrumentBaseItem, InstrumentBaseSnapshot } from '../instrumentBase';
-import { buildRealisticInstrumentProposal } from '../instrumentBase';
+import { buildRealisticInstrumentProposal, validateInstrumentBaseJson } from '../instrumentBase';
 import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
@@ -1118,6 +1118,8 @@ test('instrument proposal keeps currency and prefers same manager', () => {
   assert.equal(hasUnknownCurrency, false);
   const usdMoves = proposal.moves.filter((move) => move.currency === 'USD');
   assert.equal(usdMoves.length, 0, 'USD bucket should not mix with CLP bucket');
+  const hasCrossCurrencyMove = proposal.moves.some((move) => (move.fromCurrency || move.currency) !== (move.toCurrency || move.currency));
+  assert.equal(hasCrossCurrencyMove, false, 'proposal must not include cross-currency executable moves');
   const crossManagerMoves = proposal.moves.filter((move) => move.reason.includes('Entre administradoras'));
   assert.equal(crossManagerMoves.length, 0, 'should stay within manager when possible');
 });
@@ -1139,6 +1141,40 @@ test('instrument proposal flags new destination when sleeve is missing', () => {
   if (!proposal) return;
   assert.ok(proposal.gaps.length > 0, 'proposal should surface gaps when sleeve is missing');
   assert.equal(proposal.requiresNewInstruments, true, 'proposal should require a new destination instrument when missing sleeve');
+});
+
+test('instrument base currency resolves moneda_origen for USD instruments', () => {
+  const payload = JSON.stringify({
+    instrumentos: [
+      {
+        administradora: 'SURA',
+        instrumento: 'SURA Multiactivo Agresivo (Seguro + APVs)',
+        moneda_origen: 'CLP',
+        monto_clp_eq: 1000000,
+        porcentaje_rv: 70,
+        porcentaje_rf: 30,
+        porcentaje_global: 60,
+        porcentaje_local: 40,
+      },
+      {
+        administradora: 'Offshore',
+        instrumento: 'BGF US Dollar Short Duration (Offshore)',
+        moneda_origen: 'USD',
+        monto_clp_eq: 1000000,
+        porcentaje_rv: 0,
+        porcentaje_rf: 100,
+        porcentaje_global: 100,
+        porcentaje_local: 0,
+      },
+    ],
+  });
+  const validated = validateInstrumentBaseJson(payload, null);
+  assert.equal(validated.ok, true, 'instrument base payload should be valid');
+  if (!validated.snapshot) return;
+  const sura = validated.snapshot.instruments.find((item) => item.name.includes('SURA Multiactivo Agresivo'));
+  const bgf = validated.snapshot.instruments.find((item) => item.name.includes('BGF US Dollar Short Duration'));
+  assert.equal(sura?.currency, 'CLP');
+  assert.equal(bgf?.currency, 'USD');
 });
 
 test('instrument proposal picks best multi-factor destination within manager and currency', () => {

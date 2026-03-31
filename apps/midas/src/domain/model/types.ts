@@ -314,9 +314,11 @@ export interface OptimizerInstrumentMove {
   fromId: string;
   fromName: string;
   fromManager: string;
+  fromCurrency: string;
   toId: string;
   toName: string;
   toManager: string;
+  toCurrency: string;
   currency: string;
   amountClp: number;
   fromSleeve: keyof PortfolioWeights;
