@@ -2443,6 +2443,10 @@ export default function App() {
     () => (simulationActive ? toOptimizerBaselineSnapshot(simResult) : null),
     [simulationActive, simResult],
   );
+  const optBaseSnapshot = useMemo(
+    () => (!simulationActive && !simOverrides?.active ? toOptimizerBaselineSnapshot(simResult) : baseOptimizerSnapshot),
+    [baseOptimizerSnapshot, simOverrides?.active, simResult, simulationActive],
+  );
   const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
     amountClp: null,
     asOf: null,
@@ -2758,7 +2762,7 @@ export default function App() {
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
-      preloadedBaseStats={baseOptimizerSnapshot}
+      preloadedBaseStats={optBaseSnapshot}
       preloadedSimulationStats={simulationOptimizerSnapshot}
       optimizableBaseReference={optimizableBaseAdjusted}
     />
