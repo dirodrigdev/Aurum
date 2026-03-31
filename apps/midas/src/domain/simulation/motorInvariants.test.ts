@@ -14,7 +14,7 @@ import { runSimulationParametric } from './engineParametric';
 import { applyScenarioVariant, runSimulationCore } from './engine';
 import { evaluateOptimizerPoint } from '../optimizer/gridSearch';
 import { buildMortgageProjection } from './mortgageProjection';
-import { runAnnualRebalance } from './blockState';
+import { applyExpenseWaterfall, runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
 import { evaluateConcordance } from './concordance';
 import { snapshotToParams } from '../../integrations/aurum/adapters';
@@ -391,6 +391,7 @@ test('bucket rebalance does not create magic capital', () => {
   const params = makeBaseParams();
   const stateA = {
     banks: 0,
+    usdLiquidityCLP: 0,
     riskUsdCLP: 0,
     sleeves: {
       rvGlobal: 0,
@@ -404,6 +405,7 @@ test('bucket rebalance does not create magic capital', () => {
 
   const stateB = {
     banks: 0,
+    usdLiquidityCLP: 0,
     riskUsdCLP: 0,
     sleeves: {
       rvGlobal: 0,
@@ -414,6 +416,26 @@ test('bucket rebalance does not create magic capital', () => {
   };
   const resultB = runAnnualRebalance(stateB, params, 800);
   assert.ok(resultB.bucketAfterRebalance < 800);
+});
+
+test('eur phase waterfall uses usd liquidity before rf and keeps risk last', () => {
+  const state = {
+    banks: 10,
+    usdLiquidityCLP: 20,
+    riskUsdCLP: 30,
+    sleeves: {
+      rvGlobal: 0,
+      rvChile: 0,
+      rfGlobal: 0,
+      rfChile: 100,
+    },
+  };
+  const flow = applyExpenseWaterfall(state, 25, 0, true);
+  assert.equal(flow.shortfall, 0);
+  assert.equal(state.banks, 0);
+  assert.equal(state.usdLiquidityCLP, 5);
+  assert.equal(state.sleeves.rfChile, 100);
+  assert.equal(state.riskUsdCLP, 30);
 });
 
 test('aurum adapter maps cash/other conservatively to rfChile', () => {

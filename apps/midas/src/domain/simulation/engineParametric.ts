@@ -648,6 +648,7 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
         rvChile: rRVcl,
         rfChile: rRFcl,
         banks: bankMonthly,
+        usdLiquidity: bankMonthly,
         riskUsd: riskUsdReturn,
       });
 
@@ -737,7 +738,17 @@ function runSimulationParametricBlocksInternal(params: ModelParameters): Paramet
         break;
       }
 
-      const flow = applyExpenseWaterfall(liquidState, G, monthSnapshot.expense * 36);
+      let phaseStart = 0;
+      let phaseCurrency: 'EUR' | 'CLP' = 'CLP';
+      for (const phase of spendingPhases) {
+        if (month <= phaseStart + phase.durationMonths) {
+          phaseCurrency = phase.currency;
+          break;
+        }
+        phaseStart += phase.durationMonths;
+      }
+      const preferUsdLiquidity = phaseCurrency === 'EUR';
+      const flow = applyExpenseWaterfall(liquidState, G, monthSnapshot.expense * 36, preferUsdLiquidity);
       if (flow.shortfall > 0) {
         ruined = true;
         nRuin += 1;

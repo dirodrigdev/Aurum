@@ -156,6 +156,7 @@ export interface RiskCapitalInput {
 export interface NonOptimizableBlocksInput {
   banksCLP: number;
   nonMortgageDebtCLP: number;
+  usdLiquidityCLP?: number;
   realEstate?: RealEstateInput;
   riskCapital?: RiskCapitalInput;
 }
