@@ -5336,32 +5336,39 @@ export const Patrimonio: React.FC = () => {
   }, [closeFxDraft]);
   const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
-    const previewRecords =
-      selectedClosureForDraft?.records?.length
-        ? latestRecordsForMonth(selectedClosureForDraft.records, closeMonthDraft).filter(
-            (record) => !isStartMonthCheckpointRecord(record),
-          )
-        : closeValidationDraft.targetRecords;
+    const previewRecords = closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(previewRecords, includeRiskCapitalInTotals);
-    const amounts = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
+    const fromLiveRecords = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
     const riskRecords = previewRecords.filter(
       (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
     );
-    const riskClp = riskRecords.reduce(
+    const liveRiskClp = riskRecords.reduce(
       (sum, record) => sum + toClp(record.amount, record.currency, closeFxValues.usdClp, closeFxValues.eurClp, closeFxValues.ufClp),
       0,
     );
-    const hasProperty = previewRecords.some(
+    const liveHasProperty = previewRecords.some(
       (record) =>
         record.block === 'real_estate' &&
         sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
     );
 
+    const closureSummary = selectedClosureForDraft?.summary as (WealthMonthlyClosure['summary'] & {
+      riskCapitalClp?: number;
+    }) | null;
+    const fromSelectedClosure = selectedClosureForDraft ? resolveSectionAmountsFromClosure(selectedClosureForDraft) : null;
+    const riskClp =
+      selectedClosureForDraft && Number.isFinite(closureSummary?.riskCapitalClp)
+        ? Number(closureSummary.riskCapitalClp)
+        : liveRiskClp;
+    const hasRisk = selectedClosureForDraft ? Math.abs(riskClp) > 0 : riskRecords.length > 0;
+    const hasProperty = selectedClosureForDraft ? fromSelectedClosure?.realEstateNet !== 0 : liveHasProperty;
+    const amounts = fromSelectedClosure || fromLiveRecords;
+
     return {
       banks: amounts.bank,
       investments: amounts.investment,
       riskClp,
-      hasRisk: riskRecords.length > 0,
+      hasRisk,
       propertyNet: amounts.realEstateNet,
       hasProperty,
       nonMortgageDebt: amounts.nonMortgageDebt,
@@ -5372,10 +5379,10 @@ export const Patrimonio: React.FC = () => {
     };
   }, [
     selectedClosureForDraft,
-    closeMonthDraft,
     closeValidationDraft.targetRecords,
     includeRiskCapitalInTotals,
     closeFxValues,
+    resolveSectionAmountsFromClosure,
   ]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
