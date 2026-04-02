@@ -5336,17 +5336,22 @@ export const Patrimonio: React.FC = () => {
   }, [closeFxDraft]);
   const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
-    const targetRecords = closeValidationDraft.targetRecords;
-    const resolved = resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals);
+    const previewRecords =
+      selectedClosureForDraft?.records?.length
+        ? latestRecordsForMonth(selectedClosureForDraft.records, closeMonthDraft).filter(
+            (record) => !isStartMonthCheckpointRecord(record),
+          )
+        : closeValidationDraft.targetRecords;
+    const resolved = resolveRiskCapitalRecordsForTotals(previewRecords, includeRiskCapitalInTotals);
     const amounts = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
-    const riskRecords = targetRecords.filter(
+    const riskRecords = previewRecords.filter(
       (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
     );
     const riskClp = riskRecords.reduce(
       (sum, record) => sum + toClp(record.amount, record.currency, closeFxValues.usdClp, closeFxValues.eurClp, closeFxValues.ufClp),
       0,
     );
-    const hasProperty = targetRecords.some(
+    const hasProperty = previewRecords.some(
       (record) =>
         record.block === 'real_estate' &&
         sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
@@ -5365,7 +5370,13 @@ export const Patrimonio: React.FC = () => {
       ufClp: closeFxValues.ufClp,
       totalNetClp: amounts.totalNetClp,
     };
-  }, [closeValidationDraft.targetRecords, includeRiskCapitalInTotals, closeFxValues]);
+  }, [
+    selectedClosureForDraft,
+    closeMonthDraft,
+    closeValidationDraft.targetRecords,
+    includeRiskCapitalInTotals,
+    closeFxValues,
+  ]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
