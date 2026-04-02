@@ -1247,6 +1247,7 @@ type MergeWealthStateInput = {
   remoteFx: WealthFxRates;
   localUpdatedAt: string;
   remoteUpdatedAt: string;
+  forcePreferLocal?: boolean;
 };
 
 type MergedWealthState = {
@@ -1262,6 +1263,7 @@ type MergedWealthState = {
 
 const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
   let preferLocal = isLocalStateNewerOrEqual(input.localUpdatedAt, input.remoteUpdatedAt);
+  if (input.forcePreferLocal) preferLocal = true;
   const localMax = maxCreatedAt(input.localRecords);
   const remoteMax = maxCreatedAt(input.remoteRecords);
   if (Number.isFinite(localMax) && Number.isFinite(remoteMax) && localMax > remoteMax) {
@@ -3603,6 +3605,10 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           remoteFx: remote.fx,
           localUpdatedAt,
           remoteUpdatedAt: remote.updatedAt,
+          forcePreferLocal: (() => {
+            const syncState = loadWealthSyncUiState();
+            return syncState.status === 'dirty' || syncState.status === 'syncing';
+          })(),
         });
 
         const sameAsLocal =
