@@ -5336,6 +5336,36 @@ export const Patrimonio: React.FC = () => {
   }, [closeFxDraft]);
   const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
+    const previewingCurrentWorkingMonth = closeMonthDraft === monthKey && !selectedClosureForDraft;
+    if (previewingCurrentWorkingMonth) {
+      const riskRecords = monthRecords.filter(
+        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
+      );
+      const riskClp = riskRecords.reduce(
+        (sum, record) => sum + toClp(record.amount, record.currency, closeFxValues.usdClp, closeFxValues.eurClp, closeFxValues.ufClp),
+        0,
+      );
+      const hasProperty = monthRecords.some(
+        (record) =>
+          record.block === 'real_estate' &&
+          sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
+      );
+
+      return {
+        banks: sectionAmounts.bank,
+        investments: sectionAmounts.investment,
+        riskClp,
+        hasRisk: riskRecords.length > 0,
+        propertyNet: sectionAmounts.realEstateNet,
+        hasProperty,
+        nonMortgageDebt: sectionAmounts.nonMortgageDebt,
+        usdClp: closeFxValues.usdClp,
+        eurClp: closeFxValues.eurClp,
+        ufClp: closeFxValues.ufClp,
+        totalNetClp: sectionAmounts.totalNetClp,
+      };
+    }
+
     const previewRecords = closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(previewRecords, includeRiskCapitalInTotals);
     const fromLiveRecords = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
@@ -5378,7 +5408,11 @@ export const Patrimonio: React.FC = () => {
       totalNetClp: amounts.totalNetClp,
     };
   }, [
+    closeMonthDraft,
+    monthKey,
     selectedClosureForDraft,
+    monthRecords,
+    sectionAmounts,
     closeValidationDraft.targetRecords,
     includeRiskCapitalInTotals,
     closeFxValues,
