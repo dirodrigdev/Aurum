@@ -13,6 +13,7 @@ import {
 import { db, ensureAuthPersistence, getCurrentUid } from './firebase';
 import { setFirestoreChecking, setFirestoreOk, setFirestoreStatusFromError } from './firestoreStatus';
 import { publishAurumOptimizableInvestmentsSnapshot } from './midasPublished';
+import { sameCanonicalLabel } from '../utils/wealthLabels';
 
 export type WealthCurrency = 'CLP' | 'USD' | 'EUR' | 'UF';
 
@@ -1095,6 +1096,15 @@ const makeAssetMonthKey = (
 };
 const logicalRecordKey = (record: WealthRecord) => makeAssetMonthKey(record) || `${makeAssetKey(record)}::${record.snapshotDate}`;
 
+const isSameCanonicalAssetMonth = (
+  left: Pick<WealthRecord, 'block' | 'label' | 'currency' | 'snapshotDate'>,
+  right: Pick<WealthRecord, 'block' | 'label' | 'currency' | 'snapshotDate'>,
+) =>
+  left.block === right.block &&
+  left.currency === right.currency &&
+  monthKeyFromSnapshotDate(left.snapshotDate) === monthKeyFromSnapshotDate(right.snapshotDate) &&
+  sameCanonicalLabel(left.label, right.label);
+
 const recordTimestamp = (record: WealthRecord) => {
   const t = new Date(record.createdAt).getTime();
   return Number.isFinite(t) ? t : 0;
@@ -1493,7 +1503,6 @@ export const saveWealthRecords = (records: WealthRecord[], options?: PersistOpti
 export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'> & { id?: string }) => {
   const current = loadWealthRecords();
   const id = input.id || crypto.randomUUID();
-  const existing = current.find((r) => r.id === id);
   const numericAmount = toNumber(input.amount);
   const normalizedAmount = input.block === 'debt' ? Math.abs(numericAmount) : numericAmount;
 
@@ -1512,7 +1521,10 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
 
   const next: WealthRecord = input.note ? { ...nextBase, note: input.note } : nextBase;
 
-  const merged = existing ? current.map((r) => (r.id === id ? next : r)) : [next, ...current];
+  const filteredCurrent = current.filter(
+    (record) => record.id !== id && !isSameCanonicalAssetMonth(record, next),
+  );
+  const merged = [next, ...filteredCurrent];
 
   saveWealthRecords(merged.sort(sortByCreatedDesc));
   const deletedIds = loadDeletedRecordIds();
@@ -1558,19 +1570,15 @@ export const removeWealthRecordForMonthAsset = (input: {
   currency: WealthCurrency;
   monthKey: string;
 }) => {
-  const monthPrefix = `${input.monthKey}-`;
-  const targetLabel = normalizeLabelKey(input.label);
   const current = loadWealthRecords();
   const removedRecords: WealthRecord[] = [];
 
   const next = current.filter((record) => {
-    const recordLabel = normalizeLabelKey(record.label);
-    const sameLabel = recordLabel === targetLabel;
     const shouldRemove =
       record.block === input.block &&
       record.currency === input.currency &&
-      record.snapshotDate.startsWith(monthPrefix) &&
-      sameLabel;
+      monthKeyFromSnapshotDate(record.snapshotDate) === input.monthKey &&
+      sameCanonicalLabel(record.label, input.label);
     if (shouldRemove) removedRecords.push(record);
     return !shouldRemove;
   });
