@@ -4574,6 +4574,7 @@ export const Patrimonio: React.FC = () => {
   };
 
   const monthConsistencyCheckedRef = useRef(false);
+  const autoCarryAttemptedMonthRef = useRef<string | null>(null);
   useEffect(() => {
     if (!hydrationReady) return;
     if (monthConsistencyCheckedRef.current) return;
@@ -4756,6 +4757,43 @@ export const Patrimonio: React.FC = () => {
       return prev;
     });
   };
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (monthKey !== realCurrentMonthKey) return;
+    if (activeClosure) return;
+    if (!previousClosureForMonthStart) return;
+    if (
+      startMonthCheckpoint &&
+      startMonthCheckpoint.monthKey === realCurrentMonthKey &&
+      startMonthCheckpoint.actions.carry === 'applied'
+    ) {
+      autoCarryAttemptedMonthRef.current = realCurrentMonthKey;
+      return;
+    }
+    if (autoCarryAttemptedMonthRef.current === realCurrentMonthKey) return;
+    autoCarryAttemptedMonthRef.current = realCurrentMonthKey;
+
+    const result = fillMissingWithPreviousClosure(
+      realCurrentMonthKey,
+      visualMonthSnapshotDate(realCurrentMonthKey),
+    );
+    refreshRecords();
+    refreshInstruments();
+    markStartMonthStepApplied(realCurrentMonthKey, 'carry');
+    if (result.added > 0) {
+      setCarryMessage(
+        `Arrastre aplicado automáticamente en ${monthLabel(realCurrentMonthKey).toLowerCase()} desde ${result.sourceMonth || 'el cierre anterior'}.`,
+      );
+    }
+  }, [
+    hydrationReady,
+    monthKey,
+    realCurrentMonthKey,
+    activeClosure,
+    previousClosureForMonthStart,
+    startMonthCheckpoint,
+  ]);
 
   const skipStartMonthCarry = () => {
     const monthToStart = realCurrentMonthKey;

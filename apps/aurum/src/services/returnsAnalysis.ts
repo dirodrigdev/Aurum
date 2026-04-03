@@ -105,8 +105,8 @@ export const computeMonthlyRows = (
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey])
       ? Number(GASTAPP_TOTALS[closure.monthKey])
-      : null;
-    const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
+      : 0;
+    const gastosClp = invalidNet ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
