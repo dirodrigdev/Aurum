@@ -4923,13 +4923,19 @@ export const Patrimonio: React.FC = () => {
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
   ) => {
-    const targetRecords = latestRecordsForMonth(records, targetMonthKey).filter(
+    const carriedIntoClose = fillMissingWithPreviousClosure(
+      targetMonthKey,
+      visualMonthSnapshotDate(targetMonthKey),
+    );
+    const persistedRecords = loadWealthRecords();
+    const targetRecords = latestRecordsForMonth(persistedRecords, targetMonthKey).filter(
       (record) => !isStartMonthCheckpointRecord(record),
     );
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
     createMonthlyClosure(targetRecords, fxForClose, toCloseDateFromMonthKey(targetMonthKey));
+    refreshRecords();
     refreshClosures();
     const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || null;
     const persistedFx = persistedClosure?.fxRates || null;
@@ -4942,11 +4948,35 @@ export const Patrimonio: React.FC = () => {
       setCloseError('El cierre se guardó, pero no pude confirmar TC/UF persistidos.');
     }
     const nextVisualMonth = monthAfterKey(targetMonthKey) || currentMonthKey();
+    const carryResult = fillMissingWithPreviousClosure(
+      nextVisualMonth,
+      visualMonthSnapshotDate(nextVisualMonth),
+    );
+    refreshRecords();
+    refreshInstruments();
     setMonthKey(nextVisualMonth);
     setCloseMonthDraft(nextVisualMonth);
     const advanced = nextVisualMonth !== targetMonthKey;
     if (!advanced) {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
+      return;
+    }
+    if (carryResult.added > 0) {
+      setCarryMessage(
+        `Cierre guardado${
+          carriedIntoClose.added > 0
+            ? ` con ${carriedIntoClose.added} valor(es) consolidados en ${monthLabel(targetMonthKey).toLowerCase()}`
+            : ''
+        } y ${carryResult.added} valor(es) arrastrados automáticamente a ${monthLabel(nextVisualMonth).toLowerCase()}.`,
+      );
+    } else {
+      setCarryMessage(
+        `Cierre guardado${
+          carriedIntoClose.added > 0
+            ? ` con ${carriedIntoClose.added} valor(es) consolidados en ${monthLabel(targetMonthKey).toLowerCase()}`
+            : ''
+        }. ${monthLabel(nextVisualMonth)} quedó sin cambios adicionales porque no había valores nuevos para arrastrar.`,
+      );
     }
   };
   const finalizeMonthlyClose = (
