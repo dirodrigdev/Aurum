@@ -910,9 +910,9 @@ export const ClosingAurum: React.FC = () => {
   }, [compareClosureForHoy, compareClosureForHoyRecords, compareClosureForHoyFx, includeRiskCapitalInTotals]);
 
   const evolutionRows = useMemo(() => {
-    const rows: EvolutionRow[] = closures
+    return closures
       .slice()
-      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+      .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
       .map((c) => {
         const fx = c.fxRates || currentFx;
         const hasClosureRecords = Array.isArray(c.records) && c.records.length > 0;
@@ -935,32 +935,22 @@ export const ClosingAurum: React.FC = () => {
           hasRiskCapital,
         };
       });
-    rows.push({
-      key: monthKey,
-      label: monthLabel(monthKey),
-      kind: 'hoy',
-      net: fromClp(currentBreakdown.netClp, currency, currentFx),
-      hasRiskCapital: currentHasRiskCapital,
-    });
-    return rows.sort((a, b) => a.key.localeCompare(b.key));
   }, [
     closures,
     currency,
-    monthKey,
-    currentBreakdown.netClp,
     currentFx,
     includeRiskCapitalInTotals,
-    currentHasRiskCapital,
   ]);
 
   const evolutionWithReturns = useMemo(
     () =>
       evolutionRows.map((row, idx) => {
-        if (idx === 0 || row.net === null) return { ...row, delta: null as number | null, pct: null as number | null };
-        const prev = evolutionRows[idx - 1];
-        if (prev.net === null) return { ...row, delta: null as number | null, pct: null as number | null };
-        const delta = row.net - prev.net;
-        return { ...row, delta, pct: prev.net !== 0 ? (delta / prev.net) * 100 : null };
+        const older = evolutionRows[idx + 1];
+        if (!older || row.net === null || older.net === null) {
+          return { ...row, delta: null as number | null, pct: null as number | null };
+        }
+        const delta = row.net - older.net;
+        return { ...row, delta, pct: older.net !== 0 ? (delta / older.net) * 100 : null };
       }),
     [evolutionRows],
   );
