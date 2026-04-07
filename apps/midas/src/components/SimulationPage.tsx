@@ -263,7 +263,6 @@ export function SimulationPage({
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
-  const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const scenarioFromParamsRaw = params.activeScenario as unknown;
   const activeScenarioForUi: ScenarioVariantId =
     scenarioFromParamsRaw === 'base' || scenarioFromParamsRaw === 'pessimistic' || scenarioFromParamsRaw === 'optimistic'
@@ -281,7 +280,17 @@ export function SimulationPage({
       : null;
   const resultSeed = resultCentral?.params?.simulation?.seed ?? null;
   const activeCapitalSource = (resultCentral?.params?.capitalSource ?? params.capitalSource ?? 'aurum') as CapitalSource;
-  const activeCapitalSourceLabel = activeCapitalSource === 'manual' ? 'Manual' : 'Aurum';
+  const effectiveCapitalSource = snapshotApplied && activeCapitalSource === 'aurum'
+    ? 'aurum'
+    : activeCapitalSource === 'manual'
+      ? 'manual'
+      : 'local';
+  const activeCapitalSourceLabel =
+    effectiveCapitalSource === 'aurum'
+      ? 'Aurum'
+      : effectiveCapitalSource === 'manual'
+        ? 'Manual'
+        : 'Local';
   const effectiveBaseCapital = Number(resultCentral?.params?.capitalInitial ?? params.capitalInitial ?? 0);
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
@@ -304,6 +313,9 @@ export function SimulationPage({
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
+  const hasEffectiveRealEstate = Boolean(compositionSource?.nonOptimizable?.realEstate);
+  const liquidarDeptoConfigured = params.realEstatePolicy?.enabled ?? true;
+  const liquidarDeptoEnabled = hasEffectiveRealEstate && liquidarDeptoConfigured;
   const compositionDiagnostics = compositionSource?.diagnostics;
   const compositionMode = compositionSource?.mode ?? 'legacy';
   const diagnosticWarnings = compositionDiagnostics?.diagnosticWarnings ?? [];
@@ -699,6 +711,7 @@ export function SimulationPage({
   };
 
   const toggleLiquidarDepto = () => {
+    if (!hasEffectiveRealEstate) return;
     onUpdateParams((prev) => ({
       ...prev,
       realEstatePolicy: {
@@ -927,7 +940,7 @@ export function SimulationPage({
           <button
             type="button"
             onClick={toggleLiquidarDepto}
-            disabled={isRecalculating}
+            disabled={isRecalculating || !hasEffectiveRealEstate}
             style={{
               background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
               border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
@@ -937,11 +950,11 @@ export function SimulationPage({
               fontSize: 11,
               fontWeight: 700,
               textAlign: 'left',
-              cursor: isRecalculating ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating ? 0.65 : 1,
+              cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+              opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
             }}
           >
-            Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+            Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
           </button>
           <button
             type="button"
