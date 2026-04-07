@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  CapitalSource,
   ManualCapitalAdjustment,
   ManualCapitalDestination,
   ModelParameters,
@@ -279,6 +280,9 @@ export function SimulationPage({
       ? scenarioFromResultRaw
       : null;
   const resultSeed = resultCentral?.params?.simulation?.seed ?? null;
+  const activeCapitalSource = (resultCentral?.params?.capitalSource ?? params.capitalSource ?? 'aurum') as CapitalSource;
+  const activeCapitalSourceLabel = activeCapitalSource === 'manual' ? 'Manual' : 'Aurum';
+  const effectiveBaseCapital = Number(resultCentral?.params?.capitalInitial ?? params.capitalInitial ?? 0);
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -813,6 +817,48 @@ export function SimulationPage({
           <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
         </div>
       )}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            Base activa
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 3 }}>
+            {activeCapitalSourceLabel}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{patrimonioSourceTechnical}</div>
+        </div>
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            Capital base efectivo
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 3 }}>
+            {formatMoneyCompact(effectiveBaseCapital)}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+            Corrida actual · {formatCapital(effectiveBaseCapital)}
+          </div>
+        </div>
+      </div>
       <div
         style={{
           background: T.surface,
