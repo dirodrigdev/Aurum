@@ -45,10 +45,9 @@ import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/t
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
+const AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY = 'midas:aurum-last-applied-signature.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
 const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
-const AURUM_SYNC_ABS_TOLERANCE_CLP = 1_000_000;
-const AURUM_SYNC_REL_TOLERANCE = 0.005;
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
@@ -416,16 +415,6 @@ function persistBaseVigente(params: ModelParameters): void {
   }
 }
 
-function isMaterialAurumDiff(baseOptimizable: number, latestOptimizable: number) {
-  if (!Number.isFinite(baseOptimizable) || !Number.isFinite(latestOptimizable)) {
-    return { isMaterial: false, diff: latestOptimizable - baseOptimizable, threshold: NaN };
-  }
-  const diff = latestOptimizable - baseOptimizable;
-  const abs = Math.abs(diff);
-  const threshold = Math.max(AURUM_SYNC_ABS_TOLERANCE_CLP, Math.abs(baseOptimizable) * AURUM_SYNC_REL_TOLERANCE);
-  return { isMaterial: abs >= threshold, diff, threshold };
-}
-
 function resolveInitialDistributionState(): {
   officialWeights: PortfolioWeights | null;
   lastKnownOfficialWeights: PortfolioWeights | null;
@@ -456,6 +445,28 @@ function resolveInitialDistributionState(): {
     activeWeightsSavedAt,
     fallbackReason: resolved.fallbackReason,
   };
+}
+
+function loadLastAppliedAurumSnapshotSignature(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistLastAppliedAurumSnapshotSignature(signature: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!signature) {
+      window.localStorage.removeItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY, signature);
+  } catch {
+    // noop
+  }
 }
 
 export default function App() {
@@ -507,6 +518,9 @@ export default function App() {
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [snapshotApplied, setSnapshotApplied] = useState(false);
+  const [lastAppliedAurumSnapshotSignature, setLastAppliedAurumSnapshotSignature] = useState<string | null>(
+    () => (initialModelParams.capitalSource === 'aurum' ? loadLastAppliedAurumSnapshotSignature() : null),
+  );
   const [aurumSyncState, setAurumSyncState] = useState<AurumSyncState>('unknown');
   const [aurumSyncDiff, setAurumSyncDiff] = useState<number | null>(null);
   const [aurumSyncBaseOpt, setAurumSyncBaseOpt] = useState<number | null>(null);
@@ -564,7 +578,7 @@ export default function App() {
   const appliedRecalcRequestIdRef = useRef<number | null>(appliedRecalcRequestId);
   const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
-  const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
+  const lastAppliedSnapshotSignatureRef = useRef<string | null>(lastAppliedAurumSnapshotSignature);
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
   const manualCommitInFlightRef = useRef(false);
@@ -703,6 +717,10 @@ export default function App() {
   }, [activeWeights]);
 
   useEffect(() => {
+    lastAppliedSnapshotSignatureRef.current = lastAppliedAurumSnapshotSignature;
+  }, [lastAppliedAurumSnapshotSignature]);
+
+  useEffect(() => {
     weightsSourceModeRef.current = weightsSourceMode;
   }, [weightsSourceMode]);
 
@@ -727,6 +745,10 @@ export default function App() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('midas:manualCapitalAdjustments', JSON.stringify(manualCapitalAdjustments));
   }, [manualCapitalAdjustments]);
+
+  useEffect(() => {
+    persistLastAppliedAurumSnapshotSignature(lastAppliedAurumSnapshotSignature);
+  }, [lastAppliedAurumSnapshotSignature]);
 
   useEffect(() => {
     const ensureOverlay = () => {
@@ -1752,6 +1774,7 @@ export default function App() {
     if (!snapshot) return;
     const shouldRecalculate = options?.recalc ?? true;
     try {
+      const appliedSnapshotSignature = getSnapshotSignature(snapshot);
       const composition = snapshotToSimulationComposition(snapshot);
       const compositionMode = composition?.mode ?? 'legacy';
       const hasFallbackFlags =
@@ -1760,10 +1783,6 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
       const riskExposure = computeRiskCapital(snapshot);
-      const aurumNetWorthWithRisk =
-        Number.isFinite(riskExposure.baseWithRiskCLP) && riskExposure.baseWithRiskCLP > 0
-          ? riskExposure.baseWithRiskCLP
-          : aurumNetWorth + riskExposure.riskTotalCLP;
       const compositionWithToggle = composition
         ? {
             ...composition,
@@ -1801,40 +1820,23 @@ export default function App() {
       const currentBase = baseParamsRef.current;
       const nextBaseComposition = compositionWithToggle ?? currentBase.simulationComposition;
       const baseTargetCapital = aurumNetWorth;
-      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
-      const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
-      if (!sameBaseCapital || !sameBaseComposition) {
-        setBaseParams({
-          ...currentBase,
-          capitalInitial: baseTargetCapital,
-          label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
-          simulationComposition: nextBaseComposition,
-        });
-      }
-
-      const currentSim = simParamsRef.current;
-      const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
-      const shouldApplyCapital = !hasCapitalOverride;
-      const nextSimComposition = compositionWithToggle ?? currentSim.simulationComposition;
-      const baseSimCapital = riskCapitalEnabled ? aurumNetWorthWithRisk : aurumNetWorth;
-      const baseForCanonical: ModelParameters = {
-        ...currentBase,
+      const baseSnapshotLayer: ModelParameters = {
+        ...cloneParams(currentBase),
         capitalInitial: baseTargetCapital,
+        capitalSource: 'aurum',
+        manualCapitalInput: undefined,
+        label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
-      const simSeed: ModelParameters = {
-        ...currentSim,
-        capitalInitial: shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial,
-        label: shouldApplyCapital
-          ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
-          : currentSim.label,
-        simulationComposition: nextSimComposition,
-      };
-      const nextSimParamsFinal = buildCanonicalSimParams(baseForCanonical, simSeed, {
-        applyCapital: shouldApplyCapital,
+      const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
+        applyCapital: true,
+        manualImpact: manualAdjustmentImpact,
+        riskCapitalEnabled,
       });
-      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(nextSimParamsFinal.capitalInitial);
-      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimParamsFinal.simulationComposition);
+      const currentSim = simParamsRef.current;
+      const nextSimParamsFinal = nextBaseOfficialParams;
+      const sameBaseSignature = JSON.stringify(currentBase) === JSON.stringify(nextBaseOfficialParams);
+      const sameSimSignature = JSON.stringify(currentSim) === JSON.stringify(nextSimParamsFinal);
 
       appendRuntimeTimeline('snapshot_applied', {
         snapshotApplied: true,
@@ -1843,13 +1845,18 @@ export default function App() {
         ...summarizeParams(nextSimParamsFinal),
       });
 
-      if (!sameSimCapital || !sameSimComposition) {
+      if (!sameBaseSignature) {
+        setBaseParams(nextBaseOfficialParams);
+      }
+      if (!sameSimSignature) {
         setSimParams(nextSimParamsFinal);
       }
+      setLastAppliedAurumSnapshotSignature(appliedSnapshotSignature);
+      lastAppliedSnapshotSignatureRef.current = appliedSnapshotSignature;
       setSimulationActive(false);
       setSimulationPreset('base');
       setSimOverrides(null);
-      const nextBaseOptimizable = Number(nextBaseComposition?.optimizableInvestmentsCLP ?? NaN);
+      const nextBaseOptimizable = Number(nextBaseOfficialParams.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
       setAurumSyncBaseOpt(Number.isFinite(nextBaseOptimizable) ? nextBaseOptimizable : null);
       setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
@@ -1862,7 +1869,7 @@ export default function App() {
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
         startRecalculation('apply-aurum', () => nextSimParamsFinal);
-      } else if (!sameSimCapital || !sameSimComposition) {
+      } else if (!sameSimSignature) {
         setBaseUpdatePending(true);
       }
     } catch (error: any) {
@@ -1874,10 +1881,11 @@ export default function App() {
     }
   }, [
     appendRuntimeTimeline,
+    getSnapshotSignature,
     computeRiskCapital,
     riskCapitalEnabled,
-    simOverrides?.active,
-    simOverrides?.capital,
+    manualAdjustmentImpact,
+    setLastAppliedAurumSnapshotSignature,
     startRecalculation,
     buildCanonicalSimParams,
     summarizeParams,
@@ -1938,7 +1946,6 @@ export default function App() {
     setPendingSnapshotApplying(true);
     window.setTimeout(() => {
       try {
-        lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
         setSnapshotApplied(true);
         applySnapshotNow(pendingSnapshot, { recalc: true });
         setPendingSnapshot(null);
@@ -2659,14 +2666,18 @@ export default function App() {
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
-      const diffMeta = isMaterialAurumDiff(baseOptimizable, latestOptimizable);
+      const diffValue =
+        Number.isFinite(baseOptimizable) && Number.isFinite(latestOptimizable)
+          ? latestOptimizable - baseOptimizable
+          : NaN;
       setAurumSyncBaseOpt(Number.isFinite(baseOptimizable) ? baseOptimizable : null);
       setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
-      setAurumSyncDiff(Number.isFinite(diffMeta.diff) ? diffMeta.diff : null);
-      setAurumSyncState(diffMeta.isMaterial ? 'outdated' : 'synced');
+      setAurumSyncDiff(Number.isFinite(diffValue) ? diffValue : null);
 
       const snapshotSignature = getSnapshotSignature(snapshot);
-      if (snapshotSignature === lastAppliedSnapshotSignatureRef.current && !diffMeta.isMaterial) {
+      const sameAsAppliedSnapshot = snapshotSignature === lastAppliedSnapshotSignatureRef.current;
+      setAurumSyncState(sameAsAppliedSnapshot ? 'synced' : 'outdated');
+      if (sameAsAppliedSnapshot) {
         setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -2674,22 +2685,14 @@ export default function App() {
         lastSnapshotSignatureRef.current = snapshotSignature;
         return;
       }
-      if (snapshotSignature === lastSnapshotSignatureRef.current && !diffMeta.isMaterial) return;
+      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
       lastSnapshotSignatureRef.current = snapshotSignature;
 
-      if (diffMeta.isMaterial) {
-        setSnapshotApplied(false);
-        setPendingSnapshot(snapshot);
-        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-        setPendingSnapshotSignature(snapshotSignature);
-        setBaseUpdatePending(false);
-      } else {
-        setSnapshotApplied(true);
-        setPendingSnapshot(null);
-        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-        setPendingSnapshotSignature(null);
-        setBaseUpdatePending(false);
-      }
+      setSnapshotApplied(false);
+      setPendingSnapshot(snapshot);
+      setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setPendingSnapshotSignature(snapshotSignature);
+      setBaseUpdatePending(false);
     };
 
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
@@ -2803,7 +2806,7 @@ export default function App() {
   );
 
   const patrimonioSourceTechnical = snapshotApplied
-    ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'})`
+    ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'}) · Base oficial + capa MIDAS persistente`
     : 'Modelo base local (sin aplicar snapshot Aurum)';
   const distributionSourceTechnical = `${weightsSourceLabel}${
     activeWeightsSavedAt ? ` · savedAt=${activeWeightsSavedAt}` : ''
