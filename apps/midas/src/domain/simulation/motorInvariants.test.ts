@@ -206,7 +206,7 @@ const runtimeIdentity6 = () => [
 
 const makeRuntimeInput = (overrides: Partial<M8Input> = {}): M8Input => {
   const base: M8Input = {
-    years: 3,
+    years: 4,
     n_paths: 24,
     seed: 42,
     simulation_frequency: 'monthly',
@@ -226,8 +226,10 @@ const makeRuntimeInput = (overrides: Partial<M8Input> = {}): M8Input => {
     phase1MonthlyClp: 1_000_000,
     phase2MonthlyClp: 1_200_000,
     phase3MonthlyClp: 1_500_000,
+    phase4MonthlyClp: 1_300_000,
     phase1EndYear: 1,
     phase2EndYear: 2,
+    phase3EndYear: 3,
     return_assumptions: {
       eq_global_real_annual: 0.07,
       eq_chile_real_annual: 0.075,
@@ -1627,7 +1629,7 @@ test('m8 adapter rejects future events without simulation base month', () => {
   );
 });
 
-test('m8 adapter rejects invalid horizon, non-clp spend and missing uf snapshot', () => {
+test('m8 adapter rejects invalid horizon and missing uf snapshot, while normalizing legacy EUR spend', () => {
   const badHorizon = makeM8ContractParams();
   badHorizon.capitalSource = 'manual';
   badHorizon.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
@@ -1649,10 +1651,8 @@ test('m8 adapter rejects invalid horizon, non-clp spend and missing uf snapshot'
     { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
   ];
   const badSpendCapital = resolveCapital({ params: badSpend });
-  assert.throws(
-    () => toM8Input(badSpend, badSpendCapital),
-    /debe estar en CLP/,
-  );
+  const normalizedInput = toM8Input(badSpend, badSpendCapital);
+  assert.equal(normalizedInput.phase1MonthlyClp > 6_000_000, true);
 
   const badHouse = makeM8ContractParams();
   const badHouseCapital = resolveCapital({

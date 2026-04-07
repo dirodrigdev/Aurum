@@ -139,8 +139,10 @@ export interface M8Input {
   phase1MonthlyClp: number;
   phase2MonthlyClp: number;
   phase3MonthlyClp: number;
+  phase4MonthlyClp: number;
   phase1EndYear: number;
   phase2EndYear: number;
+  phase3EndYear: number;
   return_assumptions: M8ReturnAssumptions;
   generator_type: M8GeneratorType;
   generator_params: M8AnyGeneratorParams;

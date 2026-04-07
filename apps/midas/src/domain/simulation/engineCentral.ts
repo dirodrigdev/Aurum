@@ -1,5 +1,5 @@
 import type { ModelParameters, SimulationResults } from '../model/types';
-import { DEFAULT_PARAMETERS } from '../model/defaults';
+import { normalizeModelSpendingPhases } from '../model/spendingPhases';
 import { resolveCapital } from './capitalResolver';
 import { fromM8Output, toM8Input } from './m8Adapter';
 import { runM8 } from './engineM8';
@@ -17,53 +17,15 @@ function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
 }
 
-function normalizeSpendingPhasesForM8(params: ModelParameters): ModelParameters['spendingPhases'] {
-  const phases = params.spendingPhases.slice(0, 3).map((phase) => ({ ...phase }));
-  const fallbackPhases = DEFAULT_PARAMETERS.spendingPhases;
-  const eurToClp = (params.fx?.clpUsdInitial ?? 1) * (params.fx?.usdEurFixed ?? 1);
-  while (phases.length < 3) {
-    const fallback = fallbackPhases[phases.length];
-    if (!fallback) break;
-    phases.push({ ...fallback });
-  }
-
-  // M8 exige CLP real en las tres fases. Convertimos legado EUR->CLP para no romper previews con estado historico.
-  for (let i = 0; i < phases.length; i += 1) {
-    const phase = phases[i];
-    if (phase.currency === 'EUR') {
-      phases[i] = {
-        ...phase,
-        amountReal: phase.amountReal * eurToClp,
-        currency: 'CLP',
-      };
-    }
-  }
-
-  const horizonMonths = params.simulation.horizonMonths;
-  if (Number.isFinite(horizonMonths) && horizonMonths > 0 && phases.length >= 3) {
-    const phase1Months = phases[0].durationMonths;
-    const phase2Months = phases[1].durationMonths;
-    if (phase1Months + phase2Months >= horizonMonths) {
-      const chunk = Math.max(1, Math.floor(horizonMonths / 3));
-      const phase3Months = Math.max(1, horizonMonths - (chunk * 2));
-      phases[0] = { ...phases[0], durationMonths: chunk };
-      phases[1] = { ...phases[1], durationMonths: chunk };
-      phases[2] = { ...phases[2], durationMonths: phase3Months };
-    }
-  }
-
-  return phases;
-}
-
 function normalizeM8Params(params: ModelParameters): ModelParameters {
   const cloned = cloneParams(params);
-  if (cloned.simulation.horizonMonths < 36) {
+  if (cloned.simulation.horizonMonths < 48) {
     cloned.simulation = {
       ...cloned.simulation,
-      horizonMonths: 36,
+      horizonMonths: 48,
     };
   }
-  cloned.spendingPhases = normalizeSpendingPhasesForM8(cloned);
+  cloned.spendingPhases = normalizeModelSpendingPhases(cloned);
   return cloned;
 }
 

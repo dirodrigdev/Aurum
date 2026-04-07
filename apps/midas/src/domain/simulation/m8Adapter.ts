@@ -6,6 +6,7 @@ import type {
   SimulationResults,
 } from '../model/types';
 import { SCENARIO_VARIANTS } from '../model/defaults';
+import { normalizeModelSpendingPhases } from '../model/spendingPhases';
 import type { CapitalResolution } from './capitalResolver';
 import type {
   M8CutsInput,
@@ -366,12 +367,12 @@ export const validateM8Preconditions = (
 
     buildScenarioOverrides(params);
 
-    const phases = params.spendingPhases;
-    if (phases.length < 3) {
-      errors.push('spendingPhases debe incluir al menos 3 fases para mapear a M8');
+    const phases = normalizeModelSpendingPhases(params);
+    if (phases.length < 4) {
+      errors.push('spendingPhases debe incluir al menos 4 fases para mapear a M8');
     } else {
-      const firstThree = phases.slice(0, 3);
-      for (const [idx, phase] of firstThree.entries()) {
+      const firstFour = phases.slice(0, 4);
+      for (const [idx, phase] of firstFour.entries()) {
         if (phase.currency !== 'CLP') {
           errors.push(`spendingPhases[${idx}] debe estar en CLP para M8`);
         }
@@ -427,7 +428,8 @@ export const toM8Input = (
   const horizonMonths = params.simulation.horizonMonths;
   const years = horizonMonths / 12;
   const portfolioMix = combineM8PortfolioMix(params.weights, operationalWeights);
-  const [phase1, phase2, phase3] = params.spendingPhases;
+  const normalizedPhases = normalizeModelSpendingPhases(params);
+  const [phase1, phase2, phase3, phase4] = normalizedPhases;
   const simulationBaseMonth = resolveSimulationBaseMonth(params);
   const riskCapitalClp = resolveRiskCapitalClp(capitalResolution);
   const futureEvents =
@@ -456,8 +458,10 @@ export const toM8Input = (
     phase1MonthlyClp: phase1.amountReal,
     phase2MonthlyClp: phase2.amountReal,
     phase3MonthlyClp: phase3.amountReal,
+    phase4MonthlyClp: phase4.amountReal,
     phase1EndYear: phase1.durationMonths / 12,
     phase2EndYear: (phase1.durationMonths + phase2.durationMonths) / 12,
+    phase3EndYear: (phase1.durationMonths + phase2.durationMonths + phase3.durationMonths) / 12,
     return_assumptions: {
       eq_global_real_annual: params.returns.rvGlobalAnnual,
       eq_chile_real_annual: params.returns.rvChileAnnual,

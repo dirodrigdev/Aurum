@@ -8,6 +8,7 @@ import type {
   ScenarioVariantId,
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
+import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -620,10 +621,16 @@ export function SimulationPage({
   }, []);
   const activeWeightSummary = formatWeightMix(activeWeights);
   const officialWeightSummary = formatWeightMix(officialReferenceWeights);
+  const spendingPhases = useMemo(() => normalizeModelSpendingPhases(params), [params]);
+  const spendingPhaseLabels = useMemo(() => buildSpendingPhaseUiLabels(spendingPhases), [spendingPhases]);
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
-      const next = { ...prev, spendingPhases: prev.spendingPhases.map((p, i) => (i === index ? { ...p, amountReal: amount } : p)) };
+      const normalizedPrevPhases = normalizeModelSpendingPhases(prev);
+      const next = {
+        ...prev,
+        spendingPhases: normalizedPrevPhases.map((p, i) => (i === index ? { ...p, amountReal: amount } : p)),
+      };
       return next;
     });
   };
@@ -1178,10 +1185,10 @@ export function SimulationPage({
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-                {params.spendingPhases.map((phase, idx) => (
+                {spendingPhases.map((phase, idx) => (
                   <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <span style={{ color: T.textSecondary, fontSize: 11 }}>
-                      Tramo {idx + 1} ({Math.round(phase.durationMonths / 12)} años)
+                      {spendingPhaseLabels[idx]?.title ?? `Tramo ${idx + 1}`}
                     </span>
                     <input
                       type="text"

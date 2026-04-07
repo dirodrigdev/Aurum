@@ -167,23 +167,30 @@ export function ParamSheet({
             step={1_000_000}
           />
           <NumberInput
-            label="Gasto Fase 1 (CLP/mes)"
+            label="Tramo 1 (años 0-3) · CLP/mes"
             value={params.spendingPhases[0]?.amountReal ?? 0}
             onChange={(v) => onUpdate('spendingPhases.0.amountReal', v)}
             suffix="$"
             step={100000}
           />
           <NumberInput
-            label="Gasto Fase 2 (MM CLP/mes)"
+            label="Tramo 2 (años 4-20) · CLP/mes"
             value={params.spendingPhases[1]?.amountReal ?? 0}
             onChange={(v) => onUpdate('spendingPhases.1.amountReal', v)}
             suffix="$"
             step={100000}
           />
           <NumberInput
-            label="Gasto Fase 3 (MM CLP/mes)"
+            label="Tramo 3 (años 21-horizonte-5) · CLP/mes"
             value={params.spendingPhases[2]?.amountReal ?? 0}
             onChange={(v) => onUpdate('spendingPhases.2.amountReal', v)}
+            suffix="$"
+            step={100000}
+          />
+          <NumberInput
+            label="Tramo 4 (últimos 5 años) · CLP/mes"
+            value={params.spendingPhases[3]?.amountReal ?? 0}
+            onChange={(v) => onUpdate('spendingPhases.3.amountReal', v)}
             suffix="$"
             step={100000}
           />

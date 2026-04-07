@@ -12,6 +12,7 @@ import type {
   SimulationResults,
 } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
+import { normalizeModelSpendingPhases } from './domain/model/spendingPhases';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
@@ -397,7 +398,10 @@ function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParamet
     );
     const capital = Number(normalized.capitalInitial ?? NaN);
     if (!Number.isFinite(capital) || capital <= 0) return null;
-    return normalized;
+    return {
+      ...normalized,
+      spendingPhases: normalizeModelSpendingPhases(normalized),
+    };
   } catch {
     return null;
   }
@@ -1518,7 +1522,11 @@ export default function App() {
         };
       }
 
-      return applyActiveDistribution(next);
+      const normalizedNext: ModelParameters = {
+        ...next,
+        spendingPhases: normalizeModelSpendingPhases(next),
+      };
+      return applyActiveDistribution(normalizedNext);
     },
     [
       applyActiveDistribution,

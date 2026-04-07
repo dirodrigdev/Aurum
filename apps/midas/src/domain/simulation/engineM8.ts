@@ -271,18 +271,20 @@ const estimateHouseSaleEquityClp = (input: M8Input, monthIndex: number, mortgage
   return Math.max((input.house.houseValueUf - mortgageBalanceUf) * currentUfClp(input, monthIndex), 0);
 };
 
-const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 => {
+const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 | 4 => {
   const yearIndex = Math.floor((monthIndex - 1) / 12) + 1;
   if (yearIndex <= input.phase1EndYear) return 1;
   if (yearIndex <= input.phase2EndYear) return 2;
-  return 3;
+  if (yearIndex <= input.phase3EndYear) return 3;
+  return 4;
 };
 
 const monthlySpendIfHouseSold = (input: M8Input, monthIndex: number): number => {
   const phase = phaseOfMonth(input, monthIndex);
   if (phase === 1) return input.phase1MonthlyClp;
   if (phase === 2) return input.phase2MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE2_CLP;
-  return input.phase3MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP;
+  if (phase === 3) return input.phase3MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP;
+  return input.phase4MonthlyClp + DEFAULT_POST_SALE_UPLIFT_PHASE3_CLP;
 };
 
 const baseMonthlySpend = (input: M8Input, monthIndex: number, soldHouse: boolean): number => {
@@ -290,7 +292,8 @@ const baseMonthlySpend = (input: M8Input, monthIndex: number, soldHouse: boolean
   const phase = phaseOfMonth(input, monthIndex);
   if (phase === 1) return input.phase1MonthlyClp;
   if (phase === 2) return input.phase2MonthlyClp;
-  return input.phase3MonthlyClp;
+  if (phase === 3) return input.phase3MonthlyClp;
+  return input.phase4MonthlyClp;
 };
 
 const buildGeneratorState = (
@@ -484,19 +487,30 @@ export const validateM8Input = (input: M8Input): string[] => {
     errors.push('portfolio_mix es obligatorio');
   }
 
-  if (!Number.isInteger(input.phase1EndYear) || !Number.isInteger(input.phase2EndYear) || input.phase1EndYear <= 0 || input.phase2EndYear <= 0) {
-    errors.push('phase1EndYear y phase2EndYear deben ser enteros positivos');
+  if (
+    !Number.isInteger(input.phase1EndYear)
+    || !Number.isInteger(input.phase2EndYear)
+    || !Number.isInteger(input.phase3EndYear)
+    || input.phase1EndYear <= 0
+    || input.phase2EndYear <= 0
+    || input.phase3EndYear <= 0
+  ) {
+    errors.push('phase1EndYear, phase2EndYear y phase3EndYear deben ser enteros positivos');
   }
   if (input.phase1EndYear >= input.phase2EndYear) {
     errors.push('phase2EndYear debe ser mayor que phase1EndYear');
   }
-  if (input.phase2EndYear >= input.years) {
-    errors.push('phase2EndYear debe ser menor que years');
+  if (input.phase2EndYear >= input.phase3EndYear) {
+    errors.push('phase3EndYear debe ser mayor que phase2EndYear');
+  }
+  if (input.phase3EndYear >= input.years) {
+    errors.push('phase3EndYear debe ser menor que years');
   }
   for (const [label, value] of [
     ['phase1MonthlyClp', input.phase1MonthlyClp],
     ['phase2MonthlyClp', input.phase2MonthlyClp],
     ['phase3MonthlyClp', input.phase3MonthlyClp],
+    ['phase4MonthlyClp', input.phase4MonthlyClp],
   ] as const) {
     if (!isFiniteNumber(value) || value <= 0) {
       errors.push(`${label} debe ser > 0`);
@@ -778,8 +792,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   if (input.phase1EndYear >= input.phase2EndYear) {
     throw new Error('phase2EndYear debe ser mayor que phase1EndYear');
   }
-  if (input.phase2EndYear >= input.years) {
-    throw new Error('phase2EndYear debe ser menor que years');
+  if (input.phase2EndYear >= input.phase3EndYear) {
+    throw new Error('phase3EndYear debe ser mayor que phase2EndYear');
+  }
+  if (input.phase3EndYear >= input.years) {
+    throw new Error('phase3EndYear debe ser menor que years');
   }
 
   const includeHouse = input.house?.include_house ?? false;
