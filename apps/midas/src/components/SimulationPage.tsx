@@ -507,9 +507,9 @@ export function SimulationPage({
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
   const ruinP75 = displayResult?.ruinTimingP75 ?? null;
   const ruinWindowLabel = ruinP25 !== null && ruinP75 !== null
-    ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)}`
+    ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)} años`
     : '—';
-  const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)}` : '—';
+  const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)} años` : '—';
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
@@ -530,7 +530,18 @@ export function SimulationPage({
     innerBase: point.p25,
     innerSpan: Math.max(0, point.p75 - point.p25),
   }));
-  const percentileRows = [10, 25, 50, 75, 90] as const;
+  const percentileRows = useMemo(() => {
+    if (!displayResult) return [] as number[];
+    const candidates = [10, 25, 50, 75, 90] as const;
+    return candidates.filter((p) => Number.isFinite(displayResult.terminalWealthPercentiles[p]));
+  }, [displayResult]);
+  const activeGenerator = useMemo(() => {
+    const raw = displayResult?.params?.generatorType ?? params.generatorType ?? 'student_t';
+    if (raw === 'student_t') return 'Student-t (df 7)';
+    if (raw === 'gaussian_iid') return 'Gaussiano IID';
+    if (raw === 'two_regime') return 'Two-regime (suave)';
+    return String(raw);
+  }, [displayResult?.params?.generatorType, params.generatorType]);
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
   const rawFanYears = rawFanChart.at(-1)?.year ?? 40;
   const fanChartYears = Number.isFinite(rawFanYears)
@@ -683,12 +694,6 @@ export function SimulationPage({
     });
   };
 
-  const handleEditBase = () => {
-    if (window.confirm('Vas a modificar la configuración base guardada. ¿Quieres continuar?')) {
-      window.alert('Editar modelo base aún no está disponible.');
-    }
-  };
-
   const toggleLiquidarDepto = () => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -736,11 +741,11 @@ export function SimulationPage({
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(probSuccess * 100).toFixed(1)}%</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina {ruinWindowLabel}</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina P25–P75 (años)</div>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(100 - (probSuccess * 100)).toFixed(1)}%</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica (mediana)</div>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinTypicalLabel}</div>
             </div>
           </div>
@@ -977,7 +982,7 @@ export function SimulationPage({
                 ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
                 : 'Corre una simulación para ver resultados'
           }
-          ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
+          ruinCopy={ruinMedian ? `Ruina típica (mediana): ${(ruinMedian / 12).toFixed(1)} años` : 'Ruina típica: —'}
           mode={simActive ? 'sim' : 'real'}
           chips={[
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
@@ -1206,6 +1211,9 @@ export function SimulationPage({
                   </label>
                 ))}
               </div>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Generador: <span style={{ color: T.textSecondary, fontWeight: 700 }}>{activeGenerator}</span>
             </div>
 
             <div>
@@ -1569,7 +1577,7 @@ export function SimulationPage({
                 <span>EUR equiv</span>
                 <span>DD máx</span>
               </div>
-              {percentileRows.map((p) => {
+              {percentileRows.map((p, rowIdx) => {
                 const clp = displayResult.terminalWealthPercentiles[p];
                 const eur = clp / eurRate / 1e6;
                 const dd = displayResult.maxDrawdownPercentiles[p];
@@ -1583,7 +1591,7 @@ export function SimulationPage({
                       gap: 0,
                       padding: '10px 12px',
                       background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
-                      borderBottom: p === 90 ? 'none' : `1px solid ${T.border}`,
+                      borderBottom: rowIdx === percentileRows.length - 1 ? 'none' : `1px solid ${T.border}`,
                       color: highlight ? T.primary : T.textPrimary,
                       alignItems: 'center',
                     }}
@@ -1845,22 +1853,6 @@ export function SimulationPage({
         </div>
       )}
 
-      <button
-        onClick={handleEditBase}
-        style={{
-          alignSelf: 'center',
-          marginTop: 10,
-          background: 'transparent',
-          border: `1px solid ${T.border}`,
-          borderRadius: 999,
-          padding: '8px 14px',
-          color: T.textMuted,
-          fontSize: 12,
-          cursor: 'pointer',
-        }}
-      >
-        Editar modelo base
-      </button>
     </div>
   );
 }
