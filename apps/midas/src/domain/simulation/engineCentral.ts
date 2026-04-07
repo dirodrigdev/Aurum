@@ -20,10 +20,23 @@ function cloneParams(params: ModelParameters): ModelParameters {
 function normalizeSpendingPhasesForM8(params: ModelParameters): ModelParameters['spendingPhases'] {
   const phases = params.spendingPhases.slice(0, 3).map((phase) => ({ ...phase }));
   const fallbackPhases = DEFAULT_PARAMETERS.spendingPhases;
+  const eurToClp = (params.fx?.clpUsdInitial ?? 1) * (params.fx?.usdEurFixed ?? 1);
   while (phases.length < 3) {
     const fallback = fallbackPhases[phases.length];
     if (!fallback) break;
     phases.push({ ...fallback });
+  }
+
+  // M8 exige CLP real en las tres fases. Convertimos legado EUR->CLP para no romper previews con estado historico.
+  for (let i = 0; i < phases.length; i += 1) {
+    const phase = phases[i];
+    if (phase.currency === 'EUR') {
+      phases[i] = {
+        ...phase,
+        amountReal: phase.amountReal * eurToClp,
+        currency: 'CLP',
+      };
+    }
   }
 
   const horizonMonths = params.simulation.horizonMonths;

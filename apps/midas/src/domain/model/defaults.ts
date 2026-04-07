@@ -37,9 +37,9 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   feeAnnual: 0.0035,
 
   spendingPhases: [
-    { durationMonths: 36,  amountReal: 6_000,     currency: 'EUR' },
-    { durationMonths: 204, amountReal: 6_000_000, currency: 'CLP' },
-    { durationMonths: 240, amountReal: 4_000_000, currency: 'CLP' },
+    { durationMonths: 36,  amountReal: 6_000_000, currency: 'CLP' },
+    { durationMonths: 204, amountReal: 3_900_000, currency: 'CLP' },
+    { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
   ],
 
   spendingRule: {
