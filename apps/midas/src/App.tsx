@@ -358,12 +358,10 @@ function deriveVisibleCapitalFromComposition(
   if (!composition) return null;
   const optimizable = Number(composition.optimizableInvestmentsCLP ?? 0);
   const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
-  const realEstateEquity = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
-  const nonMortgageDebt = Math.abs(Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
   const riskCapital = includeRiskCapital
     ? normalizeRiskCapitalExposure(composition.nonOptimizable?.riskCapital, 1).visibleCLP
     : 0;
-  const total = optimizable + banks + realEstateEquity + riskCapital - nonMortgageDebt;
+  const total = optimizable + banks + riskCapital;
   if (!Number.isFinite(total)) return null;
   return Math.max(1, total);
 }
@@ -1490,19 +1488,18 @@ export default function App() {
           ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
           : 0;
 
-        const realEstateEquity = Math.max(0, Number(baseComposition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0));
-        const nonMortgageDebt = Math.abs(Number(baseComposition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
         const targetWithoutRisk = Math.max(
           1,
-          Number(baseComposition.totalNetWorthCLP ?? 0) +
+          Number(baseComposition.optimizableInvestmentsCLP ?? 0) +
+            Number(baseComposition.nonOptimizable?.banksCLP ?? 0) +
             manualImpact.currentBanksDelta +
             manualImpact.currentInvestmentsDelta,
         );
-        const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
+        const modeledWithoutRisk = nextOptimizable + nextBanks;
         let gap = targetWithoutRisk - modeledWithoutRisk;
         if (Math.abs(gap) > 0.5) {
           nextBanks = Math.max(0, nextBanks + gap);
-          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt);
+          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks);
           if (Math.abs(remainingGap) > 0.5) {
             nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
           }
@@ -1548,6 +1545,13 @@ export default function App() {
         ...next,
         spendingPhases: normalizeModelSpendingPhases(next),
       };
+      const hasRealEstateBlock = Boolean(normalizedNext.simulationComposition?.nonOptimizable?.realEstate);
+      if (!hasRealEstateBlock && normalizedNext.realEstatePolicy?.enabled) {
+        normalizedNext.realEstatePolicy = {
+          ...normalizedNext.realEstatePolicy,
+          enabled: false,
+        };
+      }
       return applyActiveDistribution(normalizedNext);
     },
     [
@@ -1781,7 +1785,9 @@ export default function App() {
         composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
         (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
-      const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+      const aurumOptimizable = Number(snapshot?.optimizableInvestmentsCLP ?? NaN);
+      const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
+      const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const riskExposure = computeRiskCapital(snapshot);
       const compositionWithToggle = composition
         ? {
@@ -1805,7 +1811,7 @@ export default function App() {
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
-      if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
+      if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
           setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
@@ -1819,7 +1825,7 @@ export default function App() {
 
       const currentBase = baseParamsRef.current;
       const nextBaseComposition = compositionWithToggle ?? currentBase.simulationComposition;
-      const baseTargetCapital = aurumNetWorth;
+      const baseTargetCapital = aurumFinancialBase;
       const baseSnapshotLayer: ModelParameters = {
         ...cloneParams(currentBase),
         capitalInitial: baseTargetCapital,

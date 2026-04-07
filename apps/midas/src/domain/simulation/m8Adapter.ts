@@ -302,7 +302,8 @@ const resolveHouse = (params: ModelParameters, capitalResolution: CapitalResolut
   const resolvedHouse = capitalResolution.simulationComposition.nonOptimizable.realEstate;
   if (!includeHouse) return undefined;
   if (!resolvedHouse) {
-    throw new Error('include_house=true requiere composicion realEstate en CapitalResolution');
+    // En boot o bases sin inmueble, apagamos house de forma segura para evitar fallo en frio.
+    return undefined;
   }
   if (!isFiniteNumber(resolvedHouse.propertyValueCLP) || resolvedHouse.propertyValueCLP <= 0) {
     throw new Error('propertyValueCLP invalido');
