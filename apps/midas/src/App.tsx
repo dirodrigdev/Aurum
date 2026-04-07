@@ -41,6 +41,8 @@ import {
 } from './integrations/aurum/optimizableSnapshot';
 import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
+import { resolveCapital } from './domain/simulation/capitalResolver';
+import { toM8Input } from './domain/simulation/m8Adapter';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
@@ -234,7 +236,16 @@ function resolveScenarioVariantId(value: unknown): ScenarioVariantId {
   return isScenarioVariantId(value) ? value : 'base';
 }
 
-function nextSimulationSeed(): number {
+function isAuditPreviewMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  const query = new URLSearchParams(window.location.search);
+  return query.has('midas-audit') || query.get('midas-audit') === '1' || query.get('audit') === '1';
+}
+
+function nextSimulationSeed(forceSeed: number | null = null): number {
+  if (Number.isInteger(forceSeed) && forceSeed !== null && forceSeed > 0) {
+    return forceSeed;
+  }
   if (typeof window !== 'undefined') {
     const fixedSeedRaw = window.localStorage.getItem('midas:debug-fixed-seed');
     const fixedSeed = Number(fixedSeedRaw);
@@ -248,6 +259,33 @@ function nextSimulationSeed(): number {
     }
   }
   return Math.floor(Math.random() * 2_147_483_646) + 1;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, v]) => `${JSON.stringify(key)}:${stableSerialize(v)}`);
+  return `{${entries.join(',')}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function hashJson(value: unknown): string {
+  return hashString(stableSerialize(value));
 }
 
 function computeWeightedReturn(p: ModelParameters) {
@@ -485,6 +523,7 @@ export default function App() {
       },
     };
   }, []);
+  const auditPreviewMode = useMemo(() => isAuditPreviewMode(), []);
   const [baseParams, setBaseParams] = useState<ModelParameters>(() =>
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
@@ -1414,6 +1453,68 @@ export default function App() {
     }
   }, [appendRuntimeTimeline, summarizeParams, summarizeResult]);
 
+  const heroVisibleResult = heroPhase === 'ready'
+    ? simResult
+    : heroPhase === 'stale'
+      ? lastStableCentral
+      : null;
+  const heroVisibleSource: 'simResult' | 'lastStableCentral' | 'none' = heroPhase === 'ready'
+    ? 'simResult'
+    : heroPhase === 'stale'
+      ? 'lastStableCentral'
+      : 'none';
+  const heroAuditProbe = useMemo(() => {
+    if (!auditPreviewMode) return null;
+    const heroParams = heroVisibleResult?.params ?? simParams;
+    try {
+      const capitalResolution = resolveCapital({ params: heroParams });
+      const input = toM8Input(heroParams, capitalResolution);
+      const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
+      const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;
+      return {
+        heroSource: heroVisibleSource,
+        requestId,
+        seed: Number(input.seed ?? 0),
+        nPaths: Number(input.n_paths ?? 0),
+        capitalInitial: Number(input.capital_initial_clp ?? 0),
+        capitalSource: input.capital_source,
+        sourceLabel: input.capital_source_label ?? capitalResolution.sourceLabel,
+        riskCapitalEnabled,
+        houseInclude: Boolean(input.house?.include_house),
+        futureEventsCount: input.future_events?.length ?? 0,
+        inputHash: hashJson(input),
+        success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
+        probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
+        probRuin20: heroVisibleResult?.probRuin20 ?? null,
+      };
+    } catch (error) {
+      const heroParams = heroVisibleResult?.params ?? simParams;
+      return {
+        heroSource: heroVisibleSource,
+        requestId: heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId,
+        seed: Number(heroParams.simulation?.seed ?? 0),
+        nPaths: Number(heroParams.simulation?.nSim ?? 0),
+        capitalInitial: Number(heroParams.capitalInitial ?? 0),
+        capitalSource: heroParams.capitalSource ?? 'manual',
+        sourceLabel: heroParams.label || 'n/a',
+        riskCapitalEnabled: Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+        houseInclude: Boolean(heroParams.simulationComposition?.nonOptimizable?.realEstate),
+        futureEventsCount: heroParams.futureCapitalEvents?.length ?? 0,
+        inputHash: `error:${error instanceof Error ? error.message : String(error)}`,
+        success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
+        probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
+        probRuin20: heroVisibleResult?.probRuin20 ?? null,
+      };
+    }
+  }, [
+    activeRecalcRequestId,
+    appliedRecalcRequestId,
+    auditPreviewMode,
+    heroVisibleResult,
+    heroVisibleSource,
+    simParams,
+  ]);
+
   const buildCanonicalSimParams = useCallback(
     (
       baseParamsCurrent: ModelParameters,
@@ -1594,7 +1695,7 @@ export default function App() {
       activeRecalcOwnerRequestIdRef.current = requestId;
       setActiveRecalcOwner(ownerForRun);
     }
-    const simulationSeed = nextSimulationSeed();
+    const simulationSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
     setActiveRecalcSeed(simulationSeed);
@@ -1621,6 +1722,7 @@ export default function App() {
           ...paramsBase,
           simulation: {
             ...paramsBase.simulation,
+            nSim: auditPreviewMode ? DEFAULT_SIMULATION_NSIM : paramsBase.simulation.nSim,
             seed: simulationSeed,
           },
         };
@@ -1689,6 +1791,7 @@ export default function App() {
     appendRuntimeTimeline,
     beginRecalculationVisual,
     clearCalculationTimer,
+    auditPreviewMode,
     runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
@@ -1773,6 +1876,11 @@ export default function App() {
       visibleValuePct: visibleValue != null ? Number((visibleValue * 100).toFixed(2)) : null,
     });
   }, [appendRuntimeTimeline, heroPhase, lastStableCentral, simResult]);
+
+  useEffect(() => {
+    if (!heroAuditProbe) return;
+    appendRuntimeTimeline('hero_audit_snapshot', heroAuditProbe as Record<string, unknown>);
+  }, [appendRuntimeTimeline, heroAuditProbe]);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
@@ -2877,6 +2985,8 @@ export default function App() {
       weightsSourceLabel={weightsSourceLabel}
       officialReferenceWeights={officialReferenceWeights}
       activeWeights={activeWeightsNormalized}
+      auditModeEnabled={auditPreviewMode}
+      auditProbe={heroAuditProbe}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}

@@ -117,6 +117,8 @@ export function SimulationPage({
   weightsSourceLabel,
   officialReferenceWeights,
   activeWeights,
+  auditModeEnabled,
+  auditProbe,
   applyAurumHarness,
   onApplyPendingSnapshot,
   onRunApplyAurumHarness,
@@ -184,6 +186,23 @@ export function SimulationPage({
   weightsSourceLabel: string;
   officialReferenceWeights: PortfolioWeights;
   activeWeights: PortfolioWeights;
+  auditModeEnabled: boolean;
+  auditProbe: {
+    heroSource: 'simResult' | 'lastStableCentral' | 'none';
+    requestId: number | null;
+    seed: number;
+    nPaths: number;
+    capitalInitial: number;
+    capitalSource: CapitalSource;
+    sourceLabel: string;
+    riskCapitalEnabled: boolean;
+    houseInclude: boolean;
+    futureEventsCount: number;
+    inputHash: string;
+    success40: number | null;
+    probRuin40: number | null;
+    probRuin20: number | null;
+  } | null;
   applyAurumHarness: {
     status: 'idle' | 'running' | 'pass' | 'fail';
     startedAtMs: number | null;
@@ -872,6 +891,33 @@ export function SimulationPage({
           </div>
         </div>
       </div>
+      {auditModeEnabled && auditProbe && (
+        <div
+          style={{
+            background: 'rgba(91, 140, 255, 0.08)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+            color: T.textPrimary,
+            fontSize: 11,
+            display: 'grid',
+            gap: 4,
+          }}
+        >
+          <div style={{ fontWeight: 800, color: T.primary }}>Auditoría determinista</div>
+          <div>Hero source: {auditProbe.heroSource} · requestId: {auditProbe.requestId ?? '—'}</div>
+          <div>Seed: {auditProbe.seed} · n_paths: {auditProbe.nPaths} · input hash: {auditProbe.inputHash}</div>
+          <div>
+            capital_initial_clp: {formatCapital(auditProbe.capitalInitial)} · capital_source: {auditProbe.capitalSource} · sourceLabel: {auditProbe.sourceLabel}
+          </div>
+          <div>
+            riskCapitalEnabled: {auditProbe.riskCapitalEnabled ? 'ON' : 'OFF'} · house.include_house: {auditProbe.houseInclude ? 'true' : 'false'} · future_events: {auditProbe.futureEventsCount}
+          </div>
+          <div>
+            Success40: {auditProbe.success40 !== null ? `${(auditProbe.success40 * 100).toFixed(2)}%` : '—'} · ProbRuin40: {auditProbe.probRuin40 !== null ? `${(auditProbe.probRuin40 * 100).toFixed(2)}%` : '—'} · ProbRuin20: {auditProbe.probRuin20 !== null ? `${(auditProbe.probRuin20 * 100).toFixed(2)}%` : '—'}
+          </div>
+        </div>
+      )}
       <div
         style={{
           background: T.surface,
