@@ -10,6 +10,7 @@ import type {
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
+import type { M8Input } from '../domain/simulation/m8.types';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -199,6 +200,8 @@ export function SimulationPage({
     houseInclude: boolean;
     futureEventsCount: number;
     inputHash: string;
+    m8Input: M8Input | null;
+    heroResult: Record<string, unknown> | null;
     success40: number | null;
     probRuin40: number | null;
     probRuin20: number | null;
@@ -904,7 +907,32 @@ export function SimulationPage({
             gap: 4,
           }}
         >
-          <div style={{ fontWeight: 800, color: T.primary }}>Auditoría determinista</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontWeight: 800, color: T.primary }}>Auditoría determinista</div>
+            <button
+              type="button"
+              onClick={async () => {
+                const payload = JSON.stringify(auditProbe, null, 2);
+                if (navigator.clipboard?.writeText) {
+                  await navigator.clipboard.writeText(payload);
+                  return;
+                }
+                window.prompt('Copia la auditoría JSON', payload);
+              }}
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surface,
+                color: T.textPrimary,
+                borderRadius: 999,
+                fontSize: 10,
+                fontWeight: 800,
+                padding: '5px 9px',
+                cursor: 'pointer',
+              }}
+            >
+              Copiar auditoría JSON
+            </button>
+          </div>
           <div>Hero source: {auditProbe.heroSource} · requestId: {auditProbe.requestId ?? '—'}</div>
           <div>Seed: {auditProbe.seed} · n_paths: {auditProbe.nPaths} · input hash: {auditProbe.inputHash}</div>
           <div>

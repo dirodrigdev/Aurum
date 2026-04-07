@@ -1469,6 +1469,21 @@ export default function App() {
     try {
       const capitalResolution = resolveCapital({ params: heroParams });
       const input = toM8Input(heroParams, capitalResolution);
+      const heroResult = heroVisibleResult
+        ? {
+            success40: heroVisibleResult.success40,
+            probRuin40: heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin,
+            probRuin20: heroVisibleResult.probRuin20 ?? null,
+            ruinTimingMedian: heroVisibleResult.ruinTimingMedian ?? null,
+            terminalWealthPercentiles: heroVisibleResult.terminalWealthPercentiles,
+            p50TerminalAllPaths: heroVisibleResult.p50TerminalAllPaths,
+            p50TerminalSurvivors: heroVisibleResult.p50TerminalSurvivors,
+            houseSalePct: heroVisibleResult.houseSalePct ?? null,
+            spendFactorTotal: heroVisibleResult.spendFactorTotal ?? null,
+            cutTimeShare: heroVisibleResult.cutTimeShare ?? null,
+            maxDrawdownPercentiles: heroVisibleResult.maxDrawdownPercentiles,
+          }
+        : null;
       const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
       const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;
       return {
@@ -1483,6 +1498,8 @@ export default function App() {
         houseInclude: Boolean(input.house?.include_house),
         futureEventsCount: input.future_events?.length ?? 0,
         inputHash: hashJson(input),
+        m8Input: input,
+        heroResult,
         success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
         probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
         probRuin20: heroVisibleResult?.probRuin20 ?? null,
@@ -1501,6 +1518,8 @@ export default function App() {
         houseInclude: Boolean(heroParams.simulationComposition?.nonOptimizable?.realEstate),
         futureEventsCount: heroParams.futureCapitalEvents?.length ?? 0,
         inputHash: `error:${error instanceof Error ? error.message : String(error)}`,
+        m8Input: null,
+        heroResult: null,
         success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
         probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
         probRuin20: heroVisibleResult?.probRuin20 ?? null,
@@ -1878,8 +1897,15 @@ export default function App() {
   }, [appendRuntimeTimeline, heroPhase, lastStableCentral, simResult]);
 
   useEffect(() => {
+    const target = window as typeof window & { __MIDAS_AUDIT__?: typeof heroAuditProbe | null };
+    target.__MIDAS_AUDIT__ = heroAuditProbe;
     if (!heroAuditProbe) return;
     appendRuntimeTimeline('hero_audit_snapshot', heroAuditProbe as Record<string, unknown>);
+    return () => {
+      if (target.__MIDAS_AUDIT__ === heroAuditProbe) {
+        target.__MIDAS_AUDIT__ = null;
+      }
+    };
   }, [appendRuntimeTimeline, heroAuditProbe]);
 
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
