@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CashflowEvent,
+  FutureCapitalEvent,
   ManualCapitalAdjustment,
   ModelParameters,
   PortfolioWeights,
@@ -92,6 +93,7 @@ type ManualAdjustmentImpact = {
   currentInvestmentsDelta: number;
   currentRiskDelta: number;
   futureEvents: CashflowEvent[];
+  futureCapitalEvents: FutureCapitalEvent[];
 };
 
 type OptimizerBaselineSnapshot = {
@@ -1196,6 +1198,12 @@ export default function App() {
     const capped = Math.min(Math.max(1, diff), baseParams.simulation.horizonMonths);
     return capped;
   }, [aurumSnapshotMonth, baseParams.simulation.horizonMonths, parseYearMonth]);
+  const resolveSimulationBaseMonth = useCallback((params: ModelParameters) => {
+    const explicit = typeof params.simulationBaseMonth === 'string' ? params.simulationBaseMonth.trim() : '';
+    if (explicit) return explicit;
+    if (aurumSnapshotMonth) return aurumSnapshotMonth;
+    return new Date().toISOString().slice(0, 7);
+  }, [aurumSnapshotMonth]);
   const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
     if (currency === 'CLP') return amount;
     const usdToClp = baseParams.fx?.clpUsdInitial ?? 1;
@@ -1217,6 +1225,7 @@ export default function App() {
     let currentRiskDelta = 0;
     let currentOtherDelta = 0;
     const futureEvents: CashflowEvent[] = [];
+    const futureCapitalEvents: FutureCapitalEvent[] = [];
     const todayKey = new Date().toISOString().slice(0, 7);
     adjustments.forEach((adj) => {
       const amountClp = toClp(adj.amount, adj.currency);
@@ -1239,6 +1248,14 @@ export default function App() {
         amountType: 'real',
         sleeve: mapDestinationToSleeve(adj.destination),
       });
+      futureCapitalEvents.push({
+        id: `manual-${adj.id}`,
+        description: adj.note ?? adj.destination,
+        type: signed > 0 ? 'inflow' : 'outflow',
+        amount: Math.abs(amountClp),
+        currency: 'CLP',
+        effectiveDate: adj.effectiveDate,
+      });
     });
     const currentBanksDelta = currentLiquidityDelta + currentOtherDelta;
     const currentTotalDelta = currentBanksDelta + currentInvestmentsDelta + currentRiskDelta;
@@ -1248,6 +1265,7 @@ export default function App() {
       currentInvestmentsDelta,
       currentRiskDelta,
       futureEvents,
+      futureCapitalEvents,
     };
   }, [mapDestinationToSleeve, resolveMonthIndex, toClp]);
 
@@ -1379,18 +1397,41 @@ export default function App() {
       options?: {
         applyCapital?: boolean;
         manualImpact?: ManualAdjustmentImpact;
+        riskCapitalEnabled?: boolean;
       },
     ): ModelParameters => {
       const applyCapital = options?.applyCapital ?? true;
       const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
+      const riskEnabled = options?.riskCapitalEnabled ?? riskCapitalEnabled;
       const mergedEvents = [
         ...(baseParamsCurrent.cashflowEvents ?? []),
         ...manualImpact.futureEvents,
       ];
+      const mergedFutureCapitalEvents = (() => {
+        const map = new Map<string, FutureCapitalEvent>();
+        for (const event of baseParamsCurrent.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        for (const event of currentSimParams.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        for (const event of manualImpact.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        return [...map.values()].sort((a, b) => {
+          const dateCmp = a.effectiveDate.localeCompare(b.effectiveDate);
+          if (dateCmp !== 0) return dateCmp;
+          return a.id.localeCompare(b.id);
+        });
+      })();
       const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
       let next: ModelParameters = {
         ...currentSimParams,
         cashflowEvents: mergedEvents,
+        futureCapitalEvents: mergedFutureCapitalEvents,
+        simulationBaseMonth: currentSimParams.simulationBaseMonth
+          ?? baseParamsCurrent.simulationBaseMonth
+          ?? resolveSimulationBaseMonth(currentSimParams),
       };
 
       if (blocksMode && baseParamsCurrent.simulationComposition) {
@@ -1418,8 +1459,8 @@ export default function App() {
         const riskUsdEnabledTotal = riskUsdSnapshot > 0
           ? riskEnabledClpTotal / riskUsdSnapshot
           : 0;
-        const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
-        const riskClpApplied = riskCapitalEnabled
+        const riskUsdApplied = riskEnabled ? riskUsdEnabledTotal : 0;
+        const riskClpApplied = riskEnabled
           ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
           : 0;
 
@@ -1441,7 +1482,7 @@ export default function App() {
           }
         }
 
-        const targetVisibleCapital = riskCapitalEnabled
+        const targetVisibleCapital = riskEnabled
           ? targetWithoutRisk + riskClpApplied
           : targetWithoutRisk;
 
@@ -1466,7 +1507,7 @@ export default function App() {
           capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : currentSimParams.capitalInitial,
         };
       } else {
-        const riskDelta = riskCapitalEnabled
+        const riskDelta = riskEnabled
           ? manualImpact.currentRiskDelta + riskCapitalCLP
           : 0;
         const nextDelta = manualImpact.currentBanksDelta + manualImpact.currentInvestmentsDelta + riskDelta;
@@ -1479,7 +1520,14 @@ export default function App() {
 
       return applyActiveDistribution(next);
     },
-    [applyActiveDistribution, manualAdjustmentImpact, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP],
+    [
+      applyActiveDistribution,
+      manualAdjustmentImpact,
+      resolveSimulationBaseMonth,
+      riskCapitalCLP,
+      riskCapitalEnabled,
+      riskCapitalUsdSnapshotCLP,
+    ],
   );
 
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
@@ -2158,10 +2206,28 @@ export default function App() {
   ]);
 
   const toggleRiskCapital = useCallback(() => {
+    const nextEnabled = !riskCapitalEnabled;
     pendingRecalcCauseRef.current = 'risk-toggle';
-    setRiskCapitalEnabled((prev) => !prev);
+    setRiskCapitalEnabled(nextEnabled);
     markSimulationInteraction();
-  }, [markSimulationInteraction]);
+    const nextParams = buildCanonicalSimParams(baseParamsRef.current, simParamsRef.current, {
+      applyCapital: true,
+      manualImpact: manualAdjustmentImpact,
+      riskCapitalEnabled: nextEnabled,
+    });
+    setSimParams(nextParams);
+    const base = applySimulationOverrides(nextParams, simOverrides);
+    startRecalculation('risk-toggle', () => base);
+  }, [
+    applySimulationOverrides,
+    baseParamsRef,
+    buildCanonicalSimParams,
+    manualAdjustmentImpact,
+    markSimulationInteraction,
+    riskCapitalEnabled,
+    simOverrides,
+    startRecalculation,
+  ]);
 
   useEffect(() => {
     if (pendingSnapshot) return;
@@ -2183,6 +2249,7 @@ export default function App() {
       applyCapital: true,
       manualImpact: impact,
     });
+    setBaseParams(nextParams);
     setSimParams(nextParams);
     const base = applySimulationOverrides(nextParams, simOverrides);
     startRecalculation('ledger-commit', () => base);

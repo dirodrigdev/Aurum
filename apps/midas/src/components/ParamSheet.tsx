@@ -10,6 +10,7 @@ type NumberInputProps = {
   min?: number;
   max?: number;
   step?: number;
+  disabled?: boolean;
 };
 
 const getWeight = (params: ModelParameters, path: string) => {
@@ -26,7 +27,7 @@ const getWeight = (params: ModelParameters, path: string) => {
   }
 };
 
-function NumberInput({ label, value, onChange, suffix, min, max, step = 0.01 }: NumberInputProps) {
+function NumberInput({ label, value, onChange, suffix, min, max, step = 0.01, disabled = false }: NumberInputProps) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ color: T.textSecondary, fontSize: 12 }}>{label}</span>
@@ -41,6 +42,7 @@ function NumberInput({ label, value, onChange, suffix, min, max, step = 0.01 }: 
           min={min}
           max={max}
           step={step}
+          disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           style={{
             flex: 1,
@@ -49,6 +51,7 @@ function NumberInput({ label, value, onChange, suffix, min, max, step = 0.01 }: 
             color: T.textPrimary,
             fontSize: 14,
             outline: 'none',
+            cursor: disabled ? 'not-allowed' : 'text',
           }}
         />
         {suffix && <span style={{ color: T.textMuted, fontSize: 12 }}>{suffix}</span>}
@@ -77,6 +80,8 @@ export function ParamSheet({
   onRun: () => void;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const showLegacyCashflowEvents = false;
+  const showLegacyBootstrapControl = false;
   const [eventForm, setEventForm] = useState({
     description: '',
     year: 1,
@@ -252,12 +257,20 @@ export function ParamSheet({
                 onChange={(v) => onUpdate('fx.tcrealLT', v)}
                 step={0.1}
               />
-              <NumberInput
-                label="Block length (bootstrap)"
-                value={params.simulation.blockLength}
-                onChange={(v) => onUpdate('simulation.blockLength', v)}
-                step={1}
-              />
+              {showLegacyBootstrapControl ? (
+                <>
+                  <NumberInput
+                    label="Block length (bootstrap, legacy)"
+                    value={params.simulation.blockLength}
+                    onChange={(v) => onUpdate('simulation.blockLength', v)}
+                    step={1}
+                    disabled
+                  />
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>
+                    Legacy bootstrap: M8 no usa este parámetro.
+                  </div>
+                </>
+              ) : null}
               <NumberInput
                 label="N° simulaciones"
                 value={params.simulation.nSim}
@@ -273,203 +286,14 @@ export function ParamSheet({
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 6 }}>
-            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>EVENTOS DE CAJA</div>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ color: T.textSecondary, fontSize: 12 }}>Descripción</span>
-              <input
-                type="text"
-                value={eventForm.description}
-                placeholder="ej: Herencia, Compra auto"
-                onChange={(e) => setEventForm((prev) => ({ ...prev, description: e.target.value }))}
-                style={{
-                  background: T.surface,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '10px 12px',
-                  color: T.textPrimary,
-                  fontSize: 14,
-                  outline: 'none',
-                }}
-              />
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <NumberInput
-                label="Año"
-                value={eventForm.year}
-                onChange={(v) => setEventForm((prev) => ({ ...prev, year: Math.max(1, Math.min(40, Math.round(v))) }))}
-                min={1}
-                max={40}
-                step={1}
-              />
-              <NumberInput
-                label="Monto"
-                value={eventForm.amount}
-                onChange={(v) => setEventForm((prev) => ({ ...prev, amount: Math.max(0, v) }))}
-                step={1}
-              />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textSecondary, fontSize: 12 }}>Tipo</span>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
-                  {([
-                    ['Ingreso', 'inflow'],
-                    ['Retiro', 'outflow'],
-                  ] as const).map(([label, value]) => {
-                    const active = eventForm.type === value;
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setEventForm((prev) => ({ ...prev, type: value }))}
-                        style={{
-                          background: active ? T.primary : T.surface,
-                          color: active ? '#fff' : T.textSecondary,
-                          border: `1px solid ${active ? T.primary : T.border}`,
-                          borderRadius: 10,
-                          padding: '10px 12px',
-                          cursor: 'pointer',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textSecondary, fontSize: 12 }}>Moneda</span>
-                <select
-                  value={eventForm.currency}
-                  onChange={(e) =>
-                    setEventForm((prev) => {
-                      const nextCurrency = e.target.value as CashflowEvent['currency'];
-                      return {
-                        ...prev,
-                        currency: nextCurrency,
-                        amountType: nextCurrency === 'CLP' ? prev.amountType : 'nominal',
-                      };
-                    })
-                  }
-                  style={{
-                    background: T.surface,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    color: T.textPrimary,
-                    fontSize: 14,
-                    outline: 'none',
-                  }}
-                >
-                  <option value="CLP">CLP</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
-                </select>
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textSecondary, fontSize: 12 }}>Tipo de monto</span>
-                <select
-                  value={eventForm.currency === 'CLP' ? eventForm.amountType : 'nominal'}
-                  onChange={(e) =>
-                    setEventForm((prev) => ({
-                      ...prev,
-                      amountType: e.target.value as NonNullable<CashflowEvent['amountType']>,
-                    }))
-                  }
-                  disabled={eventForm.currency !== 'CLP'}
-                  style={{
-                    background: T.surface,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    color: T.textPrimary,
-                    fontSize: 14,
-                    outline: 'none',
-                    opacity: eventForm.currency === 'CLP' ? 1 : 0.7,
-                  }}
-                >
-                  <option value="real">Real (pesos de hoy)</option>
-                  <option value="nominal">Nominal (monto fijo futuro)</option>
-                </select>
-              </label>
-            </div>
-            {eventForm.currency !== 'CLP' && (
+          {showLegacyCashflowEvents ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>EVENTOS DE CAJA</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
-                Para USD/EUR, en esta versión los eventos se tratan como nominales.
+                Legacy visible: para M8, usa el '+' del capital y la hoja flotante de futuros.
               </div>
-            )}
-            <button
-              type="button"
-              onClick={addCashflowEvent}
-              style={{
-                alignSelf: 'flex-start',
-                background: T.surface,
-                color: T.primary,
-                border: `1px solid ${T.border}`,
-                borderRadius: 10,
-                padding: '10px 12px',
-                cursor: 'pointer',
-                fontWeight: 700,
-              }}
-            >
-              Agregar evento
-            </button>
-
-            {cashflowEvents.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {cashflowEvents.map((event) => {
-                  const year = Math.floor((event.month - 1) / 12) + 1;
-                  const isInflow = event.type === 'inflow';
-                  const sign = isInflow ? '+' : '−';
-                  const color = isInflow ? '#2f8f4e' : '#c44747';
-                  return (
-                    <div
-                      key={event.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 10,
-                        background: T.surface,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: 10,
-                        padding: '10px 12px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <div style={{ color, fontWeight: 800, fontSize: 12 }}>
-                          {isInflow ? '↑' : '↓'} Año {year} — {event.description}
-                        </div>
-                        <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          {sign}${event.amount.toLocaleString('es-CL')} {event.currency}
-                        </div>
-                        <div style={{ color: T.textMuted, fontSize: 11 }}>
-                          tipo: {(event.amountType ?? (event.currency === 'CLP' ? 'real' : 'nominal')) === 'real' ? 'real' : 'nominal'}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeCashflowEvent(event.id)}
-                        style={{
-                          background: 'transparent',
-                          border: `1px solid ${T.border}`,
-                          color: T.textSecondary,
-                          borderRadius: 999,
-                          width: 28,
-                          height: 28,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, background: T.surfaceEl, borderTop: `1px solid ${T.border}` }}>
           <button

@@ -4,6 +4,7 @@ import { STRESS_SCENARIOS } from '../domain/model/defaults';
 import { T, css } from './theme';
 
 export function StressPage({ params, stateLabel }: { params: ModelParameters; stateLabel?: string }) {
+  const stressLegacyPending = true;
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(STRESS_SCENARIOS.map((s) => [s.id, true])),
   );
@@ -33,6 +34,12 @@ export function StressPage({ params, stateLabel }: { params: ModelParameters; st
   const toggle = (id: string) => setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const run = () => {
+    if (stressLegacyPending) {
+      setError('StressPage pendiente de migración a M8. Esta tab queda explícitamente legacy por ahora.');
+      setRunning(false);
+      setProgress(null);
+      return;
+    }
     const ids = STRESS_SCENARIOS.filter((s) => selected[s.id]);
     workerRef.current?.terminate();
     const worker = new Worker(new URL('../domain/analysis/scenario.worker.ts', import.meta.url), {
@@ -111,6 +118,11 @@ export function StressPage({ params, stateLabel }: { params: ModelParameters; st
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           Escenarios determinísticos (separados de Optimista/Base/Pesimista) · usan tu configuración vigente
         </div>
+        {stressLegacyPending && (
+          <div style={{ color: T.warning, fontSize: 12, marginTop: 4 }}>
+            Legacy / pendiente de migración a M8.
+          </div>
+        )}
       </div>
       {stateLabel && <div style={{ color: T.textSecondary, fontSize: 11 }}>{stateLabel}</div>}
 
@@ -132,6 +144,7 @@ export function StressPage({ params, stateLabel }: { params: ModelParameters; st
               type="checkbox"
               checked={!!selected[sc.id]}
               onChange={() => toggle(sc.id)}
+              disabled={stressLegacyPending}
               style={{ marginTop: 4 }}
             />
             <div>
@@ -142,23 +155,23 @@ export function StressPage({ params, stateLabel }: { params: ModelParameters; st
         ))}
       </div>
 
-      <button
-        onClick={run}
-        disabled={running}
-        style={{
+        <button
+          onClick={run}
+          disabled={running || stressLegacyPending}
+          style={{
           width: '100%',
-          background: running ? T.border : T.primary,
+          background: running || stressLegacyPending ? T.border : T.primary,
           color: '#fff',
           border: 'none',
           borderRadius: 12,
           padding: '14px 0',
           fontWeight: 800,
           fontSize: 14,
-          cursor: running ? 'wait' : 'pointer',
-        }}
-      >
-        {running ? 'Ejecutando...' : '▶ Ejecutar stress tests seleccionados'}
-      </button>
+          cursor: running || stressLegacyPending ? 'not-allowed' : 'pointer',
+          }}
+        >
+        {stressLegacyPending ? 'Stress pendiente de migración' : running ? 'Ejecutando...' : '▶ Ejecutar stress tests seleccionados'}
+        </button>
 
       {baseline && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>

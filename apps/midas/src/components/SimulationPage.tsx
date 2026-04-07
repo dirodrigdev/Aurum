@@ -205,6 +205,8 @@ export function SimulationPage({
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
+  const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
@@ -497,6 +499,8 @@ export function SimulationPage({
         ? T.negative
         : T.textMuted;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
+  const probRuin40 = displayResult?.probRuin40 ?? displayResult?.probRuin ?? null;
+  const probRuin20 = displayResult?.probRuin20 ?? null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
@@ -508,6 +512,13 @@ export function SimulationPage({
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
+  const houseSalePct = displayResult?.houseSalePct ?? null;
+  const triggerYearMedian = displayResult?.triggerYearMedian ?? null;
+  const saleYearMedian = displayResult?.saleYearMedian ?? null;
+  const houseSaleSummary =
+    houseSalePct !== null && Number.isFinite(houseSalePct)
+      ? `Venta de casa en ${(houseSalePct * 100).toFixed(1)}% de escenarios`
+      : 'Venta de casa: —';
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
@@ -1125,35 +1136,20 @@ export function SimulationPage({
 
       {!hideResultBlocks && displayResult && probSuccess !== null && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
-          <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
-              <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
-            <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {probSuccess !== null && (() => {
-                const successPct = probSuccess * 100;
-                const left = mapSuccessPct(successPct);
-                const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
-                return (
-                  <span
-                    title={`Éxito: ${successPct.toFixed(1)}%`}
-                    style={{
-                      position: 'absolute',
-                      left: `${left}%`,
-                      top: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      width: 14,
-                      height: 14,
-                      borderRadius: '50%',
-                      border: `2px solid ${zoneColor}`,
-                      background: zoneColor,
-                      opacity: 0.95,
-                      display: 'block',
-                    }}
-                  />
-                );
-              })()}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>LECTURA RÁPIDA</div>
+            <div style={{ color: T.textSecondary, fontSize: 11, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 999, padding: '4px 10px' }}>
+              Resumen M8
             </div>
-            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 8, marginTop: 10 }}>
+            <MetricTile label="Ruina 40" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
+            <MetricTile label="Ruina 20" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
+            <MetricTile label="P50 terminal" value={p50AllPaths !== null ? formatCapital(p50AllPaths) : '—'} tone="primary" />
+            <MetricTile label="Factor gasto total" value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'} />
+          </div>
+          <div style={{ marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
+            {houseSaleSummary}
           </div>
         </div>
       )}
@@ -1352,7 +1348,7 @@ export function SimulationPage({
         }}
       >
         <InfoCard
-          label="Gasto modelado / planificado"
+          label="Factor gasto total"
           value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
         />
         <InfoCard
@@ -1360,6 +1356,84 @@ export function SimulationPage({
           value={p50AllPaths !== null ? `$${formatMillionsMM(p50AllPaths / 1e6)}` : '—'}
         />
       </div>
+      )}
+
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={keyMetricsOpen}
+          onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+          }}
+        >
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span>Métricas clave</span>
+            <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
+          </summary>
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+            <MetricTile label="P50 terminal (sobrevivientes)" value={p50Survivors !== null ? formatCapital(p50Survivors) : '—'} />
+            <MetricTile
+              label="Max drawdown"
+              value={
+                displayResult
+                  ? `P50 ${(displayResult.maxDrawdownPercentiles[50] * 100).toFixed(1)}% · P75 ${(displayResult.maxDrawdownPercentiles[75] * 100).toFixed(1)}% · P90 ${(displayResult.maxDrawdownPercentiles[90] * 100).toFixed(1)}%`
+                  : '—'
+              }
+            />
+            <MetricTile label="Cut time share" value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'} />
+            {houseSalePct !== null && houseSalePct > 0 ? (
+              <MetricTile
+                label="Casa"
+                value={`Venta ${(houseSalePct * 100).toFixed(1)}% · Disparo ${triggerYearMedian !== null ? `Año ${triggerYearMedian.toFixed(1)}` : '—'} · Venta ${saleYearMedian !== null ? `Año ${saleYearMedian.toFixed(1)}` : '—'}`}
+              />
+            ) : null}
+          </div>
+        </details>
+      )}
+
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={moreMetricsOpen}
+          onToggle={(e) => setMoreMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+          }}
+        >
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span>Más métricas</span>
+            <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
+          </summary>
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+            <MetricTile label="Spending phase 2" value={displayResult.spendFactorPhase2 !== undefined ? `${(displayResult.spendFactorPhase2 * 100).toFixed(1)}%` : '—'} />
+            <MetricTile label="Spending phase 3" value={displayResult.spendFactorPhase3 !== undefined ? `${(displayResult.spendFactorPhase3 * 100).toFixed(1)}%` : '—'} />
+            <MetricTile label="Cuts meses" value={
+              displayResult.spendFactorCutMonths !== undefined ||
+              displayResult.spendFactorNoCutMonths !== undefined ||
+              displayResult.spendFactorCut1Months !== undefined ||
+              displayResult.spendFactorCut2Months !== undefined
+                ? `Cut ${(displayResult.spendFactorCutMonths ?? 0).toFixed(1)} · No cut ${(displayResult.spendFactorNoCutMonths ?? 0).toFixed(1)} · C1 ${(displayResult.spendFactorCut1Months ?? 0).toFixed(1)} · C2 ${(displayResult.spendFactorCut2Months ?? 0).toFixed(1)}`
+                : '—'
+            } />
+            <MetricTile label="Stress share" value={displayResult.stressTimeShare !== undefined ? `${(displayResult.stressTimeShare * 100).toFixed(1)}%` : '—'} />
+            <MetricTile label="Cut1 / Cut2" value={
+              displayResult.cut1TimeShare !== undefined || displayResult.cut2TimeShare !== undefined
+                ? `C1 ${((displayResult.cut1TimeShare ?? 0) * 100).toFixed(1)}% · C2 ${((displayResult.cut2TimeShare ?? 0) * 100).toFixed(1)}%`
+                : '—'
+            } />
+            <MetricTile label="Terminal all paths" value={
+              Array.isArray(displayResult.terminalWealthAllPaths)
+                ? `${displayResult.terminalWealthAllPaths.length} paths`
+                : '—'
+            } />
+            <MetricTile label="Banda de incertidumbre" value={`Ruina ${(displayResult.uncertaintyBand.low * 100).toFixed(1)}% – ${(displayResult.uncertaintyBand.high * 100).toFixed(1)}%`} />
+          </div>
+        </details>
       )}
 
       {!hideResultBlocks && displayResult && (
@@ -1525,22 +1599,23 @@ export function SimulationPage({
         </>
       )}
 
-      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending || Boolean(lastRecalcCause) || Boolean(pendingSnapshotLabel) || applyAurumHarness.status !== 'idle') && (
-        <details
-          style={{
-            marginTop: 12,
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
-            color: T.textSecondary,
-            fontSize: 11,
-          }}
-        >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
-            Detalles técnicos
-          </summary>
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <details
+        open={advancedOpen}
+        onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{
+          marginTop: 12,
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          padding: '10px 12px',
+          color: T.textSecondary,
+          fontSize: 11,
+        }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
+          Otros parámetros
+        </summary>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
             <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
             <div style={{ color: T.textMuted }}>
@@ -1722,9 +1797,46 @@ export function SimulationPage({
                 Último rebalanceo anual: mes {lastRebalanceMonth}
               </span>
             ) : null}
+        </div>
+      </details>
+
+      <details
+        style={{
+          marginTop: 12,
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          padding: '10px 12px',
+          color: T.textSecondary,
+          fontSize: 11,
+        }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
+          Parámetros técnicos / legacy
+        </summary>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
+          <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
+          <div style={{ color: T.textMuted }}>
+            heroPhase={heroPhase} · simUiState={simUiState} · worker={recalcWorkerStatus}
           </div>
-        </details>
-      )}
+          <div style={{ color: T.textMuted }}>
+            fuentePatrimonio={patrimonioSourceTechnical}
+          </div>
+          <div style={{ color: T.textMuted }}>
+            fuenteDistribución={distributionSourceTechnical}
+          </div>
+          <div style={{ color: T.textMuted }}>
+            weightsSourceMode={weightsSourceMode} · weightsSourceLabel={weightsSourceLabel}
+          </div>
+          <div style={{ color: T.textMuted }}>
+            fxSpotSource={fxSpotSourceTechnical}
+          </div>
+          <div style={{ color: T.textMuted }}>
+            bloquesNoOptimizables={nonOptimizableBlocksTechnical}
+          </div>
+        </div>
+      </details>
 
       {capitalLedgerOpen && (
         <div
@@ -1990,6 +2102,29 @@ function InfoCard({ label, value }: { label: string; value: string }) {
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
       <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
       <div style={{ ...css.mono, fontSize: 18, fontWeight: 700, color: T.textPrimary, marginTop: 6 }}>{value}</div>
+    </div>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: 'primary' | 'negative' | 'muted';
+}) {
+  const color =
+    tone === 'primary'
+      ? T.primary
+      : tone === 'negative'
+        ? T.negative
+        : T.textPrimary;
+  return (
+    <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
+      <div style={{ ...css.mono, fontSize: 16, fontWeight: 800, color, marginTop: 6, lineHeight: 1.25 }}>{value}</div>
     </div>
   );
 }

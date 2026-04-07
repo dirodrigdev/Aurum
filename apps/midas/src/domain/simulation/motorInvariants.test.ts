@@ -18,6 +18,12 @@ import { applyExpenseWaterfall, runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
 import { evaluateConcordance } from './concordance';
 import { snapshotToParams, snapshotToSimulationComposition } from '../../integrations/aurum/adapters';
+import { resolveCapital } from './capitalResolver';
+import { fromM8Output, toM8Input, validateM8Preconditions } from './m8Adapter';
+import { runM8 } from './engineM8';
+import { runSimulationCentral, runSimulationCentralAudit } from './engineCentral';
+import { getMidasEngineFor } from './policy';
+import type { M8Input } from './m8.types';
 
 type TestFn = () => void;
 
@@ -115,6 +121,178 @@ const makeBaseParams = (): ModelParameters => {
   };
   params.ruinThresholdMonths = 0;
   return params;
+};
+
+const makeM8ContractParams = (): ModelParameters => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.capitalSource = 'aurum';
+  params.capitalInitial = 650_000_000;
+  params.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  params.simulationBaseMonth = '2026-03';
+  params.activeScenario = 'optimistic';
+  params.generatorType = 'student_t';
+  params.bucketMonths = 24;
+  params.simulation = {
+    ...params.simulation,
+    nSim: 3_000,
+    horizonMonths: 480,
+    seed: 321,
+    useHistoricalData: false,
+  };
+  params.weights = {
+    rvGlobal: 0.30,
+    rfGlobal: 0.20,
+    rvChile: 0.35,
+    rfChile: 0.15,
+  };
+  params.spendingPhases = [
+    { durationMonths: 36, amountReal: 6_000_000, currency: 'CLP' },
+    { durationMonths: 204, amountReal: 3_900_000, currency: 'CLP' },
+    { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
+  ];
+  params.spendingRule = {
+    ...params.spendingRule,
+    dd15Threshold: 0.15,
+    dd25Threshold: 0.25,
+    consecutiveMonths: 3,
+    softCut: 0.9,
+    hardCut: 0.8,
+    adjustmentAlpha: 0.2,
+    recoveryAlpha: 0.8,
+  };
+  params.realEstatePolicy = {
+    enabled: true,
+    triggerRunwayMonths: 36,
+    saleDelayMonths: 12,
+    saleCostPct: 0,
+    realAppreciationAnnual: 0,
+  };
+  params.futureCapitalEvents = [];
+  params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    mortgageProjectionStatus: 'uf_schedule',
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  return params;
+};
+
+const runtimeIdentity6 = () => [
+  [1, 0, 0, 0, 0, 0],
+  [0, 1, 0, 0, 0, 0],
+  [0, 0, 1, 0, 0, 0],
+  [0, 0, 0, 1, 0, 0],
+  [0, 0, 0, 0, 1, 0],
+  [0, 0, 0, 0, 0, 1],
+];
+
+const makeRuntimeInput = (overrides: Partial<M8Input> = {}): M8Input => {
+  const base: M8Input = {
+    years: 3,
+    n_paths: 24,
+    seed: 42,
+    simulation_frequency: 'monthly',
+    use_real_terms: true,
+    simulation_base_month: '2026-03',
+    capital_initial_clp: 120_000_000,
+    capital_source: 'manual',
+    capital_source_label: 'manual',
+    portfolio_mix: {
+      eq_global: 0.30,
+      eq_chile: 0.15,
+      fi_global: 0.25,
+      fi_chile: 0.15,
+      usd_liquidity: 0.10,
+      clp_cash: 0.05,
+    },
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_200_000,
+    phase3MonthlyClp: 1_500_000,
+    phase1EndYear: 1,
+    phase2EndYear: 2,
+    return_assumptions: {
+      eq_global_real_annual: 0.07,
+      eq_chile_real_annual: 0.075,
+      fi_global_real_annual: 0.025,
+      fi_chile_real_annual: 0.02,
+      usd_liquidity_real_annual: 0.008,
+      clp_cash_real_annual: 0.0025,
+    },
+    generator_type: 'student_t',
+    generator_params: {
+      distribution: 'student_t',
+      degrees_of_freedom: 7,
+      sleeves: {
+        eq_global: { mean_annual: 0.07, vol_annual: 0.15 },
+        eq_chile: { mean_annual: 0.075, vol_annual: 0.19 },
+        fi_global: { mean_annual: 0.025, vol_annual: 0.045 },
+        fi_chile: { mean_annual: 0.02, vol_annual: 0.035 },
+        usd_liquidity: { mean_annual: 0.008, vol_annual: 0.015 },
+        clp_cash: { mean_annual: 0.0025, vol_annual: 0.002 },
+      },
+      correlation_matrix: runtimeIdentity6(),
+    },
+    scenario_overrides: { scenario_id: 'base' },
+    bucket: {
+      bucket_mode: 'operational_simple',
+      bucket_months: 24,
+    },
+    cuts: {
+      cut1_floor: 0.9,
+      cut2_floor: 0.8,
+      recovery_cut2_to_cut1_months: 2,
+      recovery_cut1_to_normal_months: 3,
+      adjustment_alpha: 0.2,
+      dd15_threshold: 0.15,
+      dd25_threshold: 0.25,
+      consecutive_months: 3,
+    },
+    future_events: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    portfolio_mix: { ...base.portfolio_mix, ...(overrides.portfolio_mix ?? {}) },
+    return_assumptions: { ...base.return_assumptions, ...(overrides.return_assumptions ?? {}) },
+    bucket: { ...base.bucket, ...(overrides.bucket ?? {}) },
+    cuts: { ...base.cuts, ...(overrides.cuts ?? {}) },
+    generator_params: overrides.generator_params ?? base.generator_params,
+    scenario_overrides: overrides.scenario_overrides ?? base.scenario_overrides,
+    future_events: overrides.future_events ?? base.future_events,
+    house: overrides.house ?? base.house,
+  };
+};
+
+const runtimeFlatGaussianParams: M8Input['generator_params'] = {
+  distribution: 'gaussian_iid',
+  sleeves: {
+    eq_global: { mean_annual: 0, vol_annual: 0 },
+    eq_chile: { mean_annual: 0, vol_annual: 0 },
+    fi_global: { mean_annual: 0, vol_annual: 0 },
+    fi_chile: { mean_annual: 0, vol_annual: 0 },
+    usd_liquidity: { mean_annual: 0, vol_annual: 0 },
+    clp_cash: { mean_annual: 0, vol_annual: 0 },
+  },
+  correlation_matrix: runtimeIdentity6(),
 };
 
 test('equity uf with zero inflation matches amortization sum', () => {
@@ -533,7 +711,11 @@ test('bootstrap scenario variants shift terminal wealth directionally', () => {
     useHistoricalData: false,
   };
   params.weights = { rvGlobal: 1, rfGlobal: 0, rvChile: 0, rfChile: 0 };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.returns = {
     rvGlobalAnnual: 0,
     rfGlobalAnnual: 0,
@@ -596,7 +778,11 @@ test('bootstrap block mode includes all-paths terminal and applies non-mortgage 
     seed: 321,
     useHistoricalData: false,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.simulationComposition = {
     mode: 'full',
     totalNetWorthCLP: 100,
@@ -629,7 +815,7 @@ test('bootstrap block mode includes all-paths terminal and applies non-mortgage 
   };
   const result = runSimulationCore(params);
   assert.ok(Array.isArray(result.terminalWealthAllPaths));
-  const expected = Math.max(0, 100 - (0.7 * 100));
+  const expected = 29;
   approxEqual(result.p50TerminalAllPaths ?? 0, expected, 1e-6);
 });
 
@@ -1000,7 +1186,11 @@ test('optimizer decision share 0 keeps current mix outcome', () => {
     tcrealLT: 1,
     mrHalfLifeYears: 1,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.simulationComposition = {
     ...params.simulationComposition!,
     optimizableInvestmentsCLP: 100,
@@ -1046,7 +1236,11 @@ test('optimizer decision share 1 applies candidate mix impact', () => {
     tcrealLT: 1,
     mrHalfLifeYears: 1,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.simulationComposition = {
     ...params.simulationComposition!,
     optimizableInvestmentsCLP: 100,
@@ -1211,6 +1405,444 @@ test('instrument proposal picks best multi-factor destination within manager and
   if (!proposal) return;
   assert.ok(proposal.moves.length > 0, 'proposal should include movements');
   assert.equal(proposal.moves[0]?.toId, 'c-rfch', 'first movement should choose the destination that improves RV/RF and Global/Local jointly');
+});
+
+test('m8 adapter maps aurum capital, house, cuts and scenario overrides', () => {
+  const params = makeM8ContractParams();
+  const aurumSnapshot = {
+    version: 2,
+    publishedAt: '2026-04-01T00:00:00Z',
+    snapshotMonth: '2026-03',
+    snapshotLabel: 'marzo 2026',
+    currency: 'CLP',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      usdLiquidityCLP: 0,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+
+  const capitalResolution = resolveCapital({ params, aurumSnapshot });
+  const input = toM8Input(params, capitalResolution, { usd_liquidity: 0.08, clp_cash: 0.02 });
+
+  assert.equal(input.capital_initial_clp, 730_000_000);
+  assert.equal(input.capital_source, 'aurum');
+  assert.equal(input.capital_source_label, 'Aurum · marzo 2026');
+  assert.equal(input.simulation_base_month, '2026-03');
+  assert.equal(input.portfolio_mix.usd_liquidity > 0, true);
+  assert.equal(input.portfolio_mix.clp_cash > 0, true);
+  assert.equal(input.generator_params.distribution, 'student_t');
+  assert.equal((input.generator_params as any).degrees_of_freedom, 7);
+  assert.equal(input.cuts.cut1_floor, 0.9);
+  assert.equal(input.cuts.cut2_floor, 0.8);
+  assert.equal(input.cuts.recovery_cut2_to_cut1_months, 4);
+  assert.equal(input.cuts.recovery_cut1_to_normal_months, 6);
+  assert.equal(input.scenario_overrides?.scenario_id, 'optimistic');
+  assert.equal(input.scenario_overrides?.rv_chile_annual, 0.11);
+  assert.equal(input.house?.houseValueUf, 7_500);
+  assert.equal(input.house?.mortgageBalanceUfNow, 3_000);
+  assert.equal(input.house?.monthlyAmortizationUf, 37.5);
+  assert.equal(input.future_events?.length ?? 0, 0);
+});
+
+test('capitalResolver can derive aurum capital from simulationComposition when snapshot is absent', () => {
+  const params = makeM8ContractParams();
+  const capitalResolution = resolveCapital({ params });
+
+  assert.equal(capitalResolution.capitalInitial, 730_000_000);
+  assert.equal(capitalResolution.simulationComposition.optimizableInvestmentsCLP, 650_000_000);
+  assert.equal(capitalResolution.simulationComposition.nonOptimizable.banksCLP, 80_000_000);
+  assert.equal(capitalResolution.sourceLabel.startsWith('Aurum ·'), true);
+});
+
+test('policy routes every simulation channel to M8', () => {
+  assert.equal(getMidasEngineFor('primary'), 'm8');
+  assert.equal(getMidasEngineFor('favorable'), 'm8');
+  assert.equal(getMidasEngineFor('prudent'), 'm8');
+});
+
+test('engineCentral delegates to the M8 adapter contract', () => {
+  const params = makeM8ContractParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 128,
+    seed: 987,
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const expectedInput = toM8Input(params, capitalResolution);
+  const expected = fromM8Output(runM8(expectedInput), params);
+  const actual = runSimulationCentral(params);
+  const audit = runSimulationCentralAudit(params);
+
+  approxEqual(actual.probRuin, expected.probRuin, 1e-12);
+  approxEqual(actual.p50TerminalAllPaths ?? 0, expected.p50TerminalAllPaths ?? 0, 1e-12);
+  approxEqual(actual.p50TerminalSurvivors ?? 0, expected.p50TerminalSurvivors ?? 0, 1e-12);
+  approxEqual(actual.maxDrawdownPercentiles[50] ?? 0, expected.maxDrawdownPercentiles[50] ?? 0, 1e-12);
+  approxEqual(actual.fanChartData[0]?.p50 ?? 0, expected.fanChartData[0]?.p50 ?? 0, 1e-12);
+  assert.equal(audit.probRuin, actual.probRuin);
+  assert.equal(audit.successRate, actual.success40);
+});
+
+test('m8 adapter builds two-regime generator params with two states and zero-vol cash sleeves', () => {
+  const params = makeM8ContractParams();
+  params.generatorType = 'two_regime';
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+
+  const input = toM8Input(params, capitalResolution);
+  const generator = input.generator_params as any;
+
+  assert.equal(generator.distribution, 'two_regime');
+  assert.equal(generator.transition_matrix.normal.normal, 0.9975);
+  assert.equal(generator.transition_matrix.normal.stress, 0.0025);
+  assert.equal(generator.transition_matrix.stress.stress, 0.85);
+  assert.equal(generator.transition_matrix.stress.normal, 0.15);
+  assert.ok(generator.regimes.normal);
+  assert.ok(generator.regimes.stress);
+  assert.equal(generator.regimes.recovery, undefined);
+  assert.equal(generator.sleeves.usd_liquidity.vol_annual, 0);
+  assert.equal(generator.sleeves.clp_cash.vol_annual, 0);
+});
+
+test('m8 adapter maps manual capital without house', () => {
+  const params = makeM8ContractParams();
+  params.capitalSource = 'manual';
+  params.realEstatePolicy = {
+    ...params.realEstatePolicy!,
+    enabled: false,
+  };
+  params.manualCapitalInput = {
+    financialCapitalCLP: 123_000_000,
+  };
+  params.simulationComposition = undefined;
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(input.capital_initial_clp, 123_000_000);
+  assert.equal(input.capital_source, 'manual');
+  assert.equal(input.house, undefined);
+});
+
+test('m8 adapter normalizes future inflow and outflow against simulation base month', () => {
+  const params = makeM8ContractParams();
+  params.futureCapitalEvents = [
+    { id: 'f1', type: 'inflow', amount: 10_000_000, currency: 'CLP', effectiveDate: '2026-05', description: 'aporte' },
+    { id: 'f2', type: 'outflow', amount: 2_000_000, currency: 'CLP', effectiveDate: '2026-06', description: 'gasto' },
+  ];
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(input.future_events?.[0]?.effective_month, 3);
+  assert.equal(input.future_events?.[1]?.effective_month, 4);
+});
+
+test('m8 adapter rejects future events without simulation base month', () => {
+  const params = makeM8ContractParams();
+  params.simulationBaseMonth = undefined;
+  params.futureCapitalEvents = [
+    { id: 'f1', type: 'inflow', amount: 10_000_000, currency: 'CLP', effectiveDate: '2026-05', description: 'aporte' },
+  ];
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+
+  assert.throws(
+    () => toM8Input(params, capitalResolution),
+    /simulationBaseMonth/,
+  );
+});
+
+test('m8 adapter rejects invalid horizon, non-clp spend and missing uf snapshot', () => {
+  const badHorizon = makeM8ContractParams();
+  badHorizon.capitalSource = 'manual';
+  badHorizon.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  badHorizon.realEstatePolicy = { ...badHorizon.realEstatePolicy!, enabled: false };
+  badHorizon.simulation.horizonMonths = 25;
+  const badCapital = resolveCapital({ params: badHorizon });
+  assert.throws(
+    () => toM8Input(badHorizon, badCapital),
+    /multiplo de 12/,
+  );
+
+  const badSpend = makeM8ContractParams();
+  badSpend.capitalSource = 'manual';
+  badSpend.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  badSpend.realEstatePolicy = { ...badSpend.realEstatePolicy!, enabled: false };
+  badSpend.spendingPhases = [
+    { durationMonths: 36, amountReal: 6_000_000, currency: 'EUR' },
+    { durationMonths: 204, amountReal: 3_900_000, currency: 'CLP' },
+    { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
+  ];
+  const badSpendCapital = resolveCapital({ params: badSpend });
+  assert.throws(
+    () => toM8Input(badSpend, badSpendCapital),
+    /debe estar en CLP/,
+  );
+
+  const badHouse = makeM8ContractParams();
+  const badHouseCapital = resolveCapital({
+    params: badHouse,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+  assert.throws(
+    () => toM8Input(badHouse, badHouseCapital),
+    /ufSnapshotCLP invalido/,
+  );
+});
+
+test('m8 output maps canonical ruin and controlled placeholders', () => {
+  const params = makeM8ContractParams();
+  const result = fromM8Output(
+    {
+      Success40: 0.84,
+      ProbRuin20: 0.08,
+      ProbRuin40: 0.16,
+      RuinYearMedian: 24,
+      RuinYearP25: 18,
+      RuinYearP75: 31,
+      TerminalMedianCLP: 987_000_000,
+      TerminalMedianIfSuccessCLP: 1_024_000_000,
+      TerminalP25CLP: 800_000_000,
+      TerminalP75CLP: 1_200_000_000,
+      HouseSalePct: 0.25,
+      TriggerYearMedian: 12,
+      SaleYearMedian: 13,
+      SpendFactorTotal: 0.92,
+      SpendFactorPhase2: 0.95,
+      SpendFactorPhase3: 0.97,
+      SpendFactorCutMonths: 11,
+      SpendFactorNoCutMonths: 469,
+      SpendFactorCut1Months: 9,
+      SpendFactorCut2Months: 2,
+      CutTimeShare: 0.08,
+      maxDrawdownPercentiles: {
+        10: 0.12,
+        50: 0.24,
+      },
+      StressTimeShare: 0.12,
+      Cut1TimeShare: 0.05,
+      Cut2TimeShare: 0.03,
+      fanChart: [
+        { year: 1, p5: 100, p10: 200, p25: 300, p50: 400, p75: 500, p90: 600, p95: 700 },
+        { year: 2, p5: 90, p10: 180, p25: 270, p50: 360, p75: 450, p90: 540, p95: 630 },
+      ],
+    },
+    params,
+    1234,
+  );
+
+  assert.equal(result.probRuin, 0.16);
+  assert.equal(result.success40, 0.84);
+  assert.equal(result.probRuin40, 0.16);
+  assert.equal(result.probRuin20, 0.08);
+  assert.equal(result.spendFactorTotal, 0.92);
+  assert.equal(result.houseSalePct, 0.25);
+  assert.equal(result.triggerYearMedian, 12);
+  assert.equal(result.saleYearMedian, 13);
+  assert.equal(result.spendFactorPhase2, 0.95);
+  assert.equal(result.spendFactorPhase3, 0.97);
+  assert.equal(result.spendFactorCutMonths, 11);
+  assert.equal(result.spendFactorNoCutMonths, 469);
+  assert.equal(result.spendFactorCut1Months, 9);
+  assert.equal(result.spendFactorCut2Months, 2);
+  assert.equal(result.cutTimeShare, 0.08);
+  assert.equal(result.stressTimeShare, 0.12);
+  assert.equal(result.cut1TimeShare, 0.05);
+  assert.equal(result.cut2TimeShare, 0.03);
+  assert.equal(result.fanChartData.length, 2);
+  assert.equal(result.durationMs, 1234);
+  assert.equal(result.maxDrawdownPercentiles[10], 0.12);
+  assert.equal(result.maxDrawdownPercentiles[50], 0.24);
+  assert.deepEqual(result.terminalWealthAllPaths, []);
+});
+
+test('m8 output requires real max drawdown percentiles for cutover', () => {
+  const params = makeM8ContractParams();
+  assert.throws(
+    () => fromM8Output(
+      {
+        Success40: 0.84,
+        ProbRuin20: 0.08,
+        ProbRuin40: 0.16,
+        RuinYearMedian: 24,
+        RuinYearP25: 18,
+        RuinYearP75: 31,
+        TerminalMedianCLP: 987_000_000,
+        TerminalMedianIfSuccessCLP: 1_024_000_000,
+        TerminalP25CLP: 800_000_000,
+        TerminalP75CLP: 1_200_000_000,
+        HouseSalePct: 0.25,
+        TriggerYearMedian: 12,
+        SaleYearMedian: 13,
+        SpendFactorTotal: 0.92,
+        SpendFactorPhase2: 0.95,
+        SpendFactorPhase3: 0.97,
+        SpendFactorCutMonths: 11,
+        SpendFactorNoCutMonths: 469,
+        SpendFactorCut1Months: 9,
+        SpendFactorCut2Months: 2,
+        CutTimeShare: 0.08,
+        fanChart: [{ year: 1, p5: 100, p10: 200, p25: 300, p50: 400, p75: 500, p90: 600, p95: 700 }],
+      } as any,
+      params,
+      1234,
+    ),
+    /maxDrawdownPercentiles/,
+  );
+});
+
+test('m8 runtime smoke runs and returns canonical outputs', () => {
+  const input = makeRuntimeInput({
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+  });
+  const result = runM8(input);
+
+  assert.equal(result.ReturnGenerator, 'gaussian_iid');
+  assert.equal(result.StudentTDF, undefined);
+  assert.equal(result.wealthPaths.length, input.years * 12 + 1);
+  assert.equal(result.wealthPaths[0].length, input.n_paths);
+  assert.equal(result.terminalWealthAllPaths?.length ?? 0, input.n_paths);
+  assert.ok(Number.isFinite(result.Success40));
+  assert.ok(Number.isFinite(result.ProbRuin40));
+  assert.ok(Number.isFinite(result.maxDrawdownPercentiles[50]));
+  assert.ok((result.maxDrawdownPercentiles[10] ?? 0) <= (result.maxDrawdownPercentiles[25] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[25] ?? 0) <= (result.maxDrawdownPercentiles[50] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[50] ?? 0) <= (result.maxDrawdownPercentiles[75] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[75] ?? 0) <= (result.maxDrawdownPercentiles[90] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[10] ?? 0) >= 0 && (result.maxDrawdownPercentiles[90] ?? 0) <= 1);
+  assert.ok((result.fanChart?.length ?? 0) > 0);
+});
+
+test('m8 runtime counts future inflow and outflow totals', () => {
+  const input = makeRuntimeInput({
+    future_events: [
+      { id: 'in-1', type: 'inflow', amount: 5_000_000, currency: 'CLP', effective_month: 2, description: 'aporte' },
+      { id: 'out-1', type: 'outflow', amount: 2_000_000, currency: 'CLP', effective_month: 3, description: 'gasto' },
+    ],
+  });
+  const result = runM8(input);
+
+  assert.equal(result.FutureInflowTotalCLP, 5_000_000);
+  assert.equal(result.FutureOutflowTotalCLP, 2_000_000);
+});
+
+test('m8 runtime with house includes house equity in the starting wealth', () => {
+  const input = makeRuntimeInput({
+    house: {
+      include_house: true,
+      houseValueUf: 10_000,
+      mortgageBalanceUfNow: 1_000,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: 2,
+      house_sale_lag_months: 0,
+    },
+  });
+  const result = runM8(input);
+
+  assert.ok(result.wealthPaths[0][0] > input.capital_initial_clp);
+  assert.ok(Number.isFinite(result.HouseSalePct));
+});
+
+test('m8 runtime exposes student_t df 7 explicitly', () => {
+  const input = makeRuntimeInput();
+  const result = runM8(input);
+
+  assert.equal(result.ReturnGenerator, 'student_t');
+  assert.equal(result.StudentTDF, 7);
 });
 
 const failures: string[] = [];

@@ -18,6 +18,7 @@ export const REAL_ESTATE_REAL_APPRECIATION_SENSITIVITY = [0, 0.005, 0.01] as con
 export const DEFAULT_PARAMETERS: ModelParameters = {
   label: 'Portafolio Real — V1.4',
   capitalInitial: 1_401_000_000,
+  capitalSource: 'aurum',
 
   // CONFIRMED + corrección BTG (carteras CMF ene/abr/jul/oct 2025, ene 2026)
   // BTG Gestión Activa: promedio 4 períodos estables = 49% RV / 48% RF
@@ -30,6 +31,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     rfChile:  0.257,
   },
   cashflowEvents: [],
+  futureCapitalEvents: [],
   activeScenario: 'base',
 
   feeAnnual: 0.0035,
@@ -78,6 +80,9 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     tcrealLT:        BASE_ECONOMIC_ASSUMPTIONS.tcrealLT,
     mrHalfLifeYears: BASE_ECONOMIC_ASSUMPTIONS.mrHalfLifeYears,      // calibrado con AR(1) empirico R²=0.98
   },
+
+  generatorType: 'student_t',
+  bucketMonths: 24,
 
   simulation: {
     nSim: 1_000, horizonMonths: 480,

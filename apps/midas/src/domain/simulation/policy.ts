@@ -2,7 +2,7 @@ import type { ModelParameters, SimulationResults } from '../model/types';
 import { runSimulationCentral } from './engineCentral';
 
 export type MidasSimulationChannel = 'primary' | 'favorable' | 'prudent';
-export type MidasEngineId = 'central';
+export type MidasEngineId = 'm8';
 
 /**
  * Single source of truth for simulation engine routing in Midas.
@@ -12,9 +12,9 @@ export type MidasEngineId = 'central';
  * - Auxiliary engines remain in repository for reference, outside active flow.
  */
 export const MIDAS_SIMULATION_POLICY: Record<MidasSimulationChannel, MidasEngineId> = {
-  primary: 'central',
-  favorable: 'central',
-  prudent: 'central',
+  primary: 'm8',
+  favorable: 'm8',
+  prudent: 'm8',
 };
 
 export function getMidasEngineFor(channel: MidasSimulationChannel): MidasEngineId {
