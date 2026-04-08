@@ -172,8 +172,10 @@ export interface M8Output {
   RuinYearP75: number;
   TerminalMedianCLP: number;
   TerminalMedianIfSuccessCLP: number;
-  TerminalP25CLP: number;
-  TerminalP75CLP: number;
+  TerminalP25AllPaths: number;
+  TerminalP25IfSuccess: number;
+  TerminalP75AllPaths: number;
+  TerminalP75IfSuccess: number;
   HouseSalePct: number;
   TriggerYearMedian: number;
   SaleYearMedian: number;

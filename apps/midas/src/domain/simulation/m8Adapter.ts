@@ -2,7 +2,6 @@ import type {
   CapitalSource,
   FutureCapitalEvent,
   ModelParameters,
-  PortfolioWeights,
   SimulationResults,
 } from '../model/types';
 import { SCENARIO_VARIANTS } from '../model/defaults';
@@ -23,13 +22,17 @@ import type {
   M8TwoRegimeGeneratorParams,
   M8GeneratorSleeveStats,
 } from './m8.types';
-import { M8_BASE_CORRELATION_MATRIX } from './engineM8';
+import {
+  M8_CANONICAL_CASH_RETURN_ASSUMPTIONS,
+  M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS,
+  M8_CANONICAL_CORRELATION_MATRIX,
+  M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS,
+  buildCanonicalM8PortfolioMix,
+  M8_STUDENT_T_DF,
+  remapLegacyCorrelationMatrixToM8,
+} from './m8Calibration';
 
 const M8_DEFAULT_N_PATHS = 3000;
-const M8_DEFAULT_USD_LIQUIDITY_REAL_ANNUAL = 0.008;
-const M8_DEFAULT_CLP_CASH_REAL_ANNUAL = 0.0025;
-// Warning de integracion: los sleeves de caja se mantienen con vol 0 hasta que el dueño de M8 confirme otra calibracion.
-const M8_STUDENT_T_DF = 7;
 const M8_DEFAULT_OPERATIONAL_WEIGHTS: M8OperationalWeights = {
   usd_liquidity: 0,
   clp_cash: 0,
@@ -137,11 +140,11 @@ const buildSleeveStats = (meanAnnual: number, volAnnual: number): M8GeneratorSle
   vol_annual: volAnnual,
 });
 
-const cloneMatrix = (matrix: number[][]): number[][] => matrix.map((row) => row.slice());
+const cloneMatrix = (matrix: readonly (readonly number[])[]): number[][] => matrix.map((row) => row.slice());
 
-const expandCorrelationMatrix = (legacyMatrix: number[][]): number[][] => {
+const expandCorrelationMatrix = (legacyMatrix: readonly (readonly number[])[]): number[][] => {
   if (!Array.isArray(legacyMatrix) || legacyMatrix.length === 0) {
-    return cloneMatrix(M8_BASE_CORRELATION_MATRIX);
+    return cloneMatrix(M8_CANONICAL_CORRELATION_MATRIX);
   }
 
   const size = legacyMatrix.length;
@@ -150,7 +153,7 @@ const expandCorrelationMatrix = (legacyMatrix: number[][]): number[][] => {
     throw new Error(`correlationMatrix invalida: se esperaba matriz cuadrada y se recibió ${size}x?`);
   }
 
-  if (size === M8_BASE_CORRELATION_MATRIX.length) {
+  if (size === M8_CANONICAL_CORRELATION_MATRIX.length) {
     return cloneMatrix(legacyMatrix);
   }
 
@@ -158,26 +161,38 @@ const expandCorrelationMatrix = (legacyMatrix: number[][]): number[][] => {
     throw new Error(`correlationMatrix invalida: se esperaba 4x4 o 6x6 y se recibió ${size}x${size}`);
   }
 
-  const expanded = cloneMatrix(M8_BASE_CORRELATION_MATRIX);
-  for (let i = 0; i < size; i += 1) {
-    for (let j = 0; j < size; j += 1) {
-      expanded[i][j] = legacyMatrix[i][j];
-    }
-  }
-  return expanded;
+  return remapLegacyCorrelationMatrixToM8(legacyMatrix);
 };
 
-const buildGeneratorSleeves = (params: ModelParameters): M8GeneratorParams['sleeves'] => ({
-  eq_global: buildSleeveStats(params.returns.rvGlobalAnnual, params.returns.rvGlobalVolAnnual),
-  eq_chile: buildSleeveStats(params.returns.rvChileAnnual, params.returns.rvChileVolAnnual),
-  fi_global: buildSleeveStats(params.returns.rfGlobalAnnual, params.returns.rfGlobalVolAnnual),
-  fi_chile: buildSleeveStats(params.returns.rfChileUFAnnual, params.returns.rfChileVolAnnual),
-  usd_liquidity: buildSleeveStats(M8_DEFAULT_USD_LIQUIDITY_REAL_ANNUAL, 0),
-  clp_cash: buildSleeveStats(M8_DEFAULT_CLP_CASH_REAL_ANNUAL, 0),
+const buildGeneratorSleeves = (): M8GeneratorParams['sleeves'] => ({
+  eq_global: buildSleeveStats(
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalAnnual,
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalVolAnnual,
+  ),
+  eq_chile: buildSleeveStats(
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileAnnual,
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileVolAnnual,
+  ),
+  fi_global: buildSleeveStats(
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalAnnual,
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalVolAnnual,
+  ),
+  fi_chile: buildSleeveStats(
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileRealAnnual,
+    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileVolAnnual,
+  ),
+  usd_liquidity: buildSleeveStats(
+    M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.usd_liquidity_real_annual,
+    M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS.usd_liquidity_vol_annual,
+  ),
+  clp_cash: buildSleeveStats(
+    M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.clp_cash_real_annual,
+    M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS.clp_cash_vol_annual,
+  ),
 });
 
 const buildGeneratorParams = (params: ModelParameters): M8AnyGeneratorParams => {
-  const sleeves = buildGeneratorSleeves(params);
+  const sleeves = buildGeneratorSleeves();
   const correlationMatrix = expandCorrelationMatrix(params.returns.correlationMatrix);
 
   if ((params.generatorType ?? 'student_t') === 'gaussian_iid') {
@@ -221,55 +236,6 @@ const buildGeneratorParams = (params: ModelParameters): M8AnyGeneratorParams => 
     },
   };
   return twoRegime;
-};
-
-const normalizeOperationalWeights = (
-  weights: M8OperationalWeights = M8_DEFAULT_OPERATIONAL_WEIGHTS
-): M8OperationalWeights => {
-  const raw = {
-    usd_liquidity: weights.usd_liquidity,
-    clp_cash: weights.clp_cash,
-  };
-
-  for (const [key, value] of Object.entries(raw)) {
-    if (!isFiniteNumber(value) || value < 0) {
-      throw new Error(`Peso invalido en ${key}: ${String(value)}`);
-    }
-  }
-
-  return {
-    usd_liquidity: raw.usd_liquidity,
-    clp_cash: raw.clp_cash,
-  };
-};
-
-const combineM8PortfolioMix = (
-  legacyWeights: PortfolioWeights,
-  operationalWeights?: M8OperationalWeights
-): M8PortfolioMix => {
-  const overlay = normalizeOperationalWeights(operationalWeights);
-  const raw = {
-    eq_global: legacyWeights.rvGlobal,
-    eq_chile: legacyWeights.rvChile,
-    fi_global: legacyWeights.rfGlobal,
-    fi_chile: legacyWeights.rfChile,
-    usd_liquidity: overlay.usd_liquidity,
-    clp_cash: overlay.clp_cash,
-  };
-
-  const total = Object.values(raw).reduce((acc, value) => acc + value, 0);
-  if (!isFiniteNumber(total) || total <= 0) {
-    throw new Error('M8 portfolio mix invalido: total debe ser > 0');
-  }
-
-  return {
-    eq_global: raw.eq_global / total,
-    eq_chile: raw.eq_chile / total,
-    fi_global: raw.fi_global / total,
-    fi_chile: raw.fi_chile / total,
-    usd_liquidity: raw.usd_liquidity / total,
-    clp_cash: raw.clp_cash / total,
-  };
 };
 
 const validateFutureEvents = (
@@ -364,7 +330,7 @@ export const validateM8Preconditions = (
       errors.push('futureCapitalEvents requieren simulationBaseMonth valido para normalizar effectiveDate');
     }
 
-    combineM8PortfolioMix(params.weights, operationalWeights);
+    buildCanonicalM8PortfolioMix(params.weights, operationalWeights);
 
     buildScenarioOverrides(params);
 
@@ -428,7 +394,7 @@ export const toM8Input = (
 
   const horizonMonths = params.simulation.horizonMonths;
   const years = horizonMonths / 12;
-  const portfolioMix = combineM8PortfolioMix(params.weights, operationalWeights);
+  const portfolioMix = buildCanonicalM8PortfolioMix(params.weights, operationalWeights);
   const normalizedPhases = normalizeModelSpendingPhases(params);
   const [phase1, phase2, phase3, phase4] = normalizedPhases;
   const simulationBaseMonth = resolveSimulationBaseMonth(params);
@@ -468,8 +434,8 @@ export const toM8Input = (
       eq_chile_real_annual: params.returns.rvChileAnnual,
       fi_global_real_annual: params.returns.rfGlobalAnnual,
       fi_chile_real_annual: params.returns.rfChileUFAnnual,
-      usd_liquidity_real_annual: M8_DEFAULT_USD_LIQUIDITY_REAL_ANNUAL,
-      clp_cash_real_annual: M8_DEFAULT_CLP_CASH_REAL_ANNUAL,
+      usd_liquidity_real_annual: M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.usd_liquidity_real_annual,
+      clp_cash_real_annual: M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.clp_cash_real_annual,
     },
     generator_type: params.generatorType ?? 'student_t',
     generator_params: buildGeneratorParams(params),
@@ -507,14 +473,18 @@ export const fromM8Output = (
       high: Math.min(1, output.ProbRuin40 + 0.06),
     },
     terminalWealthPercentiles: {
-      25: output.TerminalP25CLP,
+      25: output.TerminalP25IfSuccess,
       50: output.TerminalMedianIfSuccessCLP,
-      75: output.TerminalP75CLP,
+      75: output.TerminalP75IfSuccess,
     },
     terminalWealthAll: [],
     terminalWealthAllPaths: output.terminalWealthAllPaths ?? [],
     p50TerminalAllPaths: output.TerminalMedianCLP,
     p50TerminalSurvivors: output.TerminalMedianIfSuccessCLP,
+    terminalP25AllPaths: output.TerminalP25AllPaths,
+    terminalP25IfSuccess: output.TerminalP25IfSuccess,
+    terminalP75AllPaths: output.TerminalP75AllPaths,
+    terminalP75IfSuccess: output.TerminalP75IfSuccess,
     maxDrawdownPercentiles: output.maxDrawdownPercentiles,
     ruinTimingMedian: output.RuinYearMedian,
     ruinTimingP25: output.RuinYearP25,

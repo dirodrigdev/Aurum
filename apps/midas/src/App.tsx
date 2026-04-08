@@ -1470,19 +1470,23 @@ export default function App() {
       const capitalResolution = resolveCapital({ params: heroParams });
       const input = toM8Input(heroParams, capitalResolution);
       const heroResult = heroVisibleResult
-        ? {
-            success40: heroVisibleResult.success40,
-            probRuin40: heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin,
-            probRuin20: heroVisibleResult.probRuin20 ?? null,
-            ruinTimingMedian: heroVisibleResult.ruinTimingMedian ?? null,
-            terminalWealthPercentiles: heroVisibleResult.terminalWealthPercentiles,
-            p50TerminalAllPaths: heroVisibleResult.p50TerminalAllPaths,
-            p50TerminalSurvivors: heroVisibleResult.p50TerminalSurvivors,
-            houseSalePct: heroVisibleResult.houseSalePct ?? null,
-            spendFactorTotal: heroVisibleResult.spendFactorTotal ?? null,
-            cutTimeShare: heroVisibleResult.cutTimeShare ?? null,
-            maxDrawdownPercentiles: heroVisibleResult.maxDrawdownPercentiles,
-          }
+          ? {
+              success40: heroVisibleResult.success40,
+              probRuin40: heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin,
+              probRuin20: heroVisibleResult.probRuin20 ?? null,
+              ruinTimingMedian: heroVisibleResult.ruinTimingMedian ?? null,
+              terminalWealthPercentiles: heroVisibleResult.terminalWealthPercentiles,
+              p50TerminalAllPaths: heroVisibleResult.p50TerminalAllPaths,
+              p50TerminalSurvivors: heroVisibleResult.p50TerminalSurvivors,
+              terminalP25AllPaths: heroVisibleResult.terminalP25AllPaths ?? null,
+              terminalP25IfSuccess: heroVisibleResult.terminalP25IfSuccess ?? null,
+              terminalP75AllPaths: heroVisibleResult.terminalP75AllPaths ?? null,
+              terminalP75IfSuccess: heroVisibleResult.terminalP75IfSuccess ?? null,
+              houseSalePct: heroVisibleResult.houseSalePct ?? null,
+              spendFactorTotal: heroVisibleResult.spendFactorTotal ?? null,
+              cutTimeShare: heroVisibleResult.cutTimeShare ?? null,
+              maxDrawdownPercentiles: heroVisibleResult.maxDrawdownPercentiles,
+            }
         : null;
       const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
       const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;

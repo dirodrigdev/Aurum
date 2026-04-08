@@ -8,6 +8,7 @@ import type {
   M8TwoRegimeGeneratorParams,
   M8ScenarioOverrides,
 } from './m8.types';
+import { M8_CANONICAL_CORRELATION_MATRIX } from './m8Calibration';
 
 const ASSET_ORDER = ['eq_global', 'eq_chile', 'fi_global', 'fi_chile', 'usd_liquidity', 'clp_cash'] as const;
 type AssetKey = typeof ASSET_ORDER[number];
@@ -24,14 +25,7 @@ const RECOVER_TO_WEAK_THRESHOLD = 0.15;
 const RECOVER_TO_NORMAL_THRESHOLD = 0.07;
 const MAX_DRAWDOWN_PERCENTILES = [10, 25, 50, 75, 90] as const;
 
-export const M8_BASE_CORRELATION_MATRIX = [
-  [1.00, 0.65, 0.05, 0.00, 0.05, 0.00],
-  [0.65, 1.00, 0.05, 0.10, 0.05, 0.00],
-  [0.05, 0.05, 1.00, 0.20, 0.50, 0.20],
-  [0.00, 0.10, 0.20, 1.00, 0.20, 0.50],
-  [0.05, 0.05, 0.50, 0.20, 1.00, 0.30],
-  [0.00, 0.00, 0.20, 0.50, 0.30, 1.00],
-];
+export const M8_BASE_CORRELATION_MATRIX = M8_CANONICAL_CORRELATION_MATRIX.map((row) => row.slice());
 
 const STRESS_CORR = [
   [1.00, 0.85, 0.35, 0.20, 0.15, 0.00],
@@ -1093,8 +1087,10 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     RuinYearP75: ruinMonthsYears.length ? percentile(ruinMonthsYears, 75) : Number.NaN,
     TerminalMedianCLP: terminalAll.length ? median(terminalAll) : Number.NaN,
     TerminalMedianIfSuccessCLP: terminalSuccess.length ? median(terminalSuccess) : Number.NaN,
-    TerminalP25CLP: terminalSuccess.length ? percentile(terminalSuccess, 25) : Number.NaN,
-    TerminalP75CLP: terminalSuccess.length ? percentile(terminalSuccess, 75) : Number.NaN,
+    TerminalP25AllPaths: terminalAll.length ? percentile(terminalAll, 25) : Number.NaN,
+    TerminalP25IfSuccess: terminalSuccess.length ? percentile(terminalSuccess, 25) : Number.NaN,
+    TerminalP75AllPaths: terminalAll.length ? percentile(terminalAll, 75) : Number.NaN,
+    TerminalP75IfSuccess: terminalSuccess.length ? percentile(terminalSuccess, 75) : Number.NaN,
     HouseSalePct: soldHouseFlags.length ? mean(soldHouseFlags) : 0,
     TriggerYearMedian: triggerMonths.length ? median(triggerMonths.map((month) => month / 12)) : Number.NaN,
     SaleYearMedian: saleMonths.length ? median(saleMonths.map((month) => month / 12)) : Number.NaN,

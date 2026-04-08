@@ -270,6 +270,14 @@ export interface SimulationResults {
   p50TerminalAllPaths?:        number;
   // Nueva métrica explícita: P50 sobre paths sobrevivientes.
   p50TerminalSurvivors?:       number;
+  // Nueva métrica explícita: P25 sobre todos los paths.
+  terminalP25AllPaths?:        number;
+  // Nueva métrica explícita: P25 sobre paths sobrevivientes.
+  terminalP25IfSuccess?:       number;
+  // Nueva métrica explícita: P75 sobre todos los paths.
+  terminalP75AllPaths?:        number;
+  // Nueva métrica explícita: P75 sobre paths sobrevivientes.
+  terminalP75IfSuccess?:       number;
   maxDrawdownPercentiles:      Record<number, number>;
   ruinTimingMedian:            number;
   ruinTimingP25:               number;
