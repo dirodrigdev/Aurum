@@ -236,6 +236,7 @@ export function SimulationPage({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
+  const [showStickyBar, setShowStickyBar] = useState(false);
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
@@ -249,6 +250,7 @@ export function SimulationPage({
     note: '',
   });
   const prevSimActive = useRef(false);
+  const heroCardRef = useRef<HTMLDivElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -530,6 +532,31 @@ export function SimulationPage({
     }
   }, [simActive]);
 
+  useEffect(() => {
+    if (!heroCardRef.current) return undefined;
+    const target = heroCardRef.current;
+
+    if (typeof IntersectionObserver === 'undefined') {
+      const onScroll = () => setShowStickyBar(window.scrollY > 140);
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+      return () => window.removeEventListener('scroll', onScroll);
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        setShowStickyBar(!entry.isIntersecting);
+      },
+      {
+        root: null,
+        threshold: 0.3,
+      }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [heroPhase, simUiState]);
+
   const displayResult = hideResultBlocks ? null : resultCentral;
   const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
   const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
@@ -550,9 +577,12 @@ export function SimulationPage({
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
   const ruinP75 = displayResult?.ruinTimingP75 ?? null;
   const ruinWindowLabel = ruinP25 !== null && ruinP75 !== null
-    ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)} años`
+    ? `${ruinP25.toFixed(1)}–${ruinP75.toFixed(1)} años`
     : '—';
-  const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)} años` : '—';
+  const ruinTypicalLabel = ruinMedian !== null ? `${ruinMedian.toFixed(1)} años` : '—';
+  const ruinHumanSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
+    ? `Si falla, normalmente ocurre entre los años ${ruinP25.toFixed(1)} y ${ruinP75.toFixed(1)} (año típico: ${ruinMedian.toFixed(1)}).`
+    : 'Si falla, el motor estima el timing de ruina solo sobre los escenarios que efectivamente fracasan.';
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
@@ -575,8 +605,20 @@ export function SimulationPage({
   }));
   const percentileRows = useMemo(() => {
     if (!displayResult) return [] as number[];
-    const candidates = [10, 25, 50, 75, 90] as const;
-    return candidates.filter((p) => Number.isFinite(displayResult.terminalWealthPercentiles[p]));
+    const candidates = [25, 50, 75] as const;
+    return candidates.filter((p) => {
+      const survivorValue = p === 50
+        ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+        : p === 25
+          ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+          : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+      const allPathsValue = p === 50
+        ? displayResult.p50TerminalAllPaths
+        : p === 25
+          ? displayResult.terminalP25AllPaths
+          : displayResult.terminalP75AllPaths;
+      return Number.isFinite(survivorValue) || Number.isFinite(allPathsValue);
+    });
   }, [displayResult]);
   const activeGenerator = useMemo(() => {
     const raw = displayResult?.params?.generatorType ?? params.generatorType ?? 'student_t';
@@ -769,32 +811,34 @@ export function SimulationPage({
           position: 'sticky',
           top: 0,
           zIndex: 35,
-          background: 'rgba(11, 16, 24, 0.92)',
-          border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: '8px 10px',
-          backdropFilter: 'blur(6px)',
+          minHeight: showStickyBar ? undefined : 0,
         }}
       >
-        {isRecalculating ? (
-          <div style={{ color: T.primary, fontSize: 12, fontWeight: 700 }}>Calculando…</div>
-        ) : displayResult && probSuccess !== null ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(probSuccess * 100).toFixed(1)}%</div>
-            </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina P25–P75 (años)</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinWindowLabel}</div>
-            </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica (mediana)</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinTypicalLabel}</div>
-            </div>
+        {showStickyBar && (
+          <div
+            style={{
+              background: 'rgba(11, 16, 24, 0.94)',
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              padding: '8px 12px',
+              backdropFilter: 'blur(6px)',
+              color: T.textPrimary,
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            {isRecalculating ? (
+              <span style={{ color: T.primary }}>Calculando…</span>
+            ) : displayResult && probSuccess !== null ? (
+              <span>
+                Éxito {(probSuccess * 100).toFixed(1)}% {' | '}
+                Si falla: año típico {ruinTypicalLabel} {' | '}
+                rango {ruinWindowLabel}
+              </span>
+            ) : (
+              <span style={{ color: T.textMuted }}>Simulación en espera</span>
+            )}
           </div>
-        ) : (
-          <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>Simulación en espera</div>
         )}
       </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
@@ -1103,7 +1147,7 @@ export function SimulationPage({
           </div>
         </div>
       </div>
-      <div style={{ position: 'relative' }}>
+      <div ref={heroCardRef} style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -1120,10 +1164,10 @@ export function SimulationPage({
               : heroPhase !== 'ready'
               ? 'Calculando simulación...'
               : displayResult
-                ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
+                ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina · Prob. de ruina ${(probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—')}`
                 : 'Corre una simulación para ver resultados'
           }
-          ruinCopy={ruinMedian ? `Ruina típica (mediana): ${(ruinMedian / 12).toFixed(1)} años` : 'Ruina típica: —'}
+          ruinCopy={ruinHumanSummary}
           mode={simActive ? 'sim' : 'real'}
           chips={[
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
@@ -1287,27 +1331,133 @@ export function SimulationPage({
         )}
       </div>
 
-      {!hideResultBlocks && displayResult && probSuccess !== null && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>LECTURA RÁPIDA</div>
-            <div style={{ color: T.textSecondary, fontSize: 11, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 999, padding: '4px 10px' }}>
-              Resumen M8
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 8, marginTop: 10 }}>
-            <MetricTile label="Ruina 40" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
-            <MetricTile label="Ruina 20" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
-            <MetricTile label="P50 terminal" value={p50AllPaths !== null ? formatCapital(p50AllPaths) : '—'} tone="primary" />
-            <MetricTile label="Factor gasto total" value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'} />
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={keyMetricsOpen}
+          onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 14,
+            padding: '10px 12px',
+          }}
+        >
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span>Lectura ampliada</span>
+            <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
+          </summary>
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+            <MetricTile label="Ruina a 40 años" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
+            <MetricTile label="Ruina a 20 años" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
+            <MetricTile
+              label={<LabelWithInfo label="Patrimonio terminal típico (todos los escenarios)" info="P50 considerando todos los escenarios simulados, incluidos los que llegan a ruina." />}
+              value={p50AllPaths !== null ? formatCapital(p50AllPaths) : '—'}
+              tone="primary"
+            />
+            <MetricTile
+              label={<LabelWithInfo label="Patrimonio terminal típico (sobrevivientes)" info="P50 considerando solo escenarios que terminan solventes al final del horizonte." />}
+              value={p50Survivors !== null ? formatCapital(p50Survivors) : '—'}
+            />
+            <MetricTile
+              label={<LabelWithInfo label="Gasto ejecutado vs plan" info="Proporción de gasto efectivamente ejecutado respecto del plan base." />}
+              value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
+            />
+            <MetricTile
+              label={<LabelWithInfo label="Tiempo en recorte" info="Porcentaje del tiempo total en que el gasto operó bajo recortes (cut1 o cut2)." />}
+              value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'}
+            />
+            <MetricTile
+              label={<LabelWithInfo label="Drawdown máximo" info="Máxima caída relativa desde el peak de patrimonio en cada escenario; se resume en percentiles." />}
+              value={
+                `P50 ${((displayResult.maxDrawdownPercentiles[50] ?? 0) * 100).toFixed(1)}% · ` +
+                `P75 ${((displayResult.maxDrawdownPercentiles[75] ?? 0) * 100).toFixed(1)}% · ` +
+                `P90 ${((displayResult.maxDrawdownPercentiles[90] ?? 0) * 100).toFixed(1)}%`
+              }
+            />
+            <MetricTile
+              label={<LabelWithInfo label="Casa como amortiguador" info="Indica en qué escenarios se activa venta de casa y en qué momento se gatilla/ejecuta." />}
+              value={
+                houseSalePct !== null && houseSalePct > 0
+                  ? `Venta ${(houseSalePct * 100).toFixed(1)}% · Disparo ${triggerYearMedian !== null ? `año ${triggerYearMedian.toFixed(1)}` : '—'} · Venta ${saleYearMedian !== null ? `año ${saleYearMedian.toFixed(1)}` : '—'}`
+                  : 'No se activa en los escenarios simulados'
+              }
+            />
           </div>
           <div style={{ marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
             {houseSaleSummary}
           </div>
-        </div>
+
+          <details
+            open={moreMetricsOpen}
+            onToggle={(e) => setMoreMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+            style={{
+              marginTop: 12,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              padding: '10px 12px',
+            }}
+          >
+            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <span>Lectura analítica y técnica</span>
+              <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
+            </summary>
+            <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
+              <MetricGroup
+                title="Supervivencia y ruina"
+                items={[
+                  { label: 'Probabilidad de éxito (40 años)', value: `${((displayResult.success40 ?? (1 - displayResult.probRuin)) * 100).toFixed(1)}%` },
+                  { label: 'Ruina condicional (P25–P75)', value: ruinWindowLabel },
+                  { label: 'Año típico de ruina (condicional)', value: ruinTypicalLabel },
+                  { label: 'Banda de incertidumbre (ruina)', value: `Ruina ${(displayResult.uncertaintyBand.low * 100).toFixed(1)}% – ${(displayResult.uncertaintyBand.high * 100).toFixed(1)}%` },
+                ]}
+              />
+              <MetricGroup
+                title="Consumo y recortes"
+                items={[
+                  { label: 'Gasto ejecutado tramo 2', value: displayResult.spendFactorPhase2 !== undefined ? `${(displayResult.spendFactorPhase2 * 100).toFixed(1)}%` : '—' },
+                  { label: 'Gasto ejecutado tramo 3', value: displayResult.spendFactorPhase3 !== undefined ? `${(displayResult.spendFactorPhase3 * 100).toFixed(1)}%` : '—' },
+                  {
+                    label: 'Meses de recorte',
+                    value:
+                      displayResult.spendFactorCutMonths !== undefined ||
+                      displayResult.spendFactorNoCutMonths !== undefined ||
+                      displayResult.spendFactorCut1Months !== undefined ||
+                      displayResult.spendFactorCut2Months !== undefined
+                        ? `Cut ${(displayResult.spendFactorCutMonths ?? 0).toFixed(1)} · Sin cut ${(displayResult.spendFactorNoCutMonths ?? 0).toFixed(1)} · C1 ${(displayResult.spendFactorCut1Months ?? 0).toFixed(1)} · C2 ${(displayResult.spendFactorCut2Months ?? 0).toFixed(1)}`
+                        : '—',
+                  },
+                  {
+                    label: 'Tiempo en estrés / recortes',
+                    value: `Estrés ${((displayResult.stressTimeShare ?? 0) * 100).toFixed(1)}% · C1 ${((displayResult.cut1TimeShare ?? 0) * 100).toFixed(1)}% · C2 ${((displayResult.cut2TimeShare ?? 0) * 100).toFixed(1)}%`,
+                  },
+                ]}
+              />
+              <MetricGroup
+                title="Patrimonio terminal"
+                items={[
+                  { label: 'P25 todos los escenarios', value: displayResult.terminalP25AllPaths !== undefined ? formatCapital(displayResult.terminalP25AllPaths) : '—' },
+                  { label: 'P25 solo sobrevivientes', value: displayResult.terminalP25IfSuccess !== undefined ? formatCapital(displayResult.terminalP25IfSuccess) : '—' },
+                  { label: 'P75 todos los escenarios', value: displayResult.terminalP75AllPaths !== undefined ? formatCapital(displayResult.terminalP75AllPaths) : '—' },
+                  { label: 'P75 solo sobrevivientes', value: displayResult.terminalP75IfSuccess !== undefined ? formatCapital(displayResult.terminalP75IfSuccess) : '—' },
+                ]}
+              />
+              <MetricGroup
+                title="Motor y soporte"
+                items={[
+                  { label: 'Generador activo', value: activeGenerator },
+                  {
+                    label: 'Escenarios simulados',
+                    value: Array.isArray(displayResult.terminalWealthAllPaths) ? `${displayResult.terminalWealthAllPaths.length}` : '—',
+                  },
+                ]}
+              />
+            </div>
+          </details>
+        </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{
@@ -1495,108 +1645,11 @@ export function SimulationPage({
         )}
       </div>
 
-      {!hideResultBlocks && (
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
-          gap: 10,
-        }}
-      >
-        <InfoCard
-          label="Factor gasto total"
-          value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
-        />
-        <InfoCard
-          label="Patrimonio P50 (todos los paths)"
-          value={p50AllPaths !== null ? `$${formatMillionsMM(p50AllPaths / 1e6)}` : '—'}
-        />
-      </div>
-      )}
-
-      {!hideResultBlocks && displayResult && (
-        <details
-          open={keyMetricsOpen}
-          onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
-          }}
-        >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <span>Métricas clave</span>
-            <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
-          </summary>
-          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
-            <MetricTile label="P50 terminal (sobrevivientes)" value={p50Survivors !== null ? formatCapital(p50Survivors) : '—'} />
-            <MetricTile
-              label="Max drawdown"
-              value={
-                displayResult
-                  ? `P50 ${(displayResult.maxDrawdownPercentiles[50] * 100).toFixed(1)}% · P75 ${(displayResult.maxDrawdownPercentiles[75] * 100).toFixed(1)}% · P90 ${(displayResult.maxDrawdownPercentiles[90] * 100).toFixed(1)}%`
-                  : '—'
-              }
-            />
-            <MetricTile label="Cut time share" value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'} />
-            {houseSalePct !== null && houseSalePct > 0 ? (
-              <MetricTile
-                label="Casa"
-                value={`Venta ${(houseSalePct * 100).toFixed(1)}% · Disparo ${triggerYearMedian !== null ? `Año ${triggerYearMedian.toFixed(1)}` : '—'} · Venta ${saleYearMedian !== null ? `Año ${saleYearMedian.toFixed(1)}` : '—'}`}
-              />
-            ) : null}
-          </div>
-        </details>
-      )}
-
-      {!hideResultBlocks && displayResult && (
-        <details
-          open={moreMetricsOpen}
-          onToggle={(e) => setMoreMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
-          }}
-        >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <span>Más métricas</span>
-            <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
-          </summary>
-          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
-            <MetricTile label="Spending phase 2" value={displayResult.spendFactorPhase2 !== undefined ? `${(displayResult.spendFactorPhase2 * 100).toFixed(1)}%` : '—'} />
-            <MetricTile label="Spending phase 3" value={displayResult.spendFactorPhase3 !== undefined ? `${(displayResult.spendFactorPhase3 * 100).toFixed(1)}%` : '—'} />
-            <MetricTile label="Cuts meses" value={
-              displayResult.spendFactorCutMonths !== undefined ||
-              displayResult.spendFactorNoCutMonths !== undefined ||
-              displayResult.spendFactorCut1Months !== undefined ||
-              displayResult.spendFactorCut2Months !== undefined
-                ? `Cut ${(displayResult.spendFactorCutMonths ?? 0).toFixed(1)} · No cut ${(displayResult.spendFactorNoCutMonths ?? 0).toFixed(1)} · C1 ${(displayResult.spendFactorCut1Months ?? 0).toFixed(1)} · C2 ${(displayResult.spendFactorCut2Months ?? 0).toFixed(1)}`
-                : '—'
-            } />
-            <MetricTile label="Stress share" value={displayResult.stressTimeShare !== undefined ? `${(displayResult.stressTimeShare * 100).toFixed(1)}%` : '—'} />
-            <MetricTile label="Cut1 / Cut2" value={
-              displayResult.cut1TimeShare !== undefined || displayResult.cut2TimeShare !== undefined
-                ? `C1 ${((displayResult.cut1TimeShare ?? 0) * 100).toFixed(1)}% · C2 ${((displayResult.cut2TimeShare ?? 0) * 100).toFixed(1)}%`
-                : '—'
-            } />
-            <MetricTile label="Terminal all paths" value={
-              Array.isArray(displayResult.terminalWealthAllPaths)
-                ? `${displayResult.terminalWealthAllPaths.length} paths`
-                : '—'
-            } />
-            <MetricTile label="Banda de incertidumbre" value={`Ruina ${(displayResult.uncertaintyBand.low * 100).toFixed(1)}% – ${(displayResult.uncertaintyBand.high * 100).toFixed(1)}%`} />
-          </div>
-        </details>
-      )}
-
       {!hideResultBlocks && displayResult && (
         <>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
+              <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>TRAYECTORIAS SIMULADAS (TODOS LOS ESCENARIOS)</div>
               <div
                 style={{
                   color: T.textSecondary,
@@ -1692,19 +1745,19 @@ export function SimulationPage({
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Años en cortes de 5</span>
-              <span>Fases marcadas en la barra</span>
+              <span>Incluye escenarios que llegan a ruina (wealth = 0)</span>
+              <span>Eje temporal anual</span>
             </div>
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
-              PERCENTILES (sobrevivientes)
+              PERCENTILES TERMINALES (SOBREVIVIENTES VS TODOS)
             </div>
             <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '56px repeat(3, minmax(0, 1fr))',
+                  gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
                   gap: 0,
                   background: T.surfaceEl,
                   color: T.textMuted,
@@ -1714,13 +1767,23 @@ export function SimulationPage({
                 }}
               >
                 <span>P</span>
-                <span>CLP real</span>
-                <span>EUR equiv</span>
-                <span>DD máx</span>
+                <span>Patrimonio terminal (sobrevivientes)</span>
+                <span>Patrimonio terminal (todos)</span>
+                <span>EUR equiv (sobrevivientes)</span>
+                <span>DD máx (todos)</span>
               </div>
               {percentileRows.map((p, rowIdx) => {
-                const clp = displayResult.terminalWealthPercentiles[p];
-                const eur = clp / eurRate / 1e6;
+                const clpSurvivors = p === 25
+                  ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+                  : p === 50
+                    ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+                    : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+                const clpAll = p === 25
+                  ? displayResult.terminalP25AllPaths
+                  : p === 50
+                    ? displayResult.p50TerminalAllPaths
+                    : displayResult.terminalP75AllPaths;
+                const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
                 const dd = displayResult.maxDrawdownPercentiles[p];
                 const highlight = p === 50;
                 return (
@@ -1728,7 +1791,7 @@ export function SimulationPage({
                     key={p}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '56px repeat(3, minmax(0, 1fr))',
+                      gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
                       gap: 0,
                       padding: '10px 12px',
                       background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
@@ -1736,11 +1799,12 @@ export function SimulationPage({
                       color: highlight ? T.primary : T.textPrimary,
                       alignItems: 'center',
                     }}
-                  >
+                    >
                     <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
-                  <span style={{ ...css.mono, fontWeight: 700 }}>{`$${formatMillionsMM(clp / 1e6)}`}</span>
-                  <span style={{ ...css.mono }}>{`€${formatMillionsMM(eur)}`}</span>
-                    <span style={{ ...css.mono }}>{`${(dd * 100).toFixed(1)}%`}</span>
+                  <span style={{ ...css.mono, fontWeight: 700 }}>{Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}</span>
+                  <span style={{ ...css.mono }}>{Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}</span>
+                  <span style={{ ...css.mono }}>{Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}</span>
+                    <span style={{ ...css.mono }}>{Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}</span>
                   </div>
                 );
               })}
@@ -1998,21 +2062,12 @@ export function SimulationPage({
   );
 }
 
-function InfoCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-      <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
-      <div style={{ ...css.mono, fontSize: 18, fontWeight: 700, color: T.textPrimary, marginTop: 6 }}>{value}</div>
-    </div>
-  );
-}
-
 function MetricTile({
   label,
   value,
   tone,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
   tone?: 'primary' | 'negative' | 'muted';
 }) {
@@ -2024,8 +2079,58 @@ function MetricTile({
         : T.textPrimary;
   return (
     <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-      <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
+      <div style={{ color: T.textMuted, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>{label}</div>
       <div style={{ ...css.mono, fontSize: 16, fontWeight: 800, color, marginTop: 6, lineHeight: 1.25 }}>{value}</div>
     </div>
+  );
+}
+
+function MetricGroup({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', background: T.surface }}>
+      <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.03em', marginBottom: 8 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {items.map((item) => (
+          <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: `1px dashed ${T.border}`, paddingBottom: 5 }}>
+            <span style={{ color: T.textSecondary, fontSize: 11 }}>{item.label}</span>
+            <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LabelWithInfo({ label, info }: { label: string; info: string }) {
+  return (
+    <>
+      <span>{label}</span>
+      <span
+        title={info}
+        aria-label={info}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 14,
+          height: 14,
+          borderRadius: 999,
+          border: `1px solid ${T.border}`,
+          color: T.textMuted,
+          fontSize: 10,
+          fontWeight: 800,
+          cursor: 'help',
+          userSelect: 'none',
+        }}
+      >
+        i
+      </span>
+    </>
   );
 }
