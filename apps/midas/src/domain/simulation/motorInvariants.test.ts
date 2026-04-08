@@ -1548,6 +1548,32 @@ test('engineCentral delegates to the M8 adapter contract', () => {
   assert.equal(audit.successRate, actual.success40);
 });
 
+test('m8 runtime reacts to return assumptions visible in product controls', () => {
+  const base = makeM8ContractParams();
+  base.simulation = {
+    ...base.simulation,
+    nSim: 512,
+    seed: 42,
+  };
+  base.activeScenario = 'base';
+
+  const highReturn = cloneParams(base);
+  highReturn.returns = {
+    ...highReturn.returns,
+    rvGlobalAnnual: highReturn.returns.rvGlobalAnnual + 0.10,
+    rvChileAnnual: highReturn.returns.rvChileAnnual + 0.10,
+    rfGlobalAnnual: highReturn.returns.rfGlobalAnnual + 0.03,
+    rfChileUFAnnual: highReturn.returns.rfChileUFAnnual + 0.03,
+  };
+
+  const baseResult = runSimulationCentral(base);
+  const highResult = runSimulationCentral(highReturn);
+
+  assert.ok((highResult.success40 ?? 0) > (baseResult.success40 ?? 0));
+  assert.ok((highResult.probRuin40 ?? 1) < (baseResult.probRuin40 ?? 1));
+  assert.ok((highResult.p50TerminalAllPaths ?? 0) > (baseResult.p50TerminalAllPaths ?? 0));
+});
+
 test('m8 adapter builds two-regime generator params with canonical cash sleeves', () => {
   const params = makeM8ContractParams();
   params.generatorType = 'two_regime';
@@ -1810,6 +1836,7 @@ test('m8 output maps canonical ruin and controlled placeholders', () => {
       SpendFactorCut1Months: 9,
       SpendFactorCut2Months: 2,
       CutTimeShare: 0.08,
+      terminalWealthAllPaths: [0, 750_000_000, 2_200_000_000, 1_100_000_000],
       maxDrawdownPercentiles: {
         10: 0.12,
         50: 0.24,
@@ -1855,7 +1882,8 @@ test('m8 output maps canonical ruin and controlled placeholders', () => {
   assert.equal(result.terminalP25IfSuccess, 800_000_000);
   assert.equal(result.terminalP75AllPaths, 1_180_000_000);
   assert.equal(result.terminalP75IfSuccess, 1_200_000_000);
-  assert.deepEqual(result.terminalWealthAllPaths, []);
+  assert.deepEqual(result.terminalWealthAllPaths, [0, 750_000_000, 2_200_000_000, 1_100_000_000]);
+  assert.deepEqual(result.terminalWealthAll, [750_000_000, 1_100_000_000, 2_200_000_000]);
 });
 
 test('m8 output requires real max drawdown percentiles for cutover', () => {

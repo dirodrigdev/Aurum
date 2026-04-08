@@ -205,6 +205,11 @@ export function SimulationPage({
     success40: number | null;
     probRuin40: number | null;
     probRuin20: number | null;
+    normalizationsApplied?: {
+      horizonMinForced: boolean;
+      spendingPhasesNormalized: boolean;
+      notes: string[];
+    };
   } | null;
   applyAurumHarness: {
     status: 'idle' | 'running' | 'pass' | 'fail';
@@ -781,7 +786,7 @@ export function SimulationPage({
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
               <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina P25–P75 (años)</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(100 - (probSuccess * 100)).toFixed(1)}%</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinWindowLabel}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
               <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica (mediana)</div>
@@ -935,6 +940,9 @@ export function SimulationPage({
           </div>
           <div>Hero source: {auditProbe.heroSource} · requestId: {auditProbe.requestId ?? '—'}</div>
           <div>Seed: {auditProbe.seed} · n_paths: {auditProbe.nPaths} · input hash: {auditProbe.inputHash}</div>
+          {auditProbe.normalizationsApplied && auditProbe.normalizationsApplied.notes.length > 0 && (
+            <div>Normalizaciones: {auditProbe.normalizationsApplied.notes.join(' · ')}</div>
+          )}
           <div>
             capital_initial_clp: {formatCapital(auditProbe.capitalInitial)} · capital_source: {auditProbe.capitalSource} · sourceLabel: {auditProbe.sourceLabel}
           </div>

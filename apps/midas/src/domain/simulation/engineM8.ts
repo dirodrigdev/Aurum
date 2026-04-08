@@ -156,6 +156,69 @@ const scenarioToRuntimeKey = (scenarioId: M8ScenarioOverrides['scenario_id'] | u
   return 'Central';
 };
 
+const buildEffectiveReturnAssumptions = (input: M8Input): M8Input['return_assumptions'] => {
+  const overrides = input.scenario_overrides;
+  return {
+    eq_global_real_annual: isFiniteNumber(overrides?.rv_global_annual)
+      ? overrides.rv_global_annual
+      : input.return_assumptions.eq_global_real_annual,
+    eq_chile_real_annual: isFiniteNumber(overrides?.rv_chile_annual)
+      ? overrides.rv_chile_annual
+      : input.return_assumptions.eq_chile_real_annual,
+    fi_global_real_annual: isFiniteNumber(overrides?.rf_global_annual)
+      ? overrides.rf_global_annual
+      : input.return_assumptions.fi_global_real_annual,
+    fi_chile_real_annual: isFiniteNumber(overrides?.rf_chile_annual)
+      ? overrides.rf_chile_annual
+      : input.return_assumptions.fi_chile_real_annual,
+    usd_liquidity_real_annual: input.return_assumptions.usd_liquidity_real_annual,
+    clp_cash_real_annual: input.return_assumptions.clp_cash_real_annual,
+  };
+};
+
+const buildEffectiveNormalSleeves = (
+  input: M8Input,
+  baseSleeves: M8GeneratorParams['sleeves'],
+): M8GeneratorParams['sleeves'] => {
+  const assumptions = buildEffectiveReturnAssumptions(input);
+  const overrides = input.scenario_overrides;
+
+  return {
+    eq_global: {
+      mean_annual: assumptions.eq_global_real_annual,
+      vol_annual: isFiniteNumber(overrides?.rv_global_vol_annual)
+        ? overrides.rv_global_vol_annual
+        : baseSleeves.eq_global.vol_annual,
+    },
+    eq_chile: {
+      mean_annual: assumptions.eq_chile_real_annual,
+      vol_annual: isFiniteNumber(overrides?.rv_chile_vol_annual)
+        ? overrides.rv_chile_vol_annual
+        : baseSleeves.eq_chile.vol_annual,
+    },
+    fi_global: {
+      mean_annual: assumptions.fi_global_real_annual,
+      vol_annual: isFiniteNumber(overrides?.rf_global_vol_annual)
+        ? overrides.rf_global_vol_annual
+        : baseSleeves.fi_global.vol_annual,
+    },
+    fi_chile: {
+      mean_annual: assumptions.fi_chile_real_annual,
+      vol_annual: isFiniteNumber(overrides?.rf_chile_vol_annual)
+        ? overrides.rf_chile_vol_annual
+        : baseSleeves.fi_chile.vol_annual,
+    },
+    usd_liquidity: {
+      mean_annual: assumptions.usd_liquidity_real_annual,
+      vol_annual: baseSleeves.usd_liquidity.vol_annual,
+    },
+    clp_cash: {
+      mean_annual: assumptions.clp_cash_real_annual,
+      vol_annual: baseSleeves.clp_cash.vol_annual,
+    },
+  };
+};
+
 const validateSquareMatrix = (matrix: number[][], expectedSize: number, label: string): void => {
   if (!Array.isArray(matrix) || matrix.length !== expectedSize) {
     throw new Error(`${label} debe ser una matriz cuadrada de tamaño ${expectedSize}`);
@@ -349,10 +412,12 @@ const buildGeneratorStates = (input: M8Input): SimulationState => {
   const scenarioKey = scenarioToRuntimeKey(input.scenario_overrides?.scenario_id);
   if (input.generator_type === 'two_regime') {
     const params = input.generator_params as M8TwoRegimeGeneratorParams;
-    return buildTwoRegimeState(params.regimes.normal, scenarioKey, params.correlation_matrix);
+    const effectiveNormalSleeves = buildEffectiveNormalSleeves(input, params.regimes.normal);
+    return buildTwoRegimeState(effectiveNormalSleeves, scenarioKey, params.correlation_matrix);
   }
+  const effectiveNormalSleeves = buildEffectiveNormalSleeves(input, input.generator_params.sleeves);
   return {
-    normal: buildGeneratorState(input.generator_params.sleeves, scenarioKey, input.generator_params.correlation_matrix),
+    normal: buildGeneratorState(effectiveNormalSleeves, scenarioKey, input.generator_params.correlation_matrix),
   };
 };
 

@@ -26,7 +26,6 @@ import {
   M8_CANONICAL_CASH_RETURN_ASSUMPTIONS,
   M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS,
   M8_CANONICAL_CORRELATION_MATRIX,
-  M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS,
   buildCanonicalM8PortfolioMix,
   M8_STUDENT_T_DF,
   remapLegacyCorrelationMatrixToM8,
@@ -164,22 +163,22 @@ const expandCorrelationMatrix = (legacyMatrix: readonly (readonly number[])[]): 
   return remapLegacyCorrelationMatrixToM8(legacyMatrix);
 };
 
-const buildGeneratorSleeves = (): M8GeneratorParams['sleeves'] => ({
+const buildGeneratorSleeves = (params: ModelParameters): M8GeneratorParams['sleeves'] => ({
   eq_global: buildSleeveStats(
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalAnnual,
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalVolAnnual,
+    params.returns.rvGlobalAnnual,
+    params.returns.rvGlobalVolAnnual,
   ),
   eq_chile: buildSleeveStats(
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileAnnual,
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileVolAnnual,
+    params.returns.rvChileAnnual,
+    params.returns.rvChileVolAnnual,
   ),
   fi_global: buildSleeveStats(
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalAnnual,
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalVolAnnual,
+    params.returns.rfGlobalAnnual,
+    params.returns.rfGlobalVolAnnual,
   ),
   fi_chile: buildSleeveStats(
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileRealAnnual,
-    M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileVolAnnual,
+    params.returns.rfChileUFAnnual,
+    params.returns.rfChileVolAnnual,
   ),
   usd_liquidity: buildSleeveStats(
     M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.usd_liquidity_real_annual,
@@ -192,7 +191,7 @@ const buildGeneratorSleeves = (): M8GeneratorParams['sleeves'] => ({
 });
 
 const buildGeneratorParams = (params: ModelParameters): M8AnyGeneratorParams => {
-  const sleeves = buildGeneratorSleeves();
+  const sleeves = buildGeneratorSleeves(params);
   const correlationMatrix = expandCorrelationMatrix(params.returns.correlationMatrix);
 
   if ((params.generatorType ?? 'student_t') === 'gaussian_iid') {
@@ -457,6 +456,10 @@ export const fromM8Output = (
 ): SimulationResults => {
   const nTotal = params.simulation.nSim ?? M8_DEFAULT_N_PATHS;
   const nRuin = Math.round(output.ProbRuin40 * nTotal);
+  const terminalAllPaths = output.terminalWealthAllPaths ?? [];
+  const terminalSurvivors = terminalAllPaths
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
   if (!output.maxDrawdownPercentiles || Object.keys(output.maxDrawdownPercentiles).length === 0) {
     throw new Error('M8Output.maxDrawdownPercentiles requerido para cutover');
   }
@@ -477,8 +480,8 @@ export const fromM8Output = (
       50: output.TerminalMedianIfSuccessCLP,
       75: output.TerminalP75IfSuccess,
     },
-    terminalWealthAll: [],
-    terminalWealthAllPaths: output.terminalWealthAllPaths ?? [],
+    terminalWealthAll: terminalSurvivors,
+    terminalWealthAllPaths: terminalAllPaths,
     p50TerminalAllPaths: output.TerminalMedianCLP,
     p50TerminalSurvivors: output.TerminalMedianIfSuccessCLP,
     terminalP25AllPaths: output.TerminalP25AllPaths,

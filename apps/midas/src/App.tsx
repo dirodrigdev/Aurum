@@ -1490,6 +1490,23 @@ export default function App() {
         : null;
       const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
       const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;
+      const requestParams =
+        requestId != null
+          ? workerPayloadByRequestRef.current.get(`recalc:${requestId}`) ?? null
+          : null;
+      const sourceParamsForNormalization = requestParams ?? heroParams;
+      const normalizedSpendingPhases = normalizeModelSpendingPhases(sourceParamsForNormalization);
+      const spendingPhasesNormalized =
+        stableSerialize(sourceParamsForNormalization.spendingPhases) !== stableSerialize(normalizedSpendingPhases);
+      const sourceHorizonMonths = Number(sourceParamsForNormalization.simulation?.horizonMonths ?? 0);
+      const horizonMinForced = Number.isFinite(sourceHorizonMonths) && sourceHorizonMonths > 0 && sourceHorizonMonths < 48;
+      const normalizationNotes: string[] = [];
+      if (horizonMinForced) {
+        normalizationNotes.push(`horizon mínimo forzado: ${sourceHorizonMonths} -> 48 meses`);
+      }
+      if (spendingPhasesNormalized) {
+        normalizationNotes.push('spendingPhases normalizadas (legacy/EUR/3 fases -> contrato M8 4 tramos CLP)');
+      }
       return {
         heroSource: heroVisibleSource,
         requestId,
@@ -1504,6 +1521,11 @@ export default function App() {
         inputHash: hashJson(input),
         m8Input: input,
         heroResult,
+        normalizationsApplied: {
+          horizonMinForced,
+          spendingPhasesNormalized,
+          notes: normalizationNotes,
+        },
         success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
         probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
         probRuin20: heroVisibleResult?.probRuin20 ?? null,
@@ -1524,6 +1546,11 @@ export default function App() {
         inputHash: `error:${error instanceof Error ? error.message : String(error)}`,
         m8Input: null,
         heroResult: null,
+        normalizationsApplied: {
+          horizonMinForced: false,
+          spendingPhasesNormalized: false,
+          notes: [],
+        },
         success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
         probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
         probRuin20: heroVisibleResult?.probRuin20 ?? null,
