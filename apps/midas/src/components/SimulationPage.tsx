@@ -237,6 +237,12 @@ export function SimulationPage({
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [showStickyBar, setShowStickyBar] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 760 : false
+  );
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 390 : false
+  );
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
@@ -557,6 +563,17 @@ export function SimulationPage({
     return () => observer.disconnect();
   }, [heroPhase, simUiState]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onResize = () => {
+      setIsMobileViewport(window.innerWidth <= 760);
+      setIsCompactViewport(window.innerWidth <= 390);
+    };
+    onResize();
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const displayResult = hideResultBlocks ? null : resultCentral;
   const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
   const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
@@ -583,6 +600,11 @@ export function SimulationPage({
   const ruinHumanSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
     ? `Si falla, normalmente ocurre entre los años ${ruinP25.toFixed(1)} y ${ruinP75.toFixed(1)} (año típico: ${ruinMedian.toFixed(1)}).`
     : 'Si falla, el motor estima el timing de ruina solo sobre los escenarios que efectivamente fracasan.';
+  const heroRuinSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
+    ? isMobileViewport
+      ? `Si falla: típico ${ruinMedian.toFixed(1)} años · rango ${ruinP25.toFixed(1)}–${ruinP75.toFixed(1)}`
+      : ruinHumanSummary
+    : ruinHumanSummary;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
@@ -633,6 +655,10 @@ export function SimulationPage({
     ? Math.max(5, Math.ceil(rawFanYears / 5) * 5)
     : 40;
   const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
+  const fanChartTicksMobile = Array.from(
+    { length: Math.max(1, Math.floor(fanChartYears / 10)) },
+    (_, idx) => (idx + 1) * 10
+  ).filter((tick) => tick <= fanChartYears);
   const successValues = [
     probSuccess !== null ? probSuccess * 100 : null,
   ].filter((value): value is number => Number.isFinite(value));
@@ -812,6 +838,7 @@ export function SimulationPage({
           top: 0,
           zIndex: 35,
           minHeight: showStickyBar ? undefined : 0,
+          paddingTop: showStickyBar ? 'env(safe-area-inset-top, 0px)' : 0,
         }}
       >
         {showStickyBar && (
@@ -820,21 +847,30 @@ export function SimulationPage({
               background: 'rgba(11, 16, 24, 0.94)',
               border: `1px solid ${T.border}`,
               borderRadius: 12,
-              padding: '8px 12px',
+              padding: isMobileViewport ? '7px 10px' : '8px 12px',
               backdropFilter: 'blur(6px)',
               color: T.textPrimary,
-              fontSize: 12,
+              fontSize: isMobileViewport ? 11 : 12,
               fontWeight: 700,
             }}
           >
             {isRecalculating ? (
               <span style={{ color: T.primary }}>Calculando…</span>
             ) : displayResult && probSuccess !== null ? (
-              <span>
-                Éxito {(probSuccess * 100).toFixed(1)}% {' | '}
-                Si falla: año típico {ruinTypicalLabel} {' | '}
-                rango {ruinWindowLabel}
-              </span>
+              isMobileViewport ? (
+                <div style={{ display: 'grid', gap: 2, lineHeight: 1.25 }}>
+                  <span>Éxito {(probSuccess * 100).toFixed(1)}%</span>
+                  <span>
+                    Si falla: {isCompactViewport ? `típico ${ruinTypicalLabel}` : `año típico ${ruinTypicalLabel}`} · rango {ruinWindowLabel}
+                  </span>
+                </div>
+              ) : (
+                <span>
+                  Éxito {(probSuccess * 100).toFixed(1)}% {' | '}
+                  Si falla: año típico {ruinTypicalLabel} {' | '}
+                  rango {ruinWindowLabel}
+                </span>
+              )
             ) : (
               <span style={{ color: T.textMuted }}>Simulación en espera</span>
             )}
@@ -855,9 +891,10 @@ export function SimulationPage({
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 10,
+            flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
           }}
         >
-          <span>Nueva base Aurum disponible · {pendingSnapshotLabel}</span>
+          <span style={{ lineHeight: 1.3 }}>Nueva base Aurum disponible · {pendingSnapshotLabel}</span>
           <button
             type="button"
             onClick={onApplyPendingSnapshot}
@@ -893,9 +930,10 @@ export function SimulationPage({
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 10,
+            flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
           }}
         >
-          <span>
+          <span style={{ lineHeight: 1.3 }}>
             Aurum ya sincronizado · Base {baseOptLabel} · Aurum {latestOptLabel} · Δ {diffAbsLabel}
           </span>
           <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
@@ -1005,7 +1043,7 @@ export function SimulationPage({
           borderRadius: 12,
           padding: 10,
           display: 'grid',
-          gridTemplateColumns: 'minmax(0,1fr) minmax(0,220px)',
+          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
           gap: 12,
           alignItems: 'start',
         }}
@@ -1167,7 +1205,7 @@ export function SimulationPage({
                 ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina · Prob. de ruina ${(probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—')}`
                 : 'Corre una simulación para ver resultados'
           }
-          ruinCopy={ruinHumanSummary}
+          ruinCopy={heroRuinSummary}
           mode={simActive ? 'sim' : 'real'}
           chips={[
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
@@ -1342,7 +1380,7 @@ export function SimulationPage({
             padding: '10px 12px',
           }}
         >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '8px 4px' : '4px 2px', minHeight: 38 }}>
             <span>Lectura ampliada</span>
             <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
           </summary>
@@ -1398,13 +1436,14 @@ export function SimulationPage({
               padding: '10px 12px',
             }}
           >
-            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '8px 4px' : '4px 2px', minHeight: 36 }}>
               <span>Lectura analítica y técnica</span>
               <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
             </summary>
             <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
               <MetricGroup
                 title="Supervivencia y ruina"
+                compact={isMobileViewport}
                 items={[
                   { label: 'Probabilidad de éxito (40 años)', value: `${((displayResult.success40 ?? (1 - displayResult.probRuin)) * 100).toFixed(1)}%` },
                   { label: 'Ruina condicional (P25–P75)', value: ruinWindowLabel },
@@ -1414,6 +1453,7 @@ export function SimulationPage({
               />
               <MetricGroup
                 title="Consumo y recortes"
+                compact={isMobileViewport}
                 items={[
                   { label: 'Gasto ejecutado tramo 2', value: displayResult.spendFactorPhase2 !== undefined ? `${(displayResult.spendFactorPhase2 * 100).toFixed(1)}%` : '—' },
                   { label: 'Gasto ejecutado tramo 3', value: displayResult.spendFactorPhase3 !== undefined ? `${(displayResult.spendFactorPhase3 * 100).toFixed(1)}%` : '—' },
@@ -1435,6 +1475,7 @@ export function SimulationPage({
               />
               <MetricGroup
                 title="Patrimonio terminal"
+                compact={isMobileViewport}
                 items={[
                   { label: 'P25 todos los escenarios', value: displayResult.terminalP25AllPaths !== undefined ? formatCapital(displayResult.terminalP25AllPaths) : '—' },
                   { label: 'P25 solo sobrevivientes', value: displayResult.terminalP25IfSuccess !== undefined ? formatCapital(displayResult.terminalP25IfSuccess) : '—' },
@@ -1444,6 +1485,7 @@ export function SimulationPage({
               />
               <MetricGroup
                 title="Motor y soporte"
+                compact={isMobileViewport}
                 items={[
                   { label: 'Generador activo', value: activeGenerator },
                   {
@@ -1664,25 +1706,25 @@ export function SimulationPage({
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={isMobileViewport ? 200 : 240}>
                 <AreaChart data={fanChartData} margin={{ top: 8, right: 6, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
                   <XAxis
                     dataKey="year"
                     type="number"
                     domain={[0, fanChartYears]}
-                    ticks={fanChartTicks}
-                    tick={{ fill: T.textMuted, fontSize: 10 }}
+                    ticks={isMobileViewport ? fanChartTicksMobile : fanChartTicks}
+                    tick={{ fill: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}
                     tickFormatter={(v: number | string) => String(v)}
                     stroke={T.border}
                     tickMargin={8}
                     label={{ value: 'Años', position: 'insideBottom', offset: -2, fill: T.textMuted, fontSize: 11 }}
                   />
                   <YAxis
-                    tick={{ fill: T.textMuted, fontSize: 10 }}
+                    tick={{ fill: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}
                     tickFormatter={(v: number | string) => formatMillionsMM(Number(v))}
                     stroke={T.border}
-                    width={46}
+                    width={isMobileViewport ? 40 : 46}
                   />
                   <Tooltip
                     contentStyle={{
@@ -1753,62 +1795,123 @@ export function SimulationPage({
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
               PERCENTILES TERMINALES (SOBREVIVIENTES VS TODOS)
             </div>
-            <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
-                  gap: 0,
-                  background: T.surfaceEl,
-                  color: T.textMuted,
-                  fontSize: 11,
-                  padding: '10px 12px',
-                  borderBottom: `1px solid ${T.border}`,
-                }}
-              >
-                <span>P</span>
-                <span>Patrimonio terminal (sobrevivientes)</span>
-                <span>Patrimonio terminal (todos)</span>
-                <span>EUR equiv (sobrevivientes)</span>
-                <span>DD máx (todos)</span>
-              </div>
-              {percentileRows.map((p, rowIdx) => {
-                const clpSurvivors = p === 25
-                  ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
-                  : p === 50
-                    ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
-                    : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
-                const clpAll = p === 25
-                  ? displayResult.terminalP25AllPaths
-                  : p === 50
-                    ? displayResult.p50TerminalAllPaths
-                    : displayResult.terminalP75AllPaths;
-                const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
-                const dd = displayResult.maxDrawdownPercentiles[p];
-                const highlight = p === 50;
-                return (
-                  <div
-                    key={p}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
-                      gap: 0,
-                      padding: '10px 12px',
-                      background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
-                      borderBottom: rowIdx === percentileRows.length - 1 ? 'none' : `1px solid ${T.border}`,
-                      color: highlight ? T.primary : T.textPrimary,
-                      alignItems: 'center',
-                    }}
+            {isMobileViewport ? (
+              <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                {percentileRows.map((p) => {
+                  const clpSurvivors = p === 25
+                    ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+                    : p === 50
+                      ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+                      : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+                  const clpAll = p === 25
+                    ? displayResult.terminalP25AllPaths
+                    : p === 50
+                      ? displayResult.p50TerminalAllPaths
+                      : displayResult.terminalP75AllPaths;
+                  const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
+                  const dd = displayResult.maxDrawdownPercentiles[p];
+                  const highlight = p === 50;
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '10px 12px',
+                        display: 'grid',
+                        gap: 6,
+                      }}
                     >
-                    <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
-                  <span style={{ ...css.mono, fontWeight: 700 }}>{Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}</span>
-                  <span style={{ ...css.mono }}>{Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}</span>
-                  <span style={{ ...css.mono }}>{Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}</span>
-                    <span style={{ ...css.mono }}>{Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}</span>
-                  </div>
-                );
-              })}
-            </div>
+                      <div style={{ color: highlight ? T.primary : T.textMuted, fontWeight: 800, fontSize: 12 }}>P{p}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>Sobrevivientes</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                            {Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>Todos los escenarios</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>EUR equiv (sobrevivientes)</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>DD máx (todos)</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
+                    gap: 0,
+                    background: T.surfaceEl,
+                    color: T.textMuted,
+                    fontSize: 11,
+                    padding: '10px 12px',
+                    borderBottom: `1px solid ${T.border}`,
+                  }}
+                >
+                  <span>P</span>
+                  <span>Patrimonio terminal (sobrevivientes)</span>
+                  <span>Patrimonio terminal (todos)</span>
+                  <span>EUR equiv (sobrevivientes)</span>
+                  <span>DD máx (todos)</span>
+                </div>
+                {percentileRows.map((p, rowIdx) => {
+                  const clpSurvivors = p === 25
+                    ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+                    : p === 50
+                      ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+                      : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+                  const clpAll = p === 25
+                    ? displayResult.terminalP25AllPaths
+                    : p === 50
+                      ? displayResult.p50TerminalAllPaths
+                      : displayResult.terminalP75AllPaths;
+                  const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
+                  const dd = displayResult.maxDrawdownPercentiles[p];
+                  const highlight = p === 50;
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
+                        gap: 0,
+                        padding: '10px 12px',
+                        background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
+                        borderBottom: rowIdx === percentileRows.length - 1 ? 'none' : `1px solid ${T.border}`,
+                        color: highlight ? T.primary : T.textPrimary,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
+                      <span style={{ ...css.mono, fontWeight: 700 }}>{Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em', marginBottom: 4 }}>TCREAL</div>
@@ -2088,14 +2191,16 @@ function MetricTile({
 function MetricGroup({
   title,
   items,
+  compact = false,
 }: {
   title: string;
   items: Array<{ label: string; value: string }>;
+  compact?: boolean;
 }) {
   return (
     <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', background: T.surface }}>
       <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.03em', marginBottom: 8 }}>{title}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: compact ? 'minmax(0,1fr)' : 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
         {items.map((item) => (
           <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: `1px dashed ${T.border}`, paddingBottom: 5 }}>
             <span style={{ color: T.textSecondary, fontSize: 11 }}>{item.label}</span>
@@ -2111,26 +2216,80 @@ function LabelWithInfo({ label, info }: { label: string; info: string }) {
   return (
     <>
       <span>{label}</span>
-      <span
-        title={info}
-        aria-label={info}
+      <InfoHint text={info} />
+    </>
+  );
+}
+
+function InfoHint({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const node = wrapRef.current;
+      if (!node) return;
+      if (event.target instanceof Node && !node.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+    };
+  }, [open]);
+
+  return (
+    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        aria-label="Mostrar explicación"
+        onClick={() => setOpen((prev) => !prev)}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 14,
-          height: 14,
+          width: 18,
+          height: 18,
           borderRadius: 999,
           border: `1px solid ${T.border}`,
           color: T.textMuted,
-          fontSize: 10,
+          background: T.surface,
+          fontSize: 11,
           fontWeight: 800,
-          cursor: 'help',
+          cursor: 'pointer',
           userSelect: 'none',
+          padding: 0,
         }}
       >
         i
-      </span>
-    </>
+      </button>
+      {open && (
+        <span
+          role="note"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            minWidth: 180,
+            maxWidth: 260,
+            background: 'rgba(11, 16, 24, 0.98)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            color: T.textSecondary,
+            padding: '8px 10px',
+            fontSize: 11,
+            lineHeight: 1.35,
+            zIndex: 70,
+            boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
   );
 }
