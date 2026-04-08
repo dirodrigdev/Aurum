@@ -78,7 +78,7 @@ export function HeroCard({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: isMobileViewport ? '100%' : 'auto' }}>
             {chips.map((chip) => (
               <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: isMobileViewport ? 'space-between' : 'flex-start' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'flex-start' : 'center', gap: 2 }}>
                   <button
                     onClick={chip.onClick}
                     style={{
@@ -114,7 +114,9 @@ export function HeroCard({
       <div style={{ height: 1, background: T.border, margin: '12px 0' }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12, flexWrap: isMobileViewport ? 'wrap' : 'nowrap' }}>
         <span>Prob. ruina {pct === null ? '—' : `${(100 - pct).toFixed(1)}%`}</span>
-        <span>{ruinCopy ?? 'Timing mediano: —'}</span>
+        <span style={{ flex: isMobileViewport ? '1 1 100%' : undefined, textAlign: isMobileViewport ? 'left' : 'right' }}>
+          {ruinCopy ?? 'Timing mediano: —'}
+        </span>
       </div>
     </div>
   );

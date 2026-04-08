@@ -844,14 +844,15 @@ export function SimulationPage({
         {showStickyBar && (
           <div
             style={{
-              background: 'rgba(11, 16, 24, 0.94)',
+              background: 'rgba(11, 16, 24, 0.92)',
               border: `1px solid ${T.border}`,
-              borderRadius: 12,
-              padding: isMobileViewport ? '7px 10px' : '8px 12px',
+              borderRadius: 10,
+              padding: isMobileViewport ? '6px 9px' : '8px 12px',
               backdropFilter: 'blur(6px)',
               color: T.textPrimary,
               fontSize: isMobileViewport ? 11 : 12,
-              fontWeight: 700,
+              fontWeight: 650,
+              lineHeight: 1.25,
             }}
           >
             {isRecalculating ? (
@@ -1380,7 +1381,7 @@ export function SimulationPage({
             padding: '10px 12px',
           }}
         >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '8px 4px' : '4px 2px', minHeight: 38 }}>
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 42 : 38 }}>
             <span>Lectura ampliada</span>
             <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
           </summary>
@@ -1436,7 +1437,7 @@ export function SimulationPage({
               padding: '10px 12px',
             }}
           >
-            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '8px 4px' : '4px 2px', minHeight: 36 }}>
+            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 40 : 36 }}>
               <span>Lectura analítica y técnica</span>
               <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
             </summary>
@@ -1522,7 +1523,7 @@ export function SimulationPage({
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
                 {spendingPhases.map((phase, idx) => (
                   <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <span style={{ color: T.textSecondary, fontSize: 11 }}>
@@ -1593,7 +1594,7 @@ export function SimulationPage({
                 </div>
               </div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
                   <input
@@ -1631,7 +1632,7 @@ export function SimulationPage({
 
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
                   <input
@@ -1777,12 +1778,11 @@ export function SimulationPage({
                   <Line type="monotone" dataKey="p50" stroke={T.primary} strokeWidth={2.5} dot={false} />
                   <Line type="monotone" dataKey="p10" stroke={T.negative} strokeWidth={1} strokeDasharray="3 3" dot={false} />
                   <ReferenceLine y={0} stroke={T.negative} strokeDasharray="4 2" />
-                  <ReferenceLine x={5} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={10} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={15} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={20} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={25} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={30} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  {(isMobileViewport ? [10, 20, 30, 40] : [5, 10, 15, 20, 25, 30, 35, 40])
+                    .filter((x) => x <= fanChartYears)
+                    .map((x) => (
+                      <ReferenceLine key={x} x={x} stroke={T.metalDeep} strokeDasharray="2 3" />
+                    ))}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1818,9 +1818,9 @@ export function SimulationPage({
                         background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
                         border: `1px solid ${T.border}`,
                         borderRadius: 10,
-                        padding: '10px 12px',
+                        padding: isCompactViewport ? '9px 10px' : '10px 12px',
                         display: 'grid',
-                        gap: 6,
+                        gap: 5,
                       }}
                     >
                       <div style={{ color: highlight ? T.primary : T.textMuted, fontWeight: 800, fontSize: 12 }}>P{p}</div>
@@ -1838,7 +1838,7 @@ export function SimulationPage({
                           </span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                          <span style={{ color: T.textSecondary, fontSize: 11 }}>EUR equiv (sobrevivientes)</span>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>EUR (sobrev.)</span>
                           <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
                             {Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}
                           </span>
@@ -2036,7 +2036,7 @@ export function SimulationPage({
               )}
             </div>
 
-            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
                 <select
@@ -2223,6 +2223,7 @@ function LabelWithInfo({ label, info }: { label: string; info: string }) {
 
 function InfoHint({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<'left' | 'right' | 'center'>('center');
   const wrapRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
@@ -2242,18 +2243,37 @@ function InfoHint({ text }: { text: string }) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    const node = wrapRef.current;
+    if (!node) return undefined;
+    const rect = node.getBoundingClientRect();
+    const minSideSpace = 140;
+    const nextPlacement =
+      window.innerWidth - rect.right < minSideSpace
+        ? 'right'
+        : rect.left < minSideSpace
+          ? 'left'
+          : 'center';
+    setPlacement(nextPlacement);
+    return undefined;
+  }, [open]);
+
   return (
     <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
       <button
         type="button"
         aria-label="Mostrar explicación"
         onClick={() => setOpen((prev) => !prev)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+        }}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 18,
-          height: 18,
+          width: 20,
+          height: 20,
           borderRadius: 999,
           border: `1px solid ${T.border}`,
           color: T.textMuted,
@@ -2273,9 +2293,12 @@ function InfoHint({ text }: { text: string }) {
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
-            right: 0,
-            minWidth: 180,
-            maxWidth: 260,
+            ...(placement === 'right'
+              ? { right: 0 }
+              : placement === 'left'
+                ? { left: 0 }
+                : { left: '50%', transform: 'translateX(-50%)' }),
+            maxWidth: 'min(260px, calc(100vw - 24px))',
             background: 'rgba(11, 16, 24, 0.98)',
             border: `1px solid ${T.border}`,
             borderRadius: 10,
