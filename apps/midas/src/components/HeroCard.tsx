@@ -23,10 +23,16 @@ export function HeroCard({
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
   );
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 390 : false
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const onResize = () => setIsMobileViewport(window.innerWidth <= 760);
+    const onResize = () => {
+      setIsMobileViewport(window.innerWidth <= 760);
+      setIsCompactViewport(window.innerWidth <= 390);
+    };
     onResize();
     window.addEventListener('resize', onResize, { passive: true });
     return () => window.removeEventListener('resize', onResize);
@@ -49,7 +55,7 @@ export function HeroCard({
         background: simMode ? 'rgba(91, 140, 255, 0.08)' : T.surface,
         border: simMode ? `1px solid ${T.primary}` : `1px solid ${T.border}`,
         borderRadius: 16,
-        padding: isMobileViewport ? 14 : 16,
+        padding: isMobileViewport ? 12 : 16,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -59,11 +65,11 @@ export function HeroCard({
         {labelAccessory}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'flex-start', flexWrap: isMobileViewport ? 'wrap' : 'nowrap' }}>
+      <div style={{ display: 'flex', gap: isMobileViewport ? 8 : 12, marginTop: 6, alignItems: 'flex-start', flexWrap: 'nowrap' }}>
         <div
           style={{
             ...css.mono,
-            fontSize: 'clamp(48px, 18vw, 72px)',
+            fontSize: isMobileViewport ? 'clamp(42px, 16vw, 60px)' : 'clamp(48px, 18vw, 72px)',
             fontWeight: 700,
             lineHeight: 1,
             color: valueTone,
@@ -75,23 +81,24 @@ export function HeroCard({
           {pct === null ? '—' : `${pct.toFixed(1)}%`}
         </div>
         {chips && chips.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: isMobileViewport ? '100%' : 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 6 : 8, width: isMobileViewport ? (isCompactViewport ? 128 : 138) : 'auto', flexShrink: 0 }}>
             {chips.map((chip) => (
-              <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: isMobileViewport ? 'space-between' : 'flex-start' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'flex-start' : 'center', gap: 2 }}>
+              <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 1, minWidth: 0 }}>
                   <button
                     onClick={chip.onClick}
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
                       color: T.textSecondary,
-                      fontSize: 12,
+                      fontSize: isMobileViewport ? 11 : 12,
                       fontWeight: 700,
-                      padding: isMobileViewport ? '7px 12px' : '6px 10px',
+                      padding: isMobileViewport ? '5px 8px' : '6px 10px',
                       borderRadius: 999,
                       cursor: 'pointer',
-                      minWidth: isMobileViewport ? 108 : 96,
+                      minWidth: isMobileViewport ? 84 : 96,
                       textAlign: 'center',
+                      whiteSpace: 'nowrap',
                     }}
                   >
                     {chip.value}
@@ -107,12 +114,12 @@ export function HeroCard({
         )}
       </div>
       {subtitle && (
-        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 12 : 13, marginTop: 6, lineHeight: 1.35 }}>
+        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 13, marginTop: 4, lineHeight: 1.3 }}>
           {subtitle}
         </div>
       )}
-      <div style={{ height: 1, background: T.border, margin: '12px 0' }} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12, flexWrap: isMobileViewport ? 'wrap' : 'nowrap' }}>
+      <div style={{ height: 1, background: T.border, margin: isMobileViewport ? '10px 0 8px' : '12px 0' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: isMobileViewport ? 8 : 12, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 12, flexWrap: isMobileViewport ? 'wrap' : 'nowrap', lineHeight: 1.3 }}>
         <span>Prob. ruina {pct === null ? '—' : `${(100 - pct).toFixed(1)}%`}</span>
         <span style={{ flex: isMobileViewport ? '1 1 100%' : undefined, textAlign: isMobileViewport ? 'left' : 'right' }}>
           {ruinCopy ?? 'Timing mediano: —'}

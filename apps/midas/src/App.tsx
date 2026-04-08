@@ -796,7 +796,7 @@ export default function App() {
       panel.style.position = 'fixed';
       panel.style.left = '12px';
       panel.style.right = '12px';
-      panel.style.bottom = '86px';
+      panel.style.bottom = 'calc(86px + env(safe-area-inset-bottom, 0px))';
       panel.style.zIndex = '9999';
       panel.style.background = 'rgba(255, 92, 92, 0.14)';
       panel.style.border = `1px solid ${T.negative}`;
@@ -3119,6 +3119,7 @@ export default function App() {
         <main
           style={{
             padding: '12px 16px 90px',
+            paddingBottom: 'calc(90px + env(safe-area-inset-bottom, 0px))',
             marginTop: 48,
             maxWidth: 960,
             marginLeft: 'auto',
@@ -3149,7 +3150,7 @@ export default function App() {
           onClick={() => setParamSheetOpen(true)}
           style={{
             position: 'fixed',
-            bottom: 80,
+            bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
             right: 16,
             width: 52,
             height: 52,

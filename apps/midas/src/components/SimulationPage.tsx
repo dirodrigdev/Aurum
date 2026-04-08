@@ -257,6 +257,7 @@ export function SimulationPage({
   });
   const prevSimActive = useRef(false);
   const heroCardRef = useRef<HTMLDivElement | null>(null);
+  const heroSentinelRef = useRef<HTMLDivElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -539,29 +540,38 @@ export function SimulationPage({
   }, [simActive]);
 
   useEffect(() => {
-    if (!heroCardRef.current) return undefined;
-    const target = heroCardRef.current;
+    const heroNode = heroCardRef.current;
+    const sentinelNode = heroSentinelRef.current;
+    if (!heroNode || !sentinelNode) return undefined;
+
+    const stickyOffsetPx = isMobileViewport ? 66 : 56;
+    const fallbackCheck = () => {
+      const rect = heroNode.getBoundingClientRect();
+      setShowStickyBar(rect.bottom <= stickyOffsetPx);
+    };
 
     if (typeof IntersectionObserver === 'undefined') {
-      const onScroll = () => setShowStickyBar(window.scrollY > 140);
-      onScroll();
-      window.addEventListener('scroll', onScroll, { passive: true });
-      return () => window.removeEventListener('scroll', onScroll);
+      fallbackCheck();
+      window.addEventListener('scroll', fallbackCheck, { passive: true });
+      return () => window.removeEventListener('scroll', fallbackCheck);
     }
 
     const observer = new IntersectionObserver(
       (entries) => {
         const [entry] = entries;
-        setShowStickyBar(!entry.isIntersecting);
+        const shouldShow = !entry.isIntersecting || entry.boundingClientRect.top <= stickyOffsetPx;
+        setShowStickyBar(shouldShow);
       },
       {
         root: null,
-        threshold: 0.3,
+        threshold: 0,
+        rootMargin: `-${stickyOffsetPx}px 0px 0px 0px`,
       }
     );
-    observer.observe(target);
+    observer.observe(sentinelNode);
+    fallbackCheck();
     return () => observer.disconnect();
-  }, [heroPhase, simUiState]);
+  }, [heroPhase, simUiState, isMobileViewport]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -831,14 +841,13 @@ export function SimulationPage({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
       <div
         style={{
           position: 'sticky',
-          top: 0,
+          top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
           zIndex: 35,
           minHeight: showStickyBar ? undefined : 0,
-          paddingTop: showStickyBar ? 'env(safe-area-inset-top, 0px)' : 0,
         }}
       >
         {showStickyBar && (
@@ -847,7 +856,7 @@ export function SimulationPage({
               background: 'rgba(11, 16, 24, 0.92)',
               border: `1px solid ${T.border}`,
               borderRadius: 10,
-              padding: isMobileViewport ? '6px 9px' : '8px 12px',
+              padding: isMobileViewport ? '5px 8px' : '8px 12px',
               backdropFilter: 'blur(6px)',
               color: T.textPrimary,
               fontSize: isMobileViewport ? 11 : 12,
@@ -883,10 +892,10 @@ export function SimulationPage({
           style={{
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
-            borderRadius: 12,
-            padding: '8px 10px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
             color: T.textPrimary,
-            fontSize: 11,
+            fontSize: isMobileViewport ? 10 : 11,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
@@ -904,9 +913,9 @@ export function SimulationPage({
               background: T.primary,
               border: 'none',
               color: '#fff',
-              borderRadius: 10,
-              padding: '6px 10px',
-              fontSize: 11,
+              borderRadius: 9,
+              padding: isMobileViewport ? '5px 8px' : '6px 10px',
+              fontSize: isMobileViewport ? 10 : 11,
               fontWeight: 700,
               cursor: pendingSnapshotApplying ? 'not-allowed' : 'pointer',
               opacity: pendingSnapshotApplying ? 0.6 : 1,
@@ -922,10 +931,10 @@ export function SimulationPage({
           style={{
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
-            borderRadius: 12,
-            padding: '8px 10px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
             color: T.textPrimary,
-            fontSize: 11,
+            fontSize: isMobileViewport ? 10 : 11,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
@@ -943,41 +952,41 @@ export function SimulationPage({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: 8,
+          gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: isMobileViewport ? 6 : 8,
         }}
       >
         <div
           style={{
             background: T.surface,
             border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '8px 9px' : '10px 12px',
           }}
         >
-          <div style={{ color: T.textMuted, fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
             Base activa
           </div>
-          <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 3 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
             {activeCapitalSourceLabel}
           </div>
-          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>{patrimonioSourceTechnical}</div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>{patrimonioSourceTechnical}</div>
         </div>
         <div
           style={{
             background: T.surface,
             border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '8px 9px' : '10px 12px',
           }}
         >
-          <div style={{ color: T.textMuted, fontSize: 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
             Capital base efectivo
           </div>
-          <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 3 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
             {formatMoneyCompact(effectiveBaseCapital)}
           </div>
-          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>
             Corrida actual · {formatCapital(effectiveBaseCapital)}
           </div>
         </div>
@@ -1041,16 +1050,16 @@ export function SimulationPage({
         style={{
           background: T.surface,
           border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: 10,
+          borderRadius: 10,
+          padding: isMobileViewport ? 8 : 10,
           display: 'grid',
           gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
-          gap: 12,
+          gap: isMobileViewport ? 8 : 12,
           alignItems: 'start',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
               const active = activeScenarioForUi === variant.id;
               return (
@@ -1064,8 +1073,8 @@ export function SimulationPage({
                       border: `1px solid ${active ? T.primary : T.border}`,
                       color: active ? '#fff' : T.textSecondary,
                       borderRadius: 999,
-                      padding: '6px 11px',
-                      fontSize: 11,
+                      padding: isMobileViewport ? '5px 9px' : '6px 11px',
+                      fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
                       cursor: isRecalculating ? 'not-allowed' : 'pointer',
                       opacity: isRecalculating ? 0.65 : 1,
@@ -1074,7 +1083,7 @@ export function SimulationPage({
                     {variant.label}
                   </button>
                   {active && isScenarioAdjusted ? (
-                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Ajustada</span>
+                <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
                   ) : null}
                 </div>
               );
@@ -1090,8 +1099,8 @@ export function SimulationPage({
                 border: `1px solid ${T.border}`,
                 color: T.textSecondary,
                 borderRadius: 999,
-                padding: '6px 10px',
-                fontSize: 11,
+                padding: isMobileViewport ? '5px 9px' : '6px 10px',
+                fontSize: isMobileViewport ? 10 : 11,
                 fontWeight: 700,
                 cursor: isRecalculating ? 'not-allowed' : 'pointer',
                 opacity: isRecalculating ? 0.6 : 1,
@@ -1110,9 +1119,9 @@ export function SimulationPage({
               background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
               border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
               color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-              borderRadius: 10,
-              padding: '8px 10px',
-              fontSize: 11,
+              borderRadius: 9,
+              padding: isMobileViewport ? '6px 8px' : '8px 10px',
+              fontSize: isMobileViewport ? 10 : 11,
               fontWeight: 700,
               textAlign: 'left',
               cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
@@ -1131,9 +1140,9 @@ export function SimulationPage({
               color: riskCapitalEnabled
                 ? '#f6d38d'
                 : T.textSecondary,
-              borderRadius: 10,
-              padding: '8px 10px',
-              fontSize: 11,
+              borderRadius: 9,
+              padding: isMobileViewport ? '6px 8px' : '8px 10px',
+              fontSize: isMobileViewport ? 10 : 11,
               fontWeight: 700,
               textAlign: 'left',
               cursor: isRecalculating ? 'not-allowed' : 'pointer',
@@ -1149,15 +1158,15 @@ export function SimulationPage({
               gap: 6,
               background: T.surfaceEl,
               border: `1px solid ${T.border}`,
-              borderRadius: 10,
-              padding: '8px 10px',
+              borderRadius: 9,
+              padding: isMobileViewport ? '6px 8px' : '8px 10px',
             }}
           >
             <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
               Simulaciones Monte Carlo
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {nSimOptions.map((nSimOption) => {
+              <div style={{ display: 'flex', gap: 5 }}>
+                {nSimOptions.map((nSimOption) => {
                 const active = currentNSim === nSimOption;
                 return (
                   <button
@@ -1171,8 +1180,8 @@ export function SimulationPage({
                       border: `1px solid ${active ? T.primary : T.border}`,
                       color: active ? '#fff' : T.textSecondary,
                       borderRadius: 999,
-                      padding: '6px 8px',
-                      fontSize: 11,
+                      padding: isMobileViewport ? '5px 7px' : '6px 8px',
+                      fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
                       cursor: isRecalculating ? 'not-allowed' : 'pointer',
                       opacity: isRecalculating ? 0.65 : 1,
@@ -1369,6 +1378,7 @@ export function SimulationPage({
           </div>
         )}
       </div>
+      <div ref={heroSentinelRef} style={{ height: 1, width: '100%' }} />
 
       {!hideResultBlocks && displayResult && (
         <details
@@ -1378,34 +1388,39 @@ export function SimulationPage({
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 14,
-            padding: '10px 12px',
+            padding: isMobileViewport ? '8px 10px' : '10px 12px',
           }}
         >
           <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 42 : 38 }}>
             <span>Lectura ampliada</span>
             <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
           </summary>
-          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
-            <MetricTile label="Ruina a 40 años" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
-            <MetricTile label="Ruina a 20 años" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
+          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: isMobileViewport ? 8 : 10 }}>
+            <MetricTile compact={isMobileViewport} label="Ruina a 40 años" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
+            <MetricTile compact={isMobileViewport} label="Ruina a 20 años" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Patrimonio terminal típico (todos los escenarios)" info="P50 considerando todos los escenarios simulados, incluidos los que llegan a ruina." />}
               value={p50AllPaths !== null ? formatCapital(p50AllPaths) : '—'}
               tone="primary"
             />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Patrimonio terminal típico (sobrevivientes)" info="P50 considerando solo escenarios que terminan solventes al final del horizonte." />}
               value={p50Survivors !== null ? formatCapital(p50Survivors) : '—'}
             />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Gasto ejecutado vs plan" info="Proporción de gasto efectivamente ejecutado respecto del plan base." />}
               value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
             />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Tiempo en recorte" info="Porcentaje del tiempo total en que el gasto operó bajo recortes (cut1 o cut2)." />}
               value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'}
             />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Drawdown máximo" info="Máxima caída relativa desde el peak de patrimonio en cada escenario; se resume en percentiles." />}
               value={
                 `P50 ${((displayResult.maxDrawdownPercentiles[50] ?? 0) * 100).toFixed(1)}% · ` +
@@ -1414,6 +1429,7 @@ export function SimulationPage({
               }
             />
             <MetricTile
+              compact={isMobileViewport}
               label={<LabelWithInfo label="Casa como amortiguador" info="Indica en qué escenarios se activa venta de casa y en qué momento se gatilla/ejecuta." />}
               value={
                 houseSalePct !== null && houseSalePct > 0
@@ -1422,7 +1438,7 @@ export function SimulationPage({
               }
             />
           </div>
-          <div style={{ marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
+          <div style={{ marginTop: 7, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 11 }}>
             {houseSaleSummary}
           </div>
 
@@ -1430,18 +1446,18 @@ export function SimulationPage({
             open={moreMetricsOpen}
             onToggle={(e) => setMoreMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
             style={{
-              marginTop: 12,
+              marginTop: isMobileViewport ? 10 : 12,
               background: T.surfaceEl,
               border: `1px solid ${T.border}`,
               borderRadius: 12,
-              padding: '10px 12px',
+              padding: isMobileViewport ? '8px 10px' : '10px 12px',
             }}
           >
             <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 40 : 36 }}>
               <span>Lectura analítica y técnica</span>
               <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
             </summary>
-            <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
+            <div style={{ marginTop: 8, display: 'grid', gap: isMobileViewport ? 10 : 12 }}>
               <MetricGroup
                 title="Supervivencia y ruina"
                 compact={isMobileViewport}
@@ -2169,10 +2185,12 @@ function MetricTile({
   label,
   value,
   tone,
+  compact = false,
 }: {
   label: React.ReactNode;
   value: string;
   tone?: 'primary' | 'negative' | 'muted';
+  compact?: boolean;
 }) {
   const color =
     tone === 'primary'
@@ -2181,9 +2199,9 @@ function MetricTile({
         ? T.negative
         : T.textPrimary;
   return (
-    <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-      <div style={{ color: T.textMuted, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>{label}</div>
-      <div style={{ ...css.mono, fontSize: 16, fontWeight: 800, color, marginTop: 6, lineHeight: 1.25 }}>{value}</div>
+    <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: compact ? '10px 10px' : 12 }}>
+      <div style={{ color: T.textMuted, fontSize: compact ? 10 : 11, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>{label}</div>
+      <div style={{ ...css.mono, fontSize: compact ? 14 : 16, fontWeight: 800, color, marginTop: compact ? 5 : 6, lineHeight: compact ? 1.2 : 1.25 }}>{value}</div>
     </div>
   );
 }

@@ -62,12 +62,14 @@ export function BottomNav({
         bottom: 0,
         left: 0,
         right: 0,
-        height: 64,
+        height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         display: 'grid',
         gridTemplateColumns: 'repeat(6, 1fr)',
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,
+        boxShadow: '0 -6px 14px rgba(0,0,0,0.20)',
       }}
     >
       {items.map((item) => {
@@ -88,6 +90,8 @@ export function BottomNav({
               fontSize: 11,
               fontWeight: 600,
               cursor: 'pointer',
+              minHeight: 64,
+              padding: '4px 2px',
             }}
           >
             {icons[item.id]}
