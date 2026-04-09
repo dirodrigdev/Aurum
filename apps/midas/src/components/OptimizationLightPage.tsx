@@ -38,6 +38,49 @@ function buildRuinCentral80(result: SimulationResults): string {
   return `${(p10 as number).toFixed(1)}–${(p90 as number).toFixed(1)} años`;
 }
 
+function formatPctValue(value: number): string {
+  return `${(value * 100).toFixed(1).replace('.', ',')}%`;
+}
+
+function approxEqual(a: number, b: number, epsilon = 1e-6): boolean {
+  return Math.abs(a - b) <= epsilon;
+}
+
+function summarizeRiskMix(params: ModelParameters): string {
+  const rv = params.weights.rvGlobal + params.weights.rvChile;
+  const rf = params.weights.rfGlobal + params.weights.rfChile;
+  return `${Math.round(rv * 100)}/${Math.round(rf * 100)}`;
+}
+
+function hasRiskCapitalEnabled(params: ModelParameters): boolean {
+  const risk = Number(params.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0);
+  return Number.isFinite(risk) && risk > 0;
+}
+
+function buildDeltaSummary(baseParams: ModelParameters, candidateParams: ModelParameters): string {
+  const deltas: string[] = [];
+  const baseMix = summarizeRiskMix(baseParams);
+  const candidateMix = summarizeRiskMix(candidateParams);
+  if (baseMix !== candidateMix) deltas.push(`mix ${candidateMix}`);
+  if (!approxEqual(baseParams.feeAnnual, candidateParams.feeAnnual)) {
+    deltas.push(`fee ${formatPctValue(candidateParams.feeAnnual)}`);
+  }
+  if (baseParams.simulation.nSim !== candidateParams.simulation.nSim) {
+    deltas.push(`nSim ${candidateParams.simulation.nSim}`);
+  }
+  const baseHouseEnabled = Boolean(baseParams.realEstatePolicy?.enabled);
+  const candidateHouseEnabled = Boolean(candidateParams.realEstatePolicy?.enabled);
+  if (baseHouseEnabled !== candidateHouseEnabled) {
+    deltas.push(`venta de casa ${candidateHouseEnabled ? 'ON' : 'OFF'}`);
+  }
+  const baseRiskCapital = hasRiskCapitalEnabled(baseParams);
+  const candidateRiskCapital = hasRiskCapitalEnabled(candidateParams);
+  if (baseRiskCapital !== candidateRiskCapital) {
+    deltas.push(`capital de riesgo ${candidateRiskCapital ? 'ON' : 'OFF'}`);
+  }
+  return deltas.length ? `Cambios vs base: ${deltas.join(' · ')}` : 'Sin cambios temporales respecto de la base vigente';
+}
+
 export function OptimizationLightPage({
   baseParams,
   simulationParams,
@@ -60,7 +103,13 @@ export function OptimizationLightPage({
   }>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
-  const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base oficial';
+  const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
+  const sourceDescription = sourceMode === 'simulation' && simulationActive
+    ? 'Simulación activa: usa los cambios temporales que estás probando'
+    : 'Base vigente: usa la configuración persistida del caso';
+  const sourceDeltaSummary = sourceMode === 'simulation' && simulationActive
+    ? buildDeltaSummary(baseParams, simulationParams)
+    : 'Sin cambios temporales respecto de la base vigente';
 
   const runLightOptimization = useCallback(async () => {
     if (running) return;
@@ -185,7 +234,7 @@ export function OptimizationLightPage({
               cursor: 'pointer',
             }}
           >
-            Base oficial
+            Base vigente
           </button>
           <button
             type="button"
@@ -205,6 +254,10 @@ export function OptimizationLightPage({
           >
             Simulación activa
           </button>
+        </div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <div style={{ color: T.textSecondary, fontSize: 11 }}>{sourceDescription}</div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>{sourceDeltaSummary}</div>
         </div>
       </div>
 
@@ -263,4 +316,3 @@ export function OptimizationLightPage({
     </div>
   );
 }
-
