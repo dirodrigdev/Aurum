@@ -16,6 +16,7 @@ type Phase1Point = {
   terminalP50All: number | null;
   terminalP50Survivors: number | null;
   weights: PortfolioWeights;
+  isCurrentMix?: boolean;
 };
 
 type Phase2Point = {
@@ -93,8 +94,16 @@ const PHASE2_COMPETITION_THRESHOLDS = {
   },
 } as const;
 
-function cloneParams(params: ModelParameters): ModelParameters {
-  return JSON.parse(JSON.stringify(params)) as ModelParameters;
+const MIX_COMPARISON_THRESHOLDS = {
+  successPpConsiderMin: 0.5,
+  successPpStrongMin: 1.5,
+  ruin20PpImprovement: 0.5,
+  ruinP10YearsImprovement: 1.0,
+  maxDDP50PpImprovement: 3.0,
+} as const;
+
+function cloneParams<T>(params: T): T {
+  return JSON.parse(JSON.stringify(params)) as T;
 }
 
 function stableSerialize(value: unknown): string {
@@ -198,10 +207,12 @@ function buildCandidateWeights(currentWeights: PortfolioWeights, rvPct: number):
   };
 }
 
-function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: SimulationResults): Phase1Point {
+function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: SimulationResults, options?: { isCurrentMix?: boolean }): Phase1Point {
+  const rvRounded = Number(rvPct.toFixed(1));
+  const rfRounded = Number((100 - rvRounded).toFixed(1));
   return {
-    rvPct,
-    rfPct: Math.round((1 - (rvPct / 100)) * 100),
+    rvPct: rvRounded,
+    rfPct: rfRounded,
     success40: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
     ruin20: sim.probRuin20 ?? 0,
     ruinP10: Number.isFinite(sim.ruinTimingP10 ?? Number.NaN) ? (sim.ruinTimingP10 as number) : null,
@@ -209,6 +220,7 @@ function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: Simulation
     terminalP50All: sim.p50TerminalAllPaths ?? null,
     terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
     weights,
+    isCurrentMix: options?.isCurrentMix ?? false,
   };
 }
 
@@ -326,6 +338,10 @@ function buildRunMeta(params: ModelParameters, sourceLabel: string, phase: 'phas
 
 function hasNumber(value: number | null): value is number {
   return value !== null && Number.isFinite(value);
+}
+
+function isSameMix(a: Phase1Point, b: Phase1Point, epsilon = 0.05): boolean {
+  return Math.abs(a.rvPct - b.rvPct) <= epsilon && Math.abs(a.rfPct - b.rfPct) <= epsilon;
 }
 
 function evaluatePhase2Competition(
@@ -447,6 +463,71 @@ function choosePhase1Baseline(points: Phase1Point[]): Phase1Point | null {
   return balanced[0] ?? ranking[0] ?? null;
 }
 
+type MixSwitchVerdict = {
+  level: 'no' | 'considerar' | 'cambiar';
+  label: string;
+  detail: string;
+  deltaSuccessPp: number;
+  movePp: number;
+  phase1DownsideImprovement: boolean;
+  phase2MaterialImprovements: number;
+};
+
+function buildMixSwitchVerdict(
+  currentPoint: Phase1Point,
+  targetPoint: Phase1Point,
+  currentPhase2Decision: Phase2CompetitionDecision | null,
+  targetPhase2Decision: Phase2CompetitionDecision | null,
+): MixSwitchVerdict {
+  const t = MIX_COMPARISON_THRESHOLDS;
+  const deltaSuccessPp = (targetPoint.success40 - currentPoint.success40) * 100;
+  const movePp = Math.abs(targetPoint.rvPct - currentPoint.rvPct);
+  const phase1DownsideImprovement = (
+    ((currentPoint.ruin20 - targetPoint.ruin20) * 100) >= t.ruin20PpImprovement
+    || ((targetPoint.ruinP10 ?? Number.NEGATIVE_INFINITY) - (currentPoint.ruinP10 ?? Number.NEGATIVE_INFINITY)) >= t.ruinP10YearsImprovement
+    || ((currentPoint.drawdownP50 - targetPoint.drawdownP50) * 100) >= t.maxDDP50PpImprovement
+  );
+  const phase2MaterialImprovements = Math.max(
+    0,
+    (targetPhase2Decision?.materialImprovements.length ?? 0) - (currentPhase2Decision?.materialImprovements.length ?? 0),
+  );
+  const hasDownsideImprovement = phase1DownsideImprovement || phase2MaterialImprovements > 0;
+
+  if (deltaSuccessPp > t.successPpStrongMin || phase2MaterialImprovements >= 2) {
+    return {
+      level: 'cambiar',
+      label: 'Vale la pena cambiar',
+      detail: phase2MaterialImprovements >= 2
+        ? 'Mejora material en varias métricas de costo/downside'
+        : 'Mejora fuerte en Success40',
+      deltaSuccessPp,
+      movePp,
+      phase1DownsideImprovement,
+      phase2MaterialImprovements,
+    };
+  }
+  if ((deltaSuccessPp >= t.successPpConsiderMin && deltaSuccessPp <= t.successPpStrongMin) || hasDownsideImprovement) {
+    return {
+      level: 'considerar',
+      label: 'Vale la pena considerar',
+      detail: hasDownsideImprovement ? 'También mejora downside/costo de supervivencia' : 'Mejora moderada en Success40',
+      deltaSuccessPp,
+      movePp,
+      phase1DownsideImprovement,
+      phase2MaterialImprovements,
+    };
+  }
+  return {
+    level: 'no',
+    label: 'No vale la pena cambiar',
+    detail: 'La mejora es marginal y sin mejora material de downside/costo',
+    deltaSuccessPp,
+    movePp,
+    phase1DownsideImprovement,
+    phase2MaterialImprovements,
+  };
+}
+
 function renderRunMeta(meta: PhaseRunMeta, stale: boolean): React.ReactNode {
   return (
     <div
@@ -537,6 +618,8 @@ export function OptimizationLightPage({
     setShortlist([]);
     setPhase2Rows([]);
     try {
+      // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const autonomousBase = buildAutonomousParams(activeParams);
       const points: Phase1Point[] = [];
       for (let rvPct = PHASE1_SWEEP_MIN_RV; rvPct <= PHASE1_SWEEP_MAX_RV; rvPct += PHASE1_SWEEP_STEP) {
@@ -546,6 +629,15 @@ export function OptimizationLightPage({
         const sim = runSimulationCentral(candidate);
         points.push(toPhase1Point(rvPct, nextWeights, sim));
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+      const currentRvPct = (autonomousBase.weights.rvGlobal + autonomousBase.weights.rvChile) * 100;
+      const currentPointCandidate = toPhase1Point(currentRvPct, cloneParams(autonomousBase.weights), runSimulationCentral(autonomousBase), { isCurrentMix: true });
+      if (!points.some((point) => isSameMix(point, currentPointCandidate))) {
+        points.push(currentPointCandidate);
+      } else {
+        points.forEach((point) => {
+          if (isSameMix(point, currentPointCandidate)) point.isCurrentMix = true;
+        });
       }
       setPhase1Points(points);
       setShortlist(buildShortlist(points));
@@ -563,11 +655,18 @@ export function OptimizationLightPage({
     setStaleNotice(null);
     setPhase2Rows([]);
     try {
+      // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const baselinePoint = choosePhase1Baseline(phase1Points);
+      const currentPoint = phase1Points.find((point) => point.isCurrentMix) ?? null;
       const evaluationPoints = [...shortlist];
       if (baselinePoint) {
-        const baselineIncluded = evaluationPoints.some((point) => point.rvPct === baselinePoint.rvPct);
+        const baselineIncluded = evaluationPoints.some((point) => isSameMix(point, baselinePoint));
         if (!baselineIncluded) evaluationPoints.push(baselinePoint);
+      }
+      if (currentPoint) {
+        const currentIncluded = evaluationPoints.some((point) => isSameMix(point, currentPoint));
+        if (!currentIncluded) evaluationPoints.push(currentPoint);
       }
       const rows: Phase2Point[] = [];
       for (const point of evaluationPoints) {
@@ -635,12 +734,28 @@ export function OptimizationLightPage({
     ));
     return sorted[0] ?? null;
   }, [phase1TechnicalTiePoints]);
+  const phase1CurrentPoint = useMemo(
+    () => phase1Points.find((point) => point.isCurrentMix) ?? null,
+    [phase1Points],
+  );
+  const phase1SuggestedPoint = useMemo(
+    () => choosePhase1Baseline(phase1Points),
+    [phase1Points],
+  );
   const phase2BaselinePoint = useMemo(
     () => choosePhase1Baseline(phase1Points),
     [phase1Points],
   );
+  const phase2CurrentRow = useMemo(
+    () => (phase1CurrentPoint ? phase2Rows.find((row) => isSameMix(row.source, phase1CurrentPoint)) ?? null : null),
+    [phase1CurrentPoint, phase2Rows],
+  );
+  const phase2SuggestedRow = useMemo(
+    () => (phase1SuggestedPoint ? phase2Rows.find((row) => isSameMix(row.source, phase1SuggestedPoint)) ?? null : null),
+    [phase1SuggestedPoint, phase2Rows],
+  );
   const phase2BaselineRow = useMemo(
-    () => (phase2BaselinePoint ? phase2Rows.find((row) => row.source.rvPct === phase2BaselinePoint.rvPct) ?? null : null),
+    () => (phase2BaselinePoint ? phase2Rows.find((row) => isSameMix(row.source, phase2BaselinePoint)) ?? null : null),
     [phase2BaselinePoint, phase2Rows],
   );
   const phase2Decisions = useMemo(() => {
@@ -649,6 +764,12 @@ export function OptimizationLightPage({
       phase2Rows.map((row) => [row.source.rvPct, evaluatePhase2Competition(phase2BaselineRow, row)]),
     );
   }, [phase2BaselineRow, phase2Rows]);
+  const switchVerdict = useMemo(() => {
+    if (!phase1CurrentPoint || !phase1SuggestedPoint) return null;
+    const currentDecision = phase2CurrentRow ? phase2Decisions.get(phase2CurrentRow.source.rvPct) ?? null : null;
+    const suggestedDecision = phase2SuggestedRow ? phase2Decisions.get(phase2SuggestedRow.source.rvPct) ?? null : null;
+    return buildMixSwitchVerdict(phase1CurrentPoint, phase1SuggestedPoint, currentDecision, suggestedDecision);
+  }, [phase1CurrentPoint, phase1SuggestedPoint, phase2CurrentRow, phase2Decisions, phase2SuggestedRow]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -768,7 +889,7 @@ export function OptimizationLightPage({
               opacity: mode !== 'light' ? 0.65 : 1,
             }}
           >
-            {phase1Running ? 'Ejecutando Fase 1…' : 'Ejecutar Fase 1'}
+            {phase1Running ? 'Calculando Fase 1…' : 'Ejecutar Fase 1'}
           </button>
         </div>
         {staleNotice ? (
@@ -777,6 +898,9 @@ export function OptimizationLightPage({
           </div>
         ) : null}
         {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Mix actual: {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
+        </div>
 
         {phase1Top3.length > 0 && (
           <div style={{ display: 'grid', gap: 8 }}>
@@ -810,6 +934,33 @@ export function OptimizationLightPage({
               ) : null}
             </div>
 
+            {phase1CurrentPoint && phase1SuggestedPoint && switchVerdict && (
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 4 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>¿Vale la pena cambiar?</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Desde: RV {phase1CurrentPoint.rvPct}% / RF {phase1CurrentPoint.rfPct}% · Hacia: RV {phase1SuggestedPoint.rvPct}% / RF {phase1SuggestedPoint.rfPct}%
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Cambio requerido: {switchVerdict.movePp.toFixed(1)} pp · Mejora en éxito: {switchVerdict.deltaSuccessPp >= 0 ? '+' : ''}{switchVerdict.deltaSuccessPp.toFixed(1)} pp
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Success40 actual: {formatPct(phase1CurrentPoint.success40)} · sugerido: {formatPct(phase1SuggestedPoint.success40)} · Ruina20 {formatPct(phase1CurrentPoint.ruin20)} → {formatPct(phase1SuggestedPoint.ruin20)}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  RuinP10 {formatYears(phase1CurrentPoint.ruinP10)} → {formatYears(phase1SuggestedPoint.ruinP10)} · MaxDDP50 {formatPct(phase1CurrentPoint.drawdownP50)} → {formatPct(phase1SuggestedPoint.drawdownP50)}
+                </div>
+                {phase2CurrentRow && phase2SuggestedRow ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Assisted: éxito {formatPct(phase2CurrentRow.success40Assisted)} → {formatPct(phase2SuggestedRow.success40Assisted)} · casa {formatPct(phase2CurrentRow.houseSalePct)} → {formatPct(phase2SuggestedRow.houseSalePct)} · cuts {phase2CurrentRow.cutScenarioPct !== null ? formatPct(phase2CurrentRow.cutScenarioPct) : 'NA'} → {phase2SuggestedRow.cutScenarioPct !== null ? formatPct(phase2SuggestedRow.cutScenarioPct) : 'NA'}
+                  </div>
+                ) : null}
+                <div style={{ color: switchVerdict.level === 'cambiar' ? T.positive : switchVerdict.level === 'considerar' ? T.warning : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                  Veredicto: {switchVerdict.label}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>{switchVerdict.detail}</div>
+              </div>
+            )}
+
             <div style={{ display: 'grid', gap: 6 }}>
               {phase1Sweep.map((point) => {
                 const deltaVsBest = phase1BestSuccess !== null ? (point.success40 - phase1BestSuccess) * 100 : 0;
@@ -832,6 +983,7 @@ export function OptimizationLightPage({
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                         RV {point.rvPct}% / RF {point.rfPct}%
+                        {point.isCurrentMix ? ' · mix actual' : ''}
                         {isBest ? ' · mejor bruto' : ''}
                         {!isBest && isBalanced ? ' · mejor balanceado' : ''}
                         {!isBest && !isBalanced && isTechnicalTie ? ' · empate técnico' : ''}
@@ -889,7 +1041,7 @@ export function OptimizationLightPage({
               opacity: (!shortlist.length || mode !== 'light') ? 0.65 : 1,
             }}
           >
-            {phase2Running ? 'Ejecutando Fase 2…' : 'Ejecutar Fase 2'}
+            {phase2Running ? 'Calculando Fase 2…' : 'Evaluar Fase 2'}
           </button>
         </div>
         {phase2Meta ? renderRunMeta(phase2Meta, phase2IsStale) : null}
@@ -903,7 +1055,7 @@ export function OptimizationLightPage({
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
             {phase2Rows.map((row) => {
               const decision = phase2Decisions.get(row.source.rvPct) ?? null;
-              const isBaseline = Boolean(phase2BaselinePoint && row.source.rvPct === phase2BaselinePoint.rvPct);
+              const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
               const isCompeting = Boolean(!isBaseline && decision?.competesWithPhase1);
               const isDisplacing = Boolean(!isBaseline && decision?.displacesPhase1);
               const cardBorderColor = isBaseline
