@@ -48,6 +48,9 @@ type PhaseRunMeta = {
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
 const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
+const PHASE1_SWEEP_MIN_RV = 0;
+const PHASE1_SWEEP_MAX_RV = 100;
+const PHASE1_SWEEP_STEP = 10;
 
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
@@ -367,7 +370,7 @@ export function OptimizationLightPage({
     try {
       const autonomousBase = buildAutonomousParams(activeParams);
       const points: Phase1Point[] = [];
-      for (let rvPct = 20; rvPct <= 90; rvPct += 5) {
+      for (let rvPct = PHASE1_SWEEP_MIN_RV; rvPct <= PHASE1_SWEEP_MAX_RV; rvPct += PHASE1_SWEEP_STEP) {
         const candidate = cloneParams(autonomousBase);
         const nextWeights = buildCandidateWeights(autonomousBase.weights, rvPct);
         candidate.weights = nextWeights;
@@ -430,6 +433,19 @@ export function OptimizationLightPage({
   const phase1BestSuccess = useMemo(() => (
     phase1Points.length ? Math.max(...phase1Points.map((p) => p.success40)) : null
   ), [phase1Points]);
+  const phase1Ranking = useMemo(
+    () => [...phase1Points].sort((a, b) => (
+      (b.success40 - a.success40)
+        || (a.ruin20 - b.ruin20)
+        || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+    )),
+    [phase1Points],
+  );
+  const phase1Sweep = useMemo(
+    () => [...phase1Points].sort((a, b) => a.rvPct - b.rvPct),
+    [phase1Points],
+  );
+  const phase1Top3 = phase1Ranking.slice(0, 3);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -527,7 +543,7 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Sweep RF/RV (20% a 90%, paso 5) para elegir política de inversión por sí sola, sin casa y con cuts neutralizados de forma controlada.
+          Sweep RF/RV completo (RV 0% a 100%, paso 10) para elegir política de inversión por sí sola, sin casa y con cuts neutralizados de forma controlada.
         </div>
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
@@ -559,21 +575,65 @@ export function OptimizationLightPage({
         ) : null}
         {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
 
-        {shortlist.length > 0 && (
-          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            {shortlist.map((point) => (
-              <div key={`phase1-${point.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
-                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {point.rvPct}% · RF {point.rfPct}%</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 autónomo: {formatPct(point.success40)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 autónoma: {formatPct(point.ruin20)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Primeras ruinas (P10): {formatYears(point.ruinP10)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(point.drawdownP50)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(point.terminalP50All)}</div>
+        {phase1Top3.length > 0 && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                Mejor mix para maximizar éxito autónomo: RV {phase1Top3[0].rvPct}% / RF {phase1Top3[0].rfPct}%
               </div>
-            ))}
-            <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
+              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                Success40 autónomo = {formatPct(phase1Top3[0].success40)}
+              </div>
+              {phase1Top3.slice(1).map((point, index) => (
+                <div key={`phase1-top-${point.rvPct}`} style={{ color: T.textSecondary, fontSize: 11 }}>
+                  {index + 2}º mejor: RV {point.rvPct}% / RF {point.rfPct}% · {formatPct(point.success40)} · {phase1BestSuccess !== null ? `${((point.success40 - phase1BestSuccess) * 100).toFixed(1)}pp vs mejor` : ''}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gap: 6 }}>
+              {phase1Sweep.map((point) => {
+                const deltaVsBest = phase1BestSuccess !== null ? (point.success40 - phase1BestSuccess) * 100 : 0;
+                const isBest = phase1BestSuccess !== null && Math.abs(point.success40 - phase1BestSuccess) < 1e-9;
+                return (
+                  <div
+                    key={`phase1-sweep-${point.rvPct}`}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${isBest ? T.primary : T.border}`,
+                      borderRadius: 10,
+                      padding: '9px 10px',
+                      display: 'grid',
+                      gap: 4,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                        RV {point.rvPct}% / RF {point.rfPct}%
+                        {isBest ? ' · mejor' : ''}
+                      </div>
+                      <div style={{ color: isBest ? T.primary : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                        Δ vs mejor: {deltaVsBest.toFixed(1)}pp
+                      </div>
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Success40 autónomo: {formatPct(point.success40)} · Ruina20 autónoma: {formatPct(point.ruin20)}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      RuinP10: {formatYears(point.ruinP10)} · MaxDDP50: {formatPct(point.drawdownP50)} · Terminal P50 all: {formatMoney(point.terminalP50All)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {shortlist.length > 0 && (
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>Mixes competitivos (secundario)</div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
               Shortlist: {shortlist.length} mixes ({phase1Points.length} evaluados) · banda de éxito {Math.round(SHORTLIST_BEST_SUCCESS_BAND * 1000) / 10}pp · diversidad mínima {SHORTLIST_MIN_RV_DISTANCE}pp en RV.
-              {phase1BestSuccess !== null ? ` Mejor éxito autónomo: ${formatPct(phase1BestSuccess)}.` : ''}
             </div>
           </div>
         )}
