@@ -18,7 +18,7 @@ import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
-import { SensitivityPage } from './components/SensitivityPage';
+import { PalancasPage } from './components/PalancasPage';
 import { StressPage } from './components/StressPage';
 import { OptPage } from './components/OptPage';
 import { OptimizationLightPage } from './components/OptimizationLightPage';
@@ -3061,7 +3061,12 @@ export default function App() {
       onOpenOptimization={() => setActiveTab('opt')}
     />
   ) : activeTab === 'sens' ? (
-    <SensitivityPage params={simParams} stateLabel={stateLabel} />
+    <PalancasPage
+      baseParams={baseParams}
+      simulationParams={optimizerSimulationParams}
+      simulationActive={simulationActive}
+      simulationLabel={stateLabel}
+    />
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'settings' ? (

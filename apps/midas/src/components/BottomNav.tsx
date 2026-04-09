@@ -49,7 +49,7 @@ export function BottomNav({
 }) {
   const items: Array<{ id: TabId; label: string }> = [
     { id: 'sim', label: 'Simulación' },
-    { id: 'sens', label: 'Sensibilidades' },
+    { id: 'sens', label: 'Palancas' },
     { id: 'stress', label: 'Stress' },
     { id: 'optv0', label: 'OPT' },
     { id: 'opt', label: 'Optimizador' },
