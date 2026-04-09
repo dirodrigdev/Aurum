@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T } from './theme';
@@ -32,12 +32,51 @@ type Phase2Point = {
   drawdownP50: number;
 };
 
+type PhaseRunMeta = {
+  sourceLabel: string;
+  nSim: number;
+  seed: number;
+  feeAnnual: number;
+  bucketMonths: number;
+  houseMode: string;
+  cutsMode: string;
+  riskCapitalMode: string;
+  ranAtLabel: string;
+  scenarioHash: string;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
 const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
 
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  }
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+    .join(',')}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function hashJson(value: unknown): string {
+  return hashString(stableSerialize(value));
 }
 
 function formatPct(value: number): string {
@@ -196,6 +235,71 @@ function buildShortlist(points: Phase1Point[]): Phase1Point[] {
   return shortlist;
 }
 
+function buildRunMeta(params: ModelParameters, sourceLabel: string, phase: 'phase1' | 'phase2'): PhaseRunMeta {
+  const phaseParams = phase === 'phase1' ? buildAutonomousParams(params) : cloneParams(params);
+  const houseMode = phase === 'phase1'
+    ? 'OFF'
+    : phaseParams.realEstatePolicy?.enabled
+      ? 'ON'
+      : 'OFF';
+  const cutsMode = phase === 'phase1'
+    ? 'Neutralizados'
+    : `Activos ${Math.round(phaseParams.spendingRule.softCut * 100)}/${Math.round(phaseParams.spendingRule.hardCut * 100)}`;
+  const riskCapitalAmount = Number(phaseParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0);
+  const riskCapitalMode = riskCapitalAmount > 0 ? 'ON' : 'OFF';
+  const scenarioHash = hashJson({
+    sourceLabel,
+    phase,
+    weights: phaseParams.weights,
+    spendingPhases: phaseParams.spendingPhases,
+    spendingRule: phaseParams.spendingRule,
+    bucketMonths: phaseParams.bucketMonths,
+    feeAnnual: phaseParams.feeAnnual,
+    houseEnabled: phaseParams.realEstatePolicy?.enabled ?? false,
+    houseTrigger: phaseParams.realEstatePolicy?.triggerRunwayMonths ?? null,
+    riskCapital: riskCapitalAmount,
+    nSim: phaseParams.simulation.nSim,
+    seed: phaseParams.simulation.seed,
+  });
+  return {
+    sourceLabel,
+    nSim: phaseParams.simulation.nSim,
+    seed: phaseParams.simulation.seed,
+    feeAnnual: phaseParams.feeAnnual,
+    bucketMonths: phaseParams.bucketMonths ?? 24,
+    houseMode,
+    cutsMode,
+    riskCapitalMode,
+    ranAtLabel: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+    scenarioHash,
+  };
+}
+
+function renderRunMeta(meta: PhaseRunMeta, stale: boolean): React.ReactNode {
+  return (
+    <div
+      style={{
+        background: stale ? 'rgba(255, 176, 32, 0.10)' : T.surfaceEl,
+        border: `1px solid ${stale ? 'rgba(255, 176, 32, 0.35)' : T.border}`,
+        borderRadius: 10,
+        padding: '8px 10px',
+        display: 'grid',
+        gap: 3,
+      }}
+    >
+      <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+        {stale ? 'Resultados desactualizados: vuelve a ejecutar' : 'Resultados calculados con la fuente actual'}
+      </div>
+      <div style={{ color: T.textMuted, fontSize: 10 }}>
+        {`${meta.sourceLabel} · nSim ${meta.nSim} · seed ${meta.seed} · fee ${formatPctValue(meta.feeAnnual)} · bucket ${meta.bucketMonths}m`}
+      </div>
+      <div style={{ color: T.textMuted, fontSize: 10 }}>
+        {`house ${meta.houseMode} · cuts ${meta.cutsMode} · risk capital ${meta.riskCapitalMode} · ${meta.ranAtLabel} · hash ${meta.scenarioHash}`}
+      </div>
+    </div>
+  );
+}
+
 export function OptimizationLightPage({
   baseParams,
   simulationParams,
@@ -214,6 +318,9 @@ export function OptimizationLightPage({
   const [phase1Points, setPhase1Points] = useState<Phase1Point[]>([]);
   const [shortlist, setShortlist] = useState<Phase1Point[]>([]);
   const [phase2Rows, setPhase2Rows] = useState<Phase2Point[]>([]);
+  const [phase1Meta, setPhase1Meta] = useState<PhaseRunMeta | null>(null);
+  const [phase2Meta, setPhase2Meta] = useState<PhaseRunMeta | null>(null);
+  const [staleNotice, setStaleNotice] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -223,10 +330,37 @@ export function OptimizationLightPage({
   const sourceDeltaSummary = sourceMode === 'simulation' && simulationActive
     ? buildDeltaSummary(baseParams, simulationParams)
     : 'Sin cambios temporales respecto de la base vigente';
+  const expectedPhase1Hash = useMemo(
+    () => buildRunMeta(activeParams, activeLabel, 'phase1').scenarioHash,
+    [activeLabel, activeParams],
+  );
+  const expectedPhase2Hash = useMemo(
+    () => buildRunMeta(activeParams, activeLabel, 'phase2').scenarioHash,
+    [activeLabel, activeParams],
+  );
+  const phase1IsStale = Boolean(phase1Meta && phase1Meta.scenarioHash !== expectedPhase1Hash);
+  const phase2IsStale = Boolean(phase2Meta && phase2Meta.scenarioHash !== expectedPhase2Hash);
+
+  useEffect(() => {
+    const stalePhase1 = phase1Meta && phase1Meta.scenarioHash !== expectedPhase1Hash;
+    const stalePhase2 = phase2Meta && phase2Meta.scenarioHash !== expectedPhase2Hash;
+    if (!stalePhase1 && !stalePhase2) return;
+    setStaleNotice('Resultados desactualizados: cambió la fuente o el escenario. Vuelve a ejecutar.');
+    if (stalePhase1) {
+      setPhase1Points([]);
+      setShortlist([]);
+      setPhase1Meta(null);
+    }
+    if (stalePhase2 || stalePhase1) {
+      setPhase2Rows([]);
+      setPhase2Meta(null);
+    }
+  }, [expectedPhase1Hash, expectedPhase2Hash, phase1Meta, phase2Meta]);
 
   const runPhase1 = useCallback(async () => {
     if (phase1Running) return;
     setPhase1Running(true);
+    setStaleNotice(null);
     setPhase1Points([]);
     setShortlist([]);
     setPhase2Rows([]);
@@ -243,14 +377,18 @@ export function OptimizationLightPage({
       }
       setPhase1Points(points);
       setShortlist(buildShortlist(points));
+      setPhase1Meta(buildRunMeta(activeParams, activeLabel, 'phase1'));
+      setPhase2Rows([]);
+      setPhase2Meta(null);
     } finally {
       setPhase1Running(false);
     }
-  }, [activeParams, phase1Running]);
+  }, [activeLabel, activeParams, phase1Running]);
 
   const runPhase2 = useCallback(async () => {
     if (phase2Running || !shortlist.length) return;
     setPhase2Running(true);
+    setStaleNotice(null);
     setPhase2Rows([]);
     try {
       const rows: Phase2Point[] = [];
@@ -274,10 +412,11 @@ export function OptimizationLightPage({
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       setPhase2Rows(rows);
+      setPhase2Meta(buildRunMeta(activeParams, activeLabel, 'phase2'));
     } finally {
       setPhase2Running(false);
     }
-  }, [activeParams, phase2Running, shortlist]);
+  }, [activeLabel, activeParams, phase2Running, shortlist]);
 
   const modeCards = useMemo(
     () => ([
@@ -413,6 +552,12 @@ export function OptimizationLightPage({
             {phase1Running ? 'Ejecutando Fase 1…' : 'Ejecutar Fase 1'}
           </button>
         </div>
+        {staleNotice ? (
+          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            {staleNotice}
+          </div>
+        ) : null}
+        {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
 
         {shortlist.length > 0 && (
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
@@ -459,6 +604,7 @@ export function OptimizationLightPage({
             {phase2Running ? 'Ejecutando Fase 2…' : 'Ejecutar Fase 2'}
           </button>
         </div>
+        {phase2Meta ? renderRunMeta(phase2Meta, phase2IsStale) : null}
 
         {phase2Rows.length > 0 && (
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
