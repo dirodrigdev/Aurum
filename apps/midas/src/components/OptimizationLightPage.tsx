@@ -51,6 +51,8 @@ const SHORTLIST_TARGET = 5;
 const PHASE1_SWEEP_MIN_RV = 0;
 const PHASE1_SWEEP_MAX_RV = 100;
 const PHASE1_SWEEP_STEP = 10;
+const TECHNICAL_TIE_BAND_PP = 0.2;
+const DELTA_ZERO_EPSILON_PP = 0.05;
 
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
@@ -98,6 +100,11 @@ function formatMoney(value: number | null): string {
 
 function formatPctValue(value: number): string {
   return `${(value * 100).toFixed(1).replace('.', ',')}%`;
+}
+
+function formatDeltaVsBest(deltaVsBestPp: number): string {
+  if (Math.abs(deltaVsBestPp) < DELTA_ZERO_EPSILON_PP) return '0.0 pp';
+  return `${deltaVsBestPp.toFixed(1)} pp`;
 }
 
 function approxEqual(a: number, b: number, epsilon = 1e-6): boolean {
@@ -446,6 +453,20 @@ export function OptimizationLightPage({
     [phase1Points],
   );
   const phase1Top3 = phase1Ranking.slice(0, 3);
+  const phase1TechnicalTiePoints = useMemo(() => {
+    if (phase1BestSuccess === null) return [];
+    return phase1Ranking.filter((point) => ((phase1BestSuccess - point.success40) * 100) <= (TECHNICAL_TIE_BAND_PP + 1e-9));
+  }, [phase1BestSuccess, phase1Ranking]);
+  const phase1BalancedPoint = useMemo(() => {
+    if (!phase1TechnicalTiePoints.length) return null;
+    const sorted = [...phase1TechnicalTiePoints].sort((a, b) => (
+      (a.ruin20 - b.ruin20)
+      || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+      || (a.drawdownP50 - b.drawdownP50)
+      || (a.rvPct - b.rvPct)
+    ));
+    return sorted[0] ?? null;
+  }, [phase1TechnicalTiePoints]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -584,23 +605,42 @@ export function OptimizationLightPage({
               <div style={{ color: T.textSecondary, fontSize: 11 }}>
                 Success40 autónomo = {formatPct(phase1Top3[0].success40)}
               </div>
+              {phase1TechnicalTiePoints.length > 1 && phase1BalancedPoint && (
+                <>
+                  <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                    Mejor balanceado (dentro del empate técnico): RV {phase1BalancedPoint.rvPct}% / RF {phase1BalancedPoint.rfPct}%
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Criterio: menor Ruina20, luego RuinP10 más tardío, luego menor MaxDDP50 y menor RV.
+                  </div>
+                </>
+              )}
               {phase1Top3.slice(1).map((point, index) => (
                 <div key={`phase1-top-${point.rvPct}`} style={{ color: T.textSecondary, fontSize: 11 }}>
-                  {index + 2}º mejor: RV {point.rvPct}% / RF {point.rfPct}% · {formatPct(point.success40)} · {phase1BestSuccess !== null ? `${((point.success40 - phase1BestSuccess) * 100).toFixed(1)}pp vs mejor` : ''}
+                  {index + 2}º mejor: RV {point.rvPct}% / RF {point.rfPct}% · {formatPct(point.success40)} · {phase1BestSuccess !== null ? formatDeltaVsBest((point.success40 - phase1BestSuccess) * 100) : ''}
                 </div>
               ))}
+              {phase1TechnicalTiePoints.length > 1 ? (
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Meseta de éxito: {phase1TechnicalTiePoints.length} mixes quedan dentro de {TECHNICAL_TIE_BAND_PP.toFixed(1)} pp del mejor.
+                  {' '}({phase1TechnicalTiePoints.map((point) => `${point.rvPct}/${point.rfPct}`).join(' · ')})
+                </div>
+              ) : null}
             </div>
 
             <div style={{ display: 'grid', gap: 6 }}>
               {phase1Sweep.map((point) => {
                 const deltaVsBest = phase1BestSuccess !== null ? (point.success40 - phase1BestSuccess) * 100 : 0;
                 const isBest = phase1BestSuccess !== null && Math.abs(point.success40 - phase1BestSuccess) < 1e-9;
+                const isTechnicalTie = phase1BestSuccess !== null
+                  && ((phase1BestSuccess - point.success40) * 100) <= (TECHNICAL_TIE_BAND_PP + 1e-9);
+                const isBalanced = Boolean(phase1BalancedPoint && phase1BalancedPoint.rvPct === point.rvPct);
                 return (
                   <div
                     key={`phase1-sweep-${point.rvPct}`}
                     style={{
                       background: T.surfaceEl,
-                      border: `1px solid ${isBest ? T.primary : T.border}`,
+                      border: `1px solid ${isBest ? T.primary : isBalanced ? '#4e86ff' : isTechnicalTie ? T.warning : T.border}`,
                       borderRadius: 10,
                       padding: '9px 10px',
                       display: 'grid',
@@ -610,10 +650,12 @@ export function OptimizationLightPage({
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                         RV {point.rvPct}% / RF {point.rfPct}%
-                        {isBest ? ' · mejor' : ''}
+                        {isBest ? ' · mejor bruto' : ''}
+                        {!isBest && isBalanced ? ' · mejor balanceado' : ''}
+                        {!isBest && !isBalanced && isTechnicalTie ? ' · empate técnico' : ''}
                       </div>
                       <div style={{ color: isBest ? T.primary : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                        Δ vs mejor: {deltaVsBest.toFixed(1)}pp
+                        Δ vs mejor: {isBest ? '0.0 pp' : isTechnicalTie ? 'Empate técnico' : formatDeltaVsBest(deltaVsBest)}
                       </div>
                     </div>
                     <div style={{ color: T.textSecondary, fontSize: 11 }}>
