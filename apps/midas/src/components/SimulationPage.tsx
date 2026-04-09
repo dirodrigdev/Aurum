@@ -257,7 +257,6 @@ export function SimulationPage({
   });
   const prevSimActive = useRef(false);
   const heroCardRef = useRef<HTMLDivElement | null>(null);
-  const heroSentinelRef = useRef<HTMLDivElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -541,13 +540,12 @@ export function SimulationPage({
 
   useEffect(() => {
     const heroNode = heroCardRef.current;
-    const sentinelNode = heroSentinelRef.current;
-    if (!heroNode || !sentinelNode) return undefined;
+    if (!heroNode) return undefined;
 
-    const stickyOffsetPx = isMobileViewport ? 66 : 56;
+    const stickyOffsetPx = isMobileViewport ? 64 : 56;
     const fallbackCheck = () => {
       const rect = heroNode.getBoundingClientRect();
-      setShowStickyBar(rect.bottom <= stickyOffsetPx);
+      setShowStickyBar(rect.top <= stickyOffsetPx - 4);
     };
 
     if (typeof IntersectionObserver === 'undefined') {
@@ -559,16 +557,18 @@ export function SimulationPage({
     const observer = new IntersectionObserver(
       (entries) => {
         const [entry] = entries;
-        const shouldShow = !entry.isIntersecting || entry.boundingClientRect.top <= stickyOffsetPx;
+        const shouldShow =
+          entry.boundingClientRect.top <= stickyOffsetPx - 4 &&
+          entry.intersectionRatio < 0.98;
         setShowStickyBar(shouldShow);
       },
       {
         root: null,
-        threshold: 0,
+        threshold: [0, 0.25, 0.5, 0.75, 1],
         rootMargin: `-${stickyOffsetPx}px 0px 0px 0px`,
       }
     );
-    observer.observe(sentinelNode);
+    observer.observe(heroNode);
     fallbackCheck();
     return () => observer.disconnect();
   }, [heroPhase, simUiState, isMobileViewport]);
@@ -1053,145 +1053,140 @@ export function SimulationPage({
           borderRadius: 10,
           padding: isMobileViewport ? 8 : 10,
           display: 'grid',
-          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
+          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
           gap: isMobileViewport ? 8 : 12,
           alignItems: 'start',
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-              const active = activeScenarioForUi === variant.id;
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+            const active = activeScenarioForUi === variant.id;
+            return (
+              <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => onScenarioChange(variant.id)}
+                  disabled={isRecalculating}
+                  style={{
+                    background: active ? T.primary : T.surfaceEl,
+                    border: `1px solid ${active ? T.primary : T.border}`,
+                    color: active ? '#fff' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '5px 9px' : '6px 11px',
+                    fontSize: isMobileViewport ? 10 : 11,
+                    fontWeight: 700,
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.65 : 1,
+                  }}
+                >
+                  {variant.label}
+                </button>
+                {active && isScenarioAdjusted ? (
+                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={toggleLiquidarDepto}
+          disabled={isRecalculating || !hasEffectiveRealEstate}
+          style={{
+            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
+            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+            color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            textAlign: 'left',
+            cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+          }}
+        >
+          Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+        </button>
+        <button
+          type="button"
+          onClick={onRestoreScenarioPreset}
+          disabled={isRecalculating}
+          style={{
+            background: T.surfaceEl,
+            border: `1px solid ${T.border}`,
+            color: T.textSecondary,
+            borderRadius: 999,
+            padding: isMobileViewport ? '5px 9px' : '6px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating ? 0.6 : 1,
+          }}
+        >
+          Restaurar ajustes del escenario
+        </button>
+        <button
+          type="button"
+          onClick={onToggleRiskCapital}
+          disabled={isRecalculating}
+          style={{
+            background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
+            border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+            color: riskCapitalEnabled
+              ? '#f6d38d'
+              : T.textSecondary,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            textAlign: 'left',
+            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating ? 0.65 : 1,
+          }}
+        >
+          Incluir capital de riesgo · {riskToggleCopy}
+        </button>
+        <div
+          style={{
+            gridColumn: '1 / -1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            background: T.surfaceEl,
+            border: `1px solid ${T.border}`,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+            Simulaciones Monte Carlo
+          </div>
+          <div style={{ display: 'flex', gap: 5 }}>
+            {nSimOptions.map((nSimOption) => {
+              const active = currentNSim === nSimOption;
               return (
-                <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <button
-                    type="button"
-                    onClick={() => onScenarioChange(variant.id)}
-                    disabled={isRecalculating}
-                    style={{
-                      background: active ? T.primary : T.surfaceEl,
-                      border: `1px solid ${active ? T.primary : T.border}`,
-                      color: active ? '#fff' : T.textSecondary,
-                      borderRadius: 999,
-                      padding: isMobileViewport ? '5px 9px' : '6px 11px',
-                      fontSize: isMobileViewport ? 10 : 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
-                    }}
-                  >
-                    {variant.label}
-                  </button>
-                  {active && isScenarioAdjusted ? (
-                <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
-                  ) : null}
-                </div>
+                <button
+                  key={nSimOption}
+                  type="button"
+                  onClick={() => setNSim(nSimOption)}
+                  disabled={isRecalculating}
+                  style={{
+                    flex: 1,
+                    background: active ? T.primary : T.surface,
+                    border: `1px solid ${active ? T.primary : T.border}`,
+                    color: active ? '#fff' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '5px 7px' : '6px 8px',
+                    fontSize: isMobileViewport ? 10 : 11,
+                    fontWeight: 700,
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.65 : 1,
+                  }}
+                >
+                  {nSimOption}
+                </button>
               );
             })}
-          </div>
-          <div>
-            <button
-              type="button"
-              onClick={onRestoreScenarioPreset}
-              disabled={isRecalculating}
-              style={{
-                background: T.surfaceEl,
-                border: `1px solid ${T.border}`,
-                color: T.textSecondary,
-                borderRadius: 999,
-                padding: isMobileViewport ? '5px 9px' : '6px 10px',
-                fontSize: isMobileViewport ? 10 : 11,
-                fontWeight: 700,
-                cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                opacity: isRecalculating ? 0.6 : 1,
-              }}
-            >
-              Restaurar ajustes del escenario
-            </button>
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button
-            type="button"
-            onClick={toggleLiquidarDepto}
-            disabled={isRecalculating || !hasEffectiveRealEstate}
-            style={{
-              background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
-              border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
-              color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-              borderRadius: 9,
-              padding: isMobileViewport ? '6px 8px' : '8px 10px',
-              fontSize: isMobileViewport ? 10 : 11,
-              fontWeight: 700,
-              textAlign: 'left',
-              cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
-            }}
-          >
-            Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleRiskCapital}
-            disabled={isRecalculating}
-            style={{
-              background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
-              border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-              color: riskCapitalEnabled
-                ? '#f6d38d'
-                : T.textSecondary,
-              borderRadius: 9,
-              padding: isMobileViewport ? '6px 8px' : '8px 10px',
-              fontSize: isMobileViewport ? 10 : 11,
-              fontWeight: 700,
-              textAlign: 'left',
-              cursor: isRecalculating ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating ? 0.65 : 1,
-            }}
-          >
-            Incluir capital de riesgo · {riskToggleCopy}
-          </button>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              background: T.surfaceEl,
-              border: `1px solid ${T.border}`,
-              borderRadius: 9,
-              padding: isMobileViewport ? '6px 8px' : '8px 10px',
-            }}
-          >
-            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
-              Simulaciones Monte Carlo
-            </div>
-              <div style={{ display: 'flex', gap: 5 }}>
-                {nSimOptions.map((nSimOption) => {
-                const active = currentNSim === nSimOption;
-                return (
-                  <button
-                    key={nSimOption}
-                    type="button"
-                    onClick={() => setNSim(nSimOption)}
-                    disabled={isRecalculating}
-                    style={{
-                      flex: 1,
-                      background: active ? T.primary : T.surface,
-                      border: `1px solid ${active ? T.primary : T.border}`,
-                      color: active ? '#fff' : T.textSecondary,
-                      borderRadius: 999,
-                      padding: isMobileViewport ? '5px 7px' : '6px 8px',
-                      fontSize: isMobileViewport ? 10 : 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
-                    }}
-                  >
-                    {nSimOption}
-                  </button>
-                );
-              })}
-            </div>
           </div>
         </div>
       </div>
@@ -1378,8 +1373,6 @@ export function SimulationPage({
           </div>
         )}
       </div>
-      <div ref={heroSentinelRef} style={{ height: 1, width: '100%' }} />
-
       {!hideResultBlocks && displayResult && (
         <details
           open={keyMetricsOpen}
@@ -1395,7 +1388,14 @@ export function SimulationPage({
             <span>Lectura ampliada</span>
             <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
           </summary>
-          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: isMobileViewport ? 8 : 10 }}>
+          <div
+            style={{
+              marginTop: 8,
+              display: 'grid',
+              gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(170px, 1fr))',
+              gap: isMobileViewport ? 8 : 10,
+            }}
+          >
             <MetricTile compact={isMobileViewport} label="Ruina a 40 años" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
             <MetricTile compact={isMobileViewport} label="Ruina a 20 años" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
             <MetricTile
@@ -1427,6 +1427,7 @@ export function SimulationPage({
                 `P75 ${((displayResult.maxDrawdownPercentiles[75] ?? 0) * 100).toFixed(1)}% · ` +
                 `P90 ${((displayResult.maxDrawdownPercentiles[90] ?? 0) * 100).toFixed(1)}%`
               }
+              fullMobile={isMobileViewport}
             />
             <MetricTile
               compact={isMobileViewport}
@@ -1436,6 +1437,7 @@ export function SimulationPage({
                   ? `Venta ${(houseSalePct * 100).toFixed(1)}% · Disparo ${triggerYearMedian !== null ? `año ${triggerYearMedian.toFixed(1)}` : '—'} · Venta ${saleYearMedian !== null ? `año ${saleYearMedian.toFixed(1)}` : '—'}`
                   : 'No se activa en los escenarios simulados'
               }
+              fullMobile={isMobileViewport}
             />
           </div>
           <div style={{ marginTop: 7, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 11 }}>
@@ -2186,11 +2188,13 @@ function MetricTile({
   value,
   tone,
   compact = false,
+  fullMobile = false,
 }: {
   label: React.ReactNode;
   value: string;
   tone?: 'primary' | 'negative' | 'muted';
   compact?: boolean;
+  fullMobile?: boolean;
 }) {
   const color =
     tone === 'primary'
@@ -2199,7 +2203,15 @@ function MetricTile({
         ? T.negative
         : T.textPrimary;
   return (
-    <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: compact ? '10px 10px' : 12 }}>
+    <div
+      style={{
+        background: T.surfaceEl,
+        border: `1px solid ${T.border}`,
+        borderRadius: 12,
+        padding: compact ? '10px 10px' : 12,
+        gridColumn: fullMobile ? '1 / -1' : undefined,
+      }}
+    >
       <div style={{ color: T.textMuted, fontSize: compact ? 10 : 11, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>{label}</div>
       <div style={{ ...css.mono, fontSize: compact ? 14 : 16, fontWeight: 800, color, marginTop: compact ? 5 : 6, lineHeight: compact ? 1.2 : 1.25 }}>{value}</div>
     </div>

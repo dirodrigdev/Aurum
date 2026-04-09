@@ -433,8 +433,10 @@ function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParamet
     );
     const capital = Number(normalized.capitalInitial ?? NaN);
     if (!Number.isFinite(capital) || capital <= 0) return null;
+    const hydratedFeeAnnual = Number(normalized.feeAnnual);
     return {
       ...normalized,
+      feeAnnual: Number.isFinite(hydratedFeeAnnual) ? hydratedFeeAnnual : 0,
       spendingPhases: normalizeModelSpendingPhases(normalized),
     };
   } catch {

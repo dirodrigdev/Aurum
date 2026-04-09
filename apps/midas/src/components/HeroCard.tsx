@@ -83,7 +83,8 @@ export function HeroCard({
         {chips && chips.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 6 : 8, width: isMobileViewport ? (isCompactViewport ? 128 : 138) : 'auto', flexShrink: 0 }}>
             {chips.map((chip) => (
-              <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'space-between' }}>
+              <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
+                {chip.accessory ? <span style={{ display: 'inline-flex', alignItems: 'center' }}>{chip.accessory}</span> : null}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 1, minWidth: 0 }}>
                   <button
                     onClick={chip.onClick}
@@ -107,7 +108,6 @@ export function HeroCard({
                     <span style={{ color: T.textMuted, fontSize: 10 }}>{chip.note}</span>
                   ) : null}
                 </div>
-                {chip.accessory}
               </div>
             ))}
           </div>

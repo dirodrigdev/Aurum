@@ -34,7 +34,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
   futureCapitalEvents: [],
   activeScenario: 'base',
 
-  feeAnnual: 0.0035,
+  feeAnnual: 0,
 
   spendingPhases: [
     { durationMonths: 48,  amountReal: 6_000_000, currency: 'CLP' },
