@@ -45,6 +45,17 @@ type PhaseRunMeta = {
   scenarioHash: string;
 };
 
+type Phase2CompetitionDecision = {
+  baselineLabel: string;
+  autonomousGapPp: number;
+  eligibleAutonomous: boolean;
+  materialImprovements: string[];
+  redFlags: string[];
+  competesWithPhase1: boolean;
+  displacesPhase1: boolean;
+  reasons: string[];
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
 const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
@@ -53,6 +64,34 @@ const PHASE1_SWEEP_MAX_RV = 100;
 const PHASE1_SWEEP_STEP = 10;
 const TECHNICAL_TIE_BAND_PP = 0.2;
 const DELTA_ZERO_EPSILON_PP = 0.05;
+const PHASE2_COMPETITION_THRESHOLDS = {
+  autonomousEligibilityGapPp: 1.0,
+  material: {
+    houseSalePctPpLower: 5.0,
+    houseSaleYearLaterYears: 2.0,
+    cutScenarioPctPpLower: 5.0,
+    cutSeverityPpLower: 2.0,
+    firstCutYearLaterYears: 2.0,
+    ruin20PpLower: 0.5,
+    maxDDP50PpLower: 3.0,
+  },
+  redFlags: {
+    success40AssistedPpWorse: 0.5,
+    houseSalePctPpWorse: 5.0,
+    cutScenarioPctPpWorse: 5.0,
+    cutSeverityPpWorse: 2.0,
+    firstCutYearEarlierYears: 2.0,
+    ruin20AssistedPpWorse: 0.5,
+    maxDDP50PpWorse: 3.0,
+  },
+  compete: {
+    minMaterialImprovements: 2,
+  },
+  displace: {
+    success40AssistedMaxWorsePp: 0.2,
+    minMaterialImprovements: 3,
+  },
+} as const;
 
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
@@ -285,6 +324,129 @@ function buildRunMeta(params: ModelParameters, sourceLabel: string, phase: 'phas
   };
 }
 
+function hasNumber(value: number | null): value is number {
+  return value !== null && Number.isFinite(value);
+}
+
+function evaluatePhase2Competition(
+  baseline: Phase2Point,
+  candidate: Phase2Point,
+): Phase2CompetitionDecision {
+  const t = PHASE2_COMPETITION_THRESHOLDS;
+  const autonomousGapPp = (baseline.source.success40 - candidate.source.success40) * 100;
+  const eligibleAutonomous = autonomousGapPp <= t.autonomousEligibilityGapPp + 1e-9;
+  const materialImprovements: string[] = [];
+  const redFlags: string[] = [];
+
+  if (((baseline.houseSalePct - candidate.houseSalePct) * 100) >= t.material.houseSalePctPpLower) {
+    materialImprovements.push(`Venta de casa ${((baseline.houseSalePct - candidate.houseSalePct) * 100).toFixed(1)} pp menor`);
+  }
+  if (hasNumber(candidate.houseSaleYearP50) && hasNumber(baseline.houseSaleYearP50)
+    && (candidate.houseSaleYearP50 - baseline.houseSaleYearP50) >= t.material.houseSaleYearLaterYears) {
+    materialImprovements.push(`Venta de casa ${(candidate.houseSaleYearP50 - baseline.houseSaleYearP50).toFixed(1)} años más tarde`);
+  }
+  if (hasNumber(candidate.cutScenarioPct) && hasNumber(baseline.cutScenarioPct)
+    && ((baseline.cutScenarioPct - candidate.cutScenarioPct) * 100) >= t.material.cutScenarioPctPpLower) {
+    materialImprovements.push(`Escenarios con cuts ${((baseline.cutScenarioPct - candidate.cutScenarioPct) * 100).toFixed(1)} pp menor`);
+  }
+  if (hasNumber(candidate.cutSeverityMean) && hasNumber(baseline.cutSeverityMean)
+    && ((baseline.cutSeverityMean - candidate.cutSeverityMean) * 100) >= t.material.cutSeverityPpLower) {
+    materialImprovements.push(`Recorte medio ${((baseline.cutSeverityMean - candidate.cutSeverityMean) * 100).toFixed(1)} pp menor`);
+  }
+  if (hasNumber(candidate.firstCutYearP50) && hasNumber(baseline.firstCutYearP50)
+    && (candidate.firstCutYearP50 - baseline.firstCutYearP50) >= t.material.firstCutYearLaterYears) {
+    materialImprovements.push(`Primer cut ${(candidate.firstCutYearP50 - baseline.firstCutYearP50).toFixed(1)} años más tarde`);
+  }
+  if (((baseline.ruin20Assisted - candidate.ruin20Assisted) * 100) >= t.material.ruin20PpLower) {
+    materialImprovements.push(`Ruina20 asistida ${((baseline.ruin20Assisted - candidate.ruin20Assisted) * 100).toFixed(1)} pp menor`);
+  }
+  if (((baseline.drawdownP50 - candidate.drawdownP50) * 100) >= t.material.maxDDP50PpLower) {
+    materialImprovements.push(`MaxDD P50 ${((baseline.drawdownP50 - candidate.drawdownP50) * 100).toFixed(1)} pp menor`);
+  }
+
+  if (((baseline.success40Assisted - candidate.success40Assisted) * 100) >= t.redFlags.success40AssistedPpWorse) {
+    redFlags.push(`Éxito40 asistido ${((baseline.success40Assisted - candidate.success40Assisted) * 100).toFixed(1)} pp peor`);
+  }
+  if (((candidate.houseSalePct - baseline.houseSalePct) * 100) >= t.redFlags.houseSalePctPpWorse) {
+    redFlags.push(`Venta de casa ${((candidate.houseSalePct - baseline.houseSalePct) * 100).toFixed(1)} pp peor`);
+  }
+  if (hasNumber(candidate.cutScenarioPct) && hasNumber(baseline.cutScenarioPct)
+    && ((candidate.cutScenarioPct - baseline.cutScenarioPct) * 100) >= t.redFlags.cutScenarioPctPpWorse) {
+    redFlags.push(`Escenarios con cuts ${((candidate.cutScenarioPct - baseline.cutScenarioPct) * 100).toFixed(1)} pp peor`);
+  }
+  if (hasNumber(candidate.cutSeverityMean) && hasNumber(baseline.cutSeverityMean)
+    && ((candidate.cutSeverityMean - baseline.cutSeverityMean) * 100) >= t.redFlags.cutSeverityPpWorse) {
+    redFlags.push(`Recorte medio ${((candidate.cutSeverityMean - baseline.cutSeverityMean) * 100).toFixed(1)} pp peor`);
+  }
+  if (hasNumber(candidate.firstCutYearP50) && hasNumber(baseline.firstCutYearP50)
+    && (baseline.firstCutYearP50 - candidate.firstCutYearP50) >= t.redFlags.firstCutYearEarlierYears) {
+    redFlags.push(`Primer cut ${(baseline.firstCutYearP50 - candidate.firstCutYearP50).toFixed(1)} años más temprano`);
+  }
+  if (((candidate.ruin20Assisted - baseline.ruin20Assisted) * 100) >= t.redFlags.ruin20AssistedPpWorse) {
+    redFlags.push(`Ruina20 asistida ${((candidate.ruin20Assisted - baseline.ruin20Assisted) * 100).toFixed(1)} pp peor`);
+  }
+  if (((candidate.drawdownP50 - baseline.drawdownP50) * 100) >= t.redFlags.maxDDP50PpWorse) {
+    redFlags.push(`MaxDD P50 ${((candidate.drawdownP50 - baseline.drawdownP50) * 100).toFixed(1)} pp peor`);
+  }
+
+  const noRedFlags = redFlags.length === 0;
+  const competesWithPhase1 = eligibleAutonomous
+    && materialImprovements.length >= t.compete.minMaterialImprovements
+    && noRedFlags;
+  const displacesPhase1 = eligibleAutonomous
+    && ((candidate.success40Assisted - baseline.success40Assisted) * 100) >= -t.displace.success40AssistedMaxWorsePp
+    && materialImprovements.length >= t.displace.minMaterialImprovements
+    && noRedFlags;
+
+  const reasons: string[] = [];
+  reasons.push(
+    eligibleAutonomous
+      ? `OK Elegibilidad autónoma: ${autonomousGapPp.toFixed(1)} pp vs baseline (<= ${t.autonomousEligibilityGapPp.toFixed(1)} pp)`
+      : `NO Elegibilidad autónoma: ${autonomousGapPp.toFixed(1)} pp vs baseline (> ${t.autonomousEligibilityGapPp.toFixed(1)} pp)`,
+  );
+  if (materialImprovements.length) {
+    reasons.push(...materialImprovements.slice(0, 3).map((reason) => `OK ${reason}`));
+  } else {
+    reasons.push('NO Sin mejoras materiales');
+  }
+  if (redFlags.length) {
+    reasons.push(...redFlags.slice(0, 2).map((reason) => `NO ${reason}`));
+  } else {
+    reasons.push('OK Sin red flags');
+  }
+
+  return {
+    baselineLabel: `RV ${baseline.source.rvPct}% / RF ${baseline.source.rfPct}%`,
+    autonomousGapPp,
+    eligibleAutonomous,
+    materialImprovements,
+    redFlags,
+    competesWithPhase1,
+    displacesPhase1,
+    reasons,
+  };
+}
+
+function choosePhase1Baseline(points: Phase1Point[]): Phase1Point | null {
+  if (!points.length) return null;
+  const ranking = [...points].sort((a, b) => (
+    (b.success40 - a.success40)
+      || (a.ruin20 - b.ruin20)
+      || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+  ));
+  const bestSuccess = ranking[0]?.success40 ?? null;
+  if (bestSuccess === null) return ranking[0] ?? null;
+  const plateau = ranking.filter((point) => ((bestSuccess - point.success40) * 100) <= (TECHNICAL_TIE_BAND_PP + 1e-9));
+  if (plateau.length <= 1) return ranking[0] ?? null;
+  const balanced = [...plateau].sort((a, b) => (
+    (a.ruin20 - b.ruin20)
+    || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+    || (a.drawdownP50 - b.drawdownP50)
+    || (a.rvPct - b.rvPct)
+  ));
+  return balanced[0] ?? ranking[0] ?? null;
+}
+
 function renderRunMeta(meta: PhaseRunMeta, stale: boolean): React.ReactNode {
   return (
     <div
@@ -401,8 +563,14 @@ export function OptimizationLightPage({
     setStaleNotice(null);
     setPhase2Rows([]);
     try {
+      const baselinePoint = choosePhase1Baseline(phase1Points);
+      const evaluationPoints = [...shortlist];
+      if (baselinePoint) {
+        const baselineIncluded = evaluationPoints.some((point) => point.rvPct === baselinePoint.rvPct);
+        if (!baselineIncluded) evaluationPoints.push(baselinePoint);
+      }
       const rows: Phase2Point[] = [];
-      for (const point of shortlist) {
+      for (const point of evaluationPoints) {
         const assistedParams = cloneParams(activeParams);
         assistedParams.weights = point.weights;
         const sim = runSimulationCentral(assistedParams);
@@ -426,7 +594,7 @@ export function OptimizationLightPage({
     } finally {
       setPhase2Running(false);
     }
-  }, [activeLabel, activeParams, phase2Running, shortlist]);
+  }, [activeLabel, activeParams, phase1Points, phase2Running, shortlist]);
 
   const modeCards = useMemo(
     () => ([
@@ -467,6 +635,20 @@ export function OptimizationLightPage({
     ));
     return sorted[0] ?? null;
   }, [phase1TechnicalTiePoints]);
+  const phase2BaselinePoint = useMemo(
+    () => choosePhase1Baseline(phase1Points),
+    [phase1Points],
+  );
+  const phase2BaselineRow = useMemo(
+    () => (phase2BaselinePoint ? phase2Rows.find((row) => row.source.rvPct === phase2BaselinePoint.rvPct) ?? null : null),
+    [phase2BaselinePoint, phase2Rows],
+  );
+  const phase2Decisions = useMemo(() => {
+    if (!phase2BaselineRow) return new Map<number, Phase2CompetitionDecision>();
+    return new Map(
+      phase2Rows.map((row) => [row.source.rvPct, evaluatePhase2Competition(phase2BaselineRow, row)]),
+    );
+  }, [phase2BaselineRow, phase2Rows]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -686,6 +868,10 @@ export function OptimizationLightPage({
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
           Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). Esta fase no reoptimiza: solo valida costo de supervivencia.
         </div>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Referencia Fase 1: {phase2BaselinePoint ? `RV ${phase2BaselinePoint.rvPct}% / RF ${phase2BaselinePoint.rfPct}%` : 'No disponible'} ·
+          {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
+        </div>
         <div>
           <button
             type="button"
@@ -707,12 +893,47 @@ export function OptimizationLightPage({
           </button>
         </div>
         {phase2Meta ? renderRunMeta(phase2Meta, phase2IsStale) : null}
+        {!phase2BaselineRow && phase2Rows.length > 0 ? (
+          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            No se pudo determinar baseline de Fase 2 para comparar competencia.
+          </div>
+        ) : null}
 
         {phase2Rows.length > 0 && (
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-            {phase2Rows.map((row) => (
-              <div key={`phase2-${row.source.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+            {phase2Rows.map((row) => {
+              const decision = phase2Decisions.get(row.source.rvPct) ?? null;
+              const isBaseline = Boolean(phase2BaselinePoint && row.source.rvPct === phase2BaselinePoint.rvPct);
+              return (
+              <div key={`phase2-${row.source.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${isBaseline ? T.primary : T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
                 <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {row.source.rvPct}% · RF {row.source.rfPct}%</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {isBaseline ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px' }}>
+                      Referencia Fase 1
+                    </span>
+                  ) : null}
+                  {!isBaseline && decision ? (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: decision.competesWithPhase1 ? '#fff' : T.textSecondary,
+                        background: decision.competesWithPhase1 ? T.positive : T.surface,
+                        border: `1px solid ${decision.competesWithPhase1 ? T.positive : T.border}`,
+                        borderRadius: 999,
+                        padding: '2px 8px',
+                      }}
+                    >
+                      {decision.competesWithPhase1 ? 'Compite con Fase 1' : 'No compite'}
+                    </span>
+                  ) : null}
+                  {!isBaseline && decision?.displacesPhase1 ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.warning, borderRadius: 999, padding: '2px 8px' }}>
+                      Desplaza a Fase 1
+                    </span>
+                  ) : null}
+                </div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)} ({row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp vs autónomo)</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 asistida: {formatPct(row.ruin20Assisted)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta de casa: {formatPct(row.houseSalePct)}</div>
@@ -728,8 +949,18 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(row.terminalP50All)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(row.drawdownP50)}</div>
+                {!isBaseline && decision ? (
+                  <div style={{ display: 'grid', gap: 2, marginTop: 2 }}>
+                    {decision.reasons.map((reason) => (
+                      <div key={`${row.source.rvPct}-${reason}`} style={{ color: T.textMuted, fontSize: 10 }}>
+                        {reason}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
