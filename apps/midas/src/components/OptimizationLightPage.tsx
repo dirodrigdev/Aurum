@@ -138,8 +138,10 @@ function buildAutonomousParams(params: ModelParameters): ModelParameters {
   };
   next.spendingRule = {
     ...next.spendingRule,
-    softCut: 1,
-    hardCut: 1,
+    // Neutralizacion controlada: mantenemos orden valido de floors,
+    // pero usamos umbrales extremos para que no se activen en la practica.
+    softCut: 0.999,
+    hardCut: 0.998,
     dd15Threshold: 10,
     dd25Threshold: 10,
     consecutiveMonths: 999,

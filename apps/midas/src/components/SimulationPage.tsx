@@ -659,21 +659,27 @@ export function SimulationPage({
   const heroHouseCostLine =
     houseSalePct !== null && Number.isFinite(houseSalePct)
       ? houseSalePct > 0
-        ? `Casa: ${(houseSalePct * 100).toFixed(1)}% de escenarios · venta mediana año ${
-            saleYearMedian !== null && Number.isFinite(saleYearMedian) ? saleYearMedian.toFixed(1) : '—'
-          }`
-        : 'Casa: no se activa'
-      : 'Casa: no disponible';
+        ? {
+            label: 'Casa',
+            detail: `${(houseSalePct * 100).toFixed(1)}% escenarios · venta mediana a. ${
+              saleYearMedian !== null && Number.isFinite(saleYearMedian) ? saleYearMedian.toFixed(1) : '—'
+            }`,
+          }
+        : { label: 'Casa', detail: 'No se activa' }
+      : { label: 'Casa', detail: 'No disponible' };
   const heroCutCostLine =
     cutScenarioPct !== null && Number.isFinite(cutScenarioPct)
       ? cutScenarioPct > 0
-        ? `Cuts: ${(cutScenarioPct * 100).toFixed(1)}% de escenarios · recorte medio ${
-            cutSeverityMean !== null && Number.isFinite(cutSeverityMean) ? `${(cutSeverityMean * 100).toFixed(1)}%` : '—'
-          } · primer cut año ${
-            firstCutYearMedian !== null && Number.isFinite(firstCutYearMedian) ? firstCutYearMedian.toFixed(1) : '—'
-          }`
-        : 'Cuts: no se activan'
-      : 'Cuts: no disponible';
+        ? {
+            label: 'Cuts',
+            detail: `${(cutScenarioPct * 100).toFixed(1)}% escenarios · recorte medio ${
+              cutSeverityMean !== null && Number.isFinite(cutSeverityMean) ? `${(cutSeverityMean * 100).toFixed(1)}%` : '—'
+            } · 1er cut a. ${
+              firstCutYearMedian !== null && Number.isFinite(firstCutYearMedian) ? firstCutYearMedian.toFixed(1) : '—'
+            }`,
+          }
+        : { label: 'Cuts', detail: 'No se activan' }
+      : { label: 'Cuts', detail: 'No disponible' };
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1262,11 +1268,34 @@ export function SimulationPage({
               ? 'Calculando simulación...'
               : displayResult
                 ? (
-                  <span style={{ display: 'grid', gap: 2 }}>
+                  <span style={{ display: 'grid', gap: 4 }}>
                     <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
-                    <span>{`Prob. de ruina: ${probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'}`}</span>
-                    <span>{heroHouseCostLine}</span>
-                    <span>{heroCutCostLine}</span>
+                    <span
+                      style={{
+                        display: 'grid',
+                        gap: 3,
+                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                      }}
+                    >
+                      {[heroHouseCostLine, heroCutCostLine].map((item) => (
+                        <span
+                          key={item.label}
+                          style={{
+                            display: 'grid',
+                            gap: 1,
+                            padding: '4px 6px',
+                            borderRadius: 8,
+                            background: T.surfaceEl,
+                            border: `1px solid ${T.border}`,
+                          }}
+                        >
+                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+                            {item.label}
+                          </span>
+                          <span>{item.detail}</span>
+                        </span>
+                      ))}
+                    </span>
                   </span>
                 )
                 : 'Corre una simulación para ver resultados'

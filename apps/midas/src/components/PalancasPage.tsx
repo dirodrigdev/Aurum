@@ -38,6 +38,16 @@ type SimSnapshot = {
   firstCutYearP50: number | null;
 };
 
+const LEVER_LABELS: Record<LeverId, string> = {
+  mix_rv_rf: 'Mix RF/RV',
+  bucket_months: 'Bucket',
+  spend_phase_1: 'Gasto fase 1',
+  spend_phase_2: 'Gasto fase 2',
+  spend_phase_3: 'Gasto fase 3',
+  cuts_policy: 'Política de cuts',
+  house_trigger_policy: 'Política/trigger venta casa',
+};
+
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
 }
@@ -329,6 +339,7 @@ export function PalancasPage({
   const [sourceMode, setSourceMode] = useState<SourceMode>(simulationActive ? 'simulation' : 'base');
   const [goal, setGoal] = useState<GoalId>('2pp');
   const [running, setRunning] = useState(false);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<SimSnapshot | null>(null);
   const [rows, setRows] = useState<LeverResult[]>([]);
 
@@ -346,8 +357,9 @@ export function PalancasPage({
   const runLevers = useCallback(async () => {
     if (running) return;
     setRunning(true);
-    setRows([]);
+    setProgressLabel('Preparando baseline...');
     try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const baseResult = toSnapshot(runSimulationCentral(activeParams));
       setBaseline(baseResult);
       const targetSuccess = baseResult.success40 + (targetDeltaPp / 100);
@@ -363,7 +375,9 @@ export function PalancasPage({
       ];
 
       const nextRows: LeverResult[] = [];
-      for (const id of leverIds) {
+      for (const [index, id] of leverIds.entries()) {
+        setProgressLabel(`Analizando ${index + 1} de ${leverIds.length}: ${LEVER_LABELS[id]}`);
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         const out = evaluateLeverCandidates(activeParams, baseResult, targetSuccess, id);
         if (out.best) nextRows.push(out.best);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -378,6 +392,7 @@ export function PalancasPage({
       setRows(nextRows);
     } finally {
       setRunning(false);
+      setProgressLabel(null);
     }
   }, [activeParams, running, targetDeltaPp]);
 
@@ -491,9 +506,14 @@ export function PalancasPage({
               cursor: running ? 'not-allowed' : 'pointer',
             }}
           >
-            {running ? 'Analizando palancas…' : 'Evaluar palancas'}
+            {running ? 'Evaluando...' : 'Evaluar palancas'}
           </button>
         </div>
+        {running && progressLabel ? (
+          <div style={{ color: T.textSecondary, fontSize: 11 }}>
+            {progressLabel}
+          </div>
+        ) : null}
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Estimación orientativa por sensibilidad local (una variable a la vez) sobre el modelo completo. No reemplaza la simulación integral.
         </div>
@@ -510,8 +530,27 @@ export function PalancasPage({
         </div>
       )}
 
+      {running && rows.length === 0 ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 6 }}>
+          <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+            Evaluando palancas del modelo completo
+          </div>
+          <div style={{ color: T.textSecondary, fontSize: 11 }}>
+            {progressLabel ?? 'Preparando análisis...'}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Mantenemos la página visible mientras corre el cálculo.
+          </div>
+        </div>
+      ) : null}
+
       {rows.length > 0 && (
         <div style={{ display: 'grid', gap: 8 }}>
+          {running ? (
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Actualizando resultados sin borrar la evaluación anterior.
+            </div>
+          ) : null}
           {rows.map((row) => (
             <div key={row.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{row.variable}</div>
