@@ -656,6 +656,12 @@ export function SimulationPage({
     houseSalePct !== null && Number.isFinite(houseSalePct)
       ? `Venta de casa en ${(houseSalePct * 100).toFixed(1)}% de escenarios`
       : 'Venta de casa: —';
+  const heroProbRuinLine = {
+    label: 'Prob. ruina',
+    detail: `${probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} · si falla: mediana a. ${
+      ruinMedian !== null && Number.isFinite(ruinMedian) ? ruinMedian.toFixed(1) : '—'
+    }`,
+  };
   const heroHouseCostLine =
     houseSalePct !== null && Number.isFinite(houseSalePct)
       ? houseSalePct > 0
@@ -1209,19 +1215,20 @@ export function SimulationPage({
         <div
           style={{
             gridColumn: '1 / -1',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
+            display: 'grid',
+            gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
+            alignItems: 'center',
+            gap: 8,
             background: T.surfaceEl,
             border: `1px solid ${T.border}`,
             borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+            padding: isMobileViewport ? '6px 8px' : '7px 10px',
           }}
         >
-          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
-            Simulaciones Monte Carlo
+          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Monte Carlo
           </div>
-          <div style={{ display: 'flex', gap: 5 }}>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
             {nSimOptions.map((nSimOption) => {
               const active = currentNSim === nSimOption;
               return (
@@ -1231,16 +1238,16 @@ export function SimulationPage({
                   onClick={() => setNSim(nSimOption)}
                   disabled={isRecalculating}
                   style={{
-                    flex: 1,
                     background: active ? T.primary : T.surface,
                     border: `1px solid ${active ? T.primary : T.border}`,
                     color: active ? '#fff' : T.textSecondary,
                     borderRadius: 999,
-                    padding: isMobileViewport ? '5px 7px' : '6px 8px',
+                    padding: isMobileViewport ? '5px 8px' : '5px 9px',
                     fontSize: isMobileViewport ? 10 : 11,
                     fontWeight: 700,
                     cursor: isRecalculating ? 'not-allowed' : 'pointer',
                     opacity: isRecalculating ? 0.65 : 1,
+                    minWidth: isMobileViewport ? 52 : 60,
                   }}
                 >
                   {nSimOption}
@@ -1274,10 +1281,10 @@ export function SimulationPage({
                       style={{
                         display: 'grid',
                         gap: 3,
-                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
                       }}
                     >
-                      {[heroHouseCostLine, heroCutCostLine].map((item) => (
+                      {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
                         <span
                           key={item.label}
                           style={{
@@ -1300,7 +1307,7 @@ export function SimulationPage({
                 )
                 : 'Corre una simulación para ver resultados'
           }
-          ruinCopy={heroRuinSummary}
+          footerContent={null}
           mode={simActive ? 'sim' : 'real'}
           chips={[
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },

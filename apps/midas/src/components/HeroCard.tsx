@@ -6,6 +6,7 @@ export function HeroCard({
   valuePct,
   subtitle,
   ruinCopy,
+  footerContent,
   labelAccessory,
   chips,
   mode = 'real',
@@ -15,6 +16,7 @@ export function HeroCard({
   valuePct: number | null;
   subtitle?: React.ReactNode;
   ruinCopy?: string;
+  footerContent?: React.ReactNode | null;
   labelAccessory?: React.ReactNode;
   chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode; note?: string }>;
   mode?: 'real' | 'sim';
@@ -118,13 +120,19 @@ export function HeroCard({
           {subtitle}
         </div>
       )}
-      <div style={{ height: 1, background: T.border, margin: isMobileViewport ? '10px 0 8px' : '12px 0' }} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: isMobileViewport ? 8 : 12, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 12, flexWrap: isMobileViewport ? 'wrap' : 'nowrap', lineHeight: 1.3 }}>
-        <span>Prob. ruina {pct === null ? '—' : `${(100 - pct).toFixed(1)}%`}</span>
-        <span style={{ flex: isMobileViewport ? '1 1 100%' : undefined, textAlign: isMobileViewport ? 'left' : 'right' }}>
-          {ruinCopy ?? 'Timing mediano: —'}
-        </span>
-      </div>
+      {footerContent !== null ? (
+        <>
+          <div style={{ height: 1, background: T.border, margin: isMobileViewport ? '10px 0 8px' : '12px 0' }} />
+          {footerContent ?? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: isMobileViewport ? 8 : 12, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 12, flexWrap: isMobileViewport ? 'wrap' : 'nowrap', lineHeight: 1.3 }}>
+              <span>Prob. ruina {pct === null ? '—' : `${(100 - pct).toFixed(1)}%`}</span>
+              <span style={{ flex: isMobileViewport ? '1 1 100%' : undefined, textAlign: isMobileViewport ? 'left' : 'right' }}>
+                {ruinCopy ?? 'Timing mediano: —'}
+              </span>
+            </div>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }
