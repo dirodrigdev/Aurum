@@ -297,6 +297,9 @@ export interface SimulationResults {
   spendFactorCut1Months?:      number;
   spendFactorCut2Months?:      number;
   cutTimeShare?:               number;
+  cutScenarioPct?:             number;
+  cutSeverityMean?:            number;
+  firstCutYearMedian?:         number;
   stressTimeShare?:            number;
   cut1TimeShare?:              number;
   cut2TimeShare?:              number;

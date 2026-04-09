@@ -839,6 +839,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const cutTimeShare: number[] = [];
   const cut1TimeShare: number[] = [];
   const cut2TimeShare: number[] = [];
+  const cutScenarioFlags: number[] = [];
+  const firstCutYears: number[] = [];
+  const cutSeverityOnCutPaths: number[] = [];
   const bridgeTimeShare: number[] = [];
   const spendFactorCutMonths: number[] = [];
   const spendFactorNoCutMonths: number[] = [];
@@ -887,6 +890,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let cutState = 0;
     let cut1Months = 0;
     let cut2Months = 0;
+    let firstCutMonth: number | null = null;
+    let cutSeverityAccum = 0;
+    let cutSeverityCount = 0;
     let bridgeMonths = 0;
 
     let spentTotal = 0;
@@ -1012,9 +1018,15 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       if (cutState === 1) {
         regularSpend *= input.cuts.cut1_floor;
         cut1Months += 1;
+        if (firstCutMonth === null) firstCutMonth = m;
+        cutSeverityAccum += 1 - input.cuts.cut1_floor;
+        cutSeverityCount += 1;
       } else if (cutState === 2) {
         regularSpend *= input.cuts.cut2_floor;
         cut2Months += 1;
+        if (firstCutMonth === null) firstCutMonth = m;
+        cutSeverityAccum += 1 - input.cuts.cut2_floor;
+        cutSeverityCount += 1;
       }
       const spend = regularSpend + extraOutflowThisMonth;
 
@@ -1090,6 +1102,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           cutTimeShare.push((cut1Months + cut2Months) / m);
           cut1TimeShare.push(cut1Months / m);
           cut2TimeShare.push(cut2Months / m);
+          cutScenarioFlags.push(cutSeverityCount > 0 ? 1 : 0);
+          if (firstCutMonth !== null) firstCutYears.push(firstCutMonth / 12);
+          if (cutSeverityCount > 0) cutSeverityOnCutPaths.push(cutSeverityAccum / cutSeverityCount);
           bridgeTimeShare.push(bridgeMonths / m);
           spendFactorCutMonths.push(budgetCutTotal > 0 ? spentCutTotal / budgetCutTotal : 1);
           spendFactorNoCutMonths.push(budgetNoCutTotal > 0 ? spentNoCutTotal / budgetNoCutTotal : 1);
@@ -1122,6 +1137,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       cutTimeShare.push((cut1Months + cut2Months) / months);
       cut1TimeShare.push(cut1Months / months);
       cut2TimeShare.push(cut2Months / months);
+      cutScenarioFlags.push(cutSeverityCount > 0 ? 1 : 0);
+      if (firstCutMonth !== null) firstCutYears.push(firstCutMonth / 12);
+      if (cutSeverityCount > 0) cutSeverityOnCutPaths.push(cutSeverityAccum / cutSeverityCount);
       bridgeTimeShare.push(bridgeMonths / months);
       spendFactorCutMonths.push(budgetCutTotal > 0 ? spentCutTotal / budgetCutTotal : 1);
       spendFactorNoCutMonths.push(budgetNoCutTotal > 0 ? spentNoCutTotal / budgetNoCutTotal : 1);
@@ -1169,6 +1187,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     SpendFactorCut1Months: spendFactorCut1Months.length ? mean(spendFactorCut1Months) : Number.NaN,
     SpendFactorCut2Months: spendFactorCut2Months.length ? mean(spendFactorCut2Months) : Number.NaN,
     CutTimeShare: cutTimeShare.length ? mean(cutTimeShare) : Number.NaN,
+    CutScenarioPct: cutScenarioFlags.length ? mean(cutScenarioFlags) : Number.NaN,
+    CutSeverityMean: cutSeverityOnCutPaths.length ? mean(cutSeverityOnCutPaths) : Number.NaN,
+    FirstCutYearMedian: firstCutYears.length ? median(firstCutYears) : Number.NaN,
     terminalWealthAllPaths,
     maxDrawdownPercentiles: computeMaxDrawdownPercentiles(wealthPaths),
     fanChart: buildFanChart(wealthPaths),

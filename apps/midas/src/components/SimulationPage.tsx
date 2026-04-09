@@ -647,12 +647,33 @@ export function SimulationPage({
   const houseSalePct = displayResult?.houseSalePct ?? null;
   const triggerYearMedian = displayResult?.triggerYearMedian ?? null;
   const saleYearMedian = displayResult?.saleYearMedian ?? null;
+  const cutScenarioPct = displayResult?.cutScenarioPct ?? null;
+  const cutSeverityMean = displayResult?.cutSeverityMean ?? null;
+  const firstCutYearMedian = displayResult?.firstCutYearMedian ?? null;
   const drawdownP50 = displayResult?.maxDrawdownPercentiles?.[50] ?? null;
   const cutShare = displayResult?.cutTimeShare ?? null;
   const houseSaleSummary =
     houseSalePct !== null && Number.isFinite(houseSalePct)
       ? `Venta de casa en ${(houseSalePct * 100).toFixed(1)}% de escenarios`
       : 'Venta de casa: —';
+  const heroHouseCostLine =
+    houseSalePct !== null && Number.isFinite(houseSalePct)
+      ? houseSalePct > 0
+        ? `Casa: ${(houseSalePct * 100).toFixed(1)}% de escenarios · venta mediana año ${
+            saleYearMedian !== null && Number.isFinite(saleYearMedian) ? saleYearMedian.toFixed(1) : '—'
+          }`
+        : 'Casa: no se activa'
+      : 'Casa: no disponible';
+  const heroCutCostLine =
+    cutScenarioPct !== null && Number.isFinite(cutScenarioPct)
+      ? cutScenarioPct > 0
+        ? `Cuts: ${(cutScenarioPct * 100).toFixed(1)}% de escenarios · recorte medio ${
+            cutSeverityMean !== null && Number.isFinite(cutSeverityMean) ? `${(cutSeverityMean * 100).toFixed(1)}%` : '—'
+          } · primer cut año ${
+            firstCutYearMedian !== null && Number.isFinite(firstCutYearMedian) ? firstCutYearMedian.toFixed(1) : '—'
+          }`
+        : 'Cuts: no se activan'
+      : 'Cuts: no disponible';
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1244,6 +1265,8 @@ export function SimulationPage({
                   <span style={{ display: 'grid', gap: 2 }}>
                     <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
                     <span>{`Prob. de ruina: ${probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'}`}</span>
+                    <span>{heroHouseCostLine}</span>
+                    <span>{heroCutCostLine}</span>
                   </span>
                 )
                 : 'Corre una simulación para ver resultados'

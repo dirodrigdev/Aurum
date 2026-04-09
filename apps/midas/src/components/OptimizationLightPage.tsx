@@ -1,21 +1,35 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import type { ModelParameters, SimulationResults } from '../domain/model/types';
+import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T } from './theme';
 
 type OptimizationMode = 'light' | 'normal' | 'decision';
 type SourceMode = 'base' | 'simulation';
 
-type LightOptimizationPoint = {
+type Phase1Point = {
   rvPct: number;
   rfPct: number;
   success40: number;
-  probRuin20: number;
-  houseSalePct: number;
-  earlyRuinP10: number | null;
-  ruinCentral80: string;
+  ruin20: number;
+  ruinP10: number | null;
   drawdownP50: number;
-  cutTimeShare: number;
+  terminalP50All: number | null;
+  terminalP50Survivors: number | null;
+  weights: PortfolioWeights;
+};
+
+type Phase2Point = {
+  source: Phase1Point;
+  success40Assisted: number;
+  ruin20Assisted: number;
+  houseSalePct: number;
+  houseSaleYearP50: number | null;
+  cutScenarioPct: number | null;
+  cutSeverityMean: number | null;
+  firstCutYearP50: number | null;
+  terminalP50All: number | null;
+  terminalP50Survivors: number | null;
+  drawdownP50: number;
 };
 
 function cloneParams(params: ModelParameters): ModelParameters {
@@ -31,11 +45,9 @@ function formatYears(value: number | null): string {
   return `${value.toFixed(1)} años`;
 }
 
-function buildRuinCentral80(result: SimulationResults): string {
-  const p10 = result.ruinTimingP10;
-  const p90 = result.ruinTimingP90;
-  if (!Number.isFinite(p10 ?? Number.NaN) || !Number.isFinite(p90 ?? Number.NaN)) return 'No disponible';
-  return `${(p10 as number).toFixed(1)}–${(p90 as number).toFixed(1)} años`;
+function formatMoney(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
 }
 
 function formatPctValue(value: number): string {
@@ -81,6 +93,65 @@ function buildDeltaSummary(baseParams: ModelParameters, candidateParams: ModelPa
   return deltas.length ? `Cambios vs base: ${deltas.join(' · ')}` : 'Sin cambios temporales respecto de la base vigente';
 }
 
+function buildCandidateWeights(currentWeights: PortfolioWeights, rvPct: number): PortfolioWeights {
+  const globalShare = Math.max(0, Math.min(1, (currentWeights.rvGlobal + currentWeights.rfGlobal) || 0.5));
+  const localShare = Math.max(0, Math.min(1, 1 - globalShare));
+  const rv = rvPct / 100;
+  const rf = 1 - rv;
+  return {
+    rvGlobal: rv * globalShare,
+    rvChile: rv * localShare,
+    rfGlobal: rf * globalShare,
+    rfChile: rf * localShare,
+  };
+}
+
+function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: SimulationResults): Phase1Point {
+  return {
+    rvPct,
+    rfPct: Math.round((1 - (rvPct / 100)) * 100),
+    success40: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
+    ruin20: sim.probRuin20 ?? 0,
+    ruinP10: Number.isFinite(sim.ruinTimingP10 ?? Number.NaN) ? (sim.ruinTimingP10 as number) : null,
+    drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
+    terminalP50All: sim.p50TerminalAllPaths ?? null,
+    terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
+    weights,
+  };
+}
+
+function buildAutonomousParams(params: ModelParameters): ModelParameters {
+  const next = cloneParams(params);
+  next.realEstatePolicy = {
+    ...(next.realEstatePolicy ?? {
+      enabled: false,
+      triggerRunwayMonths: 36,
+      saleDelayMonths: 12,
+      saleCostPct: 0,
+      realAppreciationAnnual: 0,
+    }),
+    enabled: false,
+  };
+  next.spendingRule = {
+    ...next.spendingRule,
+    softCut: 1,
+    hardCut: 1,
+    dd15Threshold: 10,
+    dd25Threshold: 10,
+    consecutiveMonths: 999,
+  };
+  return next;
+}
+
+function buildShortlist(points: Phase1Point[]): Phase1Point[] {
+  if (!points.length) return [];
+  const sorted = [...points].sort((a, b) => (b.success40 - a.success40) || (a.ruin20 - b.ruin20));
+  const bestSuccess = sorted[0].success40;
+  const nearBest = sorted.filter((point) => point.success40 >= bestSuccess - 0.01).slice(0, 5);
+  if (nearBest.length >= 3) return nearBest;
+  return sorted.slice(0, Math.min(5, sorted.length));
+}
+
 export function OptimizationLightPage({
   baseParams,
   simulationParams,
@@ -94,13 +165,11 @@ export function OptimizationLightPage({
 }) {
   const [mode, setMode] = useState<OptimizationMode>('light');
   const [sourceMode, setSourceMode] = useState<SourceMode>(simulationActive ? 'simulation' : 'base');
-  const [running, setRunning] = useState(false);
-  const [summary, setSummary] = useState<null | {
-    bestSuccess: LightOptimizationPoint;
-    minHouseSale: LightOptimizationPoint;
-    maxEarlyRuinDelay: LightOptimizationPoint;
-    scanned: number;
-  }>(null);
+  const [phase1Running, setPhase1Running] = useState(false);
+  const [phase2Running, setPhase2Running] = useState(false);
+  const [phase1Points, setPhase1Points] = useState<Phase1Point[]>([]);
+  const [shortlist, setShortlist] = useState<Phase1Point[]>([]);
+  const [phase2Rows, setPhase2Rows] = useState<Phase2Point[]>([]);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -111,65 +180,64 @@ export function OptimizationLightPage({
     ? buildDeltaSummary(baseParams, simulationParams)
     : 'Sin cambios temporales respecto de la base vigente';
 
-  const runLightOptimization = useCallback(async () => {
-    if (running) return;
-    setRunning(true);
-    setSummary(null);
+  const runPhase1 = useCallback(async () => {
+    if (phase1Running) return;
+    setPhase1Running(true);
+    setPhase1Points([]);
+    setShortlist([]);
+    setPhase2Rows([]);
     try {
-      const currentWeights = activeParams.weights;
-      const globalShare = Math.max(0, Math.min(1, (currentWeights.rvGlobal + currentWeights.rfGlobal) || 0.5));
-      const localShare = Math.max(0, Math.min(1, 1 - globalShare));
-      const points: LightOptimizationPoint[] = [];
-
+      const autonomousBase = buildAutonomousParams(activeParams);
+      const points: Phase1Point[] = [];
       for (let rvPct = 20; rvPct <= 90; rvPct += 5) {
-        const rv = rvPct / 100;
-        const rf = 1 - rv;
-        const candidate = cloneParams(activeParams);
-        candidate.weights = {
-          rvGlobal: rv * globalShare,
-          rvChile: rv * localShare,
-          rfGlobal: rf * globalShare,
-          rfChile: rf * localShare,
-        };
+        const candidate = cloneParams(autonomousBase);
+        const nextWeights = buildCandidateWeights(autonomousBase.weights, rvPct);
+        candidate.weights = nextWeights;
         const sim = runSimulationCentral(candidate);
-        const earlyP10 = Number.isFinite(sim.ruinTimingP10 ?? Number.NaN) ? (sim.ruinTimingP10 as number) : null;
-        points.push({
-          rvPct,
-          rfPct: Math.round(rf * 100),
-          success40: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
-          probRuin20: sim.probRuin20 ?? 0,
+        points.push(toPhase1Point(rvPct, nextWeights, sim));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+      setPhase1Points(points);
+      setShortlist(buildShortlist(points));
+    } finally {
+      setPhase1Running(false);
+    }
+  }, [activeParams, phase1Running]);
+
+  const runPhase2 = useCallback(async () => {
+    if (phase2Running || !shortlist.length) return;
+    setPhase2Running(true);
+    setPhase2Rows([]);
+    try {
+      const rows: Phase2Point[] = [];
+      for (const point of shortlist) {
+        const assistedParams = cloneParams(activeParams);
+        assistedParams.weights = point.weights;
+        const sim = runSimulationCentral(assistedParams);
+        rows.push({
+          source: point,
+          success40Assisted: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
+          ruin20Assisted: sim.probRuin20 ?? 0,
           houseSalePct: sim.houseSalePct ?? 0,
-          earlyRuinP10: earlyP10,
-          ruinCentral80: buildRuinCentral80(sim),
+          houseSaleYearP50: Number.isFinite(sim.saleYearMedian ?? Number.NaN) ? (sim.saleYearMedian as number) : null,
+          cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
+          cutSeverityMean: Number.isFinite(sim.cutSeverityMean ?? Number.NaN) ? (sim.cutSeverityMean as number) : null,
+          firstCutYearP50: Number.isFinite(sim.firstCutYearMedian ?? Number.NaN) ? (sim.firstCutYearMedian as number) : null,
+          terminalP50All: sim.p50TerminalAllPaths ?? null,
+          terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
           drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
-          cutTimeShare: sim.cutTimeShare ?? 0,
         });
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
-
-      if (!points.length) return;
-      const bestSuccess = [...points].sort((a, b) => (b.success40 - a.success40) || (a.probRuin20 - b.probRuin20))[0];
-      const minHouseSale = [...points].sort((a, b) => (a.houseSalePct - b.houseSalePct) || (b.success40 - a.success40))[0];
-      const maxEarlyRuinDelay = [...points].sort((a, b) => {
-        const aScore = a.earlyRuinP10 ?? Number.NEGATIVE_INFINITY;
-        const bScore = b.earlyRuinP10 ?? Number.NEGATIVE_INFINITY;
-        return (bScore - aScore) || (b.success40 - a.success40);
-      })[0];
-
-      setSummary({
-        bestSuccess,
-        minHouseSale,
-        maxEarlyRuinDelay,
-        scanned: points.length,
-      });
+      setPhase2Rows(rows);
     } finally {
-      setRunning(false);
+      setPhase2Running(false);
     }
-  }, [activeParams, running]);
+  }, [activeParams, phase2Running, shortlist]);
 
   const modeCards = useMemo(
     () => ([
-      { id: 'light', label: 'Light', active: mode === 'light', enabled: true, hint: 'Barrido RF/RV rápido y explicable' },
+      { id: 'light', label: 'Light', active: mode === 'light', enabled: true, hint: 'Fase 1 + Fase 2' },
       { id: 'normal', label: 'Normal', active: mode === 'normal', enabled: false, hint: 'Próximamente' },
       { id: 'decision', label: 'Decisión', active: mode === 'decision', enabled: false, hint: 'Próximamente' },
     ] as const),
@@ -181,7 +249,7 @@ export function OptimizationLightPage({
       <div style={{ display: 'grid', gap: 4 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Optimización</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Explora combinaciones para mejorar el escenario actual.
+          Fase 1: optimización autónoma del portafolio. Fase 2: validación del shortlist en el modelo completo.
         </div>
       </div>
 
@@ -262,57 +330,100 @@ export function OptimizationLightPage({
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
+        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Barrido RF/RV: RV 20% → 90% (paso 5%). Se mantiene fijo el resto de parámetros activos.
+          Sweep RF/RV (20% a 90%, paso 5) con casa y cuts desactivados para elegir política de inversión por sí sola.
         </div>
         <div>
           <button
             type="button"
-            onClick={runLightOptimization}
-            disabled={running || mode !== 'light'}
+            onClick={runPhase1}
+            disabled={phase1Running || mode !== 'light'}
             style={{
-              background: running ? T.surfaceEl : T.primary,
-              border: `1px solid ${running ? T.border : T.primary}`,
-              color: running ? T.textMuted : '#fff',
+              background: phase1Running ? T.surfaceEl : T.primary,
+              border: `1px solid ${phase1Running ? T.border : T.primary}`,
+              color: phase1Running ? T.textMuted : '#fff',
               borderRadius: 999,
               padding: '7px 12px',
               fontSize: 11,
               fontWeight: 700,
-              cursor: running || mode !== 'light' ? 'not-allowed' : 'pointer',
+              cursor: phase1Running || mode !== 'light' ? 'not-allowed' : 'pointer',
               opacity: mode !== 'light' ? 0.65 : 1,
             }}
           >
-            {running ? 'Analizando…' : 'Ejecutar optimización Light'}
+            {phase1Running ? 'Ejecutando Fase 1…' : 'Ejecutar Fase 1'}
           </button>
         </div>
+
+        {shortlist.length > 0 && (
+          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            {shortlist.map((point) => (
+              <div key={`phase1-${point.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {point.rvPct}% · RF {point.rfPct}%</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 autónomo: {formatPct(point.success40)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 autónoma: {formatPct(point.ruin20)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Primeras ruinas (P10): {formatYears(point.ruinP10)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(point.drawdownP50)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(point.terminalP50All)}</div>
+              </div>
+            ))}
+            <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
+              Shortlist generado: {shortlist.length} mixes cercanos al mejor desempeño autónomo.
+            </div>
+          </div>
+        )}
       </div>
 
-      {summary && (
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          {[
-            { title: 'Mejor mix para maximizar éxito', point: summary.bestSuccess },
-            { title: 'Mejor mix para minimizar venta de casa', point: summary.minHouseSale },
-            { title: 'Mejor mix para retrasar primeras ruinas', point: summary.maxEarlyRuinDelay },
-          ].map(({ title, point }) => (
-            <div key={title} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
-              <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{title}</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>
-                RV {point.rvPct}% · RF {point.rfPct}%
-              </div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito 40 años: {formatPct(point.success40)}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina 20 años: {formatPct(point.probRuin20)}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta de casa: {formatPct(point.houseSalePct)}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Primeras ruinas relevantes: {formatYears(point.earlyRuinP10)}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Rango central de ruina (P10–P90): {point.ruinCentral80}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Drawdown máximo (P50): {formatPct(point.drawdownP50)}</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>Tiempo en recorte: {formatPct(point.cutTimeShare)}</div>
-            </div>
-          ))}
-          <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
-            Escaneados: {summary.scanned} mixes RF/RV.
-          </div>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
+        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 2 · Validación modelo completo</div>
+        <div style={{ color: T.textSecondary, fontSize: 12 }}>
+          Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). No reoptimiza.
         </div>
-      )}
+        <div>
+          <button
+            type="button"
+            onClick={runPhase2}
+            disabled={phase2Running || !shortlist.length || mode !== 'light'}
+            style={{
+              background: phase2Running ? T.surfaceEl : T.primary,
+              border: `1px solid ${phase2Running ? T.border : T.primary}`,
+              color: phase2Running ? T.textMuted : '#fff',
+              borderRadius: 999,
+              padding: '7px 12px',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: phase2Running || !shortlist.length || mode !== 'light' ? 'not-allowed' : 'pointer',
+              opacity: (!shortlist.length || mode !== 'light') ? 0.65 : 1,
+            }}
+          >
+            {phase2Running ? 'Ejecutando Fase 2…' : 'Ejecutar Fase 2'}
+          </button>
+        </div>
+
+        {phase2Rows.length > 0 && (
+          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            {phase2Rows.map((row) => (
+              <div key={`phase2-${row.source.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {row.source.rvPct}% · RF {row.source.rfPct}%</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 asistida: {formatPct(row.ruin20Assisted)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta de casa: {formatPct(row.houseSalePct)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Año venta P50: {formatYears(row.houseSaleYearP50)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Escenarios con cuts: {row.cutScenarioPct !== null ? formatPct(row.cutScenarioPct) : 'No disponible'}
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Recorte medio: {row.cutSeverityMean !== null ? formatPct(row.cutSeverityMean) : 'No disponible'}
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Primer cut año P50: {formatYears(row.firstCutYearP50)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(row.terminalP50All)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(row.drawdownP50)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

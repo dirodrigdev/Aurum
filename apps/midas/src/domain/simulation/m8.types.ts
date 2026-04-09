@@ -189,6 +189,9 @@ export interface M8Output {
   SpendFactorCut1Months: number;
   SpendFactorCut2Months: number;
   CutTimeShare: number;
+  CutScenarioPct?: number;
+  CutSeverityMean?: number;
+  FirstCutYearMedian?: number;
   terminalWealthAllPaths?: number[];
   maxDrawdownPercentiles: Record<number, number>;
   fanChart?: M8FanChartPoint[];
