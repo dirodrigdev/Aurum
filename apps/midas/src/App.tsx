@@ -20,8 +20,8 @@ import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
 import { SensitivityPage } from './components/SensitivityPage';
 import { StressPage } from './components/StressPage';
-import { OptimizerPage } from './components/OptimizerPage';
 import { OptPage } from './components/OptPage';
+import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
@@ -3058,6 +3058,7 @@ export default function App() {
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
       onResetSim={resetSimulationSession}
+      onOpenOptimization={() => setActiveTab('opt')}
     />
   ) : activeTab === 'sens' ? (
     <SensitivityPage params={simParams} stateLabel={stateLabel} />
@@ -3079,15 +3080,11 @@ export default function App() {
       optimizableBaseReference={optimizableBaseAdjusted}
     />
   ) : (
-    <OptimizerPage
+    <OptimizationLightPage
       baseParams={baseParams}
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
-      weightsSourceLabel={weightsSourceLabel}
-      preloadedBaseStats={baseOptimizerSnapshot}
-      preloadedSimulationStats={simulationOptimizerSnapshot}
-      optimizableBaseReference={optimizableBaseAdjusted}
     />
   );
 
