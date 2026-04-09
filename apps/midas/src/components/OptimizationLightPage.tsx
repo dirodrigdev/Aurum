@@ -32,6 +32,10 @@ type Phase2Point = {
   drawdownP50: number;
 };
 
+const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
+const SHORTLIST_MIN_RV_DISTANCE = 10;
+const SHORTLIST_TARGET = 5;
+
 function cloneParams(params: ModelParameters): ModelParameters {
   return JSON.parse(JSON.stringify(params)) as ModelParameters;
 }
@@ -140,16 +144,54 @@ function buildAutonomousParams(params: ModelParameters): ModelParameters {
     dd25Threshold: 10,
     consecutiveMonths: 999,
   };
+  if (next.simulationComposition?.nonOptimizable?.riskCapital) {
+    next.simulationComposition.nonOptimizable.riskCapital = {
+      ...next.simulationComposition.nonOptimizable.riskCapital,
+      totalCLP: 0,
+      clp: 0,
+      usd: 0,
+      usdTotal: 0,
+      source: 'autonomous_phase1_disabled',
+    };
+  }
   return next;
 }
 
 function buildShortlist(points: Phase1Point[]): Phase1Point[] {
   if (!points.length) return [];
-  const sorted = [...points].sort((a, b) => (b.success40 - a.success40) || (a.ruin20 - b.ruin20));
+  const sorted = [...points].sort((a, b) => (
+    (b.success40 - a.success40)
+      || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+      || (a.ruin20 - b.ruin20)
+      || (a.drawdownP50 - b.drawdownP50)
+  ));
   const bestSuccess = sorted[0].success40;
-  const nearBest = sorted.filter((point) => point.success40 >= bestSuccess - 0.01).slice(0, 5);
-  if (nearBest.length >= 3) return nearBest;
-  return sorted.slice(0, Math.min(5, sorted.length));
+  const candidatePool = sorted.filter((point) => point.success40 >= bestSuccess - SHORTLIST_BEST_SUCCESS_BAND);
+  const shortlist: Phase1Point[] = [];
+
+  for (const point of candidatePool) {
+    if (shortlist.length >= SHORTLIST_TARGET) break;
+    const hasNearbyMix = shortlist.some((chosen) => Math.abs(chosen.rvPct - point.rvPct) < SHORTLIST_MIN_RV_DISTANCE);
+    if (!hasNearbyMix) shortlist.push(point);
+  }
+
+  if (shortlist.length < 3) {
+    for (const point of sorted) {
+      if (shortlist.length >= 3) break;
+      const alreadyIncluded = shortlist.some((chosen) => chosen.rvPct === point.rvPct);
+      if (!alreadyIncluded) shortlist.push(point);
+    }
+  }
+
+  if (shortlist.length < SHORTLIST_TARGET) {
+    for (const point of sorted) {
+      if (shortlist.length >= SHORTLIST_TARGET) break;
+      const alreadyIncluded = shortlist.some((chosen) => chosen.rvPct === point.rvPct);
+      if (!alreadyIncluded) shortlist.push(point);
+    }
+  }
+
+  return shortlist;
 }
 
 export function OptimizationLightPage({
@@ -244,6 +286,18 @@ export function OptimizationLightPage({
     [mode],
   );
 
+  const phase1BestSuccess = useMemo(() => (
+    phase1Points.length ? Math.max(...phase1Points.map((p) => p.success40)) : null
+  ), [phase1Points]);
+
+  const classifyRescueDependency = useCallback((row: Phase2Point): string => {
+    const house = row.houseSalePct;
+    const cut = row.cutScenarioPct ?? 0;
+    if (house > 0.30 || cut > 0.35) return 'Dependencia alta de rescates';
+    if (house > 0.15 || cut > 0.20) return 'Dependencia media de rescates';
+    return 'Dependencia baja de rescates';
+  }, []);
+
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 4 }}>
@@ -332,7 +386,10 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Sweep RF/RV (20% a 90%, paso 5) con casa y cuts desactivados para elegir política de inversión por sí sola.
+          Sweep RF/RV (20% a 90%, paso 5) para elegir política de inversión por sí sola, sin casa y con cuts neutralizados de forma controlada.
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
         </div>
         <div>
           <button
@@ -368,7 +425,8 @@ export function OptimizationLightPage({
               </div>
             ))}
             <div style={{ gridColumn: '1 / -1', color: T.textMuted, fontSize: 10 }}>
-              Shortlist generado: {shortlist.length} mixes cercanos al mejor desempeño autónomo.
+              Shortlist: {shortlist.length} mixes ({phase1Points.length} evaluados) · banda de éxito {Math.round(SHORTLIST_BEST_SUCCESS_BAND * 1000) / 10}pp · diversidad mínima {SHORTLIST_MIN_RV_DISTANCE}pp en RV.
+              {phase1BestSuccess !== null ? ` Mejor éxito autónomo: ${formatPct(phase1BestSuccess)}.` : ''}
             </div>
           </div>
         )}
@@ -377,7 +435,7 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 2 · Validación modelo completo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). No reoptimiza.
+          Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). Esta fase no reoptimiza: solo valida costo de supervivencia.
         </div>
         <div>
           <button
@@ -405,7 +463,7 @@ export function OptimizationLightPage({
             {phase2Rows.map((row) => (
               <div key={`phase2-${row.source.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
                 <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {row.source.rvPct}% · RF {row.source.rfPct}%</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)} ({row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp vs autónomo)</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 asistida: {formatPct(row.ruin20Assisted)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta de casa: {formatPct(row.houseSalePct)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Año venta P50: {formatYears(row.houseSaleYearP50)}</div>
@@ -416,6 +474,7 @@ export function OptimizationLightPage({
                   Recorte medio: {row.cutSeverityMean !== null ? formatPct(row.cutSeverityMean) : 'No disponible'}
                 </div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Primer cut año P50: {formatYears(row.firstCutYearP50)}</div>
+                <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{classifyRescueDependency(row)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(row.terminalP50All)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(row.drawdownP50)}</div>
