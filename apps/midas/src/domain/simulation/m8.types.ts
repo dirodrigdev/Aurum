@@ -168,8 +168,10 @@ export interface M8Output {
   ProbRuin20: number;
   ProbRuin40: number;
   RuinYearMedian: number;
+  RuinYearP10?: number;
   RuinYearP25: number;
   RuinYearP75: number;
+  RuinYearP90?: number;
   TerminalMedianCLP: number;
   TerminalMedianIfSuccessCLP: number;
   TerminalP25AllPaths: number;

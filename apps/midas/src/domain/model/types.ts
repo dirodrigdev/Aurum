@@ -280,8 +280,10 @@ export interface SimulationResults {
   terminalP75IfSuccess?:       number;
   maxDrawdownPercentiles:      Record<number, number>;
   ruinTimingMedian:            number;
+  ruinTimingP10?:              number;
   ruinTimingP25:               number;
   ruinTimingP75:               number;
+  ruinTimingP90?:              number;
   fanChartData:                FanChartPoint[];
   spendingRatioMedian:         number;
   spendFactorTotal?:           number;

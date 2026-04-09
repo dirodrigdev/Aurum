@@ -13,7 +13,7 @@ export function HeroCard({
 }: {
   label: string;
   valuePct: number | null;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   ruinCopy?: string;
   labelAccessory?: React.ReactNode;
   chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode; note?: string }>;

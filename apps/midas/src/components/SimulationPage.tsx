@@ -10,6 +10,7 @@ import type {
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
+import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
@@ -30,6 +31,19 @@ type FanChartDatum = SimulationResults['fanChartData'][number] & {
   outerSpan: number;
   innerBase: number;
   innerSpan: number;
+};
+
+type MixOptimizationPoint = {
+  rvPct: number;
+  rfPct: number;
+  success40: number;
+  probRuin20: number;
+  probRuin40: number;
+  houseSalePct: number;
+  cutTimeShare: number;
+  drawdownP50: number;
+  terminalP25: number;
+  earlyRuinP10: number | null;
 };
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
@@ -70,6 +84,28 @@ const formatMoneyCompact = (value: number) => {
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
 };
+
+type TrafficLight = 'green' | 'yellow' | 'red' | 'neutral';
+
+const TRAFFIC_COLORS: Record<TrafficLight, string> = {
+  green: '#32c97b',
+  yellow: '#f4b740',
+  red: '#ff6a6a',
+  neutral: '#71829b',
+};
+
+function classifyThreshold(value: number | null, thresholds: { greenMax?: number; yellowMax?: number; greenMin?: number; yellowMin?: number }): TrafficLight {
+  if (value === null || !Number.isFinite(value)) return 'neutral';
+  if (thresholds.greenMax !== undefined && value <= thresholds.greenMax) return 'green';
+  if (thresholds.yellowMax !== undefined && value <= thresholds.yellowMax) return 'yellow';
+  if (thresholds.greenMin !== undefined && value >= thresholds.greenMin) return 'green';
+  if (thresholds.yellowMin !== undefined && value >= thresholds.yellowMin) return 'yellow';
+  return 'red';
+}
+
+function cloneModelParams(params: ModelParameters): ModelParameters {
+  return JSON.parse(JSON.stringify(params)) as ModelParameters;
+}
 
 export function SimulationPage({
   resultCentral,
@@ -236,6 +272,13 @@ export function SimulationPage({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
+  const [mixOptimizationRunning, setMixOptimizationRunning] = useState(false);
+  const [mixOptimizationSummary, setMixOptimizationSummary] = useState<null | {
+    bestSuccess: MixOptimizationPoint;
+    minHouseSale: MixOptimizationPoint;
+    maxEarlyRuinDelay: MixOptimizationPoint;
+    scanned: number;
+  }>(null);
   const [showStickyBar, setShowStickyBar] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
@@ -601,12 +644,28 @@ export function SimulationPage({
   const probRuin20 = displayResult?.probRuin20 ?? null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
+  const ruinP10Raw = displayResult?.ruinTimingP10 ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
   const ruinP75 = displayResult?.ruinTimingP75 ?? null;
+  const ruinP90Raw = displayResult?.ruinTimingP90 ?? null;
+  const ruinP10 = ruinP10Raw !== null && Number.isFinite(ruinP10Raw)
+    ? ruinP10Raw
+    : ruinP25 !== null && ruinMedian !== null
+      ? Math.max(0, ruinP25 - (ruinMedian - ruinP25))
+      : null;
+  const ruinP90 = ruinP90Raw !== null && Number.isFinite(ruinP90Raw)
+    ? ruinP90Raw
+    : ruinP75 !== null && ruinMedian !== null
+      ? ruinP75 + (ruinP75 - ruinMedian)
+      : null;
   const ruinWindowLabel = ruinP25 !== null && ruinP75 !== null
     ? `${ruinP25.toFixed(1)}–${ruinP75.toFixed(1)} años`
     : '—';
   const ruinTypicalLabel = ruinMedian !== null ? `${ruinMedian.toFixed(1)} años` : '—';
+  const firstRuinRelevantLabel = ruinP10 !== null ? `${ruinP10.toFixed(1)} años` : '—';
+  const ruinCentral80Label = ruinP10 !== null && ruinP90 !== null
+    ? `${ruinP10.toFixed(1)}–${ruinP90.toFixed(1)} años`
+    : '—';
   const ruinHumanSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
     ? `Si falla, normalmente ocurre entre los años ${ruinP25.toFixed(1)} y ${ruinP75.toFixed(1)} (año típico: ${ruinMedian.toFixed(1)}).`
     : 'Si falla, el motor estima el timing de ruina solo sobre los escenarios que efectivamente fracasan.';
@@ -621,10 +680,18 @@ export function SimulationPage({
   const houseSalePct = displayResult?.houseSalePct ?? null;
   const triggerYearMedian = displayResult?.triggerYearMedian ?? null;
   const saleYearMedian = displayResult?.saleYearMedian ?? null;
+  const drawdownP50 = displayResult?.maxDrawdownPercentiles?.[50] ?? null;
+  const cutShare = displayResult?.cutTimeShare ?? null;
   const houseSaleSummary =
     houseSalePct !== null && Number.isFinite(houseSalePct)
       ? `Venta de casa en ${(houseSalePct * 100).toFixed(1)}% de escenarios`
       : 'Venta de casa: —';
+  const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
+  const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
+  const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
+  const houseSaleLight = classifyThreshold(houseSalePct, { greenMax: 0.10, yellowMax: 0.30 });
+  const drawdownLight = classifyThreshold(drawdownP50, { greenMax: 0.20, yellowMax: 0.35 });
+  const earlyRuinLight = classifyThreshold(ruinP10, { greenMin: 12, yellowMin: 6 });
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
@@ -839,6 +906,72 @@ export function SimulationPage({
       },
     }));
   };
+  const runBasicMixOptimization = useCallback(async () => {
+    if (mixOptimizationRunning) return;
+    setMixOptimizationRunning(true);
+    setMixOptimizationSummary(null);
+    try {
+      const currentWeights = params.weights;
+      const globalShare = Math.max(
+        0,
+        Math.min(1, (currentWeights.rvGlobal + currentWeights.rfGlobal) || 0.5),
+      );
+      const localShare = Math.max(0, Math.min(1, 1 - globalShare));
+      const points: MixOptimizationPoint[] = [];
+
+      for (let rvPct = 20; rvPct <= 90; rvPct += 5) {
+        const rv = rvPct / 100;
+        const rf = 1 - rv;
+        const candidate = cloneModelParams(params);
+        candidate.weights = {
+          rvGlobal: rv * globalShare,
+          rvChile: rv * localShare,
+          rfGlobal: rf * globalShare,
+          rfChile: rf * localShare,
+        };
+        const sim = runSimulationCentral(candidate);
+        const p10 = Number.isFinite(sim.ruinTimingP10 ?? Number.NaN)
+          ? (sim.ruinTimingP10 as number)
+          : Number.isFinite(sim.ruinTimingP25) && Number.isFinite(sim.ruinTimingMedian)
+            ? Math.max(0, sim.ruinTimingP25 - (sim.ruinTimingMedian - sim.ruinTimingP25))
+            : null;
+        points.push({
+          rvPct,
+          rfPct: Math.round((1 - rv) * 100),
+          success40: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
+          probRuin20: sim.probRuin20 ?? 0,
+          probRuin40: sim.probRuin40 ?? sim.probRuin,
+          houseSalePct: sim.houseSalePct ?? 0,
+          cutTimeShare: sim.cutTimeShare ?? 0,
+          drawdownP50: sim.maxDrawdownPercentiles?.[50] ?? 0,
+          terminalP25: sim.terminalP25AllPaths ?? 0,
+          earlyRuinP10: p10,
+        });
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+
+      if (!points.length) return;
+      const bestSuccess = [...points].sort((a, b) => (b.success40 - a.success40) || (a.probRuin40 - b.probRuin40))[0];
+      const minHouseSale = [...points].sort((a, b) => (a.houseSalePct - b.houseSalePct) || (b.success40 - a.success40))[0];
+      const maxEarlyRuinDelay = [...points].sort((a, b) => {
+        const aScore = a.earlyRuinP10 === null ? Number.POSITIVE_INFINITY : a.earlyRuinP10;
+        const bScore = b.earlyRuinP10 === null ? Number.POSITIVE_INFINITY : b.earlyRuinP10;
+        return (bScore - aScore) || (b.success40 - a.success40);
+      })[0];
+      setMixOptimizationSummary({
+        bestSuccess,
+        minHouseSale,
+        maxEarlyRuinDelay,
+        scanned: points.length,
+      });
+    } finally {
+      setMixOptimizationRunning(false);
+    }
+  }, [mixOptimizationRunning, params]);
+  const formatEarlyRuin = useCallback((value: number | null) => {
+    if (value === null || !Number.isFinite(value)) return 'Sin ruina observada';
+    return `${value.toFixed(1)} años`;
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
@@ -1207,7 +1340,12 @@ export function SimulationPage({
               : heroPhase !== 'ready'
               ? 'Calculando simulación...'
               : displayResult
-                ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina · Prob. de ruina ${(probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—')}`
+                ? (
+                  <span style={{ display: 'grid', gap: 2 }}>
+                    <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
+                    <span>{`Prob. de ruina: ${probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'}`}</span>
+                  </span>
+                )
                 : 'Corre una simulación para ver resultados'
           }
           ruinCopy={heroRuinSummary}
@@ -1396,8 +1534,19 @@ export function SimulationPage({
               gap: isMobileViewport ? 8 : 10,
             }}
           >
-            <MetricTile compact={isMobileViewport} label="Ruina a 40 años" value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} tone="negative" />
-            <MetricTile compact={isMobileViewport} label="Ruina a 20 años" value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'} />
+            <MetricTile
+              compact={isMobileViewport}
+              label="Ruina a 40 años"
+              value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'}
+              tone="negative"
+              traffic={ruin40Light}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label="Ruina a 20 años"
+              value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'}
+              traffic={ruin20Light}
+            />
             <MetricTile
               compact={isMobileViewport}
               label={<LabelWithInfo label="Patrimonio terminal típico (todos los escenarios)" info="P50 considerando todos los escenarios simulados, incluidos los que llegan a ruina." />}
@@ -1418,6 +1567,7 @@ export function SimulationPage({
               compact={isMobileViewport}
               label={<LabelWithInfo label="Tiempo en recorte" info="Porcentaje del tiempo total en que el gasto operó bajo recortes (cut1 o cut2)." />}
               value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'}
+              traffic={cutTimeLight}
             />
             <MetricTile
               compact={isMobileViewport}
@@ -1428,6 +1578,7 @@ export function SimulationPage({
                 `P90 ${((displayResult.maxDrawdownPercentiles[90] ?? 0) * 100).toFixed(1)}%`
               }
               fullMobile={isMobileViewport}
+              traffic={drawdownLight}
             />
             <MetricTile
               compact={isMobileViewport}
@@ -1438,6 +1589,14 @@ export function SimulationPage({
                   : 'No se activa en los escenarios simulados'
               }
               fullMobile={isMobileViewport}
+              traffic={houseSaleLight}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Primeras ruinas relevantes" info="P10 del año de ruina condicional: considera solo escenarios que sí fracasan." />}
+              value={firstRuinRelevantLabel}
+              subvalue={`80% central: ${ruinCentral80Label}`}
+              traffic={earlyRuinLight}
             />
           </div>
           <div style={{ marginTop: 7, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 11 }}>
@@ -1516,6 +1675,72 @@ export function SimulationPage({
             </div>
           </details>
         </details>
+      )}
+
+      {!hideResultBlocks && displayResult && (
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: isMobileViewport ? '10px 10px' : '12px',
+            display: 'grid',
+            gap: 10,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>
+              Optimización básica RF/RV
+            </div>
+            <button
+              type="button"
+              onClick={runBasicMixOptimization}
+              disabled={mixOptimizationRunning}
+              style={{
+                background: mixOptimizationRunning ? T.surfaceEl : T.primary,
+                border: `1px solid ${mixOptimizationRunning ? T.border : T.primary}`,
+                color: mixOptimizationRunning ? T.textMuted : '#fff',
+                borderRadius: 999,
+                padding: '6px 10px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: mixOptimizationRunning ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {mixOptimizationRunning ? 'Analizando…' : 'Analizar mix RF/RV'}
+            </button>
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 11 }}>
+            Barrido simple de RV 20% a 90% (paso 5%), manteniendo gasto, casa, cuts, bucket, fee y resto de supuestos.
+          </div>
+          {mixOptimizationSummary && (
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))' }}>
+              {[
+                { title: 'Mejor éxito', point: mixOptimizationSummary.bestSuccess },
+                { title: 'Menor venta de casa', point: mixOptimizationSummary.minHouseSale },
+                { title: 'Ruinas más tardías', point: mixOptimizationSummary.maxEarlyRuinDelay },
+              ].map(({ title, point }) => (
+                <div key={title} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '9px 10px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{title}</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>
+                    RV {point.rvPct}% · RF {point.rfPct}%
+                  </div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito 40: {(point.success40 * 100).toFixed(1)}%</div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina 20: {(point.probRuin20 * 100).toFixed(1)}%</div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta casa: {(point.houseSalePct * 100).toFixed(1)}%</div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Primeras ruinas: {formatEarlyRuin(point.earlyRuinP10)}</div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Drawdown P50: {(point.drawdownP50 * 100).toFixed(1)}%</div>
+                  <div style={{ color: T.textSecondary, fontSize: 11 }}>Tiempo en recorte: {(point.cutTimeShare * 100).toFixed(1)}%</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {mixOptimizationSummary && (
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Escaneados: {mixOptimizationSummary.scanned} mixes RF/RV.
+            </div>
+          )}
+        </div>
       )}
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
@@ -2189,12 +2414,16 @@ function MetricTile({
   tone,
   compact = false,
   fullMobile = false,
+  traffic,
+  subvalue,
 }: {
   label: React.ReactNode;
   value: string;
   tone?: 'primary' | 'negative' | 'muted';
   compact?: boolean;
   fullMobile?: boolean;
+  traffic?: TrafficLight;
+  subvalue?: string;
 }) {
   const color =
     tone === 'primary'
@@ -2212,8 +2441,28 @@ function MetricTile({
         gridColumn: fullMobile ? '1 / -1' : undefined,
       }}
     >
-      <div style={{ color: T.textMuted, fontSize: compact ? 10 : 11, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>{label}</div>
+      <div style={{ color: T.textMuted, fontSize: compact ? 10 : 11, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>
+        {traffic ? (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: TRAFFIC_COLORS[traffic],
+              boxShadow: `0 0 0 2px rgba(0,0,0,0.12) inset`,
+              flexShrink: 0,
+            }}
+          />
+        ) : null}
+        {label}
+      </div>
       <div style={{ ...css.mono, fontSize: compact ? 14 : 16, fontWeight: 800, color, marginTop: compact ? 5 : 6, lineHeight: compact ? 1.2 : 1.25 }}>{value}</div>
+      {subvalue ? (
+        <div style={{ color: T.textMuted, fontSize: 10, marginTop: 4, lineHeight: 1.3 }}>
+          {subvalue}
+        </div>
+      ) : null}
     </div>
   );
 }
