@@ -904,8 +904,34 @@ export function OptimizationLightPage({
             {phase2Rows.map((row) => {
               const decision = phase2Decisions.get(row.source.rvPct) ?? null;
               const isBaseline = Boolean(phase2BaselinePoint && row.source.rvPct === phase2BaselinePoint.rvPct);
+              const isCompeting = Boolean(!isBaseline && decision?.competesWithPhase1);
+              const isDisplacing = Boolean(!isBaseline && decision?.displacesPhase1);
+              const cardBorderColor = isBaseline
+                ? T.primary
+                : isDisplacing
+                  ? '#f2c06b'
+                  : isCompeting
+                    ? '#d8a24a'
+                    : T.border;
+              const cardBorderWidth = isDisplacing ? 2.5 : (isBaseline || isCompeting ? 1.5 : 1);
+              const cardShadow = isDisplacing
+                ? '0 0 0 1px rgba(242, 192, 107, 0.20), 0 6px 16px rgba(242, 192, 107, 0.10)'
+                : isBaseline
+                  ? '0 0 0 1px rgba(92, 128, 255, 0.16)'
+                  : 'none';
               return (
-              <div key={`phase2-${row.source.rvPct}`} style={{ background: T.surfaceEl, border: `1px solid ${isBaseline ? T.primary : T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+              <div
+                key={`phase2-${row.source.rvPct}`}
+                style={{
+                  background: T.surfaceEl,
+                  border: `${cardBorderWidth}px solid ${cardBorderColor}`,
+                  borderRadius: 12,
+                  boxShadow: cardShadow,
+                  padding: 10,
+                  display: 'grid',
+                  gap: 4,
+                }}
+              >
                 <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {row.source.rvPct}% · RF {row.source.rfPct}%</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {isBaseline ? (
