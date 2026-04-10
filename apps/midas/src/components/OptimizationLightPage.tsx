@@ -906,7 +906,7 @@ export function OptimizationLightPage({
           <div style={{ display: 'grid', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                Mejor mix para maximizar éxito autónomo: RV {phase1Top3[0].rvPct}% / RF {phase1Top3[0].rfPct}%
+                Referencia Fase 1 (mejor bruto): RV {phase1Top3[0].rvPct}% / RF {phase1Top3[0].rfPct}%
               </div>
               <div style={{ color: T.textSecondary, fontSize: 11 }}>
                 Success40 autónomo = {formatPct(phase1Top3[0].success40)}
@@ -914,7 +914,7 @@ export function OptimizationLightPage({
               {phase1TechnicalTiePoints.length > 1 && phase1BalancedPoint && (
                 <>
                   <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                    Mejor balanceado (dentro del empate técnico): RV {phase1BalancedPoint.rvPct}% / RF {phase1BalancedPoint.rfPct}%
+                    Empate técnico / finalista: RV {phase1BalancedPoint.rvPct}% / RF {phase1BalancedPoint.rfPct}
                   </div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
                     Criterio: menor Ruina20, luego RuinP10 más tardío, luego menor MaxDDP50 y menor RV.
@@ -984,9 +984,9 @@ export function OptimizationLightPage({
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                         RV {point.rvPct}% / RF {point.rfPct}%
                         {point.isCurrentMix ? ' · mix actual' : ''}
-                        {isBest ? ' · mejor bruto' : ''}
-                        {!isBest && isBalanced ? ' · mejor balanceado' : ''}
-                        {!isBest && !isBalanced && isTechnicalTie ? ' · empate técnico' : ''}
+                        {isBest ? ' · referencia Fase 1' : ''}
+                        {!isBest && isBalanced ? ' · empate técnico (finalista)' : ''}
+                        {!isBest && !isBalanced && isTechnicalTie ? ' · finalista Fase 1' : ''}
                       </div>
                       <div style={{ color: isBest ? T.primary : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                         Δ vs mejor: {isBest ? '0.0 pp' : isTechnicalTie ? 'Empate técnico' : formatDeltaVsBest(deltaVsBest)}
@@ -1056,20 +1056,23 @@ export function OptimizationLightPage({
             {phase2Rows.map((row) => {
               const decision = phase2Decisions.get(row.source.rvPct) ?? null;
               const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
+              const isPhase1Finalist = Boolean(
+                !isBaseline && phase1TechnicalTiePoints.some((point) => isSameMix(point, row.source)),
+              );
               const isCompeting = Boolean(!isBaseline && decision?.competesWithPhase1);
               const isDisplacing = Boolean(!isBaseline && decision?.displacesPhase1);
               const cardBorderColor = isBaseline
                 ? T.primary
                 : isDisplacing
-                  ? '#f2c06b'
+                  ? T.positive
                   : isCompeting
                     ? '#d8a24a'
                     : T.border;
-              const cardBorderWidth = isDisplacing ? 2.5 : (isBaseline || isCompeting ? 1.5 : 1);
+              const cardBorderWidth = isDisplacing ? 2.5 : (isBaseline ? 2.5 : (isCompeting ? 1.5 : 1));
               const cardShadow = isDisplacing
-                ? '0 0 0 1px rgba(242, 192, 107, 0.20), 0 6px 16px rgba(242, 192, 107, 0.10)'
+                ? '0 0 0 1px rgba(72, 199, 116, 0.22), 0 6px 16px rgba(72, 199, 116, 0.10)'
                 : isBaseline
-                  ? '0 0 0 1px rgba(92, 128, 255, 0.16)'
+                  ? '0 0 0 1px rgba(92, 128, 255, 0.24), 0 4px 12px rgba(92, 128, 255, 0.10)'
                   : 'none';
               return (
               <div
@@ -1106,8 +1109,23 @@ export function OptimizationLightPage({
                       {decision.competesWithPhase1 ? 'Compite con Fase 1' : 'No compite'}
                     </span>
                   ) : null}
+                  {!isBaseline && isPhase1Finalist ? (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: '#6c4a12',
+                        background: 'rgba(216, 162, 74, 0.16)',
+                        border: '1px solid rgba(216, 162, 74, 0.35)',
+                        borderRadius: 999,
+                        padding: '2px 8px',
+                      }}
+                    >
+                      Finalista Fase 1
+                    </span>
+                  ) : null}
                   {!isBaseline && decision?.displacesPhase1 ? (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.warning, borderRadius: 999, padding: '2px 8px' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.positive, borderRadius: 999, padding: '2px 8px' }}>
                       Desplaza a Fase 1
                     </span>
                   ) : null}
