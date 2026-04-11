@@ -57,6 +57,16 @@ type Phase2CompetitionDecision = {
   reasons: string[];
 };
 
+type LongevityPlus5Result = {
+  selectedLabel: string;
+  selectedReason: string;
+  success40AssistedBase: number;
+  success45: number;
+  drop40To45Pp: number;
+  carryAmong40: number | null;
+  terminalP50All45: number | null;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
 const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
@@ -463,6 +473,31 @@ function choosePhase1Baseline(points: Phase1Point[]): Phase1Point | null {
   return balanced[0] ?? ranking[0] ?? null;
 }
 
+function buildLongevityPlus5Params(baseParams: ModelParameters, weights: PortfolioWeights): ModelParameters {
+  const next = cloneParams(baseParams);
+  const baseHorizon = next.simulation.horizonMonths;
+  const extendedHorizon = baseHorizon + 60;
+  next.weights = cloneParams(weights);
+  next.simulation = {
+    ...next.simulation,
+    horizonMonths: extendedHorizon,
+  };
+
+  // Supuesto explícito: los 5 años extra usan el gasto real de la última fase.
+  const totalDuration = next.spendingPhases.reduce((sum, phase) => sum + phase.durationMonths, 0);
+  const extraMonths = Math.max(0, extendedHorizon - totalDuration);
+  if (extraMonths > 0 && next.spendingPhases.length > 0) {
+    const lastIndex = next.spendingPhases.length - 1;
+    const lastPhase = next.spendingPhases[lastIndex];
+    next.spendingPhases = next.spendingPhases.map((phase, index) => (
+      index === lastIndex
+        ? { ...lastPhase, durationMonths: lastPhase.durationMonths + extraMonths }
+        : phase
+    ));
+  }
+  return next;
+}
+
 type MixSwitchVerdict = {
   level: 'no' | 'considerar' | 'cambiar';
   label: string;
@@ -574,6 +609,10 @@ export function OptimizationLightPage({
   const [phase1Meta, setPhase1Meta] = useState<PhaseRunMeta | null>(null);
   const [phase2Meta, setPhase2Meta] = useState<PhaseRunMeta | null>(null);
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
+  const [longevityOpen, setLongevityOpen] = useState(false);
+  const [longevityRunning, setLongevityRunning] = useState(false);
+  const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
+  const [longevityError, setLongevityError] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -599,6 +638,8 @@ export function OptimizationLightPage({
     const stalePhase2 = phase2Meta && phase2Meta.scenarioHash !== expectedPhase2Hash;
     if (!stalePhase1 && !stalePhase2) return;
     setStaleNotice('Resultados desactualizados: cambió la fuente o el escenario. Vuelve a ejecutar.');
+    setLongevityResult(null);
+    setLongevityError(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -617,6 +658,8 @@ export function OptimizationLightPage({
     setPhase1Points([]);
     setShortlist([]);
     setPhase2Rows([]);
+    setLongevityResult(null);
+    setLongevityError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -654,6 +697,8 @@ export function OptimizationLightPage({
     setPhase2Running(true);
     setStaleNotice(null);
     setPhase2Rows([]);
+    setLongevityResult(null);
+    setLongevityError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -770,6 +815,54 @@ export function OptimizationLightPage({
     const suggestedDecision = phase2SuggestedRow ? phase2Decisions.get(phase2SuggestedRow.source.rvPct) ?? null : null;
     return buildMixSwitchVerdict(phase1CurrentPoint, phase1SuggestedPoint, currentDecision, suggestedDecision);
   }, [phase1CurrentPoint, phase1SuggestedPoint, phase2CurrentRow, phase2Decisions, phase2SuggestedRow]);
+  const phase2DisplacingRows = useMemo(
+    () => phase2Rows.filter((row) => phase2Decisions.get(row.source.rvPct)?.displacesPhase1),
+    [phase2Decisions, phase2Rows],
+  );
+  const phase2LongevitySelectedRow = useMemo(() => {
+    if (phase2DisplacingRows.length) {
+      const sorted = [...phase2DisplacingRows].sort((a, b) => (
+        (b.success40Assisted - a.success40Assisted)
+        || (a.ruin20Assisted - b.ruin20Assisted)
+        || (a.houseSalePct - b.houseSalePct)
+      ));
+      return {
+        row: sorted[0] ?? null,
+        reason: 'Seleccionado por desplazar a la referencia Fase 1',
+      };
+    }
+    return {
+      row: phase2BaselineRow,
+      reason: 'Se usa la referencia Fase 1 (no hay desplazador claro)',
+    };
+  }, [phase2BaselineRow, phase2DisplacingRows]);
+  const runLongevityPlus5 = useCallback(async () => {
+    const selectedRow = phase2LongevitySelectedRow.row;
+    if (!selectedRow || longevityRunning) return;
+    setLongevityRunning(true);
+    setLongevityError(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const extendedParams = buildLongevityPlus5Params(activeParams, selectedRow.source.weights);
+      const shadow45 = runSimulationCentral(extendedParams);
+      const success45 = shadow45.success40 ?? (1 - (shadow45.probRuin40 ?? shadow45.probRuin));
+      const success40Base = selectedRow.success40Assisted;
+      const carryAmong40 = success40Base > 0 ? (success45 / success40Base) : null;
+      setLongevityResult({
+        selectedLabel: `RV ${selectedRow.source.rvPct}% / RF ${selectedRow.source.rfPct}%`,
+        selectedReason: phase2LongevitySelectedRow.reason,
+        success40AssistedBase: success40Base,
+        success45,
+        drop40To45Pp: (success40Base - success45) * 100,
+        carryAmong40,
+        terminalP50All45: shadow45.p50TerminalAllPaths ?? null,
+      });
+    } catch (error) {
+      setLongevityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLongevityRunning(false);
+    }
+  }, [activeParams, longevityRunning, phase2LongevitySelectedRow]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -1157,6 +1250,81 @@ export function OptimizationLightPage({
               </div>
               );
             })}
+          </div>
+        )}
+
+        {phase2Rows.length > 0 && (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setLongevityOpen((prev) => !prev)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: T.textPrimary,
+                fontSize: 12,
+                fontWeight: 800,
+                padding: 0,
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+            >
+              {longevityOpen ? '▾ Prórroga +5 años' : '▸ Prórroga +5 años'}
+            </button>
+            {longevityOpen ? (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Explora cuánto aguanta el plan completo si necesitara durar cinco años más. Esta métrica no cambia el resultado oficial a 40 años.
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Plan evaluado: {phase2LongevitySelectedRow.row ? `RV ${phase2LongevitySelectedRow.row.source.rvPct}% / RF ${phase2LongevitySelectedRow.row.source.rfPct}%` : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Supuesto +5 años: se prolonga la última fase de gasto por 60 meses con el mismo gasto real.
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={runLongevityPlus5}
+                    disabled={!phase2LongevitySelectedRow.row || longevityRunning}
+                    style={{
+                      background: longevityRunning ? T.surface : T.primary,
+                      border: `1px solid ${longevityRunning ? T.border : T.primary}`,
+                      color: longevityRunning ? T.textMuted : '#fff',
+                      borderRadius: 999,
+                      padding: '6px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: !phase2LongevitySelectedRow.row || longevityRunning ? 'not-allowed' : 'pointer',
+                      opacity: !phase2LongevitySelectedRow.row ? 0.6 : 1,
+                    }}
+                  >
+                    {longevityRunning ? 'Calculando prórroga +5…' : 'Calcular prórroga +5'}
+                  </button>
+                </div>
+                {longevityError ? (
+                  <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+                    {longevityError}
+                  </div>
+                ) : null}
+                {longevityResult ? (
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Éxito 45 años: {formatPct(longevityResult.success45)}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Caída 40 → 45: {longevityResult.drop40To45Pp >= 0 ? '-' : '+'}{Math.abs(longevityResult.drop40To45Pp).toFixed(1)} pp
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Prórroga +5 entre quienes llegaron a 40: {longevityResult.carryAmong40 !== null ? formatPct(longevityResult.carryAmong40) : 'No disponible'}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Terminal P50 all a 45: {formatMoney(longevityResult.terminalP50All45)}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         )}
       </div>
