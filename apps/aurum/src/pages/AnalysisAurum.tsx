@@ -272,6 +272,16 @@ export const AnalysisAurum: React.FC = () => {
     return buildTrailingSummary(monthlyRowsAsc, 12, 'hero-12m', 'Últ. 12M');
   }, [monthlyRowsAsc]);
 
+  const heroYtd2026 = useMemo(() => {
+    const ytdRows = monthlyRowsAsc.filter((row) => row.monthKey >= '2026-01' && row.monthKey <= '2026-12');
+    if (!ytdRows.length) return null;
+    const baseRow = monthlyRowsAsc
+      .filter((row) => row.monthKey < '2026-01' && row.netDisplay !== null)
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+      .at(-1);
+    return aggregateRows('hero-ytd-2026', 'YTD 2026', ytdRows, baseRow?.netDisplay ?? null);
+  }, [monthlyRowsAsc]);
+
   const heroLastMonth = useMemo(() => {
     const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     if (!row) return null;
@@ -391,6 +401,7 @@ export const AnalysisAurum: React.FC = () => {
         <ReturnsTab
           heroSinceStart={heroSinceStart}
           heroLast12={heroLast12}
+          heroYtd2026={heroYtd2026}
           heroLastMonth={heroLastMonth}
           heroLastMonthPctMonthly={heroLastMonthPctMonthly}
           currency={currency}
