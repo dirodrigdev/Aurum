@@ -29,6 +29,7 @@ type GastappMonthlyContableEntry = {
 
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
+const GASTAPP_MONTHLY_COLLECTION = 'aurum_monthly_from_periods_v1';
 
 const gastappMonthlyRuntime: {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -208,9 +209,9 @@ const loadGastappMonthlyContable = async () => {
     try {
       const runtimeProjectId = String(db.app.options.projectId || '');
       console.info(
-        `${GASTAPP_DIAG_PREFIX} query_start collection=aurum_monthly_contable projectId_runtime=${runtimeProjectId || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} query_start collection=${GASTAPP_MONTHLY_COLLECTION} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
-      const snapshot = await getDocs(collection(db, 'aurum_monthly_contable'));
+      const snapshot = await getDocs(collection(db, GASTAPP_MONTHLY_COLLECTION));
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
       const now = new Date();
 
@@ -251,7 +252,7 @@ const loadGastappMonthlyContable = async () => {
       logSourceModeOnce();
       const march = loaded['2026-03'] || null;
       console.info(
-        `${GASTAPP_DIAG_PREFIX} query_done collection=aurum_monthly_contable docs=${snapshot.size} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} query_done collection=${GASTAPP_MONTHLY_COLLECTION} docs=${snapshot.size} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
       if (march) {
         console.info(
