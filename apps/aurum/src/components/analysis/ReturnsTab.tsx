@@ -15,6 +15,7 @@ import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMo
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
   heroLast12: AggregatedSummary | null;
+  heroYtd2026: AggregatedSummary | null;
   heroLastMonth: AggregatedSummary | null;
   heroLastMonthPctMonthly: number | null;
   currency: WealthCurrency;
@@ -93,6 +94,7 @@ const SummaryTable: React.FC<{
 const ReturnRealHero: React.FC<{
   sinceStart: AggregatedSummary | null;
   last12: AggregatedSummary | null;
+  ytd2026: AggregatedSummary | null;
   lastMonth: AggregatedSummary | null;
   lastMonthPctMonthly: number | null;
   currency: WealthCurrency;
@@ -102,6 +104,7 @@ const ReturnRealHero: React.FC<{
 }> = ({
   sinceStart,
   last12,
+  ytd2026,
   lastMonth,
   lastMonthPctMonthly,
   currency,
@@ -112,6 +115,7 @@ const ReturnRealHero: React.FC<{
   const rows = [
     { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
+    { key: 'ytd', label: 'YTD 2026', value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
     { key: 'mes', label: 'ÚLT. MES', value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
   const spendClass = (value: AggregatedSummary | null | undefined) => {
@@ -126,7 +130,7 @@ const ReturnRealHero: React.FC<{
     (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
   return (
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-4 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
+    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-3.5 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
@@ -170,14 +174,14 @@ const ReturnRealHero: React.FC<{
           </button>
         </div>
       </div>
-      <div className="relative mt-3 space-y-2">
+      <div className="relative mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
         {rows.map((row) => {
           const spendInsight = buildReturnSpendInsight(row.value);
 
           return (
             <div
               key={row.key}
-              className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
+              className="rounded-2xl border border-white/8 bg-white/[0.045] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-[2px]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -185,7 +189,11 @@ const ReturnRealHero: React.FC<{
                     {row.label}
                   </div>
                   <div className="mt-0.5 text-[10px] text-slate-500">
-                    {row.key === 'mes' ? 'Comparación mensual' : 'Tasa anual equivalente'}
+                    {row.key === 'mes'
+                      ? 'Comparación mensual'
+                      : row.key === 'ytd'
+                        ? 'Desde enero'
+                        : 'Tasa anual equivalente'}
                   </div>
                 </div>
                 <div className="min-w-0 text-right">
@@ -197,7 +205,7 @@ const ReturnRealHero: React.FC<{
                   ) : null}
                 </div>
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
                 <div className="rounded-xl bg-white/[0.04] px-2.5 py-1.5">
                   <div className="text-[9px] font-medium uppercase tracking-wide text-slate-500">Prom. mensual</div>
                   <div
@@ -416,6 +424,7 @@ const TrendLineCard: React.FC<{
 export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   heroSinceStart,
   heroLast12,
+  heroYtd2026,
   heroLastMonth,
   heroLastMonthPctMonthly,
   currency,
@@ -438,6 +447,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     <ReturnRealHero
       sinceStart={heroSinceStart}
       last12={heroLast12}
+      ytd2026={heroYtd2026}
       lastMonth={heroLastMonth}
       lastMonthPctMonthly={heroLastMonthPctMonthly}
       currency={currency}
