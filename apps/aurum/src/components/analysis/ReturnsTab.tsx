@@ -429,7 +429,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   yearlySummaries,
   trajectoryCurve,
   patrimonyCurve,
-}) => (
+}) => {
+  const pendingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
+  const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
+
+  return (
   <>
     <ReturnRealHero
       sinceStart={heroSinceStart}
@@ -449,6 +453,26 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         {` · Gastos ${analysisDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
         {` · Ret.Econ. ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
         {` · % ${formatPct(analysisDiagnostics.anomalyRaw.pct)}`}
+      </Card>
+    )}
+
+    {(pendingSpendMonths.length > 0 || missingSpendMonths.length > 0) && (
+      <Card className={cn(
+        'p-3 text-xs',
+        missingSpendMonths.length > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-amber-200 bg-amber-50 text-amber-800'
+      )}>
+        {missingSpendMonths.length > 0 && (
+          <div>
+            Meses cerrados sin gasto contable final: {missingSpendMonths.map((m) => monthLabel(m)).join(', ')}.
+            No se incluyen en agregados cerrados.
+          </div>
+        )}
+        {pendingSpendMonths.length > 0 && (
+          <div className={missingSpendMonths.length > 0 ? 'mt-1' : ''}>
+            Meses pendientes de cierre de gasto: {pendingSpendMonths.map((m) => monthLabel(m)).join(', ')}.
+            Se muestran, pero no entran en agregados cerrados.
+          </div>
+        )}
       </Card>
     )}
 
@@ -486,8 +510,21 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                   <td className="py-1.5 pr-2 text-right text-slate-700">
                     {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}
                   </td>
-                  <td className="py-1.5 text-right text-slate-700">
-                    {gastosDisplay === null ? '—' : formatCurrency(gastosDisplay, currency)}
+                  <td className={cn(
+                    'py-1.5 text-right',
+                    row.gastosStatus === 'missing'
+                      ? 'text-rose-700'
+                      : row.gastosStatus === 'pending'
+                        ? 'text-amber-700'
+                        : 'text-slate-700'
+                  )}>
+                    {row.gastosStatus === 'missing'
+                      ? 'Faltante'
+                      : row.gastosStatus === 'pending'
+                        ? 'Pendiente'
+                        : gastosDisplay === null
+                          ? '—'
+                          : formatCurrency(gastosDisplay, currency)}
                   </td>
                 </tr>
               );
@@ -523,4 +560,5 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       formatter={(value) => formatCompactCurrency(value, currency)}
     />
   </>
-);
+  );
+};

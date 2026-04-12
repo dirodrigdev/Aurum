@@ -1,5 +1,6 @@
-// Incluye gasto total mensual: día a día + viajes + otros
-export const GASTAPP_TOTALS: Record<string, number> = {
+// Fuente mensual para AURUM (Retornos Económicos): gasto contable real cerrado.
+// Incluye día a día + viajes + otros, pero NO representa "estilo de vida" proyectable.
+export const GASTAPP_TOTALS: Record<string, number | null> = {
   '2023-05': 4536,
   '2023-06': 4724,
   '2023-07': 4130,
@@ -34,4 +35,6 @@ export const GASTAPP_TOTALS: Record<string, number> = {
   '2025-12': 4400,
   '2026-01': 6288,
   '2026-02': 7928,
+  // Mes mapeado desde GastApp (P35 -> 2026-03). Pendiente de consolidación final.
+  '2026-03': null,
 };
