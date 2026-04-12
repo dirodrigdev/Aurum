@@ -12,6 +12,16 @@ import type {
 } from './types';
 import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
+const MONTH_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'] as const;
+
+const monthLabelShort = (monthKey: string) => {
+  const [yearRaw, monthRaw] = monthKey.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return monthKey;
+  return `${MONTH_SHORT_ES[month - 1]} ${year}`;
+};
+
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
   heroLast12: AggregatedSummary | null;
@@ -137,6 +147,7 @@ const ReturnRealHero: React.FC<{
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
             <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
+            <div className="mt-1 text-[10px] text-slate-500">Gastos desde GastApp (P → mes equivalente)</div>
             {includeRiskCapitalInTotals && crpContributionInsight && (
               <div
                 className={cn(
@@ -192,7 +203,7 @@ const ReturnRealHero: React.FC<{
                     {row.key === 'mes'
                       ? 'Comparación mensual'
                       : row.key === 'ytd'
-                        ? 'Desde enero'
+                        ? 'Desde enero · Tasa anual equivalente'
                         : 'Tasa anual equivalente'}
                   </div>
                 </div>
@@ -441,6 +452,63 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 }) => {
   const pendingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
   const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
+  const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
+
+  const historyRows = React.useMemo(
+    () =>
+      monthlyRowsDesc.map((row) => {
+        const retornoDisplay = row.retornoRealDisplay;
+        const varDisplay = row.varPatrimonioDisplay;
+        const gastosDisplay = row.gastosDisplay;
+        return {
+          month: monthLabelShort(row.monthKey),
+          pct: formatPct(row.pct),
+          retorno: retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency),
+          varPat: varDisplay === null ? '—' : formatCurrency(varDisplay, currency),
+          gastos:
+            row.gastosStatus === 'missing'
+              ? 'Faltante'
+              : row.gastosStatus === 'pending'
+                ? 'Pendiente'
+                : gastosDisplay === null
+                  ? '—'
+                  : formatCurrency(gastosDisplay, currency),
+        };
+      }),
+    [monthlyRowsDesc, currency],
+  );
+
+  const copyTable = React.useCallback(async () => {
+    const header = ['Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const lines = [
+      header.join('\t'),
+      ...historyRows.map((row) => [row.month, row.pct, row.retorno, row.varPat, row.gastos].join('\t')),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopyStatus('done');
+    } catch {
+      setCopyStatus('error');
+    }
+    window.setTimeout(() => setCopyStatus('idle'), 1600);
+  }, [historyRows]);
+
+  const exportCsv = React.useCallback(() => {
+    const escape = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+    const header = ['Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const lines = [
+      header.map(escape).join(','),
+      ...historyRows.map((row) => [row.month, row.pct, row.retorno, row.varPat, row.gastos].map(escape).join(',')),
+    ];
+    const csv = lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `retorno-economico-historial-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [historyRows]);
 
   return (
   <>
@@ -487,9 +555,27 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     )}
 
     <Card className="border-slate-200 p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        <CalendarDays size={14} />
-        Historial completo
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <CalendarDays size={14} />
+          Historial completo
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={copyTable}
+            className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            {copyStatus === 'done' ? 'Copiado' : copyStatus === 'error' ? 'Error al copiar' : 'Copiar tabla'}
+          </button>
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            Exportar CSV
+          </button>
+        </div>
       </div>
       <div className="mt-2 max-h-[55vh] overflow-y-auto overflow-x-auto">
         <table className="w-full min-w-[600px] text-xs">
@@ -510,7 +596,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               const positive = (retornoDisplay || 0) >= 0;
               return (
                 <tr key={row.monthKey} className="border-t border-slate-100">
-                  <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabel(row.monthKey)}</td>
+                  <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabelShort(row.monthKey)}</td>
                   <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                     {formatPct(row.pct)}
                   </td>

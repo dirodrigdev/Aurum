@@ -30,6 +30,17 @@ type GastappMonthlyContableEntry = {
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
 const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
 const GASTAPP_MONTHLY_COLLECTION = 'aurum_monthly_from_periods_v1';
+const GASTAPP_DIAG_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.VITE_GASTAPP_DIAG === '1');
+
+const diagInfo = (message: string) => {
+  if (!GASTAPP_DIAG_ENABLED) return;
+  console.info(message);
+};
+
+const diagWarn = (message: string) => {
+  if (!GASTAPP_DIAG_ENABLED) return;
+  console.warn(message);
+};
 
 const gastappMonthlyRuntime: {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -112,7 +123,7 @@ const emitGastappSourceUpdated = () => {
 const logSourceModeOnce = () => {
   if (gastappMonthlyDiag.didLogMode) return;
   if (gastappMonthlyRuntime.mode === 'firestore') {
-    console.info(
+    diagInfo(
       `${GASTAPP_DIAG_PREFIX} source=gastapp_firestore projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
     );
     gastappMonthlyDiag.didLogMode = true;
@@ -135,7 +146,7 @@ const logMarchResolutionIfNeeded = (
   const signature = `${origin}|${resolution.source}|${resolution.status}|${resolution.gastosEur ?? 'null'}|${reason}|${gastappMonthlyRuntime.mode}|${gastappMonthlyRuntime.status}|${gastappMonthlyRuntime.error || 'none'}`;
   if (gastappMonthlyDiag.lastMarchSignature === signature) return;
   gastappMonthlyDiag.lastMarchSignature = signature;
-  console.warn(
+  diagWarn(
     `${GASTAPP_DIAG_PREFIX} month=2026-03 source=${resolution.source} status=${resolution.status} total_contable_eur=${resolution.gastosEur ?? 'null'} reason=${reason} runtime_mode=${gastappMonthlyRuntime.mode || 'n/a'} runtime_status=${gastappMonthlyRuntime.status} runtime_error=${gastappMonthlyRuntime.error || 'none'}`,
   );
 };
@@ -175,7 +186,7 @@ const loadGastappMonthlyContable = async () => {
 
   gastappMonthlyRuntime.status = 'loading';
   gastappMonthlyRuntime.error = null;
-  console.info(
+  diagInfo(
     `${GASTAPP_DIAG_PREFIX} loading_start firestore_configured=${isGastappFirestoreConfigured()} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
   );
   gastappMonthlyRuntime.loadPromise = (async () => {
@@ -208,7 +219,7 @@ const loadGastappMonthlyContable = async () => {
 
     try {
       const runtimeProjectId = String(db.app.options.projectId || '');
-      console.info(
+      diagInfo(
         `${GASTAPP_DIAG_PREFIX} query_start collection=${GASTAPP_MONTHLY_COLLECTION} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
       const snapshot = await getDocs(collection(db, GASTAPP_MONTHLY_COLLECTION));
@@ -251,16 +262,16 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       logSourceModeOnce();
       const march = loaded['2026-03'] || null;
-      console.info(
+      diagInfo(
         `${GASTAPP_DIAG_PREFIX} query_done collection=${GASTAPP_MONTHLY_COLLECTION} docs=${snapshot.size} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
       );
       if (march) {
-        console.info(
+        diagInfo(
           `${GASTAPP_DIAG_PREFIX} month=2026-03 status=${march.status} total_contable_eur=${march.gastosEur ?? 'null'} source=gastapp_firestore`,
         );
       } else {
         const reason = snapshot.empty ? 'collection_empty' : 'month_doc_not_found';
-        console.warn(
+        diagWarn(
           `${GASTAPP_DIAG_PREFIX} month=2026-03 not_found reason=${reason} fallback_status=${inferStatusWithoutTotal('2026-03', now)}`,
         );
       }
