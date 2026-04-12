@@ -60,6 +60,8 @@ export const getGastappFirestore = () => {
 };
 
 export const isGastappFirestoreConfigured = () => hasGastappFirebaseConfig();
+export const getGastappConfiguredProjectId = () =>
+  String(gastappFirebaseConfig.projectId || '');
 
 let _authInitPromise: Promise<void> | null = null;
 let _persistenceInitPromise: Promise<void> | null = null;
