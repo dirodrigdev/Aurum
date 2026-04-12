@@ -165,7 +165,10 @@ export const AnalysisAurum: React.FC = () => {
     const anomalyRaw = [...monthlyRowsAsc]
       .filter((row) => row.pct !== null)
       .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
-    return { eurScaleOutliers, invalidNetMonths, anomalyRaw };
+    const missingSpendMonths = monthlyRowsAsc
+      .filter((row) => row.gastosStatus === 'missing')
+      .map((row) => row.monthKey);
+    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths };
   }, [monthlyRowsAsc]);
 
   useEffect(() => {
@@ -181,6 +184,13 @@ export const AnalysisAurum: React.FC = () => {
         `Detecté EUR/CLP fuera de escala en: ${analysisDiagnostics.eurScaleOutliers
           .map((row) => row.monthKey)
           .join(', ')}. Corrige esos cierres en origen.`,
+      );
+      return;
+    }
+
+    if (analysisDiagnostics.missingSpendMonths.length > 0) {
+      setErrorMessage(
+        `Faltan gastos contables cerrados en: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados.`,
       );
       return;
     }

@@ -6,7 +6,7 @@ import {
   type WealthMonthlyClosure,
   type WealthSnapshotSummary,
 } from './wealthStorage';
-import { GASTAPP_TOTALS } from '../data/gastappTotals';
+import { resolveGastappMonthlySpend } from './gastosMonthly';
 import { WEALTH_LAB_EXTERNAL_AGGREGATE } from '../data/wealthLabHistoricalAggregate';
 
 export type WealthLabPoint = {
@@ -420,8 +420,8 @@ export const buildWealthLabModel = (
     const prevNetClp = netClp !== null && Number.isFinite(netClp) && netClp > 0 ? previousValidNet : null;
     const varPatrimonioClp =
       netClp !== null && prevNetClp !== null && prevNetClp > 0 ? netClp - prevNetClp : null;
-    const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey]) ? Number(GASTAPP_TOTALS[closure.monthKey]) : 0;
-    const gastosClp = gastosEur * fx.eurClp;
+    const spend = resolveGastappMonthlySpend(closure.monthKey, new Date());
+    const gastosClp = spend.gastosEur !== null ? spend.gastosEur * fx.eurClp : null;
     const retornoEconomicoClp =
       varPatrimonioClp !== null && gastosClp !== null ? varPatrimonioClp + gastosClp : null;
     const deltaUsdRealClp =

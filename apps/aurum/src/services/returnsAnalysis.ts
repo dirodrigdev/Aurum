@@ -6,7 +6,7 @@ import type {
   ReturnCurveModel,
   ReturnCurvePoint,
 } from '../components/analysis/types';
-import { GASTAPP_TOTALS } from '../data/gastappTotals';
+import { resolveGastappMonthlySpend } from './gastosMonthly';
 import type { WealthCurrency, WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
@@ -103,10 +103,9 @@ export const computeMonthlyRows = (
       invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
     const varPatrimonioDisplay =
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
-    const gastosEur = Number.isFinite(GASTAPP_TOTALS[closure.monthKey])
-      ? Number(GASTAPP_TOTALS[closure.monthKey])
-      : 0;
-    const gastosClp = invalidNet ? null : gastosEur * fx.eurClp;
+    const spend = resolveGastappMonthlySpend(closure.monthKey, new Date());
+    const gastosEur = spend.gastosEur;
+    const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
@@ -123,6 +122,8 @@ export const computeMonthlyRows = (
         netClp: closure.summary?.netClp ?? null,
         netConsolidatedClp: closure.summary?.netConsolidatedClp ?? null,
       });
+    } else if (spend.status === 'missing') {
+      console.warn('[Analysis][missing-spend-month]', { monthKey: closure.monthKey });
     } else {
       previousValidNet = Number(netClp);
       previousValidNetDisplay = Number(netDisplay);
@@ -132,6 +133,7 @@ export const computeMonthlyRows = (
       monthKey: closure.monthKey,
       fx,
       rawEurClp: fxRaw.eurClp,
+      gastosStatus: spend.status,
       netClp,
       prevNetClp,
       invalidNet,
@@ -158,6 +160,7 @@ export const aggregateRows = (
 ): AggregatedSummary => {
   const validRows = rows.filter(
     (row) =>
+      row.gastosStatus === 'complete' &&
       row.varPatrimonioDisplay !== null &&
       row.gastosDisplay !== null &&
       row.retornoRealDisplay !== null,
