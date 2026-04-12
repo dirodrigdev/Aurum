@@ -1,6 +1,10 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { GASTAPP_TOTALS } from '../data/gastappTotals';
-import { getGastappFirestore, isGastappFirestoreConfigured } from './firebase';
+import {
+  getGastappConfiguredProjectId,
+  getGastappFirestore,
+  isGastappFirestoreConfigured,
+} from './firebase';
 
 export type GastosMonthStatus = 'complete' | 'pending' | 'missing';
 export type GastosMonthSource = 'gastapp_firestore' | 'legacy_static';
@@ -24,6 +28,7 @@ type GastappMonthlyContableEntry = {
 };
 
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
+const GASTAPP_DIAG_PREFIX = '[AURUM][gastapp-monthly][diag]';
 
 const gastappMonthlyRuntime: {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -39,6 +44,11 @@ const gastappMonthlyRuntime: {
   loadPromise: null,
   error: null,
   lastUpdatedAt: null,
+};
+
+const gastappMonthlyDiag = {
+  didLogMode: false,
+  lastMarchSignature: '',
 };
 
 const parseMonthKey = (monthKey: string): { year: number; month: number } | null => {
@@ -98,23 +108,62 @@ const emitGastappSourceUpdated = () => {
   window.dispatchEvent(new CustomEvent(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT));
 };
 
+const logSourceModeOnce = () => {
+  if (gastappMonthlyDiag.didLogMode) return;
+  if (gastappMonthlyRuntime.mode === 'firestore') {
+    console.info(
+      `${GASTAPP_DIAG_PREFIX} source=gastapp_firestore projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+    );
+    gastappMonthlyDiag.didLogMode = true;
+    return;
+  }
+  if (gastappMonthlyRuntime.mode === 'legacy') {
+    console.error(
+      `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+    );
+    gastappMonthlyDiag.didLogMode = true;
+  }
+};
+
+const logMarchResolutionIfNeeded = (
+  origin: 'firestore' | 'legacy',
+  resolution: GastosMonthResolution,
+  reason: string,
+) => {
+  if (resolution.monthKey !== '2026-03') return;
+  const signature = `${origin}|${resolution.source}|${resolution.status}|${resolution.gastosEur ?? 'null'}|${reason}|${gastappMonthlyRuntime.mode}|${gastappMonthlyRuntime.status}|${gastappMonthlyRuntime.error || 'none'}`;
+  if (gastappMonthlyDiag.lastMarchSignature === signature) return;
+  gastappMonthlyDiag.lastMarchSignature = signature;
+  console.warn(
+    `${GASTAPP_DIAG_PREFIX} month=2026-03 source=${resolution.source} status=${resolution.status} total_contable_eur=${resolution.gastosEur ?? 'null'} reason=${reason} runtime_mode=${gastappMonthlyRuntime.mode || 'n/a'} runtime_status=${gastappMonthlyRuntime.status} runtime_error=${gastappMonthlyRuntime.error || 'none'}`,
+  );
+};
+
 const resolveFromFirestore = (monthKey: string, now: Date): GastosMonthResolution => {
   const fromMap = gastappMonthlyRuntime.map[monthKey];
   if (fromMap) {
-    return {
+    const resolution: GastosMonthResolution = {
       monthKey,
       status: fromMap.status,
       gastosEur: fromMap.gastosEur,
       source: 'gastapp_firestore',
     };
+    logMarchResolutionIfNeeded('firestore', resolution, 'doc_found_in_firestore');
+    return resolution;
   }
 
-  return {
+  const resolution: GastosMonthResolution = {
     monthKey,
     status: inferStatusWithoutTotal(monthKey, now),
     gastosEur: null,
     source: 'gastapp_firestore',
   };
+  const reason =
+    gastappMonthlyRuntime.status === 'ready'
+      ? 'doc_not_found_in_firestore_cache'
+      : `firestore_runtime_${gastappMonthlyRuntime.status}`;
+  logMarchResolutionIfNeeded('firestore', resolution, reason);
+  return resolution;
 };
 
 const loadGastappMonthlyContable = async () => {
@@ -125,13 +174,19 @@ const loadGastappMonthlyContable = async () => {
 
   gastappMonthlyRuntime.status = 'loading';
   gastappMonthlyRuntime.error = null;
+  console.info(
+    `${GASTAPP_DIAG_PREFIX} loading_start firestore_configured=${isGastappFirestoreConfigured()} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+  );
   gastappMonthlyRuntime.loadPromise = (async () => {
     if (!isGastappFirestoreConfigured()) {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_not_configured';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
-      console.warn('[AURUM][gastapp-monthly] fallback legacy (missing GastApp Firebase env vars)');
+      console.error(
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_not_configured projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+      );
+      logSourceModeOnce();
       emitGastappSourceUpdated();
       return;
     }
@@ -142,12 +197,19 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_unavailable';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
-      console.warn('[AURUM][gastapp-monthly] fallback legacy (GastApp Firestore unavailable)');
+      console.error(
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_unavailable projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+      );
+      logSourceModeOnce();
       emitGastappSourceUpdated();
       return;
     }
 
     try {
+      const runtimeProjectId = String(db.app.options.projectId || '');
+      console.info(
+        `${GASTAPP_DIAG_PREFIX} query_start collection=aurum_monthly_contable projectId_runtime=${runtimeProjectId || 'n/a'}`,
+      );
       const snapshot = await getDocs(collection(db, 'aurum_monthly_contable'));
       const loaded: Record<string, GastappMonthlyContableEntry> = {};
       const now = new Date();
@@ -186,15 +248,31 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'firestore';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      logSourceModeOnce();
+      const march = loaded['2026-03'] || null;
+      console.info(
+        `${GASTAPP_DIAG_PREFIX} query_done collection=aurum_monthly_contable docs=${snapshot.size} month_2026_03_found=${Boolean(march)} projectId_runtime=${runtimeProjectId || 'n/a'}`,
+      );
+      if (march) {
+        console.info(
+          `${GASTAPP_DIAG_PREFIX} month=2026-03 status=${march.status} total_contable_eur=${march.gastosEur ?? 'null'} source=gastapp_firestore`,
+        );
+      } else {
+        const reason = snapshot.empty ? 'collection_empty' : 'month_doc_not_found';
+        console.warn(
+          `${GASTAPP_DIAG_PREFIX} month=2026-03 not_found reason=${reason} fallback_status=${inferStatusWithoutTotal('2026-03', now)}`,
+        );
+      }
       emitGastappSourceUpdated();
     } catch (error: any) {
       gastappMonthlyRuntime.status = 'error';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = String(error?.message || error || 'unknown_error');
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
-      console.warn('[AURUM][gastapp-monthly] firestore unavailable, fallback legacy', {
-        error: gastappMonthlyRuntime.error,
-      });
+      console.error(
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=firestore_query_exception error=${gastappMonthlyRuntime.error} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+      );
+      logSourceModeOnce();
       emitGastappSourceUpdated();
     }
   })()
@@ -218,5 +296,14 @@ export const resolveGastappMonthlySpend = (monthKey: string, now = new Date()): 
     return resolveFromFirestore(monthKey, now);
   }
 
-  return resolveFromLegacy(monthKey, now);
+  const legacy = resolveFromLegacy(monthKey, now);
+  logSourceModeOnce();
+  if (monthKey === '2026-03') {
+    const reason =
+      gastappMonthlyRuntime.mode === 'legacy'
+        ? `legacy_mode_${gastappMonthlyRuntime.error || 'fallback'}`
+        : `firestore_not_ready_${gastappMonthlyRuntime.status}`;
+    logMarchResolutionIfNeeded('legacy', legacy, reason);
+  }
+  return legacy;
 };
