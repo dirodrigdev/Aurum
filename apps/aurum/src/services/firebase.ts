@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { getApps, initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import {
   browserLocalPersistence,
@@ -26,6 +26,40 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+
+const gastappFirebaseConfig = {
+  apiKey: import.meta.env.VITE_GASTAPP_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_GASTAPP_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_GASTAPP_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_GASTAPP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_GASTAPP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_GASTAPP_FIREBASE_APP_ID,
+};
+
+const hasGastappFirebaseConfig = () =>
+  Boolean(
+    gastappFirebaseConfig.apiKey &&
+      gastappFirebaseConfig.authDomain &&
+      gastappFirebaseConfig.projectId &&
+      gastappFirebaseConfig.storageBucket &&
+      gastappFirebaseConfig.messagingSenderId &&
+      gastappFirebaseConfig.appId,
+  );
+
+let gastappDbSingleton: ReturnType<typeof getFirestore> | null = null;
+
+export const getGastappFirestore = () => {
+  if (!hasGastappFirebaseConfig()) return null;
+  if (gastappDbSingleton) return gastappDbSingleton;
+
+  const appName = 'gastapp-shared';
+  const existing = getApps().find((item) => item.name === appName);
+  const gastappApp = existing ?? initializeApp(gastappFirebaseConfig, appName);
+  gastappDbSingleton = getFirestore(gastappApp);
+  return gastappDbSingleton;
+};
+
+export const isGastappFirestoreConfigured = () => hasGastappFirebaseConfig();
 
 let _authInitPromise: Promise<void> | null = null;
 let _persistenceInitPromise: Promise<void> | null = null;
