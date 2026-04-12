@@ -89,6 +89,8 @@ export const isGastappMonthClosed = (monthKey: string, now = new Date(), closing
 const inferStatusWithoutTotal = (monthKey: string, now: Date): GastosMonthStatus =>
   isGastappMonthClosed(monthKey, now) ? 'missing' : 'pending';
 
+// TEMP LEGACY FALLBACK (deprecado): se mantiene solo para transición controlada.
+// Retirar cuando la lectura desde `aurum_monthly_from_periods_v1` esté validada al 100%.
 const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution => {
   const raw = GASTAPP_TOTALS[monthKey];
   if (Number.isFinite(raw)) {

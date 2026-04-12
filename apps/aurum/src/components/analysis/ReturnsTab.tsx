@@ -147,7 +147,7 @@ const ReturnRealHero: React.FC<{
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
             <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
-            <div className="mt-1 text-[10px] text-slate-500">Gastos desde GastApp (P → mes equivalente)</div>
+            <div className="mt-1 text-[9px] text-slate-500/70">Gastos desde GastApp (P → mes equivalente)</div>
             {includeRiskCapitalInTotals && crpContributionInsight && (
               <div
                 className={cn(
@@ -461,6 +461,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         const varDisplay = row.varPatrimonioDisplay;
         const gastosDisplay = row.gastosDisplay;
         return {
+          monthKey: row.monthKey,
           month: monthLabelShort(row.monthKey),
           pct: formatPct(row.pct),
           retorno: retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency),
@@ -479,10 +480,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   );
 
   const copyTable = React.useCallback(async () => {
-    const header = ['Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
     const lines = [
       header.join('\t'),
-      ...historyRows.map((row) => [row.month, row.pct, row.retorno, row.varPat, row.gastos].join('\t')),
+      ...historyRows.map((row) => [row.monthKey, row.month, row.pct, row.retorno, row.varPat, row.gastos].join('\t')),
     ];
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
@@ -495,10 +496,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   const exportCsv = React.useCallback(() => {
     const escape = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
-    const header = ['Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
     const lines = [
       header.map(escape).join(','),
-      ...historyRows.map((row) => [row.month, row.pct, row.retorno, row.varPat, row.gastos].map(escape).join(',')),
+      ...historyRows.map((row) => [row.monthKey, row.month, row.pct, row.retorno, row.varPat, row.gastos].map(escape).join(',')),
     ];
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -579,7 +580,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       </div>
       <div className="mt-2 max-h-[55vh] overflow-y-auto overflow-x-auto">
         <table className="w-full min-w-[600px] text-xs">
-          <thead className="sticky top-0 bg-white">
+          <thead className="sticky top-0 z-10 bg-white/95 backdrop-blur-[1px]">
             <tr className="text-left text-slate-500">
               <th className="py-1 pr-2">Mes</th>
               <th className="py-1 pr-2 text-right">%</th>
