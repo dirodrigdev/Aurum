@@ -40,6 +40,10 @@ import {
   buildWealthLabModel,
 } from '../services/wealthLab';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
+import {
+  GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+  warmGastappMonthlyContable,
+} from '../services/gastosMonthly';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -79,6 +83,7 @@ export const AnalysisAurum: React.FC = () => {
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() =>
     loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey)),
   );
+  const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
     annualRatePct: '5',
@@ -103,6 +108,21 @@ export const AnalysisAurum: React.FC = () => {
   useEffect(() => {
     refreshClosures();
   }, [refreshClosures]);
+
+  useEffect(() => {
+    const onGastosSourceUpdated = () => setGastosSourceVersion((current) => current + 1);
+    window.addEventListener(
+      GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+      onGastosSourceUpdated as EventListener,
+    );
+    void warmGastappMonthlyContable();
+    return () => {
+      window.removeEventListener(
+        GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+        onGastosSourceUpdated as EventListener,
+      );
+    };
+  }, []);
 
   useEffect(() => {
     saveIncludeRiskCapitalInTotals(includeRiskCapitalInTotals);
@@ -142,11 +162,11 @@ export const AnalysisAurum: React.FC = () => {
 
   const monthlyRowsAsc = useMemo(
     () => computeMonthlyRows(closures, includeRiskCapitalInTotals, currency),
-    [closures, includeRiskCapitalInTotals, currency],
+    [closures, includeRiskCapitalInTotals, currency, gastosSourceVersion],
   );
   const monthlyRowsAscWithoutCrp = useMemo(
     () => computeMonthlyRows(closures, false, currency),
-    [closures, currency],
+    [closures, currency, gastosSourceVersion],
   );
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
@@ -265,7 +285,7 @@ export const AnalysisAurum: React.FC = () => {
 
   const wealthLabModel = useMemo(
     () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
-    [closures, includeRiskCapitalInTotals],
+    [closures, includeRiskCapitalInTotals, gastosSourceVersion],
   );
 
   const financialFreedomBase = useMemo(
