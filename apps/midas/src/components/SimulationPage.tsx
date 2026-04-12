@@ -11,6 +11,7 @@ import type {
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
 import type { M8Input } from '../domain/simulation/m8.types';
+import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -30,6 +31,13 @@ type FanChartDatum = SimulationResults['fanChartData'][number] & {
   outerSpan: number;
   innerBase: number;
   innerSpan: number;
+};
+
+type LongevityPlus5Result = {
+  success45: number;
+  drop40To45Pp: number;
+  carryAmong40: number | null;
+  terminalP50All45: number | null;
 };
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
@@ -69,6 +77,28 @@ const formatMoneyCompact = (value: number) => {
   if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
+};
+
+const cloneModelParams = (params: ModelParameters): ModelParameters => JSON.parse(JSON.stringify(params)) as ModelParameters;
+
+const buildLongevityPlus5Params = (baseParams: ModelParameters): ModelParameters => {
+  const next = cloneModelParams(baseParams);
+  const extendedHorizon = next.simulation.horizonMonths + 60;
+  next.simulation = {
+    ...next.simulation,
+    horizonMonths: extendedHorizon,
+  };
+  // Supuesto explícito: se prolonga la última fase con el mismo gasto real por 60 meses.
+  const totalDuration = next.spendingPhases.reduce((sum, phase) => sum + phase.durationMonths, 0);
+  const extraMonths = Math.max(0, extendedHorizon - totalDuration);
+  if (extraMonths > 0 && next.spendingPhases.length > 0) {
+    const lastIndex = next.spendingPhases.length - 1;
+    const lastPhase = next.spendingPhases[lastIndex];
+    next.spendingPhases = next.spendingPhases.map((phase, idx) => (
+      idx === lastIndex ? { ...lastPhase, durationMonths: lastPhase.durationMonths + extraMonths } : phase
+    ));
+  }
+  return next;
 };
 
 type TrafficLight = 'green' | 'yellow' | 'red' | 'neutral';
@@ -265,6 +295,10 @@ export function SimulationPage({
   );
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
+  const [longevityOpen, setLongevityOpen] = useState(false);
+  const [longevityRunning, setLongevityRunning] = useState(false);
+  const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
+  const [longevityError, setLongevityError] = useState<string | null>(null);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
@@ -906,6 +940,34 @@ export function SimulationPage({
       },
     }));
   };
+  const runLongevityPlus5 = useCallback(async () => {
+    if (longevityRunning || !displayResult) return;
+    setLongevityRunning(true);
+    setLongevityError(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const shadow45 = runSimulationCentral(buildLongevityPlus5Params(params));
+      const success45 = shadow45.success40 ?? (1 - (shadow45.probRuin40 ?? shadow45.probRuin));
+      const success40Base = displayResult.success40 ?? (1 - (displayResult.probRuin40 ?? displayResult.probRuin));
+      const carryAmong40 = success40Base > 0 ? (success45 / success40Base) : null;
+      setLongevityResult({
+        success45,
+        drop40To45Pp: (success40Base - success45) * 100,
+        carryAmong40,
+        terminalP50All45: shadow45.p50TerminalAllPaths ?? null,
+      });
+    } catch (error) {
+      setLongevityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLongevityRunning(false);
+    }
+  }, [displayResult, longevityRunning, params]);
+
+  useEffect(() => {
+    setLongevityResult(null);
+    setLongevityError(null);
+  }, [params]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
       <div
@@ -1653,6 +1715,94 @@ export function SimulationPage({
           Explorar optimización
         </button>
       </div>
+
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={longevityOpen}
+          onToggle={(e) => setLongevityOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: isMobileViewport ? '8px 10px' : '10px 12px',
+          }}
+        >
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: T.textPrimary,
+              fontWeight: 700,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 10,
+              padding: isMobileViewport ? '9px 4px' : '4px 2px',
+              minHeight: isMobileViewport ? 40 : 36,
+            }}
+          >
+            <span>Prórroga +5 años</span>
+            <span style={{ color: T.textMuted }}>{longevityOpen ? '▾' : '▸'}</span>
+          </summary>
+          {longevityOpen ? (
+            <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.35 }}>
+                Explora cuánto aguanta este escenario si necesitara durar cinco años más. Esta métrica no cambia el resultado oficial a 40 años.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <button
+                  type="button"
+                  onClick={runLongevityPlus5}
+                  disabled={longevityRunning}
+                  style={{
+                    background: longevityRunning ? T.surface : T.primary,
+                    border: `1px solid ${longevityRunning ? T.border : T.primary}`,
+                    color: longevityRunning ? T.textMuted : '#fff',
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '6px 10px' : '6px 12px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: longevityRunning ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {longevityRunning ? 'Calculando prórroga +5…' : 'Calcular prórroga +5'}
+                </button>
+              </div>
+              {longevityError ? (
+                <div style={{ color: T.negative, fontSize: 11 }}>
+                  {longevityError}
+                </div>
+              ) : null}
+              {longevityResult ? (
+                <div
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: isMobileViewport ? '9px 10px' : '10px 12px',
+                    display: 'grid',
+                    gap: 4,
+                    color: T.textSecondary,
+                    fontSize: isMobileViewport ? 11 : 12,
+                  }}
+                >
+                  <div>Éxito 45 años: {((longevityResult.success45 ?? 0) * 100).toFixed(1)}%</div>
+                  <div>
+                    Caída 40 → 45: {longevityResult.drop40To45Pp >= 0 ? '-' : '+'}{Math.abs(longevityResult.drop40To45Pp).toFixed(1)} pp
+                  </div>
+                  <div>
+                    Prórroga +5 entre quienes llegaron a 40:{' '}
+                    {longevityResult.carryAmong40 !== null ? `${(longevityResult.carryAmong40 * 100).toFixed(1)}%` : 'No disponible'}
+                  </div>
+                  <div>
+                    Terminal P50 all a 45:{' '}
+                    {longevityResult.terminalP50All45 !== null ? formatCapital(longevityResult.terminalP50All45) : '—'}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </details>
+      )}
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
         <button
