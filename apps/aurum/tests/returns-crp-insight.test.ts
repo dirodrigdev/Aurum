@@ -1,5 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
+
+vi.mock('../src/services/gastosMonthly', () => ({
+  resolveGastappMonthlySpend: (monthKey: string) => ({
+    monthKey,
+    status: 'complete' as const,
+    gastosEur: 1000,
+    source: 'gastapp_firestore' as const,
+  }),
+}));
+
 import { computeMonthlyRows } from '../src/services/returnsAnalysis';
 import { buildCrpContributionInsight } from '../src/services/returnsCrpInsight';
 
