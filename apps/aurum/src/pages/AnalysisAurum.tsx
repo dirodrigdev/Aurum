@@ -188,7 +188,10 @@ export const AnalysisAurum: React.FC = () => {
     const missingSpendMonths = monthlyRowsAsc
       .filter((row) => row.gastosStatus === 'missing')
       .map((row) => row.monthKey);
-    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths };
+    const fxExcludedMonths = monthlyRowsAsc
+      .filter((row) => !row.fxAuditable)
+      .map((row) => row.monthKey);
+    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths, fxExcludedMonths };
   }, [monthlyRowsAsc]);
 
   useEffect(() => {
@@ -285,7 +288,7 @@ export const AnalysisAurum: React.FC = () => {
   const heroLastMonth = useMemo(() => {
     const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     if (!row) return null;
-    return aggregateRows('hero-ultimo', 'Últ. mes', [row], row.prevNetDisplay);
+    return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay);
   }, [monthlyRowsAsc]);
 
   const heroLastMonthPctMonthly = useMemo(() => {
@@ -409,6 +412,7 @@ export const AnalysisAurum: React.FC = () => {
           onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           crpContributionInsight={crpContributionInsight}
           analysisDiagnostics={{ anomalyRaw: analysisDiagnostics.anomalyRaw }}
+          fxExcludedMonths={analysisDiagnostics.fxExcludedMonths}
           monthlyRowsAsc={monthlyRowsAsc}
           monthlyRowsDesc={monthlyRowsDesc}
           periodSummaries={periodSummaries}

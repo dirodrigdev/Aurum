@@ -35,6 +35,7 @@ type ReturnsTabProps = {
   analysisDiagnostics: {
     anomalyRaw: MonthlyReturnRow | null;
   };
+  fxExcludedMonths: string[];
   monthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsDesc: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
@@ -126,7 +127,7 @@ const ReturnRealHero: React.FC<{
     { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
     { key: 'ytd', label: 'YTD 2026', value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
-    { key: 'mes', label: 'ÚLT. MES', value: lastMonth, pct: lastMonthPctMonthly },
+    { key: 'mes', label: 'ÚLT. MES VÁLIDO', value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
   const spendClass = (value: AggregatedSummary | null | undefined) => {
     const insight = buildReturnSpendInsight(value);
@@ -201,7 +202,7 @@ const ReturnRealHero: React.FC<{
                   </div>
                   <div className="mt-0.5 text-[10px] text-slate-500">
                     {row.key === 'mes'
-                      ? 'Comparación mensual'
+                      ? 'Comparación mensual válida'
                       : row.key === 'ytd'
                         ? 'Desde enero · Tasa anual equivalente'
                         : 'Tasa anual equivalente'}
@@ -443,6 +444,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   onToggleRiskMode,
   crpContributionInsight,
   analysisDiagnostics,
+  fxExcludedMonths,
   monthlyRowsAsc,
   monthlyRowsDesc,
   periodSummaries,
@@ -513,6 +515,14 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   return (
   <>
+    {fxExcludedMonths.length > 0 && (
+      <Card className="border-amber-200 bg-amber-50/80 p-2.5 text-[11px] text-amber-700">
+        {fxExcludedMonths.length === 1
+          ? `1 mes excluido de agregados cerrados por FX no auditable: ${fxExcludedMonths[0]}.`
+          : `${fxExcludedMonths.length} meses excluidos de agregados cerrados por FX no auditable: ${fxExcludedMonths.join(', ')}.`}
+      </Card>
+    )}
+
     <ReturnRealHero
       sinceStart={heroSinceStart}
       last12={heroLast12}

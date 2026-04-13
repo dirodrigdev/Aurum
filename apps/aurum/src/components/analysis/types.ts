@@ -12,6 +12,9 @@ export type MonthlyReturnRow = {
   monthKey: string;
   fx: WealthFxRates;
   rawEurClp: number;
+  fxMethod: 'real_closure' | 'default_fallback';
+  fxAuditable: boolean;
+  fxMissing: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   gastosStatus: 'complete' | 'pending' | 'missing';
   netClp: number | null;
   prevNetClp: number | null;

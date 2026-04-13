@@ -17,7 +17,15 @@ const makeClosure = (
     usdClp = 900,
     eurClp = 1000,
     ufClp = 38000,
-  }: { netClp: number; netClpWithRisk?: number; usdClp?: number; eurClp?: number; ufClp?: number },
+    fxMissing,
+  }: {
+    netClp: number;
+    netClpWithRisk?: number;
+    usdClp?: number;
+    eurClp?: number;
+    ufClp?: number;
+    fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
+  },
 ): WealthMonthlyClosure => ({
   id: monthKey,
   monthKey,
@@ -41,6 +49,7 @@ const makeClosure = (
     eurClp,
     ufClp,
   },
+  fxMissing,
 });
 
 describe('returns analysis helpers', () => {
@@ -118,6 +127,30 @@ describe('returns analysis helpers', () => {
     expect(summary.validMonths).toBeGreaterThan(0);
     expect(summary.retornoRealAcumClp).not.toBeNull();
     expect(summary.retornoRealAvgDisplay).not.toBeNull();
+  });
+
+  it('marks non-auditable FX months and excludes them from closed aggregates', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000 }),
+        makeClosure('2026-02', { netClp: 1_050_000_000, fxMissing: ['eurClp'] }),
+        makeClosure('2026-03', { netClp: 1_100_000_000 }),
+      ],
+      false,
+      'CLP',
+    );
+
+    const feb = rows.find((row) => row.monthKey === '2026-02');
+    const mar = rows.find((row) => row.monthKey === '2026-03');
+    expect(feb?.fxAuditable).toBe(false);
+    expect(feb?.fxMethod).toBe('default_fallback');
+    expect(feb?.gastosClp).toBeNull();
+    expect(feb?.retornoRealClp).toBeNull();
+    // The patrimony chain still advances from the missing-FX month net.
+    expect(mar?.prevNetClp).toBe(1_050_000_000);
+
+    const summary = aggregateRows('test-fx', 'Test FX', rows, rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null);
+    expect(summary.validMonths).toBe(2);
   });
 
   it('calculates monthly pct using per-month FX for USD and EUR', () => {
