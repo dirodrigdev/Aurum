@@ -122,11 +122,15 @@ export const computeMonthlyRows = (
         netClp: closure.summary?.netClp ?? null,
         netConsolidatedClp: closure.summary?.netConsolidatedClp ?? null,
       });
-    } else if (spend.status === 'missing') {
-      console.warn('[Analysis][missing-spend-month]', { monthKey: closure.monthKey });
     } else {
+      // Keep the patrimony chain anchored to the immediately prior valid net,
+      // even when the spend month is missing and that row itself stays non-comparable.
       previousValidNet = Number(netClp);
       previousValidNetDisplay = Number(netDisplay);
+    }
+
+    if (!invalidNet && spend.status === 'missing') {
+      console.warn('[Analysis][missing-spend-month]', { monthKey: closure.monthKey });
     }
 
     rows.push({
