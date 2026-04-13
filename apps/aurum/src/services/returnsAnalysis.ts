@@ -72,6 +72,41 @@ const safeFxRaw = (fx?: WealthFxRates): WealthFxRates => ({
   ufClp: safeUfClp(Number(fx?.ufClp)),
 });
 
+const resolveFxForAnalysis = (
+  closure: WealthMonthlyClosure,
+): {
+  fx: WealthFxRates;
+  method: 'real_closure' | 'default_fallback';
+  auditable: boolean;
+  missingKeys: Array<'usdClp' | 'eurClp' | 'ufClp'>;
+} => {
+  const fx = safeFxRaw(closure.fxRates);
+  const missingFromClosure = Array.isArray(closure.fxMissing)
+    ? closure.fxMissing.filter(
+        (key): key is 'usdClp' | 'eurClp' | 'ufClp' =>
+          key === 'usdClp' || key === 'eurClp' || key === 'ufClp',
+      )
+    : [];
+  const missingFromValues: Array<'usdClp' | 'eurClp' | 'ufClp'> = [];
+  if (!Number.isFinite(Number(closure.fxRates?.usdClp)) || Number(closure.fxRates?.usdClp) <= 0) {
+    missingFromValues.push('usdClp');
+  }
+  if (!Number.isFinite(Number(closure.fxRates?.eurClp)) || Number(closure.fxRates?.eurClp) <= 0) {
+    missingFromValues.push('eurClp');
+  }
+  if (!Number.isFinite(Number(closure.fxRates?.ufClp)) || Number(closure.fxRates?.ufClp) <= 0) {
+    missingFromValues.push('ufClp');
+  }
+  const missingKeys = Array.from(new Set([...missingFromClosure, ...missingFromValues]));
+  const auditable = missingKeys.length === 0;
+  return {
+    fx,
+    method: auditable ? 'real_closure' : 'default_fallback',
+    auditable,
+    missingKeys,
+  };
+};
+
 export const convertFromClp = (valueClp: number, currency: WealthCurrency, fx: WealthFxRates) => {
   if (currency === 'CLP') return valueClp;
   if (currency === 'USD') return valueClp / Math.max(1, fx.usdClp);
@@ -92,20 +127,26 @@ export const computeMonthlyRows = (
   let previousValidNetDisplay: number | null = null;
 
   for (const closure of filtered) {
-    const fxRaw = safeFxRaw(closure.fxRates);
+    const fxResolution = resolveFxForAnalysis(closure);
+    const fxRaw = fxResolution.fx;
     const fx = fxRaw;
     const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
     const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
-    const netDisplay = invalidNet || netClp === null ? null : convertFromClp(netClp, currency, fx);
+    const fxAuditable = fxResolution.auditable;
+    const netDisplay =
+      invalidNet || netClp === null || (!fxAuditable && currency !== 'CLP')
+        ? null
+        : convertFromClp(netClp, currency, fx);
     const prevNetClp = invalidNet ? null : previousValidNet;
-    const prevNetDisplay = invalidNet ? null : previousValidNetDisplay;
+    const prevNetDisplay =
+      invalidNet || (!fxAuditable && currency !== 'CLP') ? null : previousValidNetDisplay;
     const varPatrimonioClp =
       invalidNet || prevNetClp === null || netClp === null ? null : netClp - prevNetClp;
     const varPatrimonioDisplay =
       invalidNet || prevNetDisplay === null || netDisplay === null ? null : netDisplay - prevNetDisplay;
     const spend = resolveGastappMonthlySpend(closure.monthKey, new Date());
     const gastosEur = spend.gastosEur;
-    const gastosClp = invalidNet || gastosEur === null ? null : gastosEur * fx.eurClp;
+    const gastosClp = invalidNet || !fxAuditable || gastosEur === null ? null : gastosEur * fx.eurClp;
     const gastosDisplay = gastosClp === null ? null : convertFromClp(gastosClp, currency, fx);
     const retornoRealClp =
       varPatrimonioClp === null || gastosClp === null ? null : varPatrimonioClp + gastosClp;
@@ -126,17 +167,29 @@ export const computeMonthlyRows = (
       // Keep the patrimony chain anchored to the immediately prior valid net,
       // even when the spend month is missing and that row itself stays non-comparable.
       previousValidNet = Number(netClp);
-      previousValidNetDisplay = Number(netDisplay);
+      if (netDisplay !== null && Number.isFinite(netDisplay)) {
+        previousValidNetDisplay = Number(netDisplay);
+      }
     }
 
     if (!invalidNet && spend.status === 'missing') {
       console.warn('[Analysis][missing-spend-month]', { monthKey: closure.monthKey });
+    }
+    if (!invalidNet && !fxAuditable) {
+      console.warn('[Analysis][fx-not-auditable-month]', {
+        monthKey: closure.monthKey,
+        fxMethod: fxResolution.method,
+        fxMissing: fxResolution.missingKeys,
+      });
     }
 
     rows.push({
       monthKey: closure.monthKey,
       fx,
       rawEurClp: fxRaw.eurClp,
+      fxMethod: fxResolution.method,
+      fxAuditable,
+      fxMissing: fxResolution.missingKeys,
       gastosStatus: spend.status,
       netClp,
       prevNetClp,
@@ -164,6 +217,7 @@ export const aggregateRows = (
 ): AggregatedSummary => {
   const validRows = rows.filter(
     (row) =>
+      row.fxAuditable &&
       row.gastosStatus === 'complete' &&
       row.varPatrimonioDisplay !== null &&
       row.gastosDisplay !== null &&
