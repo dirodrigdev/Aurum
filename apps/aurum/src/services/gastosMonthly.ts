@@ -1,10 +1,5 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { GASTAPP_TOTALS } from '../data/gastappTotals';
-import {
-  getGastappConfiguredProjectId,
-  getGastappFirestore,
-  isGastappFirestoreConfigured,
-} from './firebase';
 
 export type GastosMonthStatus = 'complete' | 'pending' | 'missing';
 export type GastosMonthSource = 'gastapp_firestore' | 'legacy_static';
@@ -49,6 +44,7 @@ const gastappMonthlyRuntime: {
   loadPromise: Promise<void> | null;
   error: string | null;
   lastUpdatedAt: string | null;
+  configuredProjectId: string;
 } = {
   status: 'idle',
   mode: null,
@@ -56,11 +52,32 @@ const gastappMonthlyRuntime: {
   loadPromise: null,
   error: null,
   lastUpdatedAt: null,
+  configuredProjectId: '',
 };
 
 const gastappMonthlyDiag = {
   didLogMode: false,
   lastMarchSignature: '',
+};
+
+type GastappFirebaseBridge = {
+  getGastappConfiguredProjectId: () => string;
+  isGastappFirestoreConfigured: () => boolean;
+  getGastappFirestore: () => ReturnType<typeof import('firebase/firestore').getFirestore> | null;
+};
+
+const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null> => {
+  try {
+    const mod = await import('./firebase');
+    return {
+      getGastappConfiguredProjectId: mod.getGastappConfiguredProjectId,
+      isGastappFirestoreConfigured: mod.isGastappFirestoreConfigured,
+      getGastappFirestore: mod.getGastappFirestore,
+    };
+  } catch (error: any) {
+    gastappMonthlyRuntime.error = `gastapp_firebase_bridge_unavailable:${String(error?.message || error || 'unknown_error')}`;
+    return null;
+  }
 };
 
 const parseMonthKey = (monthKey: string): { year: number; month: number } | null => {
@@ -122,18 +139,20 @@ const emitGastappSourceUpdated = () => {
   window.dispatchEvent(new CustomEvent(GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT));
 };
 
+const configuredProjectIdForLogs = () => gastappMonthlyRuntime.configuredProjectId || 'n/a';
+
 const logSourceModeOnce = () => {
   if (gastappMonthlyDiag.didLogMode) return;
   if (gastappMonthlyRuntime.mode === 'firestore') {
     diagInfo(
-      `${GASTAPP_DIAG_PREFIX} source=gastapp_firestore projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+      `${GASTAPP_DIAG_PREFIX} source=gastapp_firestore projectId_configured=${configuredProjectIdForLogs()}`,
     );
     gastappMonthlyDiag.didLogMode = true;
     return;
   }
   if (gastappMonthlyRuntime.mode === 'legacy') {
     console.error(
-      `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+      `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=${gastappMonthlyRuntime.error || 'unknown'} projectId_configured=${configuredProjectIdForLogs()}`,
     );
     gastappMonthlyDiag.didLogMode = true;
   }
@@ -188,31 +207,44 @@ const loadGastappMonthlyContable = async () => {
 
   gastappMonthlyRuntime.status = 'loading';
   gastappMonthlyRuntime.error = null;
-  diagInfo(
-    `${GASTAPP_DIAG_PREFIX} loading_start firestore_configured=${isGastappFirestoreConfigured()} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
-  );
   gastappMonthlyRuntime.loadPromise = (async () => {
-    if (!isGastappFirestoreConfigured()) {
+    const firebaseBridge = await loadGastappFirebaseBridge();
+    if (!firebaseBridge) {
+      gastappMonthlyRuntime.status = 'ready';
+      gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
+      logSourceModeOnce();
+      emitGastappSourceUpdated();
+      return;
+    }
+
+    gastappMonthlyRuntime.configuredProjectId = String(firebaseBridge.getGastappConfiguredProjectId() || '');
+    const firestoreConfigured = firebaseBridge.isGastappFirestoreConfigured();
+    diagInfo(
+      `${GASTAPP_DIAG_PREFIX} loading_start firestore_configured=${firestoreConfigured} projectId_configured=${configuredProjectIdForLogs()}`,
+    );
+
+    if (!firestoreConfigured) {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_not_configured';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_not_configured projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_not_configured projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
       return;
     }
 
-    const db = getGastappFirestore();
+    const db = firebaseBridge.getGastappFirestore();
     if (!db) {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_unavailable';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_unavailable projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_unavailable projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
@@ -284,7 +316,7 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.error = String(error?.message || error || 'unknown_error');
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
-        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=firestore_query_exception error=${gastappMonthlyRuntime.error} projectId_configured=${getGastappConfiguredProjectId() || 'n/a'}`,
+        `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=firestore_query_exception error=${gastappMonthlyRuntime.error} projectId_configured=${configuredProjectIdForLogs()}`,
       );
       logSourceModeOnce();
       emitGastappSourceUpdated();
