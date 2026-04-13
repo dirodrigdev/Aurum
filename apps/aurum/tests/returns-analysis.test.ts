@@ -1,5 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
+const TEST_GASTOS_EUR: Record<string, number> = {
+  '2025-12': 4400,
+  '2026-01': 6288,
+  '2026-02': 7928,
+  '2026-03': 6567.24,
+};
+
+vi.mock('../src/services/gastosMonthly', () => ({
+  resolveGastappMonthlySpend: (monthKey: string) => {
+    const value = TEST_GASTOS_EUR[monthKey];
+    if (Number.isFinite(value)) {
+      return {
+        monthKey,
+        status: 'complete' as const,
+        gastosEur: value,
+        source: 'gastapp_firestore' as const,
+      };
+    }
+    return {
+      monthKey,
+      status: 'pending' as const,
+      gastosEur: null,
+      source: 'gastapp_firestore' as const,
+    };
+  },
+}));
+
 import {
   aggregateRows,
   buildPatrimonyCurve,
@@ -7,7 +34,6 @@ import {
   computeMonthlyRows,
 } from '../src/services/returnsAnalysis';
 import { buildReturnSpendInsight } from '../src/components/analysis/shared';
-import { GASTAPP_TOTALS } from '../src/data/gastappTotals';
 
 const makeClosure = (
   monthKey: string,
@@ -150,7 +176,7 @@ describe('returns analysis helpers', () => {
     expect(mar?.prevNetClp).toBe(1_050_000_000);
 
     const summary = aggregateRows('test-fx', 'Test FX', rows, rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null);
-    expect(summary.validMonths).toBe(2);
+    expect(summary.validMonths).toBe(1);
   });
 
   it('calculates monthly pct using per-month FX for USD and EUR', () => {
@@ -158,8 +184,7 @@ describe('returns analysis helpers', () => {
       makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000 }),
       makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200 }),
     ];
-    const gastosEurFeb = GASTAPP_TOTALS['2026-02'];
-    if (!gastosEurFeb) throw new Error('Missing gastapp total for 2026-02');
+    const gastosEurFeb = TEST_GASTOS_EUR['2026-02'];
     const gastosClpFeb = gastosEurFeb * 1200;
 
     const netUsdJan = 1_000_000_000 / 1000;
@@ -187,8 +212,7 @@ describe('returns analysis helpers', () => {
       makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000 }),
       makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200 }),
     ];
-    const gastosEurFeb = GASTAPP_TOTALS['2026-02'];
-    if (!gastosEurFeb) throw new Error('Missing gastapp total for 2026-02');
+    const gastosEurFeb = TEST_GASTOS_EUR['2026-02'];
     const gastosClpFeb = gastosEurFeb * 1200;
 
     const netUsdJan = 1_000_000_000 / 1000;
