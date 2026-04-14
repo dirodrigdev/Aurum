@@ -300,6 +300,7 @@ export function SimulationPage({
   const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
   const [longevityError, setLongevityError] = useState<string | null>(null);
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
+  const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
@@ -331,6 +332,7 @@ export function SimulationPage({
       ? formatMoneyCompact(aurumSyncLatestOpt)
       : '—';
   const openCapitalLedger = useCallback(() => {
+    draftManualAdjustmentsRef.current = manualCapitalAdjustments;
     setDraftManualAdjustments(manualCapitalAdjustments);
     setCapitalLedgerOpen(true);
     setSavingMovement(false);
@@ -547,10 +549,14 @@ export function SimulationPage({
       note: movementForm.note?.trim() || undefined,
     };
     setDraftManualAdjustments((prev) => {
+      const nextList = editingMovementId
+        ? prev.map((item) => (item.id === next.id ? next : item))
+        : [next, ...prev];
+      draftManualAdjustmentsRef.current = nextList;
       if (editingMovementId) {
-        return prev.map((item) => (item.id === next.id ? next : item));
+        return nextList;
       }
-      return [next, ...prev];
+      return nextList;
     });
     resetMovementForm();
   }, [editingMovementId, movementForm, resetMovementForm]);
@@ -571,15 +577,19 @@ export function SimulationPage({
               note: movementForm.note?.trim() || undefined,
             };
             if (editingMovementId) {
-              return draftManualAdjustments.map((item) => (item.id === next.id ? next : item));
+              return draftManualAdjustmentsRef.current.map((item) => (item.id === next.id ? next : item));
             }
-            return [next, ...draftManualAdjustments];
+            return [next, ...draftManualAdjustmentsRef.current];
           })()
-        : draftManualAdjustments;
+        : draftManualAdjustmentsRef.current;
       onCommitManualCapitalAdjustments(ledgerToCommit);
       closeCapitalLedger();
     }, 0);
-  }, [closeCapitalLedger, draftManualAdjustments, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
+  }, [closeCapitalLedger, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
+
+  useEffect(() => {
+    draftManualAdjustmentsRef.current = draftManualAdjustments;
+  }, [draftManualAdjustments]);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -2326,13 +2336,14 @@ export function SimulationPage({
                         <button
                           type="button"
                           onClick={() => {
-                            const nextDraft = draftManualAdjustments.filter((item) => item.id !== adj.id);
-                            setDraftManualAdjustments(nextDraft);
+                            setDraftManualAdjustments((prev) => {
+                              const nextDraft = prev.filter((item) => item.id !== adj.id);
+                              draftManualAdjustmentsRef.current = nextDraft;
+                              return nextDraft;
+                            });
                             if (editingMovementId === adj.id) {
                               resetMovementForm();
                             }
-                            // Commit inmediato para que capital/pastilla/motor no queden stale.
-                            onCommitManualCapitalAdjustments(nextDraft);
                           }}
                           style={{
                             background: 'transparent',
