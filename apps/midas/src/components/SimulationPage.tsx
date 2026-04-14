@@ -2326,10 +2326,13 @@ export function SimulationPage({
                         <button
                           type="button"
                           onClick={() => {
-                            setDraftManualAdjustments((prev) => prev.filter((item) => item.id !== adj.id));
+                            const nextDraft = draftManualAdjustments.filter((item) => item.id !== adj.id);
+                            setDraftManualAdjustments(nextDraft);
                             if (editingMovementId === adj.id) {
                               resetMovementForm();
                             }
+                            // Commit inmediato para que capital/pastilla/motor no queden stale.
+                            onCommitManualCapitalAdjustments(nextDraft);
                           }}
                           style={{
                             background: 'transparent',
