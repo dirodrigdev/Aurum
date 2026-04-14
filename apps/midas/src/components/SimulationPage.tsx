@@ -482,7 +482,13 @@ export function SimulationPage({
   }, [compositionHasFallback, compositionMode]);
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
-  const effectiveCapital = simOverrides?.capital ?? baseCapital;
+  // En modo bloques (full/partial), el capital visible es derivado del snapshot + bloques + ledger
+  // y debe alinearse con el capital que efectivamente usa la corrida (resultCentral.params.capitalInitial).
+  // En modo legacy sí existe un override manual directo por chip.
+  const isDerivedCapital = compositionMode !== 'legacy';
+  const effectiveCapital = isDerivedCapital
+    ? effectiveBaseCapital
+    : (simOverrides?.capital ?? baseCapital);
   const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
     if (currency === 'CLP') return amount;
     const usdToClp = params.fx?.clpUsdInitial ?? 1;
@@ -789,7 +795,11 @@ export function SimulationPage({
     setActiveChip(chip);
     if (chip === 'return') setDraftValue((effectiveReturn * 100).toFixed(2));
     if (chip === 'years') setDraftValue(String(effectiveYears));
-    if (chip === 'capital') setDraftValue(String(Math.round(effectiveCapital)));
+    if (chip === 'capital') {
+      // Si el capital es derivado (bloques), no permitimos edición manual engañosa.
+      if (isDerivedCapital) return;
+      setDraftValue(String(Math.round(effectiveCapital)));
+    }
   };
 
   const restoreFieldFromScenario = useCallback((field: 'return' | 'years') => {
@@ -1379,7 +1389,7 @@ export function SimulationPage({
               id: 'capital',
               value: formatCapital(effectiveCapital),
               note: hasFutureAdjustments ? '+ futuros' : undefined,
-              onClick: () => openChip('capital'),
+              onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
               accessory: (
                 <button
                   type="button"
