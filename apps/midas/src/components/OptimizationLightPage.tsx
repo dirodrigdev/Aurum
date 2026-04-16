@@ -219,6 +219,10 @@ function formatSignedPp(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)} pp`;
 }
 
+function formatSignedPct(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
 function formatDeltaVsBest(deltaVsBestPp: number): string {
   if (Math.abs(deltaVsBestPp) < DELTA_ZERO_EPSILON_PP) return '0.0 pp';
   return `${deltaVsBestPp.toFixed(1)} pp`;
@@ -956,6 +960,10 @@ export function OptimizationLightPage({
     if (rows.length) return rows;
     return phase2BaselineRow ? [phase2BaselineRow] : [];
   }, [phase2BaselinePoint, phase2BaselineRow, phase2Decisions, phase2Rows]);
+  const phase3BaseSpendingVector = useMemo(
+    () => getSpendingVector(activeParams),
+    [activeParams],
+  );
   const phase2LongevitySelectedRow = useMemo(() => {
     if (phase2DisplacingRows.length) {
       const sorted = [...phase2DisplacingRows].sort((a, b) => (
@@ -1478,6 +1486,47 @@ export function OptimizationLightPage({
                 ? phase3RelevantRows.map((row) => `RV ${row.source.rvPct}/RF ${row.source.rfPct}`).join(' · ')
                 : 'No disponibles'} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes · pesos QoL G1/G2/G3/G4 = 25/40/25/10.
             </div>
+            {phase3RelevantRows.length > 0 ? (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                  Escenarios base evaluados en Fase 3
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {phase3RelevantRows.map((row) => {
+                    const decision = phase2Decisions.get(row.source.rvPct) ?? null;
+                    const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
+                    const roleLabel = isBaseline
+                      ? 'Referencia Fase 1'
+                      : decision?.displacesPhase1
+                        ? 'Desplaza'
+                        : decision?.competesWithPhase1
+                          ? 'Compite'
+                          : 'Finalista';
+                    return (
+                      <div
+                        key={`phase3-base-${row.source.rvPct}-${roleLabel}`}
+                        style={{
+                          border: `1px solid ${isBaseline ? T.primary : decision?.displacesPhase1 ? T.positive : T.border}`,
+                          background: T.surface,
+                          borderRadius: 10,
+                          padding: '6px 8px',
+                          display: 'grid',
+                          gap: 2,
+                          minWidth: 158,
+                        }}
+                      >
+                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                          RV {row.source.rvPct}% / RF {row.source.rfPct}%
+                        </div>
+                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                          {roleLabel} · {formatPct(row.success40Assisted)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div>
               <button
                 type="button"
@@ -1505,9 +1554,11 @@ export function OptimizationLightPage({
               <div style={{ display: 'grid', gap: 8 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mejor éxito Fase 2</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Techo de éxito Fase 2</div>
                     <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.bestSuccessRow.success40Assisted)}</div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>RV {phase3Result.bestSuccessRow.source.rvPct} / RF {phase3Result.bestSuccessRow.source.rfPct}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Mejor éxito disponible para comparar · RV {phase3Result.bestSuccessRow.source.rvPct} / RF {phase3Result.bestSuccessRow.source.rfPct}
+                    </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>Banda usada</div>
@@ -1526,14 +1577,34 @@ export function OptimizationLightPage({
                     <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                       Escenario preferido por calidad de vida: RV {phase3Result.preferred.baseRow.source.rvPct}% / RF {phase3Result.preferred.baseRow.source.rfPct}%
                     </div>
-                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                      Variante: {phase3Result.preferred.variant.label} · Success40 {formatPct(phase3Result.preferred.success40)} · Δ vs mejor éxito {formatSignedPp(phase3Result.preferred.deltaVsBestSuccessPp)}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito final elegido (Fase 3)</div>
+                        <div style={{ color: T.textPrimary, fontSize: 20, fontWeight: 900 }}>{formatPct(phase3Result.preferred.success40)}</div>
+                      </div>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>Mejora ponderada de gasto</div>
+                        <div style={{ color: phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? T.positive : T.warning, fontSize: 20, fontWeight: 900 }}>
+                          {formatSignedPct(phase3Result.preferred.weightedSpendingImprovementPct)}
+                        </div>
+                      </div>
                     </div>
                     <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                      QoL score {phase3Result.preferred.qualityOfLifeScore.toFixed(3)} · mejora ponderada gasto {phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? '+' : ''}{phase3Result.preferred.weightedSpendingImprovementPct.toFixed(1)}%
+                      Variante: {phase3Result.preferred.variant.label} · Δ vs techo de éxito {formatSignedPp(phase3Result.preferred.deltaVsBestSuccessPp)}
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      G1/G2/G3/G4: {phase3Result.preferred.spendingVector.map((value) => formatMoney(value)).join(' · ')}
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      QoL score {phase3Result.preferred.qualityOfLifeScore.toFixed(3)}
+                    </div>
+                    <div style={{ display: 'grid', gap: 3 }}>
+                      {phase3Result.preferred.spendingVector.map((target, index) => {
+                        const base = phase3BaseSpendingVector[index] ?? target;
+                        const changePct = base > 0 ? ((target / base) - 1) * 100 : 0;
+                        return (
+                          <div key={`phase3-spend-breakdown-${index}`} style={{ color: T.textMuted, fontSize: 10 }}>
+                            Fase {index + 1}: {formatMoney(base)} → {formatMoney(target)} ({formatSignedPct(changePct)})
+                          </div>
+                        );
+                      })}
                     </div>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>
                       Guardrails: {phase3Result.preferred.guardrailsPassed ? 'OK' : phase3Result.preferred.guardrailViolations.join(' · ')}
