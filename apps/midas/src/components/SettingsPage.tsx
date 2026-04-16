@@ -10,6 +10,17 @@ import {
   type InstrumentBaseSummary,
   type InstrumentBaseValidation,
 } from '../domain/instrumentBase';
+import {
+  clearInstrumentUniverseSnapshot,
+  loadInstrumentUniverseSnapshot,
+  saveInstrumentUniverseSnapshot,
+  summarizeInstrumentUniverse,
+  validateInstrumentUniverseJson,
+  type InstrumentUniverseSnapshot,
+  type InstrumentUniverseSummary,
+  type InstrumentUniverseValidation,
+} from '../domain/instrumentUniverse';
+import type { PortfolioWeights } from '../domain/model/types';
 import { T, css } from './theme';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 
@@ -52,6 +63,49 @@ const placeholderJson = `{
       "porcentaje_local": 25
     }
   ]
+}`;
+
+const placeholderUniverseJson = `{
+  "instrument_master": [
+    {
+      "instrument_id": "fund-a",
+      "name": "Fondo A",
+      "vehicle_type": "fund",
+      "currency": "CLP",
+      "tax_wrapper": "general",
+      "is_captive": false,
+      "is_sellable": true
+    }
+  ],
+  "instrument_mix_profile": [
+    {
+      "instrument_id": "fund-a",
+      "current_mix_used": { "rv": 0.6, "rf": 0.4, "cash": 0, "other": 0 },
+      "historical_used_range": { "rv": { "min": 0.45, "max": 0.75 }, "rf": { "min": 0.25, "max": 0.55 } },
+      "legal_range": {},
+      "observed_window_months": 36,
+      "observed_from": "2023-01",
+      "observed_to": "2025-12",
+      "estimation_method": "reported",
+      "confidence_score": 0.9,
+      "source_preference": "reported"
+    }
+  ],
+  "portfolio_position": [
+    {
+      "instrument_id": "fund-a",
+      "amount_clp": 100000000,
+      "weight_portfolio": 1,
+      "role": "core",
+      "structural_mix_driver": "rv_rf",
+      "estimated_mix_impact_points": 60,
+      "replaceability_score": 0.8,
+      "replacement_constraint": "none"
+    }
+  ],
+  "optimizer_metadata": {},
+  "portfolio_summary": {},
+  "methodology": {}
 }`;
 
 function SummaryCard({
@@ -120,6 +174,90 @@ function ExposureSummary({ summary }: { summary: InstrumentBaseSummary | null })
   );
 }
 
+function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary | null }) {
+  if (!summary) return null;
+  const currentMix = summary.currentMix;
+  const historical = summary.historicalUsedRange;
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+        <SummaryCard
+          title="Instrumentos universo"
+          value={`${summary.usableInstrumentCount}/${summary.instrumentCount}`}
+          subtitle={`Peso útil: ${formatPct(summary.totalWeightPortfolio)}`}
+        />
+        <SummaryCard
+          title="Current mix"
+          value={currentMix ? `RV ${formatPct(currentMix.rv)}` : '—'}
+          subtitle={currentMix ? `RF ${formatPct(currentMix.rf)} · Cash ${formatPct(currentMix.cash)}` : 'Sin mix utilizable'}
+        />
+        <SummaryCard
+          title="Banda histórica RV"
+          value={historical ? `${formatPct(historical.rv.min)} - ${formatPct(historical.rv.max)}` : '—'}
+          subtitle={`Target actual: ${formatPct(summary.targetRv)}`}
+        />
+        <SummaryCard
+          title="Cambio estructural"
+          value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Sí' : 'No'}
+          subtitle={
+            summary.targetWithinHistoricalRange === null
+              ? 'Sin banda o target'
+              : summary.targetWithinHistoricalRange
+                ? 'Target dentro de rango'
+                : 'Target fuera de rango'
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSnapshot | null }) {
+  if (!snapshot) return null;
+  return (
+    <div style={{ overflowX: 'auto', border: `1px solid ${T.border}`, borderRadius: 14 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+        <thead>
+          <tr style={{ background: T.surfaceEl, color: T.textMuted, fontSize: 11, textAlign: 'left' }}>
+            {['Instrumento', 'Peso', 'Mix usado', 'Rango RV', 'Conf.', 'Fuente', 'Driver', 'Warnings'].map((label) => (
+              <th key={label} style={{ padding: '10px 12px', borderBottom: `1px solid ${T.border}` }}>{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {snapshot.instruments.map((item) => (
+            <tr key={item.instrumentId} style={{ borderBottom: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12 }}>
+              <td style={{ padding: '10px 12px', color: T.textPrimary, fontWeight: 700 }}>
+                {item.name || item.instrumentId}
+                <div style={{ color: T.textMuted, fontSize: 10 }}>{item.instrumentId}</div>
+              </td>
+              <td style={{ padding: '10px 12px' }}>{formatPct(item.weightPortfolio)}</td>
+              <td style={{ padding: '10px 12px' }}>
+                {item.currentMixUsed
+                  ? `RV ${formatPct(item.currentMixUsed.rv)} / RF ${formatPct(item.currentMixUsed.rf)}`
+                  : '—'}
+              </td>
+              <td style={{ padding: '10px 12px' }}>
+                {item.historicalUsedRange
+                  ? `${formatPct(item.historicalUsedRange.rv.min)} - ${formatPct(item.historicalUsedRange.rv.max)}`
+                  : '—'}
+              </td>
+              <td style={{ padding: '10px 12px' }}>{formatPct(item.confidenceScore)}</td>
+              <td style={{ padding: '10px 12px' }}>{item.sourcePreference || '—'}</td>
+              <td style={{ padding: '10px 12px' }}>{item.structuralMixDriver || '—'}</td>
+              <td style={{ padding: '10px 12px', color: item.usable ? T.textMuted : T.warning }}>
+                {item.missingCriticalFields.length
+                  ? `Faltan: ${item.missingCriticalFields.join(', ')}`
+                  : item.warnings.join(' · ') || 'OK'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function aurumBaseSubtitle(status: AurumIntegrationStatus, optimizableBaseReference: OptimizableBaseReference) {
   if (status === 'available' || status === 'partial' || status === 'refreshing') {
     const prefix = status === 'partial' ? 'Fuente parcial' : 'Fuente';
@@ -136,14 +274,20 @@ function aurumBaseSubtitle(status: AurumIntegrationStatus, optimizableBaseRefere
 export function SettingsPage({
   optimizableBaseReference,
   aurumIntegrationStatus,
+  targetWeights,
 }: {
   optimizableBaseReference: OptimizableBaseReference;
   aurumIntegrationStatus: AurumIntegrationStatus;
+  targetWeights: PortfolioWeights;
 }) {
   const [savedSnapshot, setSavedSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const [editorValue, setEditorValue] = useState(() => loadInstrumentBaseSnapshot()?.rawJson || '');
   const [validation, setValidation] = useState<InstrumentBaseValidation | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [savedUniverseSnapshot, setSavedUniverseSnapshot] = useState(() => loadInstrumentUniverseSnapshot());
+  const [universeEditorValue, setUniverseEditorValue] = useState(() => loadInstrumentUniverseSnapshot()?.rawJson || '');
+  const [universeValidation, setUniverseValidation] = useState<InstrumentUniverseValidation | null>(null);
+  const [universeStatusMessage, setUniverseStatusMessage] = useState<string>('');
 
   useEffect(() => {
     const snapshot = loadInstrumentBaseSnapshot();
@@ -156,6 +300,10 @@ export function SettingsPage({
   const savedSummary = useMemo(
     () => summarizeInstrumentBase(savedSnapshot, optimizableBaseReference.amountClp),
     [savedSnapshot, optimizableBaseReference.amountClp],
+  );
+  const savedUniverseSummary = useMemo(
+    () => summarizeInstrumentUniverse(savedUniverseSnapshot, targetWeights),
+    [savedUniverseSnapshot, targetWeights],
   );
   const coverageQuality = classifyCoverageQuality(savedSummary?.coverageVsOptimizableBaseRatio ?? null);
 
@@ -187,6 +335,34 @@ export function SettingsPage({
     setSavedSnapshot(null);
     setValidation(null);
     setStatusMessage('Base instrumental eliminada de este dispositivo.');
+  };
+
+  const runUniverseValidation = () => {
+    const next = validateInstrumentUniverseJson(universeEditorValue, targetWeights);
+    setUniverseValidation(next);
+    setUniverseStatusMessage(next.ok ? 'Universe válido. Puedes guardarlo como contrato paralelo.' : 'Corrige el universe antes de guardar.');
+    return next;
+  };
+
+  const handleSaveUniverse = () => {
+    const next = universeValidation && universeValidation.snapshot?.rawJson === universeEditorValue.trim()
+      ? universeValidation
+      : validateInstrumentUniverseJson(universeEditorValue, targetWeights);
+    setUniverseValidation(next);
+    if (!next.ok || !next.snapshot) {
+      setUniverseStatusMessage('No pude guardar instrument_universe. Revisa errores.');
+      return;
+    }
+    saveInstrumentUniverseSnapshot(next.snapshot);
+    setSavedUniverseSnapshot(next.snapshot);
+    setUniverseStatusMessage('Instrument universe guardado en paralelo. No reemplaza la base instrumental actual.');
+  };
+
+  const handleClearUniverse = () => {
+    clearInstrumentUniverseSnapshot();
+    setSavedUniverseSnapshot(null);
+    setUniverseValidation(null);
+    setUniverseStatusMessage('Instrument universe eliminado de este dispositivo.');
   };
 
   return (
@@ -428,6 +604,227 @@ export function SettingsPage({
                 <div>Total cargado: <strong style={{ color: T.textPrimary }}>{formatMoneyClp(validation.summary.totalAmountCLP)}</strong></div>
                 <div>Cobertura estimada: <strong style={{ color: T.textPrimary }}>{formatPct(validation.summary.coverageVsOptimizableBaseRatio)}</strong></div>
                 <div>Diferencia vs base optimizable: <strong style={{ color: T.textPrimary }}>{formatMoneyClp(validation.summary.differenceVsOptimizableBaseClp)}</strong></div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section
+        style={{
+          border: `1px solid ${T.border}`,
+          background: T.surface,
+          borderRadius: 24,
+          padding: 18,
+          display: 'grid',
+          gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.16em', color: T.textMuted }}>
+            Instrument universe v1
+          </div>
+          <h2 style={{ margin: '10px 0 6px', fontSize: 24, lineHeight: 1.08 }}>Panel técnico paralelo</h2>
+          <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+            Carga y valida el nuevo schema sin fusionarlo con la base instrumental actual ni con el optimizador.
+          </div>
+        </div>
+
+        {savedUniverseSummary && (
+          <>
+            <UniverseSummaryPanel summary={savedUniverseSummary} />
+            <InstrumentUniverseTable snapshot={savedUniverseSnapshot} />
+            {savedUniverseSummary.warnings.length > 0 && (
+              <div style={{ color: T.warning, fontSize: 12, display: 'grid', gap: 5 }}>
+                {savedUniverseSummary.warnings.slice(0, 12).map((warning) => (
+                  <div key={warning}>• {warning}</div>
+                ))}
+                {savedUniverseSummary.warnings.length > 12 && (
+                  <div>• Hay {savedUniverseSummary.warnings.length - 12} warning(s) adicionales.</div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
+              Cargar instrument_universe.json
+            </div>
+            <div style={{ marginTop: 6, color: T.textSecondary, fontSize: 13 }}>
+              Acepta archivo JSON o pegado manual. Se guarda en storage separado: midas.instrument-universe.v1.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <label
+              style={{
+                borderRadius: 14,
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                color: T.textPrimary,
+                padding: '10px 14px',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Cargar archivo
+              <input
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  setUniverseEditorValue(await file.text());
+                  setUniverseStatusMessage(`Archivo cargado: ${file.name}`);
+                  event.currentTarget.value = '';
+                }}
+              />
+            </label>
+            {savedUniverseSnapshot && (
+              <button
+                type="button"
+                onClick={() => setUniverseEditorValue(savedUniverseSnapshot.rawJson)}
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  color: T.textPrimary,
+                  padding: '10px 14px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Cargar guardado
+              </button>
+            )}
+          </div>
+        </div>
+
+        <textarea
+          value={universeEditorValue}
+          onChange={(event) => {
+            setUniverseEditorValue(event.target.value);
+            setUniverseStatusMessage('');
+          }}
+          placeholder={placeholderUniverseJson}
+          spellCheck={false}
+          style={{
+            ...css.mono,
+            width: '100%',
+            minHeight: 260,
+            resize: 'vertical',
+            borderRadius: 18,
+            border: `1px solid ${T.border}`,
+            background: '#101522',
+            color: T.textPrimary,
+            padding: 14,
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}
+        />
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={runUniverseValidation}
+            style={{
+              borderRadius: 14,
+              border: `1px solid ${T.primaryStrong}`,
+              background: T.primaryStrong,
+              color: '#fff',
+              padding: '12px 16px',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Validar universe
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveUniverse}
+            style={{
+              borderRadius: 14,
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              color: T.textPrimary,
+              padding: '12px 16px',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Guardar universe
+          </button>
+          {savedUniverseSnapshot && (
+            <button
+              type="button"
+              onClick={handleClearUniverse}
+              style={{
+                borderRadius: 14,
+                border: `1px solid ${T.negative}`,
+                background: 'transparent',
+                color: T.negative,
+                padding: '12px 16px',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Eliminar universe
+            </button>
+          )}
+        </div>
+
+        {universeStatusMessage && (
+          <div
+            style={{
+              borderRadius: 16,
+              border: `1px solid ${universeValidation?.ok ? 'rgba(63,191,127,0.35)' : 'rgba(212,90,90,0.35)'}`,
+              background: universeValidation?.ok ? 'rgba(63,191,127,0.08)' : 'rgba(212,90,90,0.08)',
+              color: universeValidation?.ok ? T.positive : T.textSecondary,
+              padding: '12px 14px',
+              fontSize: 13,
+            }}
+          >
+            {universeStatusMessage}
+          </div>
+        )}
+
+        {universeValidation && (
+          <div
+            style={{
+              display: 'grid',
+              gap: 10,
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              borderRadius: 18,
+              padding: 14,
+            }}
+          >
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
+              Resultado de validación universe
+            </div>
+            {universeValidation.errors.length > 0 && (
+              <div style={{ color: T.negative, fontSize: 13, display: 'grid', gap: 6 }}>
+                {universeValidation.errors.map((error) => (
+                  <div key={error}>• {error}</div>
+                ))}
+              </div>
+            )}
+            {universeValidation.summary && <UniverseSummaryPanel summary={universeValidation.summary} />}
+            {universeValidation.warnings.length > 0 && (
+              <div style={{ color: T.warning, fontSize: 12, display: 'grid', gap: 5 }}>
+                {universeValidation.warnings.slice(0, 12).map((warning) => (
+                  <div key={warning}>• {warning}</div>
+                ))}
+                {universeValidation.warnings.length > 12 && (
+                  <div>• Hay {universeValidation.warnings.length - 12} warning(s) adicionales.</div>
+                )}
               </div>
             )}
           </div>

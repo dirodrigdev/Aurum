@@ -3,6 +3,7 @@ import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import type { InstrumentBaseItem, InstrumentBaseSnapshot } from '../instrumentBase';
 import { buildRealisticInstrumentProposal, validateInstrumentBaseJson } from '../instrumentBase';
+import { validateInstrumentUniverseJson } from '../instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
@@ -1392,6 +1393,96 @@ test('instrument base currency resolves moneda_origen for USD instruments', () =
   const bgf = validated.snapshot.instruments.find((item) => item.name.includes('BGF US Dollar Short Duration'));
   assert.equal(sura?.currency, 'CLP');
   assert.equal(bgf?.currency, 'USD');
+});
+
+test('instrument universe v1 computes current mix and reachable RV band separately', () => {
+  const payload = JSON.stringify({
+    instrument_master: [
+      {
+        instrument_id: 'fund-a',
+        name: 'Fund A',
+        vehicle_type: 'fund',
+        currency: 'CLP',
+        tax_wrapper: 'general',
+        is_captive: false,
+        is_sellable: true,
+      },
+      {
+        instrument_id: 'fund-b',
+        name: 'Fund B',
+        vehicle_type: 'fund',
+        currency: 'USD',
+        tax_wrapper: 'general',
+        is_captive: false,
+        is_sellable: true,
+      },
+    ],
+    instrument_mix_profile: [
+      {
+        instrument_id: 'fund-a',
+        current_mix_used: { rv: 0.6, rf: 0.4, cash: 0, other: 0 },
+        historical_used_range: { rv: { min: 0.4, max: 0.7 }, rf: { min: 0.3, max: 0.6 } },
+        legal_range: {},
+        observed_window_months: 24,
+        observed_from: '2024-01',
+        observed_to: '2025-12',
+        estimation_method: 'reported',
+        confidence_score: 0.9,
+        source_preference: 'reported',
+      },
+      {
+        instrument_id: 'fund-b',
+        current_mix_used: { rv: 0.8, rf: 0.2, cash: 0, other: 0 },
+        historical_used_range: { rv: { min: 0.5, max: 0.9 }, rf: { min: 0.1, max: 0.5 } },
+        legal_range: {},
+        observed_window_months: 24,
+        observed_from: '2024-01',
+        observed_to: '2025-12',
+        estimation_method: 'estimated',
+        confidence_score: 0.7,
+        source_preference: 'estimated',
+      },
+    ],
+    portfolio_position: [
+      {
+        instrument_id: 'fund-a',
+        amount_clp: 40,
+        weight_portfolio: 0.4,
+        role: 'core',
+        structural_mix_driver: 'rv_rf',
+        estimated_mix_impact_points: 24,
+        replaceability_score: 0.8,
+        replacement_constraint: 'none',
+      },
+      {
+        instrument_id: 'fund-b',
+        amount_clp: 60,
+        weight_portfolio: 0.6,
+        role: 'core',
+        structural_mix_driver: 'rv_rf',
+        estimated_mix_impact_points: 48,
+        replaceability_score: 0.6,
+        replacement_constraint: 'same_currency',
+      },
+    ],
+    optimizer_metadata: {},
+    portfolio_summary: {},
+    methodology: {},
+  });
+
+  const validation = validateInstrumentUniverseJson(payload, {
+    rvGlobal: 0.75,
+    rvChile: 0,
+    rfGlobal: 0.25,
+    rfChile: 0,
+  });
+
+  assert.equal(validation.ok, true);
+  assert.equal(validation.snapshot?.instruments.length, 2);
+  assert.equal(validation.summary?.structuralChangeRequired, false);
+  approxEqual(validation.summary?.currentMix?.rv ?? 0, 0.72);
+  approxEqual(validation.summary?.historicalUsedRange?.rv.min ?? 0, 0.46);
+  approxEqual(validation.summary?.historicalUsedRange?.rv.max ?? 0, 0.82);
 });
 
 test('instrument proposal picks best multi-factor destination within manager and currency', () => {

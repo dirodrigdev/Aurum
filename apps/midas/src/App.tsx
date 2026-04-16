@@ -3073,6 +3073,7 @@ export default function App() {
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
+      targetWeights={optimizerSimulationParams.weights}
     />
   ) : activeTab === 'optv0' ? (
     <OptPage
