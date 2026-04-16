@@ -34,6 +34,10 @@ export type InstrumentUniverseInstrument = {
   estimatedMixImpactPoints: number | null;
   replaceabilityScore: number | null;
   replacementConstraint: string | null;
+  sameCurrencyCandidates: string[];
+  sameManagerCandidates: string[];
+  sameTaxWrapperCandidates: string[];
+  decisionEligible: boolean | null;
   missingCriticalFields: string[];
   warnings: string[];
   usable: boolean;
@@ -265,6 +269,16 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     estimatedMixImpactPoints: normalizeLooseNumber(source.estimated_mix_impact_points ?? source.estimatedMixImpactPoints),
     replaceabilityScore: normalizeRatio(source.replaceability_score ?? source.replaceabilityScore),
     replacementConstraint: readString(source.replacement_constraint ?? source.replacementConstraint),
+    sameCurrencyCandidates: Array.isArray(source.same_currency_candidates)
+      ? source.same_currency_candidates.map((item) => String(item)).filter(Boolean)
+      : [],
+    sameManagerCandidates: Array.isArray(source.same_manager_candidates)
+      ? source.same_manager_candidates.map((item) => String(item)).filter(Boolean)
+      : [],
+    sameTaxWrapperCandidates: Array.isArray(source.same_tax_wrapper_candidates)
+      ? source.same_tax_wrapper_candidates.map((item) => String(item)).filter(Boolean)
+      : [],
+    decisionEligible: readBoolean(source.decision_eligible ?? source.decisionEligible),
     missingCriticalFields,
     warnings,
     usable:

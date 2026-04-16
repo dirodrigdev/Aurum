@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
+import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
+import {
+  buildInstrumentImplementationPlan,
+  REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP,
+} from '../domain/instrumentImplementationPlanner';
+import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
 import { T } from './theme';
 
 type OptimizationMode = 'light' | 'normal' | 'decision';
@@ -99,6 +105,12 @@ type Phase3Result = {
   candidatesEvaluated: number;
   eligibleCandidates: number;
   preferred: Phase3Candidate | null;
+};
+
+type RealisticValidationResult = {
+  row: Phase2Point;
+  deltaVsIdealSuccessPp: number;
+  message: string;
 };
 
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
@@ -735,6 +747,12 @@ export function OptimizationLightPage({
   const [longevityRunning, setLongevityRunning] = useState(false);
   const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
   const [longevityError, setLongevityError] = useState<string | null>(null);
+  const [implementationRunning, setImplementationRunning] = useState(false);
+  const [implementationPlan, setImplementationPlan] = useState<InstrumentImplementationPlan | null>(null);
+  const [implementationError, setImplementationError] = useState<string | null>(null);
+  const [realisticValidationRunning, setRealisticValidationRunning] = useState(false);
+  const [realisticValidation, setRealisticValidation] = useState<RealisticValidationResult | null>(null);
+  const [realisticValidationError, setRealisticValidationError] = useState<string | null>(null);
   const [phase3Running, setPhase3Running] = useState(false);
   const [phase3Result, setPhase3Result] = useState<Phase3Result | null>(null);
   const [phase3Error, setPhase3Error] = useState<string | null>(null);
@@ -765,6 +783,10 @@ export function OptimizationLightPage({
     setStaleNotice('Resultados desactualizados: cambió la fuente o el escenario. Vuelve a ejecutar.');
     setLongevityResult(null);
     setLongevityError(null);
+    setImplementationPlan(null);
+    setImplementationError(null);
+    setRealisticValidation(null);
+    setRealisticValidationError(null);
     setPhase3Result(null);
     setPhase3Error(null);
     if (stalePhase1) {
@@ -787,6 +809,10 @@ export function OptimizationLightPage({
     setPhase2Rows([]);
     setLongevityResult(null);
     setLongevityError(null);
+    setImplementationPlan(null);
+    setImplementationError(null);
+    setRealisticValidation(null);
+    setRealisticValidationError(null);
     setPhase3Result(null);
     setPhase3Error(null);
     try {
@@ -828,6 +854,10 @@ export function OptimizationLightPage({
     setPhase2Rows([]);
     setLongevityResult(null);
     setLongevityError(null);
+    setImplementationPlan(null);
+    setImplementationError(null);
+    setRealisticValidation(null);
+    setRealisticValidationError(null);
     setPhase3Result(null);
     setPhase3Error(null);
     try {
@@ -981,6 +1011,120 @@ export function OptimizationLightPage({
       reason: 'Se usa la referencia Fase 1 (no hay desplazador claro)',
     };
   }, [phase2BaselineRow, phase2DisplacingRows]);
+  const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
+  const phase3Input = useMemo(() => {
+    const materialGap = Boolean(
+      implementationPlan
+      && Math.abs(implementationPlan.gapVsIdealRvPp) > REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9,
+    );
+    if (materialGap) {
+      if (realisticValidation?.row) {
+        return {
+          rows: [realisticValidation.row] as Phase2Point[],
+          sourceLabel: 'Escenario implementable revalidado',
+          blockedReason: null as string | null,
+        };
+      }
+      return {
+        rows: [] as Phase2Point[],
+        sourceLabel: 'Escenario implementable pendiente de validación realista',
+        blockedReason: 'Para ejecutar Fase 3 primero debes correr la Validación realista.',
+      };
+    }
+    return {
+      rows: phase3RelevantRows,
+      sourceLabel: 'Escenarios relevantes de Fase 2',
+      blockedReason: null as string | null,
+    };
+  }, [implementationPlan, phase3RelevantRows, realisticValidation]);
+  const phase3InputRows = phase3Input.rows;
+
+  const runImplementation = useCallback(async () => {
+    if (implementationRunning) return;
+    const idealRow = phase2ImplementationSelectedRow;
+    if (!idealRow) {
+      setImplementationError('No hay escenario ideal de Fase 2 para construir implementación.');
+      return;
+    }
+    setImplementationRunning(true);
+    setImplementationError(null);
+    setImplementationPlan(null);
+    setRealisticValidation(null);
+    setRealisticValidationError(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const loaded = loadInstrumentImplementationUniverse(idealRow.source.weights);
+      if (!loaded.universe) {
+        throw new Error(loaded.warnings[0] ?? 'No hay instrument_universe cargado para implementar el mix ideal.');
+      }
+      const plan = buildInstrumentImplementationPlan({
+        universe: loaded.universe,
+        targetWeights: idealRow.source.weights,
+      });
+      if (!plan) throw new Error('No se pudo construir un plan de implementación utilizable.');
+      setImplementationPlan(plan);
+    } catch (error) {
+      setImplementationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImplementationRunning(false);
+    }
+  }, [implementationRunning, phase2ImplementationSelectedRow]);
+
+  const runRealisticValidation = useCallback(async () => {
+    if (realisticValidationRunning) return;
+    const idealRow = phase2ImplementationSelectedRow;
+    if (!implementationPlan || !idealRow) {
+      setRealisticValidationError('Primero ejecuta Implementación para validar el mix alcanzable.');
+      return;
+    }
+    if (Math.abs(implementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9) {
+      setRealisticValidation({
+        row: idealRow,
+        deltaVsIdealSuccessPp: 0,
+        message: 'Implementación equivalente al objetivo ideal (no requiere validación adicional).',
+      });
+      setRealisticValidationError(null);
+      return;
+    }
+    setRealisticValidationRunning(true);
+    setRealisticValidationError(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const params = cloneParams(activeParams);
+      params.weights = cloneParams(implementationPlan.reachableWeights);
+      const sim = runSimulationCentral(params);
+      const reachableRv = (implementationPlan.reachableWeights.rvGlobal + implementationPlan.reachableWeights.rvChile) * 100;
+      const reachableRf = 100 - reachableRv;
+      const row: Phase2Point = {
+        source: {
+          ...idealRow.source,
+          rvPct: Number(reachableRv.toFixed(1)),
+          rfPct: Number(reachableRf.toFixed(1)),
+          weights: cloneParams(implementationPlan.reachableWeights),
+        },
+        success40Assisted: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
+        ruin20Assisted: sim.probRuin20 ?? 0,
+        houseSalePct: sim.houseSalePct ?? 0,
+        houseSaleYearP50: Number.isFinite(sim.saleYearMedian ?? Number.NaN) ? (sim.saleYearMedian as number) : null,
+        cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
+        cutSeverityMean: Number.isFinite(sim.cutSeverityMean ?? Number.NaN) ? (sim.cutSeverityMean as number) : null,
+        firstCutYearP50: Number.isFinite(sim.firstCutYearMedian ?? Number.NaN) ? (sim.firstCutYearMedian as number) : null,
+        terminalP50All: sim.p50TerminalAllPaths ?? null,
+        terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
+        drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
+      };
+      const deltaVsIdealSuccessPp = (row.success40Assisted - idealRow.success40Assisted) * 100;
+      const message = Math.abs(deltaVsIdealSuccessPp) <= 0.25
+        ? 'Implementación equivalente al objetivo (resultado prácticamente igual).'
+        : 'La implementación real modifica el resultado del escenario ideal.';
+      setRealisticValidation({ row, deltaVsIdealSuccessPp, message });
+    } catch (error) {
+      setRealisticValidationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRealisticValidationRunning(false);
+    }
+  }, [activeParams, implementationPlan, phase2ImplementationSelectedRow, realisticValidationRunning]);
+
   const runLongevityPlus5 = useCallback(async () => {
     const selectedRow = phase2LongevitySelectedRow.row;
     if (!selectedRow || longevityRunning) return;
@@ -1010,13 +1154,13 @@ export function OptimizationLightPage({
   }, [activeParams, longevityRunning, phase2LongevitySelectedRow]);
 
   const runPhase3 = useCallback(async () => {
-    if (phase3Running || !phase3RelevantRows.length) return;
+    if (phase3Running || !phase3InputRows.length) return;
     setPhase3Running(true);
     setPhase3Error(null);
     setPhase3Result(null);
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      const sortedBySuccess = [...phase3RelevantRows].sort((a, b) => (
+      const sortedBySuccess = [...phase3InputRows].sort((a, b) => (
         (b.success40Assisted - a.success40Assisted)
         || (a.ruin20Assisted - b.ruin20Assisted)
         || (a.houseSalePct - b.houseSalePct)
@@ -1030,7 +1174,7 @@ export function OptimizationLightPage({
       const baseSpendingVector = getSpendingVector(activeParams);
       const candidates: Phase3Candidate[] = [];
 
-      for (const row of phase3RelevantRows) {
+      for (const row of phase3InputRows) {
         for (const variant of PHASE3_SPENDING_VARIANTS) {
           const candidateParams = buildPhase3SpendingParams(activeParams, row.source.weights, variant);
           const sim = runSimulationCentral(candidateParams);
@@ -1070,7 +1214,7 @@ export function OptimizationLightPage({
       ))[0] ?? null;
 
       setPhase3Result({
-        relevantRows: phase3RelevantRows,
+        relevantRows: phase3InputRows,
         bestSuccessRow,
         successBand,
         minimumSuccess,
@@ -1084,7 +1228,7 @@ export function OptimizationLightPage({
     } finally {
       setPhase3Running(false);
     }
-  }, [activeParams, phase3RelevantRows, phase3Running]);
+  }, [activeParams, phase3InputRows, phase3Running]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -1477,26 +1621,157 @@ export function OptimizationLightPage({
 
         {phase2Rows.length > 0 && (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Fase 3 · Calidad de vida / gasto</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Implementación · Traspasos sugeridos</div>
             <div style={{ color: T.textSecondary, fontSize: 11 }}>
-              Busca variantes de gasto más cómodas solo entre escenarios relevantes de Fase 2 y dentro de la banda aceptable de éxito.
+              Traduce el objetivo ideal a instrumentos reales (sin tocar el JSON abstracto del optimizador).
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Escenarios base: {phase3RelevantRows.length
-                ? phase3RelevantRows.map((row) => `RV ${row.source.rvPct}/RF ${row.source.rfPct}`).join(' · ')
+              Objetivo ideal base: {phase2ImplementationSelectedRow ? `RV ${phase2ImplementationSelectedRow.source.rvPct}% / RF ${phase2ImplementationSelectedRow.source.rfPct}%` : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={runImplementation}
+                disabled={implementationRunning || !phase2ImplementationSelectedRow}
+                style={{
+                  background: implementationRunning ? T.surface : T.primary,
+                  border: `1px solid ${implementationRunning ? T.border : T.primary}`,
+                  color: implementationRunning ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: implementationRunning || !phase2ImplementationSelectedRow ? 'not-allowed' : 'pointer',
+                  opacity: !phase2ImplementationSelectedRow ? 0.6 : 1,
+                }}
+              >
+                {implementationRunning ? 'Calculando implementación…' : 'Calcular implementación'}
+              </button>
+              <button
+                type="button"
+                onClick={runRealisticValidation}
+                disabled={realisticValidationRunning || !implementationPlan}
+                style={{
+                  background: realisticValidationRunning ? T.surface : T.primary,
+                  border: `1px solid ${realisticValidationRunning ? T.border : T.primary}`,
+                  color: realisticValidationRunning ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: realisticValidationRunning || !implementationPlan ? 'not-allowed' : 'pointer',
+                  opacity: !implementationPlan ? 0.6 : 1,
+                }}
+              >
+                {realisticValidationRunning ? 'Validando mix alcanzable…' : 'Validación realista'}
+              </button>
+            </div>
+            {implementationError ? (
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{implementationError}</div>
+            ) : null}
+            {implementationPlan ? (
+              <div style={{ display: 'grid', gap: 7 }}>
+                <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo ideal</div>
+                    <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
+                      RV {(implementationPlan.targetMixIdeal.rv * 100).toFixed(1)}% / RF {(implementationPlan.targetMixIdeal.rf * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix alcanzable</div>
+                    <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
+                      RV {(implementationPlan.reachableMix.rv * 100).toFixed(1)}% / RF {(implementationPlan.reachableMix.rf * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Gap vs ideal (RV)</div>
+                    <div style={{ color: Math.abs(implementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP ? T.positive : T.warning, fontSize: 15, fontWeight: 800 }}>
+                      {formatSignedPp(-implementationPlan.gapVsIdealRvPp)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ color: implementationPlan.equivalentToIdeal ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
+                  {implementationPlan.equivalentToIdeal
+                    ? 'Implementación equivalente al objetivo ideal.'
+                    : 'Gap material detectado: se requiere Validación realista para pasar a Fase 3.'}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Restricciones aplicadas · misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
+                  {' '}misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'} ·
+                  {' '}mismo wrapper: {implementationPlan.restrictionsApplied.sameTaxWrapper ? 'sí' : 'no'} ·
+                  {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'}
+                </div>
+                {implementationPlan.transfers.length ? (
+                  <div style={{ display: 'grid', gap: 3 }}>
+                    {implementationPlan.transfers.slice(0, 6).map((transfer, index) => (
+                      <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10 }}>
+                        {transfer.fromName} → {transfer.toName} · mover {(transfer.weightMoved * 100).toFixed(2)}% cartera · {transfer.rationale}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    No hay traspasos sugeridos con el universo cargado.
+                  </div>
+                )}
+                {implementationPlan.warnings.length ? (
+                  <div style={{ display: 'grid', gap: 2 }}>
+                    {implementationPlan.warnings.map((warning) => (
+                      <div key={warning} style={{ color: T.warning, fontSize: 10 }}>{warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {realisticValidationError ? (
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{realisticValidationError}</div>
+            ) : null}
+            {realisticValidation ? (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface, display: 'grid', gap: 4 }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Validación realista</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>{realisticValidation.message}</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Éxito mix alcanzable: {formatPct(realisticValidation.row.success40Assisted)} · Δ vs ideal {formatSignedPp(realisticValidation.deltaVsIdealSuccessPp)}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Ruina20: {formatPct(realisticValidation.row.ruin20Assisted)} · Venta casa: {formatPct(realisticValidation.row.houseSalePct)} · MaxDD P50: {formatPct(realisticValidation.row.drawdownP50)}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {phase2Rows.length > 0 && (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Fase 3 · Calidad de vida / gasto</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Busca variantes de gasto más cómodas sobre el escenario final validado y dentro de la banda aceptable de éxito.
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Fuente Fase 3: {phase3Input.sourceLabel} · Escenarios base: {phase3InputRows.length
+                ? phase3InputRows.map((row) => `RV ${row.source.rvPct}/RF ${row.source.rfPct}`).join(' · ')
                 : 'No disponibles'} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes · pesos QoL G1/G2/G3/G4 = 25/40/25/10.
             </div>
-            {phase3RelevantRows.length > 0 ? (
+            {phase3Input.blockedReason ? (
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+                {phase3Input.blockedReason}
+              </div>
+            ) : null}
+            {phase3InputRows.length > 0 ? (
               <div style={{ display: 'grid', gap: 6 }}>
                 <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                   Escenarios base evaluados en Fase 3
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {phase3RelevantRows.map((row) => {
+                  {phase3InputRows.map((row) => {
                     const decision = phase2Decisions.get(row.source.rvPct) ?? null;
                     const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
+                    const isRealistic = Boolean(realisticValidation?.row && row === realisticValidation.row);
                     const roleLabel = isBaseline
                       ? 'Referencia Fase 1'
+                      : isRealistic
+                        ? 'Implementable validado'
                       : decision?.displacesPhase1
                         ? 'Desplaza'
                         : decision?.competesWithPhase1
@@ -1531,7 +1806,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runPhase3}
-                disabled={phase3Running || !phase3RelevantRows.length}
+                disabled={phase3Running || !phase3InputRows.length}
                 style={{
                   background: phase3Running ? T.surface : T.primary,
                   border: `1px solid ${phase3Running ? T.border : T.primary}`,
@@ -1540,8 +1815,8 @@ export function OptimizationLightPage({
                   padding: '6px 10px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: phase3Running || !phase3RelevantRows.length ? 'not-allowed' : 'pointer',
-                  opacity: !phase3RelevantRows.length ? 0.6 : 1,
+                  cursor: phase3Running || !phase3InputRows.length ? 'not-allowed' : 'pointer',
+                  opacity: !phase3InputRows.length ? 0.6 : 1,
                 }}
               >
                 {phase3Running ? 'Calculando Fase 3…' : 'Ejecutar Fase 3'}
@@ -1574,8 +1849,16 @@ export function OptimizationLightPage({
 
                 {phase3Result.preferred ? (
                   <div style={{ border: `1px solid ${T.positive}`, borderRadius: 12, padding: 10, display: 'grid', gap: 5 }}>
+                    <div style={{ color: T.positive, fontSize: 11, fontWeight: 800 }}>
+                      Escenario recomendado final
+                    </div>
                     <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                       Escenario preferido por calidad de vida: RV {phase3Result.preferred.baseRow.source.rvPct}% / RF {phase3Result.preferred.baseRow.source.rfPct}%
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Fuente final: {realisticValidation?.row && phase3Result.preferred.baseRow === realisticValidation.row
+                        ? 'Mix implementable revalidado'
+                        : 'Mix ideal equivalente'}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
                       <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
