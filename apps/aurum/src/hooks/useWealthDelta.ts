@@ -29,6 +29,8 @@ type WealthDeltaToastState = {
   reason: string;
 };
 
+export const WEALTH_DELTA_TOAST_TRIGGER_EVENT = 'aurum:wealth-delta-toast-trigger';
+
 const EPSILON = 0.5;
 
 const differs = (a: number, b: number) => Math.abs(a - b) >= EPSILON;
@@ -133,6 +135,20 @@ export const useWealthDelta = () => {
     const onFxUpdated = () => processChange('fx');
     const onRiskUpdated = () => processChange('risk');
     const onStorage = () => processChange('wealth');
+    const onManualToastTrigger = (event: Event) => {
+      const detail = (event as CustomEvent<{ delta?: number; reason?: string }>).detail || {};
+      const delta = Number(detail.delta || 0);
+      if (!differs(delta, 0)) return;
+      pendingReasonsRef.current.clear();
+      pendingDeltaRef.current = delta;
+      if (detail.reason) pendingReasonsRef.current.add(String(detail.reason));
+      setToast({
+        visible: true,
+        delta: pendingDeltaRef.current,
+        reason: summarizeReasons(pendingReasonsRef.current),
+      });
+      restartTimer();
+    };
 
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, onWealthUpdated as EventListener);
     window.addEventListener(FX_RATES_UPDATED_EVENT, onFxUpdated as EventListener);
@@ -141,6 +157,7 @@ export const useWealthDelta = () => {
       onRiskUpdated as EventListener,
     );
     window.addEventListener('storage', onStorage);
+    window.addEventListener(WEALTH_DELTA_TOAST_TRIGGER_EVENT, onManualToastTrigger as EventListener);
 
     return () => {
       clearTimer();
@@ -151,9 +168,9 @@ export const useWealthDelta = () => {
         onRiskUpdated as EventListener,
       );
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener(WEALTH_DELTA_TOAST_TRIGGER_EVENT, onManualToastTrigger as EventListener);
     };
   }, []);
 
   return toast;
 };
-
