@@ -67,6 +67,40 @@ type LongevityPlus5Result = {
   terminalP50All45: number | null;
 };
 
+type Phase3SpendingVariant = {
+  id: string;
+  label: string;
+  deltas: [number, number, number, number];
+};
+
+type Phase3Candidate = {
+  baseRow: Phase2Point;
+  variant: Phase3SpendingVariant;
+  spendingVector: number[];
+  success40: number;
+  ruin20: number;
+  cutScenarioPct: number | null;
+  houseSalePct: number;
+  drawdownP50: number;
+  qualityOfLifeScore: number;
+  weightedSpendingImprovementPct: number;
+  deltaVsBestSuccessPp: number;
+  guardrailViolations: string[];
+  eligibleByBand: boolean;
+  guardrailsPassed: boolean;
+};
+
+type Phase3Result = {
+  relevantRows: Phase2Point[];
+  bestSuccessRow: Phase2Point;
+  successBand: number;
+  minimumSuccess: number;
+  variantsTested: Phase3SpendingVariant[];
+  candidatesEvaluated: number;
+  eligibleCandidates: number;
+  preferred: Phase3Candidate | null;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
 const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
@@ -75,6 +109,27 @@ const PHASE1_SWEEP_MAX_RV = 100;
 const PHASE1_SWEEP_STEP = 10;
 const TECHNICAL_TIE_BAND_PP = 0.2;
 const DELTA_ZERO_EPSILON_PP = 0.05;
+const PHASE3_QOL_WEIGHTS = [0.25, 0.40, 0.25, 0.10] as const;
+const PHASE3_SPENDING_VARIANTS: Phase3SpendingVariant[] = [
+  { id: 'base', label: 'Base', deltas: [0, 0, 0, 0] },
+  { id: 'uniform-5', label: 'Uniforme +5%', deltas: [0.05, 0.05, 0.05, 0.05] },
+  { id: 'uniform-10', label: 'Uniforme +10%', deltas: [0.10, 0.10, 0.10, 0.10] },
+  { id: 'uniform-15', label: 'Uniforme +15%', deltas: [0.15, 0.15, 0.15, 0.15] },
+  { id: 'g2-5', label: 'Fase 2 +5%', deltas: [0, 0.05, 0, 0] },
+  { id: 'g2-10', label: 'Fase 2 +10%', deltas: [0, 0.10, 0, 0] },
+  { id: 'g2-15', label: 'Fase 2 +15%', deltas: [0, 0.15, 0, 0] },
+  { id: 'g2g3-5', label: 'Fase 2+3 +5%', deltas: [0, 0.05, 0.05, 0] },
+  { id: 'g2-10-g3-5', label: 'Fase 2 +10%, Fase 3 +5%', deltas: [0, 0.10, 0.05, 0] },
+  { id: 'g2g3-10', label: 'Fase 2+3 +10%', deltas: [0, 0.10, 0.10, 0] },
+  { id: 'human-1', label: 'Humana +5/+10/+5', deltas: [0.05, 0.10, 0.05, 0] },
+  { id: 'human-2', label: 'Humana +5/+15/+10', deltas: [0.05, 0.15, 0.10, 0] },
+];
+const PHASE3_GUARDRAILS = {
+  ruin20MaxWorse: 0.005,
+  cutScenarioPctMaxWorse: 0.05,
+  houseSalePctMaxWorse: 0.05,
+  maxDDP50MaxWorse: 0.03,
+} as const;
 const PHASE2_COMPETITION_THRESHOLDS = {
   autonomousEligibilityGapPp: 1.0,
   material: {
@@ -158,6 +213,10 @@ function formatMoney(value: number | null): string {
 
 function formatPctValue(value: number): string {
   return `${(value * 100).toFixed(1).replace('.', ',')}%`;
+}
+
+function formatSignedPp(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)} pp`;
 }
 
 function formatDeltaVsBest(deltaVsBestPp: number): string {
@@ -498,6 +557,65 @@ function buildLongevityPlus5Params(baseParams: ModelParameters, weights: Portfol
   return next;
 }
 
+function phase3SuccessBand(bestSuccess: number): number {
+  if (bestSuccess >= 0.90) return 0.03;
+  if (bestSuccess >= 0.85) return 0.025;
+  if (bestSuccess >= 0.80) return 0.02;
+  if (bestSuccess >= 0.70) return 0.015;
+  return 0.01;
+}
+
+function getSpendingVector(params: ModelParameters): number[] {
+  return PHASE3_QOL_WEIGHTS.map((_, index) => {
+    const phase = params.spendingPhases[index] ?? params.spendingPhases[params.spendingPhases.length - 1];
+    return Math.max(1, Number(phase?.amountReal ?? 1));
+  });
+}
+
+function buildPhase3SpendingParams(
+  baseParams: ModelParameters,
+  weights: PortfolioWeights,
+  variant: Phase3SpendingVariant,
+): ModelParameters {
+  const next = cloneParams(baseParams);
+  next.weights = cloneParams(weights);
+  next.spendingPhases = next.spendingPhases.map((phase, index) => (
+    index < 4
+      ? { ...phase, amountReal: phase.amountReal * (1 + variant.deltas[index]) }
+      : phase
+  ));
+  return next;
+}
+
+function computeQualityOfLifeScore(baseVector: number[], candidateVector: number[]): number {
+  return PHASE3_QOL_WEIGHTS.reduce((sum, weight, index) => {
+    const base = Math.max(1, baseVector[index] ?? 1);
+    const candidate = Math.max(0, candidateVector[index] ?? base);
+    return sum + weight * (candidate / base);
+  }, 0);
+}
+
+function buildPhase3GuardrailViolations(bestBase: Phase2Point, candidate: Phase3Candidate): string[] {
+  const violations: string[] = [];
+  if (candidate.ruin20 - bestBase.ruin20Assisted > PHASE3_GUARDRAILS.ruin20MaxWorse + 1e-9) {
+    violations.push(`Ruina20 empeora ${formatSignedPp((candidate.ruin20 - bestBase.ruin20Assisted) * 100)}`);
+  }
+  if (
+    hasNumber(candidate.cutScenarioPct)
+    && hasNumber(bestBase.cutScenarioPct)
+    && candidate.cutScenarioPct - bestBase.cutScenarioPct > PHASE3_GUARDRAILS.cutScenarioPctMaxWorse + 1e-9
+  ) {
+    violations.push(`Cuts empeoran ${formatSignedPp((candidate.cutScenarioPct - bestBase.cutScenarioPct) * 100)}`);
+  }
+  if (candidate.houseSalePct - bestBase.houseSalePct > PHASE3_GUARDRAILS.houseSalePctMaxWorse + 1e-9) {
+    violations.push(`Venta casa empeora ${formatSignedPp((candidate.houseSalePct - bestBase.houseSalePct) * 100)}`);
+  }
+  if (candidate.drawdownP50 - bestBase.drawdownP50 > PHASE3_GUARDRAILS.maxDDP50MaxWorse + 1e-9) {
+    violations.push(`MaxDD P50 empeora ${formatSignedPp((candidate.drawdownP50 - bestBase.drawdownP50) * 100)}`);
+  }
+  return violations;
+}
+
 type MixSwitchVerdict = {
   level: 'no' | 'considerar' | 'cambiar';
   label: string;
@@ -613,6 +731,9 @@ export function OptimizationLightPage({
   const [longevityRunning, setLongevityRunning] = useState(false);
   const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
   const [longevityError, setLongevityError] = useState<string | null>(null);
+  const [phase3Running, setPhase3Running] = useState(false);
+  const [phase3Result, setPhase3Result] = useState<Phase3Result | null>(null);
+  const [phase3Error, setPhase3Error] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -640,6 +761,8 @@ export function OptimizationLightPage({
     setStaleNotice('Resultados desactualizados: cambió la fuente o el escenario. Vuelve a ejecutar.');
     setLongevityResult(null);
     setLongevityError(null);
+    setPhase3Result(null);
+    setPhase3Error(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -660,6 +783,8 @@ export function OptimizationLightPage({
     setPhase2Rows([]);
     setLongevityResult(null);
     setLongevityError(null);
+    setPhase3Result(null);
+    setPhase3Error(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -699,6 +824,8 @@ export function OptimizationLightPage({
     setPhase2Rows([]);
     setLongevityResult(null);
     setLongevityError(null);
+    setPhase3Result(null);
+    setPhase3Error(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -819,6 +946,16 @@ export function OptimizationLightPage({
     () => phase2Rows.filter((row) => phase2Decisions.get(row.source.rvPct)?.displacesPhase1),
     [phase2Decisions, phase2Rows],
   );
+  const phase3RelevantRows = useMemo(() => {
+    if (!phase2Rows.length) return [];
+    const rows = phase2Rows.filter((row) => {
+      const decision = phase2Decisions.get(row.source.rvPct) ?? null;
+      const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
+      return isBaseline || Boolean(decision?.competesWithPhase1) || Boolean(decision?.displacesPhase1);
+    });
+    if (rows.length) return rows;
+    return phase2BaselineRow ? [phase2BaselineRow] : [];
+  }, [phase2BaselinePoint, phase2BaselineRow, phase2Decisions, phase2Rows]);
   const phase2LongevitySelectedRow = useMemo(() => {
     if (phase2DisplacingRows.length) {
       const sorted = [...phase2DisplacingRows].sort((a, b) => (
@@ -864,6 +1001,83 @@ export function OptimizationLightPage({
     }
   }, [activeParams, longevityRunning, phase2LongevitySelectedRow]);
 
+  const runPhase3 = useCallback(async () => {
+    if (phase3Running || !phase3RelevantRows.length) return;
+    setPhase3Running(true);
+    setPhase3Error(null);
+    setPhase3Result(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const sortedBySuccess = [...phase3RelevantRows].sort((a, b) => (
+        (b.success40Assisted - a.success40Assisted)
+        || (a.ruin20Assisted - b.ruin20Assisted)
+        || (a.houseSalePct - b.houseSalePct)
+      ));
+      const bestSuccessRow = sortedBySuccess[0];
+      if (!bestSuccessRow) throw new Error('No hay escenarios relevantes de Fase 2 para Fase 3.');
+
+      const bestSuccess = bestSuccessRow.success40Assisted;
+      const successBand = phase3SuccessBand(bestSuccess);
+      const minimumSuccess = bestSuccess - successBand;
+      const baseSpendingVector = getSpendingVector(activeParams);
+      const candidates: Phase3Candidate[] = [];
+
+      for (const row of phase3RelevantRows) {
+        for (const variant of PHASE3_SPENDING_VARIANTS) {
+          const candidateParams = buildPhase3SpendingParams(activeParams, row.source.weights, variant);
+          const sim = runSimulationCentral(candidateParams);
+          const spendingVector = getSpendingVector(candidateParams);
+          const qualityOfLifeScore = computeQualityOfLifeScore(baseSpendingVector, spendingVector);
+          const success40 = sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin));
+          const candidate: Phase3Candidate = {
+            baseRow: row,
+            variant,
+            spendingVector,
+            success40,
+            ruin20: sim.probRuin20 ?? 0,
+            cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
+            houseSalePct: sim.houseSalePct ?? 0,
+            drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
+            qualityOfLifeScore,
+            weightedSpendingImprovementPct: (qualityOfLifeScore - 1) * 100,
+            deltaVsBestSuccessPp: (success40 - bestSuccess) * 100,
+            guardrailViolations: [],
+            eligibleByBand: success40 >= minimumSuccess - 1e-9,
+            guardrailsPassed: false,
+          };
+          candidate.guardrailViolations = buildPhase3GuardrailViolations(bestSuccessRow, candidate);
+          candidate.guardrailsPassed = candidate.guardrailViolations.length === 0;
+          candidates.push(candidate);
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        }
+      }
+
+      const eligibleCandidates = candidates.filter((candidate) => candidate.eligibleByBand && candidate.guardrailsPassed);
+      const improvedEligibleCandidates = eligibleCandidates.filter((candidate) => candidate.qualityOfLifeScore > 1.0001);
+      const preferred = [...improvedEligibleCandidates].sort((a, b) => (
+        (b.qualityOfLifeScore - a.qualityOfLifeScore)
+        || (b.success40 - a.success40)
+        || (a.ruin20 - b.ruin20)
+        || (a.houseSalePct - b.houseSalePct)
+      ))[0] ?? null;
+
+      setPhase3Result({
+        relevantRows: phase3RelevantRows,
+        bestSuccessRow,
+        successBand,
+        minimumSuccess,
+        variantsTested: PHASE3_SPENDING_VARIANTS,
+        candidatesEvaluated: candidates.length,
+        eligibleCandidates: eligibleCandidates.length,
+        preferred,
+      });
+    } catch (error) {
+      setPhase3Error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPhase3Running(false);
+    }
+  }, [activeParams, phase3RelevantRows, phase3Running]);
+
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
     const cut = row.cutScenarioPct ?? 0;
@@ -877,7 +1091,7 @@ export function OptimizationLightPage({
       <div style={{ display: 'grid', gap: 4 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Optimización</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Fase 1: optimización autónoma del portafolio. Fase 2: validación del shortlist en el modelo completo.
+          Fase 1: optimización autónoma del portafolio. Fase 2: validación del shortlist. Fase 3: gasto cómodo dentro de banda de seguridad.
         </div>
       </div>
 
@@ -1250,6 +1464,88 @@ export function OptimizationLightPage({
               </div>
               );
             })}
+          </div>
+        )}
+
+        {phase2Rows.length > 0 && (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Fase 3 · Calidad de vida / gasto</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Busca variantes de gasto más cómodas solo entre escenarios relevantes de Fase 2 y dentro de la banda aceptable de éxito.
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Escenarios base: {phase3RelevantRows.length
+                ? phase3RelevantRows.map((row) => `RV ${row.source.rvPct}/RF ${row.source.rfPct}`).join(' · ')
+                : 'No disponibles'} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes · pesos QoL G1/G2/G3/G4 = 25/40/25/10.
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={runPhase3}
+                disabled={phase3Running || !phase3RelevantRows.length}
+                style={{
+                  background: phase3Running ? T.surface : T.primary,
+                  border: `1px solid ${phase3Running ? T.border : T.primary}`,
+                  color: phase3Running ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: phase3Running || !phase3RelevantRows.length ? 'not-allowed' : 'pointer',
+                  opacity: !phase3RelevantRows.length ? 0.6 : 1,
+                }}
+              >
+                {phase3Running ? 'Calculando Fase 3…' : 'Ejecutar Fase 3'}
+              </button>
+            </div>
+            {phase3Error ? (
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{phase3Error}</div>
+            ) : null}
+            {phase3Result ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mejor éxito Fase 2</div>
+                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.bestSuccessRow.success40Assisted)}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>RV {phase3Result.bestSuccessRow.source.rvPct} / RF {phase3Result.bestSuccessRow.source.rfPct}</div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Banda usada</div>
+                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.successBand)}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mínimo aceptado: {formatPct(phase3Result.minimumSuccess)}</div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Candidatos evaluados</div>
+                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{phase3Result.candidatesEvaluated}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Elegibles: {phase3Result.eligibleCandidates}</div>
+                  </div>
+                </div>
+
+                {phase3Result.preferred ? (
+                  <div style={{ border: `1px solid ${T.positive}`, borderRadius: 12, padding: 10, display: 'grid', gap: 5 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                      Escenario preferido por calidad de vida: RV {phase3Result.preferred.baseRow.source.rvPct}% / RF {phase3Result.preferred.baseRow.source.rfPct}%
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      Variante: {phase3Result.preferred.variant.label} · Success40 {formatPct(phase3Result.preferred.success40)} · Δ vs mejor éxito {formatSignedPp(phase3Result.preferred.deltaVsBestSuccessPp)}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                      QoL score {phase3Result.preferred.qualityOfLifeScore.toFixed(3)} · mejora ponderada gasto {phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? '+' : ''}{phase3Result.preferred.weightedSpendingImprovementPct.toFixed(1)}%
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      G1/G2/G3/G4: {phase3Result.preferred.spendingVector.map((value) => formatMoney(value)).join(' · ')}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Guardrails: {phase3Result.preferred.guardrailsPassed ? 'OK' : phase3Result.preferred.guardrailViolations.join(' · ')}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+                    No se encontró una variante de gasto que mejore calidad de vida dentro de la banda de seguridad.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
 
