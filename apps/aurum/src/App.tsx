@@ -10,7 +10,6 @@ import { DashboardAurum } from './pages/DashboardAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
 import {
-  FX_RATES_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
   computeWealthHomeSectionAmounts,
   currentMonthKey,
@@ -21,8 +20,9 @@ import {
   loadFxRates,
   loadIncludeRiskCapitalInTotals,
   loadWealthRecords,
-  refreshFxRatesDailyIfNeeded,
+  previewLiveFxRates,
   resolveRiskCapitalRecordsForTotals,
+  saveFxRates,
   subscribeWealthCloud,
   unsubscribeWealthCloud,
   type WealthFxRates,
@@ -31,7 +31,8 @@ import { hydrateWealthFromCloudShared } from './services/wealthHydration';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
-const FX_INDICATOR_READ_SNAPSHOT_KEY = 'aurum.fx-indicator-read-snapshot.v1';
+const FX_INDICATOR_APPLIED_SNAPSHOT_KEY = 'aurum.fx-indicators.applied.v1';
+const FX_INDICATOR_PENDING_SNAPSHOT_KEY = 'aurum.fx-indicators.pending.v1';
 
 type FxIndicatorSnapshot = {
   usdClp: number;
@@ -52,8 +53,8 @@ type FxIndicatorDiffRow = {
 
 type FxIndicatorPrompt = {
   rows: FxIndicatorDiffRow[];
-  previousSnapshot: FxIndicatorSnapshot;
-  currentSnapshot: FxIndicatorSnapshot;
+  appliedSnapshot: FxIndicatorSnapshot;
+  pendingSnapshot: FxIndicatorSnapshot;
   patrimonyDeltaClp: number;
 };
 
@@ -68,9 +69,9 @@ const toFinite = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
-const readFxIndicatorSnapshot = (): FxIndicatorSnapshot | null => {
+const readSnapshotFromStorage = (key: string): FxIndicatorSnapshot | null => {
   try {
-    const raw = localStorage.getItem(FX_INDICATOR_READ_SNAPSHOT_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const usdClp = toFinite(parsed?.usdClp);
@@ -88,9 +89,17 @@ const readFxIndicatorSnapshot = (): FxIndicatorSnapshot | null => {
   }
 };
 
-const saveFxIndicatorSnapshot = (snapshot: FxIndicatorSnapshot) => {
+const saveSnapshotToStorage = (key: string, snapshot: FxIndicatorSnapshot) => {
   try {
-    localStorage.setItem(FX_INDICATOR_READ_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    localStorage.setItem(key, JSON.stringify(snapshot));
+  } catch {
+    // ignore
+  }
+};
+
+const clearSnapshotFromStorage = (key: string) => {
+  try {
+    localStorage.removeItem(key);
   } catch {
     // ignore
   }
@@ -147,6 +156,20 @@ const computeFxPatrimonyDelta = (previous: FxIndicatorSnapshot, current: FxIndic
   return currentNet - previousNet;
 };
 
+const buildPromptFromSnapshots = (
+  appliedSnapshot: FxIndicatorSnapshot,
+  pendingSnapshot: FxIndicatorSnapshot,
+): FxIndicatorPrompt | null => {
+  const rows = buildFxIndicatorRows(appliedSnapshot, pendingSnapshot).filter((row) => row.changed);
+  if (!rows.length) return null;
+  return {
+    rows,
+    appliedSnapshot,
+    pendingSnapshot,
+    patrimonyDeltaClp: computeFxPatrimonyDelta(appliedSnapshot, pendingSnapshot),
+  };
+};
+
 const formatIndicatorValue = (rowKey: FxIndicatorDiffRow['key'], value: number) => {
   const digits = rowKey === 'eurUsd' ? 4 : 0;
   return value.toLocaleString('es-CL', {
@@ -200,70 +223,72 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!user || user.isAnonymous) return;
-
-    const runDailySync = () => {
-      void refreshFxRatesDailyIfNeeded();
-    };
-
-    runDailySync();
-
-    const onFocus = () => {
-      if (document.visibilityState !== 'visible') return;
-      runDailySync();
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
-      runDailySync();
-    };
-    const onFirstInteraction = () => {
-      if (document.visibilityState !== 'visible') return;
-      runDailySync();
-    };
-
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('pointerdown', onFirstInteraction);
-    window.addEventListener('touchstart', onFirstInteraction);
-    window.addEventListener('keydown', onFirstInteraction);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('pointerdown', onFirstInteraction);
-      window.removeEventListener('touchstart', onFirstInteraction);
-      window.removeEventListener('keydown', onFirstInteraction);
-    };
-  }, [user?.uid, user?.isAnonymous]);
-
-  useEffect(() => {
     if (!user || user.isAnonymous) {
       setFxIndicatorPrompt(null);
       return;
     }
 
-    const evaluateFxIndicatorPrompt = () => {
-      const currentSnapshot = buildSnapshotFromRates(loadFxRates());
-      const previousSnapshot = readFxIndicatorSnapshot();
-      if (!previousSnapshot) {
-        saveFxIndicatorSnapshot(currentSnapshot);
-        console.info('[Aurum][fx-indicators] baseline inicial guardado, sin comparación previa.');
-        return;
-      }
-      const rows = buildFxIndicatorRows(previousSnapshot, currentSnapshot);
-      const changedRows = rows.filter((row) => row.changed);
-      if (!changedRows.length) return;
-      setFxIndicatorPrompt({
-        rows: changedRows,
-        previousSnapshot,
-        currentSnapshot,
-        patrimonyDeltaClp: computeFxPatrimonyDelta(previousSnapshot, currentSnapshot),
-      });
+    let alive = true;
+
+    const ensureAppliedSnapshot = (): FxIndicatorSnapshot => {
+      const existing = readSnapshotFromStorage(FX_INDICATOR_APPLIED_SNAPSHOT_KEY);
+      if (existing) return existing;
+      const baseline = buildSnapshotFromRates(loadFxRates());
+      saveSnapshotToStorage(FX_INDICATOR_APPLIED_SNAPSHOT_KEY, baseline);
+      clearSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
+      console.info('[Aurum][fx-indicators] baseline aplicado guardado, sin comparación previa.');
+      return baseline;
     };
 
-    evaluateFxIndicatorPrompt();
-    window.addEventListener(FX_RATES_UPDATED_EVENT, evaluateFxIndicatorPrompt as EventListener);
+    const evaluateFxIndicatorPrompt = async () => {
+      const applied = ensureAppliedSnapshot();
+
+      const pending = readSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
+      if (pending) {
+        const promptFromPending = buildPromptFromSnapshots(applied, pending);
+        if (promptFromPending) {
+          setFxIndicatorPrompt(promptFromPending);
+        } else {
+          clearSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
+          setFxIndicatorPrompt(null);
+        }
+      }
+
+      try {
+        const live = await previewLiveFxRates();
+        if (!alive) return;
+        const detected = buildSnapshotFromRates(live.rates);
+        const promptFromDetected = buildPromptFromSnapshots(applied, detected);
+        if (!promptFromDetected) {
+          clearSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
+          setFxIndicatorPrompt(null);
+          return;
+        }
+        saveSnapshotToStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY, detected);
+        setFxIndicatorPrompt(promptFromDetected);
+      } catch {
+        // keep previous pending snapshot if any
+        return;
+      }
+    };
+
+    void evaluateFxIndicatorPrompt();
+
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      void evaluateFxIndicatorPrompt();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      void evaluateFxIndicatorPrompt();
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.removeEventListener(FX_RATES_UPDATED_EVENT, evaluateFxIndicatorPrompt as EventListener);
+      alive = false;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [user?.uid, user?.isAnonymous]);
 
@@ -375,6 +400,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <div className="mt-1 text-sm text-slate-600">
               Se detectaron cambios en indicadores operativos que afectan la valorización actual.
             </div>
+            <div className="mt-1 text-xs text-slate-500">Estos cambios todavía no se reflejan en tus totales.</div>
             <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
               <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr_1fr] bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-600">
                 <div>Indicador</div>
@@ -406,14 +432,21 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               ))}
             </div>
             <div className="mt-3 text-[11px] text-slate-500">
-              Baseline leído: {fxIndicatorPrompt.previousSnapshot.readAt || 'sin fecha previa'}
+              Snapshot aplicado: {fxIndicatorPrompt.appliedSnapshot.readAt || 'sin fecha previa'}
             </div>
             <div className="mt-4 flex justify-end">
               <button
                 type="button"
                 className="rounded-lg border border-[#7f5528] bg-[#9c6b36] px-4 py-2 text-sm font-semibold text-[#f6efe2] hover:bg-[#8b5f30]"
                 onClick={() => {
-                  saveFxIndicatorSnapshot(buildSnapshotFromRates(loadFxRates()));
+                  const nextApplied = {
+                    usdClp: fxIndicatorPrompt.pendingSnapshot.usdClp,
+                    eurClp: fxIndicatorPrompt.pendingSnapshot.eurClp,
+                    ufClp: fxIndicatorPrompt.pendingSnapshot.ufClp,
+                  } satisfies WealthFxRates;
+                  saveFxRates(nextApplied);
+                  saveSnapshotToStorage(FX_INDICATOR_APPLIED_SNAPSHOT_KEY, fxIndicatorPrompt.pendingSnapshot);
+                  clearSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
                   window.dispatchEvent(
                     new CustomEvent(WEALTH_DELTA_TOAST_TRIGGER_EVENT, {
                       detail: {
@@ -425,7 +458,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   setFxIndicatorPrompt(null);
                 }}
               >
-                Leído
+                Reflejar cambios
               </button>
             </div>
           </div>

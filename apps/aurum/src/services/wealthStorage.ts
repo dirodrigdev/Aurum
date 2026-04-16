@@ -1721,6 +1721,14 @@ const fetchLiveFxComposite = async (): Promise<{ rates: WealthFxRates; source: s
   };
 };
 
+export const previewLiveFxRates = async (): Promise<{
+  rates: WealthFxRates;
+  source: string;
+  fetchedAt: string;
+}> => {
+  return fetchLiveFxComposite();
+};
+
 export const refreshFxRatesFromLive = async (
   options?: { force?: boolean; recordErrorMeta?: boolean },
 ): Promise<{ updated: boolean; rates: WealthFxRates; source: string; fetchedAt: string; skipped?: boolean }> => {
