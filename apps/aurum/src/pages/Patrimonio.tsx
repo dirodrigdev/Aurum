@@ -114,6 +114,7 @@ import {
   formatCurrencyNoDecimals,
   formatMonthLabel as monthLabel,
 } from '../utils/wealthFormat';
+import { buildDisplayDeltaFromClp, fromClpUsingFx } from '../services/currencyDisplay';
 
 type MainSection = 'investment' | 'real_estate' | 'bank';
 const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
@@ -495,7 +496,7 @@ const todayYmd = () => localYmd();
 const readPreferredDisplayCurrency = (): WealthCurrency => {
   if (typeof window === 'undefined') return 'CLP';
   const stored = window.localStorage.getItem(PREFERRED_DISPLAY_CURRENCY_KEY);
-  if (stored === 'CLP' || stored === 'USD' || stored === 'EUR') return stored;
+  if (stored === 'CLP' || stored === 'USD' || stored === 'EUR' || stored === 'UF') return stored;
   return 'CLP';
 };
 
@@ -624,6 +625,7 @@ interface SectionScreenProps {
   monthKey: string;
   closures: WealthMonthlyClosure[];
   recordsForSection: WealthRecord[];
+  displayCurrency: WealthCurrency;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskCapitalView: () => void;
   investmentInstruments: WealthInvestmentInstrument[];
@@ -757,6 +759,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
   monthKey,
   closures,
   recordsForSection,
+  displayCurrency,
   includeRiskCapitalInTotals,
   onToggleRiskCapitalView,
   investmentInstruments,
@@ -862,12 +865,18 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     [recordsForSection, monthKey],
   );
 
+  const sectionClosure = useMemo(
+    () => closures.find((closure) => closure.monthKey === monthKey) || null,
+    [closures, monthKey],
+  );
+  const sectionDisplayFx = sectionClosure?.fxRates || { usdClp, eurClp, ufClp };
+
   const sectionTotalClp = useMemo(() => {
     const recordsForTotals =
       section === 'investment'
         ? resolveRiskCapitalRecordsForTotals(dedupedSectionRecords, includeRiskCapitalInTotals).recordsForTotals
         : dedupedSectionRecords;
-    const breakdown = buildWealthNetBreakdown(recordsForTotals, { usdClp, eurClp, ufClp });
+    const breakdown = buildWealthNetBreakdown(recordsForTotals, sectionDisplayFx);
 
     if (section === 'investment') return breakdown.investmentClp;
     if (section === 'bank') {
@@ -883,7 +892,7 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         sameCanonicalLabel(item.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
     );
     return hasProperty ? breakdown.realEstateNetClp : 0;
-  }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, usdClp, eurClp, ufClp]);
+  }, [section, dedupedSectionRecords, includeRiskCapitalInTotals, sectionDisplayFx]);
 
   const sectionHasRiskCapital = useMemo(
     () =>
@@ -1734,11 +1743,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     ).filter((record) => record.block === 'investment');
   }, [previousConfirmedClosureForInvestment]);
 
+  const investmentCompareDisplayFx = previousConfirmedClosureForInvestment?.fxRates || sectionDisplayFx;
+
   const investmentAnalyticsRows = useMemo<InvestmentAnalyticsRow[]>(() => {
     if (section !== 'investment') return [];
-    const currentMap = buildInvestmentAnalyticsMap(dedupedSectionRecords, { usdClp, eurClp, ufClp });
-    const compareFx = previousConfirmedClosureForInvestment?.fxRates || { usdClp, eurClp, ufClp };
-    const compareMap = buildInvestmentAnalyticsMap(previousInvestmentRecords, compareFx);
+    const currentMap = buildInvestmentAnalyticsMap(dedupedSectionRecords, sectionDisplayFx);
+    const compareMap = buildInvestmentAnalyticsMap(previousInvestmentRecords, investmentCompareDisplayFx);
     const keys = new Set([...currentMap.keys(), ...compareMap.keys()]);
     const rows = [...keys].map((key) => {
       const current = currentMap.get(key);
@@ -1762,10 +1772,8 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     section,
     dedupedSectionRecords,
     previousInvestmentRecords,
-    previousConfirmedClosureForInvestment,
-    usdClp,
-    eurClp,
-    ufClp,
+    sectionDisplayFx,
+    investmentCompareDisplayFx,
     investmentGroupOrder,
   ]);
 
@@ -1815,15 +1823,23 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
     includeRiskCapitalInTotals,
   ]);
 
-  const investmentTotalDelta = useMemo(() => {
+  const investmentTotalDeltaDisplay = useMemo(() => {
     if (section !== 'investment' || investmentTotalCompareClp === null) return null;
-    return sectionTotalClp - investmentTotalCompareClp;
-  }, [section, sectionTotalClp, investmentTotalCompareClp]);
-
-  const investmentTotalDeltaPct = useMemo(() => {
-    if (investmentTotalCompareClp === null || investmentTotalCompareClp === 0) return null;
-    return ((sectionTotalClp - investmentTotalCompareClp) / investmentTotalCompareClp) * 100;
-  }, [sectionTotalClp, investmentTotalCompareClp]);
+    return buildDisplayDeltaFromClp({
+      currentClp: sectionTotalClp,
+      previousClp: investmentTotalCompareClp,
+      currency: displayCurrency,
+      currentFx: sectionDisplayFx,
+      previousFx: investmentCompareDisplayFx,
+    });
+  }, [
+    section,
+    sectionTotalClp,
+    investmentTotalCompareClp,
+    displayCurrency,
+    sectionDisplayFx,
+    investmentCompareDisplayFx,
+  ]);
 
   const buildInvestmentSourceContextForRow = (row: ChecklistRow): InvestmentSourceContext => {
     if (isSuraInvestmentLabel(row.name)) {
@@ -2723,7 +2739,9 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
           </>
         ) : (
           <div className="mt-3 flex items-center gap-2">
-            <div className="text-3xl font-semibold text-slate-900">{formatCurrency(sectionTotalClp, 'CLP')}</div>
+            <div className="text-3xl font-semibold text-slate-900">
+              {formatCurrency(fromClpUsingFx(sectionTotalClp, displayCurrency, sectionDisplayFx), displayCurrency)}
+            </div>
             {section === 'investment' && includeRiskCapitalInTotals && sectionHasRiskCapital && (
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                 +CapRiesgo
@@ -2731,12 +2749,12 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
             )}
           </div>
         )}
-        {section === 'investment' && previousConfirmedClosureForInvestment && investmentTotalDelta !== null && (
-          <div className={`mt-1 text-xs font-medium ${investmentTotalDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-            {investmentTotalDelta >= 0 ? '+' : ''}
-            {formatCurrency(investmentTotalDelta, 'CLP')}
-            {investmentTotalDeltaPct !== null
-              ? ` (${investmentTotalDeltaPct >= 0 ? '+' : ''}${investmentTotalDeltaPct.toFixed(2)}%)`
+        {section === 'investment' && previousConfirmedClosureForInvestment && investmentTotalDeltaDisplay !== null && (
+          <div className={`mt-1 text-xs font-medium ${investmentTotalDeltaDisplay.deltaDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+            {investmentTotalDeltaDisplay.deltaDisplay >= 0 ? '+' : ''}
+            {formatCurrency(investmentTotalDeltaDisplay.deltaDisplay, displayCurrency)}
+            {investmentTotalDeltaDisplay.pctDisplay !== null
+              ? ` (${investmentTotalDeltaDisplay.pctDisplay >= 0 ? '+' : ''}${investmentTotalDeltaDisplay.pctDisplay.toFixed(2)}%)`
               : ''}
             {` vs ${monthLabel(previousConfirmedClosureForInvestment.monthKey)}`}
           </div>
@@ -2974,8 +2992,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
         <Card className="p-2.5 space-y-2 border-[#d9d8d1]">
           <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
             {investmentSubtotalCards.map((card) => {
-              const delta = card.compare === null ? null : card.current - card.compare;
-              const pct = card.compare && card.compare !== 0 ? (delta! / card.compare) * 100 : null;
+              const current = fromClpUsingFx(card.current, displayCurrency, sectionDisplayFx);
+              const compare =
+                card.compare === null ? null : fromClpUsingFx(card.compare, displayCurrency, investmentCompareDisplayFx);
+              const delta = compare === null ? null : current - compare;
+              const pct = compare && compare !== 0 ? (delta! / compare) * 100 : null;
               return (
                 <div key={card.key} className={`rounded-lg border px-2.5 py-2 ${card.className}`}>
                   <div className={`text-[11px] font-semibold ${card.titleClassName}`}>
@@ -2987,11 +3008,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                     )}
                   </div>
                   <div className="mt-1 text-[11px] text-slate-500">Subtotal</div>
-                  <div className="mt-0.5 text-base font-bold text-slate-900">{formatCurrency(card.current, 'CLP')}</div>
+                  <div className="mt-0.5 text-base font-bold text-slate-900">
+                    {formatCurrency(current, displayCurrency)}
+                  </div>
                   {delta !== null && (
                     <div className={`mt-1 text-[10px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {delta >= 0 ? '+' : ''}
-                      {formatCurrency(delta, 'CLP')}
+                      {formatCurrency(delta, displayCurrency)}
                       {pct !== null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : ''}
                     </div>
                   )}
@@ -3002,8 +3025,11 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
 
           <div className="space-y-1.5">
             {investmentAnalyticsRows.map((row) => {
-              const current = row.currentClp;
-              const compare = row.compareClp;
+              const current = fromClpUsingFx(row.currentClp, displayCurrency, sectionDisplayFx);
+              const compare =
+                row.compareClp === null
+                  ? null
+                  : fromClpUsingFx(row.compareClp, displayCurrency, investmentCompareDisplayFx);
               const delta = compare === null ? null : current - compare;
               const pct = compare && compare !== 0 ? (delta! / compare) * 100 : null;
               const riskExcluded = row.isRiskCapital && !includeRiskCapitalInTotals;
@@ -3042,11 +3068,13 @@ const SectionScreen: React.FC<SectionScreenProps> = ({
                       )}
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-semibold text-slate-900">{formatCurrency(current, 'CLP')}</div>
+                      <div className="text-xs font-semibold text-slate-900">
+                        {formatCurrency(current, displayCurrency)}
+                      </div>
                       {delta !== null && (
                         <div className={`text-[10px] ${delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                           {delta >= 0 ? '+' : ''}
-                          {formatCurrency(delta, 'CLP')}
+                          {formatCurrency(delta, displayCurrency)}
                           {pct !== null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : ''}
                         </div>
                       )}
@@ -4246,32 +4274,39 @@ export const Patrimonio: React.FC = () => {
     return closure.summary.netConsolidatedClp;
   };
 
+  const activeDisplayFx = activeClosure?.fxRates || fx;
+
   const metrics = useMemo(() => {
+    const convertNetToDisplay = (
+      netClp: number,
+      fxForMonth: { usdClp: number; eurClp: number; ufClp: number } | null | undefined,
+    ) => fromClpUsingFx(netClp, displayCurrency, fxForMonth || activeDisplayFx);
+
     const closedPoints = closures
       .filter((closure) => closure.monthKey !== realCurrentMonthKey)
       .map((closure) => ({
         key: closure.monthKey,
-        net: closureSummaryNetForMode(closure),
+        netDisplay: convertNetToDisplay(closureSummaryNetForMode(closure), closure.fxRates || activeDisplayFx),
       }))
       .sort((a, b) => a.key.localeCompare(b.key));
     const monthClosedPoint = closedPoints.find((point) => point.key === monthKey) || null;
     const previousClosedPoint = closedPoints.filter((point) => point.key < monthKey).slice(-1)[0] || null;
     const monthNetForComparison = monthClosedPoint
-      ? monthClosedPoint.net
+      ? monthClosedPoint.netDisplay
       : monthRecordsForTotals.length > 0
-        ? sectionAmounts.totalNetClp
+        ? convertNetToDisplay(sectionAmounts.totalNetClp, activeDisplayFx)
         : null;
     const monthIncrease =
       monthNetForComparison !== null && previousClosedPoint
-        ? monthNetForComparison - previousClosedPoint.net
+        ? monthNetForComparison - previousClosedPoint.netDisplay
         : null;
     const monthIncreasePct =
-      monthIncrease !== null && previousClosedPoint && previousClosedPoint.net !== 0
-        ? (monthIncrease / previousClosedPoint.net) * 100
+      monthIncrease !== null && previousClosedPoint && previousClosedPoint.netDisplay !== 0
+        ? (monthIncrease / previousClosedPoint.netDisplay) * 100
         : null;
     const closedDeltas: number[] = [];
     for (let i = 1; i < closedPoints.length; i += 1) {
-      closedDeltas.push(closedPoints[i].net - closedPoints[i - 1].net);
+      closedDeltas.push(closedPoints[i].netDisplay - closedPoints[i - 1].netDisplay);
     }
     const hasEnoughClosedPointsForAverage = closedPoints.length >= 2;
 
@@ -4288,6 +4323,8 @@ export const Patrimonio: React.FC = () => {
     monthKey,
     monthRecordsForTotals.length,
     sectionAmounts.totalNetClp,
+    displayCurrency,
+    activeDisplayFx,
   ]);
 
   const latestClosure = closures[0] || null;
@@ -4296,12 +4333,20 @@ export const Patrimonio: React.FC = () => {
     if (closures.length < 2) return null;
     const currentClosure = closures[0];
     const previousClosure = closures[1];
-    const current = closureSummaryNetForMode(currentClosure);
-    const prev = closureSummaryNetForMode(previousClosure);
+    const current = fromClpUsingFx(
+      closureSummaryNetForMode(currentClosure),
+      displayCurrency,
+      currentClosure.fxRates || activeDisplayFx,
+    );
+    const prev = fromClpUsingFx(
+      closureSummaryNetForMode(previousClosure),
+      displayCurrency,
+      previousClosure.fxRates || activeDisplayFx,
+    );
     const abs = current - prev;
     const pct = prev !== 0 ? (abs / prev) * 100 : null;
     return { abs, pct };
-  }, [closures, includeRiskCapitalInTotals, closureNetByMonth]);
+  }, [closures, includeRiskCapitalInTotals, closureNetByMonth, displayCurrency, activeDisplayFx]);
 
   useEffect(() => {
     const closedPoints = closures
@@ -4347,7 +4392,7 @@ export const Patrimonio: React.FC = () => {
   }, [latestClosure, closeMonthDraft]);
 
   const sectionAmountsDisplay = useMemo(() => {
-    const convert = (valueClp: number) => fromClp(valueClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
+    const convert = (valueClp: number) => fromClpUsingFx(valueClp, displayCurrency, activeDisplayFx);
     return {
       investment: convert(sectionAmounts.investment),
       bank: convert(sectionAmounts.bank),
@@ -4356,7 +4401,7 @@ export const Patrimonio: React.FC = () => {
       financialNet: convert(sectionAmounts.financialNet),
       totalNet: convert(sectionAmounts.totalNetClp),
     };
-  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, sectionAmounts]);
+  }, [displayCurrency, activeDisplayFx, sectionAmounts]);
 
   const previousClosureForComparisons = useMemo(
     () =>
@@ -4368,18 +4413,19 @@ export const Patrimonio: React.FC = () => {
 
   const previousClosureSectionAmounts = useMemo(() => {
     if (!previousClosureForComparisons) return null;
+    const closureFx = previousClosureForComparisons.fxRates || activeDisplayFx;
     if (previousClosureForComparisons.records?.length) {
       const recordsForTotals = resolveRiskCapitalRecordsForTotals(
         previousClosureForComparisons.records,
         includeRiskCapitalInTotals,
       ).recordsForTotals;
-      const closureFx = previousClosureForComparisons.fxRates || fx;
       const fromRecords = computeWealthHomeSectionAmounts(recordsForTotals, closureFx);
       return {
         investment: fromRecords.investment,
         realEstateNet: fromRecords.realEstateNet,
         bank: fromRecords.bank,
         nonMortgageDebt: fromRecords.nonMortgageDebt,
+        fxRates: closureFx,
       };
     }
     const summary = previousClosureForComparisons.summary as WealthMonthlyClosure['summary'] & {
@@ -4411,32 +4457,43 @@ export const Patrimonio: React.FC = () => {
       : Number.isFinite(summary?.byBlock?.debt?.CLP)
         ? Number(summary.byBlock.debt.CLP)
         : null;
-    return { investment, realEstateNet, bank, nonMortgageDebt };
-  }, [previousClosureForComparisons, includeRiskCapitalInTotals, fx]);
+    return { investment, realEstateNet, bank, nonMortgageDebt, fxRates: closureFx };
+  }, [previousClosureForComparisons, includeRiskCapitalInTotals, activeDisplayFx]);
 
   const blockVariationsDisplay = useMemo(() => {
     if (!previousClosureSectionAmounts) return null;
-    const formatVariation = (deltaClp: number | null, baseClp: number | null, debtMode = false) => {
-      if (deltaClp === null || baseClp === null) {
+    const formatVariation = (
+      currentClp: number,
+      baseClp: number | null,
+      previousFx: { usdClp: number; eurClp: number; ufClp: number },
+      debtMode = false,
+    ) => {
+      if (baseClp === null) {
         return { text: '—', trend: 'neutral' } as const;
       }
-      const deltaDisplay = fromClp(deltaClp, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
-      const pct = baseClp !== 0 ? (deltaClp / baseClp) * 100 : null;
+      const deltaResult = buildDisplayDeltaFromClp({
+        currentClp,
+        previousClp: baseClp,
+        currency: displayCurrency,
+        currentFx: activeDisplayFx,
+        previousFx,
+      });
+      const { deltaDisplay, pctDisplay } = deltaResult;
       const pctText =
-        pct === null
+        pctDisplay === null
           ? ''
-          : ` (${pct >= 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', {
+          : ` (${pctDisplay >= 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', {
               minimumFractionDigits: 1,
               maximumFractionDigits: 1,
-            }).format(pct)}%)`;
+            }).format(pctDisplay)}%)`;
       const trend =
-        Math.abs(deltaClp) < 0.5
+        Math.abs(deltaDisplay) < 0.5
           ? 'neutral'
           : debtMode
-            ? deltaClp < 0
+            ? deltaDisplay < 0
               ? 'good'
               : 'bad'
-            : deltaClp > 0
+            : deltaDisplay > 0
               ? 'good'
               : 'bad';
       return {
@@ -4447,44 +4504,37 @@ export const Patrimonio: React.FC = () => {
 
     return {
       investment: formatVariation(
-        previousClosureSectionAmounts.investment === null
-          ? null
-          : sectionAmounts.investment - previousClosureSectionAmounts.investment,
+        sectionAmounts.investment,
         previousClosureSectionAmounts.investment,
+        previousClosureSectionAmounts.fxRates,
       ),
       realEstateNet: formatVariation(
-        previousClosureSectionAmounts.realEstateNet === null
-          ? null
-          : sectionAmounts.realEstateNet - previousClosureSectionAmounts.realEstateNet,
+        sectionAmounts.realEstateNet,
         previousClosureSectionAmounts.realEstateNet,
+        previousClosureSectionAmounts.fxRates,
       ),
       bank: formatVariation(
-        previousClosureSectionAmounts.bank === null ? null : sectionAmounts.bank - previousClosureSectionAmounts.bank,
+        sectionAmounts.bank,
         previousClosureSectionAmounts.bank,
+        previousClosureSectionAmounts.fxRates,
       ),
       nonMortgageDebt: formatVariation(
-        previousClosureSectionAmounts.nonMortgageDebt === null
-          ? null
-          : sectionAmounts.nonMortgageDebt - previousClosureSectionAmounts.nonMortgageDebt,
+        sectionAmounts.nonMortgageDebt,
         previousClosureSectionAmounts.nonMortgageDebt,
+        previousClosureSectionAmounts.fxRates,
         true,
       ),
     };
-  }, [previousClosureSectionAmounts, sectionAmounts, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp]);
+  }, [previousClosureSectionAmounts, sectionAmounts, displayCurrency, activeDisplayFx]);
 
   const metricsDisplay = useMemo(() => {
-    const convert = (value: number | null) => {
-      if (value === null) return null;
-      return fromClp(value, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
-    };
-
     const formatted = (value: number | null, emptyText = '--') => {
       if (value === null) return emptyText;
       const prefix = value >= 0 ? '+' : '';
       return `${prefix}${formatCurrency(value, displayCurrency)}`;
     };
 
-    const monthIncreaseValue = convert(metrics.monthIncrease);
+    const monthIncreaseValue = metrics.monthIncrease;
     const monthIncreasePctText =
       metrics.monthIncreasePct === null
         ? ''
@@ -4502,10 +4552,10 @@ export const Patrimonio: React.FC = () => {
         monthIncreaseValue === null
           ? '--'
           : `${formatted(monthIncreaseValue, '--')}${monthIncreasePctText}`,
-      avg12: formatted(convert(metrics.avg12), '--'),
-      avgSinceStart: formatted(convert(metrics.avgSinceStart), '--'),
+      avg12: formatted(metrics.avg12, '--'),
+      avgSinceStart: formatted(metrics.avgSinceStart, '--'),
     };
-  }, [displayCurrency, fx, metrics, sectionAmountsDisplay.totalNet]);
+  }, [displayCurrency, metrics, sectionAmountsDisplay.totalNet]);
 
   const missingCriticalCount = useMemo(() => {
     const requiredNames = [...sectionChecklist.investment, ...REAL_ESTATE_CORE_NET_LABELS];
@@ -4520,16 +4570,13 @@ export const Patrimonio: React.FC = () => {
   const latestClosureDisplay = useMemo(() => {
     if (!latestClosure) return null;
     const net = closureNetByMonth.get(latestClosure.monthKey) ?? latestClosure.summary.netConsolidatedClp;
-    return fromClp(net, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp);
-  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, latestClosure, closureNetByMonth]);
+    const latestFx = latestClosure.fxRates || activeDisplayFx;
+    return fromClpUsingFx(net, displayCurrency, latestFx);
+  }, [displayCurrency, latestClosure, closureNetByMonth, activeDisplayFx]);
 
   const growthVsPrevClosureDisplay = useMemo(() => {
-    if (!growthVsPrevClosure) return null;
-    return {
-      abs: fromClp(growthVsPrevClosure.abs, displayCurrency, fx.usdClp, fx.eurClp, fx.ufClp),
-      pct: growthVsPrevClosure.pct,
-    };
-  }, [displayCurrency, fx.eurClp, fx.ufClp, fx.usdClp, growthVsPrevClosure]);
+    return growthVsPrevClosure;
+  }, [growthVsPrevClosure]);
   const hasRealEstateCoreInputs = useMemo(() => {
     let hasProperty = false;
     let hasMortgageDebt = false;
@@ -5726,6 +5773,7 @@ export const Patrimonio: React.FC = () => {
           monthKey={monthKey}
           closures={closures}
           recordsForSection={recordsForSection}
+          displayCurrency={displayCurrency}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskCapitalView={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           investmentInstruments={investmentInstruments}
@@ -5848,7 +5896,7 @@ export const Patrimonio: React.FC = () => {
 
             <div className="flex flex-col items-end gap-4 self-end">
               <div className="flex flex-col gap-2">
-                {(['CLP', 'USD', 'EUR'] as WealthCurrency[]).map((curr) => (
+                {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((curr) => (
                   <button
                     key={curr}
                     className={`px-3 py-2 rounded-lg border text-xs ${
@@ -6097,7 +6145,15 @@ export const Patrimonio: React.FC = () => {
             <div className="font-semibold">Último cierre: {latestClosure.monthKey}</div>
             <div>
               Neto consolidado:{' '}
-              {formatCurrency(latestClosureDisplay ?? latestClosure.summary.netConsolidatedClp, displayCurrency)}
+              {formatCurrency(
+                latestClosureDisplay ??
+                  fromClpUsingFx(
+                    latestClosure.summary.netConsolidatedClp,
+                    displayCurrency,
+                    latestClosure.fxRates || activeDisplayFx,
+                  ),
+                displayCurrency,
+              )}
             </div>
             {growthVsPrevClosureDisplay && (
               <div className={growthVsPrevClosureDisplay.abs >= 0 ? 'text-emerald-700' : 'text-red-700'}>
