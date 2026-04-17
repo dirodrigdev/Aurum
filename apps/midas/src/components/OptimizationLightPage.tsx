@@ -2,11 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
-import {
-  buildInstrumentImplementationPlan,
-  REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP,
-} from '../domain/instrumentImplementationPlanner';
+import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
+import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
 type OptimizationMode = 'light' | 'normal' | 'decision';
@@ -51,6 +49,15 @@ type PhaseRunMeta = {
   riskCapitalMode: string;
   ranAtLabel: string;
   scenarioHash: string;
+};
+
+type Phase1ChampionChallenger = {
+  champion: Phase1Point | null;
+  challenger: Phase1Point | null;
+  deltaSuccessPp: number | null;
+  materialityLabel: string;
+  currentIsChampion: boolean;
+  message: string;
 };
 
 type Phase1Diagnostics = {
@@ -128,9 +135,9 @@ type RealisticValidationResult = {
   message: string;
 };
 
-const SHORTLIST_BEST_SUCCESS_BAND = 0.015;
-const SHORTLIST_MIN_RV_DISTANCE = 10;
-const SHORTLIST_TARGET = 5;
+const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
+const SHORTLIST_MIN_RV_DISTANCE = optimizerPolicyConfig.phase1.shortlistMinRvDistancePp;
+const SHORTLIST_TARGET = optimizerPolicyConfig.phase1.shortlistTarget;
 const PHASE1_SWEEP_MIN_RV = 0;
 const PHASE1_SWEEP_MAX_RV = 100;
 const PHASE1_SWEEP_STEP = 5;
@@ -138,9 +145,9 @@ const PHASE1_LOCAL_REFINEMENT_BASE_LIMIT = 4;
 const PHASE1_MICRO_REFINEMENT_BASE_LIMIT = 2;
 const PHASE1_MAX_EVALUATIONS = 29;
 const PHASE1_SLOW_NOTICE_MS = 2500;
-const TECHNICAL_TIE_BAND_PP = 0.2;
+const TECHNICAL_TIE_BAND_PP = optimizerPolicyConfig.phase1.technicalTieBandPp;
 const DELTA_ZERO_EPSILON_PP = 0.05;
-const PHASE3_QOL_WEIGHTS = [0.25, 0.40, 0.25, 0.10] as const;
+const PHASE3_QOL_WEIGHTS = optimizerPolicyConfig.phase3.qolWeights;
 const PHASE3_SPENDING_VARIANTS: Phase3SpendingVariant[] = [
   { id: 'base', label: 'Base', deltas: [0, 0, 0, 0] },
   { id: 'uniform-5', label: 'Uniforme +5%', deltas: [0.05, 0.05, 0.05, 0.05] },
@@ -155,48 +162,9 @@ const PHASE3_SPENDING_VARIANTS: Phase3SpendingVariant[] = [
   { id: 'human-1', label: 'Humana +5/+10/+5', deltas: [0.05, 0.10, 0.05, 0] },
   { id: 'human-2', label: 'Humana +5/+15/+10', deltas: [0.05, 0.15, 0.10, 0] },
 ];
-const PHASE3_GUARDRAILS = {
-  ruin20MaxWorse: 0.005,
-  cutScenarioPctMaxWorse: 0.05,
-  houseSalePctMaxWorse: 0.05,
-  maxDDP50MaxWorse: 0.03,
-} as const;
-const PHASE2_COMPETITION_THRESHOLDS = {
-  autonomousEligibilityGapPp: 1.0,
-  material: {
-    houseSalePctPpLower: 5.0,
-    houseSaleYearLaterYears: 2.0,
-    cutScenarioPctPpLower: 5.0,
-    cutSeverityPpLower: 2.0,
-    firstCutYearLaterYears: 2.0,
-    ruin20PpLower: 0.5,
-    maxDDP50PpLower: 3.0,
-  },
-  redFlags: {
-    success40AssistedPpWorse: 0.5,
-    houseSalePctPpWorse: 5.0,
-    cutScenarioPctPpWorse: 5.0,
-    cutSeverityPpWorse: 2.0,
-    firstCutYearEarlierYears: 2.0,
-    ruin20AssistedPpWorse: 0.5,
-    maxDDP50PpWorse: 3.0,
-  },
-  compete: {
-    minMaterialImprovements: 2,
-  },
-  displace: {
-    success40AssistedMaxWorsePp: 0.2,
-    minMaterialImprovements: 3,
-  },
-} as const;
-
-const MIX_COMPARISON_THRESHOLDS = {
-  successPpConsiderMin: 0.5,
-  successPpStrongMin: 1.5,
-  ruin20PpImprovement: 0.5,
-  ruinP10YearsImprovement: 1.0,
-  maxDDP50PpImprovement: 3.0,
-} as const;
+const PHASE3_GUARDRAILS = optimizerPolicyConfig.phase3.guardrails;
+const PHASE2_COMPETITION_THRESHOLDS = optimizerPolicyConfig.phase2Competition;
+const MIX_COMPARISON_THRESHOLDS = optimizerPolicyConfig.moveRecommendation;
 
 function cloneParams<T>(params: T): T {
   return JSON.parse(JSON.stringify(params)) as T;
@@ -437,6 +405,12 @@ function buildShortlist(points: Phase1Point[]): Phase1Point[] {
   if (currentPoint && !shortlist.some((point) => isSameMix(point, currentPoint))) {
     shortlist.push(currentPoint);
   }
+  const phase1Decision = choosePhase1ChampionChallenger(points);
+  [phase1Decision.champion, phase1Decision.challenger].forEach((point) => {
+    if (point && !shortlist.some((candidate) => isSameMix(candidate, point))) {
+      shortlist.push(point);
+    }
+  });
 
   return shortlist;
 }
@@ -608,6 +582,52 @@ function choosePhase1Baseline(points: Phase1Point[]): Phase1Point | null {
   return balanced[0] ?? ranking[0] ?? null;
 }
 
+function choosePhase1ChampionChallenger(points: Phase1Point[]): Phase1ChampionChallenger {
+  if (!points.length) {
+    return {
+      champion: null,
+      challenger: null,
+      deltaSuccessPp: null,
+      materialityLabel: 'Sin Fase 1 calculada',
+      currentIsChampion: false,
+      message: 'Ejecuta Fase 1 para identificar campeón y retador.',
+    };
+  }
+
+  const ranking = [...points].sort((a, b) => (
+    (b.success40 - a.success40)
+    || (a.ruin20 - b.ruin20)
+    || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+    || (a.drawdownP50 - b.drawdownP50)
+    || (a.rvPct - b.rvPct)
+  ));
+  const currentPoint = points.find((point) => point.isCurrentMix) ?? null;
+  const technicalBest = ranking[0] ?? null;
+  const champion = technicalBest;
+  const currentIsChampion = Boolean(currentPoint && champion && isSameMix(currentPoint, champion));
+  const challenger = currentIsChampion
+    ? ranking.find((point) => champion && !isSameMix(point, champion)) ?? null
+    : currentPoint ?? ranking.find((point) => champion && !isSameMix(point, champion)) ?? null;
+  const deltaSuccessPp = champion && challenger ? (champion.success40 - challenger.success40) * 100 : null;
+  const isMaterial = deltaSuccessPp !== null
+    && Math.abs(deltaSuccessPp) >= optimizerPolicyConfig.phase1.materialitySuccessPp;
+  const materialityLabel = deltaSuccessPp === null
+    ? 'Sin retador comparable'
+    : isMaterial ? 'Mejora material' : 'Mejora no material';
+  const message = currentIsChampion
+    ? 'El mix actual sigue siendo el mejor resultado técnico en Fase 1. Se mantiene un retador para validación comparativa.'
+    : 'Fase 1 propone un campeón técnico distinto y conserva el mix actual como retador cuando está disponible.';
+
+  return {
+    champion,
+    challenger,
+    deltaSuccessPp,
+    materialityLabel,
+    currentIsChampion,
+    message,
+  };
+}
+
 function buildLongevityPlus5Params(baseParams: ModelParameters, weights: PortfolioWeights): ModelParameters {
   const next = cloneParams(baseParams);
   const baseHorizon = next.simulation.horizonMonths;
@@ -634,17 +654,13 @@ function buildLongevityPlus5Params(baseParams: ModelParameters, weights: Portfol
 }
 
 function phase3SuccessBand(bestSuccess: number): number {
-  if (bestSuccess >= 0.90) return 0.03;
-  if (bestSuccess >= 0.85) return 0.025;
-  if (bestSuccess >= 0.80) return 0.02;
-  if (bestSuccess >= 0.70) return 0.015;
-  return 0.01;
+  return optimizerPolicyConfig.phase3.successSacrificeBand.find((entry) => bestSuccess >= entry.minSuccess)?.band
+    ?? optimizerPolicyConfig.phase3.successSacrificeBand[optimizerPolicyConfig.phase3.successSacrificeBand.length - 1].band;
 }
 
 function phase3PoolBand(bestSuccess: number): number {
-  if (bestSuccess >= 0.90) return 0.015;
-  if (bestSuccess >= 0.80) return 0.01;
-  return 0.005;
+  return optimizerPolicyConfig.phase3.poolEntryBand.find((entry) => bestSuccess >= entry.minSuccess)?.band
+    ?? optimizerPolicyConfig.phase3.poolEntryBand[optimizerPolicyConfig.phase3.poolEntryBand.length - 1].band;
 }
 
 function getSpendingVector(params: ModelParameters): number[] {
@@ -717,6 +733,17 @@ function buildMixSwitchVerdict(
   const t = MIX_COMPARISON_THRESHOLDS;
   const deltaSuccessPp = (targetPoint.success40 - currentPoint.success40) * 100;
   const movePp = Math.abs(targetPoint.rvPct - currentPoint.rvPct);
+  if (isSameMix(currentPoint, targetPoint)) {
+    return {
+      level: 'no',
+      label: 'Mantener mix actual',
+      detail: 'El mix actual ya es el campeón técnico de Fase 1.',
+      deltaSuccessPp,
+      movePp,
+      phase1DownsideImprovement: false,
+      phase2MaterialImprovements: 0,
+    };
+  }
   const phase1DownsideImprovement = (
     ((currentPoint.ruin20 - targetPoint.ruin20) * 100) >= t.ruin20PpImprovement
     || ((targetPoint.ruinP10 ?? Number.NEGATIVE_INFINITY) - (currentPoint.ruinP10 ?? Number.NEGATIVE_INFINITY)) >= t.ruinP10YearsImprovement
@@ -1094,9 +1121,13 @@ export function OptimizationLightPage({
     () => phase1Points.find((point) => point.isCurrentMix) ?? null,
     [phase1Points],
   );
-  const phase1SuggestedPoint = useMemo(
-    () => choosePhase1Baseline(phase1Points),
+  const phase1ChampionChallenger = useMemo(
+    () => choosePhase1ChampionChallenger(phase1Points),
     [phase1Points],
+  );
+  const phase1SuggestedPoint = useMemo(
+    () => phase1ChampionChallenger.champion,
+    [phase1ChampionChallenger.champion],
   );
   const phase2BaselinePoint = useMemo(
     () => choosePhase1Baseline(phase1Points),
@@ -1343,7 +1374,7 @@ export function OptimizationLightPage({
         drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
       };
       const deltaVsIdealSuccessPp = (row.success40Assisted - idealRow.success40Assisted) * 100;
-      const message = Math.abs(deltaVsIdealSuccessPp) <= 0.25
+      const message = Math.abs(deltaVsIdealSuccessPp) <= optimizerPolicyConfig.implementation.realisticValidationGapRvPp
         ? 'Implementación equivalente al objetivo (resultado prácticamente igual).'
         : 'La implementación real modifica el resultado del escenario ideal.';
       setRealisticValidation({ row, deltaVsIdealSuccessPp, message });
@@ -1611,6 +1642,25 @@ export function OptimizationLightPage({
         {phase1Top3.length > 0 && (
           <div style={{ display: 'grid', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Campeón + retador Fase 1</div>
+              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                Campeón Fase 1: {phase1ChampionChallenger.champion ? scenarioLabel(phase1ChampionChallenger.champion) : 'No disponible'}
+                {phase1ChampionChallenger.champion ? ` · ${formatPct(phase1ChampionChallenger.champion.success40)}` : ''}
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                Retador Fase 1: {phase1ChampionChallenger.challenger ? scenarioLabel(phase1ChampionChallenger.challenger) : 'No disponible'}
+                {phase1ChampionChallenger.challenger ? ` · ${formatPct(phase1ChampionChallenger.challenger.success40)}` : ''}
+              </div>
+              <div style={{ color: phase1ChampionChallenger.materialityLabel === 'Mejora material' ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
+                {phase1ChampionChallenger.materialityLabel}
+                {phase1ChampionChallenger.deltaSuccessPp !== null ? ` · Δ éxito ${formatSignedPp(phase1ChampionChallenger.deltaSuccessPp)}` : ''}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                {phase1ChampionChallenger.message}
+              </div>
+            </div>
+
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                 Baseline Fase 1: {scenarioLabel(phase1Top3[0])}
               </div>
@@ -1674,6 +1724,8 @@ export function OptimizationLightPage({
                 const isTechnicalTie = phase1BestSuccess !== null
                   && ((phase1BestSuccess - point.success40) * 100) <= (TECHNICAL_TIE_BAND_PP + 1e-9);
                 const isBalanced = Boolean(phase1BalancedPoint && phase1BalancedPoint.rvPct === point.rvPct);
+                const isPhase1Champion = Boolean(phase1ChampionChallenger.champion && isSameMix(point, phase1ChampionChallenger.champion));
+                const isPhase1Challenger = Boolean(phase1ChampionChallenger.challenger && isSameMix(point, phase1ChampionChallenger.challenger));
                 const passesPhase2 = shortlist.some((candidate) => isSameMix(candidate, point));
                 return (
                   <div
@@ -1691,6 +1743,8 @@ export function OptimizationLightPage({
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         <span>{scenarioLabel(point)}</span>
                         {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Mix actual</span> : null}
+                        {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Campeón Fase 1</span> : null}
+                        {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Retador Fase 1</span> : null}
                         {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Baseline Fase 1</span> : null}
                         {!isBest && (isBalanced || isTechnicalTie) ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Finalista Fase 1</span> : null}
                         <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>

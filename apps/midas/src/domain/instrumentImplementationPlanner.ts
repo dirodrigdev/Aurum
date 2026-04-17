@@ -4,8 +4,7 @@ import type {
   InstrumentImplementationTransfer,
   InstrumentImplementationUniverse,
 } from './instrumentImplementationTypes';
-
-const EQUIVALENCE_GAP_RV_PP = 0.25;
+import { REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from './optimizerPolicyConfig';
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 
@@ -202,7 +201,7 @@ export function buildInstrumentImplementationPlan(input: {
   const reachableRv = movingToHigherRv ? targetRv - remainingDelta : targetRv + remainingDelta;
   const reachableRf = 1 - reachableRv;
   const gapVsIdealRvPp = (targetRv - reachableRv) * 100;
-  const equivalentToIdeal = Math.abs(gapVsIdealRvPp) <= EQUIVALENCE_GAP_RV_PP + 1e-9;
+  const equivalentToIdeal = Math.abs(gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9;
   const reachableWeights = buildTargetFromRiskMix(reachableRv, currentGlobalShare);
 
   const warnings: string[] = [];
@@ -224,5 +223,3 @@ export function buildInstrumentImplementationPlan(input: {
     reachableWeights,
   };
 }
-
-export const REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP = EQUIVALENCE_GAP_RV_PP;
