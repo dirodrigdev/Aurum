@@ -34,6 +34,13 @@ export const optimizerPolicyConfig = {
       minMaterialImprovements: 3,
     },
   },
+  phase2: {
+    successTiePp: 1.0,
+    ruin20MaterialityPp: 0.5,
+    firstCutYearMateriality: 1.0,
+    houseSaleMaterialityPp: 2.0,
+    maxDdMaterialityPp: 2.0,
+  },
   implementation: {
     realisticValidationGapRvPp: 0.25,
   },

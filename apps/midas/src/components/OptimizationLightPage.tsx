@@ -166,6 +166,7 @@ const PHASE3_SPENDING_VARIANTS: Phase3SpendingVariant[] = [
 ];
 const PHASE3_GUARDRAILS = optimizerPolicyConfig.phase3.guardrails;
 const PHASE2_COMPETITION_THRESHOLDS = optimizerPolicyConfig.phase2Competition;
+const PHASE2_SELECTION_POLICY = optimizerPolicyConfig.phase2;
 const MIX_COMPARISON_THRESHOLDS = optimizerPolicyConfig.moveRecommendation;
 
 function cloneParams<T>(params: T): T {
@@ -467,6 +468,26 @@ function isSameMix(a: Phase1Point, b: Phase1Point, epsilon = 0.05): boolean {
 
 function isSamePhase3Candidate(a: Phase3Candidate, b: Phase3Candidate): boolean {
   return isSameMix(a.baseRow.source, b.baseRow.source) && a.variant.id === b.variant.id;
+}
+
+function selectByMaterialityFloor(
+  rows: Phase2Point[],
+  value: (row: Phase2Point) => number,
+  materiality: number,
+): Phase2Point[] {
+  if (rows.length <= 1) return rows;
+  const best = rows.reduce((min, row) => Math.min(min, value(row)), Number.POSITIVE_INFINITY);
+  return rows.filter((row) => (value(row) - best) <= materiality + 1e-9);
+}
+
+function selectByMaterialityCeiling(
+  rows: Phase2Point[],
+  value: (row: Phase2Point) => number,
+  materiality: number,
+): Phase2Point[] {
+  if (rows.length <= 1) return rows;
+  const best = rows.reduce((max, row) => Math.max(max, value(row)), Number.NEGATIVE_INFINITY);
+  return rows.filter((row) => (best - value(row)) <= materiality + 1e-9);
 }
 
 function evaluatePhase2Competition(
@@ -1164,8 +1185,14 @@ export function OptimizationLightPage({
     return buildMixSwitchVerdict(phase1CurrentPoint, phase1SuggestedPoint, currentDecision, suggestedDecision);
   }, [phase1CurrentPoint, phase1SuggestedPoint, phase2CurrentRow, phase2Decisions, phase2SuggestedRow]);
   const phase2ChampionChallenger = useMemo(() => {
-    if (!phase2Rows.length) return { champion: null as Phase2Point | null, challenger: null as Phase2Point | null, reason: 'Sin Fase 2 calculada' };
-    const ranked = [...phase2Rows].sort((a, b) => {
+    if (!phase2Rows.length) {
+      return {
+        champion: null as Phase2Point | null,
+        challenger: null as Phase2Point | null,
+        reason: 'Sin Fase 2 calculada',
+      };
+    }
+    const rankRows = (rows: Phase2Point[]) => [...rows].sort((a, b) => {
       const decisionA = phase2Decisions.get(a.source.rvPct);
       const decisionB = phase2Decisions.get(b.source.rvPct);
       return (
@@ -1173,21 +1200,69 @@ export function OptimizationLightPage({
         || Number(Boolean(decisionB?.competesWithPhase1)) - Number(Boolean(decisionA?.competesWithPhase1))
         || (b.success40Assisted - a.success40Assisted)
         || (a.ruin20Assisted - b.ruin20Assisted)
+        || ((b.firstCutYearP50 ?? Number.NEGATIVE_INFINITY) - (a.firstCutYearP50 ?? Number.NEGATIVE_INFINITY))
         || (a.houseSalePct - b.houseSalePct)
+        || (a.drawdownP50 - b.drawdownP50)
       );
     });
-    const champion = ranked[0] ?? null;
+    const ranked = rankRows(phase2Rows);
+    const bestSuccess = ranked[0]?.success40Assisted ?? 0;
+    const leaderRows = ranked.filter((row) => (
+      ((bestSuccess - row.success40Assisted) * 100) <= (PHASE2_SELECTION_POLICY.successTiePp + 1e-9)
+    ));
+    let finalists = [...leaderRows];
+    let reason = 'Campeón por éxito claramente superior';
+    if (leaderRows.length > 1) {
+      const byRuin = selectByMaterialityFloor(
+        finalists,
+        (row) => row.ruin20Assisted * 100,
+        PHASE2_SELECTION_POLICY.ruin20MaterialityPp,
+      );
+      if (byRuin.length === 1) {
+        finalists = byRuin;
+        reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor Ruina20`;
+      } else {
+        const byFirstCut = selectByMaterialityCeiling(
+          byRuin,
+          (row) => row.firstCutYearP50 ?? Number.NEGATIVE_INFINITY,
+          PHASE2_SELECTION_POLICY.firstCutYearMateriality,
+        );
+        if (byFirstCut.length === 1) {
+          finalists = byFirstCut;
+          reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por primer cut más tardío`;
+        } else {
+          const byHouseSale = selectByMaterialityFloor(
+            byFirstCut,
+            (row) => row.houseSalePct * 100,
+            PHASE2_SELECTION_POLICY.houseSaleMaterialityPp,
+          );
+          if (byHouseSale.length === 1) {
+            finalists = byHouseSale;
+            reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor venta de casa`;
+          } else {
+            const byMaxDd = selectByMaterialityFloor(
+              byHouseSale,
+              (row) => row.drawdownP50 * 100,
+              PHASE2_SELECTION_POLICY.maxDdMaterialityPp,
+            );
+            finalists = byMaxDd;
+            reason = byMaxDd.length === 1
+              ? `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor MaxDD`
+              : `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); se mantiene retador`;
+          }
+        }
+      }
+    }
+    const champion = rankRows(finalists)[0] ?? ranked[0] ?? null;
+    const challengerPool = leaderRows.length > 1 ? rankRows(leaderRows) : ranked;
     const challenger = (
-      phase2CurrentRow && champion && !isSameMix(phase2CurrentRow.source, champion.source)
+      phase2CurrentRow
+      && champion
+      && !isSameMix(phase2CurrentRow.source, champion.source)
+      && challengerPool.some((row) => isSameMix(row.source, phase2CurrentRow.source))
         ? phase2CurrentRow
-        : ranked.find((row) => champion && !isSameMix(row.source, champion.source)) ?? null
+        : challengerPool.find((row) => champion && !isSameMix(row.source, champion.source)) ?? null
     );
-    const championDecision = champion ? phase2Decisions.get(champion.source.rvPct) : null;
-    const reason = championDecision?.displacesPhase1
-      ? 'Desplaza por mejoras materiales sin red flags'
-      : championDecision?.competesWithPhase1
-        ? 'Compite por mejor balance downside/supervivencia'
-        : 'Campeón por mayor éxito asistido dentro del pool';
     return { champion, challenger, reason };
   }, [phase2CurrentRow, phase2Decisions, phase2Rows]);
   const phase3BaseSpendingVector = useMemo(
@@ -1862,6 +1937,10 @@ export function OptimizationLightPage({
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
           {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Política Fase 2: empate técnico de robustez si éxito queda dentro de {PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp del mejor.
+          {' '}Desempate: Ruina20 ({PHASE2_SELECTION_POLICY.ruin20MaterialityPp.toFixed(1)} pp) → Primer cut ({PHASE2_SELECTION_POLICY.firstCutYearMateriality.toFixed(1)} años) → Venta casa ({PHASE2_SELECTION_POLICY.houseSaleMaterialityPp.toFixed(1)} pp) → MaxDD ({PHASE2_SELECTION_POLICY.maxDdMaterialityPp.toFixed(1)} pp).
         </div>
         <div>
           <button
