@@ -38,6 +38,16 @@ const formatPct = (value: number | null) => {
   return `${(value * 100).toFixed(1).replace('.', ',')}%`;
 };
 
+const formatPp = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')} pp`;
+};
+
+const formatRvBand = (min: number | null, max: number | null) => {
+  if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) return '—';
+  return `RV ${formatPct(min)}-${formatPct(max)}`;
+};
+
 const formatDateTime = (iso: string | null) => {
   if (!iso) return '—';
   const date = new Date(iso);
@@ -178,6 +188,21 @@ function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary 
   if (!summary) return null;
   const currentMix = summary.currentMix;
   const historical = summary.historicalUsedRange;
+  const targetRv = summary.targetRv;
+  const gapPp =
+    targetRv !== null && historical
+      ? targetRv < historical.rv.min
+        ? (targetRv - historical.rv.min) * 100
+        : targetRv > historical.rv.max
+          ? (targetRv - historical.rv.max) * 100
+          : 0
+      : null;
+  const gapLabel = (() => {
+    if (gapPp === null) return 'Gap: —';
+    if (Math.abs(gapPp) < 0.05) return 'Gap: dentro de rango';
+    if (gapPp > 0) return `Gap: ${formatPp(gapPp)} sobre techo`;
+    return `Gap: ${formatPp(gapPp)} bajo piso`;
+  })();
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
@@ -188,23 +213,21 @@ function UniverseSummaryPanel({ summary }: { summary: InstrumentUniverseSummary 
         />
         <SummaryCard
           title="Current mix"
-          value={currentMix ? `RV ${formatPct(currentMix.rv)}` : '—'}
-          subtitle={currentMix ? `RF ${formatPct(currentMix.rf)} · Cash ${formatPct(currentMix.cash)}` : 'Sin mix utilizable'}
+          value={currentMix ? `RV ${formatPct(currentMix.rv)} / RF ${formatPct(currentMix.rf)}` : '—'}
+          subtitle={currentMix ? `Cash ${formatPct(currentMix.cash)} · Other ${formatPct(currentMix.other)}` : 'Sin mix utilizable'}
         />
         <SummaryCard
           title="Banda histórica RV"
-          value={historical ? `${formatPct(historical.rv.min)} - ${formatPct(historical.rv.max)}` : '—'}
-          subtitle={`Target actual: ${formatPct(summary.targetRv)}`}
+          value={historical ? formatRvBand(historical.rv.min, historical.rv.max) : '—'}
+          subtitle={historical ? `Target: ${formatPct(targetRv)} · ${gapLabel}` : 'Sin banda histórica'}
         />
         <SummaryCard
           title="Cambio estructural"
-          value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Sí' : 'No'}
+          value={summary.structuralChangeRequired === null ? '—' : summary.structuralChangeRequired ? 'Requerido' : 'No requerido'}
           subtitle={
-            summary.targetWithinHistoricalRange === null
-              ? 'Sin banda o target'
-              : summary.targetWithinHistoricalRange
-                ? 'Target dentro de rango'
-                : 'Target fuera de rango'
+            historical
+              ? `Target RV ${formatPct(targetRv)} · Rango alcanzable ${formatPct(historical.rv.min)}-${formatPct(historical.rv.max)} · Gap ${formatPp(gapPp)}`
+              : 'Sin banda o target'
           }
         />
       </div>
@@ -234,7 +257,14 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
               <td style={{ padding: '10px 12px' }}>{formatPct(item.weightPortfolio)}</td>
               <td style={{ padding: '10px 12px' }}>
                 {item.currentMixUsed
-                  ? `RV ${formatPct(item.currentMixUsed.rv)} / RF ${formatPct(item.currentMixUsed.rf)}`
+                  ? (
+                    <>
+                      <div>RV {formatPct(item.currentMixUsed.rv)} / RF {formatPct(item.currentMixUsed.rf)}</div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Cash {formatPct(item.currentMixUsed.cash)} · Other {formatPct(item.currentMixUsed.other)}
+                      </div>
+                    </>
+                  )
                   : '—'}
               </td>
               <td style={{ padding: '10px 12px' }}>
@@ -242,11 +272,11 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
                   ? (
                     <>
                       <div>
-                        {formatPct(item.operationalRange.rv.min)} - {formatPct(item.operationalRange.rv.max)}
+                        {formatRvBand(item.operationalRange.rv.min, item.operationalRange.rv.max)}
                       </div>
                       {item.optimizerSafeRange && item.legalRangeMix ? (
                         <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          Legal: {formatPct(item.legalRangeMix.rv.min)} - {formatPct(item.legalRangeMix.rv.max)}
+                          Legal: {formatRvBand(item.legalRangeMix.rv.min, item.legalRangeMix.rv.max)}
                         </div>
                       ) : null}
                     </>
