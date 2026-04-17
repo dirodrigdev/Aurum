@@ -1742,12 +1742,12 @@ export function OptimizationLightPage({
         </div>
       </div>
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
-        <div style={{ color: T.textSecondary, fontSize: 12 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 1 · Portafolio autónomo</div>
+        <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
           Sweep RF/RV completo, refinamiento local y mix de la fuente activa preservado para elegir política de inversión por sí sola.
         </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
+        <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.45 }}>
           En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
         </div>
         <div>
@@ -1782,31 +1782,31 @@ export function OptimizationLightPage({
         ) : null}
         {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
         {phase1Diagnostics ? (
-          <div style={{ color: T.textMuted, fontSize: 10 }}>
+          <div style={{ color: T.textMuted, fontSize: 9 }}>
             Diagnóstico Fase 1 · run #{phase1Diagnostics.runId} · total {phase1Diagnostics.totalEvaluations}/{phase1Diagnostics.cap} · sweep {phase1Diagnostics.coarseEvaluations} · actual {phase1Diagnostics.currentEvaluations} · ref 2.5 {phase1Diagnostics.local25Evaluations} · ref 1.0 {phase1Diagnostics.micro10Evaluations} · {phase1Diagnostics.elapsedMs} ms{phase1Diagnostics.capReached ? ' · cap alcanzado' : ''}
           </div>
         ) : null}
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
+        <div style={{ color: T.textMuted, fontSize: 9 }}>
           Mix base Fase 1 (fuente activa): {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
         </div>
 
         {phase1Top3.length > 0 && (
           <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
-              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Campeón + retador Fase 1</div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, display: 'grid', gap: 7 }}>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Campeón + retador Fase 1</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, lineHeight: 1.35 }}>
                 Campeón Fase 1: {phase1ChampionChallenger.champion ? scenarioLabel(phase1ChampionChallenger.champion) : 'No disponible'}
                 {phase1ChampionChallenger.champion ? ` · ${formatPct(phase1ChampionChallenger.champion.success40)}` : ''}
               </div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700, lineHeight: 1.35 }}>
                 Retador Fase 1: {phase1ChampionChallenger.challenger ? scenarioLabel(phase1ChampionChallenger.challenger) : 'No disponible'}
                 {phase1ChampionChallenger.challenger ? ` · ${formatPct(phase1ChampionChallenger.challenger.success40)}` : ''}
               </div>
-              <div style={{ color: phase1ChampionChallenger.materialityLabel === 'Mejora material' ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
+              <div style={{ color: phase1ChampionChallenger.materialityLabel === 'Mejora material' ? T.positive : T.warning, fontSize: 12, fontWeight: 800 }}>
                 {phase1ChampionChallenger.materialityLabel}
                 {phase1ChampionChallenger.deltaSuccessPp !== null ? ` · Δ éxito ${formatSignedPp(phase1ChampionChallenger.deltaSuccessPp)}` : ''}
               </div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
+              <div style={{ color: T.textMuted, fontSize: 9 }}>
                 {phase1ChampionChallenger.message}
               </div>
             </div>
@@ -1842,29 +1842,29 @@ export function OptimizationLightPage({
             </div>
 
             {phase1CurrentPoint && phase1SuggestedPoint && switchVerdict && (
-              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 4 }}>
-                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>¿Vale la pena cambiar?</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>¿Vale la pena cambiar?</div>
+                <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.4 }}>
                   Desde: RV {phase1CurrentPoint.rvPct}% / RF {phase1CurrentPoint.rfPct}% · Hacia: RV {phase1SuggestedPoint.rvPct}% / RF {phase1SuggestedPoint.rfPct}%
                 </div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
                   Cambio requerido: {switchVerdict.movePp.toFixed(1)} pp · Mejora en éxito: {switchVerdict.deltaSuccessPp >= 0 ? '+' : ''}{switchVerdict.deltaSuccessPp.toFixed(1)} pp
                 </div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                <div style={{ color: T.textMuted, fontSize: 9 }}>
                   Success40 actual: {formatPct(phase1CurrentPoint.success40)} · sugerido: {formatPct(phase1SuggestedPoint.success40)} · Ruina20 {formatPct(phase1CurrentPoint.ruin20)} → {formatPct(phase1SuggestedPoint.ruin20)}
                 </div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                <div style={{ color: T.textMuted, fontSize: 9 }}>
                   RuinP10 {formatYears(phase1CurrentPoint.ruinP10)} → {formatYears(phase1SuggestedPoint.ruinP10)} · MaxDDP50 {formatPct(phase1CurrentPoint.drawdownP50)} → {formatPct(phase1SuggestedPoint.drawdownP50)}
                 </div>
                 {phase2CurrentRow && phase2SuggestedRow ? (
-                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 9 }}>
                     Assisted: éxito {formatPct(phase2CurrentRow.success40Assisted)} → {formatPct(phase2SuggestedRow.success40Assisted)} · casa {formatPct(phase2CurrentRow.houseSalePct)} → {formatPct(phase2SuggestedRow.houseSalePct)} · cuts {phase2CurrentRow.cutScenarioPct !== null ? formatPct(phase2CurrentRow.cutScenarioPct) : 'NA'} → {phase2SuggestedRow.cutScenarioPct !== null ? formatPct(phase2SuggestedRow.cutScenarioPct) : 'NA'}
                   </div>
                 ) : null}
-                <div style={{ color: switchVerdict.level === 'cambiar' ? T.positive : switchVerdict.level === 'considerar' ? T.warning : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                <div style={{ color: switchVerdict.level === 'cambiar' ? T.positive : switchVerdict.level === 'considerar' ? T.warning : T.textSecondary, fontSize: 13, fontWeight: 900 }}>
                   Veredicto: {switchVerdict.label}
                 </div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>{switchVerdict.detail}</div>
+                <div style={{ color: T.textMuted, fontSize: 9 }}>{switchVerdict.detail}</div>
               </div>
             )}
 
@@ -1893,12 +1893,12 @@ export function OptimizationLightPage({
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         <span>{scenarioLabel(point)}</span>
-                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Mix fuente activa</span> : null}
-                        {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Campeón Fase 1</span> : null}
-                        {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Retador Fase 1</span> : null}
-                        {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Baseline Fase 1</span> : null}
-                        {!isBest && (isBalanced || isTechnicalTie) ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Finalista Fase 1</span> : null}
-                        <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>
+                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Mix fuente activa</span> : null}
+                        {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Campeón Fase 1</span> : null}
+                        {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.18)', borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Retador Fase 1</span> : null}
+                        {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Baseline Fase 1</span> : null}
+                        {!isBest && (isBalanced || isTechnicalTie) ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.18)', borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Finalista Fase 1</span> : null}
+                        <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>
                           {passesPhase2 ? 'Pasa a Fase 2' : 'No pasa a Fase 2'}
                         </span>
                       </div>
@@ -1929,16 +1929,16 @@ export function OptimizationLightPage({
         )}
       </div>
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 2 · Validación modelo completo</div>
-        <div style={{ color: T.textSecondary, fontSize: 12 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Validación modelo completo</div>
+        <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
           Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). Esta fase no reoptimiza: solo valida costo de supervivencia.
         </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
+        <div style={{ color: T.textMuted, fontSize: 9 }}>
           Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
           {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
         </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
+        <div style={{ color: T.textMuted, fontSize: 9 }}>
           Política Fase 2: empate técnico de robustez si éxito queda dentro de {PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp del mejor.
           {' '}Desempate: Ruina20 ({PHASE2_SELECTION_POLICY.ruin20MaterialityPp.toFixed(1)} pp) → Primer cut ({PHASE2_SELECTION_POLICY.firstCutYearMateriality.toFixed(1)} años) → Venta casa ({PHASE2_SELECTION_POLICY.houseSaleMaterialityPp.toFixed(1)} pp) → MaxDD ({PHASE2_SELECTION_POLICY.maxDdMaterialityPp.toFixed(1)} pp).
         </div>
@@ -2254,28 +2254,28 @@ export function OptimizationLightPage({
         )}
 
         {phase2Rows.length > 0 && (
-          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Fase 3 · Calidad de vida / gasto</div>
-            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
+            <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Fase 3 · Calidad de vida / gasto</div>
+            <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.4 }}>
               Busca variantes de gasto más cómodas sobre el escenario final validado y dentro de la banda aceptable de éxito.
             </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
+            <div style={{ color: T.textMuted, fontSize: 9 }}>
               Fuente Fase 3: {phase3Input.sourceLabel} · Escenarios base: {phase3InputRows.length
                 ? phase3InputRows.map((row) => scenarioLabel(row.source)).join(' · ')
                 : 'No disponibles'} · banda pool {formatPct(phase3Input.poolBand)} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes.
             </div>
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 8, display: 'grid', gap: 4 }}>
-              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Política activa</div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 10, display: 'grid', gap: 5 }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Política activa</div>
+              <div style={{ color: T.textMuted, fontSize: 9 }}>
                 Materialidad Fase 1: {optimizerPolicyConfig.phase1.materialitySuccessPp.toFixed(1)} pp
               </div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
+              <div style={{ color: T.textMuted, fontSize: 9 }}>
                 Banda pool Fase 3 (y): {phase3Result ? formatPct(phase3Result.poolBand) : '—'}
               </div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
+              <div style={{ color: T.textMuted, fontSize: 9 }}>
                 Banda sacrificio QoL (x): {phase3Result ? formatPct(phase3Result.successBand) : '—'}
               </div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
+              <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.4 }}>
                 Umbral recomendación: No mover &lt; {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)} pp · Considerar {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)}–{MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp · Mover &gt; {MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp o QoL fuerte ({MIX_COMPARISON_THRESHOLDS.strongQolImprovementPct.toFixed(1)}%)
               </div>
             </div>
@@ -2354,33 +2354,33 @@ export function OptimizationLightPage({
             {phase3Result ? (
               <div style={{ display: 'grid', gap: 8 }}>
                 {phase3RawPolicyComparison ? (
-                  <div style={{ border: `1px solid ${phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a'}`, borderRadius: 10, padding: 8, display: 'grid', gap: 6, background: T.surface }}>
-                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Comparación técnica vs política</div>
+                  <div style={{ border: `1px solid ${phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a'}`, borderRadius: 10, padding: 10, display: 'grid', gap: 8, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparación técnica vs política</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 6 }}>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 7, display: 'grid', gap: 2 }}>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>Ganador técnico (RAW)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 9, display: 'grid', gap: 3 }}>
+                        <div style={{ color: T.textMuted, fontSize: 9, fontWeight: 700 }}>Ganador técnico (RAW)</div>
+                        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900, lineHeight: 1.3 }}>
                           {phase3RawPolicyComparison.raw ? scenarioLabel(phase3RawPolicyComparison.raw.baseRow.source) : 'No disponible'}
                         </div>
-                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                           {phase3RawPolicyComparison.raw
                             ? `${phase3RawPolicyComparison.raw.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.raw.success40)}`
                             : 'Sin candidato RAW'}
                         </div>
                       </div>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 7, display: 'grid', gap: 2 }}>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>Ganador recomendado (POLICY)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 9, display: 'grid', gap: 3 }}>
+                        <div style={{ color: T.textMuted, fontSize: 9, fontWeight: 700 }}>Ganador recomendado (POLICY)</div>
+                        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900, lineHeight: 1.3 }}>
                           {phase3RawPolicyComparison.policy ? scenarioLabel(phase3RawPolicyComparison.policy.baseRow.source) : 'No disponible'}
                         </div>
-                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                           {phase3RawPolicyComparison.policy
                             ? `${phase3RawPolicyComparison.policy.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.policy.success40)} · ${switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}`
                             : 'Sin ganador POLICY'}
                         </div>
                       </div>
                     </div>
-                    <div style={{ color: phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a', fontSize: 10, fontWeight: 700 }}>
+                    <div style={{ color: phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a', fontSize: 11, fontWeight: 800 }}>
                       {phase3RawPolicyComparison.reason}
                     </div>
                   </div>
@@ -2406,27 +2406,27 @@ export function OptimizationLightPage({
                 </div>
 
                 {phase3Result.preferred ? (
-                  <div style={{ border: `1px solid ${T.positive}`, borderRadius: 12, padding: 10, display: 'grid', gap: 5 }}>
-                    <div style={{ color: T.positive, fontSize: 11, fontWeight: 800 }}>
+                  <div style={{ border: `2px solid ${T.positive}`, borderRadius: 12, padding: 12, display: 'grid', gap: 7 }}>
+                    <div style={{ color: T.positive, fontSize: 12, fontWeight: 900 }}>
                       Escenario recomendado final
                     </div>
-                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>
                       Ganador: {scenarioLabel(phase3Result.preferred.baseRow.source)}
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    <div style={{ color: T.textMuted, fontSize: 10, lineHeight: 1.4 }}>
                       Fuente final: {realisticValidation?.row && phase3Result.preferred.baseRow === realisticValidation.row
                         ? 'Mix implementable revalidado'
                         : 'Mix ideal equivalente'}
                       {' '}· Veredicto: {switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surface }}>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito final elegido (Fase 3)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 20, fontWeight: 900 }}>{formatPct(phase3Result.preferred.success40)}</div>
+                        <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>{formatPct(phase3Result.preferred.success40)}</div>
                       </div>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surface }}>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>Mejora ponderada de gasto</div>
-                        <div style={{ color: phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? T.positive : T.warning, fontSize: 20, fontWeight: 900 }}>
+                        <div style={{ color: phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? T.positive : T.warning, fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>
                           {formatSignedPct(phase3Result.preferred.weightedSpendingImprovementPct)}
                         </div>
                       </div>
