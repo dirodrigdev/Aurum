@@ -987,11 +987,15 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
+      <div aria-hidden="true" style={{ height: isMobileViewport ? 104 : 58, flex: '0 0 auto' }} />
       <div
         style={{
-          position: 'sticky',
+          position: 'fixed',
           top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
-          zIndex: 35,
+          left: isMobileViewport ? 10 : 16,
+          right: isMobileViewport ? 10 : 16,
+          zIndex: 80,
+          pointerEvents: 'none',
         }}
       >
         <div
@@ -1016,6 +1020,7 @@ export function SimulationPage({
             lineHeight: 1.25,
             cursor: 'pointer',
             boxShadow: '0 8px 22px rgba(0,0,0,0.18)',
+            pointerEvents: 'auto',
           }}
         >
           <div
