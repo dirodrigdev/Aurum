@@ -615,8 +615,8 @@ function choosePhase1ChampionChallenger(points: Phase1Point[]): Phase1ChampionCh
     ? 'Sin retador comparable'
     : isMaterial ? 'Mejora material' : 'Mejora no material';
   const message = currentIsChampion
-    ? 'El mix actual sigue siendo el mejor resultado técnico en Fase 1. Se mantiene un retador para validación comparativa.'
-    : 'Fase 1 propone un campeón técnico distinto y conserva el mix actual como retador cuando está disponible.';
+    ? 'El mix de la fuente activa sigue siendo el mejor resultado técnico en Fase 1. Se mantiene un retador para validación comparativa.'
+    : 'Fase 1 propone un campeón técnico distinto y conserva el mix de la fuente activa como retador cuando está disponible.';
 
   return {
     champion,
@@ -737,7 +737,7 @@ function buildMixSwitchVerdict(
     return {
       level: 'no',
       label: 'Mantener mix actual',
-      detail: 'El mix actual ya es el campeón técnico de Fase 1.',
+      detail: 'El mix de la fuente activa ya es el campeón técnico de Fase 1.',
       deltaSuccessPp,
       movePp,
       phase1DownsideImprovement: false,
@@ -1594,7 +1594,7 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Sweep RF/RV completo, refinamiento local y mix actual preservado para elegir política de inversión por sí sola.
+          Sweep RF/RV completo, refinamiento local y mix de la fuente activa preservado para elegir política de inversión por sí sola.
         </div>
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
@@ -1636,7 +1636,7 @@ export function OptimizationLightPage({
           </div>
         ) : null}
         <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Mix actual: {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
+          Mix base Fase 1 (fuente activa): {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
         </div>
 
         {phase1Top3.length > 0 && (
@@ -1742,7 +1742,7 @@ export function OptimizationLightPage({
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         <span>{scenarioLabel(point)}</span>
-                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Mix actual</span> : null}
+                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Mix fuente activa</span> : null}
                         {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Campeón Fase 1</span> : null}
                         {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Retador Fase 1</span> : null}
                         {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Baseline Fase 1</span> : null}
