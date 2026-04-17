@@ -1153,16 +1153,6 @@ export function OptimizationLightPage({
         : 'Campeón por mayor éxito asistido dentro del pool';
     return { champion, challenger, reason };
   }, [phase2CurrentRow, phase2Decisions, phase2Rows]);
-  const phase3RelevantRows = useMemo(() => {
-    if (!phase2Rows.length) return [];
-    const rows = phase2Rows.filter((row) => {
-      const decision = phase2Decisions.get(row.source.rvPct) ?? null;
-      const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
-      return isBaseline || Boolean(decision?.competesWithPhase1) || Boolean(decision?.displacesPhase1);
-    });
-    if (rows.length) return rows;
-    return phase2BaselineRow ? [phase2BaselineRow] : [];
-  }, [phase2BaselinePoint, phase2BaselineRow, phase2Decisions, phase2Rows]);
   const phase3BaseSpendingVector = useMemo(
     () => getSpendingVector(activeParams),
     [activeParams],
@@ -1174,44 +1164,84 @@ export function OptimizationLightPage({
     };
   }, [phase2ChampionChallenger.champion, phase2ChampionChallenger.reason]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
-  const phase3Input = useMemo(() => {
+  const activeScenarioAfterPhase2 = useMemo(
+    () => phase2ImplementationSelectedRow,
+    [phase2ImplementationSelectedRow],
+  );
+  const activeScenarioAfterImplementation = useMemo(() => {
+    if (!activeScenarioAfterPhase2) {
+      return {
+        row: null as Phase2Point | null,
+        sourceLabel: 'Sin escenario activo post-Fase 2',
+        blockedReason: 'Primero ejecuta Fase 2 para definir un escenario activo.',
+        roleLabel: 'Escenario activo',
+      };
+    }
     const materialGap = Boolean(
       implementationPlan
       && Math.abs(implementationPlan.gapVsIdealRvPp) > REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9,
     );
-    if (materialGap) {
-      if (realisticValidation?.row) {
-        const seedRows = [
-          realisticValidation.row,
-          ...phase3RelevantRows.filter((row) => !isSameMix(row.source, phase2ImplementationSelectedRow?.source ?? realisticValidation.row.source)),
-        ];
-        const sorted = [...seedRows].sort((a, b) => (
-          (b.success40Assisted - a.success40Assisted)
-          || (a.ruin20Assisted - b.ruin20Assisted)
-          || (a.houseSalePct - b.houseSalePct)
-        ));
-        const best = sorted[0]?.success40Assisted ?? 0;
-        const poolBand = phase3PoolBand(best);
-        const rows = sorted.filter((row) => row.success40Assisted >= best - poolBand - 1e-9).slice(0, 4);
-        const challenger = phase2CurrentRow && !rows.some((row) => isSameMix(row.source, phase2CurrentRow.source))
-          ? phase2CurrentRow
-          : sorted.find((row) => !rows.some((chosen) => isSameMix(chosen.source, row.source))) ?? null;
-        if (rows.length < 2 && challenger) rows.push(challenger);
-        return {
-          rows,
-          sourceLabel: 'Escenario implementable revalidado',
-          poolBand,
-          blockedReason: null as string | null,
-        };
-      }
+    if (!implementationPlan) {
       return {
-        rows: [] as Phase2Point[],
-        sourceLabel: 'Escenario implementable pendiente de validación realista',
-        poolBand: 0,
-        blockedReason: 'Para ejecutar Fase 3 primero debes correr la Validación realista.',
+        row: activeScenarioAfterPhase2,
+        sourceLabel: 'Escenario activo recibido desde Fase 2',
+        blockedReason: null as string | null,
+        roleLabel: 'Activo post-Fase 2',
       };
     }
-    const sorted = [...phase3RelevantRows].sort((a, b) => (
+    if (!materialGap) {
+      return {
+        row: activeScenarioAfterPhase2,
+        sourceLabel: 'Fase 3 usando escenario implementado equivalente',
+        blockedReason: null as string | null,
+        roleLabel: 'Implementado equivalente',
+      };
+    }
+    if (realisticValidation?.row) {
+      return {
+        row: realisticValidation.row,
+        sourceLabel: 'Fase 3 usando escenario validado tras implementación',
+        blockedReason: null as string | null,
+        roleLabel: 'Validado tras implementación',
+      };
+    }
+    return {
+      row: null as Phase2Point | null,
+      sourceLabel: 'Escenario implementable pendiente de validación realista',
+      blockedReason: 'Para ejecutar Fase 3 primero debes correr la Validación realista.',
+      roleLabel: 'Escenario activo',
+    };
+  }, [activeScenarioAfterPhase2, implementationPlan, realisticValidation]);
+  const phase3Input = useMemo(() => {
+    if (!activeScenarioAfterImplementation.row) {
+      return {
+        rows: [] as Phase2Point[],
+        sourceLabel: activeScenarioAfterImplementation.sourceLabel,
+        poolBand: 0,
+        blockedReason: activeScenarioAfterImplementation.blockedReason,
+        activeRow: null as Phase2Point | null,
+        challengerRow: null as Phase2Point | null,
+        activeRoleLabel: activeScenarioAfterImplementation.roleLabel,
+      };
+    }
+
+    const seedRows: Phase2Point[] = [activeScenarioAfterImplementation.row];
+    const challengerCandidates = [
+      phase2ChampionChallenger.challenger,
+      phase2CurrentRow,
+      ...phase2Rows,
+    ].filter((row): row is Phase2Point => Boolean(row));
+
+    let selectedChallenger: Phase2Point | null = null;
+    for (const candidate of challengerCandidates) {
+      if (!seedRows.some((row) => isSameMix(row.source, candidate.source))) {
+        seedRows.push(candidate);
+        selectedChallenger = candidate;
+        break;
+      }
+    }
+
+    const sorted = [...seedRows].sort((a, b) => (
       (b.success40Assisted - a.success40Assisted)
       || (a.ruin20Assisted - b.ruin20Assisted)
       || (a.houseSalePct - b.houseSalePct)
@@ -1219,17 +1249,23 @@ export function OptimizationLightPage({
     const best = sorted[0]?.success40Assisted ?? 0;
     const poolBand = phase3PoolBand(best);
     const rows = sorted.filter((row) => row.success40Assisted >= best - poolBand - 1e-9).slice(0, 4);
-    const challenger = phase2CurrentRow && !rows.some((row) => isSameMix(row.source, phase2CurrentRow.source))
-      ? phase2CurrentRow
-      : sorted.find((row) => !rows.some((chosen) => isSameMix(chosen.source, row.source))) ?? null;
-    if (rows.length < 2 && challenger) rows.push(challenger);
+    if (rows.length < 2 && selectedChallenger && !rows.some((row) => isSameMix(row.source, selectedChallenger.source))) {
+      rows.push(selectedChallenger);
+    }
+    if (rows.length < 2) {
+      const fallback = sorted.find((row) => !rows.some((chosen) => isSameMix(chosen.source, row.source))) ?? null;
+      if (fallback) rows.push(fallback);
+    }
     return {
       rows,
-      sourceLabel: 'Escenarios relevantes de Fase 2',
+      sourceLabel: activeScenarioAfterImplementation.sourceLabel,
       poolBand,
       blockedReason: null as string | null,
+      activeRow: activeScenarioAfterImplementation.row,
+      challengerRow: selectedChallenger,
+      activeRoleLabel: activeScenarioAfterImplementation.roleLabel,
     };
-  }, [implementationPlan, phase2CurrentRow, phase2ImplementationSelectedRow, phase3RelevantRows, realisticValidation]);
+  }, [activeScenarioAfterImplementation, phase2ChampionChallenger.challenger, phase2CurrentRow, phase2Rows]);
   const phase3InputRows = phase3Input.rows;
 
   const runImplementation = useCallback(async () => {
@@ -1866,7 +1902,10 @@ export function OptimizationLightPage({
               Traduce el objetivo ideal a instrumentos reales (sin tocar el JSON abstracto del optimizador).
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Objetivo ideal base: {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+              Escenario activo recibido desde Fase 2: {activeScenarioAfterPhase2 ? scenarioLabel(activeScenarioAfterPhase2.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Objetivo ideal base (Implementation): {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
@@ -1995,6 +2034,9 @@ export function OptimizationLightPage({
                   Éxito mix alcanzable: {formatPct(realisticValidation.row.success40Assisted)} · Δ vs ideal {formatSignedPp(realisticValidation.deltaVsIdealSuccessPp)}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Escenario activo tras implementación: {scenarioLabel(realisticValidation.row.source)}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Ruina20: {formatPct(realisticValidation.row.ruin20Assisted)} · Venta casa: {formatPct(realisticValidation.row.houseSalePct)} · MaxDD P50: {formatPct(realisticValidation.row.drawdownP50)}
                 </div>
               </div>
@@ -2026,22 +2068,22 @@ export function OptimizationLightPage({
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {phase3InputRows.map((row) => {
                     const decision = phase2Decisions.get(row.source.rvPct) ?? null;
-                    const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
-                    const isRealistic = Boolean(realisticValidation?.row && row === realisticValidation.row);
-                    const roleLabel = isBaseline
-                      ? 'Referencia Fase 1'
-                      : isRealistic
-                        ? 'Implementable validado'
-                      : decision?.displacesPhase1
-                        ? 'Desplaza'
-                        : decision?.competesWithPhase1
-                          ? 'Compite'
-                          : 'Finalista';
+                    const isActive = Boolean(phase3Input.activeRow && isSameMix(row.source, phase3Input.activeRow.source));
+                    const isChallenger = Boolean(phase3Input.challengerRow && isSameMix(row.source, phase3Input.challengerRow.source));
+                    const roleLabel = isActive
+                      ? phase3Input.activeRoleLabel
+                      : isChallenger
+                        ? 'Retador desde Fase 2'
+                        : decision?.displacesPhase1
+                          ? 'Desplaza'
+                          : decision?.competesWithPhase1
+                            ? 'Compite'
+                            : 'Finalista';
                     return (
                       <div
                         key={`phase3-base-${row.source.rvPct}-${roleLabel}`}
                         style={{
-                          border: `1px solid ${isBaseline ? T.primary : decision?.displacesPhase1 ? T.positive : T.border}`,
+                          border: `1px solid ${isActive ? T.primary : decision?.displacesPhase1 ? T.positive : T.border}`,
                           background: T.surface,
                           borderRadius: 10,
                           padding: '6px 8px',
