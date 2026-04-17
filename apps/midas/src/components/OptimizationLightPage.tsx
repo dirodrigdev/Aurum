@@ -1846,14 +1846,19 @@ export function OptimizationLightPage({
           </div>
         ) : null}
         {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
-        {phase1Diagnostics ? (
-          <div style={{ color: T.textMuted, fontSize: 9 }}>
-            Diagnóstico Fase 1 · run #{phase1Diagnostics.runId} · total {phase1Diagnostics.totalEvaluations}/{phase1Diagnostics.cap} · sweep {phase1Diagnostics.coarseEvaluations} · actual {phase1Diagnostics.currentEvaluations} · ref 2.5 {phase1Diagnostics.local25Evaluations} · ref 1.0 {phase1Diagnostics.micro10Evaluations} · {phase1Diagnostics.elapsedMs} ms{phase1Diagnostics.capReached ? ' · cap alcanzado' : ''}
+        <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '6px 8px', background: T.surfaceEl }}>
+          <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+            Ver contexto técnico Fase 1
+          </summary>
+          {phase1Diagnostics ? (
+            <div style={{ color: T.textMuted, fontSize: 9, marginTop: 6 }}>
+              Diagnóstico Fase 1 · run #{phase1Diagnostics.runId} · total {phase1Diagnostics.totalEvaluations}/{phase1Diagnostics.cap} · sweep {phase1Diagnostics.coarseEvaluations} · actual {phase1Diagnostics.currentEvaluations} · ref 2.5 {phase1Diagnostics.local25Evaluations} · ref 1.0 {phase1Diagnostics.micro10Evaluations} · {phase1Diagnostics.elapsedMs} ms{phase1Diagnostics.capReached ? ' · cap alcanzado' : ''}
+            </div>
+          ) : null}
+          <div style={{ color: T.textMuted, fontSize: 9, marginTop: 4 }}>
+            Mix base Fase 1 (fuente activa): {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
           </div>
-        ) : null}
-        <div style={{ color: T.textMuted, fontSize: 9 }}>
-          Mix base Fase 1 (fuente activa): {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
-        </div>
+        </details>
 
         {phase1Top3.length > 0 && (
           <div style={{ display: 'grid', gap: 8 }}>
@@ -1876,35 +1881,40 @@ export function OptimizationLightPage({
               </div>
             </div>
 
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
-              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                Baseline Fase 1: {scenarioLabel(phase1Top3[0])}
-              </div>
-              <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                Success40 autónomo = {formatPct(phase1Top3[0].success40)}
-              </div>
-              {phase1TechnicalTiePoints.length > 1 && phase1BalancedPoint && (
-                <>
-                  <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                    Finalista Fase 1: {scenarioLabel(phase1BalancedPoint)}
+            <details style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+              <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                Baseline + ranking técnico Fase 1
+              </summary>
+              <div style={{ display: 'grid', gap: 5, marginTop: 6 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                  Baseline Fase 1: {scenarioLabel(phase1Top3[0])}
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  Success40 autónomo = {formatPct(phase1Top3[0].success40)}
+                </div>
+                {phase1TechnicalTiePoints.length > 1 && phase1BalancedPoint && (
+                  <>
+                    <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                      Finalista Fase 1: {scenarioLabel(phase1BalancedPoint)}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Criterio: menor Ruina20, luego RuinP10 más tardío, luego menor MaxDDP50 y menor RV.
+                    </div>
+                  </>
+                )}
+                {phase1Top3.slice(1).map((point, index) => (
+                  <div key={`phase1-top-${point.rvPct}`} style={{ color: T.textSecondary, fontSize: 11 }}>
+                    {index + 2}º mejor: {scenarioLabel(point)} · {formatPct(point.success40)} · {phase1BestSuccess !== null ? formatDeltaVsBest((point.success40 - phase1BestSuccess) * 100) : ''}
                   </div>
+                ))}
+                {phase1TechnicalTiePoints.length > 1 ? (
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    Criterio: menor Ruina20, luego RuinP10 más tardío, luego menor MaxDDP50 y menor RV.
+                    Meseta de éxito: {phase1TechnicalTiePoints.length} mixes quedan dentro de {TECHNICAL_TIE_BAND_PP.toFixed(1)} pp del mejor.
+                    {' '}({phase1TechnicalTiePoints.map((point) => `${point.rvPct}/${point.rfPct}`).join(' · ')})
                   </div>
-                </>
-              )}
-              {phase1Top3.slice(1).map((point, index) => (
-                <div key={`phase1-top-${point.rvPct}`} style={{ color: T.textSecondary, fontSize: 11 }}>
-                  {index + 2}º mejor: {scenarioLabel(point)} · {formatPct(point.success40)} · {phase1BestSuccess !== null ? formatDeltaVsBest((point.success40 - phase1BestSuccess) * 100) : ''}
-                </div>
-              ))}
-              {phase1TechnicalTiePoints.length > 1 ? (
-                <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Meseta de éxito: {phase1TechnicalTiePoints.length} mixes quedan dentro de {TECHNICAL_TIE_BAND_PP.toFixed(1)} pp del mejor.
-                  {' '}({phase1TechnicalTiePoints.map((point) => `${point.rvPct}/${point.rfPct}`).join(' · ')})
-                </div>
-              ) : null}
-            </div>
+                ) : null}
+              </div>
+            </details>
 
             {phase1CurrentPoint && phase1SuggestedPoint && switchVerdict && (
               <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, display: 'grid', gap: 6 }}>
@@ -1944,40 +1954,35 @@ export function OptimizationLightPage({
                 const isPhase1Challenger = Boolean(phase1ChampionChallenger.challenger && isSameMix(point, phase1ChampionChallenger.challenger));
                 const passesPhase2 = shortlist.some((candidate) => isSameMix(candidate, point));
                 return (
-                  <div
+                  <details
                     key={`phase1-sweep-${point.rvPct}`}
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${isBest ? T.primary : isBalanced ? '#4e86ff' : isTechnicalTie ? T.warning : T.border}`,
                       borderRadius: 10,
-                      padding: '9px 10px',
-                      display: 'grid',
-                      gap: 4,
+                      padding: '7px 9px',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <span>{scenarioLabel(point)}</span>
-                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Mix fuente activa</span> : null}
-                        {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Campeón Fase 1</span> : null}
-                        {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.18)', borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Retador Fase 1</span> : null}
-                        {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Baseline Fase 1</span> : null}
-                        {!isBest && (isBalanced || isTechnicalTie) ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.18)', borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>Finalista Fase 1</span> : null}
-                        <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.2 }}>
-                          {passesPhase2 ? 'Pasa a Fase 2' : 'No pasa a Fase 2'}
-                        </span>
+                    <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <span>{scenarioLabel(point)}</span>
+                          {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px', fontSize: 9, fontWeight: 800 }}>Fuente activa</span> : null}
+                          {isPhase1Champion ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px', fontSize: 9, fontWeight: 800 }}>Campeón</span> : null}
+                          {isPhase1Challenger ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.18)', borderRadius: 999, padding: '2px 8px', fontSize: 9, fontWeight: 800 }}>Retador</span> : null}
+                          <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '2px 8px', fontSize: 9, fontWeight: 800 }}>
+                            {passesPhase2 ? 'Pasa F2' : 'No pasa F2'}
+                          </span>
+                        </div>
+                        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                          Éxito {formatPct(point.success40)} · Ruina20 {formatPct(point.ruin20)} · RuinP10 {formatYears(point.ruinP10)} · MaxDD {formatPct(point.drawdownP50)} · Δ {isBest ? '0.0 pp' : isTechnicalTie ? 'Empate técnico' : formatDeltaVsBest(deltaVsBest)}
+                        </div>
                       </div>
-                      <div style={{ color: isBest ? T.primary : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                        Δ vs mejor: {isBest ? '0.0 pp' : isTechnicalTie ? 'Empate técnico' : formatDeltaVsBest(deltaVsBest)}
-                      </div>
+                    </summary>
+                    <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
+                      Terminal P50 all: {formatMoney(point.terminalP50All)} · Terminal P50 survivors: {formatMoney(point.terminalP50Survivors)}
                     </div>
-                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                      Success40 autónomo: {formatPct(point.success40)} · Ruina20 autónoma: {formatPct(point.ruin20)}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      RuinP10: {formatYears(point.ruinP10)} · MaxDDP50: {formatPct(point.drawdownP50)} · Terminal P50 all: {formatMoney(point.terminalP50All)}
-                    </div>
-                  </div>
+                  </details>
                 );
               })}
             </div>
@@ -2059,111 +2064,88 @@ export function OptimizationLightPage({
                   ? '0 0 0 1px rgba(92, 128, 255, 0.24), 0 4px 12px rgba(92, 128, 255, 0.10)'
                   : 'none';
               return (
-              <div
+              <details
                 key={`phase2-${row.source.rvPct}`}
                 style={{
                   background: T.surfaceEl,
                   border: `${cardBorderWidth}px solid ${cardBorderColor}`,
                   borderRadius: 12,
                   boxShadow: cardShadow,
-                  padding: 10,
-                  display: 'grid',
-                  gap: 4,
+                  padding: 8,
                 }}
               >
-                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{scenarioLabel(row.source)}</div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {isBaseline ? (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px' }}>
-                      Referencia
-                    </span>
-                  ) : null}
-                  {!isBaseline && decision ? (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: decision.competesWithPhase1 ? '#fff' : T.textSecondary,
-                        background: decision.competesWithPhase1 ? T.positive : T.surface,
-                        border: `1px solid ${decision.competesWithPhase1 ? T.positive : T.border}`,
-                        borderRadius: 999,
-                        padding: '2px 8px',
-                      }}
-                    >
-                      {decision.competesWithPhase1 ? 'Compite con Fase 1' : 'No compite'}
-                    </span>
-                  ) : null}
-                  {!isBaseline && isPhase1Finalist ? (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: '#6c4a12',
-                        background: 'rgba(216, 162, 74, 0.16)',
-                        border: '1px solid rgba(216, 162, 74, 0.35)',
-                        borderRadius: 999,
-                        padding: '2px 8px',
-                      }}
-                    >
-                      Finalista Fase 1
-                    </span>
-                  ) : null}
-                  {!isBaseline && decision?.displacesPhase1 ? (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.positive, borderRadius: 999, padding: '2px 8px' }}>
-                      Desplaza a Fase 1
-                    </span>
-                  ) : null}
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: phase3Eligible ? '#fff' : T.textMuted,
-                      background: phase3Eligible ? '#d8a24a' : T.surface,
-                      border: `1px solid ${phase3Eligible ? '#d8a24a' : T.border}`,
-                      borderRadius: 999,
-                      padding: '2px 8px',
-                    }}
-                  >
-                    {phase3Eligible ? 'Elegible Fase 3' : 'No elegible Fase 3'}
-                  </span>
-                </div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)} ({row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp vs autónomo)</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 asistida: {formatPct(row.ruin20Assisted)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Venta de casa: {formatPct(row.houseSalePct)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Año venta P50: {formatYears(row.houseSaleYearP50)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                  Escenarios con cuts: {row.cutScenarioPct !== null ? formatPct(row.cutScenarioPct) : 'No disponible'}
-                </div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                  Recorte medio: {row.cutSeverityMean !== null ? formatPct(row.cutSeverityMean) : 'No disponible'}
-                </div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Primer cut año P50: {formatYears(row.firstCutYearP50)}</div>
-                <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{classifyRescueDependency(row)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (all): {formatMoney(row.terminalP50All)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}</div>
-                <div style={{ color: T.textSecondary, fontSize: 11 }}>MaxDD P50: {formatPct(row.drawdownP50)}</div>
-                {!isBaseline && decision ? (
-                  <div style={{ display: 'grid', gap: 2, marginTop: 2 }}>
-                    {decision.reasons.map((reason) => (
-                      <div key={`${row.source.rvPct}-${reason}`} style={{ color: T.textMuted, fontSize: 10 }}>
-                        {reason}
-                      </div>
-                    ))}
+                <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span>{scenarioLabel(row.source)}</span>
+                      {isBaseline ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px' }}>
+                          Referencia
+                        </span>
+                      ) : null}
+                      {!isBaseline && decision?.displacesPhase1 ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: T.positive, borderRadius: 999, padding: '2px 8px' }}>
+                          Campeón
+                        </span>
+                      ) : null}
+                      {!isBaseline && decision?.competesWithPhase1 && !decision?.displacesPhase1 ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: '#d8a24a', borderRadius: 999, padding: '2px 8px' }}>
+                          Retador
+                        </span>
+                      ) : null}
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          color: phase3Eligible ? '#fff' : T.textMuted,
+                          background: phase3Eligible ? '#d8a24a' : T.surface,
+                          border: `1px solid ${phase3Eligible ? '#d8a24a' : T.border}`,
+                          borderRadius: 999,
+                          padding: '2px 8px',
+                        }}
+                      >
+                        {phase3Eligible ? 'Elegible F3' : 'No F3'}
+                      </span>
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                      Éxito {formatPct(row.success40Assisted)} · Ruina20 {formatPct(row.ruin20Assisted)} · Primer cut {formatYears(row.firstCutYearP50)} · Venta casa {formatPct(row.houseSalePct)} · MaxDD {formatPct(row.drawdownP50)}
+                    </div>
                   </div>
-                ) : null}
-              </div>
+                </summary>
+                <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Éxito40 asistido vs autónomo: {row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Escenarios con cuts: {row.cutScenarioPct !== null ? formatPct(row.cutScenarioPct) : 'No disponible'} · Recorte medio: {row.cutSeverityMean !== null ? formatPct(row.cutSeverityMean) : 'No disponible'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{classifyRescueDependency(row)}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Terminal P50 (all): {formatMoney(row.terminalP50All)} · Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}
+                  </div>
+                  {!isBaseline && decision ? (
+                    <div style={{ display: 'grid', gap: 2, marginTop: 2 }}>
+                      {decision.reasons.map((reason) => (
+                        <div key={`${row.source.rvPct}-${reason}`} style={{ color: T.textMuted, fontSize: 10 }}>
+                          {reason}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </details>
               );
             })}
           </div>
         )}
 
         {phase2ChampionChallenger.champion ? (
-          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Champion / challenger persistentes</div>
-            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Champion / challenger persistentes</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
               Campeón provisional: {scenarioLabel(phase2ChampionChallenger.champion.source)} · {formatPct(phase2ChampionChallenger.champion.success40Assisted)} · {phase2ChampionChallenger.reason}
             </div>
-            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
               Retador final: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · ${formatPct(phase2ChampionChallenger.challenger.success40Assisted)}` : 'No disponible'}
             </div>
           </div>
@@ -2257,44 +2239,49 @@ export function OptimizationLightPage({
                     ? 'Con estos traspasos se llega al objetivo ideal dentro de tolerancia.'
                     : 'Gap material detectado: se requiere Validación realista para pasar a Fase 3.'}
                 </div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Restricciones aplicadas · misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
-                  {' '}misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'} ·
-                  {' '}mismo wrapper: {implementationPlan.restrictionsApplied.sameTaxWrapper ? 'sí' : 'no'} ·
-                  {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'} ·
-                  {' '}cross-currency: {implementationPlan.restrictionsApplied.crossCurrency ? 'sí' : 'no'}
-                </div>
-                {implementationPlan.transfers.length ? (
-                  <div style={{ display: 'grid', gap: 3 }}>
-                    {implementationPlan.transfers.slice(0, 6).map((transfer, index) => (
-                      <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
-                        <div style={{ color: T.textPrimary, fontWeight: 800 }}>
-                          {transfer.fromName} → {transfer.toName}
-                        </div>
-                        <div>
-                          {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
-                        </div>
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted }}>
-                          <span>{transfer.rationale}</span>
-                          {transfer.constraints.crossManager ? <span style={{ color: '#6c4a12' }}>Cross-manager</span> : null}
-                          {transfer.constraints.crossCurrency ? <span style={{ color: T.warning }}>Cross-currency</span> : null}
-                          {!transfer.constraints.sameManager || transfer.constraints.crossCurrency ? <span>Fallback por falta de alternativa</span> : null}
-                        </div>
-                      </div>
-                    ))}
+                <details style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 6, background: T.surface }}>
+                  <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                    Ver detalle de traspasos y restricciones
+                  </summary>
+                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
+                    Restricciones aplicadas · misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
+                    {' '}misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'} ·
+                    {' '}mismo wrapper: {implementationPlan.restrictionsApplied.sameTaxWrapper ? 'sí' : 'no'} ·
+                    {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'} ·
+                    {' '}cross-currency: {implementationPlan.restrictionsApplied.crossCurrency ? 'sí' : 'no'}
                   </div>
-                ) : (
-                  <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    No hay traspasos sugeridos con el universo cargado.
-                  </div>
-                )}
-                {implementationPlan.warnings.length ? (
-                  <div style={{ display: 'grid', gap: 2 }}>
-                    {implementationPlan.warnings.map((warning) => (
-                      <div key={warning} style={{ color: T.warning, fontSize: 10 }}>{warning}</div>
-                    ))}
-                  </div>
-                ) : null}
+                  {implementationPlan.transfers.length ? (
+                    <div style={{ display: 'grid', gap: 3, marginTop: 6 }}>
+                      {implementationPlan.transfers.slice(0, 6).map((transfer, index) => (
+                        <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
+                          <div style={{ color: T.textPrimary, fontWeight: 800 }}>
+                            {transfer.fromName} → {transfer.toName}
+                          </div>
+                          <div>
+                            {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
+                          </div>
+                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted }}>
+                            <span>{transfer.rationale}</span>
+                            {transfer.constraints.crossManager ? <span style={{ color: '#6c4a12' }}>Cross-manager</span> : null}
+                            {transfer.constraints.crossCurrency ? <span style={{ color: T.warning }}>Cross-currency</span> : null}
+                            {!transfer.constraints.sameManager || transfer.constraints.crossCurrency ? <span>Fallback por falta de alternativa</span> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
+                      No hay traspasos sugeridos con el universo cargado.
+                    </div>
+                  )}
+                  {implementationPlan.warnings.length ? (
+                    <div style={{ display: 'grid', gap: 2, marginTop: 6 }}>
+                      {implementationPlan.warnings.map((warning) => (
+                        <div key={warning} style={{ color: T.warning, fontSize: 10 }}>{warning}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </details>
               </div>
             ) : null}
             {realisticValidationError ? (
@@ -2408,21 +2395,19 @@ export function OptimizationLightPage({
                 ? phase3InputRows.map((row) => scenarioLabel(row.source)).join(' · ')
                 : 'No disponibles'} · banda pool {formatPct(phase3Input.poolBand)} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes.
             </div>
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 10, display: 'grid', gap: 5 }}>
-              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Política activa</div>
-              <div style={{ color: T.textMuted, fontSize: 9 }}>
-                Materialidad Fase 1: {optimizerPolicyConfig.phase1.materialitySuccessPp.toFixed(1)} pp
+            <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 8 }}>
+              <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                Política activa · y {phase3Result ? formatPct(phase3Result.poolBand) : '—'} · x {phase3Result ? formatPct(phase3Result.successBand) : '—'}
+              </summary>
+              <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                <div style={{ color: T.textMuted, fontSize: 9 }}>
+                  Materialidad Fase 1: {optimizerPolicyConfig.phase1.materialitySuccessPp.toFixed(1)} pp
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.4 }}>
+                  Umbral recomendación: No mover &lt; {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)} pp · Considerar {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)}–{MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp · Mover &gt; {MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp o QoL fuerte ({MIX_COMPARISON_THRESHOLDS.strongQolImprovementPct.toFixed(1)}%)
+                </div>
               </div>
-              <div style={{ color: T.textMuted, fontSize: 9 }}>
-                Banda pool Fase 3 (y): {phase3Result ? formatPct(phase3Result.poolBand) : '—'}
-              </div>
-              <div style={{ color: T.textMuted, fontSize: 9 }}>
-                Banda sacrificio QoL (x): {phase3Result ? formatPct(phase3Result.successBand) : '—'}
-              </div>
-              <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.4 }}>
-                Umbral recomendación: No mover &lt; {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)} pp · Considerar {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)}–{MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp · Mover &gt; {MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp o QoL fuerte ({MIX_COMPARISON_THRESHOLDS.strongQolImprovementPct.toFixed(1)}%)
-              </div>
-            </div>
+            </details>
             {phase3Input.blockedReason ? (
               <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
                 {phase3Input.blockedReason}
