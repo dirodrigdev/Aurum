@@ -299,6 +299,7 @@ function computeWeightedReturn(p: ModelParameters) {
 
 function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters {
   if (!overrides || !overrides.active) return p;
+  const blocksMode = isBlocksCompositionMode(p);
   const baseReturn = computeWeightedReturn(p);
   const targetReturn = overrides.returnPct ?? baseReturn;
   const factor = baseReturn > 0 ? targetReturn / baseReturn : 1;
@@ -306,7 +307,9 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
   const horizonMonths = Math.max(12, Math.round(horizonYears * 12));
   return {
     ...p,
-    capitalInitial: overrides.capital ?? p.capitalInitial,
+    // En modo bloques, capitalInitial es derivado del snapshot + ledger
+    // y no debe ser sobreescrito por un override legacy/stale.
+    capitalInitial: blocksMode ? p.capitalInitial : (overrides.capital ?? p.capitalInitial),
     simulation: {
       ...p.simulation,
       horizonMonths,
@@ -321,6 +324,32 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
       rfChileUFAnnual: p.returns.rfChileUFAnnual * factor,
     },
   };
+}
+
+function sanitizeSimulationOverridesForParams(
+  params: ModelParameters,
+  overrides: SimulationOverrides | null,
+): SimulationOverrides | null {
+  if (!overrides || !overrides.active) return null;
+  const allowCapitalOverride = !isBlocksCompositionMode(params);
+  const next: SimulationOverrides = {
+    active: true,
+    preset: overrides.preset,
+  };
+  if (typeof overrides.returnPct === 'number' && Number.isFinite(overrides.returnPct)) {
+    next.returnPct = overrides.returnPct;
+  }
+  if (typeof overrides.horizonYears === 'number' && Number.isFinite(overrides.horizonYears)) {
+    next.horizonYears = overrides.horizonYears;
+  }
+  if (allowCapitalOverride && typeof overrides.capital === 'number' && Number.isFinite(overrides.capital)) {
+    next.capital = overrides.capital;
+  }
+  const hasPayload =
+    typeof next.returnPct === 'number'
+    || typeof next.horizonYears === 'number'
+    || typeof next.capital === 'number';
+  return hasPayload ? next : null;
 }
 
 function isBlocksCompositionMode(params: ModelParameters): boolean {
@@ -2404,7 +2433,8 @@ export default function App() {
       riskCapitalEnabled: nextEnabled,
     });
     setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('risk-toggle', () => base);
   }, [
     applySimulationOverrides,
@@ -2439,7 +2469,8 @@ export default function App() {
     });
     setBaseParams(nextParams);
     setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('ledger-commit', () => base);
   }, [buildCanonicalSimParams, computeManualAdjustmentImpact, markSimulationInteraction, simOverrides, startRecalculation]);
 
@@ -2461,7 +2492,12 @@ export default function App() {
     const simChanged = currentSignature !== nextSignature;
 
     const deltaChange = next.capitalInitial - currentSimParams.capitalInitial;
-    if (Math.abs(deltaChange) > 0.0001 && simOverrides?.active && typeof simOverrides.capital === 'number') {
+    if (
+      !isBlocksCompositionMode(next)
+      && Math.abs(deltaChange) > 0.0001
+      && simOverrides?.active
+      && typeof simOverrides.capital === 'number'
+    ) {
       setSimOverrides((prev) => {
         if (!prev || !prev.active || typeof prev.capital !== 'number') return prev;
         return { ...prev, capital: Math.max(1, prev.capital + deltaChange) };
@@ -2476,7 +2512,8 @@ export default function App() {
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
       }
-      const base = applySimulationOverrides(next, simOverrides);
+      const sanitizedOverrides = sanitizeSimulationOverridesForParams(next, simOverrides);
+      const base = applySimulationOverrides(next, sanitizedOverrides);
       const cause = pendingRecalcCauseRef.current ?? 'params-change';
       pendingRecalcCauseRef.current = null;
       startRecalculation(cause, () => base);
@@ -2580,7 +2617,8 @@ export default function App() {
       shouldSwitchToSimulation ? normalizedNextWeights : undefined,
     );
     setSimParams(effectiveNextParams);
-    const base = applySimulationOverrides(effectiveNextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation(cause, () => base);
   }, [applyActiveDistribution, simOverrides, startRecalculation]);
 
@@ -2603,7 +2641,8 @@ export default function App() {
     markSimulationInteraction();
     const nextParams = applyActiveDistribution(simParamsRef.current, resolved.activeWeights);
     setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('params-change', () => base);
   }, [
     applyActiveDistribution,
@@ -2628,18 +2667,6 @@ export default function App() {
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     markSimulationInteraction(next);
-    const nextOverrides = simOverrides?.active
-      ? {
-          active: true,
-          preset: simOverrides.preset,
-          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
-        }
-      : null;
-    const sanitizedOverrides =
-      nextOverrides && typeof nextOverrides.capital === 'number'
-        ? nextOverrides
-        : null;
-    setSimOverrides(sanitizedOverrides);
     const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
     const nextParams: ModelParameters = {
       ...simParamsRef.current,
@@ -2649,15 +2676,18 @@ export default function App() {
       fx: scenarioBase.fx,
     };
     const effectiveNextParams = applyActiveDistribution(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    setSimOverrides(sanitizedOverrides);
     setSimParams(effectiveNextParams);
     const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
   }, [applyActiveDistribution, applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
-    setSimOverrides(next);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParamsRef.current, next);
+    setSimOverrides(sanitizedOverrides);
     markSimulationInteraction();
-    const base = applySimulationOverrides(simParamsRef.current, next);
+    const base = applySimulationOverrides(simParamsRef.current, sanitizedOverrides);
     startRecalculation('params-change', () => base);
   }, [markSimulationInteraction, startRecalculation]);
 
@@ -2671,19 +2701,9 @@ export default function App() {
       inflation: scenarioBase.inflation,
       fx: scenarioBase.fx,
     };
-    const nextOverrides = simOverrides?.active
-      ? {
-          active: true,
-          preset: simOverrides.preset,
-          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
-        }
-      : null;
-    const sanitizedOverrides =
-      nextOverrides && typeof nextOverrides.capital === 'number'
-        ? nextOverrides
-        : null;
-    setSimOverrides(sanitizedOverrides);
     const effectiveNextParams = applyActiveDistribution(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    setSimOverrides(sanitizedOverrides);
     setSimParams(effectiveNextParams);
     const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
@@ -2697,7 +2717,8 @@ export default function App() {
 
   const runSim = useCallback(() => {
     markSimulationInteraction(resolveScenarioVariantId(simParams.activeScenario));
-    const base = applySimulationOverrides(simParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
+    const base = applySimulationOverrides(simParams, sanitizedOverrides);
     startRecalculation('manual-run', () => base);
     setActiveTab('sim');
   }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
@@ -2720,7 +2741,7 @@ export default function App() {
   }, [activeScenario, applyScenarioEconomics, baseParams, simOverrides, simParams.fx, simParams.inflation, simParams.returns]);
 
   const optimizerSimulationParams = useMemo(
-    () => applySimulationOverrides(simParams, simOverrides),
+    () => applySimulationOverrides(simParams, sanitizeSimulationOverridesForParams(simParams, simOverrides)),
     [simOverrides, simParams],
   );
   const simulationOptimizerSnapshot = useMemo(
