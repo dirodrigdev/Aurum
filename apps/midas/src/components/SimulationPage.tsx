@@ -286,7 +286,6 @@ export function SimulationPage({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
-  const [showStickyBar, setShowStickyBar] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
   );
@@ -609,41 +608,6 @@ export function SimulationPage({
   }, [simActive]);
 
   useEffect(() => {
-    const heroNode = heroCardRef.current;
-    if (!heroNode) return undefined;
-
-    const stickyOffsetPx = isMobileViewport ? 64 : 56;
-    const fallbackCheck = () => {
-      const rect = heroNode.getBoundingClientRect();
-      setShowStickyBar(rect.top <= stickyOffsetPx - 4);
-    };
-
-    if (typeof IntersectionObserver === 'undefined') {
-      fallbackCheck();
-      window.addEventListener('scroll', fallbackCheck, { passive: true });
-      return () => window.removeEventListener('scroll', fallbackCheck);
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries;
-        const shouldShow =
-          entry.boundingClientRect.top <= stickyOffsetPx - 4 &&
-          entry.intersectionRatio < 0.98;
-        setShowStickyBar(shouldShow);
-      },
-      {
-        root: null,
-        threshold: [0, 0.25, 0.5, 0.75, 1],
-        rootMargin: `-${stickyOffsetPx}px 0px 0px 0px`,
-      }
-    );
-    observer.observe(heroNode);
-    fallbackCheck();
-    return () => observer.disconnect();
-  }, [heroPhase, simUiState, isMobileViewport]);
-
-  useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onResize = () => {
       setIsMobileViewport(window.innerWidth <= 760);
@@ -667,6 +631,9 @@ export function SimulationPage({
         ? T.negative
         : T.textMuted;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
+  const success40 = displayResult
+    ? displayResult.success40 ?? (1 - (displayResult.probRuin40 ?? displayResult.probRuin))
+    : null;
   const probRuin40 = displayResult?.probRuin40 ?? displayResult?.probRuin ?? null;
   const probRuin20 = displayResult?.probRuin20 ?? null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
@@ -876,6 +843,36 @@ export function SimulationPage({
   const officialWeightSummary = formatWeightMix(officialReferenceWeights);
   const spendingPhases = useMemo(() => normalizeModelSpendingPhases(params), [params]);
   const spendingPhaseLabels = useMemo(() => buildSpendingPhaseUiLabels(spendingPhases), [spendingPhases]);
+  const formatPct = (value: number | null | undefined, digits = 1) =>
+    value !== null && value !== undefined && Number.isFinite(value)
+      ? `${(value * 100).toFixed(digits)}%`
+      : '—';
+  const compactMixSummary = useMemo(() => {
+    const weights = params.weights;
+    const rv = (weights.rvGlobal + weights.rvChile) * 100;
+    const rf = (weights.rfGlobal + weights.rfChile) * 100;
+    return `RV ${rv.toFixed(1)} / RF ${rf.toFixed(1)}`;
+  }, [params.weights]);
+  const compactSpendSummary = useMemo(
+    () => spendingPhases
+      .map((phase, idx) => `F${idx + 1} ${formatMillionsMM(phase.amountReal / 1_000_000)}`)
+      .join(' · '),
+    [spendingPhases],
+  );
+  const stickyStatusLabel = isRecalculating
+    ? 'Recalculando...'
+    : simUiState === 'error'
+      ? 'Error de simulación'
+      : displayResult
+        ? 'Resultado actual'
+        : 'Sin resultado actual';
+  const stickySuccess40 = isRecalculating ? null : success40;
+  const stickyRuin20 = isRecalculating ? null : probRuin20;
+  const stickyHouseSalePct = isRecalculating ? null : houseSalePct;
+  const stickyDrawdownP50 = isRecalculating ? null : drawdownP50;
+  const scrollToSummary = useCallback(() => {
+    heroCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
@@ -995,45 +992,100 @@ export function SimulationPage({
           position: 'sticky',
           top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
           zIndex: 35,
-          minHeight: showStickyBar ? undefined : 0,
         }}
       >
-        {showStickyBar && (
+        <div
+          onClick={scrollToSummary}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              scrollToSummary();
+            }
+          }}
+          style={{
+            background: 'rgba(11, 16, 24, 0.96)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            padding: isMobileViewport ? '7px 8px' : '8px 12px',
+            backdropFilter: 'blur(10px)',
+            color: T.textPrimary,
+            fontSize: isMobileViewport ? 11 : 12,
+            fontWeight: 650,
+            lineHeight: 1.25,
+            cursor: 'pointer',
+            boxShadow: '0 8px 22px rgba(0,0,0,0.18)',
+          }}
+        >
           <div
             style={{
-              background: 'rgba(11, 16, 24, 0.92)',
-              border: `1px solid ${T.border}`,
-              borderRadius: 10,
-              padding: isMobileViewport ? '5px 8px' : '8px 12px',
-              backdropFilter: 'blur(6px)',
-              color: T.textPrimary,
-              fontSize: isMobileViewport ? 11 : 12,
-              fontWeight: 650,
-              lineHeight: 1.25,
+              display: 'grid',
+              gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
+              gap: isMobileViewport ? 6 : 12,
+              alignItems: 'center',
             }}
           >
-            {isRecalculating ? (
-              <span style={{ color: T.primary }}>Calculando…</span>
-            ) : displayResult && probSuccess !== null ? (
-              isMobileViewport ? (
-                <div style={{ display: 'grid', gap: 2, lineHeight: 1.25 }}>
-                  <span>Éxito {(probSuccess * 100).toFixed(1)}%</span>
-                  <span>
-                    Si falla: {isCompactViewport ? `típico ${ruinTypicalLabel}` : `año típico ${ruinTypicalLabel}`} · rango {ruinWindowLabel}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+              <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>
+                Success40
+              </span>
+              <span style={{ fontSize: isMobileViewport ? 20 : 24, fontWeight: 850, color: stickySuccess40 !== null ? T.primary : T.textMuted }}>
+                {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
+              </span>
+              <span style={{ color: isRecalculating ? T.primary : T.textMuted, fontSize: 10, fontWeight: 800 }}>
+                {stickyStatusLabel}
+              </span>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isMobileViewport ? 'flex-start' : 'flex-end',
+                gap: isMobileViewport ? 6 : 8,
+                flexWrap: 'wrap',
+                minWidth: 0,
+              }}
+            >
+              {[
+                ['Ruin20', formatPct(stickyRuin20)],
+                ['Casa', formatPct(stickyHouseSalePct)],
+                ['MaxDD P50', formatPct(stickyDrawdownP50)],
+                ['Mix', compactMixSummary],
+                ['Gasto', compactSpendSummary],
+              ].map(([label, value]) => (
+                <span
+                  key={label}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    maxWidth: label === 'Gasto' ? (isMobileViewport ? '100%' : 360) : undefined,
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '4px 7px' : '5px 8px',
+                    color: T.textPrimary,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap' }}>{label}</span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 750,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {value}
                   </span>
-                </div>
-              ) : (
-                <span>
-                  Éxito {(probSuccess * 100).toFixed(1)}% {' | '}
-                  Si falla: año típico {ruinTypicalLabel} {' | '}
-                  rango {ruinWindowLabel}
                 </span>
-              )
-            ) : (
-              <span style={{ color: T.textMuted }}>Simulación en espera</span>
-            )}
+              ))}
+            </div>
           </div>
-        )}
+        </div>
       </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
