@@ -219,7 +219,7 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
         <thead>
           <tr style={{ background: T.surfaceEl, color: T.textMuted, fontSize: 11, textAlign: 'left' }}>
-            {['Instrumento', 'Peso', 'Mix usado', 'Rango RV', 'Conf.', 'Fuente', 'Driver', 'Warnings'].map((label) => (
+            {['Instrumento', 'Peso', 'Mix usado', 'Rango operativo RV', 'Conf.', 'Fuente', 'Driver', 'Warnings'].map((label) => (
               <th key={label} style={{ padding: '10px 12px', borderBottom: `1px solid ${T.border}` }}>{label}</th>
             ))}
           </tr>
@@ -238,8 +238,19 @@ function InstrumentUniverseTable({ snapshot }: { snapshot: InstrumentUniverseSna
                   : '—'}
               </td>
               <td style={{ padding: '10px 12px' }}>
-                {item.historicalUsedRange
-                  ? `${formatPct(item.historicalUsedRange.rv.min)} - ${formatPct(item.historicalUsedRange.rv.max)}`
+                {item.operationalRange
+                  ? (
+                    <>
+                      <div>
+                        {formatPct(item.operationalRange.rv.min)} - {formatPct(item.operationalRange.rv.max)}
+                      </div>
+                      {item.optimizerSafeRange && item.legalRangeMix ? (
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Legal: {formatPct(item.legalRangeMix.rv.min)} - {formatPct(item.legalRangeMix.rv.max)}
+                        </div>
+                      ) : null}
+                    </>
+                  )
                   : '—'}
               </td>
               <td style={{ padding: '10px 12px' }}>{formatPct(item.confidenceScore)}</td>

@@ -19,7 +19,10 @@ export type InstrumentUniverseInstrument = {
   isSellable: boolean | null;
   currentMixUsed: InstrumentUniverseMix | null;
   legalRange: unknown;
+  legalRangeMix: InstrumentUniverseRangeMix | null;
   historicalUsedRange: InstrumentUniverseRangeMix | null;
+  optimizerSafeRange: InstrumentUniverseRangeMix | null;
+  operationalRange: InstrumentUniverseRangeMix | null;
   observedWindowMonths: number | null;
   observedFrom: string | null;
   observedTo: string | null;
@@ -82,17 +85,11 @@ const CRITICAL_FIELDS = [
   'name',
   'vehicle_type',
   'currency',
-  'tax_wrapper',
   'is_captive',
   'is_sellable',
   'current_mix_used',
   'legal_range',
   'historical_used_range',
-  'observed_window_months',
-  'observed_from',
-  'observed_to',
-  'estimation_method',
-  'confidence_score',
   'amount_clp',
   'weight_portfolio',
   'role',
@@ -219,6 +216,8 @@ const missingCriticalFieldsFor = (source: Record<string, unknown>) =>
     return !hasValue(source, field) && !hasValue(source, camel);
   });
 
+const mergeUnique = (items: string[]) => [...new Set(items)];
+
 const mixSumWarning = (label: string, mix: InstrumentUniverseMix | null) => {
   if (!mix) return null;
   const sum = MIX_KEYS.reduce((acc, key) => acc + mix[key], 0);
@@ -234,7 +233,13 @@ const exposureWarning = (label: string, exposure: InstrumentUniverseExposureUsed
 const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseInstrument => {
   const instrumentId = idFrom(source) ?? '';
   const currentMixUsed = parseMix(source.current_mix_used ?? source.currentMixUsed);
+  const legalRangeMix = parseRangeMix(source.legal_range ?? source.legalRange);
   const historicalUsedRange = parseRangeMix(source.historical_used_range ?? source.historicalUsedRange);
+  const optimizerSafeRange = parseRangeMix(source.optimizer_safe_range ?? source.optimizerSafeRange);
+  const operationalRange = optimizerSafeRange ?? historicalUsedRange;
+  const historicalRangeSource = isRecord(source.historical_used_range ?? source.historicalUsedRange)
+    ? (source.historical_used_range ?? source.historicalUsedRange) as Record<string, unknown>
+    : null;
   const dataQuality = isRecord(source.data_quality ?? source.dataQuality)
     ? (source.data_quality ?? source.dataQuality) as Record<string, unknown>
     : null;
@@ -244,7 +249,45 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
   const exposureUsed = parseExposureUsed(
     source.exposure_used ?? source.current_exposure_used ?? source.exposureUsed ?? source.currentExposureUsed,
   );
-  const missingCriticalFields = missingCriticalFieldsFor(source);
+  const observedWindowMonths = normalizeLooseNumber(
+    source.observed_window_months
+    ?? source.observedWindowMonths
+    ?? historicalRangeSource?.observed_window_months
+    ?? historicalRangeSource?.observedWindowMonths
+    ?? sourceMetadata?.observed_window_months
+    ?? sourceMetadata?.window_months,
+  );
+  const observedFrom = readString(
+    source.observed_from
+    ?? source.observedFrom
+    ?? historicalRangeSource?.observed_from
+    ?? historicalRangeSource?.observedFrom
+    ?? sourceMetadata?.observed_from
+    ?? sourceMetadata?.from,
+  );
+  const observedTo = readString(
+    source.observed_to
+    ?? source.observedTo
+    ?? historicalRangeSource?.observed_to
+    ?? historicalRangeSource?.observedTo
+    ?? sourceMetadata?.observed_to
+    ?? sourceMetadata?.to,
+  );
+  const estimationMethod = readString(
+    source.estimation_method
+    ?? source.estimationMethod
+    ?? historicalRangeSource?.estimation_method
+    ?? historicalRangeSource?.estimationMethod
+    ?? sourceMetadata?.estimation_method
+    ?? sourceMetadata?.method,
+  );
+  const confidenceScore = normalizeRatio(source.confidence_score ?? source.confidenceScore ?? dataQuality?.confidence_score);
+  const missingCriticalFields = mergeUnique([
+    ...missingCriticalFieldsFor(source),
+    ...(!currentMixUsed ? ['current_mix_used'] : []),
+    ...(!operationalRange ? ['historical_used_range'] : []),
+    ...(normalizeRatio(source.weight_portfolio ?? source.weightPortfolio) === null ? ['weight_portfolio'] : []),
+  ]);
   const warnings = [
     mixSumWarning(instrumentId, currentMixUsed),
     exposureWarning(instrumentId, exposureUsed),
@@ -260,17 +303,15 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     isSellable: readBoolean(source.is_sellable ?? source.isSellable),
     currentMixUsed,
     legalRange: source.legal_range ?? source.legalRange ?? null,
+    legalRangeMix,
     historicalUsedRange,
-    observedWindowMonths: normalizeLooseNumber(
-      source.observed_window_months
-      ?? source.observedWindowMonths
-      ?? sourceMetadata?.observed_window_months
-      ?? sourceMetadata?.window_months,
-    ),
-    observedFrom: readString(source.observed_from ?? source.observedFrom ?? sourceMetadata?.observed_from ?? sourceMetadata?.from),
-    observedTo: readString(source.observed_to ?? source.observedTo ?? sourceMetadata?.observed_to ?? sourceMetadata?.to),
-    estimationMethod: readString(source.estimation_method ?? source.estimationMethod ?? sourceMetadata?.estimation_method ?? sourceMetadata?.method),
-    confidenceScore: normalizeRatio(source.confidence_score ?? source.confidenceScore ?? dataQuality?.confidence_score),
+    optimizerSafeRange,
+    operationalRange,
+    observedWindowMonths,
+    observedFrom,
+    observedTo,
+    estimationMethod,
+    confidenceScore,
     sourcePreference: readString(source.source_preference ?? source.sourcePreference ?? sourceMetadata?.source_preference ?? dataQuality?.range_source_type),
     exposureUsed,
     amountClp: normalizeLooseNumber(source.amount_clp ?? source.amountClp),
@@ -295,7 +336,7 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     usable:
       !!instrumentId &&
       !!currentMixUsed &&
-      !!historicalUsedRange &&
+      !!operationalRange &&
       (normalizeRatio(source.weight_portfolio ?? source.weightPortfolio) ?? 0) > 0,
   };
 };
@@ -331,7 +372,7 @@ export const summarizeInstrumentUniverse = (
       ? usable.reduce<InstrumentUniverseRangeMix>(
           (acc, item) => {
             MIX_KEYS.forEach((key) => {
-              const range = item.historicalUsedRange?.[key];
+              const range = item.operationalRange?.[key];
               const weight = item.weightPortfolio ?? 0;
               acc[key].min += (range?.min ?? 0) * weight;
               acc[key].max += (range?.max ?? 0) * weight;
