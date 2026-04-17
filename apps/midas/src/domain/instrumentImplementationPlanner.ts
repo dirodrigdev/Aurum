@@ -88,6 +88,7 @@ export function buildInstrumentImplementationPlan(input: {
     sameManager: true,
     sameTaxWrapper: true,
     crossManager: false,
+    crossCurrency: false,
   };
 
   if (Math.abs(deltaRv) <= 1e-6) {
@@ -132,7 +133,9 @@ export function buildInstrumentImplementationPlan(input: {
     const sourceWeight = sourceRemaining.get(source.instrumentId) ?? 0;
     if (sourceWeight <= 1e-6 || remainingDelta <= 1e-6) continue;
 
-    const orderedDestinations = [...destinations].sort((a, b) => scorePair(source, b) - scorePair(source, a));
+    const orderedDestinations = [...destinations]
+      .filter((destination) => source.currency && destination.currency && source.currency === destination.currency)
+      .sort((a, b) => scorePair(source, b) - scorePair(source, a));
     for (const destination of orderedDestinations) {
       if (remainingDelta <= 1e-6) break;
       if (source.instrumentId === destination.instrumentId) continue;
@@ -154,7 +157,9 @@ export function buildInstrumentImplementationPlan(input: {
       const sameManager = source.sameManagerCandidates.includes(destination.instrumentId);
       const sameTaxWrapper = source.sameTaxWrapperCandidates.includes(destination.instrumentId);
       const crossManager = !sameManager;
+      const crossCurrency = !sameCurrency;
       if (crossManager) restrictionsApplied.crossManager = true;
+      if (crossCurrency) restrictionsApplied.crossCurrency = true;
       if (!sameManager) restrictionsApplied.sameManager = false;
       if (!sameTaxWrapper) restrictionsApplied.sameTaxWrapper = false;
       if (!sameCurrency) restrictionsApplied.sameCurrency = false;
@@ -163,7 +168,9 @@ export function buildInstrumentImplementationPlan(input: {
         ? 'Prioriza mismo administrador'
         : sameCurrency
           ? 'Cross-manager por mejora material manteniendo moneda'
-          : 'Cross-manager con cruce adicional por falta de alternativa';
+          : 'Fallback por falta de alternativa limpia';
+      const sourceWeight = Math.max(0, source.weightPortfolio ?? 0);
+      const nativeRatio = sourceWeight > 0 ? moveWeight / sourceWeight : 0;
 
       transfers.push({
         fromInstrumentId: source.instrumentId,
@@ -171,13 +178,18 @@ export function buildInstrumentImplementationPlan(input: {
         toInstrumentId: destination.instrumentId,
         toName: destination.name ?? destination.instrumentId,
         weightMoved: moveWeight,
-        amountClpMoved: moveWeight * (source.amountClp ?? 0),
+        amountNativeMoved: source.amountNative !== null && source.amountNative !== undefined
+          ? source.amountNative * nativeRatio
+          : null,
+        nativeCurrency: source.amountNativeCurrency ?? source.currency ?? null,
+        amountClpMoved: (source.amountClp ?? 0) * nativeRatio,
         rationale,
         constraints: {
           sameCurrency,
           sameManager,
           sameTaxWrapper,
           crossManager,
+          crossCurrency,
         },
       });
 
@@ -196,6 +208,7 @@ export function buildInstrumentImplementationPlan(input: {
   const warnings: string[] = [];
   if (!transfers.length) warnings.push('No se encontraron traspasos ejecutables con las restricciones actuales.');
   if (!equivalentToIdeal) warnings.push(`Gap material vs objetivo ideal: ${gapVsIdealRvPp >= 0 ? '' : '+'}${gapVsIdealRvPp.toFixed(2)} pp RV.`);
+  if (remainingDelta > 1e-6) warnings.push('No totalmente implementable bajo restricciones actuales.');
 
   return {
     targetMixIdeal: { rv: targetRv, rf: targetRf },
@@ -213,4 +226,3 @@ export function buildInstrumentImplementationPlan(input: {
 }
 
 export const REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP = EQUIVALENCE_GAP_RV_PP;
-

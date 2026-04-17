@@ -31,6 +31,9 @@ export type InstrumentUniverseInstrument = {
   sourcePreference: string | null;
   exposureUsed: InstrumentUniverseExposureUsed | null;
   amountClp: number | null;
+  amountNative: number | null;
+  amountNativeCurrency: string | null;
+  fxToClpUsed: number | null;
   weightPortfolio: number | null;
   role: string | null;
   structuralMixDriver: string | null;
@@ -315,6 +318,9 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     sourcePreference: readString(source.source_preference ?? source.sourcePreference ?? sourceMetadata?.source_preference ?? dataQuality?.range_source_type),
     exposureUsed,
     amountClp: normalizeLooseNumber(source.amount_clp ?? source.amountClp),
+    amountNative: normalizeLooseNumber(source.amount_native ?? source.amountNative),
+    amountNativeCurrency: readString(source.amount_native_currency ?? source.amountNativeCurrency ?? source.currency),
+    fxToClpUsed: normalizeLooseNumber(source.fx_to_clp_used ?? source.fxToClpUsed),
     weightPortfolio: normalizeRatio(source.weight_portfolio ?? source.weightPortfolio),
     role: readString(source.role),
     structuralMixDriver: readString(source.structural_mix_driver ?? source.structuralMixDriver),

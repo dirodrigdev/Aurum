@@ -11,6 +11,7 @@ export type InstrumentImplementationConstraintFlags = {
   sameManager: boolean;
   sameTaxWrapper: boolean;
   crossManager: boolean;
+  crossCurrency: boolean;
 };
 
 export type InstrumentImplementationTransfer = {
@@ -19,6 +20,8 @@ export type InstrumentImplementationTransfer = {
   toInstrumentId: string;
   toName: string;
   weightMoved: number;
+  amountNativeMoved: number | null;
+  nativeCurrency: string | null;
   amountClpMoved: number;
   rationale: string;
   constraints: InstrumentImplementationConstraintFlags;
@@ -37,4 +40,3 @@ export type InstrumentImplementationPlan = {
   baseTargetWeights: PortfolioWeights;
   reachableWeights: PortfolioWeights;
 };
-

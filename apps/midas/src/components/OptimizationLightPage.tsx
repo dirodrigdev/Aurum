@@ -13,6 +13,7 @@ type OptimizationMode = 'light' | 'normal' | 'decision';
 type SourceMode = 'base' | 'simulation';
 
 type Phase1Point = {
+  scenarioId?: string;
   rvPct: number;
   rfPct: number;
   success40: number;
@@ -99,6 +100,8 @@ type Phase3Candidate = {
 type Phase3Result = {
   relevantRows: Phase2Point[];
   bestSuccessRow: Phase2Point;
+  runnerUp: Phase3Candidate | null;
+  poolBand: number;
   successBand: number;
   minimumSuccess: number;
   variantsTested: Phase3SpendingVariant[];
@@ -118,7 +121,7 @@ const SHORTLIST_MIN_RV_DISTANCE = 10;
 const SHORTLIST_TARGET = 5;
 const PHASE1_SWEEP_MIN_RV = 0;
 const PHASE1_SWEEP_MAX_RV = 100;
-const PHASE1_SWEEP_STEP = 10;
+const PHASE1_SWEEP_STEP = 5;
 const TECHNICAL_TIE_BAND_PP = 0.2;
 const DELTA_ZERO_EPSILON_PP = 0.05;
 const PHASE3_QOL_WEIGHTS = [0.25, 0.40, 0.25, 0.10] as const;
@@ -223,6 +226,21 @@ function formatMoney(value: number | null): string {
   return value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
 }
 
+function formatClpShort(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `CLP ${(value / 1_000_000).toFixed(1).replace('.', ',')}M`;
+  if (abs >= 1_000) return `CLP ${(value / 1_000).toFixed(1).replace('.', ',')}k`;
+  return `CLP ${value.toFixed(0)}`;
+}
+
+function formatNativeAmount(value: number | null, currency: string | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const label = currency || 'Nativo';
+  if (label.toUpperCase() === 'CLP') return formatClpShort(value);
+  return `${label.toUpperCase()} ${value.toLocaleString('es-CL', { maximumFractionDigits: 2 })}`;
+}
+
 function formatPctValue(value: number): string {
   return `${(value * 100).toFixed(1).replace('.', ',')}%`;
 }
@@ -238,6 +256,14 @@ function formatSignedPct(value: number): string {
 function formatDeltaVsBest(deltaVsBestPp: number): string {
   if (Math.abs(deltaVsBestPp) < DELTA_ZERO_EPSILON_PP) return '0.0 pp';
   return `${deltaVsBestPp.toFixed(1)} pp`;
+}
+
+function scenarioLabel(point: Phase1Point): string {
+  return `${point.scenarioId ?? '?'} · RV ${point.rvPct}% / RF ${point.rfPct}%`;
+}
+
+function formatMixPair(mix: { rv: number; rf: number }): string {
+  return `RV ${(mix.rv * 100).toFixed(1)}% / RF ${(mix.rf * 100).toFixed(1)}%`;
 }
 
 function approxEqual(a: number, b: number, epsilon = 1e-6): boolean {
@@ -290,6 +316,14 @@ function buildCandidateWeights(currentWeights: PortfolioWeights, rvPct: number):
     rfGlobal: rf * globalShare,
     rfChile: rf * localShare,
   };
+}
+
+function assignScenarioIds(points: Phase1Point[]): Phase1Point[] {
+  const sorted = [...points].sort((a, b) => a.rvPct - b.rvPct);
+  return sorted.map((point, index) => ({
+    ...point,
+    scenarioId: String.fromCharCode(65 + index),
+  }));
 }
 
 function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: SimulationResults, options?: { isCurrentMix?: boolean }): Phase1Point {
@@ -346,6 +380,7 @@ function buildAutonomousParams(params: ModelParameters): ModelParameters {
 
 function buildShortlist(points: Phase1Point[]): Phase1Point[] {
   if (!points.length) return [];
+  const currentPoint = points.find((point) => point.isCurrentMix) ?? null;
   const sorted = [...points].sort((a, b) => (
     (b.success40 - a.success40)
       || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
@@ -376,6 +411,10 @@ function buildShortlist(points: Phase1Point[]): Phase1Point[] {
       const alreadyIncluded = shortlist.some((chosen) => chosen.rvPct === point.rvPct);
       if (!alreadyIncluded) shortlist.push(point);
     }
+  }
+
+  if (currentPoint && !shortlist.some((point) => isSameMix(point, currentPoint))) {
+    shortlist.push(currentPoint);
   }
 
   return shortlist;
@@ -579,6 +618,12 @@ function phase3SuccessBand(bestSuccess: number): number {
   if (bestSuccess >= 0.80) return 0.02;
   if (bestSuccess >= 0.70) return 0.015;
   return 0.01;
+}
+
+function phase3PoolBand(bestSuccess: number): number {
+  if (bestSuccess >= 0.90) return 0.015;
+  if (bestSuccess >= 0.80) return 0.01;
+  return 0.005;
 }
 
 function getSpendingVector(params: ModelParameters): number[] {
@@ -819,23 +864,56 @@ export function OptimizationLightPage({
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const autonomousBase = buildAutonomousParams(activeParams);
-      const points: Phase1Point[] = [];
-      for (let rvPct = PHASE1_SWEEP_MIN_RV; rvPct <= PHASE1_SWEEP_MAX_RV; rvPct += PHASE1_SWEEP_STEP) {
+      const pointMap = new Map<string, Phase1Point>();
+      const evaluateRv = (rvPct: number, options?: { isCurrentMix?: boolean }) => {
+        const normalizedRv = Math.max(PHASE1_SWEEP_MIN_RV, Math.min(PHASE1_SWEEP_MAX_RV, rvPct));
+        const key = normalizedRv.toFixed(2);
+        const existing = pointMap.get(key);
+        if (existing) {
+          if (options?.isCurrentMix) existing.isCurrentMix = true;
+          return existing;
+        }
         const candidate = cloneParams(autonomousBase);
-        const nextWeights = buildCandidateWeights(autonomousBase.weights, rvPct);
+        const nextWeights = options?.isCurrentMix
+          ? cloneParams(autonomousBase.weights)
+          : buildCandidateWeights(autonomousBase.weights, normalizedRv);
         candidate.weights = nextWeights;
         const sim = runSimulationCentral(candidate);
-        points.push(toPhase1Point(rvPct, nextWeights, sim));
+        const point = toPhase1Point(normalizedRv, nextWeights, sim, options);
+        pointMap.set(key, point);
+        return point;
+      };
+      for (let rvPct = PHASE1_SWEEP_MIN_RV; rvPct <= PHASE1_SWEEP_MAX_RV; rvPct += PHASE1_SWEEP_STEP) {
+        evaluateRv(rvPct);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       const currentRvPct = (autonomousBase.weights.rvGlobal + autonomousBase.weights.rvChile) * 100;
-      const currentPointCandidate = toPhase1Point(currentRvPct, cloneParams(autonomousBase.weights), runSimulationCentral(autonomousBase), { isCurrentMix: true });
-      if (!points.some((point) => isSameMix(point, currentPointCandidate))) {
-        points.push(currentPointCandidate);
-      } else {
-        points.forEach((point) => {
-          if (isSameMix(point, currentPointCandidate)) point.isCurrentMix = true;
-        });
+      evaluateRv(currentRvPct, { isCurrentMix: true });
+
+      const coarseRanking = [...pointMap.values()].sort((a, b) => (
+        (b.success40 - a.success40) || (a.ruin20 - b.ruin20) || (a.rvPct - b.rvPct)
+      ));
+      const localCenters = [
+        currentRvPct,
+        ...coarseRanking.slice(0, 3).map((point) => point.rvPct),
+        ...(choosePhase1Baseline(coarseRanking) ? [choosePhase1Baseline(coarseRanking)!.rvPct] : []),
+      ];
+      for (const center of localCenters) {
+        [center - 2.5, center + 2.5].forEach((rvPct) => evaluateRv(rvPct));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+
+      const refinedRanking = [...pointMap.values()].sort((a, b) => (
+        (b.success40 - a.success40) || (a.ruin20 - b.ruin20) || (a.rvPct - b.rvPct)
+      ));
+      refinedRanking.slice(0, 2).forEach((point) => {
+        [point.rvPct - 1, point.rvPct + 1].forEach((rvPct) => evaluateRv(rvPct));
+      });
+
+      const points = assignScenarioIds([...pointMap.values()]);
+      const matchedCurrent = points.find((point) => Math.abs(point.rvPct - currentRvPct) <= 0.05);
+      if (matchedCurrent) {
+        matchedCurrent.isCurrentMix = true;
       }
       setPhase1Points(points);
       setShortlist(buildShortlist(points));
@@ -976,10 +1054,33 @@ export function OptimizationLightPage({
     const suggestedDecision = phase2SuggestedRow ? phase2Decisions.get(phase2SuggestedRow.source.rvPct) ?? null : null;
     return buildMixSwitchVerdict(phase1CurrentPoint, phase1SuggestedPoint, currentDecision, suggestedDecision);
   }, [phase1CurrentPoint, phase1SuggestedPoint, phase2CurrentRow, phase2Decisions, phase2SuggestedRow]);
-  const phase2DisplacingRows = useMemo(
-    () => phase2Rows.filter((row) => phase2Decisions.get(row.source.rvPct)?.displacesPhase1),
-    [phase2Decisions, phase2Rows],
-  );
+  const phase2ChampionChallenger = useMemo(() => {
+    if (!phase2Rows.length) return { champion: null as Phase2Point | null, challenger: null as Phase2Point | null, reason: 'Sin Fase 2 calculada' };
+    const ranked = [...phase2Rows].sort((a, b) => {
+      const decisionA = phase2Decisions.get(a.source.rvPct);
+      const decisionB = phase2Decisions.get(b.source.rvPct);
+      return (
+        Number(Boolean(decisionB?.displacesPhase1)) - Number(Boolean(decisionA?.displacesPhase1))
+        || Number(Boolean(decisionB?.competesWithPhase1)) - Number(Boolean(decisionA?.competesWithPhase1))
+        || (b.success40Assisted - a.success40Assisted)
+        || (a.ruin20Assisted - b.ruin20Assisted)
+        || (a.houseSalePct - b.houseSalePct)
+      );
+    });
+    const champion = ranked[0] ?? null;
+    const challenger = (
+      phase2CurrentRow && champion && !isSameMix(phase2CurrentRow.source, champion.source)
+        ? phase2CurrentRow
+        : ranked.find((row) => champion && !isSameMix(row.source, champion.source)) ?? null
+    );
+    const championDecision = champion ? phase2Decisions.get(champion.source.rvPct) : null;
+    const reason = championDecision?.displacesPhase1
+      ? 'Desplaza por mejoras materiales sin red flags'
+      : championDecision?.competesWithPhase1
+        ? 'Compite por mejor balance downside/supervivencia'
+        : 'Campeón por mayor éxito asistido dentro del pool';
+    return { champion, challenger, reason };
+  }, [phase2CurrentRow, phase2Decisions, phase2Rows]);
   const phase3RelevantRows = useMemo(() => {
     if (!phase2Rows.length) return [];
     const rows = phase2Rows.filter((row) => {
@@ -995,22 +1096,11 @@ export function OptimizationLightPage({
     [activeParams],
   );
   const phase2LongevitySelectedRow = useMemo(() => {
-    if (phase2DisplacingRows.length) {
-      const sorted = [...phase2DisplacingRows].sort((a, b) => (
-        (b.success40Assisted - a.success40Assisted)
-        || (a.ruin20Assisted - b.ruin20Assisted)
-        || (a.houseSalePct - b.houseSalePct)
-      ));
-      return {
-        row: sorted[0] ?? null,
-        reason: 'Seleccionado por desplazar a la referencia Fase 1',
-      };
-    }
     return {
-      row: phase2BaselineRow,
-      reason: 'Se usa la referencia Fase 1 (no hay desplazador claro)',
+      row: phase2ChampionChallenger.champion,
+      reason: phase2ChampionChallenger.reason,
     };
-  }, [phase2BaselineRow, phase2DisplacingRows]);
+  }, [phase2ChampionChallenger.champion, phase2ChampionChallenger.reason]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
   const phase3Input = useMemo(() => {
     const materialGap = Boolean(
@@ -1019,24 +1109,55 @@ export function OptimizationLightPage({
     );
     if (materialGap) {
       if (realisticValidation?.row) {
+        const seedRows = [
+          realisticValidation.row,
+          ...phase3RelevantRows.filter((row) => !isSameMix(row.source, phase2ImplementationSelectedRow?.source ?? realisticValidation.row.source)),
+        ];
+        const sorted = [...seedRows].sort((a, b) => (
+          (b.success40Assisted - a.success40Assisted)
+          || (a.ruin20Assisted - b.ruin20Assisted)
+          || (a.houseSalePct - b.houseSalePct)
+        ));
+        const best = sorted[0]?.success40Assisted ?? 0;
+        const poolBand = phase3PoolBand(best);
+        const rows = sorted.filter((row) => row.success40Assisted >= best - poolBand - 1e-9).slice(0, 4);
+        const challenger = phase2CurrentRow && !rows.some((row) => isSameMix(row.source, phase2CurrentRow.source))
+          ? phase2CurrentRow
+          : sorted.find((row) => !rows.some((chosen) => isSameMix(chosen.source, row.source))) ?? null;
+        if (rows.length < 2 && challenger) rows.push(challenger);
         return {
-          rows: [realisticValidation.row] as Phase2Point[],
+          rows,
           sourceLabel: 'Escenario implementable revalidado',
+          poolBand,
           blockedReason: null as string | null,
         };
       }
       return {
         rows: [] as Phase2Point[],
         sourceLabel: 'Escenario implementable pendiente de validación realista',
+        poolBand: 0,
         blockedReason: 'Para ejecutar Fase 3 primero debes correr la Validación realista.',
       };
     }
+    const sorted = [...phase3RelevantRows].sort((a, b) => (
+      (b.success40Assisted - a.success40Assisted)
+      || (a.ruin20Assisted - b.ruin20Assisted)
+      || (a.houseSalePct - b.houseSalePct)
+    ));
+    const best = sorted[0]?.success40Assisted ?? 0;
+    const poolBand = phase3PoolBand(best);
+    const rows = sorted.filter((row) => row.success40Assisted >= best - poolBand - 1e-9).slice(0, 4);
+    const challenger = phase2CurrentRow && !rows.some((row) => isSameMix(row.source, phase2CurrentRow.source))
+      ? phase2CurrentRow
+      : sorted.find((row) => !rows.some((chosen) => isSameMix(chosen.source, row.source))) ?? null;
+    if (rows.length < 2 && challenger) rows.push(challenger);
     return {
-      rows: phase3RelevantRows,
+      rows,
       sourceLabel: 'Escenarios relevantes de Fase 2',
+      poolBand,
       blockedReason: null as string | null,
     };
-  }, [implementationPlan, phase3RelevantRows, realisticValidation]);
+  }, [implementationPlan, phase2CurrentRow, phase2ImplementationSelectedRow, phase3RelevantRows, realisticValidation]);
   const phase3InputRows = phase3Input.rows;
 
   const runImplementation = useCallback(async () => {
@@ -1206,16 +1327,24 @@ export function OptimizationLightPage({
 
       const eligibleCandidates = candidates.filter((candidate) => candidate.eligibleByBand && candidate.guardrailsPassed);
       const improvedEligibleCandidates = eligibleCandidates.filter((candidate) => candidate.qualityOfLifeScore > 1.0001);
-      const preferred = [...improvedEligibleCandidates].sort((a, b) => (
+      const rankedEligible = [...improvedEligibleCandidates].sort((a, b) => (
         (b.qualityOfLifeScore - a.qualityOfLifeScore)
         || (b.success40 - a.success40)
         || (a.ruin20 - b.ruin20)
         || (a.houseSalePct - b.houseSalePct)
-      ))[0] ?? null;
+      ));
+      const preferred = rankedEligible[0] ?? null;
+      const runnerUp = rankedEligible.find((candidate) => (
+        !preferred
+        || !isSameMix(candidate.baseRow.source, preferred.baseRow.source)
+        || candidate.variant.id !== preferred.variant.id
+      )) ?? null;
 
       setPhase3Result({
         relevantRows: phase3InputRows,
         bestSuccessRow,
+        runnerUp,
+        poolBand: phase3Input.poolBand,
         successBand,
         minimumSuccess,
         variantsTested: PHASE3_SPENDING_VARIANTS,
@@ -1228,7 +1357,7 @@ export function OptimizationLightPage({
     } finally {
       setPhase3Running(false);
     }
-  }, [activeParams, phase3InputRows, phase3Running]);
+  }, [activeParams, phase3Input.poolBand, phase3InputRows, phase3Running]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -1326,7 +1455,7 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>Fase 1 · Portafolio autónomo</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Sweep RF/RV completo (RV 0% a 100%, paso 10) para elegir política de inversión por sí sola, sin casa y con cuts neutralizados de forma controlada.
+          Sweep RF/RV completo, refinamiento local y mix actual preservado para elegir política de inversión por sí sola.
         </div>
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
@@ -1365,7 +1494,7 @@ export function OptimizationLightPage({
           <div style={{ display: 'grid', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, display: 'grid', gap: 5 }}>
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                Referencia Fase 1 (mejor bruto): RV {phase1Top3[0].rvPct}% / RF {phase1Top3[0].rfPct}%
+                Baseline Fase 1: {scenarioLabel(phase1Top3[0])}
               </div>
               <div style={{ color: T.textSecondary, fontSize: 11 }}>
                 Success40 autónomo = {formatPct(phase1Top3[0].success40)}
@@ -1373,7 +1502,7 @@ export function OptimizationLightPage({
               {phase1TechnicalTiePoints.length > 1 && phase1BalancedPoint && (
                 <>
                   <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                    Empate técnico / finalista: RV {phase1BalancedPoint.rvPct}% / RF {phase1BalancedPoint.rfPct}
+                    Finalista Fase 1: {scenarioLabel(phase1BalancedPoint)}
                   </div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
                     Criterio: menor Ruina20, luego RuinP10 más tardío, luego menor MaxDDP50 y menor RV.
@@ -1382,7 +1511,7 @@ export function OptimizationLightPage({
               )}
               {phase1Top3.slice(1).map((point, index) => (
                 <div key={`phase1-top-${point.rvPct}`} style={{ color: T.textSecondary, fontSize: 11 }}>
-                  {index + 2}º mejor: RV {point.rvPct}% / RF {point.rfPct}% · {formatPct(point.success40)} · {phase1BestSuccess !== null ? formatDeltaVsBest((point.success40 - phase1BestSuccess) * 100) : ''}
+                  {index + 2}º mejor: {scenarioLabel(point)} · {formatPct(point.success40)} · {phase1BestSuccess !== null ? formatDeltaVsBest((point.success40 - phase1BestSuccess) * 100) : ''}
                 </div>
               ))}
               {phase1TechnicalTiePoints.length > 1 ? (
@@ -1427,6 +1556,7 @@ export function OptimizationLightPage({
                 const isTechnicalTie = phase1BestSuccess !== null
                   && ((phase1BestSuccess - point.success40) * 100) <= (TECHNICAL_TIE_BAND_PP + 1e-9);
                 const isBalanced = Boolean(phase1BalancedPoint && phase1BalancedPoint.rvPct === point.rvPct);
+                const passesPhase2 = shortlist.some((candidate) => isSameMix(candidate, point));
                 return (
                   <div
                     key={`phase1-sweep-${point.rvPct}`}
@@ -1440,12 +1570,14 @@ export function OptimizationLightPage({
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                        RV {point.rvPct}% / RF {point.rfPct}%
-                        {point.isCurrentMix ? ' · mix actual' : ''}
-                        {isBest ? ' · referencia Fase 1' : ''}
-                        {!isBest && isBalanced ? ' · empate técnico (finalista)' : ''}
-                        {!isBest && !isBalanced && isTechnicalTie ? ' · finalista Fase 1' : ''}
+                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span>{scenarioLabel(point)}</span>
+                        {point.isCurrentMix ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Mix actual</span> : null}
+                        {isBest ? <span style={{ color: '#fff', background: T.primary, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Baseline Fase 1</span> : null}
+                        {!isBest && (isBalanced || isTechnicalTie) ? <span style={{ color: '#6c4a12', background: 'rgba(216, 162, 74, 0.16)', borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>Finalista Fase 1</span> : null}
+                        <span style={{ color: passesPhase2 ? '#fff' : T.textMuted, background: passesPhase2 ? T.positive : T.surface, border: `1px solid ${passesPhase2 ? T.positive : T.border}`, borderRadius: 999, padding: '1px 7px', fontSize: 10 }}>
+                          {passesPhase2 ? 'Pasa a Fase 2' : 'No pasa a Fase 2'}
+                        </span>
                       </div>
                       <div style={{ color: isBest ? T.primary : T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                         Δ vs mejor: {isBest ? '0.0 pp' : isTechnicalTie ? 'Empate técnico' : formatDeltaVsBest(deltaVsBest)}
@@ -1480,7 +1612,7 @@ export function OptimizationLightPage({
           Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). Esta fase no reoptimiza: solo valida costo de supervivencia.
         </div>
         <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Referencia Fase 1: {phase2BaselinePoint ? `RV ${phase2BaselinePoint.rvPct}% / RF ${phase2BaselinePoint.rfPct}%` : 'No disponible'} ·
+          Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
           {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
         </div>
         <div>
@@ -1520,6 +1652,7 @@ export function OptimizationLightPage({
               );
               const isCompeting = Boolean(!isBaseline && decision?.competesWithPhase1);
               const isDisplacing = Boolean(!isBaseline && decision?.displacesPhase1);
+              const phase3Eligible = phase3InputRows.some((candidate) => isSameMix(candidate.source, row.source));
               const cardBorderColor = isBaseline
                 ? T.primary
                 : isDisplacing
@@ -1546,11 +1679,11 @@ export function OptimizationLightPage({
                   gap: 4,
                 }}
               >
-                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>RV {row.source.rvPct}% · RF {row.source.rfPct}%</div>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{scenarioLabel(row.source)}</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {isBaseline ? (
                     <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px' }}>
-                      Referencia Fase 1
+                      Referencia
                     </span>
                   ) : null}
                   {!isBaseline && decision ? (
@@ -1588,6 +1721,19 @@ export function OptimizationLightPage({
                       Desplaza a Fase 1
                     </span>
                   ) : null}
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: phase3Eligible ? '#fff' : T.textMuted,
+                      background: phase3Eligible ? '#d8a24a' : T.surface,
+                      border: `1px solid ${phase3Eligible ? '#d8a24a' : T.border}`,
+                      borderRadius: 999,
+                      padding: '2px 8px',
+                    }}
+                  >
+                    {phase3Eligible ? 'Elegible Fase 3' : 'No elegible Fase 3'}
+                  </span>
                 </div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Éxito40 asistido: {formatPct(row.success40Assisted)} ({row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp vs autónomo)</div>
                 <div style={{ color: T.textSecondary, fontSize: 11 }}>Ruina20 asistida: {formatPct(row.ruin20Assisted)}</div>
@@ -1619,6 +1765,18 @@ export function OptimizationLightPage({
           </div>
         )}
 
+        {phase2ChampionChallenger.champion ? (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Champion / challenger persistentes</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Campeón provisional: {scenarioLabel(phase2ChampionChallenger.champion.source)} · {formatPct(phase2ChampionChallenger.champion.success40Assisted)} · {phase2ChampionChallenger.reason}
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Retador final: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · ${formatPct(phase2ChampionChallenger.challenger.success40Assisted)}` : 'No disponible'}
+            </div>
+          </div>
+        ) : null}
+
         {phase2Rows.length > 0 && (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
             <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Implementación · Traspasos sugeridos</div>
@@ -1626,7 +1784,7 @@ export function OptimizationLightPage({
               Traduce el objetivo ideal a instrumentos reales (sin tocar el JSON abstracto del optimizador).
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Objetivo ideal base: {phase2ImplementationSelectedRow ? `RV ${phase2ImplementationSelectedRow.source.rvPct}% / RF ${phase2ImplementationSelectedRow.source.rfPct}%` : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+              Objetivo ideal base: {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
@@ -1650,7 +1808,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runRealisticValidation}
-                disabled={realisticValidationRunning || !implementationPlan}
+                disabled={realisticValidationRunning || !implementationPlan || implementationPlan.equivalentToIdeal}
                 style={{
                   background: realisticValidationRunning ? T.surface : T.primary,
                   border: `1px solid ${realisticValidationRunning ? T.border : T.primary}`,
@@ -1659,11 +1817,13 @@ export function OptimizationLightPage({
                   padding: '6px 10px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: realisticValidationRunning || !implementationPlan ? 'not-allowed' : 'pointer',
-                  opacity: !implementationPlan ? 0.6 : 1,
+                  cursor: realisticValidationRunning || !implementationPlan || implementationPlan.equivalentToIdeal ? 'not-allowed' : 'pointer',
+                  opacity: !implementationPlan || implementationPlan.equivalentToIdeal ? 0.6 : 1,
                 }}
               >
-                {realisticValidationRunning ? 'Validando mix alcanzable…' : 'Validación realista'}
+                {implementationPlan?.equivalentToIdeal
+                  ? 'Validación no necesaria'
+                  : realisticValidationRunning ? 'Validando mix alcanzable…' : 'Validar mix alcanzable'}
               </button>
             </div>
             {implementationError ? (
@@ -1673,15 +1833,21 @@ export function OptimizationLightPage({
               <div style={{ display: 'grid', gap: 7 }}>
                 <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo ideal</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual real</div>
                     <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
-                      RV {(implementationPlan.targetMixIdeal.rv * 100).toFixed(1)}% / RF {(implementationPlan.targetMixIdeal.rf * 100).toFixed(1)}%
+                      {formatMixPair(implementationPlan.currentMix)}
                     </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix alcanzable</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo ideal</div>
                     <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
-                      RV {(implementationPlan.reachableMix.rv * 100).toFixed(1)}% / RF {(implementationPlan.reachableMix.rf * 100).toFixed(1)}%
+                      {formatMixPair(implementationPlan.targetMixIdeal)}
+                    </div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix post-traspasos</div>
+                    <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
+                      {formatMixPair(implementationPlan.reachableMix)}
                     </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
@@ -1693,20 +1859,32 @@ export function OptimizationLightPage({
                 </div>
                 <div style={{ color: implementationPlan.equivalentToIdeal ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
                   {implementationPlan.equivalentToIdeal
-                    ? 'Implementación equivalente al objetivo ideal.'
+                    ? 'Con estos traspasos se llega al objetivo ideal dentro de tolerancia.'
                     : 'Gap material detectado: se requiere Validación realista para pasar a Fase 3.'}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Restricciones aplicadas · misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
                   {' '}misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'} ·
                   {' '}mismo wrapper: {implementationPlan.restrictionsApplied.sameTaxWrapper ? 'sí' : 'no'} ·
-                  {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'}
+                  {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'} ·
+                  {' '}cross-currency: {implementationPlan.restrictionsApplied.crossCurrency ? 'sí' : 'no'}
                 </div>
                 {implementationPlan.transfers.length ? (
                   <div style={{ display: 'grid', gap: 3 }}>
                     {implementationPlan.transfers.slice(0, 6).map((transfer, index) => (
-                      <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10 }}>
-                        {transfer.fromName} → {transfer.toName} · mover {(transfer.weightMoved * 100).toFixed(2)}% cartera · {transfer.rationale}
+                      <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
+                        <div style={{ color: T.textPrimary, fontWeight: 800 }}>
+                          {transfer.fromName} → {transfer.toName}
+                        </div>
+                        <div>
+                          {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
+                        </div>
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted }}>
+                          <span>{transfer.rationale}</span>
+                          {transfer.constraints.crossManager ? <span style={{ color: '#6c4a12' }}>Cross-manager</span> : null}
+                          {transfer.constraints.crossCurrency ? <span style={{ color: T.warning }}>Cross-currency</span> : null}
+                          {!transfer.constraints.sameManager || transfer.constraints.crossCurrency ? <span>Fallback por falta de alternativa</span> : null}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1750,8 +1928,8 @@ export function OptimizationLightPage({
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
               Fuente Fase 3: {phase3Input.sourceLabel} · Escenarios base: {phase3InputRows.length
-                ? phase3InputRows.map((row) => `RV ${row.source.rvPct}/RF ${row.source.rfPct}`).join(' · ')
-                : 'No disponibles'} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes · pesos QoL G1/G2/G3/G4 = 25/40/25/10.
+                ? phase3InputRows.map((row) => scenarioLabel(row.source)).join(' · ')
+                : 'No disponibles'} · banda pool {formatPct(phase3Input.poolBand)} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes.
             </div>
             {phase3Input.blockedReason ? (
               <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
@@ -1791,7 +1969,7 @@ export function OptimizationLightPage({
                         }}
                       >
                         <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                          RV {row.source.rvPct}% / RF {row.source.rfPct}%
+                          {scenarioLabel(row.source)}
                         </div>
                         <div style={{ color: T.textSecondary, fontSize: 10 }}>
                           {roleLabel} · {formatPct(row.success40Assisted)}
@@ -1829,10 +2007,10 @@ export function OptimizationLightPage({
               <div style={{ display: 'grid', gap: 8 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Techo de éxito Fase 2</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Techo del pool Fase 3</div>
                     <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.bestSuccessRow.success40Assisted)}</div>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      Mejor éxito disponible para comparar · RV {phase3Result.bestSuccessRow.source.rvPct} / RF {phase3Result.bestSuccessRow.source.rfPct}
+                      {scenarioLabel(phase3Result.bestSuccessRow.source)} · banda entrada {formatPct(phase3Result.poolBand)}
                     </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
@@ -1853,12 +2031,13 @@ export function OptimizationLightPage({
                       Escenario recomendado final
                     </div>
                     <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                      Escenario preferido por calidad de vida: RV {phase3Result.preferred.baseRow.source.rvPct}% / RF {phase3Result.preferred.baseRow.source.rfPct}%
+                      Ganador: {scenarioLabel(phase3Result.preferred.baseRow.source)}
                     </div>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>
                       Fuente final: {realisticValidation?.row && phase3Result.preferred.baseRow === realisticValidation.row
                         ? 'Mix implementable revalidado'
                         : 'Mix ideal equivalente'}
+                      {' '}· Veredicto: {switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
                       <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
@@ -1892,6 +2071,11 @@ export function OptimizationLightPage({
                     <div style={{ color: T.textMuted, fontSize: 10 }}>
                       Guardrails: {phase3Result.preferred.guardrailsPassed ? 'OK' : phase3Result.preferred.guardrailViolations.join(' · ')}
                     </div>
+                    {phase3Result.runnerUp ? (
+                      <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 6, color: T.textSecondary, fontSize: 11 }}>
+                        Retador final: {scenarioLabel(phase3Result.runnerUp.baseRow.source)} · {phase3Result.runnerUp.variant.label} · éxito {formatPct(phase3Result.runnerUp.success40)} · mejora gasto {formatSignedPct(phase3Result.runnerUp.weightedSpendingImprovementPct)}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
