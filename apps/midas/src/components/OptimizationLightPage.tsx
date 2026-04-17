@@ -872,6 +872,10 @@ export function OptimizationLightPage({
   const [implementationRunning, setImplementationRunning] = useState(false);
   const [implementationPlan, setImplementationPlan] = useState<InstrumentImplementationPlan | null>(null);
   const [implementationError, setImplementationError] = useState<string | null>(null);
+  const [finalImplementationRunning, setFinalImplementationRunning] = useState(false);
+  const [finalImplementationPlan, setFinalImplementationPlan] = useState<InstrumentImplementationPlan | null>(null);
+  const [finalImplementationError, setFinalImplementationError] = useState<string | null>(null);
+  const [finalImplementationNote, setFinalImplementationNote] = useState<string | null>(null);
   const [realisticValidationRunning, setRealisticValidationRunning] = useState(false);
   const [realisticValidation, setRealisticValidation] = useState<RealisticValidationResult | null>(null);
   const [realisticValidationError, setRealisticValidationError] = useState<string | null>(null);
@@ -907,6 +911,9 @@ export function OptimizationLightPage({
     setLongevityError(null);
     setImplementationPlan(null);
     setImplementationError(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationError(null);
+    setFinalImplementationNote(null);
     setRealisticValidation(null);
     setRealisticValidationError(null);
     setPhase3Result(null);
@@ -940,6 +947,9 @@ export function OptimizationLightPage({
     setLongevityError(null);
     setImplementationPlan(null);
     setImplementationError(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationError(null);
+    setFinalImplementationNote(null);
     setRealisticValidation(null);
     setRealisticValidationError(null);
     setPhase3Result(null);
@@ -1060,6 +1070,9 @@ export function OptimizationLightPage({
     setLongevityError(null);
     setImplementationPlan(null);
     setImplementationError(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationError(null);
+    setFinalImplementationNote(null);
     setRealisticValidation(null);
     setRealisticValidationError(null);
     setPhase3Result(null);
@@ -1379,6 +1392,14 @@ export function OptimizationLightPage({
     };
   }, [activeScenarioAfterImplementation, phase2ChampionChallenger.challenger, phase2CurrentRow, phase2Rows]);
   const phase3InputRows = phase3Input.rows;
+  const finalPolicyWinnerRow = useMemo(
+    () => phase3Result?.preferred?.baseRow ?? null,
+    [phase3Result],
+  );
+  const finalPolicyMatchesIntermediateTarget = useMemo(
+    () => Boolean(finalPolicyWinnerRow && phase2ImplementationSelectedRow && isSameMix(finalPolicyWinnerRow.source, phase2ImplementationSelectedRow.source)),
+    [finalPolicyWinnerRow, phase2ImplementationSelectedRow],
+  );
   const phase3RawPolicyComparison = useMemo(() => {
     if (!phase3Result) return null;
     const raw = phase3Result.rawWinner;
@@ -1440,6 +1461,44 @@ export function OptimizationLightPage({
     };
   }, [implementationPlan, phase3Result]);
 
+  const runFinalImplementation = useCallback(async () => {
+    if (finalImplementationRunning) return;
+    if (!finalPolicyWinnerRow) {
+      setFinalImplementationError('Primero ejecuta Fase 3 para definir un ganador POLICY final.');
+      return;
+    }
+    setFinalImplementationRunning(true);
+    setFinalImplementationError(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationNote(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const loaded = loadInstrumentImplementationUniverse(finalPolicyWinnerRow.source.weights);
+      if (!loaded.universe) {
+        throw new Error(loaded.warnings[0] ?? 'No hay instrument_universe cargado para implementar el ganador final.');
+      }
+      const plan = buildInstrumentImplementationPlan({
+        universe: loaded.universe,
+        targetWeights: finalPolicyWinnerRow.source.weights,
+      });
+      if (!plan) throw new Error('No se pudo construir el plan de implementación del ganador final.');
+      setFinalImplementationPlan(plan);
+      if (finalPolicyMatchesIntermediateTarget) {
+        setFinalImplementationNote(
+          implementationPlan
+            ? 'El ganador final coincide con la implementación actual.'
+            : 'El ganador final coincide con el objetivo intermedio de implementación.',
+        );
+      } else {
+        setFinalImplementationNote('Se recalculó la implementación para el ganador recomendado.');
+      }
+    } catch (error) {
+      setFinalImplementationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFinalImplementationRunning(false);
+    }
+  }, [finalImplementationRunning, finalPolicyWinnerRow, finalPolicyMatchesIntermediateTarget, implementationPlan]);
+
   const runImplementation = useCallback(async () => {
     if (implementationRunning) return;
     const idealRow = phase2ImplementationSelectedRow;
@@ -1450,6 +1509,9 @@ export function OptimizationLightPage({
     setImplementationRunning(true);
     setImplementationError(null);
     setImplementationPlan(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationError(null);
+    setFinalImplementationNote(null);
     setRealisticValidation(null);
     setRealisticValidationError(null);
     try {
@@ -1559,6 +1621,9 @@ export function OptimizationLightPage({
     setPhase3Running(true);
     setPhase3Error(null);
     setPhase3Result(null);
+    setFinalImplementationPlan(null);
+    setFinalImplementationError(null);
+    setFinalImplementationNote(null);
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const sortedBySuccess = [...phase3InputRows].sort((a, b) => (
@@ -2250,6 +2315,85 @@ export function OptimizationLightPage({
                 </div>
               </div>
             ) : null}
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface, display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Implementación del ganador final</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Ganador POLICY final: {finalPolicyWinnerRow ? scenarioLabel(finalPolicyWinnerRow.source) : 'No disponible (ejecuta Fase 3)'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={runFinalImplementation}
+                  disabled={finalImplementationRunning || !finalPolicyWinnerRow}
+                  style={{
+                    background: finalImplementationRunning ? T.surface : T.primary,
+                    border: `1px solid ${finalImplementationRunning ? T.border : T.primary}`,
+                    color: finalImplementationRunning ? T.textMuted : '#fff',
+                    borderRadius: 999,
+                    padding: '6px 10px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: finalImplementationRunning || !finalPolicyWinnerRow ? 'not-allowed' : 'pointer',
+                    opacity: !finalPolicyWinnerRow ? 0.6 : 1,
+                  }}
+                >
+                  {finalImplementationRunning ? 'Calculando implementación final…' : 'Implementar ganador final'}
+                </button>
+              </div>
+              {finalPolicyMatchesIntermediateTarget ? (
+                <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                  El ganador final coincide con la implementación actual.
+                </div>
+              ) : null}
+              {finalImplementationError ? (
+                <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{finalImplementationError}</div>
+              ) : null}
+              {finalImplementationNote ? (
+                <div style={{ color: T.textSecondary, fontSize: 10 }}>{finalImplementationNote}</div>
+              ) : null}
+              {finalImplementationPlan ? (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual real</div>
+                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.currentMix)}</div>
+                    </div>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo final recomendado</div>
+                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.targetMixIdeal)}</div>
+                    </div>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>Mix final implementable</div>
+                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.reachableMix)}</div>
+                    </div>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>Gap residual (RV)</div>
+                      <div style={{ color: Math.abs(finalImplementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP ? T.positive : T.warning, fontSize: 15, fontWeight: 800 }}>
+                        {formatSignedPp(-finalImplementationPlan.gapVsIdealRvPp)}
+                      </div>
+                    </div>
+                  </div>
+                  {finalImplementationPlan.transfers.length ? (
+                    <div style={{ display: 'grid', gap: 3 }}>
+                      {finalImplementationPlan.transfers.slice(0, 6).map((transfer, index) => (
+                        <div key={`final-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
+                          <div style={{ color: T.textPrimary, fontWeight: 800 }}>
+                            {transfer.fromName} → {transfer.toName}
+                          </div>
+                          <div>
+                            {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      No hay traspasos sugeridos para el ganador final con el universo cargado.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
 
