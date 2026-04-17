@@ -235,6 +235,12 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
   const instrumentId = idFrom(source) ?? '';
   const currentMixUsed = parseMix(source.current_mix_used ?? source.currentMixUsed);
   const historicalUsedRange = parseRangeMix(source.historical_used_range ?? source.historicalUsedRange);
+  const dataQuality = isRecord(source.data_quality ?? source.dataQuality)
+    ? (source.data_quality ?? source.dataQuality) as Record<string, unknown>
+    : null;
+  const sourceMetadata = isRecord(source.source_metadata ?? source.sourceMetadata)
+    ? (source.source_metadata ?? source.sourceMetadata) as Record<string, unknown>
+    : null;
   const exposureUsed = parseExposureUsed(
     source.exposure_used ?? source.current_exposure_used ?? source.exposureUsed ?? source.currentExposureUsed,
   );
@@ -255,12 +261,17 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     currentMixUsed,
     legalRange: source.legal_range ?? source.legalRange ?? null,
     historicalUsedRange,
-    observedWindowMonths: normalizeLooseNumber(source.observed_window_months ?? source.observedWindowMonths),
-    observedFrom: readString(source.observed_from ?? source.observedFrom),
-    observedTo: readString(source.observed_to ?? source.observedTo),
-    estimationMethod: readString(source.estimation_method ?? source.estimationMethod),
-    confidenceScore: normalizeRatio(source.confidence_score ?? source.confidenceScore),
-    sourcePreference: readString(source.source_preference ?? source.sourcePreference),
+    observedWindowMonths: normalizeLooseNumber(
+      source.observed_window_months
+      ?? source.observedWindowMonths
+      ?? sourceMetadata?.observed_window_months
+      ?? sourceMetadata?.window_months,
+    ),
+    observedFrom: readString(source.observed_from ?? source.observedFrom ?? sourceMetadata?.observed_from ?? sourceMetadata?.from),
+    observedTo: readString(source.observed_to ?? source.observedTo ?? sourceMetadata?.observed_to ?? sourceMetadata?.to),
+    estimationMethod: readString(source.estimation_method ?? source.estimationMethod ?? sourceMetadata?.estimation_method ?? sourceMetadata?.method),
+    confidenceScore: normalizeRatio(source.confidence_score ?? source.confidenceScore ?? dataQuality?.confidence_score),
+    sourcePreference: readString(source.source_preference ?? source.sourcePreference ?? sourceMetadata?.source_preference ?? dataQuality?.range_source_type),
     exposureUsed,
     amountClp: normalizeLooseNumber(source.amount_clp ?? source.amountClp),
     weightPortfolio: normalizeRatio(source.weight_portfolio ?? source.weightPortfolio),
@@ -283,7 +294,6 @@ const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseIns
     warnings,
     usable:
       !!instrumentId &&
-      missingCriticalFields.length === 0 &&
       !!currentMixUsed &&
       !!historicalUsedRange &&
       (normalizeRatio(source.weight_portfolio ?? source.weightPortfolio) ?? 0) > 0,
@@ -378,10 +388,51 @@ export const validateInstrumentUniverseJson = (
     return { ok: false, errors: ['El JSON instrument_universe debe ser un objeto.'], warnings: [], snapshot: null, summary: null };
   }
 
-  const instrumentRows = mergeByInstrumentId([
+  const topLevelRows = [
     pickArray(parsed, 'instrument_master', 'instrumentMaster'),
     pickArray(parsed, 'instrument_mix_profile', 'instrumentMixProfile'),
     pickArray(parsed, 'portfolio_position', 'portfolioPosition'),
+    pickArray(parsed, 'optimizer_metadata', 'optimizerMetadata'),
+  ];
+  const nestedInstrumentRows = Array.isArray(parsed.instruments)
+    ? parsed.instruments.flatMap((entry) => {
+      if (!isRecord(entry)) return [] as Record<string, unknown>[];
+      const nestedMaster = isRecord(entry.instrument_master) ? [entry.instrument_master] : [];
+      const nestedMix = isRecord(entry.instrument_mix_profile) ? [entry.instrument_mix_profile] : [];
+      const nestedPosition = isRecord(entry.portfolio_position) ? [entry.portfolio_position] : [];
+      const nestedOptimizer = isRecord(entry.optimizer_metadata) ? [entry.optimizer_metadata] : [];
+      return [
+        ...nestedMaster,
+        ...nestedMix,
+        ...nestedPosition,
+        ...nestedOptimizer,
+        ...pickArray(entry, 'instrument_master', 'instrumentMaster'),
+        ...pickArray(entry, 'instrument_mix_profile', 'instrumentMixProfile'),
+        ...pickArray(entry, 'portfolio_position', 'portfolioPosition'),
+        ...pickArray(entry, 'optimizer_metadata', 'optimizerMetadata'),
+      ];
+    })
+    : [];
+  const nestedCombinedRows = Array.isArray(parsed.instruments)
+    ? parsed.instruments.flatMap((entry) => {
+      if (!isRecord(entry)) return [] as Record<string, unknown>[];
+      const master = isRecord(entry.instrument_master) ? entry.instrument_master : {};
+      const mix = isRecord(entry.instrument_mix_profile) ? entry.instrument_mix_profile : {};
+      const position = isRecord(entry.portfolio_position) ? entry.portfolio_position : {};
+      const optimizer = isRecord(entry.optimizer_metadata) ? entry.optimizer_metadata : {};
+      const combined = {
+        ...master,
+        ...mix,
+        ...position,
+        ...optimizer,
+      };
+      return idFrom(combined) ? [combined] : [];
+    })
+    : [];
+  const instrumentRows = mergeByInstrumentId([
+    ...topLevelRows,
+    nestedInstrumentRows,
+    nestedCombinedRows,
   ]);
   if (instrumentRows.size === 0) {
     return {

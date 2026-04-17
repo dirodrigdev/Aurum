@@ -675,11 +675,12 @@ export function SettingsPage({
                 accept="application/json,.json"
                 style={{ display: 'none' }}
                 onChange={async (event) => {
-                  const file = event.target.files?.[0];
+                  const input = event.currentTarget;
+                  const file = input?.files?.[0];
                   if (!file) return;
                   setUniverseEditorValue(await file.text());
                   setUniverseStatusMessage(`Archivo cargado: ${file.name}`);
-                  event.currentTarget.value = '';
+                  if (input) input.value = '';
                 }}
               />
             </label>
