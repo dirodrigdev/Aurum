@@ -119,6 +119,8 @@ type Phase3Candidate = {
 type Phase3Result = {
   relevantRows: Phase2Point[];
   bestSuccessRow: Phase2Point;
+  rawWinner: Phase3Candidate | null;
+  rawRunnerUp: Phase3Candidate | null;
   runnerUp: Phase3Candidate | null;
   poolBand: number;
   successBand: number;
@@ -461,6 +463,10 @@ function hasNumber(value: number | null): value is number {
 
 function isSameMix(a: Phase1Point, b: Phase1Point, epsilon = 0.05): boolean {
   return Math.abs(a.rvPct - b.rvPct) <= epsilon && Math.abs(a.rfPct - b.rfPct) <= epsilon;
+}
+
+function isSamePhase3Candidate(a: Phase3Candidate, b: Phase3Candidate): boolean {
+  return isSameMix(a.baseRow.source, b.baseRow.source) && a.variant.id === b.variant.id;
 }
 
 function evaluatePhase2Competition(
@@ -1298,6 +1304,66 @@ export function OptimizationLightPage({
     };
   }, [activeScenarioAfterImplementation, phase2ChampionChallenger.challenger, phase2CurrentRow, phase2Rows]);
   const phase3InputRows = phase3Input.rows;
+  const phase3RawPolicyComparison = useMemo(() => {
+    if (!phase3Result) return null;
+    const raw = phase3Result.rawWinner;
+    const policy = phase3Result.preferred;
+    const sameWinner = Boolean(raw && policy && isSamePhase3Candidate(raw, policy));
+    if (!raw) {
+      return {
+        raw,
+        policy,
+        sameWinner: false,
+        reason: 'No hay ganador RAW calculable en esta corrida.',
+      };
+    }
+    if (sameWinner) {
+      return {
+        raw,
+        policy,
+        sameWinner: true,
+        reason: 'RAW y POLICY coinciden: resultado robusto.',
+      };
+    }
+    if (!raw.eligibleByBand) {
+      return {
+        raw,
+        policy,
+        sameWinner: false,
+        reason: 'Difieren por bandas de tolerancia activas.',
+      };
+    }
+    if (!raw.guardrailsPassed) {
+      return {
+        raw,
+        policy,
+        sameWinner: false,
+        reason: 'Difieren por guardrails activos.',
+      };
+    }
+    if (!policy) {
+      return {
+        raw,
+        policy,
+        sameWinner: false,
+        reason: 'Difieren porque POLICY exige mejora de QoL dentro de banda aceptable.',
+      };
+    }
+    if (implementationPlan && !implementationPlan.equivalentToIdeal) {
+      return {
+        raw,
+        policy,
+        sameWinner: false,
+        reason: 'Difieren por restricciones de implementación y validación realista.',
+      };
+    }
+    return {
+      raw,
+      policy,
+      sameWinner: false,
+      reason: 'Difieren por QoL dentro de banda aceptable.',
+    };
+  }, [implementationPlan, phase3Result]);
 
   const runImplementation = useCallback(async () => {
     if (implementationRunning) return;
@@ -1466,6 +1532,14 @@ export function OptimizationLightPage({
 
       const eligibleCandidates = candidates.filter((candidate) => candidate.eligibleByBand && candidate.guardrailsPassed);
       const improvedEligibleCandidates = eligibleCandidates.filter((candidate) => candidate.qualityOfLifeScore > 1.0001);
+      const rawRanked = [...candidates].sort((a, b) => (
+        (b.success40 - a.success40)
+        || (a.ruin20 - b.ruin20)
+        || (a.houseSalePct - b.houseSalePct)
+        || (b.qualityOfLifeScore - a.qualityOfLifeScore)
+      ));
+      const rawWinner = rawRanked[0] ?? null;
+      const rawRunnerUp = rawRanked.find((candidate) => rawWinner && !isSamePhase3Candidate(candidate, rawWinner)) ?? null;
       const rankedEligible = [...improvedEligibleCandidates].sort((a, b) => (
         (b.qualityOfLifeScore - a.qualityOfLifeScore)
         || (b.success40 - a.success40)
@@ -1482,6 +1556,8 @@ export function OptimizationLightPage({
       setPhase3Result({
         relevantRows: phase3InputRows,
         bestSuccessRow,
+        rawWinner,
+        rawRunnerUp,
         runnerUp,
         poolBand: phase3Input.poolBand,
         successBand,
@@ -2109,6 +2185,21 @@ export function OptimizationLightPage({
                 ? phase3InputRows.map((row) => scenarioLabel(row.source)).join(' · ')
                 : 'No disponibles'} · banda pool {formatPct(phase3Input.poolBand)} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes.
             </div>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 8, display: 'grid', gap: 4 }}>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Política activa</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Materialidad Fase 1: {optimizerPolicyConfig.phase1.materialitySuccessPp.toFixed(1)} pp
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Banda pool Fase 3 (y): {phase3Result ? formatPct(phase3Result.poolBand) : '—'}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Banda sacrificio QoL (x): {phase3Result ? formatPct(phase3Result.successBand) : '—'}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Umbral recomendación: No mover &lt; {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)} pp · Considerar {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)}–{MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp · Mover &gt; {MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp o QoL fuerte ({MIX_COMPARISON_THRESHOLDS.strongQolImprovementPct.toFixed(1)}%)
+              </div>
+            </div>
             {phase3Input.blockedReason ? (
               <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
                 {phase3Input.blockedReason}
@@ -2183,6 +2274,38 @@ export function OptimizationLightPage({
             ) : null}
             {phase3Result ? (
               <div style={{ display: 'grid', gap: 8 }}>
+                {phase3RawPolicyComparison ? (
+                  <div style={{ border: `1px solid ${phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a'}`, borderRadius: 10, padding: 8, display: 'grid', gap: 6, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Comparación técnica vs política</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 6 }}>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 7, display: 'grid', gap: 2 }}>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>Ganador técnico (RAW)</div>
+                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                          {phase3RawPolicyComparison.raw ? scenarioLabel(phase3RawPolicyComparison.raw.baseRow.source) : 'No disponible'}
+                        </div>
+                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                          {phase3RawPolicyComparison.raw
+                            ? `${phase3RawPolicyComparison.raw.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.raw.success40)}`
+                            : 'Sin candidato RAW'}
+                        </div>
+                      </div>
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 7, display: 'grid', gap: 2 }}>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>Ganador recomendado (POLICY)</div>
+                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                          {phase3RawPolicyComparison.policy ? scenarioLabel(phase3RawPolicyComparison.policy.baseRow.source) : 'No disponible'}
+                        </div>
+                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                          {phase3RawPolicyComparison.policy
+                            ? `${phase3RawPolicyComparison.policy.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.policy.success40)} · ${switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}`
+                            : 'Sin ganador POLICY'}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ color: phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a', fontSize: 10, fontWeight: 700 }}>
+                      {phase3RawPolicyComparison.reason}
+                    </div>
+                  </div>
+                ) : null}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>Techo del pool Fase 3</div>
