@@ -53,6 +53,18 @@ type PhaseRunMeta = {
   scenarioHash: string;
 };
 
+type Phase1Diagnostics = {
+  runId: number;
+  coarseEvaluations: number;
+  currentEvaluations: number;
+  local25Evaluations: number;
+  micro10Evaluations: number;
+  totalEvaluations: number;
+  elapsedMs: number;
+  capReached: boolean;
+  cap: number;
+};
+
 type Phase2CompetitionDecision = {
   baselineLabel: string;
   autonomousGapPp: number;
@@ -122,6 +134,10 @@ const SHORTLIST_TARGET = 5;
 const PHASE1_SWEEP_MIN_RV = 0;
 const PHASE1_SWEEP_MAX_RV = 100;
 const PHASE1_SWEEP_STEP = 5;
+const PHASE1_LOCAL_REFINEMENT_BASE_LIMIT = 4;
+const PHASE1_MICRO_REFINEMENT_BASE_LIMIT = 2;
+const PHASE1_MAX_EVALUATIONS = 29;
+const PHASE1_SLOW_NOTICE_MS = 2500;
 const TECHNICAL_TIE_BAND_PP = 0.2;
 const DELTA_ZERO_EPSILON_PP = 0.05;
 const PHASE3_QOL_WEIGHTS = [0.25, 0.40, 0.25, 0.10] as const;
@@ -324,6 +340,11 @@ function assignScenarioIds(points: Phase1Point[]): Phase1Point[] {
     ...point,
     scenarioId: String.fromCharCode(65 + index),
   }));
+}
+
+function pushUniqueRv(values: number[], rvPct: number) {
+  const clamped = Math.max(PHASE1_SWEEP_MIN_RV, Math.min(PHASE1_SWEEP_MAX_RV, rvPct));
+  if (!values.some((value) => Math.abs(value - clamped) <= 0.05)) values.push(clamped);
 }
 
 function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: SimulationResults, options?: { isCurrentMix?: boolean }): Phase1Point {
@@ -786,6 +807,8 @@ export function OptimizationLightPage({
   const [shortlist, setShortlist] = useState<Phase1Point[]>([]);
   const [phase2Rows, setPhase2Rows] = useState<Phase2Point[]>([]);
   const [phase1Meta, setPhase1Meta] = useState<PhaseRunMeta | null>(null);
+  const [phase1Diagnostics, setPhase1Diagnostics] = useState<Phase1Diagnostics | null>(null);
+  const [phase1SlowNotice, setPhase1SlowNotice] = useState<string | null>(null);
   const [phase2Meta, setPhase2Meta] = useState<PhaseRunMeta | null>(null);
   const [staleNotice, setStaleNotice] = useState<string | null>(null);
   const [longevityOpen, setLongevityOpen] = useState(false);
@@ -838,6 +861,8 @@ export function OptimizationLightPage({
       setPhase1Points([]);
       setShortlist([]);
       setPhase1Meta(null);
+      setPhase1Diagnostics(null);
+      setPhase1SlowNotice(null);
     }
     if (stalePhase2 || stalePhase1) {
       setPhase2Rows([]);
@@ -847,8 +872,13 @@ export function OptimizationLightPage({
 
   const runPhase1 = useCallback(async () => {
     if (phase1Running) return;
+    const runId = (phase1Diagnostics?.runId ?? 0) + 1;
+    const startedAt = performance.now();
+    let slowTimer: number | null = null;
     setPhase1Running(true);
     setStaleNotice(null);
+    setPhase1Diagnostics(null);
+    setPhase1SlowNotice(null);
     setPhase1Points([]);
     setShortlist([]);
     setPhase2Rows([]);
@@ -863,15 +893,39 @@ export function OptimizationLightPage({
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      slowTimer = window.setTimeout(() => {
+        setPhase1SlowNotice('Fase 1 sigue procesando: sweep grueso + refinamiento local acotado.');
+      }, PHASE1_SLOW_NOTICE_MS);
       const autonomousBase = buildAutonomousParams(activeParams);
       const pointMap = new Map<string, Phase1Point>();
-      const evaluateRv = (rvPct: number, options?: { isCurrentMix?: boolean }) => {
+      const counts = {
+        coarseEvaluations: 0,
+        currentEvaluations: 0,
+        local25Evaluations: 0,
+        micro10Evaluations: 0,
+      };
+      let capReached = false;
+      const totalEvaluations = () => (
+        counts.coarseEvaluations
+        + counts.currentEvaluations
+        + counts.local25Evaluations
+        + counts.micro10Evaluations
+      );
+      const evaluateRv = (
+        rvPct: number,
+        stage: 'coarseEvaluations' | 'currentEvaluations' | 'local25Evaluations' | 'micro10Evaluations',
+        options?: { isCurrentMix?: boolean },
+      ) => {
         const normalizedRv = Math.max(PHASE1_SWEEP_MIN_RV, Math.min(PHASE1_SWEEP_MAX_RV, rvPct));
         const key = normalizedRv.toFixed(2);
         const existing = pointMap.get(key);
         if (existing) {
           if (options?.isCurrentMix) existing.isCurrentMix = true;
           return existing;
+        }
+        if (totalEvaluations() >= PHASE1_MAX_EVALUATIONS) {
+          capReached = true;
+          return null;
         }
         const candidate = cloneParams(autonomousBase);
         const nextWeights = options?.isCurrentMix
@@ -881,33 +935,37 @@ export function OptimizationLightPage({
         const sim = runSimulationCentral(candidate);
         const point = toPhase1Point(normalizedRv, nextWeights, sim, options);
         pointMap.set(key, point);
+        counts[stage] += 1;
         return point;
       };
       for (let rvPct = PHASE1_SWEEP_MIN_RV; rvPct <= PHASE1_SWEEP_MAX_RV; rvPct += PHASE1_SWEEP_STEP) {
-        evaluateRv(rvPct);
+        evaluateRv(rvPct, 'coarseEvaluations');
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       const currentRvPct = (autonomousBase.weights.rvGlobal + autonomousBase.weights.rvChile) * 100;
-      evaluateRv(currentRvPct, { isCurrentMix: true });
+      evaluateRv(currentRvPct, 'currentEvaluations', { isCurrentMix: true });
 
       const coarseRanking = [...pointMap.values()].sort((a, b) => (
         (b.success40 - a.success40) || (a.ruin20 - b.ruin20) || (a.rvPct - b.rvPct)
       ));
-      const localCenters = [
-        currentRvPct,
-        ...coarseRanking.slice(0, 3).map((point) => point.rvPct),
-        ...(choosePhase1Baseline(coarseRanking) ? [choosePhase1Baseline(coarseRanking)!.rvPct] : []),
-      ];
+      const localCenters: number[] = [];
+      pushUniqueRv(localCenters, currentRvPct);
+      coarseRanking.slice(0, 3).forEach((point) => pushUniqueRv(localCenters, point.rvPct));
+      const localRefinedPoints: Phase1Point[] = [];
       for (const center of localCenters) {
-        [center - 2.5, center + 2.5].forEach((rvPct) => evaluateRv(rvPct));
+        if (localCenters.indexOf(center) >= PHASE1_LOCAL_REFINEMENT_BASE_LIMIT) break;
+        [center - 2.5, center + 2.5].forEach((rvPct) => {
+          const point = evaluateRv(rvPct, 'local25Evaluations');
+          if (point) localRefinedPoints.push(point);
+        });
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
 
-      const refinedRanking = [...pointMap.values()].sort((a, b) => (
+      const localRanking = (localRefinedPoints.length ? localRefinedPoints : [...pointMap.values()]).sort((a, b) => (
         (b.success40 - a.success40) || (a.ruin20 - b.ruin20) || (a.rvPct - b.rvPct)
       ));
-      refinedRanking.slice(0, 2).forEach((point) => {
-        [point.rvPct - 1, point.rvPct + 1].forEach((rvPct) => evaluateRv(rvPct));
+      localRanking.slice(0, PHASE1_MICRO_REFINEMENT_BASE_LIMIT).forEach((point) => {
+        [point.rvPct - 1, point.rvPct + 1].forEach((rvPct) => evaluateRv(rvPct, 'micro10Evaluations'));
       });
 
       const points = assignScenarioIds([...pointMap.values()]);
@@ -918,12 +976,26 @@ export function OptimizationLightPage({
       setPhase1Points(points);
       setShortlist(buildShortlist(points));
       setPhase1Meta(buildRunMeta(activeParams, activeLabel, 'phase1'));
+      const diagnostics: Phase1Diagnostics = {
+        runId,
+        ...counts,
+        totalEvaluations: totalEvaluations(),
+        elapsedMs: Math.round(performance.now() - startedAt),
+        capReached,
+        cap: PHASE1_MAX_EVALUATIONS,
+      };
+      setPhase1Diagnostics(diagnostics);
+      if (capReached) {
+        setPhase1SlowNotice('Se alcanzó el límite de refinamiento para mantener rendimiento.');
+      }
+      console.info('[MIDAS][phase1-diagnostics]', diagnostics);
       setPhase2Rows([]);
       setPhase2Meta(null);
     } finally {
+      if (slowTimer !== null) window.clearTimeout(slowTimer);
       setPhase1Running(false);
     }
-  }, [activeLabel, activeParams, phase1Running]);
+  }, [activeLabel, activeParams, phase1Diagnostics?.runId, phase1Running]);
 
   const runPhase2 = useCallback(async () => {
     if (phase2Running || !shortlist.length) return;
@@ -1485,7 +1557,17 @@ export function OptimizationLightPage({
             {staleNotice}
           </div>
         ) : null}
+        {phase1SlowNotice ? (
+          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            {phase1SlowNotice}
+          </div>
+        ) : null}
         {phase1Meta ? renderRunMeta(phase1Meta, phase1IsStale) : null}
+        {phase1Diagnostics ? (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Diagnóstico Fase 1 · run #{phase1Diagnostics.runId} · total {phase1Diagnostics.totalEvaluations}/{phase1Diagnostics.cap} · sweep {phase1Diagnostics.coarseEvaluations} · actual {phase1Diagnostics.currentEvaluations} · ref 2.5 {phase1Diagnostics.local25Evaluations} · ref 1.0 {phase1Diagnostics.micro10Evaluations} · {phase1Diagnostics.elapsedMs} ms{phase1Diagnostics.capReached ? ' · cap alcanzado' : ''}
+          </div>
+        ) : null}
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Mix actual: {phase1CurrentPoint ? `RV ${phase1CurrentPoint.rvPct}% / RF ${phase1CurrentPoint.rfPct}%` : `RV ${((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100).toFixed(1)}% / RF ${(100 - ((activeParams.weights.rvGlobal + activeParams.weights.rvChile) * 100)).toFixed(1)}%`}
         </div>
