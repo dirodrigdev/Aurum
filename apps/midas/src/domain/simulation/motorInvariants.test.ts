@@ -23,6 +23,10 @@ import { resolveCapital } from './capitalResolver';
 import { fromM8Output, toM8Input, validateM8Preconditions } from './m8Adapter';
 import { runM8 } from './engineM8';
 import {
+  stripManualAdjustmentImpactFromParams,
+  type ManualAdjustmentImpact,
+} from './manualCapitalAdjustments';
+import {
   M8_CANONICAL_CORRELATION_MATRIX,
   M8_CANONICAL_LEGACY_CORRELATION_MATRIX,
   M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS,
@@ -914,6 +918,118 @@ test('official distribution overrides params weights without changing capital bl
   assert.equal(next.simulationComposition?.optimizableInvestmentsCLP, 600_000_000);
   assert.equal(next.simulationComposition?.nonOptimizable?.banksCLP, 120_000_000);
   assert.equal(next.simulationComposition?.nonOptimizable?.nonMortgageDebtCLP, 20_000_000);
+});
+
+test('manual capital ledger delete restores block capital to clean base', () => {
+  const cleanBase = makeBaseParams();
+  cleanBase.capitalInitial = 720_000_000;
+  cleanBase.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 1_020_000_000,
+    optimizableInvestmentsCLP: 600_000_000,
+    nonOptimizable: {
+      banksCLP: 120_000_000,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 360_000_000,
+        realEstateEquityCLP: 300_000_000,
+        ufSnapshotCLP: 35_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  const cleanComposition = cleanBase.simulationComposition!;
+  cleanBase.cashflowEvents = [
+    {
+      id: 'base-event',
+      description: 'base inflow',
+      month: 12,
+      type: 'inflow',
+      amount: 1_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+  cleanBase.futureCapitalEvents = [
+    {
+      id: 'base-future',
+      description: 'base future',
+      type: 'inflow',
+      amount: 2_000_000,
+      currency: 'CLP',
+      effectiveDate: '2027-01',
+    },
+  ];
+
+  const addImpact: ManualAdjustmentImpact = {
+    currentTotalDelta: 120_000_000,
+    currentBanksDelta: 50_000_000,
+    currentInvestmentsDelta: 70_000_000,
+    currentRiskDelta: 0,
+    futureEvents: [],
+    futureCapitalEvents: [],
+  };
+  const withManualAdd = cloneParams(cleanBase);
+  withManualAdd.capitalInitial = 840_000_000;
+  withManualAdd.simulationComposition!.optimizableInvestmentsCLP = 670_000_000;
+  withManualAdd.simulationComposition!.nonOptimizable.banksCLP = 170_000_000;
+  withManualAdd.cashflowEvents = [
+    ...withManualAdd.cashflowEvents,
+    {
+      id: 'manual-a',
+      description: 'manual future',
+      month: 18,
+      type: 'inflow',
+      amount: 3_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+  withManualAdd.futureCapitalEvents = [
+    ...(withManualAdd.futureCapitalEvents ?? []),
+    {
+      id: 'manual-a',
+      description: 'manual future',
+      type: 'inflow',
+      amount: 3_000_000,
+      currency: 'CLP',
+      effectiveDate: '2027-06',
+    },
+  ];
+
+  assert.equal(withManualAdd.capitalInitial, cleanBase.capitalInitial + addImpact.currentTotalDelta);
+  const afterDelete = stripManualAdjustmentImpactFromParams(withManualAdd, addImpact);
+  assert.equal(afterDelete.capitalInitial, cleanBase.capitalInitial);
+  assert.equal(afterDelete.simulationComposition?.optimizableInvestmentsCLP, cleanComposition.optimizableInvestmentsCLP);
+  assert.equal(afterDelete.simulationComposition?.nonOptimizable?.banksCLP, cleanComposition.nonOptimizable.banksCLP);
+  assert.deepEqual(afterDelete.cashflowEvents.map((event) => event.id), ['base-event']);
+  assert.deepEqual(afterDelete.futureCapitalEvents?.map((event) => event.id), ['base-future']);
+
+  const editedImpact: ManualAdjustmentImpact = {
+    currentTotalDelta: 40_000_000,
+    currentBanksDelta: 10_000_000,
+    currentInvestmentsDelta: 30_000_000,
+    currentRiskDelta: 0,
+    futureEvents: [],
+    futureCapitalEvents: [],
+  };
+  const afterEditBase = stripManualAdjustmentImpactFromParams(withManualAdd, addImpact);
+  const withEditedManual = cloneParams(afterEditBase);
+  withEditedManual.capitalInitial += editedImpact.currentTotalDelta;
+  withEditedManual.simulationComposition!.optimizableInvestmentsCLP += editedImpact.currentInvestmentsDelta;
+  withEditedManual.simulationComposition!.nonOptimizable.banksCLP += editedImpact.currentBanksDelta;
+  assert.equal(withEditedManual.capitalInitial, cleanBase.capitalInitial + editedImpact.currentTotalDelta);
+  const afterEditedDelete = stripManualAdjustmentImpactFromParams(withEditedManual, editedImpact);
+  assert.equal(afterEditedDelete.capitalInitial, cleanBase.capitalInitial);
+  assert.equal(afterEditedDelete.simulationComposition?.optimizableInvestmentsCLP, cleanComposition.optimizableInvestmentsCLP);
+  assert.equal(afterEditedDelete.simulationComposition?.nonOptimizable?.banksCLP, cleanComposition.nonOptimizable.banksCLP);
 });
 
 test('invalid current JSON with last known valid falls back to last known official', () => {

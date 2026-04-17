@@ -43,6 +43,10 @@ import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
+import {
+  stripManualAdjustmentImpactFromParams,
+  type ManualAdjustmentImpact,
+} from './domain/simulation/manualCapitalAdjustments';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
@@ -89,15 +93,6 @@ type ApplyAurumHarnessState = {
 };
 
 type AurumSyncState = 'unknown' | 'synced' | 'outdated';
-type ManualAdjustmentImpact = {
-  currentTotalDelta: number;
-  currentBanksDelta: number;
-  currentInvestmentsDelta: number;
-  currentRiskDelta: number;
-  futureEvents: CashflowEvent[];
-  futureCapitalEvents: FutureCapitalEvent[];
-};
-
 type OptimizerBaselineSnapshot = {
   probRuin: number;
   terminalP50: number;
@@ -2459,20 +2454,29 @@ export default function App() {
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
+    const previousImpact = manualAdjustmentImpact;
     setManualCapitalAdjustments(next);
     markSimulationInteraction();
     const impact = computeManualAdjustmentImpact(next);
     manualCommitInFlightRef.current = true;
-    const nextParams = buildCanonicalSimParams(baseParamsRef.current, simParamsRef.current, {
+    const cleanBaseParams = stripManualAdjustmentImpactFromParams(simParamsRef.current, previousImpact);
+    const nextParams = buildCanonicalSimParams(cleanBaseParams, cleanBaseParams, {
       applyCapital: true,
       manualImpact: impact,
     });
-    setBaseParams(nextParams);
+    setBaseParams(cleanBaseParams);
     setSimParams(nextParams);
     const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
     const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('ledger-commit', () => base);
-  }, [buildCanonicalSimParams, computeManualAdjustmentImpact, markSimulationInteraction, simOverrides, startRecalculation]);
+  }, [
+    buildCanonicalSimParams,
+    computeManualAdjustmentImpact,
+    manualAdjustmentImpact,
+    markSimulationInteraction,
+    simOverrides,
+    startRecalculation,
+  ]);
 
   useEffect(() => {
     if (manualCommitInFlightRef.current) {
