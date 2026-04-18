@@ -7,6 +7,7 @@ import type {
   M8StudentTGeneratorParams,
   M8TwoRegimeGeneratorParams,
   M8ScenarioOverrides,
+  M8RiskCapitalPolicy,
 } from './m8.types';
 import { M8_CANONICAL_CORRELATION_MATRIX } from './m8Calibration';
 
@@ -24,6 +25,7 @@ const CUT2_PERSISTENCE_MONTHS = 4;
 const RECOVER_TO_WEAK_THRESHOLD = 0.15;
 const RECOVER_TO_NORMAL_THRESHOLD = 0.07;
 const MAX_DRAWDOWN_PERCENTILES = [10, 25, 50, 75, 90] as const;
+const RISK_CAPITAL_POLICY_DEFAULT: M8RiskCapitalPolicy = 'reserve_late_full';
 
 export const M8_BASE_CORRELATION_MATRIX = M8_CANONICAL_CORRELATION_MATRIX.map((row) => row.slice());
 
@@ -454,6 +456,12 @@ const pathSeed = (seed: number, pathIndex: number): number => {
   return mixed >>> 0;
 };
 
+const resolveRiskCapitalPolicy = (input: M8Input): M8RiskCapitalPolicy =>
+  input.risk_capital_policy ?? RISK_CAPITAL_POLICY_DEFAULT;
+
+const recognizedRiskFraction = (policy: M8RiskCapitalPolicy): number =>
+  policy === 'reserve_late_haircut40' || policy === 'reserve_stress_haircut40_prehouse20' ? 0.4 : 1.0;
+
 const buildFanChart = (wealthPaths: number[][]): M8FanChartPoint[] => {
   if (wealthPaths.length === 0) return [];
   const months = wealthPaths.length - 1;
@@ -537,6 +545,14 @@ export const validateM8Input = (input: M8Input): string[] => {
   }
   if (input.risk_capital_clp !== undefined && (!isFiniteNumber(input.risk_capital_clp) || input.risk_capital_clp < 0)) {
     errors.push('risk_capital_clp debe ser finito y >= 0');
+  }
+  if (
+    input.risk_capital_policy !== undefined &&
+    input.risk_capital_policy !== 'reserve_late_full' &&
+    input.risk_capital_policy !== 'reserve_late_haircut40' &&
+    input.risk_capital_policy !== 'reserve_stress_haircut40_prehouse20'
+  ) {
+    errors.push('risk_capital_policy invalida');
   }
   const mix = input.portfolio_mix;
   if (mix) {
@@ -814,7 +830,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const months = input.years * 12;
   const runtimeMix = buildRuntimeWeights(input.portfolio_mix);
   const eventsMap = buildEventsMap(input);
-  const riskReserveInitial = Math.max(0, input.risk_capital_clp ?? 0);
+  const riskPolicy = resolveRiskCapitalPolicy(input);
+  const riskReserveInitial = Math.max(0, (input.risk_capital_clp ?? 0) * recognizedRiskFraction(riskPolicy));
   const coreStartingCapital = Math.max(0, input.capital_initial_clp);
   const scenarioKey = scenarioToRuntimeKey(input.scenario_overrides?.scenario_id);
   const states: SimulationState = input.generator_type === 'two_regime'
@@ -873,6 +890,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     const rng = new SeededRng(pathSeed(input.seed, p));
     const sleeves: Record<AssetKey, number> = mixToSleeves(runtimeMix, coreStartingCapital);
     let riskReserve = riskReserveInitial;
+    let preHouseRiskUsed = 0;
+    const preHouseRiskCap = riskPolicy === 'reserve_stress_haircut40_prehouse20' ? riskReserveInitial * 0.2 : 0;
     let soldHouse = false;
     let pendingSale = false;
     let saleExecMonth: number | null = null;
@@ -1077,6 +1096,19 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       }
 
       if (remaining > 1e-8) {
+        if (
+          riskPolicy === 'reserve_stress_haircut40_prehouse20' &&
+          !soldHouse &&
+          regimeState === 'stress' &&
+          riskReserve > riskReserveInitial &&
+          preHouseRiskUsed < preHouseRiskCap
+        ) {
+          const preHouseDraw = Math.min(remaining, riskReserve, preHouseRiskCap - preHouseRiskUsed);
+          riskReserve -= preHouseDraw;
+          remaining -= preHouseDraw;
+          preHouseRiskUsed += preHouseDraw;
+        }
+
         if (houseSaleBridgeEnabled && pendingSale && saleExecMonth !== null && m < saleExecMonth) {
           const expectedHouseEquity = estimateHouseSaleEquityClp(input, saleExecMonth, mortgageBalanceUf);
           if (bridgeDeficit + remaining <= expectedHouseEquity) {

@@ -122,6 +122,11 @@ export interface M8FutureEventInput {
   description?: string;
 }
 
+export type M8RiskCapitalPolicy =
+  | 'reserve_late_full'
+  | 'reserve_late_haircut40'
+  | 'reserve_stress_haircut40_prehouse20';
+
 export interface M8Input {
   years: number;
   // Default contractual M8: 3000 (si UI abre con 1000, no cambia el default del motor).
@@ -135,6 +140,7 @@ export interface M8Input {
   capital_source_label?: string;
   feeAnnual?: number;
   risk_capital_clp?: number;
+  risk_capital_policy?: M8RiskCapitalPolicy;
   portfolio_mix: M8PortfolioMix;
   phase1MonthlyClp: number;
   phase2MonthlyClp: number;
