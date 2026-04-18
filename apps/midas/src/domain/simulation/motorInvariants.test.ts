@@ -1823,6 +1823,49 @@ test('capitalResolver prioritizes simulation composition risk capital over snaps
   assert.equal(input.risk_capital_clp, 42_000_000);
 });
 
+test('m8 runtime treats positive risk capital as monotonic additional reserve', () => {
+  const baseParams = makeM8ContractParams();
+  baseParams.simulation = {
+    ...baseParams.simulation,
+    nSim: 512,
+    seed: 42,
+  };
+  baseParams.activeScenario = 'base';
+  baseParams.simulationComposition = {
+    ...baseParams.simulationComposition!,
+    nonOptimizable: {
+      ...baseParams.simulationComposition!.nonOptimizable,
+      riskCapital: { totalCLP: 0 },
+    },
+  };
+
+  const offInput = toM8Input(baseParams, resolveCapital({ params: baseParams }));
+  const offOutput = runM8(offInput);
+
+  const onParams = cloneParams(baseParams);
+  onParams.simulationComposition = {
+    ...onParams.simulationComposition!,
+    nonOptimizable: {
+      ...onParams.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const onInput = toM8Input(onParams, resolveCapital({ params: onParams }));
+  const onOutput = runM8(onInput);
+
+  assert.equal(offInput.capital_initial_clp, onInput.capital_initial_clp);
+  assert.equal(offInput.risk_capital_clp, 0);
+  assert.equal(onInput.risk_capital_clp, 90_000_000);
+  assert.ok(
+    onOutput.Success40 >= offOutput.Success40,
+    `expected risk capital ON success ${onOutput.Success40} >= OFF success ${offOutput.Success40}`,
+  );
+});
+
 test('policy routes every simulation channel to M8', () => {
   assert.equal(getMidasEngineFor('primary'), 'm8');
   assert.equal(getMidasEngineFor('favorable'), 'm8');

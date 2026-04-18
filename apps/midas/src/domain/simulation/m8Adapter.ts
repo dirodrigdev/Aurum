@@ -395,11 +395,8 @@ export const validateM8Preconditions = (
       errors.push('capitalResolution.sourceLabel es obligatorio');
     }
 
-    const riskCapitalClp = resolveRiskCapitalClp(capitalResolution);
-    const coreCapitalClp = resolveCoreCapitalClp(capitalResolution);
-    if (riskCapitalClp > coreCapitalClp + 1e-6) {
-      errors.push('riskCapital no puede superar el capital core visible');
-    }
+    resolveRiskCapitalClp(capitalResolution);
+    resolveCoreCapitalClp(capitalResolution);
 
     if (params.feeAnnual !== undefined && (!isFiniteNumber(params.feeAnnual) || params.feeAnnual < 0)) {
       errors.push('feeAnnual debe ser finito y >= 0');

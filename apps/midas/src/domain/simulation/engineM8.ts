@@ -448,6 +448,12 @@ const percentile = (values: number[], p: number): number => {
 const median = (values: number[]): number => percentile(values, 50);
 const mean = (values: number[]): number => values.length === 0 ? Number.NaN : values.reduce((acc, value) => acc + value, 0) / values.length;
 
+const pathSeed = (seed: number, pathIndex: number): number => {
+  const base = (Math.trunc(seed) >>> 0) || 0x9e3779b9;
+  const mixed = base + Math.imul(pathIndex + 1, 0x9e3779b9);
+  return mixed >>> 0;
+};
+
 const buildFanChart = (wealthPaths: number[][]): M8FanChartPoint[] => {
   if (wealthPaths.length === 0) return [];
   const months = wealthPaths.length - 1;
@@ -532,10 +538,6 @@ export const validateM8Input = (input: M8Input): string[] => {
   if (input.risk_capital_clp !== undefined && (!isFiniteNumber(input.risk_capital_clp) || input.risk_capital_clp < 0)) {
     errors.push('risk_capital_clp debe ser finito y >= 0');
   }
-  if (isFiniteNumber(input.risk_capital_clp) && input.risk_capital_clp > input.capital_initial_clp + 1e-6) {
-    errors.push('risk_capital_clp no puede superar capital_initial_clp');
-  }
-
   const mix = input.portfolio_mix;
   if (mix) {
     const total = ASSET_ORDER.reduce((acc, asset) => acc + (isFiniteNumber(mix[asset]) ? mix[asset] : Number.NaN), 0);
@@ -809,12 +811,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     throw new Error(`invalid_m8_input:\n- ${validationErrors.join('\n- ')}`);
   }
 
-  const rng = new SeededRng(input.seed);
   const months = input.years * 12;
   const runtimeMix = buildRuntimeWeights(input.portfolio_mix);
   const eventsMap = buildEventsMap(input);
   const riskReserveInitial = Math.max(0, input.risk_capital_clp ?? 0);
-  const coreStartingCapital = Math.max(0, input.capital_initial_clp - riskReserveInitial);
+  const coreStartingCapital = Math.max(0, input.capital_initial_clp);
   const scenarioKey = scenarioToRuntimeKey(input.scenario_overrides?.scenario_id);
   const states: SimulationState = input.generator_type === 'two_regime'
     ? buildTwoRegimeState(
@@ -869,6 +870,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     : undefined;
 
   for (let p = 0; p < input.n_paths; p += 1) {
+    const rng = new SeededRng(pathSeed(input.seed, p));
     const sleeves: Record<AssetKey, number> = mixToSleeves(runtimeMix, coreStartingCapital);
     let riskReserve = riskReserveInitial;
     let soldHouse = false;
