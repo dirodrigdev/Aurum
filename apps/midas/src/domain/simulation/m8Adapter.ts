@@ -21,6 +21,8 @@ import type {
   M8StudentTGeneratorParams,
   M8TwoRegimeGeneratorParams,
   M8GeneratorSleeveStats,
+  M8RiskCapitalPolicy,
+  M8RiskCapitalBtcDriver,
 } from './m8.types';
 import {
   M8_CANONICAL_CASH_RETURN_ASSUMPTIONS,
@@ -36,6 +38,8 @@ const M8_DEFAULT_OPERATIONAL_WEIGHTS: M8OperationalWeights = {
   usd_liquidity: 0,
   clp_cash: 0,
 };
+const M8_DEFAULT_RISK_POLICY_ON: M8RiskCapitalPolicy = 'btc_like_realista_e_cycle_min';
+const M8_DEFAULT_RISK_BTC_DRIVER_ON: M8RiskCapitalBtcDriver = 'btc_like_v1';
 
 type ValidationResult = {
   ok: boolean;
@@ -450,6 +454,12 @@ export const toM8Input = (
     capital_source_label: capitalResolution.sourceLabel,
     feeAnnual: params.feeAnnual ?? 0,
     risk_capital_clp: riskCapitalClp,
+    ...(riskCapitalClp > 0
+      ? {
+          risk_capital_policy: M8_DEFAULT_RISK_POLICY_ON,
+          risk_capital_btc_driver: M8_DEFAULT_RISK_BTC_DRIVER_ON,
+        }
+      : {}),
     portfolio_mix: portfolioMix,
     phase1MonthlyClp: phase1.amountReal,
     phase2MonthlyClp: phase2.amountReal,
