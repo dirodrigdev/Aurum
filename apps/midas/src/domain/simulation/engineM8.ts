@@ -44,6 +44,27 @@ const RISK_E_BTC_LIKE = {
   minMonthlyReturn: -0.8,
   maxMonthlyReturn: 2.5,
 } as const;
+type RiskEPolicyGates = {
+  cooldownMonths: number;
+  maMonths: number;
+  drawdownFloor: number;
+  cycleMinMultiple: number;
+  cycleLookbackMonths: number;
+};
+const RISK_E_GATES_DEFAULT: RiskEPolicyGates = {
+  cooldownMonths: RISK_E_LARGE_SELL_COOLDOWN_MONTHS,
+  maMonths: 12,
+  drawdownFloor: -0.25,
+  cycleMinMultiple: 1.0,
+  cycleLookbackMonths: 24,
+};
+const RISK_E_GATES_CYCLE_MIN: RiskEPolicyGates = {
+  cooldownMonths: 18,
+  maMonths: 18,
+  drawdownFloor: -0.20,
+  cycleMinMultiple: 1.5,
+  cycleLookbackMonths: 24,
+};
 
 export const M8_BASE_CORRELATION_MATRIX = M8_CANONICAL_CORRELATION_MATRIX.map((row) => row.slice());
 
@@ -489,6 +510,10 @@ const pathSeed = (seed: number, pathIndex: number): number => {
 
 const resolveRiskCapitalPolicy = (input: M8Input): M8RiskCapitalPolicy =>
   input.risk_capital_policy ?? RISK_CAPITAL_POLICY_DEFAULT;
+const isRiskEPolicy = (policy: M8RiskCapitalPolicy): boolean =>
+  policy === 'btc_like_realista_e' || policy === 'btc_like_realista_e_cycle_min';
+const riskEPolicyGates = (policy: M8RiskCapitalPolicy): RiskEPolicyGates =>
+  policy === 'btc_like_realista_e_cycle_min' ? RISK_E_GATES_CYCLE_MIN : RISK_E_GATES_DEFAULT;
 
 const resolveRiskCapitalBtcDriver = (input: M8Input): M8RiskCapitalBtcDriver =>
   input.risk_capital_btc_driver ?? 'btc_like_v1';
@@ -496,17 +521,25 @@ const resolveRiskCapitalBtcDriver = (input: M8Input): M8RiskCapitalBtcDriver =>
 const recognizedRiskFraction = (policy: M8RiskCapitalPolicy): number =>
   policy === 'reserve_late_haircut40' || policy === 'reserve_stress_haircut40_prehouse20' ? 0.4 : 1.0;
 
-const riskDrawdownAndTrendOk = (priceHistory: number[], currentPrice: number): { drawdown24: number; aboveMa12: boolean; safeToSell: boolean } => {
+const riskDrawdownAndTrendOk = (
+  priceHistory: number[],
+  currentPrice: number,
+  gates: RiskEPolicyGates,
+): { drawdown24: number; aboveMa: boolean; expansionOk: boolean; safeToSell: boolean } => {
   const last24 = priceHistory.slice(-24);
   const peak24 = last24.length > 0 ? Math.max(...last24) : currentPrice;
   const drawdown24 = peak24 > 0 ? currentPrice / peak24 - 1 : 0;
-  const last12 = priceHistory.slice(-12);
-  const ma12 = last12.length > 0 ? last12.reduce((acc, value) => acc + value, 0) / last12.length : currentPrice;
-  const aboveMa12 = currentPrice >= ma12;
+  const maWindow = priceHistory.slice(-Math.max(1, gates.maMonths));
+  const ma = maWindow.length > 0 ? maWindow.reduce((acc, value) => acc + value, 0) / maWindow.length : currentPrice;
+  const aboveMa = currentPrice >= ma;
+  const cycleLookback = priceHistory.slice(-Math.max(1, gates.cycleLookbackMonths));
+  const cycleMin = cycleLookback.length > 0 ? Math.min(...cycleLookback) : currentPrice;
+  const expansionOk = cycleMin > 0 ? currentPrice >= cycleMin * gates.cycleMinMultiple : true;
   return {
     drawdown24,
-    aboveMa12,
-    safeToSell: drawdown24 > -0.25 && aboveMa12,
+    aboveMa,
+    expansionOk,
+    safeToSell: drawdown24 > gates.drawdownFloor && aboveMa && expansionOk,
   };
 };
 
@@ -616,7 +649,8 @@ export const validateM8Input = (input: M8Input): string[] => {
     input.risk_capital_policy !== 'reserve_late_full' &&
     input.risk_capital_policy !== 'reserve_late_haircut40' &&
     input.risk_capital_policy !== 'reserve_stress_haircut40_prehouse20' &&
-    input.risk_capital_policy !== 'btc_like_realista_e'
+    input.risk_capital_policy !== 'btc_like_realista_e' &&
+    input.risk_capital_policy !== 'btc_like_realista_e_cycle_min'
   ) {
     errors.push('risk_capital_policy invalida');
   }
@@ -904,6 +938,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const runtimeMix = buildRuntimeWeights(input.portfolio_mix);
   const eventsMap = buildEventsMap(input);
   const riskPolicy = resolveRiskCapitalPolicy(input);
+  const riskGates = riskEPolicyGates(riskPolicy);
   const riskBtcDriver = resolveRiskCapitalBtcDriver(input);
   const riskReserveInitial = Math.max(0, (input.risk_capital_clp ?? 0) * recognizedRiskFraction(riskPolicy));
   const coreStartingCapital = Math.max(0, input.capital_initial_clp);
@@ -1079,13 +1114,13 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           r = (1 + r) * (1 + fxReal) - 1;
         }
         sleeves[asset] *= Math.max(0, 1 + r);
-        if (riskPolicy === 'btc_like_realista_e' && riskBtcDriver === 'eq_global_proxy' && asset === 'eq_global') {
+        if (isRiskEPolicy(riskPolicy) && riskBtcDriver === 'eq_global_proxy' && asset === 'eq_global') {
           riskEPrice *= Math.max(0.05, 1 + r);
           riskReserve *= Math.max(0.05, 1 + r);
           riskEPriceHistory.push(riskEPrice);
         }
       }
-      if (riskPolicy === 'btc_like_realista_e' && riskBtcDriver === 'btc_like_v1') {
+      if (isRiskEPolicy(riskPolicy) && riskBtcDriver === 'btc_like_v1') {
         const riskEReturn = sampleRiskEBtcLikeMonthlyReturn(rng);
         riskEPrice *= Math.max(0.05, 1 + riskEReturn);
         riskReserve *= Math.max(0.05, 1 + riskEReturn);
@@ -1173,14 +1208,14 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         ? input.bucket.bucket_months * budget
         : 0;
 
-      if (riskPolicy === 'btc_like_realista_e' && riskReserve > 0) {
+      if (isRiskEPolicy(riskPolicy) && riskReserve > 0) {
         const defensiveNow = totalDefensiveWealth(sleeves);
         const needBucket = defensiveNow + 1e-6 < bucketTarget;
         const hasStressMotive = regimeState === 'stress';
         const motiveOk = hasStressMotive || needBucket;
-        const cooldownOk = m - riskELastLargeSellMonth >= RISK_E_LARGE_SELL_COOLDOWN_MONTHS;
+        const cooldownOk = m - riskELastLargeSellMonth >= riskGates.cooldownMonths;
         const sellWindowOpen = riskELargeSellCount < RISK_E_MAX_LARGE_SELLS;
-        const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice);
+        const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice, riskGates);
         const saleableAboveFloor = Math.max(0, riskReserve - riskEFloorInitial);
         if (motiveOk && cooldownOk && sellWindowOpen && marketGate.safeToSell && saleableAboveFloor > 0) {
           const largeSale = Math.min(riskELargeSellChunk, saleableAboveFloor);
@@ -1255,10 +1290,10 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
 
         if (remaining > 1e-8 && riskReserve > 0) {
           let riskDraw = 0;
-          if (riskPolicy === 'btc_like_realista_e') {
+          if (isRiskEPolicy(riskPolicy)) {
             const seriousStress = cutState === 2 || (regimeState === 'stress' && cutState >= 1);
             const latePlan = m >= Math.floor(months * 0.75);
-            const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice);
+            const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice, riskGates);
             const canUseFloor = (seriousStress || latePlan) && (marketGate.safeToSell || latePlan);
             const nonFloorAvailable = Math.max(0, riskReserve - riskEFloorInitial);
             if (nonFloorAvailable > 0) {

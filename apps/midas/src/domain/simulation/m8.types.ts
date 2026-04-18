@@ -126,7 +126,8 @@ export type M8RiskCapitalPolicy =
   | 'reserve_late_full'
   | 'reserve_late_haircut40'
   | 'reserve_stress_haircut40_prehouse20'
-  | 'btc_like_realista_e';
+  | 'btc_like_realista_e'
+  | 'btc_like_realista_e_cycle_min';
 
 export type M8RiskCapitalBtcDriver =
   | 'eq_global_proxy'
