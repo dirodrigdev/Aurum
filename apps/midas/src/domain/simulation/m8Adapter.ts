@@ -47,6 +47,9 @@ const isValidCapitalSource = (value: unknown): value is CapitalSource => value =
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+const hasOwn = (record: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
 const parseYearMonth = (value: string): { year: number; month: number } | null => {
   const raw = value.trim();
   const match = raw.match(/^(\d{4})-(\d{2})$/);
@@ -84,11 +87,39 @@ const buildScenarioOverrides = (params: ModelParameters): M8ScenarioOverrides =>
 };
 
 const resolveRiskCapitalClp = (capitalResolution: CapitalResolution): number => {
-  const raw = Number(capitalResolution.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0);
-  if (!isFiniteNumber(raw) || raw < 0) {
-    throw new Error('simulationComposition.nonOptimizable.riskCapital.totalCLP invalido');
+  const risk = capitalResolution.simulationComposition?.nonOptimizable?.riskCapital;
+  if (!risk || typeof risk !== 'object') return 0;
+
+  const riskRecord = risk as Record<string, unknown>;
+  const rawTotalClp = Number(riskRecord.totalCLP ?? 0);
+  if (hasOwn(riskRecord, 'totalCLP')) {
+    if (!isFiniteNumber(rawTotalClp) || rawTotalClp < 0) {
+      throw new Error('simulationComposition.nonOptimizable.riskCapital.totalCLP invalido');
+    }
+    return rawTotalClp;
   }
-  return raw;
+
+  const rawClp = Number(riskRecord.clp ?? 0);
+  const rawUsdTotal = Number(riskRecord.usdTotal ?? riskRecord.usd ?? 0);
+  const rawUsdSnapshot = Number(riskRecord.usdSnapshotCLP ?? 0);
+  const clp = isFiniteNumber(rawClp) && rawClp > 0 ? rawClp : 0;
+  const usdTotal = isFiniteNumber(rawUsdTotal) && rawUsdTotal > 0 ? rawUsdTotal : 0;
+  const usdSnapshot = isFiniteNumber(rawUsdSnapshot) && rawUsdSnapshot > 0 ? rawUsdSnapshot : 0;
+  return Math.max(0, clp + (usdTotal > 0 && usdSnapshot > 0 ? usdTotal * usdSnapshot : 0));
+};
+
+const resolveCoreCapitalClp = (capitalResolution: CapitalResolution): number => {
+  const composition = capitalResolution.simulationComposition;
+  const optimizable = Number(composition?.optimizableInvestmentsCLP ?? NaN);
+  const banks = Number(composition?.nonOptimizable?.banksCLP ?? NaN);
+  if (isFiniteNumber(optimizable) && optimizable >= 0 && isFiniteNumber(banks) && banks >= 0) {
+    return optimizable + banks;
+  }
+  const fallback = Number(capitalResolution.capitalInitial ?? 0);
+  if (!isFiniteNumber(fallback) || fallback < 0) {
+    throw new Error('capitalResolution.capitalInitial debe ser >= 0');
+  }
+  return fallback;
 };
 
 const buildCuts = (params: ModelParameters): M8CutsInput => ({
@@ -365,8 +396,9 @@ export const validateM8Preconditions = (
     }
 
     const riskCapitalClp = resolveRiskCapitalClp(capitalResolution);
-    if (riskCapitalClp > capitalResolution.capitalInitial + 1e-6) {
-      errors.push('riskCapital no puede superar el capitalInitial visible');
+    const coreCapitalClp = resolveCoreCapitalClp(capitalResolution);
+    if (riskCapitalClp > coreCapitalClp + 1e-6) {
+      errors.push('riskCapital no puede superar el capital core visible');
     }
 
     if (params.feeAnnual !== undefined && (!isFiniteNumber(params.feeAnnual) || params.feeAnnual < 0)) {
@@ -398,6 +430,7 @@ export const toM8Input = (
   const [phase1, phase2, phase3, phase4] = normalizedPhases;
   const simulationBaseMonth = resolveSimulationBaseMonth(params);
   const riskCapitalClp = resolveRiskCapitalClp(capitalResolution);
+  const coreCapitalClp = resolveCoreCapitalClp(capitalResolution);
   const futureEvents =
     params.futureCapitalEvents?.map((event) => ({
       id: event.id,
@@ -415,7 +448,7 @@ export const toM8Input = (
     simulation_frequency: 'monthly',
     use_real_terms: true,
     ...(simulationBaseMonth ? { simulation_base_month: simulationBaseMonth } : {}),
-    capital_initial_clp: Math.max(0, capitalResolution.capitalInitial - riskCapitalClp),
+    capital_initial_clp: Math.max(0, coreCapitalClp),
     capital_source: (params.capitalSource ?? 'aurum') as CapitalSource,
     capital_source_label: capitalResolution.sourceLabel,
     feeAnnual: params.feeAnnual ?? 0,

@@ -18,6 +18,12 @@ export interface CapitalResolverSimulationComposition {
     realEstate?: CapitalResolverRealEstateSource;
     riskCapital?: {
       totalCLP?: number;
+      clp?: number;
+      usd?: number;
+      usdTotal?: number;
+      usdSnapshotCLP?: number;
+      profile?: 'conservative' | 'base' | 'aggressive';
+      source?: string;
     };
   };
 }
@@ -69,6 +75,33 @@ const buildRealEstateSource = (realEstate: unknown): CapitalResolverRealEstateSo
   };
 };
 
+const buildRiskCapitalSource = (riskCapital: unknown):
+  CapitalResolverSimulationComposition['nonOptimizable']['riskCapital'] | undefined => {
+  if (!riskCapital || typeof riskCapital !== 'object') return undefined;
+  const record = riskCapital as Record<string, unknown>;
+  const totalCLP = finiteOrZero(record.totalCLP);
+  const clp = finiteOrZero(record.clp);
+  const usd = finiteOrZero(record.usd);
+  const usdTotal = finiteOrZero(record.usdTotal);
+  const usdSnapshotCLP = finiteOrZero(record.usdSnapshotCLP);
+  const profile = record.profile;
+  const source = typeof record.source === 'string' ? record.source : undefined;
+
+  if (totalCLP <= 0 && clp <= 0 && usd <= 0 && usdTotal <= 0 && usdSnapshotCLP <= 0 && !source) {
+    return undefined;
+  }
+
+  return {
+    ...(totalCLP > 0 ? { totalCLP } : {}),
+    ...(clp > 0 ? { clp } : {}),
+    ...(usd > 0 ? { usd } : {}),
+    ...(usdTotal > 0 ? { usdTotal } : {}),
+    ...(usdSnapshotCLP > 0 ? { usdSnapshotCLP } : {}),
+    ...(profile === 'conservative' || profile === 'base' || profile === 'aggressive' ? { profile } : {}),
+    ...(source ? { source } : {}),
+  };
+};
+
 export function resolveCapital(input: CapitalResolverInput): CapitalResolution {
   const { params, aurumSnapshot } = input;
   const capitalSource = params.capitalSource ?? 'aurum';
@@ -101,6 +134,11 @@ export function resolveCapital(input: CapitalResolverInput): CapitalResolution {
     const realEstate = aurumSnapshot
       ? (aurumSnapshot.version === 2 ? buildRealEstateSource(aurumSnapshot.nonOptimizable?.realEstate) : undefined)
       : buildRealEstateSource(simulationComposition?.nonOptimizable?.realEstate);
+    const riskCapitalFromComposition = buildRiskCapitalSource(simulationComposition?.nonOptimizable?.riskCapital);
+    const riskCapitalFromSnapshot = aurumSnapshot?.riskCapital
+      ? buildRiskCapitalSource(aurumSnapshot.riskCapital)
+      : undefined;
+    const riskCapital = riskCapitalFromComposition ?? riskCapitalFromSnapshot;
     const capitalInitial = optimizableInvestmentsCLP + banksCLP;
     const realEstateEquityCLP = realEstate
       ? Math.max(0, realEstate.propertyValueCLP - realEstate.mortgageDebtOutstandingCLP)
@@ -120,6 +158,7 @@ export function resolveCapital(input: CapitalResolverInput): CapitalResolution {
         nonOptimizable: {
           banksCLP,
           ...(realEstate ? { realEstate } : {}),
+          ...(riskCapital ? { riskCapital } : {}),
         },
       },
     };
@@ -152,6 +191,7 @@ export function resolveCapital(input: CapitalResolverInput): CapitalResolution {
   const realEstateEquityCLP = realEstate
     ? Math.max(0, realEstate.propertyValueCLP - realEstate.mortgageDebtOutstandingCLP)
     : 0;
+  const riskCapital = buildRiskCapitalSource(params.simulationComposition?.nonOptimizable?.riskCapital);
 
   return {
     capitalInitial,
@@ -163,6 +203,7 @@ export function resolveCapital(input: CapitalResolverInput): CapitalResolution {
       nonOptimizable: {
         banksCLP: 0,
         ...(realEstate ? { realEstate } : {}),
+        ...(riskCapital ? { riskCapital } : {}),
       },
     },
   };

@@ -1724,6 +1724,105 @@ test('capitalResolver can derive aurum capital from simulationComposition when s
   assert.equal(capitalResolution.sourceLabel.startsWith('Aurum ·'), true);
 });
 
+test('m8 adapter maps risk capital from simulation composition when disabled/enabled', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: { totalCLP: 0 },
+    },
+  };
+
+  const offResolution = resolveCapital({ params });
+  const offInput = toM8Input(params, offResolution);
+  assert.equal(offInput.risk_capital_clp, 0);
+  assert.equal(offInput.capital_initial_clp, 730_000_000);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const onResolution = resolveCapital({ params });
+  const onInput = toM8Input(params, onResolution);
+  assert.equal(onInput.risk_capital_clp, 90_000_000);
+  assert.equal(onInput.capital_initial_clp, 730_000_000);
+});
+
+test('m8 adapter derives risk capital from mixed USD + CLP components without double count', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        clp: 20_000_000,
+        usdTotal: 50_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+  assert.equal(input.risk_capital_clp, 65_000_000);
+  assert.equal(input.capital_initial_clp, 730_000_000);
+});
+
+test('capitalResolver prioritizes simulation composition risk capital over snapshot', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 42_000_000,
+        usdTotal: 42_000,
+        usdSnapshotCLP: 1_000,
+      },
+    },
+  };
+  const aurumSnapshot = {
+    version: 2,
+    publishedAt: '2026-04-01T00:00:00Z',
+    snapshotMonth: '2026-03',
+    snapshotLabel: 'marzo 2026',
+    currency: 'CLP',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    riskCapital: {
+      totalCLP: 120_000_000,
+      usd: 120_000,
+      usdSnapshotCLP: 1_000,
+    },
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      usdLiquidityCLP: 0,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+
+  const capitalResolution = resolveCapital({ params, aurumSnapshot });
+  const input = toM8Input(params, capitalResolution);
+  assert.equal(input.risk_capital_clp, 42_000_000);
+});
+
 test('policy routes every simulation channel to M8', () => {
   assert.equal(getMidasEngineFor('primary'), 'm8');
   assert.equal(getMidasEngineFor('favorable'), 'm8');
