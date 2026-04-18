@@ -87,6 +87,16 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
   const riskCapitalUSD = asFiniteOrNull(riskCapitalObj?.usd);
   const riskCapitalUsdSnapshotCLP = asFiniteOrNull(riskCapitalObj?.usdSnapshotCLP);
   const riskCapitalSource = typeof riskCapitalObj?.source === 'string' ? riskCapitalObj.source : undefined;
+  const fxReferenceRaw = (data as { fxReference?: unknown }).fxReference;
+  const fxReferenceObj =
+    fxReferenceRaw && typeof fxReferenceRaw === 'object'
+      ? (fxReferenceRaw as Record<string, unknown>)
+      : null;
+  const fxClpUsd = asFiniteOrNull(fxReferenceObj?.clpUsd);
+  const fxClpEur = asFiniteOrNull(fxReferenceObj?.clpEur);
+  const fxUsdEur = asFiniteOrNull(fxReferenceObj?.usdEur);
+  const fxUfClp = asFiniteOrNull(fxReferenceObj?.ufClp);
+  const fxSource = typeof fxReferenceObj?.source === 'string' ? fxReferenceObj.source : undefined;
 
   const base = {
     version,
@@ -106,6 +116,17 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
             ...(riskCapitalUSD !== null ? { usd: riskCapitalUSD } : {}),
             ...(riskCapitalUsdSnapshotCLP !== null ? { usdSnapshotCLP: riskCapitalUsdSnapshotCLP } : {}),
             ...(riskCapitalSource ? { source: riskCapitalSource } : {}),
+          },
+        }
+      : {}),
+    ...(fxClpUsd !== null && fxClpUsd > 0
+      ? {
+          fxReference: {
+            clpUsd: fxClpUsd,
+            ...(fxClpEur !== null && fxClpEur > 0 ? { clpEur: fxClpEur } : {}),
+            ...(fxUsdEur !== null && fxUsdEur > 0 ? { usdEur: fxUsdEur } : {}),
+            ...(fxUfClp !== null && fxUfClp > 0 ? { ufClp: fxUfClp } : {}),
+            ...(fxSource ? { source: fxSource } : {}),
           },
         }
       : {}),

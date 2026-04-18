@@ -191,6 +191,7 @@ export function SimulationPage({
   distributionSourceTechnical,
   fxSpotSourceTechnical,
   nonOptimizableBlocksTechnical,
+  aurumFxSpotCLP,
   weightsSourceMode,
   weightsSourceLabel,
   officialReferenceWeights,
@@ -261,6 +262,7 @@ export function SimulationPage({
   distributionSourceTechnical: string;
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
+  aurumFxSpotCLP: number | null;
   weightsSourceMode: 'json-official' | 'last-known-official' | 'system-defaults' | 'simulation' | 'error';
   weightsSourceLabel: string;
   officialReferenceWeights: PortfolioWeights;
@@ -921,11 +923,21 @@ export function SimulationPage({
       + Math.abs(activeWeights.rfChile - officialReferenceWeights.rfChile);
     return (sumAbs * 100) / 2;
   }, [activeWeights, officialReferenceWeights]);
-  const primaryFxClp = Number(compositionSource?.nonOptimizable?.riskCapital?.usdSnapshotCLP ?? NaN);
+  const aurumPrimaryFxClp = Number(aurumFxSpotCLP ?? NaN);
+  const riskSnapshotFxClp = Number(compositionSource?.nonOptimizable?.riskCapital?.usdSnapshotCLP ?? NaN);
+  const primaryFxClp = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
+    ? aurumPrimaryFxClp
+    : riskSnapshotFxClp;
+  const primaryFxTechnical = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
+    ? 'snapshot.fxReference.clpUsd'
+    : 'simulationComposition.nonOptimizable.riskCapital.usdSnapshotCLP';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp > 0 && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
+  const usingPrimaryFx = Number.isFinite(primaryFxClp) && primaryFxClp > 0 && Number.isFinite(backupFxClp) && backupFxClp > 0
+    ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp <= 0.0005
+    : false;
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -959,8 +971,7 @@ export function SimulationPage({
     let mixSeverity: TraceSeverity;
     if (weightsSourceMode === 'json-official') mixSeverity = 'OK';
     else if (mixDiffPp > 2) mixSeverity = 'Alerta';
-    else if (mixDiffPp > 0.5) mixSeverity = 'Aviso';
-    else mixSeverity = 'OK';
+    else mixSeverity = 'Aviso';
     const mixFallbackName =
       weightsSourceMode === 'last-known-official'
         ? 'Último oficial válido'
@@ -983,15 +994,13 @@ export function SimulationPage({
         ? 'Se usa respaldo por fallback activo, sin diferencia material con la referencia oficial.'
         : 'Se usa respaldo por fallback activo; la diferencia con referencia oficial sí es material.';
 
-    let fxSeverity: TraceSeverity = 'Aviso';
-    if (fxDiffPct !== null && fxDiffPct > 0.01) fxSeverity = 'Alerta';
-    else if (fxDiffPct !== null && fxDiffPct > 0.0025) fxSeverity = 'Aviso';
-    else if (fxDiffPct !== null) fxSeverity = 'OK';
-    const fxReason = fxSpotSourceTechnical.includes('no publica')
-      ? 'Se usa respaldo porque Aurum no publica este dato usable como spot operativo.'
+    let fxSeverity: TraceSeverity = usingPrimaryFx ? 'OK' : 'Aviso';
+    if (!usingPrimaryFx && fxDiffPct !== null && fxDiffPct > 0.01) fxSeverity = 'Alerta';
+    const fxReason = usingPrimaryFx
+      ? 'Se usa la fuente principal porque Aurum publicó un TC usable y está aplicado.'
       : Number.isFinite(primaryFxClp) && primaryFxClp > 0
-        ? 'Se usa respaldo por normalización operativa del sistema.'
-        : 'Se usa respaldo porque la fuente principal no está disponible.';
+        ? 'Se usa respaldo aunque Aurum sí publicó TC; revisar fallback operativo activo.'
+        : `Se usa respaldo porque la fuente principal no está disponible o no es usable (${fxSpotSourceTechnical}).`;
 
     return [
       {
@@ -1076,12 +1085,14 @@ export function SimulationPage({
         id: 'fx',
         name: 'FX operativo',
         severity: fxSeverity,
-        usingNow: 'FX operativo del motor',
+        usingNow: usingPrimaryFx
+          ? 'Aurum online/manual'
+          : 'FX operativo del motor',
         valueApplied: `USD/CLP ${formatNumber(backupFxClp)}`,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
         principal: {
-          human: 'Aurum',
-          technical: 'simulationComposition.nonOptimizable.riskCapital.usdSnapshotCLP',
+          human: 'Aurum online/manual',
+          technical: primaryFxTechnical,
           value: Number.isFinite(primaryFxClp) && primaryFxClp > 0
             ? `USD/CLP ${formatNumber(primaryFxClp)}`
             : 'No disponible',
@@ -1096,7 +1107,7 @@ export function SimulationPage({
           ? 'Sin comparación material disponible'
           : fxDiffPct > 0.01
             ? `Diferencia material ${(fxDiffPct * 100).toFixed(2)}%`
-            : fxDiffPct > 0.0025
+          : fxDiffPct > 0.0025
               ? `Diferencia moderada ${(fxDiffPct * 100).toFixed(2)}%`
               : `Sin diferencia material (${(fxDiffPct * 100).toFixed(2)}%)`,
       },
@@ -1108,8 +1119,10 @@ export function SimulationPage({
     aurumSyncBaseOpt,
     aurumSyncLatestOpt,
     backupFxClp,
+    aurumFxSpotCLP,
     effectiveBaseCapital,
     fxDiffPct,
+    usingPrimaryFx,
     formatNumber,
     fxSpotSourceTechnical,
     hasPendingSnapshot,
@@ -1118,6 +1131,7 @@ export function SimulationPage({
     mixDiffPp,
     officialWeightSummary,
     primaryFxClp,
+    primaryFxTechnical,
     riskCapitalEffective,
     riskCapitalEnabled,
     riskDetectedClp,
@@ -1433,9 +1447,9 @@ export function SimulationPage({
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
-          padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          padding: isMobileViewport ? '7px 8px' : '8px 10px',
           display: 'grid',
-          gap: 8,
+          gap: 6,
         }}
       >
         <div style={{ display: 'grid', gap: 2 }}>
@@ -1446,7 +1460,7 @@ export function SimulationPage({
             {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
           </div>
         </div>
-        <div style={{ display: 'grid', gap: 6 }}>
+        <div style={{ display: 'grid', gap: 5 }}>
           {appliedTraceRows.map((row) => {
             const isOpen = Boolean(openTraceRows[row.id]);
             const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
@@ -1457,9 +1471,9 @@ export function SimulationPage({
                   border: `1px solid ${T.border}`,
                   background: T.surfaceEl,
                   borderRadius: 8,
-                  padding: isMobileViewport ? '6px 8px' : '7px 10px',
+                  padding: isMobileViewport ? '5px 7px' : '6px 9px',
                   display: 'grid',
-                  gap: 6,
+                  gap: 4,
                 }}
               >
                 <button
@@ -1474,7 +1488,7 @@ export function SimulationPage({
                     textAlign: 'left',
                     color: 'inherit',
                     display: 'grid',
-                    gap: 4,
+                    gap: 2,
                   }}
                 >
                   <div
@@ -1509,33 +1523,33 @@ export function SimulationPage({
                       {isOpen ? '▴' : '▾'}
                     </span>
                   </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                     Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
                   </div>
                 </button>
                 {isOpen && (
-                  <div style={{ display: 'grid', gap: 3, borderTop: `1px solid ${T.border}`, paddingTop: 6 }}>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                  <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Respaldo: {row.fallback
                         ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
                         : 'Sin respaldo definido'}
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
                       Cuándo: {row.appliedAt}
                     </div>
                   </div>

@@ -71,6 +71,7 @@ const normalizeRiskCapital = (value) => {
   const totalCLP = asFiniteOrNull(risk.totalCLP ?? risk.totalClp ?? risk.clpTotal);
   const clp = asFiniteOrNull(risk.clp);
   const usd = asFiniteOrNull(risk.usd);
+  const usdSnapshotCLP = asFiniteOrNull(risk.usdSnapshotCLP);
   const source =
     typeof risk.source === 'string' && risk.source.trim()
       ? risk.source.trim()
@@ -82,9 +83,32 @@ const normalizeRiskCapital = (value) => {
     totalCLP: Math.round(totalCLP),
     ...(clp !== null ? { clp: Math.round(Math.max(0, clp)) } : {}),
     ...(usd !== null ? { usd: Math.round(Math.max(0, usd) * 100) / 100 } : {}),
+    ...(usdSnapshotCLP !== null && usdSnapshotCLP > 0 ? { usdSnapshotCLP: Math.round(usdSnapshotCLP) } : {}),
     ...(source ? { source } : {}),
   };
 
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+};
+
+const normalizeFxReference = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  const fx = value;
+  const clpUsd = asFiniteOrNull(fx.clpUsd);
+  if (clpUsd === null || clpUsd <= 0) return undefined;
+  const clpEur = asFiniteOrNull(fx.clpEur);
+  const usdEur = asFiniteOrNull(fx.usdEur);
+  const ufClp = asFiniteOrNull(fx.ufClp);
+  const source =
+    typeof fx.source === 'string' && fx.source.trim()
+      ? fx.source.trim()
+      : undefined;
+  const normalized = {
+    clpUsd: Math.round(clpUsd),
+    ...(clpEur !== null && clpEur > 0 ? { clpEur: Math.round(clpEur) } : {}),
+    ...(usdEur !== null && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    ...(source ? { source } : {}),
+  };
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
@@ -118,6 +142,7 @@ const normalizeSnapshotPayload = (raw) => {
   const totalNetWorthWithRiskCLP = asFiniteOrNull(snapshot.totalNetWorthWithRiskCLP);
   const optimizableInvestmentsWithRiskCLP = asFiniteOrNull(snapshot.optimizableInvestmentsWithRiskCLP);
   const riskCapital = normalizeRiskCapital(snapshot.riskCapital);
+  const fxReference = normalizeFxReference(snapshot.fxReference);
   const nonOptimizable =
     snapshot.nonOptimizable && typeof snapshot.nonOptimizable === 'object'
       ? {
@@ -150,6 +175,7 @@ const normalizeSnapshotPayload = (raw) => {
         ? { optimizableInvestmentsWithRiskCLP: Math.round(optimizableInvestmentsWithRiskCLP) }
         : {}),
       ...(riskCapital ? { riskCapital } : {}),
+      ...(fxReference ? { fxReference } : {}),
       ...(nonOptimizable && Object.keys(nonOptimizable).length > 0 ? { nonOptimizable } : {}),
       source: {
         app: 'aurum',

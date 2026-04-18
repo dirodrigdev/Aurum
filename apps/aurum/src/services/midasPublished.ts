@@ -18,6 +18,13 @@ export type AurumOptimizableInvestmentsSnapshot = {
     usd?: number;
     source?: 'summary_riskCapitalClp' | 'analysis_delta' | 'usd_only';
   };
+  fxReference?: {
+    clpUsd: number;
+    clpEur?: number;
+    usdEur?: number;
+    ufClp?: number;
+    source?: 'closure_fxRates';
+  };
   nonOptimizable?: {
     banksCLP?: number;
     nonMortgageDebtCLP?: number;
@@ -205,11 +212,30 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
     totalCLP: Math.round(totalCLP),
     ...(clpComponent !== null ? { clp: Math.round(clpComponent) } : {}),
     ...(usdDelta !== null ? { usd: roundUsd(usdDelta) } : {}),
+    ...(usdClp !== null ? { usdSnapshotCLP: Math.round(usdClp) } : {}),
     ...(riskCapitalFromSummary !== null
       ? { source: 'summary_riskCapitalClp' as const }
       : clpDelta !== null
         ? { source: 'analysis_delta' as const }
         : { source: 'usd_only' as const }),
+  };
+};
+
+const extractFxReference = (closure: WealthMonthlyClosure) => {
+  const usdClp = asFiniteOrNull(closure.fxRates?.usdClp);
+  if (usdClp === null || usdClp <= 0) return undefined;
+  const eurClp = asFiniteOrNull(closure.fxRates?.eurClp);
+  const ufClp = asFiniteOrNull(closure.fxRates?.ufClp);
+  const usdEur =
+    eurClp !== null && eurClp > 0
+      ? usdClp / eurClp
+      : null;
+  return {
+    clpUsd: Math.round(usdClp),
+    ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
+    ...(usdEur !== null && Number.isFinite(usdEur) && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    source: 'closure_fxRates' as const,
   };
 };
 
@@ -252,6 +278,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
   const riskCapital = extractRiskCapital(latest);
+  const fxReference = extractFxReference(latest);
 
   return {
     ok: true,
@@ -266,6 +293,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
       optimizableInvestmentsCLP: Math.round(withoutRisk),
       ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
       ...(riskCapital ? { riskCapital } : {}),
+      ...(fxReference ? { fxReference } : {}),
       nonOptimizable: extractNonOptimizable(latest),
       source: {
         app: 'aurum',

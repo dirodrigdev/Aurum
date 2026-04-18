@@ -413,6 +413,12 @@ function normalizeRiskCapitalExposure(
   };
 }
 
+function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
+  if (!snapshot || snapshot.version !== 2) return null;
+  const parsed = Number(snapshot.fxReference?.clpUsd ?? NaN);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function deriveVisibleCapitalFromComposition(
   composition?: SimulationCompositionInput,
   includeRiskCapital = false,
@@ -605,6 +611,7 @@ export default function App() {
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
+  const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [officialWeights, setOfficialWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.officialWeights);
   const [lastKnownOfficialWeights, setLastKnownOfficialWeights] = useState<PortfolioWeights | null>(
@@ -1382,6 +1389,10 @@ export default function App() {
       snapshot.version === 2
         ? snapshot.riskCapital?.usd ?? ''
         : '';
+    const fxClpUsd =
+      snapshot.version === 2
+        ? snapshot.fxReference?.clpUsd ?? ''
+        : '';
     return [
       snapshot.version,
       snapshot.snapshotMonth,
@@ -1392,10 +1403,14 @@ export default function App() {
       riskTotalClp,
       riskClp,
       riskUsd,
+      fxClpUsd,
     ].join('|');
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
-    const fallbackUsdSnapshotCLP = Number(baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial);
+    const snapshotFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+    const fallbackUsdSnapshotCLP = Number(
+      snapshotFxClpUsd ?? baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial,
+    );
     const exposure = normalizeRiskCapitalExposure(
       snapshot.version === 2 ? snapshot.riskCapital : undefined,
       fallbackUsdSnapshotCLP,
@@ -1980,6 +1995,7 @@ export default function App() {
       const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const riskExposure = computeRiskCapital(snapshot);
+      const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
       const compositionWithToggle = composition
         ? {
             ...composition,
@@ -2003,6 +2019,7 @@ export default function App() {
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
+      setAurumFxSpotCLP(aurumFxClpUsd);
       if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
@@ -2026,6 +2043,12 @@ export default function App() {
         label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
+      if (aurumFxClpUsd !== null) {
+        baseSnapshotLayer.fx = {
+          ...baseSnapshotLayer.fx,
+          clpUsdInitial: aurumFxClpUsd,
+        };
+      }
       const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
         applyCapital: true,
         manualImpact: manualAdjustmentImpact,
@@ -2842,6 +2865,7 @@ export default function App() {
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
+        setAurumFxSpotCLP(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
         setAurumSyncBaseOpt(null);
@@ -2862,6 +2886,7 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
@@ -3010,7 +3035,20 @@ export default function App() {
   const distributionSourceTechnical = `${weightsSourceLabel}${
     activeWeightsSavedAt ? ` · savedAt=${activeWeightsSavedAt}` : ''
   }${weightsFallbackReason ? ` · fallback=${weightsFallbackReason}` : ''}`;
-  const fxSpotSourceTechnical = 'params/default/manual (Aurum optimizable snapshot no publica spot FX explícito)';
+  const fxSpotSourceTechnical = (() => {
+    const aurumFx = Number(aurumFxSpotCLP ?? NaN);
+    const activeFx = Number(simParams.fx?.clpUsdInitial ?? NaN);
+    if (Number.isFinite(aurumFx) && aurumFx > 0) {
+      const diffPct = Number.isFinite(activeFx) && activeFx > 0
+        ? Math.abs(activeFx - aurumFx) / aurumFx
+        : null;
+      if (diffPct !== null && diffPct <= 0.0005) {
+        return 'Aurum online/manual (snapshot.fxReference.clpUsd) · fuente principal activa';
+      }
+      return 'Fallback operativo (params.fx.clpUsdInitial) con fuente Aurum disponible';
+    }
+    return 'Fallback operativo (params/default/manual) · Aurum sin FX usable publicado';
+  })();
   const nonOptimizableBlocksTechnical = (() => {
     const composition = simParams.simulationComposition;
     if (!composition || composition.mode === 'legacy') return 'No disponible en modo legacy';
@@ -3066,6 +3104,7 @@ export default function App() {
       distributionSourceTechnical={distributionSourceTechnical}
       fxSpotSourceTechnical={fxSpotSourceTechnical}
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
+      aurumFxSpotCLP={aurumFxSpotCLP}
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
       officialReferenceWeights={officialReferenceWeights}
