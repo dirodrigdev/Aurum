@@ -112,6 +112,14 @@ const resolveRiskCapitalClp = (capitalResolution: CapitalResolution): number => 
   return Math.max(0, clp + (usdTotal > 0 && usdSnapshot > 0 ? usdTotal * usdSnapshot : 0));
 };
 
+const resolveRiskCapitalEnabled = (capitalResolution: CapitalResolution): boolean => {
+  const risk = capitalResolution.simulationComposition?.nonOptimizable?.riskCapital;
+  if (!risk || typeof risk !== 'object') return false;
+  const riskRecord = risk as Record<string, unknown>;
+  if (hasOwn(riskRecord, 'enabled')) return riskRecord.enabled === true;
+  return resolveRiskCapitalClp(capitalResolution) > 0;
+};
+
 const resolveCoreCapitalClp = (capitalResolution: CapitalResolution): number => {
   const composition = capitalResolution.simulationComposition;
   const optimizable = Number(composition?.optimizableInvestmentsCLP ?? NaN);
@@ -430,7 +438,8 @@ export const toM8Input = (
   const normalizedPhases = normalizeModelSpendingPhases(params);
   const [phase1, phase2, phase3, phase4] = normalizedPhases;
   const simulationBaseMonth = resolveSimulationBaseMonth(params);
-  const riskCapitalClp = resolveRiskCapitalClp(capitalResolution);
+  const riskCapitalEnabled = resolveRiskCapitalEnabled(capitalResolution);
+  const riskCapitalClp = riskCapitalEnabled ? resolveRiskCapitalClp(capitalResolution) : 0;
   const coreCapitalClp = resolveCoreCapitalClp(capitalResolution);
   const futureEvents =
     params.futureCapitalEvents?.map((event) => ({
@@ -454,7 +463,7 @@ export const toM8Input = (
     capital_source_label: capitalResolution.sourceLabel,
     feeAnnual: params.feeAnnual ?? 0,
     risk_capital_clp: riskCapitalClp,
-    ...(riskCapitalClp > 0
+    ...(riskCapitalEnabled && riskCapitalClp > 0
       ? {
           risk_capital_policy: M8_DEFAULT_RISK_POLICY_ON,
           risk_capital_btc_driver: M8_DEFAULT_RISK_BTC_DRIVER_ON,

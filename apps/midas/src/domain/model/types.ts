@@ -162,6 +162,7 @@ export interface RealEstateInput {
 }
 
 export interface RiskCapitalInput {
+  enabled?: boolean;
   totalCLP?: number;
   clp?: number;
   usd?: number;

@@ -1866,7 +1866,7 @@ test('m8 runtime treats positive risk capital as monotonic additional reserve', 
   );
 });
 
-test('risk capital policy default activates only when riskCapitalEnabled is ON (OFF/ON/OFF smoke)', () => {
+test('risk capital policy default follows explicit riskCapitalEnabled toggle (OFF/ON/OFF-ON smoke)', () => {
   const params = makeM8ContractParams();
   params.simulation = {
     ...params.simulation,
@@ -1878,6 +1878,7 @@ test('risk capital policy default activates only when riskCapitalEnabled is ON (
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: false,
         totalCLP: 0,
         clp: 0,
         usdTotal: 0,
@@ -1897,6 +1898,7 @@ test('risk capital policy default activates only when riskCapitalEnabled is ON (
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: true,
         totalCLP: 90_000_000,
         usdTotal: 100_000,
         usdSnapshotCLP: 900,
@@ -1914,6 +1916,7 @@ test('risk capital policy default activates only when riskCapitalEnabled is ON (
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: false,
         totalCLP: 0,
         clp: 0,
         usdTotal: 0,
@@ -1926,6 +1929,42 @@ test('risk capital policy default activates only when riskCapitalEnabled is ON (
   assert.equal(offInput2.risk_capital_policy, undefined);
   assert.equal(offInput2.risk_capital_btc_driver, undefined);
   runM8(offInput2);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: true,
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const onInput2 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(onInput2.risk_capital_clp, 90_000_000);
+  assert.equal(onInput2.risk_capital_policy, 'btc_like_realista_e_cycle_min');
+  assert.equal(onInput2.risk_capital_btc_driver, 'btc_like_v1');
+  runM8(onInput2);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: false,
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const offInput3 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(offInput3.risk_capital_clp, 0);
+  assert.equal(offInput3.risk_capital_policy, undefined);
+  assert.equal(offInput3.risk_capital_btc_driver, undefined);
+  runM8(offInput3);
 });
 
 test('btc_like_realista_e can run with dedicated btc-like driver separated from eq_global proxy', () => {

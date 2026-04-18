@@ -1987,6 +1987,7 @@ export default function App() {
               ...composition.nonOptimizable,
               riskCapital: {
                 ...(composition.nonOptimizable?.riskCapital ?? {}),
+                enabled: riskCapitalEnabled,
                 source: composition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
                 usdSnapshotCLP: riskExposure.usdSnapshotCLP,
                 usdTotal: riskCapitalEnabled ? riskExposure.usdTotal : 0,

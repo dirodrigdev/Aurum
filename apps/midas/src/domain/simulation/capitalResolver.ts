@@ -17,6 +17,7 @@ export interface CapitalResolverSimulationComposition {
     banksCLP: number;
     realEstate?: CapitalResolverRealEstateSource;
     riskCapital?: {
+      enabled?: boolean;
       totalCLP?: number;
       clp?: number;
       usd?: number;
@@ -79,6 +80,7 @@ const buildRiskCapitalSource = (riskCapital: unknown):
   CapitalResolverSimulationComposition['nonOptimizable']['riskCapital'] | undefined => {
   if (!riskCapital || typeof riskCapital !== 'object') return undefined;
   const record = riskCapital as Record<string, unknown>;
+  const enabled = typeof record.enabled === 'boolean' ? record.enabled : undefined;
   const totalCLP = finiteOrZero(record.totalCLP);
   const clp = finiteOrZero(record.clp);
   const usd = finiteOrZero(record.usd);
@@ -87,11 +89,12 @@ const buildRiskCapitalSource = (riskCapital: unknown):
   const profile = record.profile;
   const source = typeof record.source === 'string' ? record.source : undefined;
 
-  if (totalCLP <= 0 && clp <= 0 && usd <= 0 && usdTotal <= 0 && usdSnapshotCLP <= 0 && !source) {
+  if (enabled === undefined && totalCLP <= 0 && clp <= 0 && usd <= 0 && usdTotal <= 0 && usdSnapshotCLP <= 0 && !source) {
     return undefined;
   }
 
   return {
+    ...(enabled !== undefined ? { enabled } : {}),
     ...(totalCLP > 0 ? { totalCLP } : {}),
     ...(clp > 0 ? { clp } : {}),
     ...(usd > 0 ? { usd } : {}),
