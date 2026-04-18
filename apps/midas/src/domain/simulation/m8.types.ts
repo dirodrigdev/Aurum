@@ -132,6 +132,23 @@ export type M8RiskCapitalBtcDriver =
   | 'eq_global_proxy'
   | 'btc_like_v1';
 
+export interface M8RiskELargeSaleStat {
+  saleIndex: 1 | 2 | 3 | 4;
+  executionPct: number;
+  yearMedian: number;
+  yearP25: number;
+  yearP75: number;
+  yearMean: number;
+}
+
+export interface M8RiskEMicroSaleStat {
+  executionPct: number;
+  firstYearMedian: number;
+  lastYearMedian: number;
+  countMedian: number;
+  countMean: number;
+}
+
 export interface M8Input {
   years: number;
   // Default contractual M8: 3000 (si UI abre con 1000, no cambia el default del motor).
@@ -214,4 +231,6 @@ export interface M8Output {
   RiskELargeSell1YearMedian?: number;
   RiskELargeSell2YearMedian?: number;
   RiskEAnyLargeSalePct?: number;
+  RiskELargeSalesStats?: M8RiskELargeSaleStat[];
+  RiskEMicroSalesStats?: M8RiskEMicroSaleStat;
 }

@@ -945,6 +945,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const riskELargeSell1Years: number[] = [];
   const riskELargeSell2Years: number[] = [];
   const riskEAnyLargeSellFlags: number[] = [];
+  const riskELargeSellYearsByIndex: [number[], number[], number[], number[]] = [[], [], [], []];
+  const riskEPathLargeSaleCount: number[] = [];
+  const riskEMicroFirstSaleYears: number[] = [];
+  const riskEMicroLastSaleYears: number[] = [];
+  const riskEMicroSaleCountByPath: number[] = [];
 
   if (input.phase1EndYear >= input.phase2EndYear) {
     throw new Error('phase2EndYear debe ser mayor que phase1EndYear');
@@ -977,6 +982,10 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let riskEFloorSold = 0;
     let riskEFirstLargeSellMonth: number | null = null;
     let riskESecondLargeSellMonth: number | null = null;
+    const riskELargeSellMonthsPerPath: number[] = [];
+    let riskEMicroFirstMonth: number | null = null;
+    let riskEMicroLastMonth: number | null = null;
+    let riskEMicroCount = 0;
     let riskEPrice = 1;
     const riskEPriceHistory: number[] = [1];
     let soldHouse = false;
@@ -1181,6 +1190,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
             riskELastLargeSellMonth = m;
             if (riskEFirstLargeSellMonth === null) riskEFirstLargeSellMonth = m;
             else if (riskESecondLargeSellMonth === null) riskESecondLargeSellMonth = m;
+            riskELargeSellMonthsPerPath.push(m);
             const bucketGap = Math.max(0, bucketTarget - totalDefensiveWealth(sleeves));
             const toBucket = Math.min(largeSale, bucketGap);
             if (toBucket > 0) allocateToDefensiveBucket(sleeves, runtimeMix, toBucket);
@@ -1257,7 +1267,12 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
               const floorAvailable = Math.max(0, Math.min(riskReserve, riskEFloorInitial) - riskEFloorSold);
               const microDraw = Math.min(riskEMicroTranche, floorAvailable, remaining);
               riskDraw = microDraw;
-              riskEFloorSold += microDraw;
+              if (microDraw > 0) {
+                riskEFloorSold += microDraw;
+                riskEMicroCount += 1;
+                if (riskEMicroFirstMonth === null) riskEMicroFirstMonth = m;
+                riskEMicroLastMonth = m;
+              }
             }
           } else {
             riskDraw = Math.min(riskReserve, remaining);
@@ -1292,6 +1307,13 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           if (riskEFirstLargeSellMonth !== null) riskELargeSell1Years.push(riskEFirstLargeSellMonth / 12);
           if (riskESecondLargeSellMonth !== null) riskELargeSell2Years.push(riskESecondLargeSellMonth / 12);
           riskEAnyLargeSellFlags.push(riskELargeSellCount > 0 ? 1 : 0);
+          riskEPathLargeSaleCount.push(riskELargeSellCount);
+          riskELargeSellMonthsPerPath.forEach((month, idx) => {
+            if (idx < riskELargeSellYearsByIndex.length) riskELargeSellYearsByIndex[idx].push(month / 12);
+          });
+          if (riskEMicroFirstMonth !== null) riskEMicroFirstSaleYears.push(riskEMicroFirstMonth / 12);
+          if (riskEMicroLastMonth !== null) riskEMicroLastSaleYears.push(riskEMicroLastMonth / 12);
+          riskEMicroSaleCountByPath.push(riskEMicroCount);
           for (let mm = m; mm <= months; mm += 1) {
             wealthPaths[mm][p] = 0;
           }
@@ -1330,6 +1352,13 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       if (riskEFirstLargeSellMonth !== null) riskELargeSell1Years.push(riskEFirstLargeSellMonth / 12);
       if (riskESecondLargeSellMonth !== null) riskELargeSell2Years.push(riskESecondLargeSellMonth / 12);
       riskEAnyLargeSellFlags.push(riskELargeSellCount > 0 ? 1 : 0);
+      riskEPathLargeSaleCount.push(riskELargeSellCount);
+      riskELargeSellMonthsPerPath.forEach((month, idx) => {
+        if (idx < riskELargeSellYearsByIndex.length) riskELargeSellYearsByIndex[idx].push(month / 12);
+      });
+      if (riskEMicroFirstMonth !== null) riskEMicroFirstSaleYears.push(riskEMicroFirstMonth / 12);
+      if (riskEMicroLastMonth !== null) riskEMicroLastSaleYears.push(riskEMicroLastMonth / 12);
+      riskEMicroSaleCountByPath.push(riskEMicroCount);
       wealthPaths[months][p] = totalTerminal;
     }
 
@@ -1340,6 +1369,25 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const ruinMonthsYears = ruinMonths.map((month) => month / 12);
   const terminalAll = terminalWealth.length > 0 ? terminalWealth : terminalWealthAllPaths;
   const terminalSuccess = terminalWealthIfSuccess;
+  const buildLargeSaleStats = (): M8Output['RiskELargeSalesStats'] => riskELargeSellYearsByIndex.map((years, idx) => ({
+    saleIndex: (idx + 1) as 1 | 2 | 3 | 4,
+    executionPct: riskEPathLargeSaleCount.length > 0
+      ? riskEPathLargeSaleCount.filter((count) => count >= idx + 1).length / riskEPathLargeSaleCount.length
+      : Number.NaN,
+    yearMedian: years.length > 0 ? median(years) : Number.NaN,
+    yearP25: years.length > 0 ? percentile(years, 25) : Number.NaN,
+    yearP75: years.length > 0 ? percentile(years, 75) : Number.NaN,
+    yearMean: years.length > 0 ? mean(years) : Number.NaN,
+  }));
+  const buildMicroSaleStats = (): M8Output['RiskEMicroSalesStats'] => ({
+    executionPct: riskEMicroSaleCountByPath.length > 0
+      ? riskEMicroSaleCountByPath.filter((count) => count > 0).length / riskEMicroSaleCountByPath.length
+      : Number.NaN,
+    firstYearMedian: riskEMicroFirstSaleYears.length > 0 ? median(riskEMicroFirstSaleYears) : Number.NaN,
+    lastYearMedian: riskEMicroLastSaleYears.length > 0 ? median(riskEMicroLastSaleYears) : Number.NaN,
+    countMedian: riskEMicroSaleCountByPath.length > 0 ? median(riskEMicroSaleCountByPath) : Number.NaN,
+    countMean: riskEMicroSaleCountByPath.length > 0 ? mean(riskEMicroSaleCountByPath) : Number.NaN,
+  });
 
   const result: M8RuntimeResult = {
     wealthPaths,
@@ -1381,6 +1429,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     RiskELargeSell1YearMedian: riskELargeSell1Years.length ? median(riskELargeSell1Years) : Number.NaN,
     RiskELargeSell2YearMedian: riskELargeSell2Years.length ? median(riskELargeSell2Years) : Number.NaN,
     RiskEAnyLargeSalePct: riskEAnyLargeSellFlags.length ? mean(riskEAnyLargeSellFlags) : Number.NaN,
+    RiskELargeSalesStats: buildLargeSaleStats(),
+    RiskEMicroSalesStats: buildMicroSaleStats(),
   };
 
   return {
