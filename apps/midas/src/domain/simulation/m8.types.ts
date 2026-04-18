@@ -128,6 +128,10 @@ export type M8RiskCapitalPolicy =
   | 'reserve_stress_haircut40_prehouse20'
   | 'btc_like_realista_e';
 
+export type M8RiskCapitalBtcDriver =
+  | 'eq_global_proxy'
+  | 'btc_like_v1';
+
 export interface M8Input {
   years: number;
   // Default contractual M8: 3000 (si UI abre con 1000, no cambia el default del motor).
@@ -142,6 +146,7 @@ export interface M8Input {
   feeAnnual?: number;
   risk_capital_clp?: number;
   risk_capital_policy?: M8RiskCapitalPolicy;
+  risk_capital_btc_driver?: M8RiskCapitalBtcDriver;
   portfolio_mix: M8PortfolioMix;
   phase1MonthlyClp: number;
   phase2MonthlyClp: number;
@@ -206,4 +211,7 @@ export interface M8Output {
   StressTimeShare?: number;
   Cut1TimeShare?: number;
   Cut2TimeShare?: number;
+  RiskELargeSell1YearMedian?: number;
+  RiskELargeSell2YearMedian?: number;
+  RiskEAnyLargeSalePct?: number;
 }

@@ -8,6 +8,7 @@ import type {
   M8TwoRegimeGeneratorParams,
   M8ScenarioOverrides,
   M8RiskCapitalPolicy,
+  M8RiskCapitalBtcDriver,
 } from './m8.types';
 import { M8_CANONICAL_CORRELATION_MATRIX } from './m8Calibration';
 
@@ -31,6 +32,18 @@ const RISK_E_FLOOR_FRACTION = 0.20;
 const RISK_E_MICRO_FRACTION = 0.05;
 const RISK_E_MAX_LARGE_SELLS = 4;
 const RISK_E_LARGE_SELL_COOLDOWN_MONTHS = 6;
+const RISK_E_BTC_LIKE = {
+  realDriftAnnual: 0.20,
+  volAnnual: 0.65,
+  downJumpProbMonthly: 0.035,
+  downJumpMean: -0.18,
+  downJumpVol: 0.08,
+  upJumpProbMonthly: 0.015,
+  upJumpMean: 0.22,
+  upJumpVol: 0.12,
+  minMonthlyReturn: -0.8,
+  maxMonthlyReturn: 2.5,
+} as const;
 
 export const M8_BASE_CORRELATION_MATRIX = M8_CANONICAL_CORRELATION_MATRIX.map((row) => row.slice());
 
@@ -156,6 +169,19 @@ const annualToMonthlyMean = (annual: number): number => (1 + annual) ** (1 / 12)
 const annualToMonthlyVol = (annual: number): number => annual / Math.sqrt(12);
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+const sampleRiskEBtcLikeMonthlyReturn = (rng: SeededRng): number => {
+  const muMonthly = annualToMonthlyMean(RISK_E_BTC_LIKE.realDriftAnnual);
+  const volMonthly = annualToMonthlyVol(RISK_E_BTC_LIKE.volAnnual);
+  let monthlyReturn = muMonthly + volMonthly * rng.normal();
+  const jumpDraw = rng.random();
+  if (jumpDraw < RISK_E_BTC_LIKE.downJumpProbMonthly) {
+    monthlyReturn += RISK_E_BTC_LIKE.downJumpMean + RISK_E_BTC_LIKE.downJumpVol * rng.normal();
+  } else if (jumpDraw < RISK_E_BTC_LIKE.downJumpProbMonthly + RISK_E_BTC_LIKE.upJumpProbMonthly) {
+    monthlyReturn += RISK_E_BTC_LIKE.upJumpMean + RISK_E_BTC_LIKE.upJumpVol * rng.normal();
+  }
+  return clamp(monthlyReturn, RISK_E_BTC_LIKE.minMonthlyReturn, RISK_E_BTC_LIKE.maxMonthlyReturn);
+};
 
 const scenarioToRuntimeKey = (scenarioId: M8ScenarioOverrides['scenario_id'] | undefined): RuntimeScenarioKey => {
   if (scenarioId === 'pessimistic') return 'Adverso';
@@ -464,6 +490,9 @@ const pathSeed = (seed: number, pathIndex: number): number => {
 const resolveRiskCapitalPolicy = (input: M8Input): M8RiskCapitalPolicy =>
   input.risk_capital_policy ?? RISK_CAPITAL_POLICY_DEFAULT;
 
+const resolveRiskCapitalBtcDriver = (input: M8Input): M8RiskCapitalBtcDriver =>
+  input.risk_capital_btc_driver ?? 'btc_like_v1';
+
 const recognizedRiskFraction = (policy: M8RiskCapitalPolicy): number =>
   policy === 'reserve_late_haircut40' || policy === 'reserve_stress_haircut40_prehouse20' ? 0.4 : 1.0;
 
@@ -590,6 +619,13 @@ export const validateM8Input = (input: M8Input): string[] => {
     input.risk_capital_policy !== 'btc_like_realista_e'
   ) {
     errors.push('risk_capital_policy invalida');
+  }
+  if (
+    input.risk_capital_btc_driver !== undefined &&
+    input.risk_capital_btc_driver !== 'eq_global_proxy' &&
+    input.risk_capital_btc_driver !== 'btc_like_v1'
+  ) {
+    errors.push('risk_capital_btc_driver invalido');
   }
   const mix = input.portfolio_mix;
   if (mix) {
@@ -868,6 +904,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const runtimeMix = buildRuntimeWeights(input.portfolio_mix);
   const eventsMap = buildEventsMap(input);
   const riskPolicy = resolveRiskCapitalPolicy(input);
+  const riskBtcDriver = resolveRiskCapitalBtcDriver(input);
   const riskReserveInitial = Math.max(0, (input.risk_capital_clp ?? 0) * recognizedRiskFraction(riskPolicy));
   const coreStartingCapital = Math.max(0, input.capital_initial_clp);
   const scenarioKey = scenarioToRuntimeKey(input.scenario_overrides?.scenario_id);
@@ -905,6 +942,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const stressTimeShare: number[] = [];
   const futureInflowTotal: number[] = [];
   const futureOutflowTotal: number[] = [];
+  const riskELargeSell1Years: number[] = [];
+  const riskELargeSell2Years: number[] = [];
+  const riskEAnyLargeSellFlags: number[] = [];
 
   if (input.phase1EndYear >= input.phase2EndYear) {
     throw new Error('phase2EndYear debe ser mayor que phase1EndYear');
@@ -935,6 +975,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let riskELargeSellCount = 0;
     let riskELastLargeSellMonth = -999;
     let riskEFloorSold = 0;
+    let riskEFirstLargeSellMonth: number | null = null;
+    let riskESecondLargeSellMonth: number | null = null;
     let riskEPrice = 1;
     const riskEPriceHistory: number[] = [1];
     let soldHouse = false;
@@ -1028,11 +1070,17 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           r = (1 + r) * (1 + fxReal) - 1;
         }
         sleeves[asset] *= Math.max(0, 1 + r);
-        if (riskPolicy === 'btc_like_realista_e' && asset === 'eq_global') {
+        if (riskPolicy === 'btc_like_realista_e' && riskBtcDriver === 'eq_global_proxy' && asset === 'eq_global') {
           riskEPrice *= Math.max(0.05, 1 + r);
           riskReserve *= Math.max(0.05, 1 + r);
           riskEPriceHistory.push(riskEPrice);
         }
+      }
+      if (riskPolicy === 'btc_like_realista_e' && riskBtcDriver === 'btc_like_v1') {
+        const riskEReturn = sampleRiskEBtcLikeMonthlyReturn(rng);
+        riskEPrice *= Math.max(0.05, 1 + riskEReturn);
+        riskReserve *= Math.max(0.05, 1 + riskEReturn);
+        riskEPriceHistory.push(riskEPrice);
       }
       applyFeeDrag(sleeves, input.feeAnnual ?? 0);
       if (regimeState === 'stress') stressMonths += 1;
@@ -1131,6 +1179,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
             riskReserve -= largeSale;
             riskELargeSellCount += 1;
             riskELastLargeSellMonth = m;
+            if (riskEFirstLargeSellMonth === null) riskEFirstLargeSellMonth = m;
+            else if (riskESecondLargeSellMonth === null) riskESecondLargeSellMonth = m;
             const bucketGap = Math.max(0, bucketTarget - totalDefensiveWealth(sleeves));
             const toBucket = Math.min(largeSale, bucketGap);
             if (toBucket > 0) allocateToDefensiveBucket(sleeves, runtimeMix, toBucket);
@@ -1239,6 +1289,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           stressTimeShare.push(m > 0 ? stressMonths / m : 0);
           futureInflowTotal.push(inflowTotalClp);
           futureOutflowTotal.push(outflowTotalClp);
+          if (riskEFirstLargeSellMonth !== null) riskELargeSell1Years.push(riskEFirstLargeSellMonth / 12);
+          if (riskESecondLargeSellMonth !== null) riskELargeSell2Years.push(riskESecondLargeSellMonth / 12);
+          riskEAnyLargeSellFlags.push(riskELargeSellCount > 0 ? 1 : 0);
           for (let mm = m; mm <= months; mm += 1) {
             wealthPaths[mm][p] = 0;
           }
@@ -1274,6 +1327,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       stressTimeShare.push(months > 0 ? stressMonths / months : 0);
       futureInflowTotal.push(inflowTotalClp);
       futureOutflowTotal.push(outflowTotalClp);
+      if (riskEFirstLargeSellMonth !== null) riskELargeSell1Years.push(riskEFirstLargeSellMonth / 12);
+      if (riskESecondLargeSellMonth !== null) riskELargeSell2Years.push(riskESecondLargeSellMonth / 12);
+      riskEAnyLargeSellFlags.push(riskELargeSellCount > 0 ? 1 : 0);
       wealthPaths[months][p] = totalTerminal;
     }
 
@@ -1322,6 +1378,9 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     StressTimeShare: stressTimeShare.length ? mean(stressTimeShare) : Number.NaN,
     Cut1TimeShare: cut1TimeShare.length ? mean(cut1TimeShare) : Number.NaN,
     Cut2TimeShare: cut2TimeShare.length ? mean(cut2TimeShare) : Number.NaN,
+    RiskELargeSell1YearMedian: riskELargeSell1Years.length ? median(riskELargeSell1Years) : Number.NaN,
+    RiskELargeSell2YearMedian: riskELargeSell2Years.length ? median(riskELargeSell2Years) : Number.NaN,
+    RiskEAnyLargeSalePct: riskEAnyLargeSellFlags.length ? mean(riskEAnyLargeSellFlags) : Number.NaN,
   };
 
   return {

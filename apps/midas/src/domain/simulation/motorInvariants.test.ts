@@ -1866,6 +1866,46 @@ test('m8 runtime treats positive risk capital as monotonic additional reserve', 
   );
 });
 
+test('btc_like_realista_e can run with dedicated btc-like driver separated from eq_global proxy', () => {
+  const params = makeM8ContractParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 384,
+    seed: 77,
+  };
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  params.spendingPhases = [
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+  ];
+
+  const baseInput = toM8Input(params, resolveCapital({ params }));
+  baseInput.risk_capital_policy = 'btc_like_realista_e';
+  const proxyInput = { ...baseInput, risk_capital_btc_driver: 'eq_global_proxy' as const };
+  const btcInput = { ...baseInput, risk_capital_btc_driver: 'btc_like_v1' as const };
+
+  const proxyOutput = runM8(proxyInput);
+  const btcOutput = runM8(btcInput);
+
+  assert.equal(proxyInput.risk_capital_clp, btcInput.risk_capital_clp);
+  assert.ok((btcInput.risk_capital_clp ?? 0) > 0);
+  assert.ok(Number.isFinite(proxyOutput.RiskELargeSell1YearMedian ?? Number.NaN));
+  assert.ok(Number.isFinite(btcOutput.RiskELargeSell1YearMedian ?? Number.NaN));
+  assert.notEqual(proxyOutput.TerminalMedianCLP, btcOutput.TerminalMedianCLP);
+});
+
 test('policy routes every simulation channel to M8', () => {
   assert.equal(getMidasEngineFor('primary'), 'm8');
   assert.equal(getMidasEngineFor('favorable'), 'm8');
