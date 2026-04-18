@@ -26,6 +26,11 @@ const RECOVER_TO_WEAK_THRESHOLD = 0.15;
 const RECOVER_TO_NORMAL_THRESHOLD = 0.07;
 const MAX_DRAWDOWN_PERCENTILES = [10, 25, 50, 75, 90] as const;
 const RISK_CAPITAL_POLICY_DEFAULT: M8RiskCapitalPolicy = 'reserve_late_full';
+const RISK_E_LARGE_SELL_FRACTION = 0.20;
+const RISK_E_FLOOR_FRACTION = 0.20;
+const RISK_E_MICRO_FRACTION = 0.05;
+const RISK_E_MAX_LARGE_SELLS = 4;
+const RISK_E_LARGE_SELL_COOLDOWN_MONTHS = 6;
 
 export const M8_BASE_CORRELATION_MATRIX = M8_CANONICAL_CORRELATION_MATRIX.map((row) => row.slice());
 
@@ -462,6 +467,37 @@ const resolveRiskCapitalPolicy = (input: M8Input): M8RiskCapitalPolicy =>
 const recognizedRiskFraction = (policy: M8RiskCapitalPolicy): number =>
   policy === 'reserve_late_haircut40' || policy === 'reserve_stress_haircut40_prehouse20' ? 0.4 : 1.0;
 
+const riskDrawdownAndTrendOk = (priceHistory: number[], currentPrice: number): { drawdown24: number; aboveMa12: boolean; safeToSell: boolean } => {
+  const last24 = priceHistory.slice(-24);
+  const peak24 = last24.length > 0 ? Math.max(...last24) : currentPrice;
+  const drawdown24 = peak24 > 0 ? currentPrice / peak24 - 1 : 0;
+  const last12 = priceHistory.slice(-12);
+  const ma12 = last12.length > 0 ? last12.reduce((acc, value) => acc + value, 0) / last12.length : currentPrice;
+  const aboveMa12 = currentPrice >= ma12;
+  return {
+    drawdown24,
+    aboveMa12,
+    safeToSell: drawdown24 > -0.25 && aboveMa12,
+  };
+};
+
+const allocateToDefensiveBucket = (
+  sleeves: Record<AssetKey, number>,
+  runtimeMix: Record<AssetKey, number>,
+  amount: number,
+): void => {
+  if (amount <= 0) return;
+  const defensiveSum = DEFENSIVE_FILL_ORDER.reduce((acc, asset) => acc + Math.max(0, runtimeMix[asset]), 0);
+  if (defensiveSum <= 0) {
+    sleeves.fi_chile += amount;
+    return;
+  }
+  for (const asset of DEFENSIVE_FILL_ORDER) {
+    const share = Math.max(0, runtimeMix[asset]) / defensiveSum;
+    sleeves[asset] += amount * share;
+  }
+};
+
 const buildFanChart = (wealthPaths: number[][]): M8FanChartPoint[] => {
   if (wealthPaths.length === 0) return [];
   const months = wealthPaths.length - 1;
@@ -550,7 +586,8 @@ export const validateM8Input = (input: M8Input): string[] => {
     input.risk_capital_policy !== undefined &&
     input.risk_capital_policy !== 'reserve_late_full' &&
     input.risk_capital_policy !== 'reserve_late_haircut40' &&
-    input.risk_capital_policy !== 'reserve_stress_haircut40_prehouse20'
+    input.risk_capital_policy !== 'reserve_stress_haircut40_prehouse20' &&
+    input.risk_capital_policy !== 'btc_like_realista_e'
   ) {
     errors.push('risk_capital_policy invalida');
   }
@@ -892,6 +929,14 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let riskReserve = riskReserveInitial;
     let preHouseRiskUsed = 0;
     const preHouseRiskCap = riskPolicy === 'reserve_stress_haircut40_prehouse20' ? riskReserveInitial * 0.2 : 0;
+    const riskELargeSellChunk = riskReserveInitial * RISK_E_LARGE_SELL_FRACTION;
+    const riskEFloorInitial = riskReserveInitial * RISK_E_FLOOR_FRACTION;
+    const riskEMicroTranche = riskReserveInitial * RISK_E_MICRO_FRACTION;
+    let riskELargeSellCount = 0;
+    let riskELastLargeSellMonth = -999;
+    let riskEFloorSold = 0;
+    let riskEPrice = 1;
+    const riskEPriceHistory: number[] = [1];
     let soldHouse = false;
     let pendingSale = false;
     let saleExecMonth: number | null = null;
@@ -983,6 +1028,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
           r = (1 + r) * (1 + fxReal) - 1;
         }
         sleeves[asset] *= Math.max(0, 1 + r);
+        if (riskPolicy === 'btc_like_realista_e' && asset === 'eq_global') {
+          riskEPrice *= Math.max(0.05, 1 + r);
+          riskReserve *= Math.max(0.05, 1 + r);
+          riskEPriceHistory.push(riskEPrice);
+        }
       }
       applyFeeDrag(sleeves, input.feeAnnual ?? 0);
       if (regimeState === 'stress') stressMonths += 1;
@@ -1065,6 +1115,31 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       const bucketTarget = input.bucket.bucket_mode === 'operational_simple'
         ? input.bucket.bucket_months * budget
         : 0;
+
+      if (riskPolicy === 'btc_like_realista_e' && riskReserve > 0) {
+        const defensiveNow = totalDefensiveWealth(sleeves);
+        const needBucket = defensiveNow + 1e-6 < bucketTarget;
+        const hasStressMotive = regimeState === 'stress';
+        const motiveOk = hasStressMotive || needBucket;
+        const cooldownOk = m - riskELastLargeSellMonth >= RISK_E_LARGE_SELL_COOLDOWN_MONTHS;
+        const sellWindowOpen = riskELargeSellCount < RISK_E_MAX_LARGE_SELLS;
+        const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice);
+        const saleableAboveFloor = Math.max(0, riskReserve - riskEFloorInitial);
+        if (motiveOk && cooldownOk && sellWindowOpen && marketGate.safeToSell && saleableAboveFloor > 0) {
+          const largeSale = Math.min(riskELargeSellChunk, saleableAboveFloor);
+          if (largeSale > 0) {
+            riskReserve -= largeSale;
+            riskELargeSellCount += 1;
+            riskELastLargeSellMonth = m;
+            const bucketGap = Math.max(0, bucketTarget - totalDefensiveWealth(sleeves));
+            const toBucket = Math.min(largeSale, bucketGap);
+            if (toBucket > 0) allocateToDefensiveBucket(sleeves, runtimeMix, toBucket);
+            const toMix = Math.max(0, largeSale - toBucket);
+            if (toMix > 0) applyInflowsProportionally(sleeves, runtimeMix, toMix);
+          }
+        }
+      }
+
       let remaining = drawSpendOperationalSimple(sleeves, spend, bucketTarget);
       const totalPaid = spend - remaining;
       const realizedRegularSpend = Math.max(0, Math.min(regularSpend, totalPaid));
@@ -1119,7 +1194,24 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         }
 
         if (remaining > 1e-8 && riskReserve > 0) {
-          const riskDraw = Math.min(riskReserve, remaining);
+          let riskDraw = 0;
+          if (riskPolicy === 'btc_like_realista_e') {
+            const seriousStress = cutState === 2 || (regimeState === 'stress' && cutState >= 1);
+            const latePlan = m >= Math.floor(months * 0.75);
+            const marketGate = riskDrawdownAndTrendOk(riskEPriceHistory, riskEPrice);
+            const canUseFloor = (seriousStress || latePlan) && (marketGate.safeToSell || latePlan);
+            const nonFloorAvailable = Math.max(0, riskReserve - riskEFloorInitial);
+            if (nonFloorAvailable > 0) {
+              riskDraw = Math.min(nonFloorAvailable, remaining);
+            } else if (canUseFloor) {
+              const floorAvailable = Math.max(0, Math.min(riskReserve, riskEFloorInitial) - riskEFloorSold);
+              const microDraw = Math.min(riskEMicroTranche, floorAvailable, remaining);
+              riskDraw = microDraw;
+              riskEFloorSold += microDraw;
+            }
+          } else {
+            riskDraw = Math.min(riskReserve, remaining);
+          }
           riskReserve -= riskDraw;
           remaining -= riskDraw;
         }

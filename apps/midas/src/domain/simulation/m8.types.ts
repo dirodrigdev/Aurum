@@ -125,7 +125,8 @@ export interface M8FutureEventInput {
 export type M8RiskCapitalPolicy =
   | 'reserve_late_full'
   | 'reserve_late_haircut40'
-  | 'reserve_stress_haircut40_prehouse20';
+  | 'reserve_stress_haircut40_prehouse20'
+  | 'btc_like_realista_e';
 
 export interface M8Input {
   years: number;
