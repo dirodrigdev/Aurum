@@ -31,6 +31,7 @@ type FanChartDatum = SimulationResults['fanChartData'][number] & {
   outerSpan: number;
   innerBase: number;
   innerSpan: number;
+  ruinBandTop: number;
 };
 
 type LongevityPlus5Result = {
@@ -40,20 +41,25 @@ type LongevityPlus5Result = {
   terminalP50All45: number | null;
 };
 
-type AutoDataSourceStatus =
-  | 'Aplicado'
-  | 'Detectado pero no aplicado'
-  | 'Disponible pero desactivado'
-  | 'No disponible';
+type TraceSeverity = 'OK' | 'Aviso' | 'Alerta';
 
-type AutoDataSourceSummary = {
+type TraceSource = {
+  human: string;
+  technical: string;
+  value: string;
+};
+
+type AppliedTraceRow = {
   id: string;
   name: string;
-  status: AutoDataSourceStatus;
+  severity: TraceSeverity;
+  usingNow: string;
+  valueApplied: string;
   appliedAt: string;
-  appliedData: string;
-  detectedNotApplied: string;
-  detail: string;
+  principal: TraceSource;
+  fallback: TraceSource | null;
+  reason: string;
+  impact: string;
 };
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
@@ -321,7 +327,7 @@ export function SimulationPage({
   const [longevityRunning, setLongevityRunning] = useState(false);
   const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
   const [longevityError, setLongevityError] = useState<string | null>(null);
-  const [autoDataDetailsOpen, setAutoDataDetailsOpen] = useState(false);
+  const [openTraceRows, setOpenTraceRows] = useState<Record<string, boolean>>({});
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
@@ -736,12 +742,22 @@ export function SimulationPage({
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
+  const breakEvenWealth = useMemo(() => {
+    const fromYear0 = rawFanChart.length > 0 ? Number(rawFanChart[0].p50) : Number.NaN;
+    if (Number.isFinite(fromYear0) && fromYear0 > 0) return fromYear0;
+    return Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0 ? effectiveBaseCapital : 0;
+  }, [effectiveBaseCapital, rawFanChart]);
+  const ruinAlertTop = useMemo(() => {
+    if (!Number.isFinite(breakEvenWealth) || breakEvenWealth <= 0) return 0;
+    return Math.max(1, breakEvenWealth * 0.06);
+  }, [breakEvenWealth]);
   const fanChartData: FanChartDatum[] = rawFanChart.map((point) => ({
     ...point,
     outerBase: point.p5,
     outerSpan: Math.max(0, point.p95 - point.p5),
     innerBase: point.p25,
     innerSpan: Math.max(0, point.p75 - point.p25),
+    ruinBandTop: ruinAlertTop,
   }));
   const percentileRows = useMemo(() => {
     if (!displayResult) return [] as number[];
@@ -898,120 +914,225 @@ export function SimulationPage({
   const riskDetectedClp = Number.isFinite(riskInCompositionRaw) && riskInCompositionRaw > 0
     ? riskInCompositionRaw
     : Math.max(0, Number(riskCapitalCLP ?? 0));
-  const autoDataSources = useMemo<AutoDataSourceSummary[]>(() => {
-    const aurumStatus: AutoDataSourceStatus =
-      snapshotApplied
-        ? 'Aplicado'
-        : hasPendingSnapshot
-          ? 'Detectado pero no aplicado'
-          : aurumIntegrationStatus === 'available' || aurumIntegrationStatus === 'partial' || aurumIntegrationStatus === 'refreshing'
-            ? 'Disponible pero desactivado'
-            : 'No disponible';
-    const aurumApplied = snapshotApplied
-      ? `Snapshot ${aurumSnapshotLabel || 'sin etiqueta'} · ${nonOptimizableBlocksTechnical}`
-      : 'Sin snapshot aplicado al escenario actual';
-    const aurumDetected = hasPendingSnapshot
-      ? `Nuevo snapshot detectado: ${pendingSnapshotLabel || 'sin etiqueta'}`
-      : aurumStatus === 'Disponible pero desactivado'
-        ? 'Fuente disponible, pendiente de aplicación explícita'
-        : 'No hay cambios pendientes detectados';
+  const mixDiffPp = useMemo(() => {
+    const sumAbs = Math.abs(activeWeights.rvGlobal - officialReferenceWeights.rvGlobal)
+      + Math.abs(activeWeights.rfGlobal - officialReferenceWeights.rfGlobal)
+      + Math.abs(activeWeights.rvChile - officialReferenceWeights.rvChile)
+      + Math.abs(activeWeights.rfChile - officialReferenceWeights.rfChile);
+    return (sumAbs * 100) / 2;
+  }, [activeWeights, officialReferenceWeights]);
+  const primaryFxClp = Number(compositionSource?.nonOptimizable?.riskCapital?.usdSnapshotCLP ?? NaN);
+  const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
+  const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp > 0 && Number.isFinite(backupFxClp) && backupFxClp > 0
+    ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
+    : null;
+  const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
+    && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
+    ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
+    : null;
+  const appliedTraceRows = useMemo<AppliedTraceRow[]>(() => {
+    const aurumSeverity: TraceSeverity = snapshotApplied
+      ? 'OK'
+      : aurumDiffPct !== null && aurumDiffPct > 0.05
+        ? 'Alerta'
+        : 'Aviso';
+    const aurumReason = snapshotApplied
+      ? 'Se usa la fuente principal porque el snapshot Aurum ya fue aplicado al escenario.'
+      : hasPendingSnapshot
+        ? 'Se usa respaldo porque hay snapshot detectado pendiente de aplicar.'
+        : aurumIntegrationStatus === 'missing' || aurumIntegrationStatus === 'error' || aurumIntegrationStatus === 'unconfigured'
+          ? 'Se usa respaldo porque la fuente principal no está disponible.'
+          : 'Se usa respaldo por fallback activo del sistema en esta sesión.';
 
-    const riskStatus: AutoDataSourceStatus =
-      riskDetectedClp <= 0
-        ? 'No disponible'
-        : !riskCapitalEnabled
-          ? 'Detectado pero no aplicado'
-          : riskCapitalEffective
-            ? 'Aplicado'
-            : 'Disponible pero desactivado';
-    const riskApplied = riskCapitalEffective
-      ? `Aplicado al motor: ${formatMoneyCompact(riskDetectedClp)} · policy btc_like_realista_e_cycle_min`
-      : 'No aplicado en la corrida actual';
-    const riskDetected = riskDetectedClp > 0
-      ? `Detectado: ${formatMoneyCompact(riskDetectedClp)}${!riskCapitalEnabled ? ' · toggle apagado' : ''}`
-      : 'No se detectó capital de riesgo en la composición';
+    let riskSeverity: TraceSeverity = 'OK';
+    if (riskCapitalEnabled && riskDetectedClp <= 0) riskSeverity = 'Alerta';
+    else if (riskCapitalEnabled && !riskCapitalEffective) riskSeverity = 'Alerta';
+    else if (!riskCapitalEnabled && riskDetectedClp > 0) riskSeverity = 'Aviso';
+    const riskReason = riskCapitalEnabled
+      ? riskDetectedClp > 0
+        ? 'Se aplicó porque el toggle está encendido y hay capital de riesgo detectado.'
+        : 'No se aplicó porque no hay capital detectado en la fuente principal.'
+      : riskDetectedClp > 0
+        ? 'Se detectó el dato, pero no se aplica porque el toggle está apagado.'
+        : 'Toggle apagado y sin capital detectado, no corresponde aplicar.';
 
-    const distributionStatus: AutoDataSourceStatus =
-      weightsSourceMode === 'json-official'
-        ? 'Aplicado'
-        : weightsSourceMode === 'last-known-official' || weightsSourceMode === 'system-defaults'
-          ? 'Detectado pero no aplicado'
+    let mixSeverity: TraceSeverity;
+    if (weightsSourceMode === 'json-official') mixSeverity = 'OK';
+    else if (mixDiffPp > 2) mixSeverity = 'Alerta';
+    else if (mixDiffPp > 0.5) mixSeverity = 'Aviso';
+    else mixSeverity = 'OK';
+    const mixFallbackName =
+      weightsSourceMode === 'last-known-official'
+        ? 'Último oficial válido'
+        : weightsSourceMode === 'system-defaults'
+          ? 'Defaults del sistema'
           : weightsSourceMode === 'simulation'
-            ? 'Disponible pero desactivado'
-            : 'No disponible';
-    const distributionApplied = `Fuente activa: ${weightsSourceLabel} · ${activeWeightSummary}`;
-    const distributionDetected = `Referencia oficial: ${officialWeightSummary}`;
+            ? 'Pesos de simulación activa'
+            : 'Sin respaldo usable';
+    const mixFallbackTech =
+      weightsSourceMode === 'last-known-official'
+        ? 'lastKnownOfficialWeights'
+        : weightsSourceMode === 'system-defaults'
+          ? 'DEFAULT_PARAMETERS.weights'
+          : weightsSourceMode === 'simulation'
+            ? 'weightsSourceMode=simulation'
+            : 'weightsSourceMode=error';
+    const mixReason = weightsSourceMode === 'json-official'
+      ? 'Se usa la fuente principal porque está disponible y activa.'
+      : mixDiffPp <= 0.5
+        ? 'Se usa respaldo por fallback activo, sin diferencia material con la referencia oficial.'
+        : 'Se usa respaldo por fallback activo; la diferencia con referencia oficial sí es material.';
 
-    const fxStatus: AutoDataSourceStatus =
-      fxSpotSourceTechnical.includes('no publica')
-        ? 'Detectado pero no aplicado'
-        : 'Aplicado';
+    let fxSeverity: TraceSeverity = 'Aviso';
+    if (fxDiffPct !== null && fxDiffPct > 0.01) fxSeverity = 'Alerta';
+    else if (fxDiffPct !== null && fxDiffPct > 0.0025) fxSeverity = 'Aviso';
+    else if (fxDiffPct !== null) fxSeverity = 'OK';
+    const fxReason = fxSpotSourceTechnical.includes('no publica')
+      ? 'Se usa respaldo porque Aurum no publica este dato usable como spot operativo.'
+      : Number.isFinite(primaryFxClp) && primaryFxClp > 0
+        ? 'Se usa respaldo por normalización operativa del sistema.'
+        : 'Se usa respaldo porque la fuente principal no está disponible.';
 
     return [
       {
         id: 'aurum',
-        name: 'Aurum',
-        status: aurumStatus,
+        name: 'Aurum importado',
+        severity: aurumSeverity,
+        usingNow: snapshotApplied
+          ? 'Aurum (snapshot aplicado)'
+          : 'Base local MIDAS',
+        valueApplied: formatMoneyCompact(effectiveBaseCapital),
         appliedAt: formatSessionMoment(lastAutoAppliedAtMs),
-        appliedData: aurumApplied,
-        detectedNotApplied: aurumDetected,
-        detail: `Estado integración: ${aurumIntegrationStatus} · sync: ${aurumSyncState}`,
+        principal: {
+          human: 'Aurum',
+          technical: 'Aurum published optimizable snapshot',
+          value: aurumSyncLatestOpt !== null && Number.isFinite(aurumSyncLatestOpt)
+            ? formatMoneyCompact(aurumSyncLatestOpt)
+            : 'No disponible',
+        },
+        fallback: {
+          human: 'Base local MIDAS',
+          technical: 'baseParams.simulationComposition',
+          value: aurumSyncBaseOpt !== null && Number.isFinite(aurumSyncBaseOpt)
+            ? formatMoneyCompact(aurumSyncBaseOpt)
+            : formatMoneyCompact(effectiveBaseCapital),
+        },
+        reason: aurumReason,
+        impact: aurumDiffPct === null
+          ? 'Sin comparación material disponible'
+          : aurumDiffPct > 0.05
+            ? `Diferencia material ${(aurumDiffPct * 100).toFixed(2)}%`
+            : aurumDiffPct > 0.01
+              ? `Diferencia moderada ${(aurumDiffPct * 100).toFixed(2)}%`
+              : `Sin diferencia material (${(aurumDiffPct * 100).toFixed(2)}%)`,
       },
       {
         id: 'risk-capital',
         name: 'Capital de riesgo',
-        status: riskStatus,
+        severity: riskSeverity,
+        usingNow: riskCapitalEffective
+          ? 'Aurum (riskCapital)'
+          : 'No aplicado',
+        valueApplied: riskCapitalEffective ? formatMoneyCompact(riskDetectedClp) : formatMoneyCompact(0),
         appliedAt: formatSessionMoment(lastTimelineAtMs),
-        appliedData: riskApplied,
-        detectedNotApplied: riskDetected,
-        detail: `Toggle: ${riskCapitalEnabled ? 'ON' : 'OFF'} · efectivo: ${riskCapitalEffective ? 'Sí' : 'No'}`,
+        principal: {
+          human: 'Aurum',
+          technical: 'simulationComposition.nonOptimizable.riskCapital',
+          value: riskDetectedClp > 0 ? formatMoneyCompact(riskDetectedClp) : 'No detectado',
+        },
+        fallback: null,
+        reason: riskReason,
+        impact: riskCapitalEffective
+          ? 'Aplicado correctamente al escenario'
+          : riskDetectedClp > 0
+            ? 'Detectado, no aplicado por toggle'
+            : 'Sin impacto (no disponible)',
       },
       {
         id: 'distribution',
         name: 'Distribución / mix',
-        status: distributionStatus,
+        severity: mixSeverity,
+        usingNow: `${weightsSourceLabel} (${weightsSourceMode})`,
+        valueApplied: activeWeightSummary,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
-        appliedData: distributionApplied,
-        detectedNotApplied: distributionDetected,
-        detail: distributionSourceTechnical,
+        principal: {
+          human: 'Referencia oficial',
+          technical: 'officialDistribution',
+          value: officialWeightSummary,
+        },
+        fallback: {
+          human: mixFallbackName,
+          technical: mixFallbackTech,
+          value: activeWeightSummary,
+        },
+        reason: mixReason,
+        impact: mixDiffPp > 2
+          ? `Diferencia material ${mixDiffPp.toFixed(2)} pp`
+          : mixDiffPp > 0.5
+            ? `Diferencia moderada ${mixDiffPp.toFixed(2)} pp`
+            : `Sin diferencia material (${mixDiffPp.toFixed(2)} pp)`,
       },
       {
         id: 'fx',
         name: 'FX operativo',
-        status: fxStatus,
+        severity: fxSeverity,
+        usingNow: 'FX operativo del motor',
+        valueApplied: `USD/CLP ${formatNumber(backupFxClp)}`,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
-        appliedData: fxSpotSourceTechnical,
-        detectedNotApplied: fxStatus === 'Detectado pero no aplicado'
-          ? 'No hay spot automático publicado por Aurum para aplicar directo'
-          : 'Sin observaciones',
-        detail: `USD/CLP ref: ${formatNumber(params.fx.clpUsdInitial)} · USD/EUR: ${params.fx.usdEurFixed.toFixed(3)}`,
+        principal: {
+          human: 'Aurum',
+          technical: 'simulationComposition.nonOptimizable.riskCapital.usdSnapshotCLP',
+          value: Number.isFinite(primaryFxClp) && primaryFxClp > 0
+            ? `USD/CLP ${formatNumber(primaryFxClp)}`
+            : 'No disponible',
+        },
+        fallback: {
+          human: 'FX operativo del motor',
+          technical: 'params.fx.clpUsdInitial',
+          value: `USD/CLP ${formatNumber(backupFxClp)}`,
+        },
+        reason: fxReason,
+        impact: fxDiffPct === null
+          ? 'Sin comparación material disponible'
+          : fxDiffPct > 0.01
+            ? `Diferencia material ${(fxDiffPct * 100).toFixed(2)}%`
+            : fxDiffPct > 0.0025
+              ? `Diferencia moderada ${(fxDiffPct * 100).toFixed(2)}%`
+              : `Sin diferencia material (${(fxDiffPct * 100).toFixed(2)}%)`,
       },
     ];
   }, [
     activeWeightSummary,
+    aurumDiffPct,
     aurumIntegrationStatus,
-    aurumSnapshotLabel,
-    aurumSyncState,
-    distributionSourceTechnical,
+    aurumSyncBaseOpt,
+    aurumSyncLatestOpt,
+    backupFxClp,
+    effectiveBaseCapital,
+    fxDiffPct,
     formatNumber,
     fxSpotSourceTechnical,
     hasPendingSnapshot,
     lastAutoAppliedAtMs,
     lastTimelineAtMs,
-    nonOptimizableBlocksTechnical,
+    mixDiffPp,
     officialWeightSummary,
-    params.fx.clpUsdInitial,
-    params.fx.usdEurFixed,
-    pendingSnapshotLabel,
+    primaryFxClp,
     riskCapitalEffective,
     riskCapitalEnabled,
     riskDetectedClp,
     snapshotApplied,
-    weightsSourceLabel,
     weightsSourceMode,
+    weightsSourceLabel,
   ]);
-  const autoSourcesApplied = autoDataSources.filter((source) => source.status === 'Aplicado').length;
-  const autoSourcesDetected = autoDataSources.filter((source) => source.status !== 'No disponible').length;
+  const traceStatusCounts = useMemo(() => ({
+    ok: appliedTraceRows.filter((row) => row.severity === 'OK').length,
+    warning: appliedTraceRows.filter((row) => row.severity === 'Aviso').length,
+    alert: appliedTraceRows.filter((row) => row.severity === 'Alerta').length,
+  }), [appliedTraceRows]);
+  const toggleTraceRow = useCallback((id: string) => {
+    setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
   const stickyStatusLabel = isRecalculating
     ? 'Recalculando...'
     : simUiState === 'error'
@@ -1317,60 +1438,41 @@ export function SimulationPage({
           gap: 8,
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 10,
-            flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
-          }}
-        >
-          <div style={{ display: 'grid', gap: 2 }}>
-            <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-              Datos aplicados automáticamente
-            </div>
-            <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-              {autoSourcesApplied} aplicadas de {autoSourcesDetected} detectadas · última aplicación en sesión {formatSessionMoment(lastAutoAppliedAtMs)}
-            </div>
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+            Datos aplicados automáticamente
           </div>
-          <button
-            type="button"
-            onClick={() => setAutoDataDetailsOpen((prev) => !prev)}
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.surfaceEl,
-              color: T.textPrimary,
-              borderRadius: 999,
-              padding: isMobileViewport ? '5px 8px' : '6px 10px',
-              fontSize: isMobileViewport ? 10 : 11,
-              fontWeight: 750,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {autoDataDetailsOpen ? 'Ocultar detalle' : 'Ver detalle'}
-          </button>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+            {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
+          </div>
         </div>
-        {autoDataDetailsOpen && (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {autoDataSources.map((source) => {
-              const statusColor =
-                source.status === 'Aplicado'
-                  ? T.positive
-                  : source.status === 'Detectado pero no aplicado'
-                    ? T.warning
-                    : source.status === 'Disponible pero desactivado'
-                      ? T.primary
-                      : T.textMuted;
-              return (
-                <div
-                  key={source.id}
+        <div style={{ display: 'grid', gap: 6 }}>
+          {appliedTraceRows.map((row) => {
+            const isOpen = Boolean(openTraceRows[row.id]);
+            const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
+            return (
+              <div
+                key={row.id}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  borderRadius: 8,
+                  padding: isMobileViewport ? '6px 8px' : '7px 10px',
+                  display: 'grid',
+                  gap: 6,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleTraceRow(row.id)}
                   style={{
-                    border: `1px solid ${T.border}`,
-                    background: T.surfaceEl,
-                    borderRadius: 8,
-                    padding: isMobileViewport ? '7px 8px' : '8px 10px',
+                    border: 'none',
+                    background: 'transparent',
+                    padding: 0,
+                    margin: 0,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    color: 'inherit',
                     display: 'grid',
                     gap: 4,
                   }}
@@ -1380,40 +1482,68 @@ export function SimulationPage({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: 10,
+                      gap: 8,
                       flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
                     }}
                   >
-                    <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>{source.name}</div>
-                    <div
-                      style={{
-                        color: statusColor,
-                        fontSize: isMobileViewport ? 10 : 11,
-                        fontWeight: 800,
-                        background: 'rgba(148,163,184,0.12)',
-                        border: '1px solid rgba(148,163,184,0.25)',
-                        borderRadius: 999,
-                        padding: '3px 8px',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {source.status}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+                        {row.name}
+                      </span>
+                      <span
+                        style={{
+                          color: severityColor,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          background: 'rgba(148,163,184,0.12)',
+                          border: '1px solid rgba(148,163,184,0.25)',
+                          borderRadius: 999,
+                          padding: '2px 7px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {row.severity}
+                      </span>
+                    </div>
+                    <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
+                      {isOpen ? '▴' : '▾'}
+                    </span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div style={{ display: 'grid', gap: 3, borderTop: `1px solid ${T.border}`, paddingTop: 6 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Respaldo: {row.fallback
+                        ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
+                        : 'Sin respaldo definido'}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+                      Cuándo: {row.appliedAt}
                     </div>
                   </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-                    Aplicado: {source.appliedData}
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-                    Detectado no aplicado: {source.detectedNotApplied}
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-                    Cuándo: {source.appliedAt} · {source.detail}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div
         style={{
@@ -2417,9 +2547,29 @@ export function SimulationPage({
                     isAnimationActive={false}
                     dot={false}
                   />
+                  <Area
+                    type="monotone"
+                    dataKey="ruinBandTop"
+                    stroke="none"
+                    fill={T.negative}
+                    fillOpacity={0.12}
+                    isAnimationActive={false}
+                    dot={false}
+                  />
                   <Line type="monotone" dataKey="p50" stroke={T.primary} strokeWidth={2.5} dot={false} />
                   <Line type="monotone" dataKey="p10" stroke={T.negative} strokeWidth={1} strokeDasharray="3 3" dot={false} />
-                  <ReferenceLine y={0} stroke={T.negative} strokeDasharray="4 2" />
+                  <ReferenceLine
+                    y={breakEvenWealth}
+                    stroke={T.warning}
+                    strokeWidth={2.2}
+                    label={isMobileViewport ? undefined : {
+                      value: 'Ganancia 0',
+                      fill: T.warning,
+                      fontSize: 11,
+                      position: 'insideTopRight',
+                    }}
+                  />
+                  <ReferenceLine y={0} stroke={T.negative} strokeOpacity={0.75} strokeDasharray="4 2" strokeWidth={1.1} />
                   {(isMobileViewport ? [10, 20, 30, 40] : [5, 10, 15, 20, 25, 30, 35, 40])
                     .filter((x) => x <= fanChartYears)
                     .map((x) => (
@@ -2429,7 +2579,7 @@ export function SimulationPage({
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Incluye escenarios que llegan a ruina (wealth = 0)</span>
+              <span>Franja roja: zona de ruina · Línea roja punteada: wealth = 0 · Línea ámbar: ganancia 0</span>
               <span>Eje temporal anual</span>
             </div>
           </div>
