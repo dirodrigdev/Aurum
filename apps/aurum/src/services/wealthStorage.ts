@@ -2572,7 +2572,9 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         }),
         { merge: true },
       );
-      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
+      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures, {
+        activeFxRates: mergedFx,
+      }).catch((err: any) => ({
         ok: false as const,
         reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
         snapshot: null,
@@ -2794,7 +2796,9 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       !sameStringList(mergedDeletedRecordAssetMonthKeys, remoteDeletedRecordAssetMonthKeys) ||
       JSON.stringify(remoteFx) !== JSON.stringify(mergedFx);
 
-    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures).catch((err: any) => ({
+    const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures, {
+      activeFxRates: mergedFx,
+    }).catch((err: any) => ({
       ok: false as const,
       reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
       snapshot: null,

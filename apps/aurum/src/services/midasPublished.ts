@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import type { WealthMonthlyClosure } from './wealthStorage';
+import type { WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
 export type AurumOptimizableInvestmentsSnapshot = {
@@ -221,11 +221,14 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
   };
 };
 
-const extractFxReference = (closure: WealthMonthlyClosure) => {
-  const usdClp = asFiniteOrNull(closure.fxRates?.usdClp);
+const extractFxReference = (
+  closure: WealthMonthlyClosure,
+  activeFxRates?: WealthFxRates | null,
+) => {
+  const usdClp = asFiniteOrNull(activeFxRates?.usdClp) ?? asFiniteOrNull(closure.fxRates?.usdClp);
   if (usdClp === null || usdClp <= 0) return undefined;
-  const eurClp = asFiniteOrNull(closure.fxRates?.eurClp);
-  const ufClp = asFiniteOrNull(closure.fxRates?.ufClp);
+  const eurClp = asFiniteOrNull(activeFxRates?.eurClp) ?? asFiniteOrNull(closure.fxRates?.eurClp);
+  const ufClp = asFiniteOrNull(activeFxRates?.ufClp) ?? asFiniteOrNull(closure.fxRates?.ufClp);
   const usdEur =
     eurClp !== null && eurClp > 0
       ? usdClp / eurClp
@@ -241,13 +244,15 @@ const extractFxReference = (closure: WealthMonthlyClosure) => {
 
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableInvestmentsSnapshot | null => {
-  const result = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  const result = prepareAurumOptimizableInvestmentsSnapshot(closures, options);
   return result.ok ? result.snapshot : null;
 };
 
 export const prepareAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableSnapshotBuildResult => {
   const latest = [...closures]
     .sort(compareClosuresByMonthDesc)
@@ -278,7 +283,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
   const riskCapital = extractRiskCapital(latest);
-  const fxReference = extractFxReference(latest);
+  const fxReference = extractFxReference(latest, options?.activeFxRates);
 
   return {
     ok: true,
@@ -305,8 +310,9 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
 
 export const publishAurumOptimizableInvestmentsSnapshot = async (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): Promise<AurumOptimizableSnapshotPublishResult> => {
-  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures, options);
   if (prepared.ok === false) {
     return {
       ok: false,
