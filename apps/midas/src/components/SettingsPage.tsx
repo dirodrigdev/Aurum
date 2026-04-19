@@ -381,7 +381,7 @@ export function SettingsPage({
   const runUniverseValidation = () => {
     const next = validateInstrumentUniverseJson(universeEditorValue, targetWeights);
     setUniverseValidation(next);
-    setUniverseStatusMessage(next.ok ? 'Universe válido. Puedes guardarlo como contrato paralelo.' : 'Corrige el universe antes de guardar.');
+    setUniverseStatusMessage(next.ok ? 'Universe válido. Puedes guardarlo como fuente principal de mix.' : 'Corrige el universe antes de guardar.');
     return next;
   };
 
@@ -395,12 +395,14 @@ export function SettingsPage({
       return;
     }
     saveInstrumentUniverseSnapshot(next.snapshot);
+    window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(next.snapshot);
-    setUniverseStatusMessage('Instrument universe guardado en paralelo. No reemplaza la base instrumental actual.');
+    setUniverseStatusMessage('Instrument universe guardado. Ahora es la fuente principal de mix cuando es derivable.');
   };
 
   const handleClearUniverse = () => {
     clearInstrumentUniverseSnapshot();
+    window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(null);
     setUniverseValidation(null);
     setUniverseStatusMessage('Instrument universe eliminado de este dispositivo.');
@@ -424,7 +426,7 @@ export function SettingsPage({
           </div>
           <h2 style={{ margin: '10px 0 6px', fontSize: 28, lineHeight: 1.08 }}>Base instrumental real</h2>
           <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
-            Pega una base JSON semiestática de instrumentos reales. Esta capa define la distribución oficial (weights) para simulación y optimizador.
+            Pega una base JSON semiestática de instrumentos reales. Esta capa queda como respaldo de mix si Instrument Universe no está disponible o no es derivable.
           </div>
         </div>
 

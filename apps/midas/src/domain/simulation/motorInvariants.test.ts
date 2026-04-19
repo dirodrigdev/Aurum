@@ -8,6 +8,8 @@ import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
   deriveOfficialDistributionWeights,
+  deriveInstrumentUniverseDistributionWeights,
+  resolveEffectiveMixFromUniverseFirst,
   resolveOfficialDistributionState,
   shouldEnterSimulationWeightsMode,
 } from '../model/officialDistribution';
@@ -1074,6 +1076,117 @@ test('without current or last known JSON uses explicit system defaults', () => {
       resolved.activeWeights.rfGlobal +
       resolved.activeWeights.rvChile +
       resolved.activeWeights.rfChile,
+    1,
+  );
+});
+
+test('instrument universe derives simulation sleeves and assigns cash other to lowest return RF sleeve', () => {
+  const validation = validateInstrumentUniverseJson(JSON.stringify({
+    instruments: [
+      {
+        instrument_master: {
+          instrument_id: 'u-1',
+          name: 'Universe Equity',
+          vehicle_type: 'fund',
+          currency: 'CLP',
+          is_captive: false,
+          is_sellable: true,
+        },
+        instrument_mix_profile: {
+          current_mix_used: { rv: 0.8, rf: 0.1, cash: 0.1, other: 0 },
+          current_exposure_used: { global: 0.25, local: 0.75 },
+          legal_range: { rv: [0, 1], rf: [0, 1], cash: [0, 1], other: [0, 1] },
+          historical_used_range: { rv: [0.7, 0.9], rf: [0.05, 0.2], cash: [0, 0.2], other: [0, 0] },
+        },
+        portfolio_position: {
+          amount_clp: 70,
+          weight_portfolio: 0.7,
+          role: 'core',
+        },
+        optimizer_metadata: {
+          structural_mix_driver: 'profile',
+          estimated_mix_impact_points: 1,
+          replaceability_score: 1,
+          replacement_constraint: 'same_currency',
+        },
+      },
+      {
+        instrument_master: {
+          instrument_id: 'u-2',
+          name: 'Universe Bonds',
+          vehicle_type: 'fund',
+          currency: 'CLP',
+          is_captive: false,
+          is_sellable: true,
+        },
+        instrument_mix_profile: {
+          current_mix_used: { rv: 0, rf: 0.8, cash: 0, other: 0.2 },
+          current_exposure_used: { global: 1, local: 0 },
+          legal_range: { rv: [0, 1], rf: [0, 1], cash: [0, 1], other: [0, 1] },
+          historical_used_range: { rv: [0, 0.1], rf: [0.7, 0.9], cash: [0, 0], other: [0, 0.2] },
+        },
+        portfolio_position: {
+          amount_clp: 30,
+          weight_portfolio: 0.3,
+          role: 'core',
+        },
+        optimizer_metadata: {
+          structural_mix_driver: 'profile',
+          estimated_mix_impact_points: 1,
+          replaceability_score: 1,
+          replacement_constraint: 'same_currency',
+        },
+      },
+    ],
+  }));
+  assert.equal(validation.ok, true);
+  const derived = deriveInstrumentUniverseDistributionWeights({
+    snapshot: validation.snapshot,
+    returns: DEFAULT_PARAMETERS.returns,
+  });
+  assert.ok(derived);
+  assert.equal(derived.diagnostics.cashOtherSleeve, 'rfChile');
+  approxEqual(derived.weights.rvGlobal, 0.14);
+  approxEqual(derived.weights.rvChile, 0.42);
+  approxEqual(derived.weights.rfGlobal, 0.2575);
+  approxEqual(derived.weights.rfChile, 0.1825);
+});
+
+test('effective mix resolver prioritizes universe then instrument base then defaults', () => {
+  const universe = { rvGlobal: 0.1, rfGlobal: 0.2, rvChile: 0.3, rfChile: 0.4 };
+  const base = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
+  const withUniverse = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: universe,
+    instrumentBaseWeights: base,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+    universeSavedAt: 'u-saved',
+    instrumentBaseSavedAt: 'b-saved',
+  });
+  assert.equal(withUniverse.weightsSourceMode, 'instrument-universe');
+  assert.equal(withUniverse.activeWeightsSavedAt, 'u-saved');
+  approxEqual(withUniverse.activeWeights.rvChile, 0.3);
+
+  const withBase = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: null,
+    instrumentBaseWeights: base,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+    instrumentBaseSavedAt: 'b-saved',
+  });
+  assert.equal(withBase.weightsSourceMode, 'instrument-base');
+  assert.equal(withBase.fallbackReason, 'instrument_universe_missing_or_invalid');
+  approxEqual(withBase.activeWeights.rfGlobal, 0.3);
+
+  const withDefaults = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: null,
+    instrumentBaseWeights: null,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+  });
+  assert.equal(withDefaults.weightsSourceMode, 'system-defaults');
+  approxEqual(
+    withDefaults.activeWeights.rvGlobal +
+      withDefaults.activeWeights.rfGlobal +
+      withDefaults.activeWeights.rvChile +
+      withDefaults.activeWeights.rfChile,
     1,
   );
 });

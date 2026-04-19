@@ -10,6 +10,7 @@ import type {
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
+import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -195,6 +196,8 @@ export function SimulationPage({
   weightsSourceMode,
   weightsSourceLabel,
   officialReferenceWeights,
+  instrumentUniverseReferenceWeights,
+  instrumentBaseReferenceWeights,
   activeWeights,
   auditModeEnabled,
   auditProbe,
@@ -263,9 +266,11 @@ export function SimulationPage({
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
   aurumFxSpotCLP: number | null;
-  weightsSourceMode: 'json-official' | 'last-known-official' | 'system-defaults' | 'simulation' | 'error';
+  weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
   officialReferenceWeights: PortfolioWeights;
+  instrumentUniverseReferenceWeights: PortfolioWeights | null;
+  instrumentBaseReferenceWeights: PortfolioWeights | null;
   activeWeights: PortfolioWeights;
   auditModeEnabled: boolean;
   auditProbe: {
@@ -883,6 +888,12 @@ export function SimulationPage({
   }, []);
   const activeWeightSummary = formatWeightMix(activeWeights);
   const officialWeightSummary = formatWeightMix(officialReferenceWeights);
+  const universeWeightSummary = instrumentUniverseReferenceWeights
+    ? formatWeightMix(instrumentUniverseReferenceWeights)
+    : 'No disponible';
+  const instrumentBaseWeightSummary = instrumentBaseReferenceWeights
+    ? formatWeightMix(instrumentBaseReferenceWeights)
+    : 'No disponible';
   const spendingPhases = useMemo(() => normalizeModelSpendingPhases(params), [params]);
   const spendingPhaseLabels = useMemo(() => buildSpendingPhaseUiLabels(spendingPhases), [spendingPhases]);
   const formatPct = (value: number | null | undefined, digits = 1) =>
@@ -916,13 +927,14 @@ export function SimulationPage({
   const riskDetectedClp = Number.isFinite(riskInCompositionRaw) && riskInCompositionRaw > 0
     ? riskInCompositionRaw
     : Math.max(0, Number(riskCapitalCLP ?? 0));
+  const mixComparisonWeights = instrumentUniverseReferenceWeights ?? instrumentBaseReferenceWeights ?? officialReferenceWeights;
   const mixDiffPp = useMemo(() => {
-    const sumAbs = Math.abs(activeWeights.rvGlobal - officialReferenceWeights.rvGlobal)
-      + Math.abs(activeWeights.rfGlobal - officialReferenceWeights.rfGlobal)
-      + Math.abs(activeWeights.rvChile - officialReferenceWeights.rvChile)
-      + Math.abs(activeWeights.rfChile - officialReferenceWeights.rfChile);
+    const sumAbs = Math.abs(activeWeights.rvGlobal - mixComparisonWeights.rvGlobal)
+      + Math.abs(activeWeights.rfGlobal - mixComparisonWeights.rfGlobal)
+      + Math.abs(activeWeights.rvChile - mixComparisonWeights.rvChile)
+      + Math.abs(activeWeights.rfChile - mixComparisonWeights.rfChile);
     return (sumAbs * 100) / 2;
-  }, [activeWeights, officialReferenceWeights]);
+  }, [activeWeights, mixComparisonWeights]);
   const aurumPrimaryFxClp = Number(aurumFxSpotCLP ?? NaN);
   const riskSnapshotFxClp = Number(compositionSource?.nonOptimizable?.riskCapital?.usdSnapshotCLP ?? NaN);
   const primaryFxClp = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
@@ -969,30 +981,43 @@ export function SimulationPage({
         : 'Toggle apagado y sin capital detectado, no corresponde aplicar.';
 
     let mixSeverity: TraceSeverity;
-    if (weightsSourceMode === 'json-official') mixSeverity = 'OK';
+    if (weightsSourceMode === 'instrument-universe') mixSeverity = 'OK';
+    else if (weightsSourceMode === 'simulation') mixSeverity = mixDiffPp > 2 ? 'Alerta' : 'Aviso';
     else if (mixDiffPp > 2) mixSeverity = 'Alerta';
     else mixSeverity = 'Aviso';
     const mixFallbackName =
-      weightsSourceMode === 'last-known-official'
-        ? 'Último oficial válido'
+      weightsSourceMode === 'instrument-base'
+        ? 'Base instrumental real'
         : weightsSourceMode === 'system-defaults'
           ? 'Defaults del sistema'
           : weightsSourceMode === 'simulation'
-            ? 'Pesos de simulación activa'
-            : 'Sin respaldo usable';
+            ? 'Override manual temporal'
+            : weightsSourceMode === 'json-official'
+              ? 'Base instrumental real'
+              : weightsSourceMode === 'last-known-official'
+                ? 'Último oficial válido'
+                : 'Sin respaldo usable';
     const mixFallbackTech =
-      weightsSourceMode === 'last-known-official'
-        ? 'lastKnownOfficialWeights'
+      weightsSourceMode === 'instrument-base'
+        ? 'midas.instrument-base.v1'
         : weightsSourceMode === 'system-defaults'
           ? 'DEFAULT_PARAMETERS.weights'
           : weightsSourceMode === 'simulation'
             ? 'weightsSourceMode=simulation'
-            : 'weightsSourceMode=error';
-    const mixReason = weightsSourceMode === 'json-official'
-      ? 'Se usa la fuente principal porque está disponible y activa.'
-      : mixDiffPp <= 0.5
-        ? 'Se usa respaldo por fallback activo, sin diferencia material con la referencia oficial.'
-        : 'Se usa respaldo por fallback activo; la diferencia con referencia oficial sí es material.';
+            : weightsSourceMode === 'json-official'
+              ? 'officialDistribution / midas.instrument-base.v1'
+              : weightsSourceMode === 'last-known-official'
+                ? 'lastKnownOfficialWeights'
+                : 'weightsSourceMode=error';
+    const mixReason = weightsSourceMode === 'instrument-universe'
+      ? 'Se usa la fuente principal porque Instrument Universe está disponible y se pudo derivar a sleeves de Simulación.'
+      : weightsSourceMode === 'simulation'
+        ? 'Se usa override manual temporal de Simulación; no reemplaza la fuente estructural.'
+        : weightsSourceMode === 'instrument-base'
+          ? 'Se usa respaldo porque Instrument Universe no está disponible o no alcanza para derivar el mix.'
+          : mixDiffPp <= 0.5
+            ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
+            : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
 
     let fxSeverity: TraceSeverity = usingPrimaryFx ? 'OK' : 'Aviso';
     if (!usingPrimaryFx && fxDiffPct !== null && fxDiffPct > 0.01) fxSeverity = 'Alerta';
@@ -1065,14 +1090,18 @@ export function SimulationPage({
         valueApplied: activeWeightSummary,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
         principal: {
-          human: 'Referencia oficial',
-          technical: 'officialDistribution',
-          value: officialWeightSummary,
+          human: 'Instrument Universe',
+          technical: 'midas.instrument-universe.v1',
+          value: universeWeightSummary,
         },
         fallback: {
           human: mixFallbackName,
           technical: mixFallbackTech,
-          value: activeWeightSummary,
+          value: weightsSourceMode === 'system-defaults'
+            ? officialWeightSummary
+            : weightsSourceMode === 'simulation'
+              ? instrumentBaseWeightSummary
+              : instrumentBaseWeightSummary,
         },
         reason: mixReason,
         impact: mixDiffPp > 2
@@ -1126,6 +1155,7 @@ export function SimulationPage({
     formatNumber,
     fxSpotSourceTechnical,
     hasPendingSnapshot,
+    instrumentBaseWeightSummary,
     lastAutoAppliedAtMs,
     lastTimelineAtMs,
     mixDiffPp,
@@ -1136,6 +1166,7 @@ export function SimulationPage({
     riskCapitalEnabled,
     riskDetectedClp,
     snapshotApplied,
+    universeWeightSummary,
     weightsSourceMode,
     weightsSourceLabel,
   ]);
@@ -2355,7 +2386,7 @@ export function SimulationPage({
                   Activa: {activeWeightSummary}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Base oficial: {officialWeightSummary}
+                  Fuente estructural: {officialWeightSummary}
                 </div>
                 <div>
                   <button
@@ -2375,7 +2406,7 @@ export function SimulationPage({
                       opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
                     }}
                   >
-                    Restaurar distribución oficial
+                    Restaurar fuente estructural
                   </button>
                 </div>
               </div>

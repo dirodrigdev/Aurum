@@ -25,12 +25,14 @@ import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
+import { loadInstrumentUniverseSnapshot } from './domain/instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   areWeightsEquivalent,
   deriveOfficialDistributionWeights,
+  deriveInstrumentUniverseDistributionWeights,
   normalizePortfolioWeights,
-  resolveOfficialDistributionState,
+  resolveEffectiveMixFromUniverseFirst,
   sanitizePortfolioWeights,
   shouldEnterSimulationWeightsMode,
   type WeightsSourceMode,
@@ -52,8 +54,6 @@ const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
 const AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY = 'midas:aurum-last-applied-signature.v1';
-const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
-const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
@@ -434,22 +434,6 @@ function deriveVisibleCapitalFromComposition(
   return Math.max(1, total);
 }
 
-function loadLastKnownOfficialWeights(): PortfolioWeights | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY);
-    if (!raw) return null;
-    return sanitizePortfolioWeights(JSON.parse(raw) as PortfolioWeights | null);
-  } catch {
-    return null;
-  }
-}
-
-function loadLastKnownOfficialWeightsSavedAt(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY);
-}
-
 function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParameters | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -484,33 +468,35 @@ function persistBaseVigente(params: ModelParameters): void {
 }
 
 function resolveInitialDistributionState(): {
-  officialWeights: PortfolioWeights | null;
-  lastKnownOfficialWeights: PortfolioWeights | null;
+  universeWeights: PortfolioWeights | null;
+  instrumentBaseWeights: PortfolioWeights | null;
   activeWeights: PortfolioWeights;
   weightsSourceMode: WeightsSourceMode;
   activeWeightsSavedAt: string | null;
   fallbackReason: string | null;
 } {
-  const snapshot = loadInstrumentBaseSnapshot();
-  const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
-  const lastKnownOfficialWeights = loadLastKnownOfficialWeights();
-  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
-  const resolved = resolveOfficialDistributionState({
-    jsonOfficialWeights,
-    lastKnownOfficialWeights,
-    defaultWeights: defaults,
+  const universeSnapshot = loadInstrumentUniverseSnapshot();
+  const universeDerived = deriveInstrumentUniverseDistributionWeights({
+    snapshot: universeSnapshot,
+    returns: DEFAULT_PARAMETERS.returns,
   });
-  const activeWeightsSavedAt = resolved.weightsSourceMode === 'json-official'
-    ? snapshot?.savedAt ?? null
-    : resolved.weightsSourceMode === 'last-known-official'
-      ? loadLastKnownOfficialWeightsSavedAt()
-      : null;
+  const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
+  const instrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
+  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
+  const resolved = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: universeDerived?.weights ?? null,
+    instrumentBaseWeights,
+    defaultWeights: defaults,
+    universeSavedAt: universeSnapshot?.savedAt ?? null,
+    instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
+    diagnostics: universeDerived?.diagnostics ?? null,
+  });
   return {
-    officialWeights: resolved.officialWeights,
-    lastKnownOfficialWeights: resolved.lastKnownOfficialWeights,
+    universeWeights: resolved.universeWeights,
+    instrumentBaseWeights: resolved.instrumentBaseWeights,
     activeWeights: resolved.activeWeights,
     weightsSourceMode: resolved.weightsSourceMode,
-    activeWeightsSavedAt,
+    activeWeightsSavedAt: resolved.activeWeightsSavedAt,
     fallbackReason: resolved.fallbackReason,
   };
 }
@@ -613,9 +599,9 @@ export default function App() {
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
-  const [officialWeights, setOfficialWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.officialWeights);
-  const [lastKnownOfficialWeights, setLastKnownOfficialWeights] = useState<PortfolioWeights | null>(
-    () => initialDistributionRef.current.lastKnownOfficialWeights,
+  const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
+  const [instrumentBaseWeights, setInstrumentBaseWeights] = useState<PortfolioWeights | null>(
+    () => initialDistributionRef.current.instrumentBaseWeights,
   );
   const [activeWeights, setActiveWeights] = useState<PortfolioWeights>(() => initialDistributionRef.current.activeWeights);
   const [weightsSourceMode, setWeightsSourceMode] = useState<WeightsSourceMode>(() => initialDistributionRef.current.weightsSourceMode);
@@ -688,27 +674,24 @@ export default function App() {
   }, []);
 
   const refreshOfficialDistribution = useCallback(() => {
-    const snapshot = loadInstrumentBaseSnapshot();
-    const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
-    const storedLastKnown = loadLastKnownOfficialWeights();
-    const resolved = resolveOfficialDistributionState({
-      jsonOfficialWeights,
-      lastKnownOfficialWeights: storedLastKnown,
+    const universeSnapshot = loadInstrumentUniverseSnapshot();
+    const universeDerived = deriveInstrumentUniverseDistributionWeights({
+      snapshot: universeSnapshot,
+      returns: DEFAULT_PARAMETERS.returns,
+    });
+    const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
+    const nextInstrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
+    const resolved = resolveEffectiveMixFromUniverseFirst({
+      universeWeights: universeDerived?.weights ?? null,
+      instrumentBaseWeights: nextInstrumentBaseWeights,
       defaultWeights: DEFAULT_PARAMETERS.weights,
+      universeSavedAt: universeSnapshot?.savedAt ?? null,
+      instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
+      diagnostics: universeDerived?.diagnostics ?? null,
     });
 
-    if (typeof window !== 'undefined' && jsonOfficialWeights) {
-      window.localStorage.setItem(
-        LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY,
-        JSON.stringify(normalizePortfolioWeights(jsonOfficialWeights)),
-      );
-      if (snapshot?.savedAt) {
-        window.localStorage.setItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY, snapshot.savedAt);
-      }
-    }
-
-    setOfficialWeights(resolved.officialWeights);
-    setLastKnownOfficialWeights(resolved.lastKnownOfficialWeights);
+    setUniverseWeights(resolved.universeWeights);
+    setInstrumentBaseWeights(resolved.instrumentBaseWeights);
 
     const keepSimulationMode = weightsSourceModeRef.current === 'simulation' && sanitizePortfolioWeights(activeWeightsRef.current);
     if (keepSimulationMode) {
@@ -719,13 +702,7 @@ export default function App() {
     setActiveWeights(resolved.activeWeights);
     setWeightsSourceMode(resolved.weightsSourceMode);
     setWeightsFallbackReason(resolved.fallbackReason);
-    setActiveWeightsSavedAt(
-      resolved.weightsSourceMode === 'json-official'
-        ? snapshot?.savedAt ?? null
-        : resolved.weightsSourceMode === 'last-known-official'
-          ? loadLastKnownOfficialWeightsSavedAt()
-          : null,
-    );
+    setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
   }, []);
 
   useEffect(() => {
@@ -737,10 +714,12 @@ export default function App() {
     window.addEventListener('focus', handleRefresh);
     window.addEventListener('storage', handleRefresh);
     window.addEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+    window.addEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     return () => {
       window.removeEventListener('focus', handleRefresh);
       window.removeEventListener('storage', handleRefresh);
       window.removeEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+      window.removeEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     };
   }, [refreshOfficialDistribution]);
 
@@ -2651,21 +2630,17 @@ export default function App() {
   }, [applyActiveDistribution, simOverrides, startRecalculation]);
 
   const restoreOfficialDistribution = useCallback(() => {
-    const resolved = resolveOfficialDistributionState({
-      jsonOfficialWeights: officialWeights,
-      lastKnownOfficialWeights,
+    const resolved = resolveEffectiveMixFromUniverseFirst({
+      universeWeights,
+      instrumentBaseWeights,
       defaultWeights: DEFAULT_PARAMETERS.weights,
+      universeSavedAt: loadInstrumentUniverseSnapshot()?.savedAt ?? null,
+      instrumentBaseSavedAt: loadInstrumentBaseSnapshot()?.savedAt ?? null,
     });
     setActiveWeights(resolved.activeWeights);
     setWeightsSourceMode(resolved.weightsSourceMode);
     setWeightsFallbackReason(resolved.fallbackReason);
-    setActiveWeightsSavedAt(
-      resolved.weightsSourceMode === 'json-official'
-        ? loadInstrumentBaseSnapshot()?.savedAt ?? null
-        : resolved.weightsSourceMode === 'last-known-official'
-          ? loadLastKnownOfficialWeightsSavedAt()
-          : null,
-    );
+    setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
     markSimulationInteraction();
     const nextParams = applyActiveDistribution(simParamsRef.current, resolved.activeWeights);
     setSimParams(nextParams);
@@ -2674,11 +2649,11 @@ export default function App() {
     startRecalculation('params-change', () => base);
   }, [
     applyActiveDistribution,
-    lastKnownOfficialWeights,
+    instrumentBaseWeights,
     markSimulationInteraction,
-    officialWeights,
     simOverrides,
     startRecalculation,
+    universeWeights,
   ]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
@@ -3015,14 +2990,24 @@ export default function App() {
 
   const weightsSourceLabel = useMemo(() => {
     if (weightsSourceMode === 'simulation') return 'Simulación';
+    if (weightsSourceMode === 'instrument-universe') return 'Instrument Universe';
+    if (weightsSourceMode === 'instrument-base') return 'Base instrumental real';
     if (weightsSourceMode === 'json-official') return 'JSON oficial';
     if (weightsSourceMode === 'last-known-official') return 'Último JSON válido';
     if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
     return 'Error (sin distribución usable)';
   }, [weightsSourceMode]);
   const officialReferenceWeights = useMemo(
-    () => normalizePortfolioWeights(officialWeights ?? lastKnownOfficialWeights ?? DEFAULT_PARAMETERS.weights),
-    [lastKnownOfficialWeights, officialWeights],
+    () => normalizePortfolioWeights(universeWeights ?? instrumentBaseWeights ?? DEFAULT_PARAMETERS.weights),
+    [instrumentBaseWeights, universeWeights],
+  );
+  const instrumentUniverseReferenceWeights = useMemo(
+    () => (universeWeights ? normalizePortfolioWeights(universeWeights) : null),
+    [universeWeights],
+  );
+  const instrumentBaseReferenceWeights = useMemo(
+    () => (instrumentBaseWeights ? normalizePortfolioWeights(instrumentBaseWeights) : null),
+    [instrumentBaseWeights],
   );
   const activeWeightsNormalized = useMemo(
     () => normalizePortfolioWeights(activeWeights),
@@ -3108,6 +3093,8 @@ export default function App() {
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
       officialReferenceWeights={officialReferenceWeights}
+      instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
+      instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
       activeWeights={activeWeightsNormalized}
       auditModeEnabled={auditPreviewMode}
       auditProbe={heroAuditProbe}
