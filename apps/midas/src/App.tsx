@@ -42,6 +42,7 @@ import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
 } from './integrations/aurum/optimizableSnapshot';
 import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
+import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -704,6 +705,22 @@ export default function App() {
     setWeightsFallbackReason(resolved.fallbackReason);
     setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateInstrumentUniverseCacheFromFirestore()
+      .then((result) => {
+        if (cancelled || !result.ok) return;
+        refreshOfficialDistribution();
+        window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
+      })
+      .catch(() => {
+        // Firestore is an authoritative source when available; local cache/fallback chain remains safe.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshOfficialDistribution]);
 
   useEffect(() => {
     refreshOfficialDistribution();

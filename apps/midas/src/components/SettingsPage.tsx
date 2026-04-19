@@ -21,6 +21,10 @@ import {
   type InstrumentUniverseValidation,
 } from '../domain/instrumentUniverse';
 import type { PortfolioWeights } from '../domain/model/types';
+import {
+  hydrateInstrumentUniverseCacheFromFirestore,
+  persistInstrumentUniverseActiveToFirestore,
+} from '../integrations/midas/instrumentUniversePersistence';
 import { T, css } from './theme';
 type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
 
@@ -327,6 +331,7 @@ export function SettingsPage({
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [savedUniverseSnapshot, setSavedUniverseSnapshot] = useState(() => loadInstrumentUniverseSnapshot());
   const [universeEditorValue, setUniverseEditorValue] = useState(() => loadInstrumentUniverseSnapshot()?.rawJson || '');
+  const [universeOriginalFileName, setUniverseOriginalFileName] = useState<string | null>(null);
   const [universeValidation, setUniverseValidation] = useState<InstrumentUniverseValidation | null>(null);
   const [universeStatusMessage, setUniverseStatusMessage] = useState<string>('');
 
@@ -336,6 +341,23 @@ export function SettingsPage({
     if (!editorValue.trim() && snapshot?.rawJson) {
       setEditorValue(snapshot.rawJson);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateInstrumentUniverseCacheFromFirestore()
+      .then((result) => {
+        if (cancelled || !result.ok) return;
+        setSavedUniverseSnapshot(result.snapshot);
+        if (!universeEditorValue.trim()) {
+          setUniverseEditorValue(result.snapshot.rawJson);
+        }
+        window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const savedSummary = useMemo(
@@ -385,7 +407,7 @@ export function SettingsPage({
     return next;
   };
 
-  const handleSaveUniverse = () => {
+  const handleSaveUniverse = async () => {
     const next = universeValidation && universeValidation.snapshot?.rawJson === universeEditorValue.trim()
       ? universeValidation
       : validateInstrumentUniverseJson(universeEditorValue, targetWeights);
@@ -394,10 +416,19 @@ export function SettingsPage({
       setUniverseStatusMessage('No pude guardar instrument_universe. Revisa errores.');
       return;
     }
+    setUniverseStatusMessage('Guardando instrument_universe como active persistente...');
+    const persisted = await persistInstrumentUniverseActiveToFirestore({
+      snapshot: next.snapshot,
+      fileName: universeOriginalFileName,
+    });
     saveInstrumentUniverseSnapshot(next.snapshot);
     window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(next.snapshot);
-    setUniverseStatusMessage('Instrument universe guardado. Ahora es la fuente principal de mix cuando es derivable.');
+    setUniverseStatusMessage(
+      persisted.ok
+        ? `Instrument universe guardado en Firestore como active (${persisted.active.hash}). Cache local actualizado.`
+        : `Cache local actualizado, pero Firestore no quedó persistido: ${persisted.reason}`,
+    );
   };
 
   const handleClearUniverse = () => {
@@ -405,7 +436,7 @@ export function SettingsPage({
     window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(null);
     setUniverseValidation(null);
-    setUniverseStatusMessage('Instrument universe eliminado de este dispositivo.');
+    setUniverseStatusMessage('Cache local eliminado. La versión active persistida en Firestore no se borra desde esta acción.');
   };
 
   return (
@@ -696,7 +727,7 @@ export function SettingsPage({
               Cargar instrument_universe.json
             </div>
             <div style={{ marginTop: 6, color: T.textSecondary, fontSize: 13 }}>
-              Acepta archivo JSON o pegado manual. Se guarda en storage separado: midas.instrument-universe.v1.
+              Acepta archivo JSON o pegado manual. Se guarda como active en Firestore y en cache local midas.instrument-universe.v1.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -722,6 +753,7 @@ export function SettingsPage({
                   const file = input?.files?.[0];
                   if (!file) return;
                   setUniverseEditorValue(await file.text());
+                  setUniverseOriginalFileName(file.name);
                   setUniverseStatusMessage(`Archivo cargado: ${file.name}`);
                   if (input) input.value = '';
                 }}
@@ -752,6 +784,7 @@ export function SettingsPage({
           value={universeEditorValue}
           onChange={(event) => {
             setUniverseEditorValue(event.target.value);
+            setUniverseOriginalFileName(null);
             setUniverseStatusMessage('');
           }}
           placeholder={placeholderUniverseJson}

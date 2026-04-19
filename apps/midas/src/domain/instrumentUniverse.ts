@@ -513,14 +513,23 @@ export const validateInstrumentUniverseJson = (
   };
 };
 
+export const parseStoredInstrumentUniverseSnapshot = (raw: string): InstrumentUniverseSnapshot | null => {
+  try {
+    const parsed = JSON.parse(raw) as InstrumentUniverseSnapshot | null;
+    if (parsed && parsed.version === VERSION && Array.isArray(parsed.instruments)) return parsed;
+  } catch {
+    // Fall through to schema validation: old cache entries may contain the raw uploaded JSON.
+  }
+  const validation = validateInstrumentUniverseJson(raw);
+  return validation.ok ? validation.snapshot : null;
+};
+
 export const loadInstrumentUniverseSnapshot = (): InstrumentUniverseSnapshot | null => {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as InstrumentUniverseSnapshot | null;
-    if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.instruments)) return null;
-    return parsed;
+    return parseStoredInstrumentUniverseSnapshot(raw);
   } catch {
     return null;
   }

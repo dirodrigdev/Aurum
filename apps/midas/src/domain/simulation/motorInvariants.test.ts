@@ -3,7 +3,7 @@ import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import type { InstrumentBaseItem, InstrumentBaseSnapshot } from '../instrumentBase';
 import { buildRealisticInstrumentProposal, validateInstrumentBaseJson } from '../instrumentBase';
-import { validateInstrumentUniverseJson } from '../instrumentUniverse';
+import { parseStoredInstrumentUniverseSnapshot, validateInstrumentUniverseJson } from '../instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
@@ -1081,7 +1081,7 @@ test('without current or last known JSON uses explicit system defaults', () => {
 });
 
 test('instrument universe derives simulation sleeves and assigns cash other to lowest return RF sleeve', () => {
-  const validation = validateInstrumentUniverseJson(JSON.stringify({
+  const rawUniverse = JSON.stringify({
     instruments: [
       {
         instrument_master: {
@@ -1138,7 +1138,10 @@ test('instrument universe derives simulation sleeves and assigns cash other to l
         },
       },
     ],
-  }));
+  });
+  const cachedRawSnapshot = parseStoredInstrumentUniverseSnapshot(rawUniverse);
+  assert.ok(cachedRawSnapshot);
+  const validation = validateInstrumentUniverseJson(rawUniverse);
   assert.equal(validation.ok, true);
   const derived = deriveInstrumentUniverseDistributionWeights({
     snapshot: validation.snapshot,
