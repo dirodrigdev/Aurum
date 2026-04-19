@@ -415,8 +415,9 @@ function normalizeRiskCapitalExposure(
 }
 
 function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
-  if (!snapshot || snapshot.version !== 2) return null;
-  const parsed = Number(snapshot.fxReference?.clpUsd ?? NaN);
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  const parsed = Number(fxReference?.clpUsd ?? NaN);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 

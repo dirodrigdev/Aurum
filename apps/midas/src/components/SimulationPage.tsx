@@ -936,18 +936,14 @@ export function SimulationPage({
     return (sumAbs * 100) / 2;
   }, [activeWeights, mixComparisonWeights]);
   const aurumPrimaryFxClp = Number(aurumFxSpotCLP ?? NaN);
-  const riskSnapshotFxClp = Number(compositionSource?.nonOptimizable?.riskCapital?.usdSnapshotCLP ?? NaN);
-  const primaryFxClp = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
-    ? aurumPrimaryFxClp
-    : riskSnapshotFxClp;
-  const primaryFxTechnical = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
-    ? 'snapshot.fxReference.clpUsd'
-    : 'simulationComposition.nonOptimizable.riskCapital.usdSnapshotCLP';
+  const hasAurumPrimaryFx = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0;
+  const primaryFxClp = hasAurumPrimaryFx ? aurumPrimaryFxClp : null;
+  const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
-  const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp > 0 && Number.isFinite(backupFxClp) && backupFxClp > 0
+  const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
-  const usingPrimaryFx = Number.isFinite(primaryFxClp) && primaryFxClp > 0 && Number.isFinite(backupFxClp) && backupFxClp > 0
+  const usingPrimaryFx = primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp <= 0.0005
     : false;
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
@@ -1019,13 +1015,16 @@ export function SimulationPage({
             ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
             : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
 
-    let fxSeverity: TraceSeverity = usingPrimaryFx ? 'OK' : 'Aviso';
-    if (!usingPrimaryFx && fxDiffPct !== null && fxDiffPct > 0.01) fxSeverity = 'Alerta';
-    const fxReason = usingPrimaryFx
-      ? 'Se usa la fuente principal porque Aurum publicó un TC usable y está aplicado.'
-      : Number.isFinite(primaryFxClp) && primaryFxClp > 0
-        ? 'Se usa respaldo aunque Aurum sí publicó TC; revisar fallback operativo activo.'
-        : `Se usa respaldo porque la fuente principal no está disponible o no es usable (${fxSpotSourceTechnical}).`;
+    const fxSeverity: TraceSeverity = (() => {
+      if (hasAurumPrimaryFx && usingPrimaryFx) return 'OK';
+      if (hasAurumPrimaryFx && !usingPrimaryFx) return 'Alerta';
+      return 'Aviso';
+    })();
+    const fxReason = hasAurumPrimaryFx
+      ? usingPrimaryFx
+        ? 'Se usa la fuente principal correcta de Aurum (fxReference.clpUsd).'
+        : 'Aurum sí publica FX principal, pero el valor aplicado está usando fallback operativo.'
+      : `Se usa fallback porque Aurum no publica un fxReference.clpUsd usable (${fxSpotSourceTechnical}).`;
 
     return [
       {
@@ -1122,7 +1121,7 @@ export function SimulationPage({
         principal: {
           human: 'Aurum online/manual',
           technical: primaryFxTechnical,
-          value: Number.isFinite(primaryFxClp) && primaryFxClp > 0
+          value: Number.isFinite(primaryFxClp) && primaryFxClp !== null
             ? `USD/CLP ${formatNumber(primaryFxClp)}`
             : 'No disponible',
         },
@@ -1134,6 +1133,8 @@ export function SimulationPage({
         reason: fxReason,
         impact: fxDiffPct === null
           ? 'Sin comparación material disponible'
+          : !usingPrimaryFx && hasAurumPrimaryFx
+            ? `Diferencia vs FX activo de Aurum ${(fxDiffPct * 100).toFixed(2)}%`
           : fxDiffPct > 0.01
             ? `Diferencia material ${(fxDiffPct * 100).toFixed(2)}%`
           : fxDiffPct > 0.0025
@@ -1151,6 +1152,7 @@ export function SimulationPage({
     aurumFxSpotCLP,
     effectiveBaseCapital,
     fxDiffPct,
+    hasAurumPrimaryFx,
     usingPrimaryFx,
     formatNumber,
     fxSpotSourceTechnical,
