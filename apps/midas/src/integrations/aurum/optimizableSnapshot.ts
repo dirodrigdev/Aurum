@@ -92,11 +92,20 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
     fxReferenceRaw && typeof fxReferenceRaw === 'object'
       ? (fxReferenceRaw as Record<string, unknown>)
       : null;
-  const fxClpUsd = asFiniteOrNull(fxReferenceObj?.clpUsd);
-  const fxClpEur = asFiniteOrNull(fxReferenceObj?.clpEur);
-  const fxUsdEur = asFiniteOrNull(fxReferenceObj?.usdEur);
-  const fxUfClp = asFiniteOrNull(fxReferenceObj?.ufClp);
-  const fxSource = typeof fxReferenceObj?.source === 'string' ? fxReferenceObj.source : undefined;
+  const legacyFxRaw = (data as { fx?: unknown }).fx;
+  const legacyFxObj =
+    legacyFxRaw && typeof legacyFxRaw === 'object'
+      ? (legacyFxRaw as Record<string, unknown>)
+      : null;
+  const fxClpUsd = asFiniteOrNull(fxReferenceObj?.clpUsd) ?? asFiniteOrNull(legacyFxObj?.usdClp) ?? asFiniteOrNull(legacyFxObj?.clpUsd);
+  const fxClpEur = asFiniteOrNull(fxReferenceObj?.clpEur) ?? asFiniteOrNull(legacyFxObj?.eurClp) ?? asFiniteOrNull(legacyFxObj?.clpEur);
+  const fxUsdEur = asFiniteOrNull(fxReferenceObj?.usdEur) ?? asFiniteOrNull(legacyFxObj?.eurUsd);
+  const fxUfClp = asFiniteOrNull(fxReferenceObj?.ufClp) ?? asFiniteOrNull(legacyFxObj?.ufClp);
+  const fxSource = typeof fxReferenceObj?.source === 'string'
+    ? fxReferenceObj.source
+    : typeof legacyFxObj?.source === 'string'
+      ? legacyFxObj.source
+      : undefined;
 
   const base = {
     version,
