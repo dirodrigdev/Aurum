@@ -23,6 +23,7 @@ import { StressPage } from './components/StressPage';
 import { OptPage } from './components/OptPage';
 import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
+import { AssistedSimulationPage } from './components/AssistedSimulationPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
 import { loadInstrumentUniverseSnapshot } from './domain/instrumentUniverse';
@@ -3227,6 +3228,8 @@ export default function App() {
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
     />
+  ) : activeTab === 'assist' ? (
+    <AssistedSimulationPage />
   ) : activeTab === 'sens' ? (
     <PalancasPage
       baseParams={baseParams}

@@ -1,12 +1,22 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'sim' | 'sens' | 'stress' | 'optv0' | 'opt' | 'settings';
+type TabId = 'sim' | 'assist' | 'sens' | 'stress' | 'optv0' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
   sim: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M6 4.5v11l9-5.5-9-5.5Z" fill="currentColor" />
+    </svg>
+  ),
+  assist: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M6 12.4 8.7 9.7l2 1.7L14 8.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="6" cy="12.4" r="1" fill="currentColor" />
+      <circle cx="8.7" cy="9.7" r="1" fill="currentColor" />
+      <circle cx="10.7" cy="11.4" r="1" fill="currentColor" />
+      <circle cx="14" cy="8.2" r="1" fill="currentColor" />
     </svg>
   ),
   sens: (
@@ -49,6 +59,7 @@ export function BottomNav({
 }) {
   const items: Array<{ id: TabId; label: string }> = [
     { id: 'sim', label: 'Simulación' },
+    { id: 'assist', label: 'Asistida' },
     { id: 'sens', label: 'Palancas' },
     { id: 'stress', label: 'Stress' },
     { id: 'optv0', label: 'OPT' },
@@ -65,7 +76,7 @@ export function BottomNav({
         height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         display: 'grid',
-        gridTemplateColumns: 'repeat(6, 1fr)',
+        gridTemplateColumns: 'repeat(7, 1fr)',
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,
