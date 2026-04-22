@@ -11,6 +11,7 @@ import type {
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
+import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -193,6 +194,8 @@ export function SimulationPage({
   fxSpotSourceTechnical,
   nonOptimizableBlocksTechnical,
   aurumFxSpotCLP,
+  aurumFxSpotSource,
+  operativeFxResolution,
   weightsSourceMode,
   weightsSourceLabel,
   officialReferenceWeights,
@@ -266,6 +269,8 @@ export function SimulationPage({
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
   aurumFxSpotCLP: number | null;
+  aurumFxSpotSource: string | null;
+  operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
   officialReferenceWeights: PortfolioWeights;
@@ -935,17 +940,17 @@ export function SimulationPage({
       + Math.abs(activeWeights.rfChile - mixComparisonWeights.rfChile);
     return (sumAbs * 100) / 2;
   }, [activeWeights, mixComparisonWeights]);
-  const aurumPrimaryFxClp = Number(aurumFxSpotCLP ?? NaN);
-  const hasAurumPrimaryFx = Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0;
-  const primaryFxClp = hasAurumPrimaryFx ? aurumPrimaryFxClp : null;
+  const aurumPrimaryFxClp = Number(operativeFxResolution.aurumCurrentClp ?? NaN);
+  const hasAurumPrimaryFx = operativeFxResolution.aurumCurrentAvailable;
+  const primaryFxClp = hasAurumPrimaryFx && Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
+    ? aurumPrimaryFxClp
+    : null;
   const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
-  const usingPrimaryFx = primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
-    ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp <= 0.0005
-    : false;
+  const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -1016,15 +1021,15 @@ export function SimulationPage({
             : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
 
     const fxSeverity: TraceSeverity = (() => {
-      if (hasAurumPrimaryFx && usingPrimaryFx) return 'OK';
-      if (hasAurumPrimaryFx && !usingPrimaryFx) return 'Alerta';
+      if (operativeFxResolution.reasonCode === 'aurum_current_applied') return 'OK';
+      if (operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied') return 'Alerta';
       return 'Aviso';
     })();
-    const fxReason = hasAurumPrimaryFx
-      ? usingPrimaryFx
-        ? 'Se usa la fuente principal correcta de Aurum (fxReference.clpUsd).'
-        : 'Aurum sí publica FX principal, pero el valor aplicado está usando fallback operativo.'
-      : `Se usa fallback porque Aurum no publica un fxReference.clpUsd usable (${fxSpotSourceTechnical}).`;
+    const fxReason = operativeFxResolution.reasonCode === 'aurum_current_applied'
+      ? 'Se usa la fuente principal correcta de Aurum (FX current publicado).'
+      : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+        ? 'Aurum publica FX current, pero el runtime está aplicando fallback operativo.'
+        : `Se usa fallback porque Aurum no publica un FX current usable (${fxSpotSourceTechnical}).`;
 
     return [
       {
@@ -1150,6 +1155,8 @@ export function SimulationPage({
     aurumSyncLatestOpt,
     backupFxClp,
     aurumFxSpotCLP,
+    aurumFxSpotSource,
+    operativeFxResolution,
     effectiveBaseCapital,
     fxDiffPct,
     hasAurumPrimaryFx,

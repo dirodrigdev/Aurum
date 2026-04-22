@@ -42,6 +42,7 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) return;
     expect(prepared.snapshot.fxReference?.clpUsd).toBe(886);
+    expect(prepared.snapshot.fxReference?.source).toBe('active_fx_rates');
   });
 
   it('falls back to closure FX when active FX is absent', () => {
@@ -50,5 +51,6 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) return;
     expect(prepared.snapshot.fxReference?.clpUsd).toBe(985);
+    expect(prepared.snapshot.fxReference?.source).toBe('closure_fxRates');
   });
 });

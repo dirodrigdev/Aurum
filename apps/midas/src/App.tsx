@@ -37,6 +37,7 @@ import {
   shouldEnterSimulationWeightsMode,
   type WeightsSourceMode,
 } from './domain/model/officialDistribution';
+import { resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
@@ -421,6 +422,14 @@ function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): string | null {
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  return typeof fxReference?.source === 'string' && fxReference.source.trim().length > 0
+    ? fxReference.source.trim()
+    : null;
+}
+
 function deriveVisibleCapitalFromComposition(
   composition?: SimulationCompositionInput,
   includeRiskCapital = false,
@@ -600,6 +609,7 @@ export default function App() {
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
+  const [aurumFxSpotSource, setAurumFxSpotSource] = useState<string | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
   const [instrumentBaseWeights, setInstrumentBaseWeights] = useState<PortfolioWeights | null>(
@@ -1993,6 +2003,7 @@ export default function App() {
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const riskExposure = computeRiskCapital(snapshot);
       const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+      const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = composition
         ? {
             ...composition,
@@ -2017,6 +2028,7 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(aurumFxClpUsd);
+      setAurumFxSpotSource(aurumFxSource);
       if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
@@ -2799,6 +2811,8 @@ export default function App() {
       setRiskCapitalCLP(0);
       setRiskCapitalUsdTotal(0);
       setRiskCapitalUsdSnapshotCLP(0);
+      setAurumFxSpotCLP(null);
+      setAurumFxSpotSource(null);
       setOptimizableBaseReference({
         amountClp: null,
         asOf: null,
@@ -2859,6 +2873,7 @@ export default function App() {
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
         setAurumFxSpotCLP(null);
+        setAurumFxSpotSource(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
         setAurumSyncBaseOpt(null);
@@ -2880,6 +2895,7 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
+      setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
@@ -3031,6 +3047,41 @@ export default function App() {
     () => normalizePortfolioWeights(activeWeights),
     [activeWeights],
   );
+  const operativeFxResolution = useMemo<OperativeFxResolution>(() =>
+    resolveOperativeMasterFx({
+      aurumFxClp: aurumFxSpotCLP,
+      aurumFxSource: aurumFxSpotSource,
+      runtimeFxClp: Number(simParams.fx?.clpUsdInitial ?? NaN),
+      manualOverrideFxClp: null,
+    }),
+  [aurumFxSpotCLP, aurumFxSpotSource, simParams.fx?.clpUsdInitial]);
+
+  useEffect(() => {
+    const target = operativeFxResolution.aurumCurrentClp;
+    if (target === null || !operativeFxResolution.aurumCurrentAvailable || operativeFxResolution.usingAurumCurrent) return;
+    setBaseParams((prev) => {
+      const current = Number(prev.fx?.clpUsdInitial ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          clpUsdInitial: target,
+        },
+      };
+    });
+    setSimParams((prev) => {
+      const current = Number(prev.fx?.clpUsdInitial ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          clpUsdInitial: target,
+        },
+      };
+    });
+  }, [operativeFxResolution]);
 
   const patrimonioSourceTechnical = snapshotApplied
     ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'}) · Base oficial + capa MIDAS persistente`
@@ -3039,18 +3090,14 @@ export default function App() {
     activeWeightsSavedAt ? ` · savedAt=${activeWeightsSavedAt}` : ''
   }${weightsFallbackReason ? ` · fallback=${weightsFallbackReason}` : ''}`;
   const fxSpotSourceTechnical = (() => {
-    const aurumFx = Number(aurumFxSpotCLP ?? NaN);
-    const activeFx = Number(simParams.fx?.clpUsdInitial ?? NaN);
-    if (Number.isFinite(aurumFx) && aurumFx > 0) {
-      const diffPct = Number.isFinite(activeFx) && activeFx > 0
-        ? Math.abs(activeFx - aurumFx) / aurumFx
-        : null;
-      if (diffPct !== null && diffPct <= 0.0005) {
-        return 'Aurum online/manual (snapshot.fxReference.clpUsd) · fuente principal activa';
-      }
-      return 'Fallback operativo (params.fx.clpUsdInitial) con fuente Aurum disponible';
+    if (operativeFxResolution.reasonCode === 'aurum_current_applied') {
+      return 'Aurum online/manual (snapshot.fxReference.clpUsd) · fuente principal activa';
     }
-    return 'Fallback operativo (params/default/manual) · Aurum sin FX usable publicado';
+    if (operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied') {
+      return 'Fallback operativo (params.fx.clpUsdInitial) con Aurum current disponible';
+    }
+    const sourceText = operativeFxResolution.aurumSource ? ` · source=${operativeFxResolution.aurumSource}` : '';
+    return `Fallback operativo (params/default/manual) · Aurum sin FX current usable${sourceText}`;
   })();
   const nonOptimizableBlocksTechnical = (() => {
     const composition = simParams.simulationComposition;
@@ -3108,6 +3155,8 @@ export default function App() {
       fxSpotSourceTechnical={fxSpotSourceTechnical}
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
       aurumFxSpotCLP={aurumFxSpotCLP}
+      aurumFxSpotSource={aurumFxSpotSource}
+      operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
       officialReferenceWeights={officialReferenceWeights}

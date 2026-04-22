@@ -37,6 +37,7 @@ import {
   M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS,
   remapLegacyCorrelationMatrixToM8,
 } from './m8Calibration';
+import { resolveOperativeMasterFx } from '../model/operativeFx';
 import { runSimulationCentral, runSimulationCentralAudit } from './engineCentral';
 import { getMidasEngineFor } from './policy';
 import type { M8Input } from './m8.types';
@@ -2589,6 +2590,30 @@ test('m8 runtime exposes student_t df 7 explicitly', () => {
 
   assert.equal(result.ReturnGenerator, 'student_t');
   assert.equal(result.StudentTDF, 7);
+});
+
+test('operative fx resolver prefers Aurum current FX over runtime fallback', () => {
+  const resolved = resolveOperativeMasterFx({
+    aurumFxClp: 886,
+    aurumFxSource: 'active_fx_rates',
+    runtimeFxClp: 985,
+  });
+
+  assert.equal(resolved.aurumCurrentAvailable, true);
+  assert.equal(resolved.usingAurumCurrent, false);
+  assert.equal(resolved.reasonCode, 'aurum_current_available_but_not_applied');
+});
+
+test('operative fx resolver treats closure FX as non-current and keeps fallback mode', () => {
+  const resolved = resolveOperativeMasterFx({
+    aurumFxClp: 985,
+    aurumFxSource: 'closure_fxRates',
+    runtimeFxClp: 985,
+  });
+
+  assert.equal(resolved.aurumCurrentAvailable, false);
+  assert.equal(resolved.sourceMode, 'fallback');
+  assert.equal(resolved.reasonCode, 'fallback_runtime_applied');
 });
 
 const failures: string[] = [];

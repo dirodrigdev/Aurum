@@ -225,6 +225,10 @@ const extractFxReference = (
   closure: WealthMonthlyClosure,
   activeFxRates?: WealthFxRates | null,
 ) => {
+  const hasActiveFx =
+    !!activeFxRates &&
+    Number.isFinite(Number(activeFxRates.usdClp)) &&
+    Number(activeFxRates.usdClp) > 0;
   const usdClp = asFiniteOrNull(activeFxRates?.usdClp) ?? asFiniteOrNull(closure.fxRates?.usdClp);
   if (usdClp === null || usdClp <= 0) return undefined;
   const eurClp = asFiniteOrNull(activeFxRates?.eurClp) ?? asFiniteOrNull(closure.fxRates?.eurClp);
@@ -238,7 +242,7 @@ const extractFxReference = (
     ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
     ...(usdEur !== null && Number.isFinite(usdEur) && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
     ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
-    source: 'closure_fxRates' as const,
+    source: (hasActiveFx ? 'active_fx_rates' : 'closure_fxRates') as const,
   };
 };
 
