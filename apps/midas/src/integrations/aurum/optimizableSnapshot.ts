@@ -10,6 +10,15 @@ const asFiniteOrNull = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    console.info(`[FX TRACE][Midas] ${stage}`, payload);
+  } catch {
+    // ignore
+  }
+};
+
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
@@ -106,6 +115,13 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
     : typeof legacyFxObj?.source === 'string'
       ? legacyFxObj.source
       : undefined;
+  logFxTrace('snapshot_hydration_raw', {
+    rawFxReferenceClpUsd: fxReferenceObj?.clpUsd ?? null,
+    rawFxReferenceSource: fxReferenceObj?.source ?? null,
+    rawLegacyFxUsdClp: legacyFxObj?.usdClp ?? null,
+    normalizedFxClpUsd: fxClpUsd,
+    normalizedFxSource: fxSource ?? null,
+  });
 
   const base = {
     version,

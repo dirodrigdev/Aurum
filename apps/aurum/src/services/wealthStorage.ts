@@ -216,6 +216,7 @@ const WEALTH_CLOUD_BACKUPS_COLLECTION = 'backups';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
+const FX_TRACE_PREFIX = '[FX TRACE][Aurum]';
 
 export type WealthSyncUiStatus = 'dirty' | 'syncing' | 'synced' | 'error';
 export type WealthSyncUiState = {
@@ -313,6 +314,15 @@ const readWealthUpdatedAt = () => {
 const dispatchWealthDataUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(WEALTH_DATA_UPDATED_EVENT));
+  }
+};
+
+const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    console.info(`${FX_TRACE_PREFIX} ${stage}`, payload);
+  } catch {
+    // ignore
   }
 };
 
@@ -1621,6 +1631,13 @@ export const loadFxRates = (): WealthFxRates => {
 
 export const saveFxRates = (rates: WealthFxRates) => {
   saveFxRatesInternal(rates);
+  logFxTrace('save_fx_rates_local', {
+    usdClp: Number(rates?.usdClp ?? NaN),
+    eurClp: Number(rates?.eurClp ?? NaN),
+    ufClp: Number(rates?.ufClp ?? NaN),
+  });
+  // FX operativo requiere publicación inmediata para MIDAS; evita quedarse en snapshot viejo.
+  requestImmediateWealthSync();
 };
 
 const normalizeNumericText = (value: string) =>
@@ -2581,6 +2598,15 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
         snapshot: null,
       }));
+      logFxTrace('sync_publish_snapshot', {
+        localFxUsdClp: Number(localFx?.usdClp ?? NaN),
+        remoteFxUsdClp: Number(remoteFx?.usdClp ?? NaN),
+        mergedFxUsdClp: Number(mergedFx?.usdClp ?? NaN),
+        preferLocal: merged.preferLocal,
+        publishedFxClpUsd: Number(publishResult?.snapshot?.fxReference?.clpUsd ?? NaN),
+        publishedFxSource: publishResult?.snapshot?.fxReference?.source ?? null,
+        publishOk: publishResult.ok !== false,
+      });
       markLastRemoteUpdatedAt(mergedUpdatedAt);
 
       if (
@@ -2807,6 +2833,15 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       reason: String(err?.message || 'No pude publicar el snapshot Aurum → Midas.'),
       snapshot: null,
     }));
+    logFxTrace('hydrate_publish_snapshot', {
+      localFxUsdClp: Number(localFx?.usdClp ?? NaN),
+      remoteFxUsdClp: Number(remoteFx?.usdClp ?? NaN),
+      mergedFxUsdClp: Number(mergedFx?.usdClp ?? NaN),
+      preferLocal: merged.preferLocal,
+      publishedFxClpUsd: Number(publishResult?.snapshot?.fxReference?.clpUsd ?? NaN),
+      publishedFxSource: publishResult?.snapshot?.fxReference?.source ?? null,
+      publishOk: publishResult.ok !== false,
+    });
     if (publishResult.ok === false) {
       const publishReason = publishResult.reason;
       const publishMessage = `midas_publish_error ${publishReason}`.trim();

@@ -3057,6 +3057,22 @@ export default function App() {
   [aurumFxSpotCLP, aurumFxSpotSource, simParams.fx?.clpUsdInitial]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      console.info('[FX TRACE][Midas] master_fx_resolution', {
+        snapshotFxClpUsd: aurumFxSpotCLP,
+        snapshotFxSource: aurumFxSpotSource,
+        runtimeFxClpUsdInitial: Number(simParams.fx?.clpUsdInitial ?? NaN),
+        resolvedSourceMode: operativeFxResolution.sourceMode,
+        resolvedReasonCode: operativeFxResolution.reasonCode,
+        appliedFxClp: operativeFxResolution.appliedClp,
+      });
+    } catch {
+      // ignore
+    }
+  }, [aurumFxSpotCLP, aurumFxSpotSource, operativeFxResolution, simParams.fx?.clpUsdInitial]);
+
+  useEffect(() => {
     const target = operativeFxResolution.aurumCurrentClp;
     if (target === null || !operativeFxResolution.aurumCurrentAvailable || operativeFxResolution.usingAurumCurrent) return;
     setBaseParams((prev) => {
