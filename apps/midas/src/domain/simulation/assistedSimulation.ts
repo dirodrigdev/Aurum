@@ -3,6 +3,7 @@ import {
   type InstrumentUniverseInstrument,
 } from '../instrumentUniverse';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
+import { buildFixedSpendingDurations } from '../model/spendingPhases';
 import type {
   FutureCapitalEvent,
   ModelParameters,
@@ -234,28 +235,35 @@ const filterFanChartToHorizon = (
 
 const buildSpendingPhases = (input: AssistedInputs, scale: number): SpendingPhase[] => {
   const horizonMonths = Math.max(48, Math.round(input.horizonYears * 12));
+  const phaseDurations = buildFixedSpendingDurations(horizonMonths);
   if (input.spendingMode === 'fixed') {
-    return [{
-      durationMonths: horizonMonths,
-      amountReal: Math.max(0, input.fixedMonthlyClp * scale),
+    const amount = Math.max(0, input.fixedMonthlyClp * scale);
+    return phaseDurations.map((durationMonths) => ({
+      durationMonths,
+      amountReal: amount,
       currency: 'CLP',
-    }];
+    }));
   }
-  const phase1MonthsRaw = Math.round(input.phase1Years * 12);
-  const phase1Months = clamp(phase1MonthsRaw, 1, Math.max(1, horizonMonths - 1));
-  const phase2Months = Math.max(1, horizonMonths - phase1Months);
-  return [
-    {
-      durationMonths: phase1Months,
-      amountReal: Math.max(0, input.phase1MonthlyClp * scale),
+
+  const phase1Months = clamp(Math.round(input.phase1Years * 12), 1, Math.max(1, horizonMonths - 1));
+  let cursorMonth = 0;
+  return phaseDurations.map((durationMonths) => {
+    const segmentStart = cursorMonth;
+    const segmentEnd = cursorMonth + durationMonths;
+    cursorMonth = segmentEnd;
+
+    const phase1Overlap = Math.max(0, Math.min(segmentEnd, phase1Months) - segmentStart);
+    const phase2Overlap = Math.max(0, durationMonths - phase1Overlap);
+    const weightedAmount =
+      ((input.phase1MonthlyClp * phase1Overlap) + (input.phase2MonthlyClp * phase2Overlap)) /
+      Math.max(1, durationMonths);
+
+    return {
+      durationMonths,
+      amountReal: Math.max(0, weightedAmount * scale),
       currency: 'CLP',
-    },
-    {
-      durationMonths: phase2Months,
-      amountReal: Math.max(0, input.phase2MonthlyClp * scale),
-      currency: 'CLP',
-    },
-  ];
+    };
+  });
 };
 
 const equivalentMonthly = (input: AssistedInputs, scale: number): number => {

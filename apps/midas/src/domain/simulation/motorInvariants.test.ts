@@ -41,6 +41,11 @@ import { resolveOperativeMasterFx } from '../model/operativeFx';
 import { runSimulationCentral, runSimulationCentralAudit } from './engineCentral';
 import { getMidasEngineFor } from './policy';
 import type { M8Input } from './m8.types';
+import {
+  runAssistedSimulation,
+  type AssistedInstrumentOption,
+  type AssistedInputs,
+} from './assistedSimulation';
 
 type TestFn = () => void;
 
@@ -2590,6 +2595,76 @@ test('m8 runtime exposes student_t df 7 explicitly', () => {
 
   assert.equal(result.ReturnGenerator, 'student_t');
   assert.equal(result.StudentTDF, 7);
+});
+
+test('assisted simulation fixed spending maps all M8 phases to user monthly spend', () => {
+  const instruments: AssistedInstrumentOption[] = [
+    {
+      instrumentId: 'btg-conservadora',
+      label: 'BTG Pactual Gestion Conservadora',
+      name: 'BTG Pactual Gestion Conservadora',
+      currency: 'CLP',
+      amountClp: 40_000_000,
+      weightPortfolio: 40 / 134,
+      sleeveWeights: { rvGlobal: 0.0105, rvChile: 0.0595, rfGlobal: 0.1395, rfChile: 0.7905 },
+    },
+    {
+      instrumentId: 'btg-activa',
+      label: 'BTG Pactual Gestion Activa',
+      name: 'BTG Pactual Gestion Activa',
+      currency: 'CLP',
+      amountClp: 72_000_000,
+      weightPortfolio: 72 / 134,
+      sleeveWeights: { rvGlobal: 0.156, rvChile: 0.244, rfGlobal: 0.234, rfChile: 0.366 },
+    },
+    {
+      instrumentId: 'sura-renta-local-uf',
+      label: 'SURA Renta Local UF',
+      name: 'SURA Renta Local UF',
+      currency: 'CLP',
+      amountClp: 22_000_000,
+      weightPortfolio: 22 / 134,
+      sleeveWeights: { rvGlobal: 0, rvChile: 0, rfGlobal: 0, rfChile: 1 },
+    },
+  ];
+  const input: AssistedInputs = {
+    initialCapitalClp: 137_000_000,
+    extraContributionEnabled: false,
+    extraContributionClp: 0,
+    extraContributionYear: 5,
+    horizonYears: 10,
+    spendingMode: 'fixed',
+    fixedMonthlyClp: 900_000,
+    phase1MonthlyClp: 900_000,
+    phase1Years: 5,
+    phase2MonthlyClp: 900_000,
+    portfolioMode: 'manual',
+    portfolioEntryMode: 'amount',
+    portfolioEntries: [
+      { instrumentId: 'btg-conservadora', amountClp: 40_000_000, percentage: 0 },
+      { instrumentId: 'btg-activa', amountClp: 72_000_000, percentage: 0 },
+      { instrumentId: 'sura-renta-local-uf', amountClp: 22_000_000, percentage: 0 },
+    ],
+    includeTwoOfThreeCheck: false,
+    successThreshold: 0.85,
+    gridStepPct: 5,
+    nSim: 200,
+    seed: 42,
+  };
+
+  const result = runAssistedSimulation(input, instruments);
+  const params = result.best.rawResult.params;
+  const m8Input = toM8Input(params, resolveCapital({ params }));
+
+  assert.equal(result.effectiveInitialCapitalClp, 134_000_000);
+  assert.equal(m8Input.years, 10);
+  assert.equal(m8Input.phase1MonthlyClp, 900_000);
+  assert.equal(m8Input.phase2MonthlyClp, 900_000);
+  assert.equal(m8Input.phase3MonthlyClp, 900_000);
+  assert.equal(m8Input.phase4MonthlyClp, 900_000);
+  assert.ok(result.best.successAtHorizon > 0.9);
+  assert.ok(result.best.p50 > 0);
+  assert.equal(result.best.fanChartData.at(-1)?.year, 10);
 });
 
 test('operative fx resolver prefers Aurum current FX over runtime fallback', () => {
