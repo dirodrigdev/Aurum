@@ -187,7 +187,10 @@ const normalizeSnapshotPayload = (raw, activeFxRatesRaw) => {
   const totalNetWorthWithRiskCLP = asFiniteOrNull(snapshot.totalNetWorthWithRiskCLP);
   const optimizableInvestmentsWithRiskCLP = asFiniteOrNull(snapshot.optimizableInvestmentsWithRiskCLP);
   const riskCapital = normalizeRiskCapital(snapshot.riskCapital);
-  const fxReference = normalizeFxReference(snapshot.fxReference) || normalizeActiveFxRates(activeFxRatesRaw);
+  const fxReference =
+    normalizeFxReference(snapshot.fxReference) ||
+    normalizeActiveFxRates(activeFxRatesRaw) ||
+    normalizeActiveFxRates(snapshot.fx);
   const nonOptimizable =
     snapshot.nonOptimizable && typeof snapshot.nonOptimizable === 'object'
       ? {
