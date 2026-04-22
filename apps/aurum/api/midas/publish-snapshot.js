@@ -250,6 +250,7 @@ export default async function handler(req, res) {
 
   try {
     const db = getAdminDb();
+    const publishedRef = db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID);
     let snapshotToWrite = normalized.snapshot;
     const payloadActiveFx = normalizeActiveFxRates(req.body?.activeFxRates);
     snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, payloadActiveFx);
@@ -272,6 +273,38 @@ export default async function handler(req, res) {
         })}`);
       }
     }
+    const incomingHasFx =
+      (asFiniteOrNull(snapshotToWrite?.fxReference?.clpUsd) ?? 0) > 0 ||
+      (asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? 0) > 0;
+    if (!incomingHasFx) {
+      try {
+        const existingSnap = await publishedRef.get();
+        if (existingSnap.exists) {
+          const existing = existingSnap.data() || {};
+          const existingFxReference = normalizeFxReference(existing.fxReference);
+          const existingLegacyFx = normalizeActiveFxRates(existing.fx);
+          const existingHasFx =
+            (asFiniteOrNull(existingFxReference?.clpUsd) ?? 0) > 0 ||
+            (asFiniteOrNull(existingLegacyFx?.clpUsd) ?? 0) > 0;
+          if (existingHasFx) {
+            snapshotToWrite = {
+              ...snapshotToWrite,
+              ...(existingFxReference ? { fxReference: existingFxReference } : {}),
+              ...(existing.fx ? { fx: existing.fx } : {}),
+            };
+            console.info(`[FX TRACE][Aurum API publish] preserve_existing_fx ${JSON.stringify({
+              docPath: `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`,
+              preservedFxReferenceClpUsd: existingFxReference?.clpUsd ?? null,
+              preservedLegacyFxUsdClp: asFiniteOrNull(existing?.fx?.usdClp) ?? null,
+            })}`);
+          }
+        }
+      } catch (err) {
+        console.info(`[FX TRACE][Aurum API publish] preserve_existing_fx_error ${JSON.stringify({
+          error: err?.message || 'No pude leer snapshot publicado actual para preservar FX.',
+        })}`);
+      }
+    }
     snapshotToWrite = mirrorLegacyFxFromFxReference(snapshotToWrite);
     const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
     console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
@@ -285,7 +318,7 @@ export default async function handler(req, res) {
       legacyFxSource: snapshotToWrite?.fx?.source ?? null,
       uid: auth.uid,
     })}`);
-    await db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID).set(
+    await publishedRef.set(
       {
         ...snapshotToWrite,
         publishedByUid: auth.uid,
