@@ -154,6 +154,11 @@ export function AssistedSimulationPage() {
     () => inputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.percentage || 0)), 0),
     [inputs.portfolioEntries],
   );
+  const portfolioPctStatus = useMemo(() => {
+    if (portfolioPctTotal > 100.5) return { label: 'Excede 100%', color: T.negative };
+    if (portfolioPctTotal < 99.5) return { label: 'Falta para 100%', color: T.warning };
+    return { label: 'Suma correcta', color: T.positive };
+  }, [portfolioPctTotal]);
 
   const run = () => {
     setRunning(true);
@@ -177,7 +182,7 @@ export function AssistedSimulationPage() {
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
         <div style={{ color: T.textPrimary, fontWeight: 800, fontSize: 18 }}>Simulación Asistida</div>
         <div style={{ color: T.textMuted, fontSize: 12, marginTop: 2 }}>
-          Hoja independiente de Simulación. Usa el motor M8 real, con portafolio construido desde instrumentos del Instrument Universe.
+          Hoja independiente de Simulación. Entrada por instrumentos reales (Instrument Universe) y proyección con motor M8 agregado.
         </div>
       </div>
 
@@ -377,6 +382,11 @@ export function AssistedSimulationPage() {
                 ? `Total portafolio ingresado: ${formatMoney(portfolioAmountTotal)}`
                 : `Suma porcentajes: ${portfolioPctTotal.toFixed(1)}%`}
             </div>
+            {inputs.portfolioEntryMode === 'percentage' && (
+              <div style={{ color: portfolioPctStatus.color, fontSize: 12, fontWeight: 700 }}>
+                Estado suma %: {portfolioPctStatus.label}
+              </div>
+            )}
           </div>
         )}
 
@@ -484,7 +494,9 @@ export function AssistedSimulationPage() {
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 850 }}>{mixLabel(result.best.weights)}</div>
             </div>
             <div>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Gasto sostenible (equivalente mensual)</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Gasto sostenible (métrica resumen equivalente mensual)
+              </div>
               <div style={{ color: T.primary, fontSize: 20, fontWeight: 900 }}>{formatMoney(result.best.sustainableMonthlyClp)}</div>
             </div>
           </div>
@@ -492,6 +504,11 @@ export function AssistedSimulationPage() {
           <div style={{ color: T.textMuted, fontSize: 12 }}>
             Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)} · Instrumentos seleccionados: {result.selectedInstrumentCount} · Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'}
           </div>
+          {inputs.spendingMode === 'two_phase' && (
+            <div style={{ color: T.textSecondary, fontSize: 12 }}>
+              Fase 1 sostenible: {formatMoney(result.best.phase1MonthlyClp)} · Fase 2 sostenible: {formatMoney(result.best.phase2MonthlyClp)}.
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
