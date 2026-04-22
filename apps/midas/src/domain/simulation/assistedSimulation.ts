@@ -1,22 +1,36 @@
+import {
+  loadInstrumentUniverseSnapshot,
+  type InstrumentUniverseInstrument,
+} from '../instrumentUniverse';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
-import type { FutureCapitalEvent, ModelParameters, PortfolioWeights, SimulationResults, SpendingPhase } from '../model/types';
+import type {
+  FutureCapitalEvent,
+  ModelParameters,
+  PortfolioWeights,
+  SimulationResults,
+  SpendingPhase,
+} from '../model/types';
 import { runSimulationCentral } from './engineCentral';
 
 export type AssistedSpendingMode = 'fixed' | 'two_phase';
 export type AssistedPortfolioMode = 'manual' | 'optimize';
-export type AssistedFundId = 'eq_global' | 'eq_chile' | 'fi_global' | 'fi_chile';
+export type AssistedPortfolioEntryMode = 'amount' | 'percentage';
 
-export type AssistedFundOption = {
-  id: AssistedFundId;
+export type AssistedInstrumentOption = {
+  instrumentId: string;
   label: string;
+  name: string;
+  currency: string;
+  amountClp: number;
+  weightPortfolio: number;
+  sleeveWeights: PortfolioWeights;
 };
 
-export const ASSISTED_FUND_OPTIONS: AssistedFundOption[] = [
-  { id: 'eq_global', label: 'RV Global' },
-  { id: 'eq_chile', label: 'RV Chile' },
-  { id: 'fi_global', label: 'RF Global' },
-  { id: 'fi_chile', label: 'RF Chile' },
-];
+export type AssistedPortfolioEntry = {
+  instrumentId: string;
+  amountClp: number;
+  percentage: number;
+};
 
 export type AssistedInputs = {
   initialCapitalClp: number;
@@ -30,8 +44,8 @@ export type AssistedInputs = {
   phase1Years: number;
   phase2MonthlyClp: number;
   portfolioMode: AssistedPortfolioMode;
-  manualRvPct: number;
-  selectedFunds: AssistedFundId[];
+  portfolioEntryMode: AssistedPortfolioEntryMode;
+  portfolioEntries: AssistedPortfolioEntry[];
   includeTwoOfThreeCheck: boolean;
   successThreshold: number;
   gridStepPct: number;
@@ -42,6 +56,7 @@ export type AssistedInputs = {
 export type AssistedCandidateResult = {
   name: string;
   weights: PortfolioWeights;
+  instrumentAllocationPct: Record<string, number>;
   sustainableMonthlyClp: number;
   phase1MonthlyClp: number;
   phase2MonthlyClp: number;
@@ -55,15 +70,17 @@ export type AssistedCandidateResult = {
 };
 
 export type AssistedOptimizationResult = {
-  mode: 'manual' | 'rf_rv' | 'two_funds' | 'three_funds';
+  mode: 'manual' | 'rf_rv' | 'instrument_two' | 'instrument_three';
   best: AssistedCandidateResult;
-  bestThreeFunds?: AssistedCandidateResult;
+  bestThreeInstruments?: AssistedCandidateResult;
   bestTwoOfThree?: AssistedCandidateResult;
   evaluatedCandidates: number;
+  effectiveInitialCapitalClp: number;
+  selectedInstrumentCount: number;
+  entryMode: AssistedPortfolioEntryMode;
 };
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
-
 const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const ym = (date: Date): string => {
@@ -83,22 +100,91 @@ const addMonths = (yearMonth: string, deltaMonths: number): string => {
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
 };
 
-const asSleeveWeights = (allocation: Partial<Record<AssistedFundId, number>>): PortfolioWeights => {
-  const eqGlobal = Math.max(0, Number(allocation.eq_global ?? 0));
-  const eqChile = Math.max(0, Number(allocation.eq_chile ?? 0));
-  const fiGlobal = Math.max(0, Number(allocation.fi_global ?? 0));
-  const fiChile = Math.max(0, Number(allocation.fi_chile ?? 0));
-  const sum = eqGlobal + eqChile + fiGlobal + fiChile;
-  if (sum <= 0) {
-    return deepClone(DEFAULT_PARAMETERS.weights);
-  }
+const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
+  const rvGlobal = Math.max(0, weights.rvGlobal);
+  const rvChile = Math.max(0, weights.rvChile);
+  const rfGlobal = Math.max(0, weights.rfGlobal);
+  const rfChile = Math.max(0, weights.rfChile);
+  const sum = rvGlobal + rvChile + rfGlobal + rfChile;
+  if (sum <= 0) return deepClone(DEFAULT_PARAMETERS.weights);
   return {
-    rvGlobal: eqGlobal / sum,
-    rvChile: eqChile / sum,
-    rfGlobal: fiGlobal / sum,
-    rfChile: fiChile / sum,
+    rvGlobal: rvGlobal / sum,
+    rvChile: rvChile / sum,
+    rfGlobal: rfGlobal / sum,
+    rfChile: rfChile / sum,
   };
 };
+
+const normalizeShare = (value: number | null | undefined): number | null => {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return null;
+  if (Math.abs(raw) > 1) return clamp(raw / 100, 0, 1);
+  return clamp(raw, 0, 1);
+};
+
+const resolveExposure = (instrument: InstrumentUniverseInstrument): { global: number; local: number } => {
+  const globalShare = normalizeShare(instrument.exposureUsed?.global ?? null);
+  const localShare = normalizeShare(instrument.exposureUsed?.local ?? null);
+  if (globalShare !== null && localShare !== null) {
+    const sum = globalShare + localShare;
+    if (sum > 0) return { global: globalShare / sum, local: localShare / sum };
+  }
+  if (globalShare !== null) return { global: globalShare, local: 1 - globalShare };
+  if (localShare !== null) return { global: 1 - localShare, local: localShare };
+
+  const currency = String(instrument.currency ?? '').toUpperCase();
+  if (currency === 'CLP' || currency === 'UF') return { global: 0, local: 1 };
+  if (currency === 'USD' || currency === 'EUR') return { global: 1, local: 0 };
+  return { global: 0.5, local: 0.5 };
+};
+
+const resolveCashReceiver = (): 'rfGlobal' | 'rfChile' =>
+  DEFAULT_PARAMETERS.returns.rfGlobalAnnual <= DEFAULT_PARAMETERS.returns.rfChileUFAnnual ? 'rfGlobal' : 'rfChile';
+
+const instrumentToSleeves = (instrument: InstrumentUniverseInstrument): PortfolioWeights => {
+  const mix = instrument.currentMixUsed;
+  if (!mix) return deepClone(DEFAULT_PARAMETERS.weights);
+  const exposure = resolveExposure(instrument);
+  const rv = clamp(mix.rv, 0, 1);
+  const rf = clamp(mix.rf, 0, 1);
+  const cashOther = clamp(mix.cash, 0, 1) + clamp(mix.other, 0, 1);
+
+  const base: PortfolioWeights = {
+    rvGlobal: rv * exposure.global,
+    rvChile: rv * exposure.local,
+    rfGlobal: rf * exposure.global,
+    rfChile: rf * exposure.local,
+  };
+  const cashReceiver = resolveCashReceiver();
+  base[cashReceiver] += cashOther;
+  return normalizeWeights(base);
+};
+
+const instrumentLabel = (instrument: InstrumentUniverseInstrument): string => {
+  const name = String(instrument.name ?? '').trim() || instrument.instrumentId;
+  const currency = String(instrument.currency ?? '').trim();
+  return currency ? `${name} · ${currency}` : name;
+};
+
+export function loadAssistedInstrumentOptions(): AssistedInstrumentOption[] {
+  const snapshot = loadInstrumentUniverseSnapshot();
+  if (!snapshot) return [];
+  return snapshot.instruments
+    .filter((instrument) => instrument.usable && !!instrument.currentMixUsed && !!instrument.instrumentId)
+    .map((instrument) => ({
+      instrumentId: instrument.instrumentId,
+      label: instrumentLabel(instrument),
+      name: String(instrument.name ?? instrument.instrumentId),
+      currency: String(instrument.currency ?? 'N/A'),
+      amountClp: Math.max(0, Number(instrument.amountClp ?? 0)),
+      weightPortfolio: Math.max(0, Number(instrument.weightPortfolio ?? 0)),
+      sleeveWeights: instrumentToSleeves(instrument),
+    }))
+    .sort((a, b) => {
+      if (b.weightPortfolio !== a.weightPortfolio) return b.weightPortfolio - a.weightPortfolio;
+      return a.label.localeCompare(b.label, 'es');
+    });
+}
 
 const labelWeights = (weights: PortfolioWeights): string =>
   `RV ${(weights.rvGlobal * 100 + weights.rvChile * 100).toFixed(0)} / RF ${(weights.rfGlobal * 100 + weights.rfChile * 100).toFixed(0)}`;
@@ -166,6 +252,8 @@ const equivalentMonthly = (input: AssistedInputs, scale: number): number => {
   return total / horizonMonths;
 };
 
+const toStep = (pct: number, step: number): number => Math.round(pct / step) * step;
+
 const manualWeightsFromRv = (rvPct: number): PortfolioWeights => {
   const base = DEFAULT_PARAMETERS.weights;
   const rvShareGlobal = (base.rvGlobal + base.rvChile) > 0 ? base.rvGlobal / (base.rvGlobal + base.rvChile) : 0.5;
@@ -180,48 +268,109 @@ const manualWeightsFromRv = (rvPct: number): PortfolioWeights => {
   };
 };
 
-const toStep = (pct: number, step: number): number => Math.round(pct / step) * step;
-
-const generateRvRfCandidates = (step: number): PortfolioWeights[] => {
+const generateRvRfCandidates = (step: number): Array<{ name: string; weights: PortfolioWeights; allocation: Record<string, number> }> => {
   const normalizedStep = clamp(toStep(step, 5), 5, 25);
-  const out: PortfolioWeights[] = [];
+  const out: Array<{ name: string; weights: PortfolioWeights; allocation: Record<string, number> }> = [];
   for (let rv = 0; rv <= 100; rv += normalizedStep) {
-    out.push(manualWeightsFromRv(rv));
+    const weights = manualWeightsFromRv(rv);
+    out.push({ name: `RV/RF · ${rv}% RV`, weights, allocation: {} });
   }
   return out;
 };
 
-const generateTwoFundCandidates = (a: AssistedFundId, b: AssistedFundId, step: number): PortfolioWeights[] => {
+const normalizeAllocation = (allocation: Record<string, number>): Record<string, number> => {
+  const entries = Object.entries(allocation).map(([k, v]) => [k, Math.max(0, Number(v))] as const);
+  const total = entries.reduce((acc, [, v]) => acc + v, 0);
+  if (total <= 0) return Object.fromEntries(entries.map(([k]) => [k, 0]));
+  return Object.fromEntries(entries.map(([k, v]) => [k, v / total]));
+};
+
+const weightsFromInstrumentAllocation = (
+  allocation: Record<string, number>,
+  optionsById: Map<string, AssistedInstrumentOption>,
+): PortfolioWeights => {
+  const normalized = normalizeAllocation(allocation);
+  const sum = Object.entries(normalized).reduce((acc, [instrumentId, ratio]) => {
+    const option = optionsById.get(instrumentId);
+    if (!option || ratio <= 0) return acc;
+    acc.rvGlobal += option.sleeveWeights.rvGlobal * ratio;
+    acc.rvChile += option.sleeveWeights.rvChile * ratio;
+    acc.rfGlobal += option.sleeveWeights.rfGlobal * ratio;
+    acc.rfChile += option.sleeveWeights.rfChile * ratio;
+    return acc;
+  }, {
+    rvGlobal: 0,
+    rvChile: 0,
+    rfGlobal: 0,
+    rfChile: 0,
+  } as PortfolioWeights);
+  return normalizeWeights(sum);
+};
+
+const generateTwoInstrumentCandidates = (ids: [string, string], step: number) => {
   const normalizedStep = clamp(toStep(step, 5), 5, 25);
-  const out: PortfolioWeights[] = [];
-  for (let wa = 0; wa <= 100; wa += normalizedStep) {
-    const wb = 100 - wa;
-    out.push(asSleeveWeights({
-      [a]: wa / 100,
-      [b]: wb / 100,
-    }));
+  const out: Array<{ allocation: Record<string, number> }> = [];
+  for (let a = 0; a <= 100; a += normalizedStep) {
+    out.push({ allocation: normalizeAllocation({ [ids[0]]: a / 100, [ids[1]]: (100 - a) / 100 }) });
   }
   return out;
 };
 
-const generateThreeFundCandidates = (a: AssistedFundId, b: AssistedFundId, c: AssistedFundId, step: number): PortfolioWeights[] => {
+const generateThreeInstrumentCandidates = (ids: [string, string, string], step: number) => {
   const normalizedStep = clamp(toStep(step, 5), 5, 25);
-  const out: PortfolioWeights[] = [];
-  for (let wa = 0; wa <= 100; wa += normalizedStep) {
-    for (let wb = 0; wb <= 100 - wa; wb += normalizedStep) {
-      const wc = 100 - wa - wb;
-      if (wc < 0 || wc % normalizedStep !== 0) continue;
-      out.push(asSleeveWeights({
-        [a]: wa / 100,
-        [b]: wb / 100,
-        [c]: wc / 100,
-      }));
+  const out: Array<{ allocation: Record<string, number> }> = [];
+  for (let a = 0; a <= 100; a += normalizedStep) {
+    for (let b = 0; b <= 100 - a; b += normalizedStep) {
+      const c = 100 - a - b;
+      if (c < 0 || c % normalizedStep !== 0) continue;
+      out.push({ allocation: normalizeAllocation({ [ids[0]]: a / 100, [ids[1]]: b / 100, [ids[2]]: c / 100 }) });
     }
   }
   return out;
 };
 
-const baseParamsFromInput = (input: AssistedInputs): ModelParameters => {
+const resolveInstrumentEntries = (
+  input: AssistedInputs,
+  optionsById: Map<string, AssistedInstrumentOption>,
+): Array<{ instrumentId: string; amountClp: number; percentage: number }> => {
+  const rows = input.portfolioEntries
+    .map((entry) => ({
+      instrumentId: entry.instrumentId,
+      amountClp: Math.max(0, Number(entry.amountClp ?? 0)),
+      percentage: Math.max(0, Number(entry.percentage ?? 0)),
+    }))
+    .filter((entry) => optionsById.has(entry.instrumentId));
+  return rows;
+};
+
+const resolveEffectiveInitialCapital = (
+  input: AssistedInputs,
+  entries: Array<{ instrumentId: string; amountClp: number; percentage: number }>,
+): number => {
+  const baseInitial = Math.max(1, Number(input.initialCapitalClp || 0));
+  if (input.portfolioEntryMode !== 'amount') return baseInitial;
+  const invested = entries.reduce((sum, row) => sum + row.amountClp, 0);
+  return Math.max(1, invested || baseInitial);
+};
+
+const manualAllocationFromEntries = (
+  input: AssistedInputs,
+  entries: Array<{ instrumentId: string; amountClp: number; percentage: number }>,
+): Record<string, number> => {
+  if (input.portfolioEntryMode === 'percentage') {
+    const totalPct = entries.reduce((sum, row) => sum + row.percentage, 0);
+    if (totalPct <= 0) throw new Error('En modo porcentaje debes ingresar porcentajes por instrumento.');
+    if (Math.abs(totalPct - 100) > 0.5) {
+      throw new Error(`En modo porcentaje la suma debe ser 100% (actual ${(totalPct).toFixed(1)}%).`);
+    }
+    return normalizeAllocation(Object.fromEntries(entries.map((row) => [row.instrumentId, row.percentage / 100])));
+  }
+  const invested = entries.reduce((sum, row) => sum + row.amountClp, 0);
+  if (invested <= 0) throw new Error('En modo monto debes ingresar montos CLP por instrumento.');
+  return normalizeAllocation(Object.fromEntries(entries.map((row) => [row.instrumentId, row.amountClp])));
+};
+
+const baseParamsFromInput = (input: AssistedInputs, effectiveInitialCapital: number): ModelParameters => {
   const base = deepClone(DEFAULT_PARAMETERS);
   const horizonMonths = Math.max(48, Math.round(input.horizonYears * 12));
   const nowYm = ym(new Date());
@@ -240,8 +389,8 @@ const baseParamsFromInput = (input: AssistedInputs): ModelParameters => {
     ...base,
     label: 'Simulación Asistida',
     capitalSource: 'manual',
-    capitalInitial: Math.max(1, input.initialCapitalClp),
-    manualCapitalInput: { financialCapitalCLP: Math.max(1, input.initialCapitalClp) },
+    capitalInitial: effectiveInitialCapital,
+    manualCapitalInput: { financialCapitalCLP: effectiveInitialCapital },
     simulationBaseMonth: nowYm,
     simulation: {
       ...base.simulation,
@@ -252,12 +401,12 @@ const baseParamsFromInput = (input: AssistedInputs): ModelParameters => {
       blockLength: 12,
     },
     spendingPhases: buildSpendingPhases(input, 1),
-    weights: manualWeightsFromRv(input.manualRvPct),
+    weights: deepClone(DEFAULT_PARAMETERS.weights),
     futureCapitalEvents: futureEvents,
     simulationComposition: {
       mode: 'legacy',
-      totalNetWorthCLP: Math.max(1, input.initialCapitalClp),
-      optimizableInvestmentsCLP: Math.max(1, input.initialCapitalClp),
+      totalNetWorthCLP: effectiveInitialCapital,
+      optimizableInvestmentsCLP: effectiveInitialCapital,
       nonOptimizable: {
         banksCLP: 0,
         nonMortgageDebtCLP: 0,
@@ -281,7 +430,12 @@ const baseParamsFromInput = (input: AssistedInputs): ModelParameters => {
   };
 };
 
-const evaluateScenario = (base: ModelParameters, input: AssistedInputs, weights: PortfolioWeights, scale: number): SimulationResults => {
+const evaluateScenario = (
+  base: ModelParameters,
+  input: AssistedInputs,
+  weights: PortfolioWeights,
+  scale: number,
+): SimulationResults => {
   const candidate: ModelParameters = {
     ...base,
     weights,
@@ -331,11 +485,13 @@ const toCandidateResult = (
   weights: PortfolioWeights,
   scale: number,
   result: SimulationResults,
+  instrumentAllocationPct: Record<string, number>,
 ): AssistedCandidateResult => {
   const { p10, p50, p90 } = resolveTerminalPercentiles(result);
   return {
     name,
     weights,
+    instrumentAllocationPct,
     sustainableMonthlyClp: equivalentMonthly(input, scale),
     phase1MonthlyClp: input.spendingMode === 'fixed' ? input.fixedMonthlyClp * scale : input.phase1MonthlyClp * scale,
     phase2MonthlyClp: input.spendingMode === 'fixed' ? input.fixedMonthlyClp * scale : input.phase2MonthlyClp * scale,
@@ -356,72 +512,116 @@ const pickBest = (rows: AssistedCandidateResult[]): AssistedCandidateResult =>
     return b.p50 - a.p50;
   })[0];
 
-export function runAssistedSimulation(input: AssistedInputs): AssistedOptimizationResult {
-  const base = baseParamsFromInput(input);
+export function runAssistedSimulation(
+  input: AssistedInputs,
+  availableInstruments: AssistedInstrumentOption[],
+): AssistedOptimizationResult {
+  const optionsById = new Map(availableInstruments.map((item) => [item.instrumentId, item]));
+  const entries = resolveInstrumentEntries(input, optionsById);
+  const effectiveInitialCapital = resolveEffectiveInitialCapital(input, entries);
+  const base = baseParamsFromInput(input, effectiveInitialCapital);
+
   if (input.portfolioMode === 'manual') {
-    const manualWeights = manualWeightsFromRv(input.manualRvPct);
+    if (entries.length === 0) {
+      throw new Error('Selecciona al menos un instrumento real para ejecutar modo manual.');
+    }
+    const allocation = manualAllocationFromEntries(input, entries);
+    const manualWeights = weightsFromInstrumentAllocation(allocation, optionsById);
     const result = evaluateScenario(base, input, manualWeights, 1);
-    const row = toCandidateResult(`Manual · ${labelWeights(manualWeights)}`, input, manualWeights, 1, result);
+    const row = toCandidateResult(
+      `Manual instrumentos · ${labelWeights(manualWeights)}`,
+      input,
+      manualWeights,
+      1,
+      result,
+      allocation,
+    );
     return {
       mode: 'manual',
       best: row,
       evaluatedCandidates: 1,
+      effectiveInitialCapitalClp: effectiveInitialCapital,
+      selectedInstrumentCount: entries.length,
+      entryMode: input.portfolioEntryMode,
     };
   }
 
-  const selected = [...new Set(input.selectedFunds)];
-  let candidates: { name: string; weights: PortfolioWeights }[] = [];
+  const selectedIds = entries.map((entry) => entry.instrumentId);
+  if (selectedIds.length === 1 || selectedIds.length > 3) {
+    throw new Error('Modo optimizar requiere 0, 2 o 3 instrumentos seleccionados.');
+  }
+
   let mode: AssistedOptimizationResult['mode'] = 'rf_rv';
-  if (selected.length === 2) {
-    mode = 'two_funds';
-    candidates = generateTwoFundCandidates(selected[0], selected[1], input.gridStepPct)
-      .map((weights, idx) => ({
-        name: `${selected[0]} / ${selected[1]} · caso ${idx + 1}`,
-        weights,
-      }));
-  } else if (selected.length === 3) {
-    mode = 'three_funds';
-    candidates = generateThreeFundCandidates(selected[0], selected[1], selected[2], input.gridStepPct)
-      .map((weights, idx) => ({
-        name: `${selected.join(' + ')} · caso ${idx + 1}`,
-        weights,
-      }));
-  } else {
+  const candidates: Array<{ name: string; weights: PortfolioWeights; allocation: Record<string, number> }> = [];
+
+  if (selectedIds.length === 0) {
     mode = 'rf_rv';
-    candidates = generateRvRfCandidates(input.gridStepPct)
-      .map((weights, idx) => ({
-        name: `RV/RF · caso ${idx + 1}`,
+    candidates.push(...generateRvRfCandidates(input.gridStepPct));
+  } else if (selectedIds.length === 2) {
+    mode = 'instrument_two';
+    const pair = [selectedIds[0], selectedIds[1]] as [string, string];
+    generateTwoInstrumentCandidates(pair, input.gridStepPct).forEach((item, idx) => {
+      const weights = weightsFromInstrumentAllocation(item.allocation, optionsById);
+      candidates.push({
+        name: `${optionsById.get(pair[0])?.name ?? pair[0]} / ${optionsById.get(pair[1])?.name ?? pair[1]} · caso ${idx + 1}`,
         weights,
-      }));
+        allocation: item.allocation,
+      });
+    });
+  } else {
+    mode = 'instrument_three';
+    const trio = [selectedIds[0], selectedIds[1], selectedIds[2]] as [string, string, string];
+    generateThreeInstrumentCandidates(trio, input.gridStepPct).forEach((item, idx) => {
+      const weights = weightsFromInstrumentAllocation(item.allocation, optionsById);
+      candidates.push({
+        name: `${trio.map((id) => optionsById.get(id)?.name ?? id).join(' + ')} · caso ${idx + 1}`,
+        weights,
+        allocation: item.allocation,
+      });
+    });
   }
 
   const evaluated: AssistedCandidateResult[] = [];
   for (const candidate of candidates) {
     const optimal = maximizeSpendingScale(base, input, candidate.weights);
-    evaluated.push(toCandidateResult(candidate.name, input, candidate.weights, optimal.scale, optimal.result));
+    evaluated.push(toCandidateResult(candidate.name, input, candidate.weights, optimal.scale, optimal.result, candidate.allocation));
   }
   const best = pickBest(evaluated);
 
-  if (mode !== 'three_funds' || !input.includeTwoOfThreeCheck || selected.length !== 3) {
+  if (mode !== 'instrument_three' || !input.includeTwoOfThreeCheck || selectedIds.length !== 3) {
     return {
       mode,
       best,
       evaluatedCandidates: evaluated.length,
+      effectiveInitialCapitalClp: effectiveInitialCapital,
+      selectedInstrumentCount: selectedIds.length,
+      entryMode: input.portfolioEntryMode,
     };
   }
 
-  const subsets: Array<[AssistedFundId, AssistedFundId]> = [
-    [selected[0], selected[1]],
-    [selected[0], selected[2]],
-    [selected[1], selected[2]],
+  const subsets: Array<[string, string]> = [
+    [selectedIds[0], selectedIds[1]],
+    [selectedIds[0], selectedIds[2]],
+    [selectedIds[1], selectedIds[2]],
   ];
+
   const subsetRows: AssistedCandidateResult[] = [];
   for (const [a, b] of subsets) {
-    const subsetCandidates = generateTwoFundCandidates(a, b, input.gridStepPct);
+    const subsetCandidates = generateTwoInstrumentCandidates([a, b], input.gridStepPct);
     const subsetEvaluated: AssistedCandidateResult[] = [];
-    for (const weights of subsetCandidates) {
+    for (const candidate of subsetCandidates) {
+      const weights = weightsFromInstrumentAllocation(candidate.allocation, optionsById);
       const optimal = maximizeSpendingScale(base, input, weights);
-      subsetEvaluated.push(toCandidateResult(`Subset ${a}+${b}`, input, weights, optimal.scale, optimal.result));
+      subsetEvaluated.push(
+        toCandidateResult(
+          `Subset ${(optionsById.get(a)?.name ?? a)} + ${(optionsById.get(b)?.name ?? b)}`,
+          input,
+          weights,
+          optimal.scale,
+          optimal.result,
+          candidate.allocation,
+        ),
+      );
     }
     subsetRows.push(pickBest(subsetEvaluated));
   }
@@ -430,8 +630,11 @@ export function runAssistedSimulation(input: AssistedInputs): AssistedOptimizati
   return {
     mode,
     best,
-    bestThreeFunds: best,
+    bestThreeInstruments: best,
     bestTwoOfThree,
     evaluatedCandidates: evaluated.length + subsets.length * (Math.round(100 / clamp(toStep(input.gridStepPct, 5), 5, 25)) + 1),
+    effectiveInitialCapitalClp: effectiveInitialCapital,
+    selectedInstrumentCount: selectedIds.length,
+    entryMode: input.portfolioEntryMode,
   };
 }

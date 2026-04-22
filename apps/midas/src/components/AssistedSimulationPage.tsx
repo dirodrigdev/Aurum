@@ -1,5 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { runAssistedSimulation, ASSISTED_FUND_OPTIONS, type AssistedFundId, type AssistedInputs, type AssistedOptimizationResult } from '../domain/simulation/assistedSimulation';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  loadAssistedInstrumentOptions,
+  runAssistedSimulation,
+  type AssistedInputs,
+  type AssistedInstrumentOption,
+  type AssistedOptimizationResult,
+  type AssistedPortfolioEntry,
+} from '../domain/simulation/assistedSimulation';
 import { T } from './theme';
 
 const formatMoney = (value: number): string => {
@@ -23,9 +30,9 @@ const defaultInputs: AssistedInputs = {
   phase1MonthlyClp: 6_000_000,
   phase1Years: 10,
   phase2MonthlyClp: 4_000_000,
-  portfolioMode: 'optimize',
-  manualRvPct: 60,
-  selectedFunds: [],
+  portfolioMode: 'manual',
+  portfolioEntryMode: 'amount',
+  portfolioEntries: [],
   includeTwoOfThreeCheck: true,
   successThreshold: 0.85,
   gridStepPct: 5,
@@ -33,8 +40,11 @@ const defaultInputs: AssistedInputs = {
   seed: 42,
 };
 
-const mixLabel = (weights: AssistedOptimizationResult['best']['weights']): string =>
-  `RV ${(weights.rvGlobal + weights.rvChile) * 100 >= 0 ? ((weights.rvGlobal + weights.rvChile) * 100).toFixed(1) : '0.0'}% · RF ${((weights.rfGlobal + weights.rfChile) * 100).toFixed(1)}%`;
+const mixLabel = (weights: AssistedOptimizationResult['best']['weights']): string => {
+  const rv = (weights.rvGlobal + weights.rvChile) * 100;
+  const rf = (weights.rfGlobal + weights.rfChile) * 100;
+  return `RV ${rv.toFixed(1)}% · RF ${rf.toFixed(1)}%`;
+};
 
 function MiniFanChart({ data }: { data: Array<{ year: number; p50: number }> }) {
   const width = 540;
@@ -66,36 +76,91 @@ function MiniFanChart({ data }: { data: Array<{ year: number; p50: number }> }) 
   );
 }
 
+const selectedIdsFromEntries = (entries: AssistedPortfolioEntry[]) => entries.map((entry) => entry.instrumentId);
+
 export function AssistedSimulationPage() {
   const [inputs, setInputs] = useState<AssistedInputs>(defaultInputs);
   const [result, setResult] = useState<AssistedOptimizationResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [availableInstruments, setAvailableInstruments] = useState<AssistedInstrumentOption[]>(() => loadAssistedInstrumentOptions());
 
-  const selectedSet = useMemo(() => new Set(inputs.selectedFunds), [inputs.selectedFunds]);
+  useEffect(() => {
+    const refresh = () => setAvailableInstruments(loadAssistedInstrumentOptions());
+    window.addEventListener('midas:instrument-universe-updated', refresh as EventListener);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('midas:instrument-universe-updated', refresh as EventListener);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  const optionsById = useMemo(
+    () => new Map(availableInstruments.map((item) => [item.instrumentId, item])),
+    [availableInstruments],
+  );
+
+  const selectedIds = useMemo(() => new Set(selectedIdsFromEntries(inputs.portfolioEntries)), [inputs.portfolioEntries]);
 
   const updateInput = <K extends keyof AssistedInputs>(key: K, value: AssistedInputs[K]) => {
     setInputs((prev) => ({ ...prev, [key]: value }));
   };
 
-  const toggleFund = (fundId: AssistedFundId) => {
+  const toggleInstrument = (instrumentId: string) => {
     setInputs((prev) => {
-      const next = new Set(prev.selectedFunds);
-      if (next.has(fundId)) next.delete(fundId);
-      else {
-        if (next.size >= 3) return prev;
-        next.add(fundId);
+      const exists = prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId);
+      if (exists) {
+        return {
+          ...prev,
+          portfolioEntries: prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId),
+        };
       }
-      return { ...prev, selectedFunds: [...next] as AssistedFundId[] };
+      return {
+        ...prev,
+        portfolioEntries: [
+          ...prev.portfolioEntries,
+          {
+            instrumentId,
+            amountClp: 0,
+            percentage: 0,
+          },
+        ],
+      };
     });
   };
+
+  const updateEntry = (instrumentId: string, patch: Partial<AssistedPortfolioEntry>) => {
+    setInputs((prev) => ({
+      ...prev,
+      portfolioEntries: prev.portfolioEntries.map((entry) =>
+        entry.instrumentId === instrumentId
+          ? {
+              ...entry,
+              ...patch,
+            }
+          : entry,
+      ),
+    }));
+  };
+
+  const portfolioAmountTotal = useMemo(
+    () => inputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0),
+    [inputs.portfolioEntries],
+  );
+
+  const portfolioPctTotal = useMemo(
+    () => inputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.percentage || 0)), 0),
+    [inputs.portfolioEntries],
+  );
 
   const run = () => {
     setRunning(true);
     setError(null);
     setResult(null);
     try {
-      const output = runAssistedSimulation(inputs);
+      const output = runAssistedSimulation(inputs, availableInstruments);
       setResult(output);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -104,22 +169,39 @@ export function AssistedSimulationPage() {
     }
   };
 
+  const selectedCount = inputs.portfolioEntries.length;
+  const optimizeSelectionInvalid = inputs.portfolioMode === 'optimize' && ![0, 2, 3].includes(selectedCount);
+
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
         <div style={{ color: T.textPrimary, fontWeight: 800, fontSize: 18 }}>Simulación Asistida</div>
-        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 2 }}>Hoja separada para escenarios asesoría, usando motor M8 real.</div>
+        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 2 }}>
+          Hoja independiente de Simulación. Usa el motor M8 real, con portafolio construido desde instrumentos del Instrument Universe.
+        </div>
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Capital y horizonte</div>
         <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
           Capital inicial (CLP)
-          <input type="number" value={inputs.initialCapitalClp} onChange={(e) => updateInput('initialCapitalClp', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+          <input
+            type="number"
+            value={inputs.initialCapitalClp}
+            onChange={(e) => updateInput('initialCapitalClp', Number(e.target.value) || 0)}
+            style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+          />
         </label>
         <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
           Horizonte (años)
-          <input type="number" min={4} max={60} value={inputs.horizonYears} onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 40)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+          <input
+            type="number"
+            min={4}
+            max={60}
+            value={inputs.horizonYears}
+            onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 40)}
+            style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+          />
         </label>
         <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: T.textPrimary, fontSize: 12 }}>
           <input type="checkbox" checked={inputs.extraContributionEnabled} onChange={(e) => updateInput('extraContributionEnabled', e.target.checked)} />
@@ -129,11 +211,23 @@ export function AssistedSimulationPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Monto (CLP)
-              <input type="number" value={inputs.extraContributionClp} onChange={(e) => updateInput('extraContributionClp', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+              <input
+                type="number"
+                value={inputs.extraContributionClp}
+                onChange={(e) => updateInput('extraContributionClp', Number(e.target.value) || 0)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
             </label>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Año aporte
-              <input type="number" min={0} max={40} value={inputs.extraContributionYear} onChange={(e) => updateInput('extraContributionYear', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+              <input
+                type="number"
+                min={0}
+                max={40}
+                value={inputs.extraContributionYear}
+                onChange={(e) => updateInput('extraContributionYear', Number(e.target.value) || 0)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
             </label>
           </div>
         )}
@@ -142,89 +236,219 @@ export function AssistedSimulationPage() {
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Gasto</div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}><input type="radio" checked={inputs.spendingMode === 'fixed'} onChange={() => updateInput('spendingMode', 'fixed')} /> Fijo mensual</label>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}><input type="radio" checked={inputs.spendingMode === 'two_phase'} onChange={() => updateInput('spendingMode', 'two_phase')} /> Dos fases</label>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="radio" checked={inputs.spendingMode === 'fixed'} onChange={() => updateInput('spendingMode', 'fixed')} /> Fijo mensual
+          </label>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="radio" checked={inputs.spendingMode === 'two_phase'} onChange={() => updateInput('spendingMode', 'two_phase')} /> Dos fases
+          </label>
         </div>
         {inputs.spendingMode === 'fixed' ? (
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
             Gasto mensual objetivo (CLP)
-            <input type="number" value={inputs.fixedMonthlyClp} onChange={(e) => updateInput('fixedMonthlyClp', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+            <input
+              type="number"
+              value={inputs.fixedMonthlyClp}
+              onChange={(e) => updateInput('fixedMonthlyClp', Number(e.target.value) || 0)}
+              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+            />
           </label>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Fase 1 mensual
-              <input type="number" value={inputs.phase1MonthlyClp} onChange={(e) => updateInput('phase1MonthlyClp', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+              <input
+                type="number"
+                value={inputs.phase1MonthlyClp}
+                onChange={(e) => updateInput('phase1MonthlyClp', Number(e.target.value) || 0)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
             </label>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Fase 1 años
-              <input type="number" min={1} max={40} value={inputs.phase1Years} onChange={(e) => updateInput('phase1Years', Number(e.target.value) || 1)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={inputs.phase1Years}
+                onChange={(e) => updateInput('phase1Years', Number(e.target.value) || 1)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
             </label>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Fase 2 mensual
-              <input type="number" value={inputs.phase2MonthlyClp} onChange={(e) => updateInput('phase2MonthlyClp', Number(e.target.value) || 0)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
+              <input
+                type="number"
+                value={inputs.phase2MonthlyClp}
+                onChange={(e) => updateInput('phase2MonthlyClp', Number(e.target.value) || 0)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
             </label>
           </div>
         )}
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
-        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Portafolio</div>
+        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Portafolio por instrumentos reales</div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}><input type="radio" checked={inputs.portfolioMode === 'manual'} onChange={() => updateInput('portfolioMode', 'manual')} /> Manual</label>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}><input type="radio" checked={inputs.portfolioMode === 'optimize'} onChange={() => updateInput('portfolioMode', 'optimize')} /> Optimizar</label>
-        </div>
-        {inputs.portfolioMode === 'manual' ? (
-          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-            RV % (RF es complemento)
-            <input type="range" min={0} max={100} step={1} value={inputs.manualRvPct} onChange={(e) => updateInput('manualRvPct', Number(e.target.value) || 0)} />
-            <span style={{ color: T.textMuted }}>RV {inputs.manualRvPct}% · RF {100 - inputs.manualRvPct}%</span>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="radio" checked={inputs.portfolioMode === 'manual'} onChange={() => updateInput('portfolioMode', 'manual')} /> Manual
           </label>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="radio" checked={inputs.portfolioMode === 'optimize'} onChange={() => updateInput('portfolioMode', 'optimize')} /> Optimizar
+          </label>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input
+              type="radio"
+              checked={inputs.portfolioEntryMode === 'amount'}
+              onChange={() => updateInput('portfolioEntryMode', 'amount')}
+            />
+            Monto por instrumento
+          </label>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input
+              type="radio"
+              checked={inputs.portfolioEntryMode === 'percentage'}
+              onChange={() => updateInput('portfolioEntryMode', 'percentage')}
+            />
+            Porcentaje por instrumento
+          </label>
+        </div>
+
+        {availableInstruments.length === 0 ? (
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            No hay instrumentos disponibles en `instrument-universe`. Carga el JSON en Ajustes para construir portafolio en Asistida.
+          </div>
         ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textMuted, fontSize: 12 }}>
-              Fondos específicos (0, 2 o 3). Si dejas 0, optimiza solo RF/RV.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
-              {ASSISTED_FUND_OPTIONS.map((fund) => (
-                <label key={fund.id} style={{ color: T.textPrimary, fontSize: 12 }}>
+          <div style={{ display: 'grid', gap: 8, maxHeight: 220, overflow: 'auto', paddingRight: 4 }}>
+            {availableInstruments.map((instrument) => (
+              <label key={instrument.instrumentId} style={{ color: T.textPrimary, fontSize: 12, display: 'grid', gap: 3 }}>
+                <span>
                   <input
                     type="checkbox"
-                    checked={selectedSet.has(fund.id)}
-                    onChange={() => toggleFund(fund.id)}
-                  /> {fund.label}
-                </label>
-              ))}
-            </div>
-            {inputs.selectedFunds.length === 3 && (
-              <label style={{ color: T.textPrimary, fontSize: 12 }}>
-                <input type="checkbox" checked={inputs.includeTwoOfThreeCheck} onChange={(e) => updateInput('includeTwoOfThreeCheck', e.target.checked)} /> Evaluar también mejor combinación 2-de-3
+                    checked={selectedIds.has(instrument.instrumentId)}
+                    onChange={() => toggleInstrument(instrument.instrumentId)}
+                  />{' '}
+                  {instrument.label}
+                </span>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>
+                  Peso ref: {(instrument.weightPortfolio * 100).toFixed(1)}% · Monto ref: {formatMoney(instrument.amountClp)}
+                </span>
               </label>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Threshold éxito
-                <input type="number" min={0.5} max={0.99} step={0.01} value={inputs.successThreshold} onChange={(e) => updateInput('successThreshold', Number(e.target.value) || 0.85)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Paso grilla %
-                <input type="number" min={5} max={25} step={5} value={inputs.gridStepPct} onChange={(e) => updateInput('gridStepPct', Number(e.target.value) || 5)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                nSim
-                <input type="number" min={200} max={5000} step={100} value={inputs.nSim} onChange={(e) => updateInput('nSim', Number(e.target.value) || 1000)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Seed
-                <input type="number" min={1} max={999999} step={1} value={inputs.seed} onChange={(e) => updateInput('seed', Number(e.target.value) || 42)} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }} />
-              </label>
+            ))}
+          </div>
+        )}
+
+        {inputs.portfolioEntries.length > 0 && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {inputs.portfolioEntries.map((entry) => {
+              const instrument = optionsById.get(entry.instrumentId);
+              if (!instrument) return null;
+              return (
+                <div key={entry.instrumentId} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 180px', gap: 8, alignItems: 'center' }}>
+                  <div style={{ color: T.textPrimary, fontSize: 12 }}>{instrument.name}</div>
+                  {inputs.portfolioEntryMode === 'amount' ? (
+                    <input
+                      type="number"
+                      value={entry.amountClp}
+                      onChange={(e) => updateEntry(entry.instrumentId, { amountClp: Number(e.target.value) || 0 })}
+                      placeholder="Monto CLP"
+                      style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={entry.percentage}
+                      onChange={(e) => updateEntry(entry.instrumentId, { percentage: Number(e.target.value) || 0 })}
+                      placeholder="%"
+                      style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                    />
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ color: T.textMuted, fontSize: 12 }}>
+              {inputs.portfolioEntryMode === 'amount'
+                ? `Total portafolio ingresado: ${formatMoney(portfolioAmountTotal)}`
+                : `Suma porcentajes: ${portfolioPctTotal.toFixed(1)}%`}
             </div>
           </div>
         )}
+
+        {inputs.portfolioMode === 'optimize' && inputs.portfolioEntries.length === 3 && (
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="checkbox" checked={inputs.includeTwoOfThreeCheck} onChange={(e) => updateInput('includeTwoOfThreeCheck', e.target.checked)} /> Evaluar también mejor combinación 2-de-3
+          </label>
+        )}
+
+        {inputs.portfolioMode === 'optimize' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Threshold éxito
+              <input
+                type="number"
+                min={0.5}
+                max={0.99}
+                step={0.01}
+                value={inputs.successThreshold}
+                onChange={(e) => updateInput('successThreshold', Number(e.target.value) || 0.85)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Paso grilla %
+              <input
+                type="number"
+                min={5}
+                max={25}
+                step={5}
+                value={inputs.gridStepPct}
+                onChange={(e) => updateInput('gridStepPct', Number(e.target.value) || 5)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              nSim
+              <input
+                type="number"
+                min={200}
+                max={5000}
+                step={100}
+                value={inputs.nSim}
+                onChange={(e) => updateInput('nSim', Number(e.target.value) || 1000)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Seed
+              <input
+                type="number"
+                min={1}
+                max={999999}
+                step={1}
+                value={inputs.seed}
+                onChange={(e) => updateInput('seed', Number(e.target.value) || 42)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+          </div>
+        )}
+
+        {inputs.portfolioMode === 'optimize' && (
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Optimización aislada de Asistida: 0 instrumentos seleccionados = búsqueda RF/RV; 2 o 3 instrumentos = búsqueda discreta sobre instrumentos reales.
+          </div>
+        )}
+
         <button
           type="button"
           onClick={run}
-          disabled={running || (inputs.portfolioMode === 'optimize' && inputs.selectedFunds.length === 1)}
+          disabled={running || optimizeSelectionInvalid}
           style={{
             background: T.primary,
             color: '#fff',
@@ -236,10 +460,13 @@ export function AssistedSimulationPage() {
             opacity: running ? 0.7 : 1,
           }}
         >
-          {running ? 'Calculando...' : inputs.portfolioMode === 'manual' ? 'Simular' : 'Optimizar'}
+          {running ? 'Calculando...' : inputs.portfolioMode === 'manual' ? 'Simular Asistida' : 'Optimizar Asistida'}
         </button>
-        {inputs.portfolioMode === 'optimize' && inputs.selectedFunds.length === 1 && (
-          <div style={{ color: T.negative, fontSize: 12 }}>Con selección específica, el modo optimize requiere exactamente 2 o 3 fondos.</div>
+
+        {optimizeSelectionInvalid && (
+          <div style={{ color: T.negative, fontSize: 12 }}>
+            En modo optimizar, selecciona 0, 2 o 3 instrumentos reales.
+          </div>
         )}
       </div>
 
@@ -261,6 +488,11 @@ export function AssistedSimulationPage() {
               <div style={{ color: T.primary, fontSize: 20, fontWeight: 900 }}>{formatMoney(result.best.sustainableMonthlyClp)}</div>
             </div>
           </div>
+
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)} · Instrumentos seleccionados: {result.selectedInstrumentCount} · Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'}
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>Success40</div>
@@ -284,16 +516,17 @@ export function AssistedSimulationPage() {
 
           <div style={{ color: T.textSecondary, fontSize: 12 }}>
             {result.mode === 'manual'
-              ? `Modo manual ejecutado en motor M8 real.`
-              : `Optimización discreta ${inputs.gridStepPct}% (${result.evaluatedCandidates} candidatos evaluados) con objetivo de gasto sostenible sujeto a éxito mínimo ${formatPct(inputs.successThreshold)}.`}
+              ? 'Ejecución manual en motor M8 real usando instrumentos reales seleccionados en Asistida.'
+              : `Optimización discreta ${inputs.gridStepPct}% (${result.evaluatedCandidates} candidatos) con objetivo de gasto sostenible y éxito mínimo ${formatPct(inputs.successThreshold)}.`}
           </div>
-          {result.bestThreeFunds && result.bestTwoOfThree && (
+
+          {result.bestTwoOfThree && result.bestThreeInstruments && (
             <div style={{ color: T.textPrimary, fontSize: 12, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              Mejor 3 fondos: {formatMoney(result.bestThreeFunds.equivalentMonthlyClp)} · Mejor 2-de-3: {formatMoney(result.bestTwoOfThree.equivalentMonthlyClp)}.
+              Mejor 3 instrumentos: {formatMoney(result.bestThreeInstruments.equivalentMonthlyClp)} · Mejor 2-de-3: {formatMoney(result.bestTwoOfThree.equivalentMonthlyClp)}.
               {' '}
-              {result.bestTwoOfThree.equivalentMonthlyClp > result.bestThreeFunds.equivalentMonthlyClp
+              {result.bestTwoOfThree.equivalentMonthlyClp > result.bestThreeInstruments.equivalentMonthlyClp
                 ? 'La alternativa 2-de-3 es superior en este caso.'
-                : 'La combinación de 3 fondos mantiene ventaja o empate.'}
+                : 'La combinación de 3 instrumentos mantiene ventaja o empate.'}
             </div>
           )}
         </div>
