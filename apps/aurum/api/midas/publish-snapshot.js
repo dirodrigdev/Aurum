@@ -203,7 +203,7 @@ export default async function handler(req, res) {
   try {
     const db = getAdminDb();
     const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
-    console.info('[FX TRACE][Aurum API publish] write_snapshot', {
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
       docPath,
       publishedAt: normalized.snapshot.publishedAt,
       version: normalized.snapshot.version,
@@ -211,7 +211,7 @@ export default async function handler(req, res) {
       fxReferenceClpUsd: normalized.snapshot.fxReference?.clpUsd ?? null,
       fxReferenceSource: normalized.snapshot.fxReference?.source ?? null,
       uid: auth.uid,
-    });
+    })}`);
     await db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID).set(
       {
         ...normalized.snapshot,
@@ -219,16 +219,16 @@ export default async function handler(req, res) {
       },
       { merge: false },
     );
-    console.info('[FX TRACE][Aurum API publish] write_snapshot_ok', {
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot_ok ${JSON.stringify({
       docPath,
       fxReferenceClpUsd: normalized.snapshot.fxReference?.clpUsd ?? null,
       fxReferenceSource: normalized.snapshot.fxReference?.source ?? null,
-    });
+    })}`);
     return res.status(200).json({ ok: true });
   } catch (error) {
-    console.info('[FX TRACE][Aurum API publish] write_snapshot_error', {
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot_error ${JSON.stringify({
       error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',
-    });
+    })}`);
     return res.status(500).json({
       ok: false,
       error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',

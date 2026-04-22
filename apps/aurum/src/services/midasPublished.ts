@@ -354,7 +354,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
     body: JSON.stringify({ snapshot }),
   });
   try {
-    console.info('[FX TRACE][Aurum publish] snapshot_payload_sent', {
+    console.info(`[FX TRACE][Aurum publish] snapshot_payload_sent ${JSON.stringify({
       collection: PUBLISHED_COLLECTION,
       docId: OPTIMIZABLE_DOC_ID,
       publishedAt: snapshot.publishedAt,
@@ -362,7 +362,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
       snapshotMonth: snapshot.snapshotMonth,
       fxReferenceClpUsd: snapshot.fxReference?.clpUsd ?? null,
       fxReferenceSource: snapshot.fxReference?.source ?? null,
-    });
+    })}`);
   } catch {
     // ignore
   }
@@ -376,11 +376,11 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
 
   if (!response.ok || !payload?.ok) {
     try {
-      console.info('[FX TRACE][Aurum publish] snapshot_publish_response', {
+      console.info(`[FX TRACE][Aurum publish] snapshot_publish_response ${JSON.stringify({
         ok: false,
         status: response.status,
         reason: String(payload?.error || 'No pude publicar el snapshot de integración en Firestore.'),
-      });
+      })}`);
     } catch {
       // ignore
     }
@@ -392,14 +392,14 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
   }
 
   try {
-    console.info('[FX TRACE][Aurum publish] snapshot_publish_response', {
+    console.info(`[FX TRACE][Aurum publish] snapshot_publish_response ${JSON.stringify({
       ok: true,
       status: response.status,
       collection: PUBLISHED_COLLECTION,
       docId: OPTIMIZABLE_DOC_ID,
       fxReferenceClpUsd: snapshot.fxReference?.clpUsd ?? null,
       fxReferenceSource: snapshot.fxReference?.source ?? null,
-    });
+    })}`);
   } catch {
     // ignore
   }

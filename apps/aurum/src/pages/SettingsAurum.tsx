@@ -371,11 +371,11 @@ export const SettingsAurum: React.FC = () => {
 
   useEffect(() => {
     try {
-      console.info('[FX TRACE][Aurum UI] current_fx_state', {
+      console.info(`[FX TRACE][Aurum UI] current_fx_state ${JSON.stringify({
         usdClp: Number(fx?.usdClp ?? NaN),
         eurClp: Number(fx?.eurClp ?? NaN),
         ufClp: Number(fx?.ufClp ?? NaN),
-      });
+      })}`);
     } catch {
       // ignore
     }

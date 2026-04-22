@@ -320,7 +320,7 @@ const dispatchWealthDataUpdated = () => {
 const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
   if (typeof window === 'undefined') return;
   try {
-    console.info(`${FX_TRACE_PREFIX} ${stage}`, payload);
+    console.info(`${FX_TRACE_PREFIX} ${stage} ${JSON.stringify(payload)}`);
   } catch {
     // ignore
   }

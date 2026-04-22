@@ -3059,14 +3059,14 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      console.info('[FX TRACE][Midas] master_fx_resolution', {
+      console.info(`[FX TRACE][Midas] master_fx_resolution ${JSON.stringify({
         snapshotFxClpUsd: aurumFxSpotCLP,
         snapshotFxSource: aurumFxSpotSource,
         runtimeFxClpUsdInitial: Number(simParams.fx?.clpUsdInitial ?? NaN),
         resolvedSourceMode: operativeFxResolution.sourceMode,
         resolvedReasonCode: operativeFxResolution.reasonCode,
         appliedFxClp: operativeFxResolution.appliedClp,
-      });
+      })}`);
     } catch {
       // ignore
     }

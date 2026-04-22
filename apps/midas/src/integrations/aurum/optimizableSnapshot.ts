@@ -13,7 +13,7 @@ const asFiniteOrNull = (value: unknown): number | null => {
 const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
   if (typeof window === 'undefined') return;
   try {
-    console.info(`[FX TRACE][Midas] ${stage}`, payload);
+    console.info(`[FX TRACE][Midas] ${stage} ${JSON.stringify(payload)}`);
   } catch {
     // ignore
   }
