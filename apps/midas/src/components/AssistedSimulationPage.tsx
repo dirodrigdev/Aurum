@@ -176,6 +176,9 @@ export function AssistedSimulationPage() {
 
   const selectedCount = inputs.portfolioEntries.length;
   const optimizeSelectionInvalid = inputs.portfolioMode === 'optimize' && ![0, 2, 3].includes(selectedCount);
+  const resultTitle = result?.hasFeasibleSolution
+    ? 'Resultado recomendado'
+    : 'Mejor esfuerzo fuera de umbral';
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -490,16 +493,22 @@ export function AssistedSimulationPage() {
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
             <div>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Resultado recomendado</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>{resultTitle}</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 850 }}>{mixLabel(result.best.weights)}</div>
             </div>
             <div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
-                Gasto sostenible (métrica resumen equivalente mensual)
+                Gasto sostenible al horizonte ({result.horizonYears} años)
               </div>
               <div style={{ color: T.primary, fontSize: 20, fontWeight: 900 }}>{formatMoney(result.best.sustainableMonthlyClp)}</div>
             </div>
           </div>
+
+          {!result.hasFeasibleSolution && (
+            <div style={{ background: 'rgba(245,158,11,0.12)', border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, color: T.textPrimary, fontSize: 12 }}>
+              No se encontró una solución que cumpla el umbral de éxito {formatPct(result.successThreshold)} al horizonte de {result.horizonYears} años. El resultado mostrado es referencia técnica, no recomendación sostenible.
+            </div>
+          )}
 
           <div style={{ color: T.textMuted, fontSize: 12 }}>
             Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)} · Instrumentos seleccionados: {result.selectedInstrumentCount} · Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'}
@@ -512,19 +521,19 @@ export function AssistedSimulationPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Success40</div>
-              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatPct(result.best.success40)}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Éxito al horizonte</div>
+              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatPct(result.best.successAtHorizon)}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P10</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P10 al horizonte</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p10)}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P50</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P50 al horizonte</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p50)}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P90</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P90 al horizonte</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p90)}</div>
             </div>
           </div>
@@ -534,7 +543,7 @@ export function AssistedSimulationPage() {
           <div style={{ color: T.textSecondary, fontSize: 12 }}>
             {result.mode === 'manual'
               ? 'Ejecución manual en motor M8 real usando instrumentos reales seleccionados en Asistida.'
-              : `Optimización discreta ${inputs.gridStepPct}% (${result.evaluatedCandidates} candidatos) con objetivo de gasto sostenible y éxito mínimo ${formatPct(inputs.successThreshold)}.`}
+              : `Optimización discreta ${inputs.gridStepPct}% (${result.evaluatedCandidates} candidatos) con objetivo de gasto sostenible y éxito mínimo ${formatPct(result.successThreshold)} al horizonte de ${result.horizonYears} años.`}
           </div>
 
           {result.bestTwoOfThree && result.bestThreeInstruments && (

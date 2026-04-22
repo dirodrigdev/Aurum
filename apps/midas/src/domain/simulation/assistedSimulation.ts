@@ -57,11 +57,13 @@ export type AssistedCandidateResult = {
   name: string;
   weights: PortfolioWeights;
   instrumentAllocationPct: Record<string, number>;
+  meetsThreshold: boolean;
+  isBestEffort: boolean;
   sustainableMonthlyClp: number;
   phase1MonthlyClp: number;
   phase2MonthlyClp: number;
   equivalentMonthlyClp: number;
-  success40: number;
+  successAtHorizon: number;
   p10: number;
   p50: number;
   p90: number;
@@ -78,6 +80,9 @@ export type AssistedOptimizationResult = {
   effectiveInitialCapitalClp: number;
   selectedInstrumentCount: number;
   entryMode: AssistedPortfolioEntryMode;
+  horizonYears: number;
+  successThreshold: number;
+  hasFeasibleSolution: boolean;
 };
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
@@ -214,6 +219,17 @@ const resolveTerminalPercentiles = (result: SimulationResults): { p10: number; p
     p50: result.p50TerminalAllPaths ?? result.terminalWealthPercentiles[50] ?? Number.NaN,
     p90: result.terminalWealthPercentiles[75] ?? Number.NaN,
   };
+};
+
+const horizonYearsFromInput = (input: AssistedInputs): number =>
+  Math.max(4, Math.round(input.horizonYears));
+
+const filterFanChartToHorizon = (
+  result: SimulationResults,
+  input: AssistedInputs,
+): SimulationResults['fanChartData'] => {
+  const horizonYears = horizonYearsFromInput(input);
+  return (result.fanChartData ?? []).filter((point) => point.year <= horizonYears);
 };
 
 const buildSpendingPhases = (input: AssistedInputs, scale: number): SpendingPhase[] => {
@@ -444,31 +460,37 @@ const evaluateScenario = (
   return runSimulationCentral(candidate);
 };
 
-const success40 = (result: SimulationResults): number =>
+const successAtHorizon = (result: SimulationResults): number =>
+  // M8 mantiene nombres legacy success40/probRuin40, pero el input ya trae el horizonte de Asistida.
   result.success40 ?? (1 - (result.probRuin40 ?? result.probRuin));
 
 const maximizeSpendingScale = (
   base: ModelParameters,
   input: AssistedInputs,
   weights: PortfolioWeights,
-): { scale: number; result: SimulationResults } => {
+): { scale: number; result: SimulationResults; feasible: boolean } => {
   const threshold = clamp(input.successThreshold, 0.5, 0.99);
+  const zeroResult = evaluateScenario(base, input, weights, 0);
+  if (successAtHorizon(zeroResult) < threshold) {
+    return { scale: 0, result: zeroResult, feasible: false };
+  }
+
   let low = 0;
   let high = 1;
   let highResult = evaluateScenario(base, input, weights, high);
   let guard = 0;
-  while (success40(highResult) >= threshold && guard < 10) {
+  while (successAtHorizon(highResult) >= threshold && guard < 10) {
     low = high;
     high *= 1.6;
     highResult = evaluateScenario(base, input, weights, high);
     guard += 1;
   }
   let bestScale = low;
-  let bestResult = evaluateScenario(base, input, weights, Math.max(0.0001, low));
+  let bestResult = low > 0 ? evaluateScenario(base, input, weights, low) : zeroResult;
   for (let i = 0; i < 14; i += 1) {
     const mid = (low + high) / 2;
     const midResult = evaluateScenario(base, input, weights, mid);
-    if (success40(midResult) >= threshold) {
+    if (successAtHorizon(midResult) >= threshold) {
       bestScale = mid;
       bestResult = midResult;
       low = mid;
@@ -476,7 +498,7 @@ const maximizeSpendingScale = (
       high = mid;
     }
   }
-  return { scale: bestScale, result: bestResult };
+  return { scale: bestScale, result: bestResult, feasible: true };
 };
 
 const toCandidateResult = (
@@ -486,29 +508,34 @@ const toCandidateResult = (
   scale: number,
   result: SimulationResults,
   instrumentAllocationPct: Record<string, number>,
+  feasible: boolean,
 ): AssistedCandidateResult => {
   const { p10, p50, p90 } = resolveTerminalPercentiles(result);
+  const success = successAtHorizon(result);
   return {
     name,
     weights,
     instrumentAllocationPct,
+    meetsThreshold: feasible && success >= clamp(input.successThreshold, 0.5, 0.99),
+    isBestEffort: !feasible,
     sustainableMonthlyClp: equivalentMonthly(input, scale),
     phase1MonthlyClp: input.spendingMode === 'fixed' ? input.fixedMonthlyClp * scale : input.phase1MonthlyClp * scale,
     phase2MonthlyClp: input.spendingMode === 'fixed' ? input.fixedMonthlyClp * scale : input.phase2MonthlyClp * scale,
     equivalentMonthlyClp: equivalentMonthly(input, scale),
-    success40: success40(result),
+    successAtHorizon: success,
     p10,
     p50,
     p90,
-    fanChartData: result.fanChartData,
+    fanChartData: filterFanChartToHorizon(result, input),
     rawResult: result,
   };
 };
 
 const pickBest = (rows: AssistedCandidateResult[]): AssistedCandidateResult =>
   [...rows].sort((a, b) => {
+    if (a.meetsThreshold !== b.meetsThreshold) return a.meetsThreshold ? -1 : 1;
     if (b.equivalentMonthlyClp !== a.equivalentMonthlyClp) return b.equivalentMonthlyClp - a.equivalentMonthlyClp;
-    if (b.success40 !== a.success40) return b.success40 - a.success40;
+    if (b.successAtHorizon !== a.successAtHorizon) return b.successAtHorizon - a.successAtHorizon;
     return b.p50 - a.p50;
   })[0];
 
@@ -528,6 +555,8 @@ export function runAssistedSimulation(
     const allocation = manualAllocationFromEntries(input, entries);
     const manualWeights = weightsFromInstrumentAllocation(allocation, optionsById);
     const result = evaluateScenario(base, input, manualWeights, 1);
+    const success = successAtHorizon(result);
+    const feasible = success >= clamp(input.successThreshold, 0.5, 0.99);
     const row = toCandidateResult(
       `Manual instrumentos · ${labelWeights(manualWeights)}`,
       input,
@@ -535,6 +564,7 @@ export function runAssistedSimulation(
       1,
       result,
       allocation,
+      feasible,
     );
     return {
       mode: 'manual',
@@ -543,6 +573,9 @@ export function runAssistedSimulation(
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: entries.length,
       entryMode: input.portfolioEntryMode,
+      horizonYears: horizonYearsFromInput(input),
+      successThreshold: clamp(input.successThreshold, 0.5, 0.99),
+      hasFeasibleSolution: feasible,
     };
   }
 
@@ -584,7 +617,15 @@ export function runAssistedSimulation(
   const evaluated: AssistedCandidateResult[] = [];
   for (const candidate of candidates) {
     const optimal = maximizeSpendingScale(base, input, candidate.weights);
-    evaluated.push(toCandidateResult(candidate.name, input, candidate.weights, optimal.scale, optimal.result, candidate.allocation));
+    evaluated.push(toCandidateResult(
+      candidate.name,
+      input,
+      candidate.weights,
+      optimal.scale,
+      optimal.result,
+      candidate.allocation,
+      optimal.feasible,
+    ));
   }
   const best = pickBest(evaluated);
 
@@ -596,6 +637,9 @@ export function runAssistedSimulation(
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: selectedIds.length,
       entryMode: input.portfolioEntryMode,
+      horizonYears: horizonYearsFromInput(input),
+      successThreshold: clamp(input.successThreshold, 0.5, 0.99),
+      hasFeasibleSolution: best.meetsThreshold,
     };
   }
 
@@ -620,6 +664,7 @@ export function runAssistedSimulation(
           optimal.scale,
           optimal.result,
           candidate.allocation,
+          optimal.feasible,
         ),
       );
     }
@@ -636,5 +681,8 @@ export function runAssistedSimulation(
     effectiveInitialCapitalClp: effectiveInitialCapital,
     selectedInstrumentCount: selectedIds.length,
     entryMode: input.portfolioEntryMode,
+    horizonYears: horizonYearsFromInput(input),
+    successThreshold: clamp(input.successThreshold, 0.5, 0.99),
+    hasFeasibleSolution: best.meetsThreshold,
   };
 }
