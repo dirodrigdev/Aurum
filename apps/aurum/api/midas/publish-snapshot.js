@@ -140,6 +140,23 @@ const withFxReferenceFromActiveRates = (snapshot, activeRates) => {
   };
 };
 
+const mirrorLegacyFxFromFxReference = (snapshot) => {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  const clpUsd = asFiniteOrNull(snapshot.fxReference?.clpUsd);
+  if (clpUsd === null || clpUsd <= 0) return snapshot;
+  const clpEur = asFiniteOrNull(snapshot.fxReference?.clpEur);
+  const ufClp = asFiniteOrNull(snapshot.fxReference?.ufClp);
+  return {
+    ...snapshot,
+    fx: {
+      usdClp: Math.round(clpUsd),
+      ...(clpEur !== null && clpEur > 0 ? { eurClp: Math.round(clpEur) } : {}),
+      ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+      source: snapshot.fxReference?.source || 'active_fx_rates',
+    },
+  };
+};
+
 const normalizeSnapshotPayload = (raw, activeFxRatesRaw) => {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'Debes enviar snapshot en el body.' };
@@ -231,11 +248,20 @@ export default async function handler(req, res) {
   try {
     const db = getAdminDb();
     let snapshotToWrite = normalized.snapshot;
+    const payloadActiveFx = normalizeActiveFxRates(req.body?.activeFxRates);
+    snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, payloadActiveFx);
+
     if (!snapshotToWrite.fxReference || asFiniteOrNull(snapshotToWrite.fxReference.clpUsd) === null) {
       try {
         const wealthSnap = await db.collection(WEALTH_COLLECTION).doc(auth.uid).get();
         const wealthData = wealthSnap.exists ? wealthSnap.data() || {} : {};
         snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, wealthData.fx);
+        console.info(`[FX TRACE][Aurum API publish] fx_reference_backfill_attempt ${JSON.stringify({
+          uid: auth.uid,
+          payloadActiveFxClpUsd: payloadActiveFx?.clpUsd ?? null,
+          wealthFxUsdClp: asFiniteOrNull(wealthData?.fx?.usdClp) ?? null,
+          resultingFxReferenceClpUsd: snapshotToWrite?.fxReference?.clpUsd ?? null,
+        })}`);
       } catch (err) {
         console.info(`[FX TRACE][Aurum API publish] fx_reference_backfill_error ${JSON.stringify({
           error: err?.message || 'No pude leer aurum_wealth para backfill FX.',
@@ -243,6 +269,7 @@ export default async function handler(req, res) {
         })}`);
       }
     }
+    snapshotToWrite = mirrorLegacyFxFromFxReference(snapshotToWrite);
     const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
     console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
       docPath,
@@ -251,6 +278,8 @@ export default async function handler(req, res) {
       snapshotMonth: snapshotToWrite.snapshotMonth,
       fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
       fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
+      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
+      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
       uid: auth.uid,
     })}`);
     await db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID).set(
@@ -264,6 +293,8 @@ export default async function handler(req, res) {
       docPath,
       fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
       fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
+      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
+      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
     })}`);
     return res.status(200).json({ ok: true });
   } catch (error) {
