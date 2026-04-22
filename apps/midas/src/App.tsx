@@ -445,6 +445,29 @@ function deriveVisibleCapitalFromComposition(
   return Math.max(1, total);
 }
 
+function withRiskCapitalDetectionState(
+  composition: SimulationCompositionInput | null,
+  exposure: NormalizedRiskCapitalExposure,
+  enabled: boolean,
+): SimulationCompositionInput | null {
+  if (!composition) return null;
+  return {
+    ...composition,
+    nonOptimizable: {
+      ...composition.nonOptimizable,
+      riskCapital: {
+        ...(composition.nonOptimizable?.riskCapital ?? {}),
+        enabled,
+        source: composition.nonOptimizable?.riskCapital?.source ?? exposure.source ?? 'normalized-usd',
+        usdSnapshotCLP: exposure.usdSnapshotCLP,
+        usdTotal: exposure.usdTotal,
+        usd: exposure.usdTotal,
+        totalCLP: exposure.riskTotalCLP,
+      },
+    },
+  };
+}
+
 function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParameters | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -1994,6 +2017,8 @@ export default function App() {
     try {
       const appliedSnapshotSignature = getSnapshotSignature(snapshot);
       const composition = snapshotToSimulationComposition(snapshot);
+      const riskExposure = computeRiskCapital(snapshot);
+      const compositionWithDetectedRisk = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
       const compositionMode = composition?.mode ?? 'legacy';
       const hasFallbackFlags =
         composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
@@ -2002,26 +2027,9 @@ export default function App() {
       const aurumOptimizable = Number(snapshot?.optimizableInvestmentsCLP ?? NaN);
       const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
-      const riskExposure = computeRiskCapital(snapshot);
       const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
       const aurumFxSource = getAurumFxReferenceSource(snapshot);
-      const compositionWithToggle = composition
-        ? {
-            ...composition,
-            nonOptimizable: {
-              ...composition.nonOptimizable,
-              riskCapital: {
-                ...(composition.nonOptimizable?.riskCapital ?? {}),
-                enabled: riskCapitalEnabled,
-                source: composition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
-                usdSnapshotCLP: riskExposure.usdSnapshotCLP,
-                usdTotal: riskExposure.usdTotal,
-                usd: riskExposure.usdTotal,
-                totalCLP: riskExposure.riskTotalCLP,
-              },
-            },
-          }
-        : composition;
+      const compositionWithToggle = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
 
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setAurumSnapshotMonth(snapshot.snapshotMonth || null);
@@ -2888,6 +2896,8 @@ export default function App() {
       }
 
       const composition = snapshotToSimulationComposition(snapshot);
+      const riskExposure = computeRiskCapital(snapshot);
+      const compositionWithDetectedRisk = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
       const compositionMode = composition?.mode ?? 'legacy';
       const hasFallbackFlags =
         composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
@@ -2895,6 +2905,9 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setRiskCapitalCLP(riskExposure.riskTotalCLP);
+      setRiskCapitalUsdTotal(riskExposure.usdTotal);
+      setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
       setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
@@ -2912,6 +2925,24 @@ export default function App() {
       const sameAsAppliedSnapshot = snapshotSignature === lastAppliedSnapshotSignatureRef.current;
       setAurumSyncState(sameAsAppliedSnapshot ? 'synced' : 'outdated');
       if (sameAsAppliedSnapshot) {
+        if (compositionWithDetectedRisk) {
+          setBaseParams((prev) => ({
+            ...prev,
+            simulationComposition: withRiskCapitalDetectionState(
+              prev.simulationComposition ?? compositionWithDetectedRisk,
+              riskExposure,
+              riskCapitalEnabled,
+            ) ?? compositionWithDetectedRisk,
+          }));
+          setSimParams((prev) => ({
+            ...prev,
+            simulationComposition: withRiskCapitalDetectionState(
+              prev.simulationComposition ?? compositionWithDetectedRisk,
+              riskExposure,
+              riskCapitalEnabled,
+            ) ?? compositionWithDetectedRisk,
+          }));
+        }
         setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
