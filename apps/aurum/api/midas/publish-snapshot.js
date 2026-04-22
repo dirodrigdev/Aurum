@@ -112,7 +112,23 @@ const normalizeFxReference = (value) => {
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
-const normalizeSnapshotPayload = (raw) => {
+const normalizeActiveFxRates = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  const usdClp = asFiniteOrNull(value.usdClp);
+  if (usdClp === null || usdClp <= 0) return undefined;
+  const eurClp = asFiniteOrNull(value.eurClp);
+  const ufClp = asFiniteOrNull(value.ufClp);
+  const usdEur = eurClp !== null && eurClp > 0 ? usdClp / eurClp : null;
+  return {
+    clpUsd: Math.round(usdClp),
+    ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
+    ...(usdEur !== null && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    source: 'active_fx_rates',
+  };
+};
+
+const normalizeSnapshotPayload = (raw, activeFxRatesRaw) => {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'Debes enviar snapshot en el body.' };
   }
@@ -142,7 +158,7 @@ const normalizeSnapshotPayload = (raw) => {
   const totalNetWorthWithRiskCLP = asFiniteOrNull(snapshot.totalNetWorthWithRiskCLP);
   const optimizableInvestmentsWithRiskCLP = asFiniteOrNull(snapshot.optimizableInvestmentsWithRiskCLP);
   const riskCapital = normalizeRiskCapital(snapshot.riskCapital);
-  const fxReference = normalizeFxReference(snapshot.fxReference);
+  const fxReference = normalizeFxReference(snapshot.fxReference) || normalizeActiveFxRates(activeFxRatesRaw);
   const nonOptimizable =
     snapshot.nonOptimizable && typeof snapshot.nonOptimizable === 'object'
       ? {
@@ -195,7 +211,7 @@ export default async function handler(req, res) {
   const auth = await requireFirebaseAuth(req, res);
   if (!auth) return;
 
-  const normalized = normalizeSnapshotPayload(req.body?.snapshot);
+  const normalized = normalizeSnapshotPayload(req.body?.snapshot, req.body?.activeFxRates);
   if (!normalized.ok) {
     return res.status(400).json({ ok: false, error: normalized.error });
   }

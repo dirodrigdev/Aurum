@@ -247,6 +247,22 @@ const extractFxReference = (
   };
 };
 
+const ensureSnapshotFxReference = (
+  snapshot: AurumOptimizableInvestmentsSnapshot,
+  closures: WealthMonthlyClosure[],
+  activeFxRates?: WealthFxRates | null,
+): AurumOptimizableInvestmentsSnapshot => {
+  const existing = asFiniteOrNull(snapshot.fxReference?.clpUsd);
+  if (existing !== null && existing > 0) return snapshot;
+  const latestByMonth = [...closures].sort(compareClosuresByMonthDesc)[0];
+  const fallbackFx = extractFxReference(latestByMonth, activeFxRates);
+  if (!fallbackFx) return snapshot;
+  return {
+    ...snapshot,
+    fxReference: fallbackFx,
+  };
+};
+
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
   options?: { activeFxRates?: WealthFxRates | null },
@@ -326,7 +342,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
     };
   }
 
-  const snapshot = prepared.snapshot;
+  const snapshot = ensureSnapshotFxReference(prepared.snapshot, closures, options?.activeFxRates);
   const currentUser = auth.currentUser;
   if (!currentUser) {
     return {
@@ -351,7 +367,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ snapshot }),
+    body: JSON.stringify({ snapshot, activeFxRates: options?.activeFxRates ?? null }),
   });
   try {
     console.info(`[FX TRACE][Aurum publish] snapshot_payload_sent ${JSON.stringify({
