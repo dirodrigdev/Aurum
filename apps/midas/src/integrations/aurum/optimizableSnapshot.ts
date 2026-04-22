@@ -23,10 +23,18 @@ export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<Aur
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
   await ensureAurumIntegrationAuth();
-  const snap = await getDoc(doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID));
+  const ref = doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID);
+  const snap = await getDoc(ref);
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot> | undefined;
+  logFxTrace('snapshot_load_getdoc', {
+    docPath: ref.path,
+    publishedAt: (data as { publishedAt?: unknown })?.publishedAt ?? null,
+    version: (data as { version?: unknown })?.version ?? null,
+    rawFxReferenceClpUsd: (data as { fxReference?: { clpUsd?: unknown } })?.fxReference?.clpUsd ?? null,
+    rawFxReferenceSource: (data as { fxReference?: { source?: unknown } })?.fxReference?.source ?? null,
+  });
   return normalizeSnapshotData(data);
 }
 
@@ -57,6 +65,15 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
             return;
           }
           const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot>;
+          logFxTrace('snapshot_subscribe_onSnapshot', {
+            docPath: snap.ref.path,
+            fromCache: snap.metadata.fromCache,
+            hasPendingWrites: snap.metadata.hasPendingWrites,
+            publishedAt: (data as { publishedAt?: unknown })?.publishedAt ?? null,
+            version: (data as { version?: unknown })?.version ?? null,
+            rawFxReferenceClpUsd: (data as { fxReference?: { clpUsd?: unknown } })?.fxReference?.clpUsd ?? null,
+            rawFxReferenceSource: (data as { fxReference?: { source?: unknown } })?.fxReference?.source ?? null,
+          });
           const normalized = normalizeSnapshotData(data);
           listener.onValue(normalized);
         },

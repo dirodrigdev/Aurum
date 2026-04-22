@@ -1631,10 +1631,17 @@ export const loadFxRates = (): WealthFxRates => {
 
 export const saveFxRates = (rates: WealthFxRates) => {
   saveFxRatesInternal(rates);
+  const persisted = loadFxRates();
+  const savedAt = nowIso();
   logFxTrace('save_fx_rates_local', {
+    savedAt,
     usdClp: Number(rates?.usdClp ?? NaN),
     eurClp: Number(rates?.eurClp ?? NaN),
     ufClp: Number(rates?.ufClp ?? NaN),
+    persistedUsdClp: Number(persisted?.usdClp ?? NaN),
+    persistedEurClp: Number(persisted?.eurClp ?? NaN),
+    persistedUfClp: Number(persisted?.ufClp ?? NaN),
+    immediateSyncInvoked: true,
   });
   // FX operativo requiere publicación inmediata para MIDAS; evita quedarse en snapshot viejo.
   requestImmediateWealthSync();
@@ -2693,6 +2700,10 @@ export const syncWealthNow = async (): Promise<boolean> => {
 };
 
 export const requestImmediateWealthSync = () => {
+  logFxTrace('request_immediate_sync', {
+    requestedAt: nowIso(),
+    localFxUsdClp: Number(loadFxRates()?.usdClp ?? NaN),
+  });
   saveWealthSyncUiState({ status: 'dirty', at: nowIso(), message: 'Cambios sin guardar' });
   void syncWealthToCloudNow();
 };
