@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  CapitalSource,
   ManualCapitalAdjustment,
   ManualCapitalDestination,
   ModelParameters,
@@ -8,6 +9,11 @@ import type {
   ScenarioVariantId,
 } from '../domain/model/types';
 import { SCENARIO_VARIANTS } from '../domain/model/defaults';
+import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
+import type { WeightsSourceMode } from '../domain/model/officialDistribution';
+import type { OperativeFxResolution } from '../domain/model/operativeFx';
+import type { M8Input } from '../domain/simulation/m8.types';
+import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import {
@@ -27,6 +33,35 @@ type FanChartDatum = SimulationResults['fanChartData'][number] & {
   outerSpan: number;
   innerBase: number;
   innerSpan: number;
+  ruinBandTop: number;
+};
+
+type LongevityPlus5Result = {
+  success45: number;
+  drop40To45Pp: number;
+  carryAmong40: number | null;
+  terminalP50All45: number | null;
+};
+
+type TraceSeverity = 'OK' | 'Aviso' | 'Alerta';
+
+type TraceSource = {
+  human: string;
+  technical: string;
+  value: string;
+};
+
+type AppliedTraceRow = {
+  id: string;
+  name: string;
+  severity: TraceSeverity;
+  usingNow: string;
+  valueApplied: string;
+  appliedAt: string;
+  principal: TraceSource;
+  fallback: TraceSource | null;
+  reason: string;
+  impact: string;
 };
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
@@ -67,6 +102,53 @@ const formatMoneyCompact = (value: number) => {
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
 };
+
+const formatSessionMoment = (atMs: number | null) => {
+  if (atMs === null || !Number.isFinite(atMs) || atMs < 0) return 'Sin registro';
+  const seconds = atMs / 1000;
+  if (seconds < 60) return `t+${seconds.toFixed(1)}s`;
+  return `t+${(seconds / 60).toFixed(1)}min`;
+};
+
+const cloneModelParams = (params: ModelParameters): ModelParameters => JSON.parse(JSON.stringify(params)) as ModelParameters;
+
+const buildLongevityPlus5Params = (baseParams: ModelParameters): ModelParameters => {
+  const next = cloneModelParams(baseParams);
+  const extendedHorizon = next.simulation.horizonMonths + 60;
+  next.simulation = {
+    ...next.simulation,
+    horizonMonths: extendedHorizon,
+  };
+  // Supuesto explícito: se prolonga la última fase con el mismo gasto real por 60 meses.
+  const totalDuration = next.spendingPhases.reduce((sum, phase) => sum + phase.durationMonths, 0);
+  const extraMonths = Math.max(0, extendedHorizon - totalDuration);
+  if (extraMonths > 0 && next.spendingPhases.length > 0) {
+    const lastIndex = next.spendingPhases.length - 1;
+    const lastPhase = next.spendingPhases[lastIndex];
+    next.spendingPhases = next.spendingPhases.map((phase, idx) => (
+      idx === lastIndex ? { ...lastPhase, durationMonths: lastPhase.durationMonths + extraMonths } : phase
+    ));
+  }
+  return next;
+};
+
+type TrafficLight = 'green' | 'yellow' | 'red' | 'neutral';
+
+const TRAFFIC_COLORS: Record<TrafficLight, string> = {
+  green: '#32c97b',
+  yellow: '#f4b740',
+  red: '#ff6a6a',
+  neutral: '#71829b',
+};
+
+function classifyThreshold(value: number | null, thresholds: { greenMax?: number; yellowMax?: number; greenMin?: number; yellowMin?: number }): TrafficLight {
+  if (value === null || !Number.isFinite(value)) return 'neutral';
+  if (thresholds.greenMax !== undefined && value <= thresholds.greenMax) return 'green';
+  if (thresholds.yellowMax !== undefined && value <= thresholds.yellowMax) return 'yellow';
+  if (thresholds.greenMin !== undefined && value >= thresholds.greenMin) return 'green';
+  if (thresholds.yellowMin !== undefined && value >= thresholds.yellowMin) return 'yellow';
+  return 'red';
+}
 
 export function SimulationPage({
   resultCentral,
@@ -111,10 +193,17 @@ export function SimulationPage({
   distributionSourceTechnical,
   fxSpotSourceTechnical,
   nonOptimizableBlocksTechnical,
+  aurumFxSpotCLP,
+  aurumFxSpotSource,
+  operativeFxResolution,
   weightsSourceMode,
   weightsSourceLabel,
   officialReferenceWeights,
+  instrumentUniverseReferenceWeights,
+  instrumentBaseReferenceWeights,
   activeWeights,
+  auditModeEnabled,
+  auditProbe,
   applyAurumHarness,
   onApplyPendingSnapshot,
   onRunApplyAurumHarness,
@@ -127,6 +216,7 @@ export function SimulationPage({
   onSimOverridesChange,
   onUpdateParams,
   onResetSim,
+  onOpenOptimization,
 }: {
   resultCentral: SimulationResults | null;
   params: ModelParameters;
@@ -178,10 +268,39 @@ export function SimulationPage({
   distributionSourceTechnical: string;
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
-  weightsSourceMode: 'json-official' | 'last-known-official' | 'system-defaults' | 'simulation' | 'error';
+  aurumFxSpotCLP: number | null;
+  aurumFxSpotSource: string | null;
+  operativeFxResolution: OperativeFxResolution;
+  weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
   officialReferenceWeights: PortfolioWeights;
+  instrumentUniverseReferenceWeights: PortfolioWeights | null;
+  instrumentBaseReferenceWeights: PortfolioWeights | null;
   activeWeights: PortfolioWeights;
+  auditModeEnabled: boolean;
+  auditProbe: {
+    heroSource: 'simResult' | 'lastStableCentral' | 'none';
+    requestId: number | null;
+    seed: number;
+    nPaths: number;
+    capitalInitial: number;
+    capitalSource: CapitalSource;
+    sourceLabel: string;
+    riskCapitalEnabled: boolean;
+    houseInclude: boolean;
+    futureEventsCount: number;
+    inputHash: string;
+    m8Input: M8Input | null;
+    heroResult: Record<string, unknown> | null;
+    success40: number | null;
+    probRuin40: number | null;
+    probRuin20: number | null;
+    normalizationsApplied?: {
+      horizonMinForced: boolean;
+      spendingPhasesNormalized: boolean;
+      notes: string[];
+    };
+  } | null;
   applyAurumHarness: {
     status: 'idle' | 'running' | 'pass' | 'fail';
     startedAtMs: number | null;
@@ -200,14 +319,29 @@ export function SimulationPage({
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
   onResetSim: () => void;
+  onOpenOptimization: () => void;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
+  const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 760 : false
+  );
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 390 : false
+  );
   const [savingMovement, setSavingMovement] = useState(false);
   const [capitalLedgerOpen, setCapitalLedgerOpen] = useState(false);
+  const [longevityOpen, setLongevityOpen] = useState(false);
+  const [longevityRunning, setLongevityRunning] = useState(false);
+  const [longevityResult, setLongevityResult] = useState<LongevityPlus5Result | null>(null);
+  const [longevityError, setLongevityError] = useState<string | null>(null);
+  const [openTraceRows, setOpenTraceRows] = useState<Record<string, boolean>>({});
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
+  const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
@@ -218,6 +352,7 @@ export function SimulationPage({
     note: '',
   });
   const prevSimActive = useRef(false);
+  const heroCardRef = useRef<HTMLDivElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -238,6 +373,7 @@ export function SimulationPage({
       ? formatMoneyCompact(aurumSyncLatestOpt)
       : '—';
   const openCapitalLedger = useCallback(() => {
+    draftManualAdjustmentsRef.current = manualCapitalAdjustments;
     setDraftManualAdjustments(manualCapitalAdjustments);
     setCapitalLedgerOpen(true);
     setSavingMovement(false);
@@ -259,7 +395,6 @@ export function SimulationPage({
   const baseReturn = useMemo(() => computeWeightedReturn(params), [params]);
   const baseYears = Math.round(params.simulation.horizonMonths / 12);
   const baseCapital = params.capitalInitial;
-  const liquidarDeptoEnabled = params.realEstatePolicy?.enabled ?? true;
   const scenarioFromParamsRaw = params.activeScenario as unknown;
   const activeScenarioForUi: ScenarioVariantId =
     scenarioFromParamsRaw === 'base' || scenarioFromParamsRaw === 'pessimistic' || scenarioFromParamsRaw === 'optimistic'
@@ -276,6 +411,19 @@ export function SimulationPage({
       ? scenarioFromResultRaw
       : null;
   const resultSeed = resultCentral?.params?.simulation?.seed ?? null;
+  const activeCapitalSource = (resultCentral?.params?.capitalSource ?? params.capitalSource ?? 'aurum') as CapitalSource;
+  const effectiveCapitalSource = snapshotApplied && activeCapitalSource === 'aurum'
+    ? 'aurum'
+    : activeCapitalSource === 'manual'
+      ? 'manual'
+      : 'local';
+  const activeCapitalSourceLabel =
+    effectiveCapitalSource === 'aurum'
+      ? 'Aurum'
+      : effectiveCapitalSource === 'manual'
+        ? 'Manual'
+        : 'Local';
+  const effectiveBaseCapital = Number(resultCentral?.params?.capitalInitial ?? params.capitalInitial ?? 0);
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -297,6 +445,9 @@ export function SimulationPage({
   const compositionSource = (baseUpdatePending
     ? params.simulationComposition
     : resultCentral?.params?.simulationComposition) ?? params.simulationComposition;
+  const hasEffectiveRealEstate = Boolean(compositionSource?.nonOptimizable?.realEstate);
+  const liquidarDeptoConfigured = params.realEstatePolicy?.enabled ?? true;
+  const liquidarDeptoEnabled = hasEffectiveRealEstate && liquidarDeptoConfigured;
   const compositionDiagnostics = compositionSource?.diagnostics;
   const compositionMode = compositionSource?.mode ?? 'legacy';
   const diagnosticWarnings = compositionDiagnostics?.diagnosticWarnings ?? [];
@@ -374,7 +525,13 @@ export function SimulationPage({
   }, [compositionHasFallback, compositionMode]);
   const effectiveReturn = simOverrides?.returnPct ?? baseReturn;
   const effectiveYears = simOverrides?.horizonYears ?? baseYears;
-  const effectiveCapital = simOverrides?.capital ?? baseCapital;
+  // En modo bloques (full/partial), el capital visible es derivado del snapshot + bloques + ledger
+  // y debe alinearse con el capital que efectivamente usa la corrida (resultCentral.params.capitalInitial).
+  // En modo legacy sí existe un override manual directo por chip.
+  const isDerivedCapital = compositionMode !== 'legacy';
+  const effectiveCapital = isDerivedCapital
+    ? effectiveBaseCapital
+    : (simOverrides?.capital ?? baseCapital);
   const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
     if (currency === 'CLP') return amount;
     const usdToClp = params.fx?.clpUsdInitial ?? 1;
@@ -433,10 +590,14 @@ export function SimulationPage({
       note: movementForm.note?.trim() || undefined,
     };
     setDraftManualAdjustments((prev) => {
+      const nextList = editingMovementId
+        ? prev.map((item) => (item.id === next.id ? next : item))
+        : [next, ...prev];
+      draftManualAdjustmentsRef.current = nextList;
       if (editingMovementId) {
-        return prev.map((item) => (item.id === next.id ? next : item));
+        return nextList;
       }
-      return [next, ...prev];
+      return nextList;
     });
     resetMovementForm();
   }, [editingMovementId, movementForm, resetMovementForm]);
@@ -457,15 +618,19 @@ export function SimulationPage({
               note: movementForm.note?.trim() || undefined,
             };
             if (editingMovementId) {
-              return draftManualAdjustments.map((item) => (item.id === next.id ? next : item));
+              return draftManualAdjustmentsRef.current.map((item) => (item.id === next.id ? next : item));
             }
-            return [next, ...draftManualAdjustments];
+            return [next, ...draftManualAdjustmentsRef.current];
           })()
-        : draftManualAdjustments;
+        : draftManualAdjustmentsRef.current;
       onCommitManualCapitalAdjustments(ledgerToCommit);
       closeCapitalLedger();
     }, 0);
-  }, [closeCapitalLedger, draftManualAdjustments, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
+  }, [closeCapitalLedger, editingMovementId, movementForm, onCommitManualCapitalAdjustments]);
+
+  useEffect(() => {
+    draftManualAdjustmentsRef.current = draftManualAdjustments;
+  }, [draftManualAdjustments]);
 
   useEffect(() => {
     if (simActive && !prevSimActive.current) {
@@ -484,6 +649,17 @@ export function SimulationPage({
     }
   }, [simActive]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onResize = () => {
+      setIsMobileViewport(window.innerWidth <= 760);
+      setIsCompactViewport(window.innerWidth <= 390);
+    };
+    onResize();
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const displayResult = hideResultBlocks ? null : resultCentral;
   const heroResult = heroPhase === 'ready' ? displayResult : heroPhase === 'stale' ? lastStableCentral : null;
   const showGhostResult = heroPhase === 'stale' && simUiState !== 'error';
@@ -497,34 +673,138 @@ export function SimulationPage({
         ? T.negative
         : T.textMuted;
   const probSuccess = displayResult ? 1 - displayResult.probRuin : null;
+  const success40 = displayResult
+    ? displayResult.success40 ?? (1 - (displayResult.probRuin40 ?? displayResult.probRuin))
+    : null;
+  const probRuin40 = displayResult?.probRuin40 ?? displayResult?.probRuin ?? null;
+  const probRuin20 = displayResult?.probRuin20 ?? null;
   const heroProbSuccess = heroResult ? 1 - heroResult.probRuin : null;
   const ruinMedian = displayResult?.ruinTimingMedian ?? null;
+  const ruinP10 = displayResult?.ruinTimingP10 ?? null;
   const ruinP25 = displayResult?.ruinTimingP25 ?? null;
   const ruinP75 = displayResult?.ruinTimingP75 ?? null;
+  const ruinP90 = displayResult?.ruinTimingP90 ?? null;
   const ruinWindowLabel = ruinP25 !== null && ruinP75 !== null
-    ? `${Math.round(ruinP25 / 12)}–${Math.round(ruinP75 / 12)}`
+    ? `${ruinP25.toFixed(1)}–${ruinP75.toFixed(1)} años`
     : '—';
-  const ruinTypicalLabel = ruinMedian !== null ? `${Math.round(ruinMedian / 12)}` : '—';
+  const ruinTypicalLabel = ruinMedian !== null ? `${ruinMedian.toFixed(1)} años` : '—';
+  const firstRuinRelevantLabel = ruinP10 !== null ? `${ruinP10.toFixed(1)} años` : '—';
+  const ruinCentral80Label = ruinP10 !== null && ruinP90 !== null
+    ? `${ruinP10.toFixed(1)}–${ruinP90.toFixed(1)} años`
+    : '—';
+  const ruinHumanSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
+    ? `Si falla, normalmente ocurre entre los años ${ruinP25.toFixed(1)} y ${ruinP75.toFixed(1)} (año típico: ${ruinMedian.toFixed(1)}).`
+    : 'Si falla, el motor estima el timing de ruina solo sobre los escenarios que efectivamente fracasan.';
+  const heroRuinSummary = ruinMedian !== null && ruinP25 !== null && ruinP75 !== null
+    ? isMobileViewport
+      ? `Si falla: típico ${ruinMedian.toFixed(1)} años · rango ${ruinP25.toFixed(1)}–${ruinP75.toFixed(1)}`
+      : ruinHumanSummary
+    : ruinHumanSummary;
   const spendRatio = displayResult?.spendingRatioMedian ?? null;
   const p50AllPaths = displayResult?.p50TerminalAllPaths ?? displayResult?.terminalWealthPercentiles[50] ?? null;
   const p50Survivors = displayResult?.p50TerminalSurvivors ?? displayResult?.terminalWealthPercentiles[50] ?? null;
+  const houseSalePct = displayResult?.houseSalePct ?? null;
+  const triggerYearMedian = displayResult?.triggerYearMedian ?? null;
+  const saleYearMedian = displayResult?.saleYearMedian ?? null;
+  const cutScenarioPct = displayResult?.cutScenarioPct ?? null;
+  const cutSeverityMean = displayResult?.cutSeverityMean ?? null;
+  const firstCutYearMedian = displayResult?.firstCutYearMedian ?? null;
+  const drawdownP50 = displayResult?.maxDrawdownPercentiles?.[50] ?? null;
+  const cutShare = displayResult?.cutTimeShare ?? null;
+  const houseSaleSummary =
+    houseSalePct !== null && Number.isFinite(houseSalePct)
+      ? `Venta de casa en ${(houseSalePct * 100).toFixed(1)}% de escenarios`
+      : 'Venta de casa: —';
+  const heroProbRuinLine = {
+    label: 'Prob. ruina',
+    detail: `${probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'} · si falla: mediana a. ${
+      ruinMedian !== null && Number.isFinite(ruinMedian) ? ruinMedian.toFixed(1) : '—'
+    }`,
+  };
+  const heroHouseCostLine =
+    houseSalePct !== null && Number.isFinite(houseSalePct)
+      ? houseSalePct > 0
+        ? {
+            label: 'Casa',
+            detail: `${(houseSalePct * 100).toFixed(1)}% escenarios · venta mediana a. ${
+              saleYearMedian !== null && Number.isFinite(saleYearMedian) ? saleYearMedian.toFixed(1) : '—'
+            }`,
+          }
+        : { label: 'Casa', detail: 'No se activa' }
+      : { label: 'Casa', detail: 'No disponible' };
+  const heroCutCostLine =
+    cutScenarioPct !== null && Number.isFinite(cutScenarioPct)
+      ? cutScenarioPct > 0
+        ? {
+            label: 'Cuts',
+            detail: `${(cutScenarioPct * 100).toFixed(1)}% escenarios · recorte medio ${
+              cutSeverityMean !== null && Number.isFinite(cutSeverityMean) ? `${(cutSeverityMean * 100).toFixed(1)}%` : '—'
+            } · 1er cut a. ${
+              firstCutYearMedian !== null && Number.isFinite(firstCutYearMedian) ? firstCutYearMedian.toFixed(1) : '—'
+            }`,
+          }
+        : { label: 'Cuts', detail: 'No se activan' }
+      : { label: 'Cuts', detail: 'No disponible' };
+  const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
+  const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
+  const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
+  const houseSaleLight = classifyThreshold(houseSalePct, { greenMax: 0.10, yellowMax: 0.30 });
+  const drawdownLight = classifyThreshold(drawdownP50, { greenMax: 0.20, yellowMax: 0.35 });
+  const earlyRuinLight = classifyThreshold(ruinP10, { greenMin: 12, yellowMin: 6 });
   const rawFanChart = displayResult && Array.isArray(displayResult.fanChartData)
     ? displayResult.fanChartData
     : [];
+  const breakEvenWealth = useMemo(() => {
+    const fromYear0 = rawFanChart.length > 0 ? Number(rawFanChart[0].p50) : Number.NaN;
+    if (Number.isFinite(fromYear0) && fromYear0 > 0) return fromYear0;
+    return Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0 ? effectiveBaseCapital : 0;
+  }, [effectiveBaseCapital, rawFanChart]);
+  const ruinAlertTop = useMemo(() => {
+    if (!Number.isFinite(breakEvenWealth) || breakEvenWealth <= 0) return 0;
+    return Math.max(1, breakEvenWealth * 0.06);
+  }, [breakEvenWealth]);
   const fanChartData: FanChartDatum[] = rawFanChart.map((point) => ({
     ...point,
     outerBase: point.p5,
     outerSpan: Math.max(0, point.p95 - point.p5),
     innerBase: point.p25,
     innerSpan: Math.max(0, point.p75 - point.p25),
+    ruinBandTop: ruinAlertTop,
   }));
-  const percentileRows = [10, 25, 50, 75, 90] as const;
+  const percentileRows = useMemo(() => {
+    if (!displayResult) return [] as number[];
+    const candidates = [25, 50, 75] as const;
+    return candidates.filter((p) => {
+      const survivorValue = p === 50
+        ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+        : p === 25
+          ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+          : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+      const allPathsValue = p === 50
+        ? displayResult.p50TerminalAllPaths
+        : p === 25
+          ? displayResult.terminalP25AllPaths
+          : displayResult.terminalP75AllPaths;
+      return Number.isFinite(survivorValue) || Number.isFinite(allPathsValue);
+    });
+  }, [displayResult]);
+  const activeGenerator = useMemo(() => {
+    const raw = displayResult?.params?.generatorType ?? params.generatorType ?? 'student_t';
+    if (raw === 'student_t') return 'Student-t (df 7)';
+    if (raw === 'gaussian_iid') return 'Gaussiano IID';
+    if (raw === 'two_regime') return 'Two-regime (suave)';
+    return String(raw);
+  }, [displayResult?.params?.generatorType, params.generatorType]);
   const eurRate = params.fx.clpUsdInitial * params.fx.usdEurFixed;
   const rawFanYears = rawFanChart.at(-1)?.year ?? 40;
   const fanChartYears = Number.isFinite(rawFanYears)
     ? Math.max(5, Math.ceil(rawFanYears / 5) * 5)
     : 40;
   const fanChartTicks = Array.from({ length: Math.floor(fanChartYears / 5) }, (_, idx) => (idx + 1) * 5);
+  const fanChartTicksMobile = Array.from(
+    { length: Math.max(1, Math.floor(fanChartYears / 10)) },
+    (_, idx) => (idx + 1) * 10
+  ).filter((tick) => tick <= fanChartYears);
   const successValues = [
     probSuccess !== null ? probSuccess * 100 : null,
   ].filter((value): value is number => Number.isFinite(value));
@@ -544,7 +824,11 @@ export function SimulationPage({
     setActiveChip(chip);
     if (chip === 'return') setDraftValue((effectiveReturn * 100).toFixed(2));
     if (chip === 'years') setDraftValue(String(effectiveYears));
-    if (chip === 'capital') setDraftValue(String(Math.round(effectiveCapital)));
+    if (chip === 'capital') {
+      // Si el capital es derivado (bloques), no permitimos edición manual engañosa.
+      if (isDerivedCapital) return;
+      setDraftValue(String(Math.round(effectiveCapital)));
+    }
   };
 
   const restoreFieldFromScenario = useCallback((field: 'return' | 'years') => {
@@ -609,10 +893,322 @@ export function SimulationPage({
   }, []);
   const activeWeightSummary = formatWeightMix(activeWeights);
   const officialWeightSummary = formatWeightMix(officialReferenceWeights);
+  const universeWeightSummary = instrumentUniverseReferenceWeights
+    ? formatWeightMix(instrumentUniverseReferenceWeights)
+    : 'No disponible';
+  const instrumentBaseWeightSummary = instrumentBaseReferenceWeights
+    ? formatWeightMix(instrumentBaseReferenceWeights)
+    : 'No disponible';
+  const spendingPhases = useMemo(() => normalizeModelSpendingPhases(params), [params]);
+  const spendingPhaseLabels = useMemo(() => buildSpendingPhaseUiLabels(spendingPhases), [spendingPhases]);
+  const formatPct = (value: number | null | undefined, digits = 1) =>
+    value !== null && value !== undefined && Number.isFinite(value)
+      ? `${(value * 100).toFixed(digits)}%`
+      : '—';
+  const compactMixSummary = useMemo(() => {
+    const weights = params.weights;
+    const rv = (weights.rvGlobal + weights.rvChile) * 100;
+    const rf = (weights.rfGlobal + weights.rfChile) * 100;
+    return `RV ${rv.toFixed(1)} / RF ${rf.toFixed(1)}`;
+  }, [params.weights]);
+  const compactSpendSummary = useMemo(
+    () => spendingPhases
+      .map((phase, idx) => `F${idx + 1} ${formatMillionsMM(phase.amountReal / 1_000_000)}`)
+      .join(' · '),
+    [spendingPhases],
+  );
+  const lastTimelineAtMs = runtimeTimeline.length > 0
+    ? runtimeTimeline[runtimeTimeline.length - 1].atMs
+    : null;
+  const lastAutoAppliedAtMs = useMemo(() => {
+    const events = runtimeTimeline.filter((entry) =>
+      entry.event === 'snapshot_applied' ||
+      entry.event === 'capital_visible_updated',
+    );
+    if (events.length === 0) return null;
+    return events[events.length - 1].atMs;
+  }, [runtimeTimeline]);
+  const riskInCompositionRaw = Number(compositionSource?.nonOptimizable?.riskCapital?.totalCLP ?? 0);
+  const riskDetectedClp = Number.isFinite(riskInCompositionRaw) && riskInCompositionRaw > 0
+    ? riskInCompositionRaw
+    : Math.max(0, Number(riskCapitalCLP ?? 0));
+  const mixComparisonWeights = instrumentUniverseReferenceWeights ?? instrumentBaseReferenceWeights ?? officialReferenceWeights;
+  const mixDiffPp = useMemo(() => {
+    const sumAbs = Math.abs(activeWeights.rvGlobal - mixComparisonWeights.rvGlobal)
+      + Math.abs(activeWeights.rfGlobal - mixComparisonWeights.rfGlobal)
+      + Math.abs(activeWeights.rvChile - mixComparisonWeights.rvChile)
+      + Math.abs(activeWeights.rfChile - mixComparisonWeights.rfChile);
+    return (sumAbs * 100) / 2;
+  }, [activeWeights, mixComparisonWeights]);
+  const aurumPrimaryFxClp = Number(operativeFxResolution.aurumCurrentClp ?? NaN);
+  const hasAurumPrimaryFx = operativeFxResolution.aurumCurrentAvailable;
+  const primaryFxClp = hasAurumPrimaryFx && Number.isFinite(aurumPrimaryFxClp) && aurumPrimaryFxClp > 0
+    ? aurumPrimaryFxClp
+    : null;
+  const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
+  const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
+  const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
+    ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
+    : null;
+  const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
+  const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
+    && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
+    ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
+    : null;
+  const appliedTraceRows = useMemo<AppliedTraceRow[]>(() => {
+    const aurumSeverity: TraceSeverity = snapshotApplied
+      ? 'OK'
+      : aurumDiffPct !== null && aurumDiffPct > 0.05
+        ? 'Alerta'
+        : 'Aviso';
+    const aurumReason = snapshotApplied
+      ? 'Se usa la fuente principal porque el snapshot Aurum ya fue aplicado al escenario.'
+      : hasPendingSnapshot
+        ? 'Se usa respaldo porque hay snapshot detectado pendiente de aplicar.'
+        : aurumIntegrationStatus === 'missing' || aurumIntegrationStatus === 'error' || aurumIntegrationStatus === 'unconfigured'
+          ? 'Se usa respaldo porque la fuente principal no está disponible.'
+          : 'Se usa respaldo por fallback activo del sistema en esta sesión.';
+
+    let riskSeverity: TraceSeverity = 'OK';
+    if (riskCapitalEnabled && riskDetectedClp <= 0) riskSeverity = 'Alerta';
+    else if (riskCapitalEnabled && !riskCapitalEffective) riskSeverity = 'Alerta';
+    else if (!riskCapitalEnabled && riskDetectedClp > 0) riskSeverity = 'Aviso';
+    const riskReason = riskCapitalEnabled
+      ? riskDetectedClp > 0
+        ? 'Se aplicó porque el toggle está encendido y hay capital de riesgo detectado.'
+        : 'No se aplicó porque no hay capital detectado en la fuente principal.'
+      : riskDetectedClp > 0
+        ? 'Se detectó el dato, pero no se aplica porque el toggle está apagado.'
+        : 'Toggle apagado y sin capital detectado, no corresponde aplicar.';
+
+    let mixSeverity: TraceSeverity;
+    if (weightsSourceMode === 'instrument-universe') mixSeverity = 'OK';
+    else if (weightsSourceMode === 'simulation') mixSeverity = mixDiffPp > 2 ? 'Alerta' : 'Aviso';
+    else if (mixDiffPp > 2) mixSeverity = 'Alerta';
+    else mixSeverity = 'Aviso';
+    const mixFallbackName =
+      weightsSourceMode === 'instrument-base'
+        ? 'Base instrumental real'
+        : weightsSourceMode === 'system-defaults'
+          ? 'Defaults del sistema'
+          : weightsSourceMode === 'simulation'
+            ? 'Override manual temporal'
+            : weightsSourceMode === 'json-official'
+              ? 'Base instrumental real'
+              : weightsSourceMode === 'last-known-official'
+                ? 'Último oficial válido'
+                : 'Sin respaldo usable';
+    const mixFallbackTech =
+      weightsSourceMode === 'instrument-base'
+        ? 'midas.instrument-base.v1'
+        : weightsSourceMode === 'system-defaults'
+          ? 'DEFAULT_PARAMETERS.weights'
+          : weightsSourceMode === 'simulation'
+            ? 'weightsSourceMode=simulation'
+            : weightsSourceMode === 'json-official'
+              ? 'officialDistribution / midas.instrument-base.v1'
+              : weightsSourceMode === 'last-known-official'
+                ? 'lastKnownOfficialWeights'
+                : 'weightsSourceMode=error';
+    const mixReason = weightsSourceMode === 'instrument-universe'
+      ? 'Se usa la fuente principal porque Instrument Universe está disponible y se pudo derivar a sleeves de Simulación.'
+      : weightsSourceMode === 'simulation'
+        ? 'Se usa override manual temporal de Simulación; no reemplaza la fuente estructural.'
+        : weightsSourceMode === 'instrument-base'
+          ? 'Se usa respaldo porque Instrument Universe no está disponible o no alcanza para derivar el mix.'
+          : mixDiffPp <= 0.5
+            ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
+            : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
+
+    const fxSeverity: TraceSeverity = (() => {
+      if (operativeFxResolution.reasonCode === 'aurum_current_applied') return 'OK';
+      if (operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied') return 'Alerta';
+      return 'Aviso';
+    })();
+    const fxReason = operativeFxResolution.reasonCode === 'aurum_current_applied'
+      ? 'Se usa la fuente principal correcta de Aurum (FX current publicado).'
+      : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+        ? 'Aurum publica FX current, pero el runtime está aplicando fallback operativo.'
+        : `Se usa fallback porque Aurum no publica un FX current usable (${fxSpotSourceTechnical}).`;
+
+    return [
+      {
+        id: 'aurum',
+        name: 'Aurum importado',
+        severity: aurumSeverity,
+        usingNow: snapshotApplied
+          ? 'Aurum (snapshot aplicado)'
+          : 'Base local MIDAS',
+        valueApplied: formatMoneyCompact(effectiveBaseCapital),
+        appliedAt: formatSessionMoment(lastAutoAppliedAtMs),
+        principal: {
+          human: 'Aurum',
+          technical: 'Aurum published optimizable snapshot',
+          value: aurumSyncLatestOpt !== null && Number.isFinite(aurumSyncLatestOpt)
+            ? formatMoneyCompact(aurumSyncLatestOpt)
+            : 'No disponible',
+        },
+        fallback: {
+          human: 'Base local MIDAS',
+          technical: 'baseParams.simulationComposition',
+          value: aurumSyncBaseOpt !== null && Number.isFinite(aurumSyncBaseOpt)
+            ? formatMoneyCompact(aurumSyncBaseOpt)
+            : formatMoneyCompact(effectiveBaseCapital),
+        },
+        reason: aurumReason,
+        impact: aurumDiffPct === null
+          ? 'Sin comparación material disponible'
+          : aurumDiffPct > 0.05
+            ? `Diferencia material ${(aurumDiffPct * 100).toFixed(2)}%`
+            : aurumDiffPct > 0.01
+              ? `Diferencia moderada ${(aurumDiffPct * 100).toFixed(2)}%`
+              : `Sin diferencia material (${(aurumDiffPct * 100).toFixed(2)}%)`,
+      },
+      {
+        id: 'risk-capital',
+        name: 'Capital de riesgo',
+        severity: riskSeverity,
+        usingNow: riskCapitalEffective
+          ? 'Aurum (riskCapital)'
+          : 'No aplicado',
+        valueApplied: riskCapitalEffective ? formatMoneyCompact(riskDetectedClp) : formatMoneyCompact(0),
+        appliedAt: formatSessionMoment(lastTimelineAtMs),
+        principal: {
+          human: 'Aurum',
+          technical: 'simulationComposition.nonOptimizable.riskCapital',
+          value: riskDetectedClp > 0 ? formatMoneyCompact(riskDetectedClp) : 'No detectado',
+        },
+        fallback: null,
+        reason: riskReason,
+        impact: riskCapitalEffective
+          ? 'Aplicado correctamente al escenario'
+          : riskDetectedClp > 0
+            ? 'Detectado, no aplicado por toggle'
+            : 'Sin impacto (no disponible)',
+      },
+      {
+        id: 'distribution',
+        name: 'Distribución / mix',
+        severity: mixSeverity,
+        usingNow: `${weightsSourceLabel} (${weightsSourceMode})`,
+        valueApplied: activeWeightSummary,
+        appliedAt: formatSessionMoment(lastTimelineAtMs),
+        principal: {
+          human: 'Instrument Universe',
+          technical: 'midas.instrument-universe.v1',
+          value: universeWeightSummary,
+        },
+        fallback: {
+          human: mixFallbackName,
+          technical: mixFallbackTech,
+          value: weightsSourceMode === 'system-defaults'
+            ? officialWeightSummary
+            : weightsSourceMode === 'simulation'
+              ? instrumentBaseWeightSummary
+              : instrumentBaseWeightSummary,
+        },
+        reason: mixReason,
+        impact: mixDiffPp > 2
+          ? `Diferencia material ${mixDiffPp.toFixed(2)} pp`
+          : mixDiffPp > 0.5
+            ? `Diferencia moderada ${mixDiffPp.toFixed(2)} pp`
+            : `Sin diferencia material (${mixDiffPp.toFixed(2)} pp)`,
+      },
+      {
+        id: 'fx',
+        name: 'FX operativo',
+        severity: fxSeverity,
+        usingNow: usingPrimaryFx
+          ? 'Aurum online/manual'
+          : 'FX operativo del motor',
+        valueApplied: `USD/CLP ${formatNumber(backupFxClp)}`,
+        appliedAt: formatSessionMoment(lastTimelineAtMs),
+        principal: {
+          human: 'Aurum online/manual',
+          technical: primaryFxTechnical,
+          value: Number.isFinite(primaryFxClp) && primaryFxClp !== null
+            ? `USD/CLP ${formatNumber(primaryFxClp)}`
+            : 'No disponible',
+        },
+        fallback: {
+          human: 'FX operativo del motor',
+          technical: 'params.fx.clpUsdInitial',
+          value: `USD/CLP ${formatNumber(backupFxClp)}`,
+        },
+        reason: fxReason,
+        impact: fxDiffPct === null
+          ? 'Sin comparación material disponible'
+          : !usingPrimaryFx && hasAurumPrimaryFx
+            ? `Diferencia vs FX activo de Aurum ${(fxDiffPct * 100).toFixed(2)}%`
+          : fxDiffPct > 0.01
+            ? `Diferencia material ${(fxDiffPct * 100).toFixed(2)}%`
+          : fxDiffPct > 0.0025
+              ? `Diferencia moderada ${(fxDiffPct * 100).toFixed(2)}%`
+              : `Sin diferencia material (${(fxDiffPct * 100).toFixed(2)}%)`,
+      },
+    ];
+  }, [
+    activeWeightSummary,
+    aurumDiffPct,
+    aurumIntegrationStatus,
+    aurumSyncBaseOpt,
+    aurumSyncLatestOpt,
+    backupFxClp,
+    aurumFxSpotCLP,
+    aurumFxSpotSource,
+    operativeFxResolution,
+    effectiveBaseCapital,
+    fxDiffPct,
+    hasAurumPrimaryFx,
+    usingPrimaryFx,
+    formatNumber,
+    fxSpotSourceTechnical,
+    hasPendingSnapshot,
+    instrumentBaseWeightSummary,
+    lastAutoAppliedAtMs,
+    lastTimelineAtMs,
+    mixDiffPp,
+    officialWeightSummary,
+    primaryFxClp,
+    primaryFxTechnical,
+    riskCapitalEffective,
+    riskCapitalEnabled,
+    riskDetectedClp,
+    snapshotApplied,
+    universeWeightSummary,
+    weightsSourceMode,
+    weightsSourceLabel,
+  ]);
+  const traceStatusCounts = useMemo(() => ({
+    ok: appliedTraceRows.filter((row) => row.severity === 'OK').length,
+    warning: appliedTraceRows.filter((row) => row.severity === 'Aviso').length,
+    alert: appliedTraceRows.filter((row) => row.severity === 'Alerta').length,
+  }), [appliedTraceRows]);
+  const toggleTraceRow = useCallback((id: string) => {
+    setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+  const stickyStatusLabel = isRecalculating
+    ? 'Recalculando...'
+    : simUiState === 'error'
+      ? 'Error de simulación'
+      : displayResult
+        ? 'Resultado actual'
+        : 'Sin resultado actual';
+  const stickySuccess40 = isRecalculating ? null : success40;
+  const stickyRuin20 = isRecalculating ? null : probRuin20;
+  const stickyHouseSalePct = isRecalculating ? null : houseSalePct;
+  const stickyDrawdownP50 = isRecalculating ? null : drawdownP50;
+  const scrollToSummary = useCallback(() => {
+    heroCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
-      const next = { ...prev, spendingPhases: prev.spendingPhases.map((p, i) => (i === index ? { ...p, amountReal: amount } : p)) };
+      const normalizedPrevPhases = normalizeModelSpendingPhases(prev);
+      const next = {
+        ...prev,
+        spendingPhases: normalizedPrevPhases.map((p, i) => (i === index ? { ...p, amountReal: amount } : p)),
+      };
       return next;
     });
   };
@@ -665,13 +1261,8 @@ export function SimulationPage({
     });
   };
 
-  const handleEditBase = () => {
-    if (window.confirm('Vas a modificar la configuración base guardada. ¿Quieres continuar?')) {
-      window.alert('Editar modelo base aún no está disponible.');
-    }
-  };
-
   const toggleLiquidarDepto = () => {
+    if (!hasEffectiveRealEstate) return;
     onUpdateParams((prev) => ({
       ...prev,
       realEstatePolicy: {
@@ -694,59 +1285,159 @@ export function SimulationPage({
       },
     }));
   };
+  const runLongevityPlus5 = useCallback(async () => {
+    if (longevityRunning || !displayResult) return;
+    setLongevityRunning(true);
+    setLongevityError(null);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const shadow45 = runSimulationCentral(buildLongevityPlus5Params(params));
+      const success45 = shadow45.success40 ?? (1 - (shadow45.probRuin40 ?? shadow45.probRuin));
+      const success40Base = displayResult.success40 ?? (1 - (displayResult.probRuin40 ?? displayResult.probRuin));
+      const carryAmong40 = success40Base > 0 ? (success45 / success40Base) : null;
+      setLongevityResult({
+        success45,
+        drop40To45Pp: (success40Base - success45) * 100,
+        carryAmong40,
+        terminalP50All45: shadow45.p50TerminalAllPaths ?? null,
+      });
+    } catch (error) {
+      setLongevityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLongevityRunning(false);
+    }
+  }, [displayResult, longevityRunning, params]);
+
+  useEffect(() => {
+    setLongevityResult(null);
+    setLongevityError(null);
+  }, [params]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
+      <div aria-hidden="true" style={{ height: isMobileViewport ? 104 : 58, flex: '0 0 auto' }} />
       <div
         style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 35,
-          background: 'rgba(11, 16, 24, 0.92)',
-          border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: '8px 10px',
-          backdropFilter: 'blur(6px)',
+          position: 'fixed',
+          top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
+          left: isMobileViewport ? 10 : 16,
+          right: isMobileViewport ? 10 : 16,
+          zIndex: 80,
+          pointerEvents: 'none',
         }}
       >
-        {isRecalculating ? (
-          <div style={{ color: T.primary, fontSize: 12, fontWeight: 700 }}>Calculando…</div>
-        ) : displayResult && probSuccess !== null ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(probSuccess * 100).toFixed(1)}%</div>
+        <div
+          onClick={scrollToSummary}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              scrollToSummary();
+            }
+          }}
+          style={{
+            background: 'rgba(11, 16, 24, 0.96)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            padding: isMobileViewport ? '7px 8px' : '8px 12px',
+            backdropFilter: 'blur(10px)',
+            color: T.textPrimary,
+            fontSize: isMobileViewport ? 11 : 12,
+            fontWeight: 650,
+            lineHeight: 1.25,
+            cursor: 'pointer',
+            boxShadow: '0 8px 22px rgba(0,0,0,0.18)',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
+              gap: isMobileViewport ? 6 : 12,
+              alignItems: 'center',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+              <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>
+                Success40
+              </span>
+              <span style={{ fontSize: isMobileViewport ? 20 : 24, fontWeight: 850, color: stickySuccess40 !== null ? T.primary : T.textMuted }}>
+                {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
+              </span>
+              <span style={{ color: isRecalculating ? T.primary : T.textMuted, fontSize: 10, fontWeight: 800 }}>
+                {stickyStatusLabel}
+              </span>
             </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina {ruinWindowLabel}</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{(100 - (probSuccess * 100)).toFixed(1)}%</div>
-            </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>Ruina típica</div>
-              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>{ruinTypicalLabel}</div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isMobileViewport ? 'flex-start' : 'flex-end',
+                gap: isMobileViewport ? 6 : 8,
+                flexWrap: 'wrap',
+                minWidth: 0,
+              }}
+            >
+              {[
+                ['Ruin20', formatPct(stickyRuin20)],
+                ['Casa', formatPct(stickyHouseSalePct)],
+                ['MaxDD P50', formatPct(stickyDrawdownP50)],
+                ['Mix', compactMixSummary],
+                ['Gasto', compactSpendSummary],
+              ].map(([label, value]) => (
+                <span
+                  key={label}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    maxWidth: label === 'Gasto' ? (isMobileViewport ? '100%' : 360) : undefined,
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '4px 7px' : '5px 8px',
+                    color: T.textPrimary,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap' }}>{label}</span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 750,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {value}
+                  </span>
+                </span>
+              ))}
             </div>
           </div>
-        ) : (
-          <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>Simulación en espera</div>
-        )}
+        </div>
       </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
-            borderRadius: 12,
-            padding: '8px 10px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
             color: T.textPrimary,
-            fontSize: 11,
+            fontSize: isMobileViewport ? 10 : 11,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 10,
+            flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
           }}
         >
-          <span>Nueva base Aurum disponible · {pendingSnapshotLabel}</span>
+          <span style={{ lineHeight: 1.3 }}>Nueva base Aurum disponible · {pendingSnapshotLabel}</span>
           <button
             type="button"
             onClick={onApplyPendingSnapshot}
@@ -755,9 +1446,9 @@ export function SimulationPage({
               background: T.primary,
               border: 'none',
               color: '#fff',
-              borderRadius: 10,
-              padding: '6px 10px',
-              fontSize: 11,
+              borderRadius: 9,
+              padding: isMobileViewport ? '5px 8px' : '6px 10px',
+              fontSize: isMobileViewport ? 10 : 11,
               fontWeight: 700,
               cursor: pendingSnapshotApplying ? 'not-allowed' : 'pointer',
               opacity: pendingSnapshotApplying ? 0.6 : 1,
@@ -773,18 +1464,19 @@ export function SimulationPage({
           style={{
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
-            borderRadius: 12,
-            padding: '8px 10px',
+            borderRadius: 10,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
             color: T.textPrimary,
-            fontSize: 11,
+            fontSize: isMobileViewport ? 10 : 11,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 10,
+            flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
           }}
         >
-          <span>
+          <span style={{ lineHeight: 1.3 }}>
             Aurum ya sincronizado · Base {baseOptLabel} · Aurum {latestOptLabel} · Δ {diffAbsLabel}
           </span>
           <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
@@ -794,152 +1486,362 @@ export function SimulationPage({
         style={{
           background: T.surface,
           border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: 10,
+          borderRadius: 10,
+          padding: isMobileViewport ? '7px 8px' : '8px 10px',
           display: 'grid',
-          gridTemplateColumns: 'minmax(0,1fr) minmax(0,220px)',
-          gap: 12,
-          alignItems: 'start',
+          gap: 6,
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-              const active = activeScenarioForUi === variant.id;
-              return (
-                <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <button
-                    type="button"
-                    onClick={() => onScenarioChange(variant.id)}
-                    disabled={isRecalculating}
-                    style={{
-                      background: active ? T.primary : T.surfaceEl,
-                      border: `1px solid ${active ? T.primary : T.border}`,
-                      color: active ? '#fff' : T.textSecondary,
-                      borderRadius: 999,
-                      padding: '6px 11px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
-                    }}
-                  >
-                    {variant.label}
-                  </button>
-                  {active && isScenarioAdjusted ? (
-                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Ajustada</span>
-                  ) : null}
-                </div>
-              );
-            })}
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+            Datos aplicados automáticamente
           </div>
-          <div>
-            <button
-              type="button"
-              onClick={onRestoreScenarioPreset}
-              disabled={isRecalculating}
-              style={{
-                background: T.surfaceEl,
-                border: `1px solid ${T.border}`,
-                color: T.textSecondary,
-                borderRadius: 999,
-                padding: '6px 10px',
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                opacity: isRecalculating ? 0.6 : 1,
-              }}
-            >
-              Restaurar ajustes del escenario
-            </button>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+            {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button
-            type="button"
-            onClick={toggleLiquidarDepto}
-            disabled={isRecalculating}
-            style={{
-              background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
-              border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
-              color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-              borderRadius: 10,
-              padding: '8px 10px',
-              fontSize: 11,
-              fontWeight: 700,
-              textAlign: 'left',
-              cursor: isRecalculating ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating ? 0.65 : 1,
-            }}
-          >
-            Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : 'OFF'}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleRiskCapital}
-            disabled={isRecalculating}
-            style={{
-              background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
-              border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-              color: riskCapitalEnabled
-                ? '#f6d38d'
-                : T.textSecondary,
-              borderRadius: 10,
-              padding: '8px 10px',
-              fontSize: 11,
-              fontWeight: 700,
-              textAlign: 'left',
-              cursor: isRecalculating ? 'not-allowed' : 'pointer',
-              opacity: isRecalculating ? 0.65 : 1,
-            }}
-          >
-            Incluir capital de riesgo · {riskToggleCopy}
-          </button>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              background: T.surfaceEl,
-              border: `1px solid ${T.border}`,
-              borderRadius: 10,
-              padding: '8px 10px',
-            }}
-          >
-            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
-              Simulaciones Monte Carlo
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {nSimOptions.map((nSimOption) => {
-                const active = currentNSim === nSimOption;
-                return (
-                  <button
-                    key={nSimOption}
-                    type="button"
-                    onClick={() => setNSim(nSimOption)}
-                    disabled={isRecalculating}
+        <div style={{ display: 'grid', gap: 5 }}>
+          {appliedTraceRows.map((row) => {
+            const isOpen = Boolean(openTraceRows[row.id]);
+            const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
+            return (
+              <div
+                key={row.id}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  borderRadius: 8,
+                  padding: isMobileViewport ? '5px 7px' : '6px 9px',
+                  display: 'grid',
+                  gap: 4,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleTraceRow(row.id)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    padding: 0,
+                    margin: 0,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    color: 'inherit',
+                    display: 'grid',
+                    gap: 2,
+                  }}
+                >
+                  <div
                     style={{
-                      flex: 1,
-                      background: active ? T.primary : T.surface,
-                      border: `1px solid ${active ? T.primary : T.border}`,
-                      color: active ? '#fff' : T.textSecondary,
-                      borderRadius: 999,
-                      padding: '6px 8px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
                     }}
                   >
-                    {nSimOption}
-                  </button>
-                );
-              })}
-            </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+                        {row.name}
+                      </span>
+                      <span
+                        style={{
+                          color: severityColor,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          background: 'rgba(148,163,184,0.12)',
+                          border: '1px solid rgba(148,163,184,0.25)',
+                          borderRadius: 999,
+                          padding: '2px 7px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {row.severity}
+                      </span>
+                    </div>
+                    <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
+                      {isOpen ? '▴' : '▾'}
+                    </span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Respaldo: {row.fallback
+                        ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
+                        : 'Sin respaldo definido'}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                      Cuándo: {row.appliedAt}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: isMobileViewport ? 6 : 8,
+        }}
+      >
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            Base activa
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
+            {activeCapitalSourceLabel}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>{patrimonioSourceTechnical}</div>
+        </div>
+        <div
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            Capital base efectivo
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
+            {formatMoneyCompact(effectiveBaseCapital)}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>
+            Corrida actual · {formatCapital(effectiveBaseCapital)}
           </div>
         </div>
       </div>
-      <div style={{ position: 'relative' }}>
+      {auditModeEnabled && auditProbe && (
+        <div
+          style={{
+            background: 'rgba(91, 140, 255, 0.08)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: '10px 12px',
+            color: T.textPrimary,
+            fontSize: 11,
+            display: 'grid',
+            gap: 4,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontWeight: 800, color: T.primary }}>Auditoría determinista</div>
+            <button
+              type="button"
+              onClick={async () => {
+                const payload = JSON.stringify(auditProbe, null, 2);
+                if (navigator.clipboard?.writeText) {
+                  await navigator.clipboard.writeText(payload);
+                  return;
+                }
+                window.prompt('Copia la auditoría JSON', payload);
+              }}
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surface,
+                color: T.textPrimary,
+                borderRadius: 999,
+                fontSize: 10,
+                fontWeight: 800,
+                padding: '5px 9px',
+                cursor: 'pointer',
+              }}
+            >
+              Copiar auditoría JSON
+            </button>
+          </div>
+          <div>Hero source: {auditProbe.heroSource} · requestId: {auditProbe.requestId ?? '—'}</div>
+          <div>Seed: {auditProbe.seed} · n_paths: {auditProbe.nPaths} · input hash: {auditProbe.inputHash}</div>
+          {auditProbe.normalizationsApplied && auditProbe.normalizationsApplied.notes.length > 0 && (
+            <div>Normalizaciones: {auditProbe.normalizationsApplied.notes.join(' · ')}</div>
+          )}
+          <div>
+            capital_initial_clp: {formatCapital(auditProbe.capitalInitial)} · capital_source: {auditProbe.capitalSource} · sourceLabel: {auditProbe.sourceLabel}
+          </div>
+          <div>
+            riskCapitalEnabled: {auditProbe.riskCapitalEnabled ? 'ON' : 'OFF'} · house.include_house: {auditProbe.houseInclude ? 'true' : 'false'} · future_events: {auditProbe.futureEventsCount}
+          </div>
+          <div>
+            Success40: {auditProbe.success40 !== null ? `${(auditProbe.success40 * 100).toFixed(2)}%` : '—'} · ProbRuin40: {auditProbe.probRuin40 !== null ? `${(auditProbe.probRuin40 * 100).toFixed(2)}%` : '—'} · ProbRuin20: {auditProbe.probRuin20 !== null ? `${(auditProbe.probRuin20 * 100).toFixed(2)}%` : '—'}
+          </div>
+        </div>
+      )}
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: isMobileViewport ? 8 : 10,
+          display: 'grid',
+          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
+          gap: isMobileViewport ? 8 : 12,
+          alignItems: 'start',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+            const active = activeScenarioForUi === variant.id;
+            return (
+              <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => onScenarioChange(variant.id)}
+                  disabled={isRecalculating}
+                  style={{
+                    background: active ? T.primary : T.surfaceEl,
+                    border: `1px solid ${active ? T.primary : T.border}`,
+                    color: active ? '#fff' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '5px 9px' : '6px 11px',
+                    fontSize: isMobileViewport ? 10 : 11,
+                    fontWeight: 700,
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.65 : 1,
+                  }}
+                >
+                  {variant.label}
+                </button>
+                {active && isScenarioAdjusted ? (
+                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={toggleLiquidarDepto}
+          disabled={isRecalculating || !hasEffectiveRealEstate}
+          style={{
+            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
+            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+            color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            textAlign: 'left',
+            cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+          }}
+        >
+          Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+        </button>
+        <button
+          type="button"
+          onClick={onRestoreScenarioPreset}
+          disabled={isRecalculating}
+          style={{
+            background: T.surfaceEl,
+            border: `1px solid ${T.border}`,
+            color: T.textSecondary,
+            borderRadius: 999,
+            padding: isMobileViewport ? '5px 9px' : '6px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating ? 0.6 : 1,
+          }}
+        >
+          Restaurar ajustes del escenario
+        </button>
+        <button
+          type="button"
+          onClick={onToggleRiskCapital}
+          disabled={isRecalculating}
+          style={{
+            background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
+            border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+            color: riskCapitalEnabled
+              ? '#f6d38d'
+              : T.textSecondary,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '8px 10px',
+            fontSize: isMobileViewport ? 10 : 11,
+            fontWeight: 700,
+            textAlign: 'left',
+            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+            opacity: isRecalculating ? 0.65 : 1,
+          }}
+        >
+          Incluir capital de riesgo · {riskToggleCopy}
+        </button>
+        <div
+          style={{
+            gridColumn: '1 / -1',
+            display: 'grid',
+            gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
+            alignItems: 'center',
+            gap: 8,
+            background: T.surfaceEl,
+            border: `1px solid ${T.border}`,
+            borderRadius: 9,
+            padding: isMobileViewport ? '6px 8px' : '7px 10px',
+          }}
+        >
+          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Monte Carlo
+          </div>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+            {nSimOptions.map((nSimOption) => {
+              const active = currentNSim === nSimOption;
+              return (
+                <button
+                  key={nSimOption}
+                  type="button"
+                  onClick={() => setNSim(nSimOption)}
+                  disabled={isRecalculating}
+                  style={{
+                    background: active ? T.primary : T.surface,
+                    border: `1px solid ${active ? T.primary : T.border}`,
+                    color: active ? '#fff' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                    fontSize: isMobileViewport ? 10 : 11,
+                    fontWeight: 700,
+                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                    opacity: isRecalculating ? 0.65 : 1,
+                    minWidth: isMobileViewport ? 52 : 60,
+                  }}
+                >
+                  {nSimOption}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div ref={heroCardRef} style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -956,10 +1858,40 @@ export function SimulationPage({
               : heroPhase !== 'ready'
               ? 'Calculando simulación...'
               : displayResult
-                ? `${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} simulaciones en ruina`
+                ? (
+                  <span style={{ display: 'grid', gap: 4 }}>
+                    <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
+                    <span
+                      style={{
+                        display: 'grid',
+                        gap: 3,
+                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                      }}
+                    >
+                      {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
+                        <span
+                          key={item.label}
+                          style={{
+                            display: 'grid',
+                            gap: 1,
+                            padding: '4px 6px',
+                            borderRadius: 8,
+                            background: T.surfaceEl,
+                            border: `1px solid ${T.border}`,
+                          }}
+                        >
+                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+                            {item.label}
+                          </span>
+                          <span>{item.detail}</span>
+                        </span>
+                      ))}
+                    </span>
+                  </span>
+                )
                 : 'Corre una simulación para ver resultados'
           }
-          ruinCopy={ruinMedian ? `Timing mediano Año ${(ruinMedian / 12).toFixed(1)}` : 'Timing mediano: —'}
+          footerContent={null}
           mode={simActive ? 'sim' : 'real'}
           chips={[
             { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
@@ -969,7 +1901,7 @@ export function SimulationPage({
               id: 'capital',
               value: formatCapital(effectiveCapital),
               note: hasFutureAdjustments ? '+ futuros' : undefined,
-              onClick: () => openChip('capital'),
+              onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
               accessory: (
                 <button
                   type="button"
@@ -1122,43 +2054,279 @@ export function SimulationPage({
           </div>
         )}
       </div>
-
-      {!hideResultBlocks && displayResult && probSuccess !== null && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
-          <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>PROBABILIDAD DE ÉXITO</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
-              <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMin)}%`}</span>
-            <div style={{ position: 'relative', flex: 1, height: 8, background: T.border, borderRadius: 999 }}>
-              {probSuccess !== null && (() => {
-                const successPct = probSuccess * 100;
-                const left = mapSuccessPct(successPct);
-                const zoneColor = successPct >= 90 ? T.positive : successPct >= 80 ? T.warning : T.negative;
-                return (
-                  <span
-                    title={`Éxito: ${successPct.toFixed(1)}%`}
-                    style={{
-                      position: 'absolute',
-                      left: `${left}%`,
-                      top: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      width: 14,
-                      height: 14,
-                      borderRadius: '50%',
-                      border: `2px solid ${zoneColor}`,
-                      background: zoneColor,
-                      opacity: 0.95,
-                      display: 'block',
-                    }}
-                  />
-                );
-              })()}
-            </div>
-            <span style={{ color: T.textMuted, fontSize: 11, whiteSpace: 'nowrap' }}>{`${Math.round(successAxisMax)}%`}</span>
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={keyMetricsOpen}
+          onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 14,
+            padding: isMobileViewport ? '8px 10px' : '10px 12px',
+          }}
+        >
+          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 800, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 42 : 38 }}>
+            <span>Lectura ampliada</span>
+            <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
+          </summary>
+          <div
+            style={{
+              marginTop: 8,
+              display: 'grid',
+              gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(170px, 1fr))',
+              gap: isMobileViewport ? 8 : 10,
+            }}
+          >
+            <MetricTile
+              compact={isMobileViewport}
+              label="Ruina a 40 años"
+              value={probRuin40 !== null ? `${(probRuin40 * 100).toFixed(1)}%` : '—'}
+              tone="negative"
+              traffic={ruin40Light}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label="Ruina a 20 años"
+              value={probRuin20 !== null ? `${(probRuin20 * 100).toFixed(1)}%` : '—'}
+              traffic={ruin20Light}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Patrimonio terminal típico (todos los escenarios)" info="P50 considerando todos los escenarios simulados, incluidos los que llegan a ruina." />}
+              value={p50AllPaths !== null ? formatCapital(p50AllPaths) : '—'}
+              tone="primary"
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Patrimonio terminal típico (sobrevivientes)" info="P50 considerando solo escenarios que terminan solventes al final del horizonte." />}
+              value={p50Survivors !== null ? formatCapital(p50Survivors) : '—'}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Gasto ejecutado vs plan" info="Proporción de gasto efectivamente ejecutado respecto del plan base." />}
+              value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Tiempo en recorte" info="Porcentaje del tiempo total en que el gasto operó bajo recortes (cut1 o cut2)." />}
+              value={displayResult.cutTimeShare !== undefined ? `${(displayResult.cutTimeShare * 100).toFixed(1)}%` : '—'}
+              traffic={cutTimeLight}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Drawdown máximo" info="Máxima caída relativa desde el peak de patrimonio en cada escenario; se resume en percentiles." />}
+              value={
+                `P50 ${((displayResult.maxDrawdownPercentiles[50] ?? 0) * 100).toFixed(1)}% · ` +
+                `P75 ${((displayResult.maxDrawdownPercentiles[75] ?? 0) * 100).toFixed(1)}% · ` +
+                `P90 ${((displayResult.maxDrawdownPercentiles[90] ?? 0) * 100).toFixed(1)}%`
+              }
+              fullMobile={isMobileViewport}
+              traffic={drawdownLight}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Casa como amortiguador" info="Indica en qué escenarios se activa venta de casa y en qué momento se gatilla/ejecuta." />}
+              value={
+                houseSalePct !== null && houseSalePct > 0
+                  ? `Venta ${(houseSalePct * 100).toFixed(1)}% · Disparo ${triggerYearMedian !== null ? `año ${triggerYearMedian.toFixed(1)}` : '—'} · Venta ${saleYearMedian !== null ? `año ${saleYearMedian.toFixed(1)}` : '—'}`
+                  : 'No se activa en los escenarios simulados'
+              }
+              fullMobile={isMobileViewport}
+              traffic={houseSaleLight}
+            />
+            <MetricTile
+              compact={isMobileViewport}
+              label={<LabelWithInfo label="Primeras ruinas relevantes" info="P10 del año de ruina condicional: considera solo escenarios que sí fracasan." />}
+              value={firstRuinRelevantLabel}
+              subvalue={`80% central: ${ruinCentral80Label}`}
+              traffic={earlyRuinLight}
+            />
           </div>
-        </div>
+          <div style={{ marginTop: 7, color: T.textSecondary, fontSize: isMobileViewport ? 10 : 11 }}>
+            {houseSaleSummary}
+          </div>
+
+          <details
+            open={moreMetricsOpen}
+            onToggle={(e) => setMoreMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
+            style={{
+              marginTop: isMobileViewport ? 10 : 12,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 12,
+              padding: isMobileViewport ? '8px 10px' : '10px 12px',
+            }}
+          >
+            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: isMobileViewport ? '9px 4px' : '4px 2px', minHeight: isMobileViewport ? 40 : 36 }}>
+              <span>Lectura analítica y técnica</span>
+              <span style={{ color: T.textMuted }}>{moreMetricsOpen ? '▴' : '▾'}</span>
+            </summary>
+            <div style={{ marginTop: 8, display: 'grid', gap: isMobileViewport ? 10 : 12 }}>
+              <MetricGroup
+                title="Supervivencia y ruina"
+                compact={isMobileViewport}
+                items={[
+                  { label: 'Probabilidad de éxito (40 años)', value: `${((displayResult.success40 ?? (1 - displayResult.probRuin)) * 100).toFixed(1)}%` },
+                  { label: 'Ruina condicional (P25–P75)', value: ruinWindowLabel },
+                  { label: 'Año típico de ruina (condicional)', value: ruinTypicalLabel },
+                  { label: 'Banda de incertidumbre (ruina)', value: `Ruina ${(displayResult.uncertaintyBand.low * 100).toFixed(1)}% – ${(displayResult.uncertaintyBand.high * 100).toFixed(1)}%` },
+                ]}
+              />
+              <MetricGroup
+                title="Consumo y recortes"
+                compact={isMobileViewport}
+                items={[
+                  { label: 'Gasto ejecutado tramo 2', value: displayResult.spendFactorPhase2 !== undefined ? `${(displayResult.spendFactorPhase2 * 100).toFixed(1)}%` : '—' },
+                  { label: 'Gasto ejecutado tramo 3', value: displayResult.spendFactorPhase3 !== undefined ? `${(displayResult.spendFactorPhase3 * 100).toFixed(1)}%` : '—' },
+                  {
+                    label: 'Meses de recorte',
+                    value:
+                      displayResult.spendFactorCutMonths !== undefined ||
+                      displayResult.spendFactorNoCutMonths !== undefined ||
+                      displayResult.spendFactorCut1Months !== undefined ||
+                      displayResult.spendFactorCut2Months !== undefined
+                        ? `Cut ${(displayResult.spendFactorCutMonths ?? 0).toFixed(1)} · Sin cut ${(displayResult.spendFactorNoCutMonths ?? 0).toFixed(1)} · C1 ${(displayResult.spendFactorCut1Months ?? 0).toFixed(1)} · C2 ${(displayResult.spendFactorCut2Months ?? 0).toFixed(1)}`
+                        : '—',
+                  },
+                  {
+                    label: 'Tiempo en estrés / recortes',
+                    value: `Estrés ${((displayResult.stressTimeShare ?? 0) * 100).toFixed(1)}% · C1 ${((displayResult.cut1TimeShare ?? 0) * 100).toFixed(1)}% · C2 ${((displayResult.cut2TimeShare ?? 0) * 100).toFixed(1)}%`,
+                  },
+                ]}
+              />
+              <MetricGroup
+                title="Patrimonio terminal"
+                compact={isMobileViewport}
+                items={[
+                  { label: 'P25 todos los escenarios', value: displayResult.terminalP25AllPaths !== undefined ? formatCapital(displayResult.terminalP25AllPaths) : '—' },
+                  { label: 'P25 solo sobrevivientes', value: displayResult.terminalP25IfSuccess !== undefined ? formatCapital(displayResult.terminalP25IfSuccess) : '—' },
+                  { label: 'P75 todos los escenarios', value: displayResult.terminalP75AllPaths !== undefined ? formatCapital(displayResult.terminalP75AllPaths) : '—' },
+                  { label: 'P75 solo sobrevivientes', value: displayResult.terminalP75IfSuccess !== undefined ? formatCapital(displayResult.terminalP75IfSuccess) : '—' },
+                ]}
+              />
+              <MetricGroup
+                title="Motor y soporte"
+                compact={isMobileViewport}
+                items={[
+                  { label: 'Generador activo', value: activeGenerator },
+                  {
+                    label: 'Escenarios simulados',
+                    value: Array.isArray(displayResult.terminalWealthAllPaths) ? `${displayResult.terminalWealthAllPaths.length}` : '—',
+                  },
+                ]}
+              />
+            </div>
+          </details>
+        </details>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          type="button"
+          onClick={onOpenOptimization}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            color: T.textSecondary,
+            borderRadius: 999,
+            padding: '6px 10px',
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: 'pointer',
+          }}
+        >
+          Explorar optimización
+        </button>
+      </div>
+
+      {!hideResultBlocks && displayResult && (
+        <details
+          open={longevityOpen}
+          onToggle={(e) => setLongevityOpen((e.currentTarget as HTMLDetailsElement).open)}
+          style={{
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            padding: isMobileViewport ? '8px 10px' : '10px 12px',
+          }}
+        >
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: T.textPrimary,
+              fontWeight: 700,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 10,
+              padding: isMobileViewport ? '9px 4px' : '4px 2px',
+              minHeight: isMobileViewport ? 40 : 36,
+            }}
+          >
+            <span>Prórroga +5 años</span>
+            <span style={{ color: T.textMuted }}>{longevityOpen ? '▾' : '▸'}</span>
+          </summary>
+          {longevityOpen ? (
+            <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.35 }}>
+                Explora cuánto aguanta este escenario si necesitara durar cinco años más. Esta métrica no cambia el resultado oficial a 40 años.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <button
+                  type="button"
+                  onClick={runLongevityPlus5}
+                  disabled={longevityRunning}
+                  style={{
+                    background: longevityRunning ? T.surface : T.primary,
+                    border: `1px solid ${longevityRunning ? T.border : T.primary}`,
+                    color: longevityRunning ? T.textMuted : '#fff',
+                    borderRadius: 999,
+                    padding: isMobileViewport ? '6px 10px' : '6px 12px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: longevityRunning ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {longevityRunning ? 'Calculando prórroga +5…' : 'Calcular prórroga +5'}
+                </button>
+              </div>
+              {longevityError ? (
+                <div style={{ color: T.negative, fontSize: 11 }}>
+                  {longevityError}
+                </div>
+              ) : null}
+              {longevityResult ? (
+                <div
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: isMobileViewport ? '9px 10px' : '10px 12px',
+                    display: 'grid',
+                    gap: 4,
+                    color: T.textSecondary,
+                    fontSize: isMobileViewport ? 11 : 12,
+                  }}
+                >
+                  <div>Éxito 45 años: {((longevityResult.success45 ?? 0) * 100).toFixed(1)}%</div>
+                  <div>
+                    Caída 40 → 45: {longevityResult.drop40To45Pp >= 0 ? '-' : '+'}{Math.abs(longevityResult.drop40To45Pp).toFixed(1)} pp
+                  </div>
+                  <div>
+                    Prórroga +5 entre quienes llegaron a 40:{' '}
+                    {longevityResult.carryAmong40 !== null ? `${(longevityResult.carryAmong40 * 100).toFixed(1)}%` : 'No disponible'}
+                  </div>
+                  <div>
+                    Terminal P50 all a 45:{' '}
+                    {longevityResult.terminalP50All45 !== null ? formatCapital(longevityResult.terminalP50All45) : '—'}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{
@@ -1181,11 +2349,11 @@ export function SimulationPage({
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-                {params.spendingPhases.map((phase, idx) => (
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                {spendingPhases.map((phase, idx) => (
                   <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <span style={{ color: T.textSecondary, fontSize: 11 }}>
-                      Tramo {idx + 1} ({Math.round(phase.durationMonths / 12)} años)
+                      {spendingPhaseLabels[idx]?.title ?? `Tramo ${idx + 1}`}
                     </span>
                     <input
                       type="text"
@@ -1203,6 +2371,9 @@ export function SimulationPage({
                   </label>
                 ))}
               </div>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Generador: <span style={{ color: T.textSecondary, fontWeight: 700 }}>{activeGenerator}</span>
             </div>
 
             <div>
@@ -1224,7 +2395,7 @@ export function SimulationPage({
                   Activa: {activeWeightSummary}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Base oficial: {officialWeightSummary}
+                  Fuente estructural: {officialWeightSummary}
                 </div>
                 <div>
                   <button
@@ -1244,12 +2415,12 @@ export function SimulationPage({
                       opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
                     }}
                   >
-                    Restaurar distribución oficial
+                    Restaurar fuente estructural
                   </button>
                 </div>
               </div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
                   <input
@@ -1287,7 +2458,7 @@ export function SimulationPage({
 
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
                   <input
@@ -1343,30 +2514,11 @@ export function SimulationPage({
         )}
       </div>
 
-      {!hideResultBlocks && (
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
-          gap: 10,
-        }}
-      >
-        <InfoCard
-          label="Gasto modelado / planificado"
-          value={spendRatio !== null ? `${(spendRatio * 100).toFixed(1)}%` : '—'}
-        />
-        <InfoCard
-          label="Patrimonio P50 (todos los paths)"
-          value={p50AllPaths !== null ? `$${formatMillionsMM(p50AllPaths / 1e6)}` : '—'}
-        />
-      </div>
-      )}
-
       {!hideResultBlocks && displayResult && (
         <>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>FAN CHART</div>
+              <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>TRAYECTORIAS SIMULADAS (TODOS LOS ESCENARIOS)</div>
               <div
                 style={{
                   color: T.textSecondary,
@@ -1381,25 +2533,25 @@ export function SimulationPage({
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={isMobileViewport ? 200 : 240}>
                 <AreaChart data={fanChartData} margin={{ top: 8, right: 6, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
                   <XAxis
                     dataKey="year"
                     type="number"
                     domain={[0, fanChartYears]}
-                    ticks={fanChartTicks}
-                    tick={{ fill: T.textMuted, fontSize: 10 }}
+                    ticks={isMobileViewport ? fanChartTicksMobile : fanChartTicks}
+                    tick={{ fill: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}
                     tickFormatter={(v: number | string) => String(v)}
                     stroke={T.border}
                     tickMargin={8}
                     label={{ value: 'Años', position: 'insideBottom', offset: -2, fill: T.textMuted, fontSize: 11 }}
                   />
                   <YAxis
-                    tick={{ fill: T.textMuted, fontSize: 10 }}
+                    tick={{ fill: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}
                     tickFormatter={(v: number | string) => formatMillionsMM(Number(v))}
                     stroke={T.border}
-                    width={46}
+                    width={isMobileViewport ? 40 : 46}
                   />
                   <Tooltip
                     contentStyle={{
@@ -1449,72 +2601,163 @@ export function SimulationPage({
                     isAnimationActive={false}
                     dot={false}
                   />
+                  <Area
+                    type="monotone"
+                    dataKey="ruinBandTop"
+                    stroke="none"
+                    fill={T.negative}
+                    fillOpacity={0.12}
+                    isAnimationActive={false}
+                    dot={false}
+                  />
                   <Line type="monotone" dataKey="p50" stroke={T.primary} strokeWidth={2.5} dot={false} />
                   <Line type="monotone" dataKey="p10" stroke={T.negative} strokeWidth={1} strokeDasharray="3 3" dot={false} />
-                  <ReferenceLine y={0} stroke={T.negative} strokeDasharray="4 2" />
-                  <ReferenceLine x={5} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={10} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={15} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={20} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={25} stroke={T.metalDeep} strokeDasharray="2 3" />
-                  <ReferenceLine x={30} stroke={T.metalDeep} strokeDasharray="2 3" />
+                  <ReferenceLine
+                    y={breakEvenWealth}
+                    stroke={T.warning}
+                    strokeWidth={2.2}
+                    label={isMobileViewport ? undefined : {
+                      value: 'Ganancia 0',
+                      fill: T.warning,
+                      fontSize: 11,
+                      position: 'insideTopRight',
+                    }}
+                  />
+                  <ReferenceLine y={0} stroke={T.negative} strokeOpacity={0.75} strokeDasharray="4 2" strokeWidth={1.1} />
+                  {(isMobileViewport ? [10, 20, 30, 40] : [5, 10, 15, 20, 25, 30, 35, 40])
+                    .filter((x) => x <= fanChartYears)
+                    .map((x) => (
+                      <ReferenceLine key={x} x={x} stroke={T.metalDeep} strokeDasharray="2 3" />
+                    ))}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Años en cortes de 5</span>
-              <span>Fases marcadas en la barra</span>
+              <span>Franja roja: zona de ruina · Línea roja punteada: wealth = 0 · Línea ámbar: ganancia 0</span>
+              <span>Eje temporal anual</span>
             </div>
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
-              PERCENTILES (sobrevivientes)
+              PERCENTILES TERMINALES (SOBREVIVIENTES VS TODOS)
             </div>
-            <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '56px repeat(3, minmax(0, 1fr))',
-                  gap: 0,
-                  background: T.surfaceEl,
-                  color: T.textMuted,
-                  fontSize: 11,
-                  padding: '10px 12px',
-                  borderBottom: `1px solid ${T.border}`,
-                }}
-              >
-                <span>P</span>
-                <span>CLP real</span>
-                <span>EUR equiv</span>
-                <span>DD máx</span>
+            {isMobileViewport ? (
+              <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                {percentileRows.map((p) => {
+                  const clpSurvivors = p === 25
+                    ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+                    : p === 50
+                      ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+                      : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+                  const clpAll = p === 25
+                    ? displayResult.terminalP25AllPaths
+                    : p === 50
+                      ? displayResult.p50TerminalAllPaths
+                      : displayResult.terminalP75AllPaths;
+                  const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
+                  const dd = displayResult.maxDrawdownPercentiles[p];
+                  const highlight = p === 50;
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: isCompactViewport ? '9px 10px' : '10px 12px',
+                        display: 'grid',
+                        gap: 5,
+                      }}
+                    >
+                      <div style={{ color: highlight ? T.primary : T.textMuted, fontWeight: 800, fontSize: 12 }}>P{p}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>Sobrevivientes</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                            {Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>Todos los escenarios</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>EUR (sobrev.)</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ color: T.textSecondary, fontSize: 11 }}>DD máx (todos)</span>
+                          <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11 }}>
+                            {Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              {percentileRows.map((p) => {
-                const clp = displayResult.terminalWealthPercentiles[p];
-                const eur = clp / eurRate / 1e6;
-                const dd = displayResult.maxDrawdownPercentiles[p];
-                const highlight = p === 50;
-                return (
-                  <div
-                    key={p}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '56px repeat(3, minmax(0, 1fr))',
-                      gap: 0,
-                      padding: '10px 12px',
-                      background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
-                      borderBottom: p === 90 ? 'none' : `1px solid ${T.border}`,
-                      color: highlight ? T.primary : T.textPrimary,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
-                  <span style={{ ...css.mono, fontWeight: 700 }}>{`$${formatMillionsMM(clp / 1e6)}`}</span>
-                  <span style={{ ...css.mono }}>{`€${formatMillionsMM(eur)}`}</span>
-                    <span style={{ ...css.mono }}>{`${(dd * 100).toFixed(1)}%`}</span>
-                  </div>
-                );
-              })}
-            </div>
+            ) : (
+              <div style={{ marginTop: 8, overflow: 'hidden', border: `1px solid ${T.border}`, borderRadius: 10 }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
+                    gap: 0,
+                    background: T.surfaceEl,
+                    color: T.textMuted,
+                    fontSize: 11,
+                    padding: '10px 12px',
+                    borderBottom: `1px solid ${T.border}`,
+                  }}
+                >
+                  <span>P</span>
+                  <span>Patrimonio terminal (sobrevivientes)</span>
+                  <span>Patrimonio terminal (todos)</span>
+                  <span>EUR equiv (sobrevivientes)</span>
+                  <span>DD máx (todos)</span>
+                </div>
+                {percentileRows.map((p, rowIdx) => {
+                  const clpSurvivors = p === 25
+                    ? displayResult.terminalP25IfSuccess ?? displayResult.terminalWealthPercentiles[25]
+                    : p === 50
+                      ? displayResult.p50TerminalSurvivors ?? displayResult.terminalWealthPercentiles[50]
+                      : displayResult.terminalP75IfSuccess ?? displayResult.terminalWealthPercentiles[75];
+                  const clpAll = p === 25
+                    ? displayResult.terminalP25AllPaths
+                    : p === 50
+                      ? displayResult.p50TerminalAllPaths
+                      : displayResult.terminalP75AllPaths;
+                  const eur = Number.isFinite(clpSurvivors) ? clpSurvivors / eurRate / 1e6 : Number.NaN;
+                  const dd = displayResult.maxDrawdownPercentiles[p];
+                  const highlight = p === 50;
+                  return (
+                    <div
+                      key={p}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '56px repeat(4, minmax(0, 1fr))',
+                        gap: 0,
+                        padding: '10px 12px',
+                        background: highlight ? 'rgba(91, 140, 255, 0.10)' : T.surface,
+                        borderBottom: rowIdx === percentileRows.length - 1 ? 'none' : `1px solid ${T.border}`,
+                        color: highlight ? T.primary : T.textPrimary,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span style={{ color: highlight ? T.primary : T.textMuted }}>P{p}</span>
+                      <span style={{ ...css.mono, fontWeight: 700 }}>{Number.isFinite(clpSurvivors) ? `$${formatMillionsMM((clpSurvivors ?? 0) / 1e6)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(clpAll) ? `$${formatMillionsMM((clpAll ?? 0) / 1e6)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(eur) ? `€${formatMillionsMM(eur)}` : '—'}</span>
+                      <span style={{ ...css.mono }}>{Number.isFinite(dd) ? `${(dd * 100).toFixed(1)}%` : '—'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em', marginBottom: 4 }}>TCREAL</div>
@@ -1523,207 +2766,6 @@ export function SimulationPage({
             </div>
           </div>
         </>
-      )}
-
-      {(motorWarnings.length > 0 || compositionMode !== 'legacy' || lastRebalanceMonth || aurumIntegrationStatus !== 'available' || baseUpdatePending || Boolean(lastRecalcCause) || Boolean(pendingSnapshotLabel) || applyAurumHarness.status !== 'idle') && (
-        <details
-          style={{
-            marginTop: 12,
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 12,
-            padding: '10px 12px',
-            color: T.textSecondary,
-            fontSize: 11,
-          }}
-        >
-          <summary style={{ cursor: 'pointer', color: T.textPrimary, fontWeight: 700 }}>
-            Detalles técnicos
-          </summary>
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ color: T.textMuted }}>{aurumTechnicalLabel}</div>
-            <div style={{ color: T.textMuted }}>{simTechnicalLabel}</div>
-            <div style={{ color: T.textMuted }}>
-              heroPhase={heroPhase} · simUiState={simUiState} · worker={recalcWorkerStatus}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              fuentePatrimonio={patrimonioSourceTechnical}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              fuenteDistribución={distributionSourceTechnical}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              weightsSourceMode={weightsSourceMode} · weightsSourceLabel={weightsSourceLabel}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              fxSpotSource={fxSpotSourceTechnical}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              bloquesNoOptimizables={nonOptimizableBlocksTechnical}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              requestId activo={activeRecalcRequestId ?? '—'} · aplicado={appliedRecalcRequestId ?? '—'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              seed activa={activeRecalcSeed ?? '—'} · seed aplicada={appliedRecalcSeed ?? '—'} · seed resultado={resultSeed ?? '—'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              owner={activeRecalcOwner ?? 'none'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              snapshotApplied={snapshotApplied ? 'yes' : 'no'} · pendingSnapshotApplying={pendingSnapshotApplying ? 'yes' : 'no'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              riskEnabled={riskCapitalEnabled ? 'yes' : 'no'} · riskEffective={riskCapitalEffective ? 'yes' : 'no'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              scenarioUI={activeScenarioForUi} · scenarioParams={String(params.activeScenario ?? '—')} · scenarioResult={scenarioFromResult ?? '—'}
-            </div>
-            {hasInvalidScenarioInParams ? (
-              <div style={{ color: T.warning }}>
-                Escenario inválido en params: {String(scenarioFromParamsRaw)} (fallback UI: base)
-              </div>
-            ) : null}
-            <div style={{ color: T.textMuted }}>
-              simResult={resultCentral ? 'present' : 'missing'} · lastStable={lastStableCentral ? 'present' : 'missing'}
-            </div>
-            <div style={{ color: T.textMuted }}>
-              capitalVisible={formatCapital(effectiveCapital)}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={onRunApplyAurumHarness}
-                disabled={harnessRunning || !hasPendingSnapshot}
-                style={{
-                  background: harnessRunning ? T.surfaceEl : 'rgba(91, 140, 255, 0.16)',
-                  border: `1px solid ${harnessRunning ? T.border : 'rgba(91, 140, 255, 0.55)'}`,
-                  color: harnessRunning ? T.textMuted : T.textPrimary,
-                  borderRadius: 8,
-                  padding: '5px 8px',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: harnessRunning || !hasPendingSnapshot ? 'not-allowed' : 'pointer',
-                  opacity: harnessRunning || !hasPendingSnapshot ? 0.7 : 1,
-                }}
-              >
-                {harnessRunning ? 'Harness corriendo…' : 'Run Apply Aurum Harness'}
-              </button>
-              <span style={{ color: harnessStatusColor }}>
-                harness={applyAurumHarness.status}
-                {applyAurumHarness.failureStep ? ` · step=${applyAurumHarness.failureStep}` : ''}
-              </span>
-            </div>
-            {applyAurumHarness.details ? (
-              <div style={{ color: T.textMuted }}>
-                {applyAurumHarness.details}
-              </div>
-            ) : null}
-            {applyAurumHarness.startedAtMs ? (
-              <div style={{ color: T.textMuted }}>
-                harnessStarted={new Date(applyAurumHarness.startedAtMs).toLocaleTimeString('es-ES')}
-                {applyAurumHarness.finishedAtMs
-                  ? ` · duration=${Math.max(0, applyAurumHarness.finishedAtMs - applyAurumHarness.startedAtMs)}ms`
-                  : ''}
-              </div>
-            ) : null}
-            {runtimeTimeline.length > 0 ? (
-              <div
-                style={{
-                  marginTop: 6,
-                  background: 'rgba(2, 6, 23, 0.55)',
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 8,
-                  padding: 8,
-                  fontFamily: 'SF Mono, Menlo, monospace',
-                  fontSize: 10,
-                  color: '#9fb2d9',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                  maxHeight: 180,
-                  overflow: 'auto',
-                }}
-              >
-                {runtimeTimeline.map((entry, idx) => (
-                  <div key={`${entry.atMs}-${idx}`}>
-                    +{entry.atMs}ms · {entry.event}
-                    {entry.payload ? ` · ${entry.payload}` : ''}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {lastRecalcCause ? (
-              <div style={{ color: T.textMuted }}>Último trigger de recálculo: {lastRecalcCause}</div>
-            ) : null}
-            <div style={{ color: T.textMuted }}>
-              Supuesto inmueble (real anual): {((params.realEstatePolicy?.realAppreciationAnnual ?? 0) * 100).toFixed(2)}%
-              {' '}· sensibilidad técnica: 0.50% / 1.00%
-            </div>
-            <div style={{ color: T.textMuted }}>
-              Motor control bootstrap: {bootstrapControlStatus}
-            </div>
-            {bootstrapControlResult ? (
-              <div style={{ color: T.textMuted }}>
-                Bootstrap control · Ruina {(bootstrapControlResult.probRuin * 100).toFixed(1)}% ·
-                P50 {Number.isFinite(bootstrapControlResult.p50TerminalAllPaths)
-                  ? `$${formatMillionsMM((bootstrapControlResult.p50TerminalAllPaths as number) / 1e6)}`
-                  : 'N/D'}
-              </div>
-            ) : null}
-            {controlConcordance.centralProbRuin !== null && controlConcordance.controlProbRuin !== null ? (
-              <>
-                <div style={{ color: T.textMuted }}>
-                  Concordancia central vs bootstrap: {controlConcordance.status.toUpperCase()}
-                </div>
-                <div style={{ color: T.textMuted }}>
-                  Ruina central={(controlConcordance.centralProbRuin * 100).toFixed(1)}% ·
-                  bootstrap={(controlConcordance.controlProbRuin * 100).toFixed(1)}% ·
-                  Δ={controlConcordance.diffAbsPp?.toFixed(1)} pp
-                </div>
-                <div style={{ color: T.textMuted }}>
-                  Zona central={controlConcordance.centralZone ?? '—'} · zona bootstrap={controlConcordance.controlZone ?? '—'}
-                </div>
-              </>
-            ) : null}
-            <div style={{ color: compositionStatusVisual.color, fontWeight: 700 }}>{compositionStatusVisual.copy}</div>
-            <div style={{ color: T.textMuted }}>{compositionStatusVisual.detail}</div>
-            {displayResult ? (
-              <>
-                <div style={{ color: T.textMuted }}>
-                  P50 terminal (todos los paths): ${formatMillionsMM((displayResult.p50TerminalAllPaths ?? 0) / 1e6)}
-                </div>
-                <div style={{ color: T.textMuted }}>
-                  P50 terminal (solo sobrevivientes): ${formatMillionsMM((displayResult.p50TerminalSurvivors ?? 0) / 1e6)}
-                </div>
-              </>
-            ) : null}
-            {motorWarnings.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                {motorWarnings.map((warning) => (
-                  <span
-                    key={warning}
-                    style={{
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      background: 'rgba(255, 176, 32, 0.16)',
-                      border: '1px solid rgba(255, 176, 32, 0.45)',
-                      color: T.warning,
-                      fontSize: 10,
-                    }}
-                  >
-                    {warning}
-                  </span>
-                ))}
-              </div>
-            )}
-            {lastRebalanceMonth ? (
-              <span style={{ color: T.textMuted }}>
-                Último rebalanceo anual: mes {lastRebalanceMonth}
-              </span>
-            ) : null}
-          </div>
-        </details>
       )}
 
       {capitalLedgerOpen && (
@@ -1816,7 +2858,11 @@ export function SimulationPage({
                         <button
                           type="button"
                           onClick={() => {
-                            setDraftManualAdjustments((prev) => prev.filter((item) => item.id !== adj.id));
+                            setDraftManualAdjustments((prev) => {
+                              const nextDraft = prev.filter((item) => item.id !== adj.id);
+                              draftManualAdjustmentsRef.current = nextDraft;
+                              return nextDraft;
+                            });
                             if (editingMovementId === adj.id) {
                               resetMovementForm();
                             }
@@ -1840,7 +2886,7 @@ export function SimulationPage({
               )}
             </div>
 
-            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
                 <select
@@ -1965,31 +3011,194 @@ export function SimulationPage({
         </div>
       )}
 
-      <button
-        onClick={handleEditBase}
-        style={{
-          alignSelf: 'center',
-          marginTop: 10,
-          background: 'transparent',
-          border: `1px solid ${T.border}`,
-          borderRadius: 999,
-          padding: '8px 14px',
-          color: T.textMuted,
-          fontSize: 12,
-          cursor: 'pointer',
-        }}
-      >
-        Editar modelo base
-      </button>
     </div>
   );
 }
 
-function InfoCard({ label, value }: { label: string; value: string }) {
+function MetricTile({
+  label,
+  value,
+  tone,
+  compact = false,
+  fullMobile = false,
+  traffic,
+  subvalue,
+}: {
+  label: React.ReactNode;
+  value: string;
+  tone?: 'primary' | 'negative' | 'muted';
+  compact?: boolean;
+  fullMobile?: boolean;
+  traffic?: TrafficLight;
+  subvalue?: string;
+}) {
+  const color =
+    tone === 'primary'
+      ? T.primary
+      : tone === 'negative'
+        ? T.negative
+        : T.textPrimary;
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-      <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
-      <div style={{ ...css.mono, fontSize: 18, fontWeight: 700, color: T.textPrimary, marginTop: 6 }}>{value}</div>
+    <div
+      style={{
+        background: T.surfaceEl,
+        border: `1px solid ${T.border}`,
+        borderRadius: 12,
+        padding: compact ? '10px 10px' : 12,
+        gridColumn: fullMobile ? '1 / -1' : undefined,
+      }}
+    >
+      <div style={{ color: T.textMuted, fontSize: compact ? 10 : 11, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>
+        {traffic ? (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: TRAFFIC_COLORS[traffic],
+              boxShadow: `0 0 0 2px rgba(0,0,0,0.12) inset`,
+              flexShrink: 0,
+            }}
+          />
+        ) : null}
+        {label}
+      </div>
+      <div style={{ ...css.mono, fontSize: compact ? 14 : 16, fontWeight: 800, color, marginTop: compact ? 5 : 6, lineHeight: compact ? 1.2 : 1.25 }}>{value}</div>
+      {subvalue ? (
+        <div style={{ color: T.textMuted, fontSize: 10, marginTop: 4, lineHeight: 1.3 }}>
+          {subvalue}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function MetricGroup({
+  title,
+  items,
+  compact = false,
+}: {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+  compact?: boolean;
+}) {
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', background: T.surface }}>
+      <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.03em', marginBottom: 8 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: compact ? 'minmax(0,1fr)' : 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {items.map((item) => (
+          <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: `1px dashed ${T.border}`, paddingBottom: 5 }}>
+            <span style={{ color: T.textSecondary, fontSize: 11 }}>{item.label}</span>
+            <span style={{ ...css.mono, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LabelWithInfo({ label, info }: { label: string; info: string }) {
+  return (
+    <>
+      <span>{label}</span>
+      <InfoHint text={info} />
+    </>
+  );
+}
+
+function InfoHint({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<'left' | 'right' | 'center'>('center');
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const node = wrapRef.current;
+      if (!node) return;
+      if (event.target instanceof Node && !node.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    const node = wrapRef.current;
+    if (!node) return undefined;
+    const rect = node.getBoundingClientRect();
+    const minSideSpace = 140;
+    const nextPlacement =
+      window.innerWidth - rect.right < minSideSpace
+        ? 'right'
+        : rect.left < minSideSpace
+          ? 'left'
+          : 'center';
+    setPlacement(nextPlacement);
+    return undefined;
+  }, [open]);
+
+  return (
+    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        aria-label="Mostrar explicación"
+        onClick={() => setOpen((prev) => !prev)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false);
+        }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          border: `1px solid ${T.border}`,
+          color: T.textMuted,
+          background: T.surface,
+          fontSize: 11,
+          fontWeight: 800,
+          cursor: 'pointer',
+          userSelect: 'none',
+          padding: 0,
+        }}
+      >
+        i
+      </button>
+      {open && (
+        <span
+          role="note"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            ...(placement === 'right'
+              ? { right: 0 }
+              : placement === 'left'
+                ? { left: 0 }
+                : { left: '50%', transform: 'translateX(-50%)' }),
+            maxWidth: 'min(260px, calc(100vw - 24px))',
+            background: 'rgba(11, 16, 24, 0.98)',
+            border: `1px solid ${T.border}`,
+            borderRadius: 10,
+            color: T.textSecondary,
+            padding: '8px 10px',
+            fontSize: 11,
+            lineHeight: 1.35,
+            zIndex: 70,
+            boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
   );
 }

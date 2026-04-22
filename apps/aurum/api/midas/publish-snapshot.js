@@ -3,6 +3,7 @@ import { getAdminDb } from '../_firestoreAdmin.js';
 
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
+const WEALTH_COLLECTION = 'aurum_wealth';
 
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -71,6 +72,7 @@ const normalizeRiskCapital = (value) => {
   const totalCLP = asFiniteOrNull(risk.totalCLP ?? risk.totalClp ?? risk.clpTotal);
   const clp = asFiniteOrNull(risk.clp);
   const usd = asFiniteOrNull(risk.usd);
+  const usdSnapshotCLP = asFiniteOrNull(risk.usdSnapshotCLP);
   const source =
     typeof risk.source === 'string' && risk.source.trim()
       ? risk.source.trim()
@@ -82,13 +84,80 @@ const normalizeRiskCapital = (value) => {
     totalCLP: Math.round(totalCLP),
     ...(clp !== null ? { clp: Math.round(Math.max(0, clp)) } : {}),
     ...(usd !== null ? { usd: Math.round(Math.max(0, usd) * 100) / 100 } : {}),
+    ...(usdSnapshotCLP !== null && usdSnapshotCLP > 0 ? { usdSnapshotCLP: Math.round(usdSnapshotCLP) } : {}),
     ...(source ? { source } : {}),
   };
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
-const normalizeSnapshotPayload = (raw) => {
+const normalizeFxReference = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  const fx = value;
+  const clpUsd = asFiniteOrNull(fx.clpUsd);
+  if (clpUsd === null || clpUsd <= 0) return undefined;
+  const clpEur = asFiniteOrNull(fx.clpEur);
+  const usdEur = asFiniteOrNull(fx.usdEur);
+  const ufClp = asFiniteOrNull(fx.ufClp);
+  const source =
+    typeof fx.source === 'string' && fx.source.trim()
+      ? fx.source.trim()
+      : undefined;
+  const normalized = {
+    clpUsd: Math.round(clpUsd),
+    ...(clpEur !== null && clpEur > 0 ? { clpEur: Math.round(clpEur) } : {}),
+    ...(usdEur !== null && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    ...(source ? { source } : {}),
+  };
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+};
+
+const normalizeActiveFxRates = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  const usdClp = asFiniteOrNull(value.usdClp);
+  if (usdClp === null || usdClp <= 0) return undefined;
+  const eurClp = asFiniteOrNull(value.eurClp);
+  const ufClp = asFiniteOrNull(value.ufClp);
+  const usdEur = eurClp !== null && eurClp > 0 ? usdClp / eurClp : null;
+  return {
+    clpUsd: Math.round(usdClp),
+    ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
+    ...(usdEur !== null && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    source: 'active_fx_rates',
+  };
+};
+
+const withFxReferenceFromActiveRates = (snapshot, activeRates) => {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  if (snapshot.fxReference && asFiniteOrNull(snapshot.fxReference.clpUsd) > 0) return snapshot;
+  const derived = normalizeActiveFxRates(activeRates);
+  if (!derived) return snapshot;
+  return {
+    ...snapshot,
+    fxReference: derived,
+  };
+};
+
+const mirrorLegacyFxFromFxReference = (snapshot) => {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  const clpUsd = asFiniteOrNull(snapshot.fxReference?.clpUsd);
+  if (clpUsd === null || clpUsd <= 0) return snapshot;
+  const clpEur = asFiniteOrNull(snapshot.fxReference?.clpEur);
+  const ufClp = asFiniteOrNull(snapshot.fxReference?.ufClp);
+  return {
+    ...snapshot,
+    fx: {
+      usdClp: Math.round(clpUsd),
+      ...(clpEur !== null && clpEur > 0 ? { eurClp: Math.round(clpEur) } : {}),
+      ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+      source: snapshot.fxReference?.source || 'active_fx_rates',
+    },
+  };
+};
+
+const normalizeSnapshotPayload = (raw, activeFxRatesRaw) => {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'Debes enviar snapshot en el body.' };
   }
@@ -118,6 +187,10 @@ const normalizeSnapshotPayload = (raw) => {
   const totalNetWorthWithRiskCLP = asFiniteOrNull(snapshot.totalNetWorthWithRiskCLP);
   const optimizableInvestmentsWithRiskCLP = asFiniteOrNull(snapshot.optimizableInvestmentsWithRiskCLP);
   const riskCapital = normalizeRiskCapital(snapshot.riskCapital);
+  const fxReference =
+    normalizeFxReference(snapshot.fxReference) ||
+    normalizeActiveFxRates(activeFxRatesRaw) ||
+    normalizeActiveFxRates(snapshot.fx);
   const nonOptimizable =
     snapshot.nonOptimizable && typeof snapshot.nonOptimizable === 'object'
       ? {
@@ -150,6 +223,7 @@ const normalizeSnapshotPayload = (raw) => {
         ? { optimizableInvestmentsWithRiskCLP: Math.round(optimizableInvestmentsWithRiskCLP) }
         : {}),
       ...(riskCapital ? { riskCapital } : {}),
+      ...(fxReference ? { fxReference } : {}),
       ...(nonOptimizable && Object.keys(nonOptimizable).length > 0 ? { nonOptimizable } : {}),
       source: {
         app: 'aurum',
@@ -169,22 +243,100 @@ export default async function handler(req, res) {
   const auth = await requireFirebaseAuth(req, res);
   if (!auth) return;
 
-  const normalized = normalizeSnapshotPayload(req.body?.snapshot);
+  const normalized = normalizeSnapshotPayload(req.body?.snapshot, req.body?.activeFxRates);
   if (!normalized.ok) {
     return res.status(400).json({ ok: false, error: normalized.error });
   }
 
   try {
     const db = getAdminDb();
-    await db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID).set(
+    const publishedRef = db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID);
+    let snapshotToWrite = normalized.snapshot;
+    const payloadActiveFx = normalizeActiveFxRates(req.body?.activeFxRates);
+    snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, payloadActiveFx);
+
+    if (!snapshotToWrite.fxReference || asFiniteOrNull(snapshotToWrite.fxReference.clpUsd) === null) {
+      try {
+        const wealthSnap = await db.collection(WEALTH_COLLECTION).doc(auth.uid).get();
+        const wealthData = wealthSnap.exists ? wealthSnap.data() || {} : {};
+        snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, wealthData.fx);
+        console.info(`[FX TRACE][Aurum API publish] fx_reference_backfill_attempt ${JSON.stringify({
+          uid: auth.uid,
+          payloadActiveFxClpUsd: payloadActiveFx?.clpUsd ?? null,
+          wealthFxUsdClp: asFiniteOrNull(wealthData?.fx?.usdClp) ?? null,
+          resultingFxReferenceClpUsd: snapshotToWrite?.fxReference?.clpUsd ?? null,
+        })}`);
+      } catch (err) {
+        console.info(`[FX TRACE][Aurum API publish] fx_reference_backfill_error ${JSON.stringify({
+          error: err?.message || 'No pude leer aurum_wealth para backfill FX.',
+          uid: auth.uid,
+        })}`);
+      }
+    }
+    const incomingHasFx =
+      (asFiniteOrNull(snapshotToWrite?.fxReference?.clpUsd) ?? 0) > 0 ||
+      (asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? 0) > 0;
+    if (!incomingHasFx) {
+      try {
+        const existingSnap = await publishedRef.get();
+        if (existingSnap.exists) {
+          const existing = existingSnap.data() || {};
+          const existingFxReference = normalizeFxReference(existing.fxReference);
+          const existingLegacyFx = normalizeActiveFxRates(existing.fx);
+          const existingHasFx =
+            (asFiniteOrNull(existingFxReference?.clpUsd) ?? 0) > 0 ||
+            (asFiniteOrNull(existingLegacyFx?.clpUsd) ?? 0) > 0;
+          if (existingHasFx) {
+            snapshotToWrite = {
+              ...snapshotToWrite,
+              ...(existingFxReference ? { fxReference: existingFxReference } : {}),
+              ...(existing.fx ? { fx: existing.fx } : {}),
+            };
+            console.info(`[FX TRACE][Aurum API publish] preserve_existing_fx ${JSON.stringify({
+              docPath: `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`,
+              preservedFxReferenceClpUsd: existingFxReference?.clpUsd ?? null,
+              preservedLegacyFxUsdClp: asFiniteOrNull(existing?.fx?.usdClp) ?? null,
+            })}`);
+          }
+        }
+      } catch (err) {
+        console.info(`[FX TRACE][Aurum API publish] preserve_existing_fx_error ${JSON.stringify({
+          error: err?.message || 'No pude leer snapshot publicado actual para preservar FX.',
+        })}`);
+      }
+    }
+    snapshotToWrite = mirrorLegacyFxFromFxReference(snapshotToWrite);
+    const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
+      docPath,
+      publishedAt: snapshotToWrite.publishedAt,
+      version: snapshotToWrite.version,
+      snapshotMonth: snapshotToWrite.snapshotMonth,
+      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
+      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
+      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
+      uid: auth.uid,
+    })}`);
+    await publishedRef.set(
       {
-        ...normalized.snapshot,
+        ...snapshotToWrite,
         publishedByUid: auth.uid,
       },
       { merge: false },
     );
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot_ok ${JSON.stringify({
+      docPath,
+      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
+      legacyFxUsdClp: asFiniteOrNull(snapshotToWrite?.fx?.usdClp) ?? null,
+      legacyFxSource: snapshotToWrite?.fx?.source ?? null,
+    })}`);
     return res.status(200).json({ ok: true });
   } catch (error) {
+    console.info(`[FX TRACE][Aurum API publish] write_snapshot_error ${JSON.stringify({
+      error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',
+    })}`);
     return res.status(500).json({
       ok: false,
       error: error?.message || 'No pude escribir el snapshot publicado en Firestore.',

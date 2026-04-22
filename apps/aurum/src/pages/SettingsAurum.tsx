@@ -369,6 +369,18 @@ export const SettingsAurum: React.FC = () => {
     setFxDraft(buildDraftFromFx(rates));
   };
 
+  useEffect(() => {
+    try {
+      console.info(`[FX TRACE][Aurum UI] current_fx_state ${JSON.stringify({
+        usdClp: Number(fx?.usdClp ?? NaN),
+        eurClp: Number(fx?.eurClp ?? NaN),
+        ufClp: Number(fx?.ufClp ?? NaN),
+      })}`);
+    } catch {
+      // ignore
+    }
+  }, [fx]);
+
   const downloadTextFile = (content: string, filename: string, mimeType = 'text/plain;charset=utf-8;') => {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);

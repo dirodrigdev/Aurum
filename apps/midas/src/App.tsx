@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CashflowEvent,
+  FutureCapitalEvent,
   ManualCapitalAdjustment,
   ModelParameters,
   PortfolioWeights,
@@ -11,42 +12,50 @@ import type {
   SimulationResults,
 } from './domain/model/types';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from './domain/model/defaults';
+import { normalizeModelSpendingPhases } from './domain/model/spendingPhases';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
 import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
-import { SensitivityPage } from './components/SensitivityPage';
+import { PalancasPage } from './components/PalancasPage';
 import { StressPage } from './components/StressPage';
-import { OptimizerPage } from './components/OptimizerPage';
 import { OptPage } from './components/OptPage';
+import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
+import { loadInstrumentUniverseSnapshot } from './domain/instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   areWeightsEquivalent,
   deriveOfficialDistributionWeights,
+  deriveInstrumentUniverseDistributionWeights,
   normalizePortfolioWeights,
-  resolveOfficialDistributionState,
+  resolveEffectiveMixFromUniverseFirst,
   sanitizePortfolioWeights,
   shouldEnterSimulationWeightsMode,
   type WeightsSourceMode,
 } from './domain/model/officialDistribution';
+import { resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
 } from './integrations/aurum/optimizableSnapshot';
 import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
+import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
+import { resolveCapital } from './domain/simulation/capitalResolver';
+import { toM8Input } from './domain/simulation/m8Adapter';
+import {
+  stripManualAdjustmentImpactFromParams,
+  type ManualAdjustmentImpact,
+} from './domain/simulation/manualCapitalAdjustments';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
-const LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY = 'midas:last-known-official-weights.v1';
-const LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY = 'midas:last-known-official-weights-saved-at.v1';
-const AURUM_SYNC_ABS_TOLERANCE_CLP = 1_000_000;
-const AURUM_SYNC_REL_TOLERANCE = 0.005;
+const AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY = 'midas:aurum-last-applied-signature.v1';
 
 type ScenarioEconomicsApplier = (p: ModelParameters, scenarioId: ScenarioVariantId) => ModelParameters;
 type SimulationUiState = 'boot' | 'stale' | 'ready' | 'error';
@@ -86,14 +95,6 @@ type ApplyAurumHarnessState = {
 };
 
 type AurumSyncState = 'unknown' | 'synced' | 'outdated';
-type ManualAdjustmentImpact = {
-  currentTotalDelta: number;
-  currentBanksDelta: number;
-  currentInvestmentsDelta: number;
-  currentRiskDelta: number;
-  futureEvents: CashflowEvent[];
-};
-
 type OptimizerBaselineSnapshot = {
   probRuin: number;
   terminalP50: number;
@@ -232,7 +233,16 @@ function resolveScenarioVariantId(value: unknown): ScenarioVariantId {
   return isScenarioVariantId(value) ? value : 'base';
 }
 
-function nextSimulationSeed(): number {
+function isAuditPreviewMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  const query = new URLSearchParams(window.location.search);
+  return query.has('midas-audit') || query.get('midas-audit') === '1' || query.get('audit') === '1';
+}
+
+function nextSimulationSeed(forceSeed: number | null = null): number {
+  if (Number.isInteger(forceSeed) && forceSeed !== null && forceSeed > 0) {
+    return forceSeed;
+  }
   if (typeof window !== 'undefined') {
     const fixedSeedRaw = window.localStorage.getItem('midas:debug-fixed-seed');
     const fixedSeed = Number(fixedSeedRaw);
@@ -248,6 +258,33 @@ function nextSimulationSeed(): number {
   return Math.floor(Math.random() * 2_147_483_646) + 1;
 }
 
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, v]) => `${JSON.stringify(key)}:${stableSerialize(v)}`);
+  return `{${entries.join(',')}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function hashJson(value: unknown): string {
+  return hashString(stableSerialize(value));
+}
+
 function computeWeightedReturn(p: ModelParameters) {
   return (
     p.weights.rvGlobal * p.returns.rvGlobalAnnual +
@@ -259,6 +296,7 @@ function computeWeightedReturn(p: ModelParameters) {
 
 function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters {
   if (!overrides || !overrides.active) return p;
+  const blocksMode = isBlocksCompositionMode(p);
   const baseReturn = computeWeightedReturn(p);
   const targetReturn = overrides.returnPct ?? baseReturn;
   const factor = baseReturn > 0 ? targetReturn / baseReturn : 1;
@@ -266,7 +304,9 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
   const horizonMonths = Math.max(12, Math.round(horizonYears * 12));
   return {
     ...p,
-    capitalInitial: overrides.capital ?? p.capitalInitial,
+    // En modo bloques, capitalInitial es derivado del snapshot + ledger
+    // y no debe ser sobreescrito por un override legacy/stale.
+    capitalInitial: blocksMode ? p.capitalInitial : (overrides.capital ?? p.capitalInitial),
     simulation: {
       ...p.simulation,
       horizonMonths,
@@ -281,6 +321,32 @@ function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverr
       rfChileUFAnnual: p.returns.rfChileUFAnnual * factor,
     },
   };
+}
+
+function sanitizeSimulationOverridesForParams(
+  params: ModelParameters,
+  overrides: SimulationOverrides | null,
+): SimulationOverrides | null {
+  if (!overrides || !overrides.active) return null;
+  const allowCapitalOverride = !isBlocksCompositionMode(params);
+  const next: SimulationOverrides = {
+    active: true,
+    preset: overrides.preset,
+  };
+  if (typeof overrides.returnPct === 'number' && Number.isFinite(overrides.returnPct)) {
+    next.returnPct = overrides.returnPct;
+  }
+  if (typeof overrides.horizonYears === 'number' && Number.isFinite(overrides.horizonYears)) {
+    next.horizonYears = overrides.horizonYears;
+  }
+  if (allowCapitalOverride && typeof overrides.capital === 'number' && Number.isFinite(overrides.capital)) {
+    next.capital = overrides.capital;
+  }
+  const hasPayload =
+    typeof next.returnPct === 'number'
+    || typeof next.horizonYears === 'number'
+    || typeof next.capital === 'number';
+  return hasPayload ? next : null;
 }
 
 function isBlocksCompositionMode(params: ModelParameters): boolean {
@@ -349,6 +415,21 @@ function normalizeRiskCapitalExposure(
   };
 }
 
+function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  const parsed = Number(fxReference?.clpUsd ?? NaN);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): string | null {
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  return typeof fxReference?.source === 'string' && fxReference.source.trim().length > 0
+    ? fxReference.source.trim()
+    : null;
+}
+
 function deriveVisibleCapitalFromComposition(
   composition?: SimulationCompositionInput,
   includeRiskCapital = false,
@@ -356,30 +437,12 @@ function deriveVisibleCapitalFromComposition(
   if (!composition) return null;
   const optimizable = Number(composition.optimizableInvestmentsCLP ?? 0);
   const banks = Number(composition.nonOptimizable?.banksCLP ?? 0);
-  const realEstateEquity = Number(composition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0);
-  const nonMortgageDebt = Math.abs(Number(composition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
   const riskCapital = includeRiskCapital
     ? normalizeRiskCapitalExposure(composition.nonOptimizable?.riskCapital, 1).visibleCLP
     : 0;
-  const total = optimizable + banks + realEstateEquity + riskCapital - nonMortgageDebt;
+  const total = optimizable + banks + riskCapital;
   if (!Number.isFinite(total)) return null;
   return Math.max(1, total);
-}
-
-function loadLastKnownOfficialWeights(): PortfolioWeights | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY);
-    if (!raw) return null;
-    return sanitizePortfolioWeights(JSON.parse(raw) as PortfolioWeights | null);
-  } catch {
-    return null;
-  }
-}
-
-function loadLastKnownOfficialWeightsSavedAt(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY);
 }
 
 function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParameters | null {
@@ -395,7 +458,12 @@ function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParamet
     );
     const capital = Number(normalized.capitalInitial ?? NaN);
     if (!Number.isFinite(capital) || capital <= 0) return null;
-    return normalized;
+    const hydratedFeeAnnual = Number(normalized.feeAnnual);
+    return {
+      ...normalized,
+      feeAnnual: Number.isFinite(hydratedFeeAnnual) ? hydratedFeeAnnual : 0,
+      spendingPhases: normalizeModelSpendingPhases(normalized),
+    };
   } catch {
     return null;
   }
@@ -410,46 +478,60 @@ function persistBaseVigente(params: ModelParameters): void {
   }
 }
 
-function isMaterialAurumDiff(baseOptimizable: number, latestOptimizable: number) {
-  if (!Number.isFinite(baseOptimizable) || !Number.isFinite(latestOptimizable)) {
-    return { isMaterial: false, diff: latestOptimizable - baseOptimizable, threshold: NaN };
-  }
-  const diff = latestOptimizable - baseOptimizable;
-  const abs = Math.abs(diff);
-  const threshold = Math.max(AURUM_SYNC_ABS_TOLERANCE_CLP, Math.abs(baseOptimizable) * AURUM_SYNC_REL_TOLERANCE);
-  return { isMaterial: abs >= threshold, diff, threshold };
-}
-
 function resolveInitialDistributionState(): {
-  officialWeights: PortfolioWeights | null;
-  lastKnownOfficialWeights: PortfolioWeights | null;
+  universeWeights: PortfolioWeights | null;
+  instrumentBaseWeights: PortfolioWeights | null;
   activeWeights: PortfolioWeights;
   weightsSourceMode: WeightsSourceMode;
   activeWeightsSavedAt: string | null;
   fallbackReason: string | null;
 } {
-  const snapshot = loadInstrumentBaseSnapshot();
-  const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
-  const lastKnownOfficialWeights = loadLastKnownOfficialWeights();
-  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
-  const resolved = resolveOfficialDistributionState({
-    jsonOfficialWeights,
-    lastKnownOfficialWeights,
-    defaultWeights: defaults,
+  const universeSnapshot = loadInstrumentUniverseSnapshot();
+  const universeDerived = deriveInstrumentUniverseDistributionWeights({
+    snapshot: universeSnapshot,
+    returns: DEFAULT_PARAMETERS.returns,
   });
-  const activeWeightsSavedAt = resolved.weightsSourceMode === 'json-official'
-    ? snapshot?.savedAt ?? null
-    : resolved.weightsSourceMode === 'last-known-official'
-      ? loadLastKnownOfficialWeightsSavedAt()
-      : null;
+  const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
+  const instrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
+  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
+  const resolved = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: universeDerived?.weights ?? null,
+    instrumentBaseWeights,
+    defaultWeights: defaults,
+    universeSavedAt: universeSnapshot?.savedAt ?? null,
+    instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
+    diagnostics: universeDerived?.diagnostics ?? null,
+  });
   return {
-    officialWeights: resolved.officialWeights,
-    lastKnownOfficialWeights: resolved.lastKnownOfficialWeights,
+    universeWeights: resolved.universeWeights,
+    instrumentBaseWeights: resolved.instrumentBaseWeights,
     activeWeights: resolved.activeWeights,
     weightsSourceMode: resolved.weightsSourceMode,
-    activeWeightsSavedAt,
+    activeWeightsSavedAt: resolved.activeWeightsSavedAt,
     fallbackReason: resolved.fallbackReason,
   };
+}
+
+function loadLastAppliedAurumSnapshotSignature(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistLastAppliedAurumSnapshotSignature(signature: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!signature) {
+      window.localStorage.removeItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY, signature);
+  } catch {
+    // noop
+  }
 }
 
 export default function App() {
@@ -470,6 +552,7 @@ export default function App() {
       },
     };
   }, []);
+  const auditPreviewMode = useMemo(() => isAuditPreviewMode(), []);
   const [baseParams, setBaseParams] = useState<ModelParameters>(() =>
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
@@ -501,6 +584,9 @@ export default function App() {
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [snapshotApplied, setSnapshotApplied] = useState(false);
+  const [lastAppliedAurumSnapshotSignature, setLastAppliedAurumSnapshotSignature] = useState<string | null>(
+    () => (initialModelParams.capitalSource === 'aurum' ? loadLastAppliedAurumSnapshotSignature() : null),
+  );
   const [aurumSyncState, setAurumSyncState] = useState<AurumSyncState>('unknown');
   const [aurumSyncDiff, setAurumSyncDiff] = useState<number | null>(null);
   const [aurumSyncBaseOpt, setAurumSyncBaseOpt] = useState<number | null>(null);
@@ -522,10 +608,12 @@ export default function App() {
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
+  const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
+  const [aurumFxSpotSource, setAurumFxSpotSource] = useState<string | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
-  const [officialWeights, setOfficialWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.officialWeights);
-  const [lastKnownOfficialWeights, setLastKnownOfficialWeights] = useState<PortfolioWeights | null>(
-    () => initialDistributionRef.current.lastKnownOfficialWeights,
+  const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
+  const [instrumentBaseWeights, setInstrumentBaseWeights] = useState<PortfolioWeights | null>(
+    () => initialDistributionRef.current.instrumentBaseWeights,
   );
   const [activeWeights, setActiveWeights] = useState<PortfolioWeights>(() => initialDistributionRef.current.activeWeights);
   const [weightsSourceMode, setWeightsSourceMode] = useState<WeightsSourceMode>(() => initialDistributionRef.current.weightsSourceMode);
@@ -558,7 +646,7 @@ export default function App() {
   const appliedRecalcRequestIdRef = useRef<number | null>(appliedRecalcRequestId);
   const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
-  const lastAppliedSnapshotSignatureRef = useRef<string | null>(null);
+  const lastAppliedSnapshotSignatureRef = useRef<string | null>(lastAppliedAurumSnapshotSignature);
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
   const manualCommitInFlightRef = useRef(false);
@@ -598,27 +686,24 @@ export default function App() {
   }, []);
 
   const refreshOfficialDistribution = useCallback(() => {
-    const snapshot = loadInstrumentBaseSnapshot();
-    const jsonOfficialWeights = deriveOfficialDistributionWeights(snapshot);
-    const storedLastKnown = loadLastKnownOfficialWeights();
-    const resolved = resolveOfficialDistributionState({
-      jsonOfficialWeights,
-      lastKnownOfficialWeights: storedLastKnown,
+    const universeSnapshot = loadInstrumentUniverseSnapshot();
+    const universeDerived = deriveInstrumentUniverseDistributionWeights({
+      snapshot: universeSnapshot,
+      returns: DEFAULT_PARAMETERS.returns,
+    });
+    const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
+    const nextInstrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
+    const resolved = resolveEffectiveMixFromUniverseFirst({
+      universeWeights: universeDerived?.weights ?? null,
+      instrumentBaseWeights: nextInstrumentBaseWeights,
       defaultWeights: DEFAULT_PARAMETERS.weights,
+      universeSavedAt: universeSnapshot?.savedAt ?? null,
+      instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
+      diagnostics: universeDerived?.diagnostics ?? null,
     });
 
-    if (typeof window !== 'undefined' && jsonOfficialWeights) {
-      window.localStorage.setItem(
-        LAST_KNOWN_OFFICIAL_WEIGHTS_STORAGE_KEY,
-        JSON.stringify(normalizePortfolioWeights(jsonOfficialWeights)),
-      );
-      if (snapshot?.savedAt) {
-        window.localStorage.setItem(LAST_KNOWN_OFFICIAL_WEIGHTS_SAVED_AT_STORAGE_KEY, snapshot.savedAt);
-      }
-    }
-
-    setOfficialWeights(resolved.officialWeights);
-    setLastKnownOfficialWeights(resolved.lastKnownOfficialWeights);
+    setUniverseWeights(resolved.universeWeights);
+    setInstrumentBaseWeights(resolved.instrumentBaseWeights);
 
     const keepSimulationMode = weightsSourceModeRef.current === 'simulation' && sanitizePortfolioWeights(activeWeightsRef.current);
     if (keepSimulationMode) {
@@ -629,14 +714,24 @@ export default function App() {
     setActiveWeights(resolved.activeWeights);
     setWeightsSourceMode(resolved.weightsSourceMode);
     setWeightsFallbackReason(resolved.fallbackReason);
-    setActiveWeightsSavedAt(
-      resolved.weightsSourceMode === 'json-official'
-        ? snapshot?.savedAt ?? null
-        : resolved.weightsSourceMode === 'last-known-official'
-          ? loadLastKnownOfficialWeightsSavedAt()
-          : null,
-    );
+    setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateInstrumentUniverseCacheFromFirestore()
+      .then((result) => {
+        if (cancelled || !result.ok) return;
+        refreshOfficialDistribution();
+        window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
+      })
+      .catch(() => {
+        // Firestore is an authoritative source when available; local cache/fallback chain remains safe.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshOfficialDistribution]);
 
   useEffect(() => {
     refreshOfficialDistribution();
@@ -647,10 +742,12 @@ export default function App() {
     window.addEventListener('focus', handleRefresh);
     window.addEventListener('storage', handleRefresh);
     window.addEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+    window.addEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     return () => {
       window.removeEventListener('focus', handleRefresh);
       window.removeEventListener('storage', handleRefresh);
       window.removeEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
+      window.removeEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     };
   }, [refreshOfficialDistribution]);
 
@@ -697,6 +794,10 @@ export default function App() {
   }, [activeWeights]);
 
   useEffect(() => {
+    lastAppliedSnapshotSignatureRef.current = lastAppliedAurumSnapshotSignature;
+  }, [lastAppliedAurumSnapshotSignature]);
+
+  useEffect(() => {
     weightsSourceModeRef.current = weightsSourceMode;
   }, [weightsSourceMode]);
 
@@ -723,6 +824,10 @@ export default function App() {
   }, [manualCapitalAdjustments]);
 
   useEffect(() => {
+    persistLastAppliedAurumSnapshotSignature(lastAppliedAurumSnapshotSignature);
+  }, [lastAppliedAurumSnapshotSignature]);
+
+  useEffect(() => {
     const ensureOverlay = () => {
       let panel = document.getElementById('midas-runtime-errors');
       if (panel) return panel;
@@ -731,7 +836,7 @@ export default function App() {
       panel.style.position = 'fixed';
       panel.style.left = '12px';
       panel.style.right = '12px';
-      panel.style.bottom = '86px';
+      panel.style.bottom = 'calc(86px + env(safe-area-inset-bottom, 0px))';
       panel.style.zIndex = '9999';
       panel.style.background = 'rgba(255, 92, 92, 0.14)';
       panel.style.border = `1px solid ${T.negative}`;
@@ -1196,6 +1301,12 @@ export default function App() {
     const capped = Math.min(Math.max(1, diff), baseParams.simulation.horizonMonths);
     return capped;
   }, [aurumSnapshotMonth, baseParams.simulation.horizonMonths, parseYearMonth]);
+  const resolveSimulationBaseMonth = useCallback((params: ModelParameters) => {
+    const explicit = typeof params.simulationBaseMonth === 'string' ? params.simulationBaseMonth.trim() : '';
+    if (explicit) return explicit;
+    if (aurumSnapshotMonth) return aurumSnapshotMonth;
+    return new Date().toISOString().slice(0, 7);
+  }, [aurumSnapshotMonth]);
   const toClp = useCallback((amount: number, currency: 'CLP' | 'USD' | 'EUR') => {
     if (currency === 'CLP') return amount;
     const usdToClp = baseParams.fx?.clpUsdInitial ?? 1;
@@ -1217,6 +1328,7 @@ export default function App() {
     let currentRiskDelta = 0;
     let currentOtherDelta = 0;
     const futureEvents: CashflowEvent[] = [];
+    const futureCapitalEvents: FutureCapitalEvent[] = [];
     const todayKey = new Date().toISOString().slice(0, 7);
     adjustments.forEach((adj) => {
       const amountClp = toClp(adj.amount, adj.currency);
@@ -1239,6 +1351,14 @@ export default function App() {
         amountType: 'real',
         sleeve: mapDestinationToSleeve(adj.destination),
       });
+      futureCapitalEvents.push({
+        id: `manual-${adj.id}`,
+        description: adj.note ?? adj.destination,
+        type: signed > 0 ? 'inflow' : 'outflow',
+        amount: Math.abs(amountClp),
+        currency: 'CLP',
+        effectiveDate: adj.effectiveDate,
+      });
     });
     const currentBanksDelta = currentLiquidityDelta + currentOtherDelta;
     const currentTotalDelta = currentBanksDelta + currentInvestmentsDelta + currentRiskDelta;
@@ -1248,6 +1368,7 @@ export default function App() {
       currentInvestmentsDelta,
       currentRiskDelta,
       futureEvents,
+      futureCapitalEvents,
     };
   }, [mapDestinationToSleeve, resolveMonthIndex, toClp]);
 
@@ -1275,6 +1396,10 @@ export default function App() {
       snapshot.version === 2
         ? snapshot.riskCapital?.usd ?? ''
         : '';
+    const fxClpUsd =
+      snapshot.version === 2
+        ? snapshot.fxReference?.clpUsd ?? ''
+        : '';
     return [
       snapshot.version,
       snapshot.snapshotMonth,
@@ -1285,10 +1410,14 @@ export default function App() {
       riskTotalClp,
       riskClp,
       riskUsd,
+      fxClpUsd,
     ].join('|');
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
-    const fallbackUsdSnapshotCLP = Number(baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial);
+    const snapshotFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+    const fallbackUsdSnapshotCLP = Number(
+      snapshotFxClpUsd ?? baseParamsRef.current.fx?.clpUsdInitial ?? DEFAULT_PARAMETERS.fx.clpUsdInitial,
+    );
     const exposure = normalizeRiskCapitalExposure(
       snapshot.version === 2 ? snapshot.riskCapital : undefined,
       fallbackUsdSnapshotCLP,
@@ -1372,6 +1501,118 @@ export default function App() {
     }
   }, [appendRuntimeTimeline, summarizeParams, summarizeResult]);
 
+  const heroVisibleResult = heroPhase === 'ready'
+    ? simResult
+    : heroPhase === 'stale'
+      ? lastStableCentral
+      : null;
+  const heroVisibleSource: 'simResult' | 'lastStableCentral' | 'none' = heroPhase === 'ready'
+    ? 'simResult'
+    : heroPhase === 'stale'
+      ? 'lastStableCentral'
+      : 'none';
+  const heroAuditProbe = useMemo(() => {
+    if (!auditPreviewMode) return null;
+    const heroParams = heroVisibleResult?.params ?? simParams;
+    try {
+      const capitalResolution = resolveCapital({ params: heroParams });
+      const input = toM8Input(heroParams, capitalResolution);
+      const heroResult = heroVisibleResult
+          ? {
+              success40: heroVisibleResult.success40,
+              probRuin40: heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin,
+              probRuin20: heroVisibleResult.probRuin20 ?? null,
+              ruinTimingMedian: heroVisibleResult.ruinTimingMedian ?? null,
+              terminalWealthPercentiles: heroVisibleResult.terminalWealthPercentiles,
+              p50TerminalAllPaths: heroVisibleResult.p50TerminalAllPaths,
+              p50TerminalSurvivors: heroVisibleResult.p50TerminalSurvivors,
+              terminalP25AllPaths: heroVisibleResult.terminalP25AllPaths ?? null,
+              terminalP25IfSuccess: heroVisibleResult.terminalP25IfSuccess ?? null,
+              terminalP75AllPaths: heroVisibleResult.terminalP75AllPaths ?? null,
+              terminalP75IfSuccess: heroVisibleResult.terminalP75IfSuccess ?? null,
+              houseSalePct: heroVisibleResult.houseSalePct ?? null,
+              spendFactorTotal: heroVisibleResult.spendFactorTotal ?? null,
+              cutTimeShare: heroVisibleResult.cutTimeShare ?? null,
+              maxDrawdownPercentiles: heroVisibleResult.maxDrawdownPercentiles,
+            }
+        : null;
+      const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
+      const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;
+      const requestParams =
+        requestId != null
+          ? workerPayloadByRequestRef.current.get(`recalc:${requestId}`) ?? null
+          : null;
+      const sourceParamsForNormalization = requestParams ?? heroParams;
+      const normalizedSpendingPhases = normalizeModelSpendingPhases(sourceParamsForNormalization);
+      const spendingPhasesNormalized =
+        stableSerialize(sourceParamsForNormalization.spendingPhases) !== stableSerialize(normalizedSpendingPhases);
+      const sourceHorizonMonths = Number(sourceParamsForNormalization.simulation?.horizonMonths ?? 0);
+      const horizonMinForced = Number.isFinite(sourceHorizonMonths) && sourceHorizonMonths > 0 && sourceHorizonMonths < 48;
+      const normalizationNotes: string[] = [];
+      if (horizonMinForced) {
+        normalizationNotes.push(`horizon mínimo forzado: ${sourceHorizonMonths} -> 48 meses`);
+      }
+      if (spendingPhasesNormalized) {
+        normalizationNotes.push('spendingPhases normalizadas (legacy/EUR/3 fases -> contrato M8 4 tramos CLP)');
+      }
+      return {
+        heroSource: heroVisibleSource,
+        requestId,
+        seed: Number(input.seed ?? 0),
+        nPaths: Number(input.n_paths ?? 0),
+        capitalInitial: Number(input.capital_initial_clp ?? 0),
+        capitalSource: input.capital_source,
+        sourceLabel: input.capital_source_label ?? capitalResolution.sourceLabel,
+        riskCapitalEnabled,
+        houseInclude: Boolean(input.house?.include_house),
+        futureEventsCount: input.future_events?.length ?? 0,
+        inputHash: hashJson(input),
+        m8Input: input,
+        heroResult,
+        normalizationsApplied: {
+          horizonMinForced,
+          spendingPhasesNormalized,
+          notes: normalizationNotes,
+        },
+        success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
+        probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
+        probRuin20: heroVisibleResult?.probRuin20 ?? null,
+      };
+    } catch (error) {
+      const heroParams = heroVisibleResult?.params ?? simParams;
+      return {
+        heroSource: heroVisibleSource,
+        requestId: heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId,
+        seed: Number(heroParams.simulation?.seed ?? 0),
+        nPaths: Number(heroParams.simulation?.nSim ?? 0),
+        capitalInitial: Number(heroParams.capitalInitial ?? 0),
+        capitalSource: heroParams.capitalSource ?? 'manual',
+        sourceLabel: heroParams.label || 'n/a',
+        riskCapitalEnabled: Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+        houseInclude: Boolean(heroParams.simulationComposition?.nonOptimizable?.realEstate),
+        futureEventsCount: heroParams.futureCapitalEvents?.length ?? 0,
+        inputHash: `error:${error instanceof Error ? error.message : String(error)}`,
+        m8Input: null,
+        heroResult: null,
+        normalizationsApplied: {
+          horizonMinForced: false,
+          spendingPhasesNormalized: false,
+          notes: [],
+        },
+        success40: heroVisibleResult?.success40 ?? (heroVisibleResult ? 1 - heroVisibleResult.probRuin : null),
+        probRuin40: heroVisibleResult?.probRuin40 ?? heroVisibleResult?.probRuin ?? null,
+        probRuin20: heroVisibleResult?.probRuin20 ?? null,
+      };
+    }
+  }, [
+    activeRecalcRequestId,
+    appliedRecalcRequestId,
+    auditPreviewMode,
+    heroVisibleResult,
+    heroVisibleSource,
+    simParams,
+  ]);
+
   const buildCanonicalSimParams = useCallback(
     (
       baseParamsCurrent: ModelParameters,
@@ -1379,18 +1620,41 @@ export default function App() {
       options?: {
         applyCapital?: boolean;
         manualImpact?: ManualAdjustmentImpact;
+        riskCapitalEnabled?: boolean;
       },
     ): ModelParameters => {
       const applyCapital = options?.applyCapital ?? true;
       const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
+      const riskEnabled = options?.riskCapitalEnabled ?? riskCapitalEnabled;
       const mergedEvents = [
         ...(baseParamsCurrent.cashflowEvents ?? []),
         ...manualImpact.futureEvents,
       ];
+      const mergedFutureCapitalEvents = (() => {
+        const map = new Map<string, FutureCapitalEvent>();
+        for (const event of baseParamsCurrent.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        for (const event of currentSimParams.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        for (const event of manualImpact.futureCapitalEvents ?? []) {
+          map.set(event.id, event);
+        }
+        return [...map.values()].sort((a, b) => {
+          const dateCmp = a.effectiveDate.localeCompare(b.effectiveDate);
+          if (dateCmp !== 0) return dateCmp;
+          return a.id.localeCompare(b.id);
+        });
+      })();
       const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
       let next: ModelParameters = {
         ...currentSimParams,
         cashflowEvents: mergedEvents,
+        futureCapitalEvents: mergedFutureCapitalEvents,
+        simulationBaseMonth: currentSimParams.simulationBaseMonth
+          ?? baseParamsCurrent.simulationBaseMonth
+          ?? resolveSimulationBaseMonth(currentSimParams),
       };
 
       if (blocksMode && baseParamsCurrent.simulationComposition) {
@@ -1418,30 +1682,29 @@ export default function App() {
         const riskUsdEnabledTotal = riskUsdSnapshot > 0
           ? riskEnabledClpTotal / riskUsdSnapshot
           : 0;
-        const riskUsdApplied = riskCapitalEnabled ? riskUsdEnabledTotal : 0;
-        const riskClpApplied = riskCapitalEnabled
+        const riskUsdApplied = riskEnabled ? riskUsdEnabledTotal : 0;
+        const riskClpApplied = riskEnabled
           ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
           : 0;
 
-        const realEstateEquity = Math.max(0, Number(baseComposition.nonOptimizable?.realEstate?.realEstateEquityCLP ?? 0));
-        const nonMortgageDebt = Math.abs(Number(baseComposition.nonOptimizable?.nonMortgageDebtCLP ?? 0));
         const targetWithoutRisk = Math.max(
           1,
-          Number(baseComposition.totalNetWorthCLP ?? 0) +
+          Number(baseComposition.optimizableInvestmentsCLP ?? 0) +
+            Number(baseComposition.nonOptimizable?.banksCLP ?? 0) +
             manualImpact.currentBanksDelta +
             manualImpact.currentInvestmentsDelta,
         );
-        const modeledWithoutRisk = nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt;
+        const modeledWithoutRisk = nextOptimizable + nextBanks;
         let gap = targetWithoutRisk - modeledWithoutRisk;
         if (Math.abs(gap) > 0.5) {
           nextBanks = Math.max(0, nextBanks + gap);
-          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks + realEstateEquity - nonMortgageDebt);
+          const remainingGap = targetWithoutRisk - (nextOptimizable + nextBanks);
           if (Math.abs(remainingGap) > 0.5) {
             nextOptimizable = Math.max(0, nextOptimizable + remainingGap);
           }
         }
 
-        const targetVisibleCapital = riskCapitalEnabled
+        const targetVisibleCapital = riskEnabled
           ? targetWithoutRisk + riskClpApplied
           : targetWithoutRisk;
 
@@ -1466,7 +1729,7 @@ export default function App() {
           capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : currentSimParams.capitalInitial,
         };
       } else {
-        const riskDelta = riskCapitalEnabled
+        const riskDelta = riskEnabled
           ? manualImpact.currentRiskDelta + riskCapitalCLP
           : 0;
         const nextDelta = manualImpact.currentBanksDelta + manualImpact.currentInvestmentsDelta + riskDelta;
@@ -1477,9 +1740,27 @@ export default function App() {
         };
       }
 
-      return applyActiveDistribution(next);
+      const normalizedNext: ModelParameters = {
+        ...next,
+        spendingPhases: normalizeModelSpendingPhases(next),
+      };
+      const hasRealEstateBlock = Boolean(normalizedNext.simulationComposition?.nonOptimizable?.realEstate);
+      if (!hasRealEstateBlock && normalizedNext.realEstatePolicy?.enabled) {
+        normalizedNext.realEstatePolicy = {
+          ...normalizedNext.realEstatePolicy,
+          enabled: false,
+        };
+      }
+      return applyActiveDistribution(normalizedNext);
     },
-    [applyActiveDistribution, manualAdjustmentImpact, riskCapitalCLP, riskCapitalEnabled, riskCapitalUsdSnapshotCLP],
+    [
+      applyActiveDistribution,
+      manualAdjustmentImpact,
+      resolveSimulationBaseMonth,
+      riskCapitalCLP,
+      riskCapitalEnabled,
+      riskCapitalUsdSnapshotCLP,
+    ],
   );
 
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
@@ -1512,7 +1793,7 @@ export default function App() {
       activeRecalcOwnerRequestIdRef.current = requestId;
       setActiveRecalcOwner(ownerForRun);
     }
-    const simulationSeed = nextSimulationSeed();
+    const simulationSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
     setActiveRecalcSeed(simulationSeed);
@@ -1539,6 +1820,7 @@ export default function App() {
           ...paramsBase,
           simulation: {
             ...paramsBase.simulation,
+            nSim: auditPreviewMode ? DEFAULT_SIMULATION_NSIM : paramsBase.simulation.nSim,
             seed: simulationSeed,
           },
         };
@@ -1607,6 +1889,7 @@ export default function App() {
     appendRuntimeTimeline,
     beginRecalculationVisual,
     clearCalculationTimer,
+    auditPreviewMode,
     runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
@@ -1692,22 +1975,35 @@ export default function App() {
     });
   }, [appendRuntimeTimeline, heroPhase, lastStableCentral, simResult]);
 
+  useEffect(() => {
+    const target = window as typeof window & { __MIDAS_AUDIT__?: typeof heroAuditProbe | null };
+    target.__MIDAS_AUDIT__ = heroAuditProbe;
+    if (!heroAuditProbe) return;
+    appendRuntimeTimeline('hero_audit_snapshot', heroAuditProbe as Record<string, unknown>);
+    return () => {
+      if (target.__MIDAS_AUDIT__ === heroAuditProbe) {
+        target.__MIDAS_AUDIT__ = null;
+      }
+    };
+  }, [appendRuntimeTimeline, heroAuditProbe]);
+
   const applySnapshotNow = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot | null, options?: { recalc?: boolean }) => {
     if (!snapshot) return;
     const shouldRecalculate = options?.recalc ?? true;
     try {
+      const appliedSnapshotSignature = getSnapshotSignature(snapshot);
       const composition = snapshotToSimulationComposition(snapshot);
       const compositionMode = composition?.mode ?? 'legacy';
       const hasFallbackFlags =
         composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
         (composition?.diagnostics?.notes ?? []).some((note) => String(note).includes('fallback'));
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
-      const aurumNetWorth = Number(snapshot?.totalNetWorthCLP ?? NaN);
+      const aurumOptimizable = Number(snapshot?.optimizableInvestmentsCLP ?? NaN);
+      const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
+      const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const riskExposure = computeRiskCapital(snapshot);
-      const aurumNetWorthWithRisk =
-        Number.isFinite(riskExposure.baseWithRiskCLP) && riskExposure.baseWithRiskCLP > 0
-          ? riskExposure.baseWithRiskCLP
-          : aurumNetWorth + riskExposure.riskTotalCLP;
+      const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+      const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = composition
         ? {
             ...composition,
@@ -1715,6 +2011,7 @@ export default function App() {
               ...composition.nonOptimizable,
               riskCapital: {
                 ...(composition.nonOptimizable?.riskCapital ?? {}),
+                enabled: riskCapitalEnabled,
                 source: composition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
                 usdSnapshotCLP: riskExposure.usdSnapshotCLP,
                 usdTotal: riskCapitalEnabled ? riskExposure.usdTotal : 0,
@@ -1730,7 +2027,9 @@ export default function App() {
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
-      if (!Number.isFinite(aurumNetWorth) || aurumNetWorth <= 0) {
+      setAurumFxSpotCLP(aurumFxClpUsd);
+      setAurumFxSpotSource(aurumFxSource);
+      if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
         if (composition) {
           setBaseParams((prev) => ({ ...prev, simulationComposition: composition }));
@@ -1744,41 +2043,30 @@ export default function App() {
 
       const currentBase = baseParamsRef.current;
       const nextBaseComposition = compositionWithToggle ?? currentBase.simulationComposition;
-      const baseTargetCapital = aurumNetWorth;
-      const sameBaseCapital = Math.round(currentBase.capitalInitial) === Math.round(baseTargetCapital);
-      const sameBaseComposition = JSON.stringify(currentBase.simulationComposition) === JSON.stringify(nextBaseComposition);
-      if (!sameBaseCapital || !sameBaseComposition) {
-        setBaseParams({
-          ...currentBase,
-          capitalInitial: baseTargetCapital,
-          label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
-          simulationComposition: nextBaseComposition,
-        });
-      }
-
-      const currentSim = simParamsRef.current;
-      const hasCapitalOverride = Boolean(simOverrides?.active && typeof simOverrides?.capital === 'number');
-      const shouldApplyCapital = !hasCapitalOverride;
-      const nextSimComposition = compositionWithToggle ?? currentSim.simulationComposition;
-      const baseSimCapital = riskCapitalEnabled ? aurumNetWorthWithRisk : aurumNetWorth;
-      const baseForCanonical: ModelParameters = {
-        ...currentBase,
+      const baseTargetCapital = aurumFinancialBase;
+      const baseSnapshotLayer: ModelParameters = {
+        ...cloneParams(currentBase),
         capitalInitial: baseTargetCapital,
+        capitalSource: 'aurum',
+        manualCapitalInput: undefined,
+        label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
-      const simSeed: ModelParameters = {
-        ...currentSim,
-        capitalInitial: shouldApplyCapital ? baseSimCapital : currentSim.capitalInitial,
-        label: shouldApplyCapital
-          ? `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`
-          : currentSim.label,
-        simulationComposition: nextSimComposition,
-      };
-      const nextSimParamsFinal = buildCanonicalSimParams(baseForCanonical, simSeed, {
-        applyCapital: shouldApplyCapital,
+      if (aurumFxClpUsd !== null) {
+        baseSnapshotLayer.fx = {
+          ...baseSnapshotLayer.fx,
+          clpUsdInitial: aurumFxClpUsd,
+        };
+      }
+      const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
+        applyCapital: true,
+        manualImpact: manualAdjustmentImpact,
+        riskCapitalEnabled,
       });
-      const sameSimCapital = Math.round(currentSim.capitalInitial) === Math.round(nextSimParamsFinal.capitalInitial);
-      const sameSimComposition = JSON.stringify(currentSim.simulationComposition) === JSON.stringify(nextSimParamsFinal.simulationComposition);
+      const currentSim = simParamsRef.current;
+      const nextSimParamsFinal = nextBaseOfficialParams;
+      const sameBaseSignature = JSON.stringify(currentBase) === JSON.stringify(nextBaseOfficialParams);
+      const sameSimSignature = JSON.stringify(currentSim) === JSON.stringify(nextSimParamsFinal);
 
       appendRuntimeTimeline('snapshot_applied', {
         snapshotApplied: true,
@@ -1787,13 +2075,18 @@ export default function App() {
         ...summarizeParams(nextSimParamsFinal),
       });
 
-      if (!sameSimCapital || !sameSimComposition) {
+      if (!sameBaseSignature) {
+        setBaseParams(nextBaseOfficialParams);
+      }
+      if (!sameSimSignature) {
         setSimParams(nextSimParamsFinal);
       }
+      setLastAppliedAurumSnapshotSignature(appliedSnapshotSignature);
+      lastAppliedSnapshotSignatureRef.current = appliedSnapshotSignature;
       setSimulationActive(false);
       setSimulationPreset('base');
       setSimOverrides(null);
-      const nextBaseOptimizable = Number(nextBaseComposition?.optimizableInvestmentsCLP ?? NaN);
+      const nextBaseOptimizable = Number(nextBaseOfficialParams.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
       setAurumSyncBaseOpt(Number.isFinite(nextBaseOptimizable) ? nextBaseOptimizable : null);
       setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
@@ -1806,7 +2099,7 @@ export default function App() {
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
         startRecalculation('apply-aurum', () => nextSimParamsFinal);
-      } else if (!sameSimCapital || !sameSimComposition) {
+      } else if (!sameSimSignature) {
         setBaseUpdatePending(true);
       }
     } catch (error: any) {
@@ -1818,10 +2111,11 @@ export default function App() {
     }
   }, [
     appendRuntimeTimeline,
+    getSnapshotSignature,
     computeRiskCapital,
     riskCapitalEnabled,
-    simOverrides?.active,
-    simOverrides?.capital,
+    manualAdjustmentImpact,
+    setLastAppliedAurumSnapshotSignature,
     startRecalculation,
     buildCanonicalSimParams,
     summarizeParams,
@@ -1882,7 +2176,6 @@ export default function App() {
     setPendingSnapshotApplying(true);
     window.setTimeout(() => {
       try {
-        lastAppliedSnapshotSignatureRef.current = pendingSnapshotSignature;
         setSnapshotApplied(true);
         applySnapshotNow(pendingSnapshot, { recalc: true });
         setPendingSnapshot(null);
@@ -2158,10 +2451,29 @@ export default function App() {
   ]);
 
   const toggleRiskCapital = useCallback(() => {
+    const nextEnabled = !riskCapitalEnabled;
     pendingRecalcCauseRef.current = 'risk-toggle';
-    setRiskCapitalEnabled((prev) => !prev);
+    setRiskCapitalEnabled(nextEnabled);
     markSimulationInteraction();
-  }, [markSimulationInteraction]);
+    const nextParams = buildCanonicalSimParams(baseParamsRef.current, simParamsRef.current, {
+      applyCapital: true,
+      manualImpact: manualAdjustmentImpact,
+      riskCapitalEnabled: nextEnabled,
+    });
+    setSimParams(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    startRecalculation('risk-toggle', () => base);
+  }, [
+    applySimulationOverrides,
+    baseParamsRef,
+    buildCanonicalSimParams,
+    manualAdjustmentImpact,
+    markSimulationInteraction,
+    riskCapitalEnabled,
+    simOverrides,
+    startRecalculation,
+  ]);
 
   useEffect(() => {
     if (pendingSnapshot) return;
@@ -2175,18 +2487,29 @@ export default function App() {
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
+    const previousImpact = manualAdjustmentImpact;
     setManualCapitalAdjustments(next);
     markSimulationInteraction();
     const impact = computeManualAdjustmentImpact(next);
     manualCommitInFlightRef.current = true;
-    const nextParams = buildCanonicalSimParams(baseParamsRef.current, simParamsRef.current, {
+    const cleanBaseParams = stripManualAdjustmentImpactFromParams(simParamsRef.current, previousImpact);
+    const nextParams = buildCanonicalSimParams(cleanBaseParams, cleanBaseParams, {
       applyCapital: true,
       manualImpact: impact,
     });
+    setBaseParams(cleanBaseParams);
     setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('ledger-commit', () => base);
-  }, [buildCanonicalSimParams, computeManualAdjustmentImpact, markSimulationInteraction, simOverrides, startRecalculation]);
+  }, [
+    buildCanonicalSimParams,
+    computeManualAdjustmentImpact,
+    manualAdjustmentImpact,
+    markSimulationInteraction,
+    simOverrides,
+    startRecalculation,
+  ]);
 
   useEffect(() => {
     if (manualCommitInFlightRef.current) {
@@ -2206,7 +2529,12 @@ export default function App() {
     const simChanged = currentSignature !== nextSignature;
 
     const deltaChange = next.capitalInitial - currentSimParams.capitalInitial;
-    if (Math.abs(deltaChange) > 0.0001 && simOverrides?.active && typeof simOverrides.capital === 'number') {
+    if (
+      !isBlocksCompositionMode(next)
+      && Math.abs(deltaChange) > 0.0001
+      && simOverrides?.active
+      && typeof simOverrides.capital === 'number'
+    ) {
       setSimOverrides((prev) => {
         if (!prev || !prev.active || typeof prev.capital !== 'number') return prev;
         return { ...prev, capital: Math.max(1, prev.capital + deltaChange) };
@@ -2221,7 +2549,8 @@ export default function App() {
       if (baseUpdatePending) {
         setBaseUpdatePending(false);
       }
-      const base = applySimulationOverrides(next, simOverrides);
+      const sanitizedOverrides = sanitizeSimulationOverridesForParams(next, simOverrides);
+      const base = applySimulationOverrides(next, sanitizedOverrides);
       const cause = pendingRecalcCauseRef.current ?? 'params-change';
       pendingRecalcCauseRef.current = null;
       startRecalculation(cause, () => base);
@@ -2325,38 +2654,36 @@ export default function App() {
       shouldSwitchToSimulation ? normalizedNextWeights : undefined,
     );
     setSimParams(effectiveNextParams);
-    const base = applySimulationOverrides(effectiveNextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation(cause, () => base);
   }, [applyActiveDistribution, simOverrides, startRecalculation]);
 
   const restoreOfficialDistribution = useCallback(() => {
-    const resolved = resolveOfficialDistributionState({
-      jsonOfficialWeights: officialWeights,
-      lastKnownOfficialWeights,
+    const resolved = resolveEffectiveMixFromUniverseFirst({
+      universeWeights,
+      instrumentBaseWeights,
       defaultWeights: DEFAULT_PARAMETERS.weights,
+      universeSavedAt: loadInstrumentUniverseSnapshot()?.savedAt ?? null,
+      instrumentBaseSavedAt: loadInstrumentBaseSnapshot()?.savedAt ?? null,
     });
     setActiveWeights(resolved.activeWeights);
     setWeightsSourceMode(resolved.weightsSourceMode);
     setWeightsFallbackReason(resolved.fallbackReason);
-    setActiveWeightsSavedAt(
-      resolved.weightsSourceMode === 'json-official'
-        ? loadInstrumentBaseSnapshot()?.savedAt ?? null
-        : resolved.weightsSourceMode === 'last-known-official'
-          ? loadLastKnownOfficialWeightsSavedAt()
-          : null,
-    );
+    setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
     markSimulationInteraction();
     const nextParams = applyActiveDistribution(simParamsRef.current, resolved.activeWeights);
     setSimParams(nextParams);
-    const base = applySimulationOverrides(nextParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
     startRecalculation('params-change', () => base);
   }, [
     applyActiveDistribution,
-    lastKnownOfficialWeights,
+    instrumentBaseWeights,
     markSimulationInteraction,
-    officialWeights,
     simOverrides,
     startRecalculation,
+    universeWeights,
   ]);
 
   const updateSimParam = useCallback((path: string, value: number) => {
@@ -2373,18 +2700,6 @@ export default function App() {
 
   const handleScenarioChange = useCallback((next: ScenarioVariantId) => {
     markSimulationInteraction(next);
-    const nextOverrides = simOverrides?.active
-      ? {
-          active: true,
-          preset: simOverrides.preset,
-          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
-        }
-      : null;
-    const sanitizedOverrides =
-      nextOverrides && typeof nextOverrides.capital === 'number'
-        ? nextOverrides
-        : null;
-    setSimOverrides(sanitizedOverrides);
     const scenarioBase = applyScenarioEconomics(cloneParams(baseParams), next);
     const nextParams: ModelParameters = {
       ...simParamsRef.current,
@@ -2394,15 +2709,18 @@ export default function App() {
       fx: scenarioBase.fx,
     };
     const effectiveNextParams = applyActiveDistribution(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    setSimOverrides(sanitizedOverrides);
     setSimParams(effectiveNextParams);
     const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
   }, [applyActiveDistribution, applyScenarioEconomics, baseParams, markSimulationInteraction, simOverrides, startRecalculation]);
 
   const handleSimOverridesChange = useCallback((next: SimulationOverrides | null) => {
-    setSimOverrides(next);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParamsRef.current, next);
+    setSimOverrides(sanitizedOverrides);
     markSimulationInteraction();
-    const base = applySimulationOverrides(simParamsRef.current, next);
+    const base = applySimulationOverrides(simParamsRef.current, sanitizedOverrides);
     startRecalculation('params-change', () => base);
   }, [markSimulationInteraction, startRecalculation]);
 
@@ -2416,19 +2734,9 @@ export default function App() {
       inflation: scenarioBase.inflation,
       fx: scenarioBase.fx,
     };
-    const nextOverrides = simOverrides?.active
-      ? {
-          active: true,
-          preset: simOverrides.preset,
-          ...(typeof simOverrides.capital === 'number' ? { capital: simOverrides.capital } : {}),
-        }
-      : null;
-    const sanitizedOverrides =
-      nextOverrides && typeof nextOverrides.capital === 'number'
-        ? nextOverrides
-        : null;
-    setSimOverrides(sanitizedOverrides);
     const effectiveNextParams = applyActiveDistribution(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(effectiveNextParams, simOverrides);
+    setSimOverrides(sanitizedOverrides);
     setSimParams(effectiveNextParams);
     const base = applySimulationOverrides(effectiveNextParams, sanitizedOverrides);
     startRecalculation('scenario', () => base);
@@ -2442,7 +2750,8 @@ export default function App() {
 
   const runSim = useCallback(() => {
     markSimulationInteraction(resolveScenarioVariantId(simParams.activeScenario));
-    const base = applySimulationOverrides(simParams, simOverrides);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
+    const base = applySimulationOverrides(simParams, sanitizedOverrides);
     startRecalculation('manual-run', () => base);
     setActiveTab('sim');
   }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
@@ -2465,7 +2774,7 @@ export default function App() {
   }, [activeScenario, applyScenarioEconomics, baseParams, simOverrides, simParams.fx, simParams.inflation, simParams.returns]);
 
   const optimizerSimulationParams = useMemo(
-    () => applySimulationOverrides(simParams, simOverrides),
+    () => applySimulationOverrides(simParams, sanitizeSimulationOverridesForParams(simParams, simOverrides)),
     [simOverrides, simParams],
   );
   const simulationOptimizerSnapshot = useMemo(
@@ -2502,6 +2811,8 @@ export default function App() {
       setRiskCapitalCLP(0);
       setRiskCapitalUsdTotal(0);
       setRiskCapitalUsdSnapshotCLP(0);
+      setAurumFxSpotCLP(null);
+      setAurumFxSpotSource(null);
       setOptimizableBaseReference({
         amountClp: null,
         asOf: null,
@@ -2561,6 +2872,8 @@ export default function App() {
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
+        setAurumFxSpotCLP(null);
+        setAurumFxSpotSource(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
         setAurumSyncBaseOpt(null);
@@ -2581,17 +2894,23 @@ export default function App() {
       const isPartialComposition = compositionMode === 'partial' || hasFallbackFlags;
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
+      setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
       const latestOptimizable = Number(snapshot.optimizableInvestmentsCLP ?? NaN);
-      const diffMeta = isMaterialAurumDiff(baseOptimizable, latestOptimizable);
+      const diffValue =
+        Number.isFinite(baseOptimizable) && Number.isFinite(latestOptimizable)
+          ? latestOptimizable - baseOptimizable
+          : NaN;
       setAurumSyncBaseOpt(Number.isFinite(baseOptimizable) ? baseOptimizable : null);
       setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
-      setAurumSyncDiff(Number.isFinite(diffMeta.diff) ? diffMeta.diff : null);
-      setAurumSyncState(diffMeta.isMaterial ? 'outdated' : 'synced');
+      setAurumSyncDiff(Number.isFinite(diffValue) ? diffValue : null);
 
       const snapshotSignature = getSnapshotSignature(snapshot);
-      if (snapshotSignature === lastAppliedSnapshotSignatureRef.current && !diffMeta.isMaterial) {
+      const sameAsAppliedSnapshot = snapshotSignature === lastAppliedSnapshotSignatureRef.current;
+      setAurumSyncState(sameAsAppliedSnapshot ? 'synced' : 'outdated');
+      if (sameAsAppliedSnapshot) {
         setSnapshotApplied(true);
         setPendingSnapshot(null);
         setPendingSnapshotLabel(null);
@@ -2599,22 +2918,14 @@ export default function App() {
         lastSnapshotSignatureRef.current = snapshotSignature;
         return;
       }
-      if (snapshotSignature === lastSnapshotSignatureRef.current && !diffMeta.isMaterial) return;
+      if (snapshotSignature === lastSnapshotSignatureRef.current) return;
       lastSnapshotSignatureRef.current = snapshotSignature;
 
-      if (diffMeta.isMaterial) {
-        setSnapshotApplied(false);
-        setPendingSnapshot(snapshot);
-        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-        setPendingSnapshotSignature(snapshotSignature);
-        setBaseUpdatePending(false);
-      } else {
-        setSnapshotApplied(true);
-        setPendingSnapshot(null);
-        setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
-        setPendingSnapshotSignature(null);
-        setBaseUpdatePending(false);
-      }
+      setSnapshotApplied(false);
+      setPendingSnapshot(snapshot);
+      setPendingSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
+      setPendingSnapshotSignature(snapshotSignature);
+      setBaseUpdatePending(false);
     };
 
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
@@ -2713,27 +3024,97 @@ export default function App() {
 
   const weightsSourceLabel = useMemo(() => {
     if (weightsSourceMode === 'simulation') return 'Simulación';
+    if (weightsSourceMode === 'instrument-universe') return 'Instrument Universe';
+    if (weightsSourceMode === 'instrument-base') return 'Base instrumental real';
     if (weightsSourceMode === 'json-official') return 'JSON oficial';
     if (weightsSourceMode === 'last-known-official') return 'Último JSON válido';
     if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
     return 'Error (sin distribución usable)';
   }, [weightsSourceMode]);
   const officialReferenceWeights = useMemo(
-    () => normalizePortfolioWeights(officialWeights ?? lastKnownOfficialWeights ?? DEFAULT_PARAMETERS.weights),
-    [lastKnownOfficialWeights, officialWeights],
+    () => normalizePortfolioWeights(universeWeights ?? instrumentBaseWeights ?? DEFAULT_PARAMETERS.weights),
+    [instrumentBaseWeights, universeWeights],
+  );
+  const instrumentUniverseReferenceWeights = useMemo(
+    () => (universeWeights ? normalizePortfolioWeights(universeWeights) : null),
+    [universeWeights],
+  );
+  const instrumentBaseReferenceWeights = useMemo(
+    () => (instrumentBaseWeights ? normalizePortfolioWeights(instrumentBaseWeights) : null),
+    [instrumentBaseWeights],
   );
   const activeWeightsNormalized = useMemo(
     () => normalizePortfolioWeights(activeWeights),
     [activeWeights],
   );
+  const operativeFxResolution = useMemo<OperativeFxResolution>(() =>
+    resolveOperativeMasterFx({
+      aurumFxClp: aurumFxSpotCLP,
+      aurumFxSource: aurumFxSpotSource,
+      runtimeFxClp: Number(simParams.fx?.clpUsdInitial ?? NaN),
+      manualOverrideFxClp: null,
+    }),
+  [aurumFxSpotCLP, aurumFxSpotSource, simParams.fx?.clpUsdInitial]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      console.info(`[FX TRACE][Midas] master_fx_resolution ${JSON.stringify({
+        snapshotFxClpUsd: aurumFxSpotCLP,
+        snapshotFxSource: aurumFxSpotSource,
+        runtimeFxClpUsdInitial: Number(simParams.fx?.clpUsdInitial ?? NaN),
+        resolvedSourceMode: operativeFxResolution.sourceMode,
+        resolvedReasonCode: operativeFxResolution.reasonCode,
+        appliedFxClp: operativeFxResolution.appliedClp,
+      })}`);
+    } catch {
+      // ignore
+    }
+  }, [aurumFxSpotCLP, aurumFxSpotSource, operativeFxResolution, simParams.fx?.clpUsdInitial]);
+
+  useEffect(() => {
+    const target = operativeFxResolution.aurumCurrentClp;
+    if (target === null || !operativeFxResolution.aurumCurrentAvailable || operativeFxResolution.usingAurumCurrent) return;
+    setBaseParams((prev) => {
+      const current = Number(prev.fx?.clpUsdInitial ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          clpUsdInitial: target,
+        },
+      };
+    });
+    setSimParams((prev) => {
+      const current = Number(prev.fx?.clpUsdInitial ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          clpUsdInitial: target,
+        },
+      };
+    });
+  }, [operativeFxResolution]);
 
   const patrimonioSourceTechnical = snapshotApplied
-    ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'})`
+    ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'}) · Base oficial + capa MIDAS persistente`
     : 'Modelo base local (sin aplicar snapshot Aurum)';
   const distributionSourceTechnical = `${weightsSourceLabel}${
     activeWeightsSavedAt ? ` · savedAt=${activeWeightsSavedAt}` : ''
   }${weightsFallbackReason ? ` · fallback=${weightsFallbackReason}` : ''}`;
-  const fxSpotSourceTechnical = 'params/default/manual (Aurum optimizable snapshot no publica spot FX explícito)';
+  const fxSpotSourceTechnical = (() => {
+    if (operativeFxResolution.reasonCode === 'aurum_current_applied') {
+      return 'Aurum online/manual (snapshot.fxReference.clpUsd) · fuente principal activa';
+    }
+    if (operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied') {
+      return 'Fallback operativo (params.fx.clpUsdInitial) con Aurum current disponible';
+    }
+    const sourceText = operativeFxResolution.aurumSource ? ` · source=${operativeFxResolution.aurumSource}` : '';
+    return `Fallback operativo (params/default/manual) · Aurum sin FX current usable${sourceText}`;
+  })();
   const nonOptimizableBlocksTechnical = (() => {
     const composition = simParams.simulationComposition;
     if (!composition || composition.mode === 'legacy') return 'No disponible en modo legacy';
@@ -2789,10 +3170,17 @@ export default function App() {
       distributionSourceTechnical={distributionSourceTechnical}
       fxSpotSourceTechnical={fxSpotSourceTechnical}
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
+      aurumFxSpotCLP={aurumFxSpotCLP}
+      aurumFxSpotSource={aurumFxSpotSource}
+      operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
       officialReferenceWeights={officialReferenceWeights}
+      instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
+      instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
       activeWeights={activeWeightsNormalized}
+      auditModeEnabled={auditPreviewMode}
+      auditProbe={heroAuditProbe}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}
@@ -2805,15 +3193,22 @@ export default function App() {
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
       onResetSim={resetSimulationSession}
+      onOpenOptimization={() => setActiveTab('opt')}
     />
   ) : activeTab === 'sens' ? (
-    <SensitivityPage params={simParams} stateLabel={stateLabel} />
+    <PalancasPage
+      baseParams={baseParams}
+      simulationParams={optimizerSimulationParams}
+      simulationActive={simulationActive}
+      simulationLabel={stateLabel}
+    />
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
   ) : activeTab === 'settings' ? (
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
+      targetWeights={optimizerSimulationParams.weights}
     />
   ) : activeTab === 'optv0' ? (
     <OptPage
@@ -2826,15 +3221,11 @@ export default function App() {
       optimizableBaseReference={optimizableBaseAdjusted}
     />
   ) : (
-    <OptimizerPage
+    <OptimizationLightPage
       baseParams={baseParams}
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
-      weightsSourceLabel={weightsSourceLabel}
-      preloadedBaseStats={baseOptimizerSnapshot}
-      preloadedSimulationStats={simulationOptimizerSnapshot}
-      optimizableBaseReference={optimizableBaseAdjusted}
     />
   );
 
@@ -2868,6 +3259,7 @@ export default function App() {
         <main
           style={{
             padding: '12px 16px 90px',
+            paddingBottom: 'calc(90px + env(safe-area-inset-bottom, 0px))',
             marginTop: 48,
             maxWidth: 960,
             marginLeft: 'auto',
@@ -2898,7 +3290,7 @@ export default function App() {
           onClick={() => setParamSheetOpen(true)}
           style={{
             position: 'fixed',
-            bottom: 80,
+            bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
             right: 16,
             width: 52,
             height: 52,

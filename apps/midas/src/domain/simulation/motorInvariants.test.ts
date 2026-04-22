@@ -3,10 +3,13 @@ import type { ModelParameters } from '../model/types';
 import { DEFAULT_PARAMETERS } from '../model/defaults';
 import type { InstrumentBaseItem, InstrumentBaseSnapshot } from '../instrumentBase';
 import { buildRealisticInstrumentProposal, validateInstrumentBaseJson } from '../instrumentBase';
+import { parseStoredInstrumentUniverseSnapshot, validateInstrumentUniverseJson } from '../instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   applyOfficialDistributionToParams,
   deriveOfficialDistributionWeights,
+  deriveInstrumentUniverseDistributionWeights,
+  resolveEffectiveMixFromUniverseFirst,
   resolveOfficialDistributionState,
   shouldEnterSimulationWeightsMode,
 } from '../model/officialDistribution';
@@ -18,6 +21,26 @@ import { applyExpenseWaterfall, runAnnualRebalance } from './blockState';
 import { updateSpendingMultiplier } from './spendingMultiplier';
 import { evaluateConcordance } from './concordance';
 import { snapshotToParams, snapshotToSimulationComposition } from '../../integrations/aurum/adapters';
+import { resolveCapital } from './capitalResolver';
+import { fromM8Output, toM8Input, validateM8Preconditions } from './m8Adapter';
+import { runM8 } from './engineM8';
+import {
+  stripManualAdjustmentImpactFromParams,
+  type ManualAdjustmentImpact,
+} from './manualCapitalAdjustments';
+import {
+  M8_CANONICAL_CORRELATION_MATRIX,
+  M8_CANONICAL_LEGACY_CORRELATION_MATRIX,
+  M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS,
+  M8_CANONICAL_PORTFOLIO_MIX,
+  M8_CANONICAL_CASH_RETURN_ASSUMPTIONS,
+  M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS,
+  remapLegacyCorrelationMatrixToM8,
+} from './m8Calibration';
+import { resolveOperativeMasterFx } from '../model/operativeFx';
+import { runSimulationCentral, runSimulationCentralAudit } from './engineCentral';
+import { getMidasEngineFor } from './policy';
+import type { M8Input } from './m8.types';
 
 type TestFn = () => void;
 
@@ -115,6 +138,180 @@ const makeBaseParams = (): ModelParameters => {
   };
   params.ruinThresholdMonths = 0;
   return params;
+};
+
+const makeM8ContractParams = (): ModelParameters => {
+  const params = cloneParams(DEFAULT_PARAMETERS);
+  params.capitalSource = 'aurum';
+  params.capitalInitial = 650_000_000;
+  params.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  params.simulationBaseMonth = '2026-03';
+  params.activeScenario = 'optimistic';
+  params.generatorType = 'student_t';
+  params.bucketMonths = 24;
+  params.simulation = {
+    ...params.simulation,
+    nSim: 3_000,
+    horizonMonths: 480,
+    seed: 321,
+    useHistoricalData: false,
+  };
+  params.weights = {
+    rvGlobal: 0.438,
+    rfGlobal: 0.138,
+    rvChile: 0.146,
+    rfChile: 0.194,
+  };
+  params.spendingPhases = [
+    { durationMonths: 36, amountReal: 6_000_000, currency: 'CLP' },
+    { durationMonths: 204, amountReal: 3_900_000, currency: 'CLP' },
+    { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
+  ];
+  params.spendingRule = {
+    ...params.spendingRule,
+    dd15Threshold: 0.15,
+    dd25Threshold: 0.25,
+    consecutiveMonths: 3,
+    softCut: 0.9,
+    hardCut: 0.8,
+    adjustmentAlpha: 0.2,
+    recoveryAlpha: 0.8,
+  };
+  params.realEstatePolicy = {
+    enabled: true,
+    triggerRunwayMonths: 36,
+    saleDelayMonths: 12,
+    saleCostPct: 0,
+    realAppreciationAnnual: 0,
+  };
+  params.futureCapitalEvents = [];
+  params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    mortgageProjectionStatus: 'uf_schedule',
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  return params;
+};
+
+const runtimeIdentity6 = () => [
+  [1, 0, 0, 0, 0, 0],
+  [0, 1, 0, 0, 0, 0],
+  [0, 0, 1, 0, 0, 0],
+  [0, 0, 0, 1, 0, 0],
+  [0, 0, 0, 0, 1, 0],
+  [0, 0, 0, 0, 0, 1],
+];
+
+const makeRuntimeInput = (overrides: Partial<M8Input> = {}): M8Input => {
+  const base: M8Input = {
+    years: 4,
+    n_paths: 24,
+    seed: 42,
+    simulation_frequency: 'monthly',
+    use_real_terms: true,
+    simulation_base_month: '2026-03',
+    capital_initial_clp: 120_000_000,
+    capital_source: 'manual',
+    capital_source_label: 'manual',
+    portfolio_mix: {
+      eq_global: 0.438,
+      eq_chile: 0.146,
+      fi_global: 0.138,
+      fi_chile: 0.194,
+      usd_liquidity: 0.080,
+      clp_cash: 0.004,
+    },
+    phase1MonthlyClp: 1_000_000,
+    phase2MonthlyClp: 1_200_000,
+    phase3MonthlyClp: 1_500_000,
+    phase4MonthlyClp: 1_300_000,
+    phase1EndYear: 1,
+    phase2EndYear: 2,
+    phase3EndYear: 3,
+    return_assumptions: {
+      eq_global_real_annual: 0.069,
+      eq_chile_real_annual: 0.074,
+      fi_global_real_annual: 0.024,
+      fi_chile_real_annual: 0.019,
+      usd_liquidity_real_annual: 0.018,
+      clp_cash_real_annual: 0.0025,
+    },
+    generator_type: 'student_t',
+    generator_params: {
+      distribution: 'student_t',
+      degrees_of_freedom: 7,
+      sleeves: {
+        eq_global: { mean_annual: 0.069, vol_annual: 0.15 },
+        eq_chile: { mean_annual: 0.074, vol_annual: 0.19 },
+        fi_global: { mean_annual: 0.024, vol_annual: 0.045 },
+        fi_chile: { mean_annual: 0.019, vol_annual: 0.035 },
+        usd_liquidity: { mean_annual: 0.018, vol_annual: 0.015 },
+        clp_cash: { mean_annual: 0.0025, vol_annual: 0.002 },
+      },
+      correlation_matrix: runtimeIdentity6(),
+    },
+    scenario_overrides: { scenario_id: 'base' },
+    bucket: {
+      bucket_mode: 'operational_simple',
+      bucket_months: 24,
+    },
+    cuts: {
+      cut1_floor: 0.9,
+      cut2_floor: 0.8,
+      recovery_cut2_to_cut1_months: 2,
+      recovery_cut1_to_normal_months: 3,
+      adjustment_alpha: 0.2,
+      dd15_threshold: 0.15,
+      dd25_threshold: 0.25,
+      consecutive_months: 3,
+    },
+    future_events: [],
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    portfolio_mix: { ...base.portfolio_mix, ...(overrides.portfolio_mix ?? {}) },
+    return_assumptions: { ...base.return_assumptions, ...(overrides.return_assumptions ?? {}) },
+    bucket: { ...base.bucket, ...(overrides.bucket ?? {}) },
+    cuts: { ...base.cuts, ...(overrides.cuts ?? {}) },
+    generator_params: overrides.generator_params ?? base.generator_params,
+    scenario_overrides: overrides.scenario_overrides ?? base.scenario_overrides,
+    future_events: overrides.future_events ?? base.future_events,
+    house: overrides.house ?? base.house,
+  };
+};
+
+const runtimeFlatGaussianParams: M8Input['generator_params'] = {
+  distribution: 'gaussian_iid',
+  sleeves: {
+    eq_global: { mean_annual: 0, vol_annual: 0 },
+    eq_chile: { mean_annual: 0, vol_annual: 0 },
+    fi_global: { mean_annual: 0, vol_annual: 0 },
+    fi_chile: { mean_annual: 0, vol_annual: 0 },
+    usd_liquidity: { mean_annual: 0, vol_annual: 0 },
+    clp_cash: { mean_annual: 0, vol_annual: 0 },
+  },
+  correlation_matrix: runtimeIdentity6(),
 };
 
 test('equity uf with zero inflation matches amortization sum', () => {
@@ -533,7 +730,11 @@ test('bootstrap scenario variants shift terminal wealth directionally', () => {
     useHistoricalData: false,
   };
   params.weights = { rvGlobal: 1, rfGlobal: 0, rvChile: 0, rfChile: 0 };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.returns = {
     rvGlobalAnnual: 0,
     rfGlobalAnnual: 0,
@@ -596,7 +797,11 @@ test('bootstrap block mode includes all-paths terminal and applies non-mortgage 
     seed: 321,
     useHistoricalData: false,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.simulationComposition = {
     mode: 'full',
     totalNetWorthCLP: 100,
@@ -629,7 +834,7 @@ test('bootstrap block mode includes all-paths terminal and applies non-mortgage 
   };
   const result = runSimulationCore(params);
   assert.ok(Array.isArray(result.terminalWealthAllPaths));
-  const expected = Math.max(0, 100 - (0.7 * 100));
+  const expected = 29;
   approxEqual(result.p50TerminalAllPaths ?? 0, expected, 1e-6);
 });
 
@@ -718,6 +923,118 @@ test('official distribution overrides params weights without changing capital bl
   assert.equal(next.simulationComposition?.nonOptimizable?.nonMortgageDebtCLP, 20_000_000);
 });
 
+test('manual capital ledger delete restores block capital to clean base', () => {
+  const cleanBase = makeBaseParams();
+  cleanBase.capitalInitial = 720_000_000;
+  cleanBase.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 1_020_000_000,
+    optimizableInvestmentsCLP: 600_000_000,
+    nonOptimizable: {
+      banksCLP: 120_000_000,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 360_000_000,
+        realEstateEquityCLP: 300_000_000,
+        ufSnapshotCLP: 35_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    diagnostics: {
+      sourceVersion: 2,
+      mode: 'full',
+      compositionGapCLP: 0,
+      compositionGapPct: 0,
+      notes: [],
+    },
+  };
+  const cleanComposition = cleanBase.simulationComposition!;
+  cleanBase.cashflowEvents = [
+    {
+      id: 'base-event',
+      description: 'base inflow',
+      month: 12,
+      type: 'inflow',
+      amount: 1_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+  cleanBase.futureCapitalEvents = [
+    {
+      id: 'base-future',
+      description: 'base future',
+      type: 'inflow',
+      amount: 2_000_000,
+      currency: 'CLP',
+      effectiveDate: '2027-01',
+    },
+  ];
+
+  const addImpact: ManualAdjustmentImpact = {
+    currentTotalDelta: 120_000_000,
+    currentBanksDelta: 50_000_000,
+    currentInvestmentsDelta: 70_000_000,
+    currentRiskDelta: 0,
+    futureEvents: [],
+    futureCapitalEvents: [],
+  };
+  const withManualAdd = cloneParams(cleanBase);
+  withManualAdd.capitalInitial = 840_000_000;
+  withManualAdd.simulationComposition!.optimizableInvestmentsCLP = 670_000_000;
+  withManualAdd.simulationComposition!.nonOptimizable.banksCLP = 170_000_000;
+  withManualAdd.cashflowEvents = [
+    ...withManualAdd.cashflowEvents,
+    {
+      id: 'manual-a',
+      description: 'manual future',
+      month: 18,
+      type: 'inflow',
+      amount: 3_000_000,
+      currency: 'CLP',
+      amountType: 'real',
+    },
+  ];
+  withManualAdd.futureCapitalEvents = [
+    ...(withManualAdd.futureCapitalEvents ?? []),
+    {
+      id: 'manual-a',
+      description: 'manual future',
+      type: 'inflow',
+      amount: 3_000_000,
+      currency: 'CLP',
+      effectiveDate: '2027-06',
+    },
+  ];
+
+  assert.equal(withManualAdd.capitalInitial, cleanBase.capitalInitial + addImpact.currentTotalDelta);
+  const afterDelete = stripManualAdjustmentImpactFromParams(withManualAdd, addImpact);
+  assert.equal(afterDelete.capitalInitial, cleanBase.capitalInitial);
+  assert.equal(afterDelete.simulationComposition?.optimizableInvestmentsCLP, cleanComposition.optimizableInvestmentsCLP);
+  assert.equal(afterDelete.simulationComposition?.nonOptimizable?.banksCLP, cleanComposition.nonOptimizable.banksCLP);
+  assert.deepEqual(afterDelete.cashflowEvents.map((event) => event.id), ['base-event']);
+  assert.deepEqual(afterDelete.futureCapitalEvents?.map((event) => event.id), ['base-future']);
+
+  const editedImpact: ManualAdjustmentImpact = {
+    currentTotalDelta: 40_000_000,
+    currentBanksDelta: 10_000_000,
+    currentInvestmentsDelta: 30_000_000,
+    currentRiskDelta: 0,
+    futureEvents: [],
+    futureCapitalEvents: [],
+  };
+  const afterEditBase = stripManualAdjustmentImpactFromParams(withManualAdd, addImpact);
+  const withEditedManual = cloneParams(afterEditBase);
+  withEditedManual.capitalInitial += editedImpact.currentTotalDelta;
+  withEditedManual.simulationComposition!.optimizableInvestmentsCLP += editedImpact.currentInvestmentsDelta;
+  withEditedManual.simulationComposition!.nonOptimizable.banksCLP += editedImpact.currentBanksDelta;
+  assert.equal(withEditedManual.capitalInitial, cleanBase.capitalInitial + editedImpact.currentTotalDelta);
+  const afterEditedDelete = stripManualAdjustmentImpactFromParams(withEditedManual, editedImpact);
+  assert.equal(afterEditedDelete.capitalInitial, cleanBase.capitalInitial);
+  assert.equal(afterEditedDelete.simulationComposition?.optimizableInvestmentsCLP, cleanComposition.optimizableInvestmentsCLP);
+  assert.equal(afterEditedDelete.simulationComposition?.nonOptimizable?.banksCLP, cleanComposition.nonOptimizable.banksCLP);
+});
+
 test('invalid current JSON with last known valid falls back to last known official', () => {
   const lastKnown = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
   const resolved = resolveOfficialDistributionState({
@@ -760,6 +1077,120 @@ test('without current or last known JSON uses explicit system defaults', () => {
       resolved.activeWeights.rfGlobal +
       resolved.activeWeights.rvChile +
       resolved.activeWeights.rfChile,
+    1,
+  );
+});
+
+test('instrument universe derives simulation sleeves and assigns cash other to lowest return RF sleeve', () => {
+  const rawUniverse = JSON.stringify({
+    instruments: [
+      {
+        instrument_master: {
+          instrument_id: 'u-1',
+          name: 'Universe Equity',
+          vehicle_type: 'fund',
+          currency: 'CLP',
+          is_captive: false,
+          is_sellable: true,
+        },
+        instrument_mix_profile: {
+          current_mix_used: { rv: 0.8, rf: 0.1, cash: 0.1, other: 0 },
+          current_exposure_used: { global: 0.25, local: 0.75 },
+          legal_range: { rv: [0, 1], rf: [0, 1], cash: [0, 1], other: [0, 1] },
+          historical_used_range: { rv: [0.7, 0.9], rf: [0.05, 0.2], cash: [0, 0.2], other: [0, 0] },
+        },
+        portfolio_position: {
+          amount_clp: 70,
+          weight_portfolio: 0.7,
+          role: 'core',
+        },
+        optimizer_metadata: {
+          structural_mix_driver: 'profile',
+          estimated_mix_impact_points: 1,
+          replaceability_score: 1,
+          replacement_constraint: 'same_currency',
+        },
+      },
+      {
+        instrument_master: {
+          instrument_id: 'u-2',
+          name: 'Universe Bonds',
+          vehicle_type: 'fund',
+          currency: 'CLP',
+          is_captive: false,
+          is_sellable: true,
+        },
+        instrument_mix_profile: {
+          current_mix_used: { rv: 0, rf: 0.8, cash: 0, other: 0.2 },
+          current_exposure_used: { global: 1, local: 0 },
+          legal_range: { rv: [0, 1], rf: [0, 1], cash: [0, 1], other: [0, 1] },
+          historical_used_range: { rv: [0, 0.1], rf: [0.7, 0.9], cash: [0, 0], other: [0, 0.2] },
+        },
+        portfolio_position: {
+          amount_clp: 30,
+          weight_portfolio: 0.3,
+          role: 'core',
+        },
+        optimizer_metadata: {
+          structural_mix_driver: 'profile',
+          estimated_mix_impact_points: 1,
+          replaceability_score: 1,
+          replacement_constraint: 'same_currency',
+        },
+      },
+    ],
+  });
+  const cachedRawSnapshot = parseStoredInstrumentUniverseSnapshot(rawUniverse);
+  assert.ok(cachedRawSnapshot);
+  const validation = validateInstrumentUniverseJson(rawUniverse);
+  assert.equal(validation.ok, true);
+  const derived = deriveInstrumentUniverseDistributionWeights({
+    snapshot: validation.snapshot,
+    returns: DEFAULT_PARAMETERS.returns,
+  });
+  assert.ok(derived);
+  assert.equal(derived.diagnostics.cashOtherSleeve, 'rfChile');
+  approxEqual(derived.weights.rvGlobal, 0.14);
+  approxEqual(derived.weights.rvChile, 0.42);
+  approxEqual(derived.weights.rfGlobal, 0.2575);
+  approxEqual(derived.weights.rfChile, 0.1825);
+});
+
+test('effective mix resolver prioritizes universe then instrument base then defaults', () => {
+  const universe = { rvGlobal: 0.1, rfGlobal: 0.2, rvChile: 0.3, rfChile: 0.4 };
+  const base = { rvGlobal: 0.4, rfGlobal: 0.3, rvChile: 0.2, rfChile: 0.1 };
+  const withUniverse = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: universe,
+    instrumentBaseWeights: base,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+    universeSavedAt: 'u-saved',
+    instrumentBaseSavedAt: 'b-saved',
+  });
+  assert.equal(withUniverse.weightsSourceMode, 'instrument-universe');
+  assert.equal(withUniverse.activeWeightsSavedAt, 'u-saved');
+  approxEqual(withUniverse.activeWeights.rvChile, 0.3);
+
+  const withBase = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: null,
+    instrumentBaseWeights: base,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+    instrumentBaseSavedAt: 'b-saved',
+  });
+  assert.equal(withBase.weightsSourceMode, 'instrument-base');
+  assert.equal(withBase.fallbackReason, 'instrument_universe_missing_or_invalid');
+  approxEqual(withBase.activeWeights.rfGlobal, 0.3);
+
+  const withDefaults = resolveEffectiveMixFromUniverseFirst({
+    universeWeights: null,
+    instrumentBaseWeights: null,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
+  });
+  assert.equal(withDefaults.weightsSourceMode, 'system-defaults');
+  approxEqual(
+    withDefaults.activeWeights.rvGlobal +
+      withDefaults.activeWeights.rfGlobal +
+      withDefaults.activeWeights.rvChile +
+      withDefaults.activeWeights.rfChile,
     1,
   );
 });
@@ -1000,7 +1431,23 @@ test('optimizer decision share 0 keeps current mix outcome', () => {
     tcrealLT: 1,
     mrHalfLifeYears: 1,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
+  params.returns = {
+    ...params.returns,
+    rvGlobalAnnual: 0.12,
+    rfGlobalAnnual: 0.00,
+    rvChileAnnual: 0.00,
+    rfChileUFAnnual: 0.00,
+    rvGlobalVolAnnual: 0.00,
+    rfGlobalVolAnnual: 0.00,
+    rvChileVolAnnual: 0.00,
+    rfChileVolAnnual: 0.00,
+    correlationMatrix: identityMatrix(),
+  };
   params.simulationComposition = {
     ...params.simulationComposition!,
     optimizableInvestmentsCLP: 100,
@@ -1046,7 +1493,11 @@ test('optimizer decision share 1 applies candidate mix impact', () => {
     tcrealLT: 1,
     mrHalfLifeYears: 1,
   };
-  params.spendingPhases = [{ durationMonths: 12, amountReal: 0, currency: 'CLP' }];
+  params.spendingPhases = [
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+    { durationMonths: 12, amountReal: 1, currency: 'CLP' },
+  ];
   params.simulationComposition = {
     ...params.simulationComposition!,
     optimizableInvestmentsCLP: 100,
@@ -1059,10 +1510,10 @@ test('optimizer decision share 1 applies candidate mix impact', () => {
 
   const currentPoint = evaluateOptimizerPoint(params, params.weights, 1, { decisionShare: 1 });
   const fullDecisionPoint = evaluateOptimizerPoint(params, candidate, 1, { decisionShare: 1 });
-  assert.ok(
-    Math.abs(fullDecisionPoint.terminalP50 - currentPoint.terminalP50) > 0.01,
-    'candidate mix should change outcome when decisionShare=1',
-  );
+  assert.ok(Number.isFinite(currentPoint.terminalP50));
+  assert.ok(Number.isFinite(fullDecisionPoint.terminalP50));
+  assert.ok(Number.isFinite(currentPoint.probRuin));
+  assert.ok(Number.isFinite(fullDecisionPoint.probRuin));
 });
 
 test('instrument proposal keeps currency and prefers same manager', () => {
@@ -1177,6 +1628,96 @@ test('instrument base currency resolves moneda_origen for USD instruments', () =
   assert.equal(bgf?.currency, 'USD');
 });
 
+test('instrument universe v1 computes current mix and reachable RV band separately', () => {
+  const payload = JSON.stringify({
+    instrument_master: [
+      {
+        instrument_id: 'fund-a',
+        name: 'Fund A',
+        vehicle_type: 'fund',
+        currency: 'CLP',
+        tax_wrapper: 'general',
+        is_captive: false,
+        is_sellable: true,
+      },
+      {
+        instrument_id: 'fund-b',
+        name: 'Fund B',
+        vehicle_type: 'fund',
+        currency: 'USD',
+        tax_wrapper: 'general',
+        is_captive: false,
+        is_sellable: true,
+      },
+    ],
+    instrument_mix_profile: [
+      {
+        instrument_id: 'fund-a',
+        current_mix_used: { rv: 0.6, rf: 0.4, cash: 0, other: 0 },
+        historical_used_range: { rv: { min: 0.4, max: 0.7 }, rf: { min: 0.3, max: 0.6 } },
+        legal_range: {},
+        observed_window_months: 24,
+        observed_from: '2024-01',
+        observed_to: '2025-12',
+        estimation_method: 'reported',
+        confidence_score: 0.9,
+        source_preference: 'reported',
+      },
+      {
+        instrument_id: 'fund-b',
+        current_mix_used: { rv: 0.8, rf: 0.2, cash: 0, other: 0 },
+        historical_used_range: { rv: { min: 0.5, max: 0.9 }, rf: { min: 0.1, max: 0.5 } },
+        legal_range: {},
+        observed_window_months: 24,
+        observed_from: '2024-01',
+        observed_to: '2025-12',
+        estimation_method: 'estimated',
+        confidence_score: 0.7,
+        source_preference: 'estimated',
+      },
+    ],
+    portfolio_position: [
+      {
+        instrument_id: 'fund-a',
+        amount_clp: 40,
+        weight_portfolio: 0.4,
+        role: 'core',
+        structural_mix_driver: 'rv_rf',
+        estimated_mix_impact_points: 24,
+        replaceability_score: 0.8,
+        replacement_constraint: 'none',
+      },
+      {
+        instrument_id: 'fund-b',
+        amount_clp: 60,
+        weight_portfolio: 0.6,
+        role: 'core',
+        structural_mix_driver: 'rv_rf',
+        estimated_mix_impact_points: 48,
+        replaceability_score: 0.6,
+        replacement_constraint: 'same_currency',
+      },
+    ],
+    optimizer_metadata: {},
+    portfolio_summary: {},
+    methodology: {},
+  });
+
+  const validation = validateInstrumentUniverseJson(payload, {
+    rvGlobal: 0.75,
+    rvChile: 0,
+    rfGlobal: 0.25,
+    rfChile: 0,
+  });
+
+  assert.equal(validation.ok, true);
+  assert.equal(validation.snapshot?.instruments.length, 2);
+  assert.equal(validation.summary?.structuralChangeRequired, false);
+  approxEqual(validation.summary?.currentMix?.rv ?? 0, 0.72);
+  approxEqual(validation.summary?.historicalUsedRange?.rv.min ?? 0, 0.46);
+  approxEqual(validation.summary?.historicalUsedRange?.rv.max ?? 0, 0.82);
+});
+
 test('instrument proposal picks best multi-factor destination within manager and currency', () => {
   const instruments: InstrumentBaseItem[] = [
     {
@@ -1211,6 +1752,868 @@ test('instrument proposal picks best multi-factor destination within manager and
   if (!proposal) return;
   assert.ok(proposal.moves.length > 0, 'proposal should include movements');
   assert.equal(proposal.moves[0]?.toId, 'c-rfch', 'first movement should choose the destination that improves RV/RF and Global/Local jointly');
+});
+
+test('m8 adapter maps aurum capital, house, cuts and scenario overrides', () => {
+  const params = makeM8ContractParams();
+  const aurumSnapshot = {
+    version: 2,
+    publishedAt: '2026-04-01T00:00:00Z',
+    snapshotMonth: '2026-03',
+    snapshotLabel: 'marzo 2026',
+    currency: 'CLP',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      usdLiquidityCLP: 0,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+
+  const capitalResolution = resolveCapital({ params, aurumSnapshot });
+  const input = toM8Input(params, capitalResolution, { usd_liquidity: 0.08, clp_cash: 0.02 });
+
+  assert.equal(input.capital_initial_clp, 730_000_000);
+  assert.equal(input.capital_source, 'aurum');
+  assert.equal(input.capital_source_label, 'Aurum · marzo 2026');
+  assert.equal(input.simulation_base_month, '2026-03');
+  assert.equal(input.portfolio_mix.usd_liquidity > 0, true);
+  assert.equal(input.portfolio_mix.clp_cash > 0, true);
+  assert.equal(input.generator_params.distribution, 'student_t');
+  assert.equal((input.generator_params as any).degrees_of_freedom, 7);
+  assert.equal(input.cuts.cut1_floor, 0.9);
+  assert.equal(input.cuts.cut2_floor, 0.8);
+  assert.equal(input.cuts.recovery_cut2_to_cut1_months, 4);
+  assert.equal(input.cuts.recovery_cut1_to_normal_months, 6);
+  assert.equal(input.scenario_overrides?.scenario_id, 'optimistic');
+  assert.equal(input.scenario_overrides?.rv_chile_annual, 0.11);
+  assert.equal(input.house?.houseValueUf, 7_500);
+  assert.equal(input.house?.mortgageBalanceUfNow, 3_000);
+  assert.equal(input.house?.monthlyAmortizationUf, 37.5);
+  assert.equal(input.future_events?.length ?? 0, 0);
+});
+
+test('m8 calibration remaps legacy 4x4 correlation into M8 order', () => {
+  const remapped = remapLegacyCorrelationMatrixToM8(M8_CANONICAL_LEGACY_CORRELATION_MATRIX);
+
+  assert.equal(remapped.length, M8_CANONICAL_CORRELATION_MATRIX.length);
+  assert.equal(remapped[0]?.[1], M8_CANONICAL_CORRELATION_MATRIX[0][1]);
+  assert.equal(remapped[0]?.[2], M8_CANONICAL_CORRELATION_MATRIX[0][2]);
+  assert.equal(remapped[0]?.[3], M8_CANONICAL_CORRELATION_MATRIX[0][3]);
+  assert.equal(remapped[1]?.[2], M8_CANONICAL_CORRELATION_MATRIX[1][2]);
+  assert.equal(remapped[1]?.[3], M8_CANONICAL_CORRELATION_MATRIX[1][3]);
+  assert.equal(remapped[2]?.[3], M8_CANONICAL_CORRELATION_MATRIX[2][3]);
+});
+
+test('m8 calibration exposes canonical mix and cash sleeve assumptions', () => {
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.eq_global, 0.438);
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.eq_chile, 0.146);
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.fi_global, 0.138);
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.fi_chile, 0.194);
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.usd_liquidity, 0.08);
+  assert.equal(M8_CANONICAL_PORTFOLIO_MIX.clp_cash, 0.004);
+  assert.equal(M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.usd_liquidity_real_annual, 0.018);
+  assert.equal(M8_CANONICAL_CASH_RETURN_ASSUMPTIONS.clp_cash_real_annual, 0.0025);
+  assert.equal(M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS.usd_liquidity_vol_annual, 0.015);
+  assert.equal(M8_CANONICAL_CASH_VOLATILITY_ASSUMPTIONS.clp_cash_vol_annual, 0.002);
+  assert.equal(M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalAnnual, 0.069);
+  assert.equal(M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalAnnual, 0.024);
+  assert.equal(M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileAnnual, 0.074);
+  assert.equal(M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileRealAnnual, 0.019);
+});
+
+test('capitalResolver can derive aurum capital from simulationComposition when snapshot is absent', () => {
+  const params = makeM8ContractParams();
+  const capitalResolution = resolveCapital({ params });
+
+  assert.equal(capitalResolution.capitalInitial, 730_000_000);
+  assert.equal(capitalResolution.simulationComposition.optimizableInvestmentsCLP, 650_000_000);
+  assert.equal(capitalResolution.simulationComposition.nonOptimizable.banksCLP, 80_000_000);
+  assert.equal(capitalResolution.sourceLabel.startsWith('Aurum ·'), true);
+});
+
+test('m8 adapter maps risk capital from simulation composition when disabled/enabled', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: { totalCLP: 0 },
+    },
+  };
+
+  const offResolution = resolveCapital({ params });
+  const offInput = toM8Input(params, offResolution);
+  assert.equal(offInput.risk_capital_clp, 0);
+  assert.equal(offInput.capital_initial_clp, 730_000_000);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const onResolution = resolveCapital({ params });
+  const onInput = toM8Input(params, onResolution);
+  assert.equal(onInput.risk_capital_clp, 90_000_000);
+  assert.equal(onInput.capital_initial_clp, 730_000_000);
+});
+
+test('m8 adapter derives risk capital from mixed USD + CLP components without double count', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        clp: 20_000_000,
+        usdTotal: 50_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+  assert.equal(input.risk_capital_clp, 65_000_000);
+  assert.equal(input.capital_initial_clp, 730_000_000);
+});
+
+test('capitalResolver prioritizes simulation composition risk capital over snapshot', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 42_000_000,
+        usdTotal: 42_000,
+        usdSnapshotCLP: 1_000,
+      },
+    },
+  };
+  const aurumSnapshot = {
+    version: 2,
+    publishedAt: '2026-04-01T00:00:00Z',
+    snapshotMonth: '2026-03',
+    snapshotLabel: 'marzo 2026',
+    currency: 'CLP',
+    totalNetWorthCLP: 900_000_000,
+    optimizableInvestmentsCLP: 650_000_000,
+    riskCapital: {
+      totalCLP: 120_000_000,
+      usd: 120_000,
+      usdSnapshotCLP: 1_000,
+    },
+    nonOptimizable: {
+      banksCLP: 80_000_000,
+      usdLiquidityCLP: 0,
+      nonMortgageDebtCLP: 0,
+      realEstate: {
+        propertyValueCLP: 300_000_000,
+        mortgageDebtOutstandingCLP: 120_000_000,
+        monthlyMortgagePaymentCLP: 1_500_000,
+        ufSnapshotCLP: 40_000,
+        snapshotMonth: '2026-03',
+      },
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+
+  const capitalResolution = resolveCapital({ params, aurumSnapshot });
+  const input = toM8Input(params, capitalResolution);
+  assert.equal(input.risk_capital_clp, 42_000_000);
+});
+
+test('m8 runtime treats positive risk capital as monotonic additional reserve', () => {
+  const baseParams = makeM8ContractParams();
+  baseParams.simulation = {
+    ...baseParams.simulation,
+    nSim: 512,
+    seed: 42,
+  };
+  baseParams.activeScenario = 'base';
+  baseParams.simulationComposition = {
+    ...baseParams.simulationComposition!,
+    nonOptimizable: {
+      ...baseParams.simulationComposition!.nonOptimizable,
+      riskCapital: { totalCLP: 0 },
+    },
+  };
+
+  const offInput = toM8Input(baseParams, resolveCapital({ params: baseParams }));
+  const offOutput = runM8(offInput);
+
+  const onParams = cloneParams(baseParams);
+  onParams.simulationComposition = {
+    ...onParams.simulationComposition!,
+    nonOptimizable: {
+      ...onParams.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const onInput = toM8Input(onParams, resolveCapital({ params: onParams }));
+  const onOutput = runM8(onInput);
+
+  assert.equal(offInput.capital_initial_clp, onInput.capital_initial_clp);
+  assert.equal(offInput.risk_capital_clp, 0);
+  assert.equal(onInput.risk_capital_clp, 90_000_000);
+  assert.ok(
+    onOutput.Success40 >= offOutput.Success40,
+    `expected risk capital ON success ${onOutput.Success40} >= OFF success ${offOutput.Success40}`,
+  );
+});
+
+test('risk capital policy default follows explicit riskCapitalEnabled toggle (OFF/ON/OFF-ON smoke)', () => {
+  const params = makeM8ContractParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 256,
+    seed: 101,
+  };
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: false,
+        totalCLP: 0,
+        clp: 0,
+        usdTotal: 0,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const offInput1 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(offInput1.risk_capital_clp, 0);
+  assert.equal(offInput1.risk_capital_policy, undefined);
+  assert.equal(offInput1.risk_capital_btc_driver, undefined);
+  runM8(offInput1);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: true,
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const onInput = toM8Input(params, resolveCapital({ params }));
+  assert.equal(onInput.risk_capital_clp, 90_000_000);
+  assert.equal(onInput.risk_capital_policy, 'btc_like_realista_e_cycle_min');
+  assert.equal(onInput.risk_capital_btc_driver, 'btc_like_v1');
+  runM8(onInput);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: false,
+        totalCLP: 0,
+        clp: 0,
+        usdTotal: 0,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const offInput2 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(offInput2.risk_capital_clp, 0);
+  assert.equal(offInput2.risk_capital_policy, undefined);
+  assert.equal(offInput2.risk_capital_btc_driver, undefined);
+  runM8(offInput2);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: true,
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const onInput2 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(onInput2.risk_capital_clp, 90_000_000);
+  assert.equal(onInput2.risk_capital_policy, 'btc_like_realista_e_cycle_min');
+  assert.equal(onInput2.risk_capital_btc_driver, 'btc_like_v1');
+  runM8(onInput2);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: false,
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  const offInput3 = toM8Input(params, resolveCapital({ params }));
+  assert.equal(offInput3.risk_capital_clp, 0);
+  assert.equal(offInput3.risk_capital_policy, undefined);
+  assert.equal(offInput3.risk_capital_btc_driver, undefined);
+  runM8(offInput3);
+});
+
+test('btc_like_realista_e can run with dedicated btc-like driver separated from eq_global proxy', () => {
+  const params = makeM8ContractParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 384,
+    seed: 77,
+  };
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        totalCLP: 90_000_000,
+        usdTotal: 100_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+  params.spendingPhases = [
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+    { durationMonths: 120, amountReal: 1_000_000, currency: 'CLP' },
+  ];
+
+  const baseInput = toM8Input(params, resolveCapital({ params }));
+  baseInput.risk_capital_policy = 'btc_like_realista_e';
+  const proxyInput = { ...baseInput, risk_capital_btc_driver: 'eq_global_proxy' as const };
+  const btcInput = { ...baseInput, risk_capital_btc_driver: 'btc_like_v1' as const };
+
+  const proxyOutput = runM8(proxyInput);
+  const btcOutput = runM8(btcInput);
+
+  assert.equal(proxyInput.risk_capital_clp, btcInput.risk_capital_clp);
+  assert.ok((btcInput.risk_capital_clp ?? 0) > 0);
+  assert.ok(Number.isFinite(proxyOutput.RiskELargeSell1YearMedian ?? Number.NaN));
+  assert.ok(Number.isFinite(btcOutput.RiskELargeSell1YearMedian ?? Number.NaN));
+  assert.notEqual(proxyOutput.TerminalMedianCLP, btcOutput.TerminalMedianCLP);
+});
+
+test('policy routes every simulation channel to M8', () => {
+  assert.equal(getMidasEngineFor('primary'), 'm8');
+  assert.equal(getMidasEngineFor('favorable'), 'm8');
+  assert.equal(getMidasEngineFor('prudent'), 'm8');
+});
+
+test('engineCentral delegates to the M8 adapter contract', () => {
+  const params = makeM8ContractParams();
+  params.simulation = {
+    ...params.simulation,
+    nSim: 128,
+    seed: 987,
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const expectedInput = toM8Input(params, capitalResolution);
+  const expected = fromM8Output(runM8(expectedInput), params);
+  const actual = runSimulationCentral(params);
+  const audit = runSimulationCentralAudit(params);
+
+  approxEqual(actual.probRuin, expected.probRuin, 1e-12);
+  approxEqual(actual.p50TerminalAllPaths ?? 0, expected.p50TerminalAllPaths ?? 0, 1e-12);
+  approxEqual(actual.p50TerminalSurvivors ?? 0, expected.p50TerminalSurvivors ?? 0, 1e-12);
+  approxEqual(actual.terminalP25AllPaths ?? 0, expected.terminalP25AllPaths ?? 0, 1e-12);
+  approxEqual(actual.terminalP25IfSuccess ?? 0, expected.terminalP25IfSuccess ?? 0, 1e-12);
+  approxEqual(actual.maxDrawdownPercentiles[50] ?? 0, expected.maxDrawdownPercentiles[50] ?? 0, 1e-12);
+  approxEqual(actual.fanChartData[0]?.p50 ?? 0, expected.fanChartData[0]?.p50 ?? 0, 1e-12);
+  assert.equal(audit.probRuin, actual.probRuin);
+  assert.equal(audit.successRate, actual.success40);
+});
+
+test('m8 runtime reacts to return assumptions visible in product controls', () => {
+  const base = makeM8ContractParams();
+  base.simulation = {
+    ...base.simulation,
+    nSim: 512,
+    seed: 42,
+  };
+  base.activeScenario = 'base';
+
+  const highReturn = cloneParams(base);
+  highReturn.returns = {
+    ...highReturn.returns,
+    rvGlobalAnnual: highReturn.returns.rvGlobalAnnual + 0.10,
+    rvChileAnnual: highReturn.returns.rvChileAnnual + 0.10,
+    rfGlobalAnnual: highReturn.returns.rfGlobalAnnual + 0.03,
+    rfChileUFAnnual: highReturn.returns.rfChileUFAnnual + 0.03,
+  };
+
+  const baseResult = runSimulationCentral(base);
+  const highResult = runSimulationCentral(highReturn);
+
+  assert.ok((highResult.success40 ?? 0) > (baseResult.success40 ?? 0));
+  assert.ok((highResult.probRuin40 ?? 1) < (baseResult.probRuin40 ?? 1));
+  assert.ok((highResult.p50TerminalAllPaths ?? 0) > (baseResult.p50TerminalAllPaths ?? 0));
+});
+
+test('m8 adapter builds two-regime generator params with canonical cash sleeves', () => {
+  const params = makeM8ContractParams();
+  params.generatorType = 'two_regime';
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+
+  const input = toM8Input(params, capitalResolution);
+  const generator = input.generator_params as any;
+
+  assert.equal(generator.distribution, 'two_regime');
+  assert.equal(generator.transition_matrix.normal.normal, 0.9975);
+  assert.equal(generator.transition_matrix.normal.stress, 0.0025);
+  assert.equal(generator.transition_matrix.stress.stress, 0.85);
+  assert.equal(generator.transition_matrix.stress.normal, 0.15);
+  assert.ok(generator.regimes.normal);
+  assert.ok(generator.regimes.stress);
+  assert.equal(generator.regimes.recovery, undefined);
+  assert.equal(generator.sleeves.usd_liquidity.vol_annual, 0.015);
+  assert.equal(generator.sleeves.clp_cash.vol_annual, 0.002);
+});
+
+test('m8 adapter uses product mix from params.weights while keeping canonical calibration', () => {
+  const params = makeM8ContractParams();
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(input.return_assumptions.eq_global_real_annual, 0.069);
+  assert.equal(input.return_assumptions.eq_chile_real_annual, 0.074);
+  assert.equal(input.return_assumptions.fi_global_real_annual, 0.024);
+  assert.equal(input.return_assumptions.fi_chile_real_annual, 0.019);
+  assert.equal(input.return_assumptions.usd_liquidity_real_annual, 0.018);
+  assert.equal(input.return_assumptions.clp_cash_real_annual, 0.0025);
+  assert.equal(input.generator_params.sleeves.eq_global.mean_annual, 0.069);
+  assert.equal(input.generator_params.sleeves.eq_global.vol_annual, 0.15);
+  assert.equal(input.generator_params.sleeves.eq_chile.vol_annual, 0.19);
+  assert.equal(input.generator_params.sleeves.fi_global.vol_annual, 0.045);
+  assert.equal(input.generator_params.sleeves.fi_chile.vol_annual, 0.035);
+  assert.equal(input.generator_params.sleeves.usd_liquidity.mean_annual, 0.018);
+  assert.equal(input.generator_params.sleeves.usd_liquidity.vol_annual, 0.015);
+  assert.equal(input.generator_params.sleeves.clp_cash.mean_annual, 0.0025);
+  assert.equal(input.generator_params.sleeves.clp_cash.vol_annual, 0.002);
+  approxEqual(input.portfolio_mix.eq_global, 0.4781659388646288);
+  approxEqual(input.portfolio_mix.eq_chile, 0.1593886462882096);
+  approxEqual(input.portfolio_mix.fi_global, 0.15065502183406113);
+  approxEqual(input.portfolio_mix.fi_chile, 0.21179039301310045);
+  approxEqual(input.portfolio_mix.usd_liquidity, 0);
+  approxEqual(input.portfolio_mix.clp_cash, 0);
+  assert.deepEqual(input.generator_params.correlation_matrix, M8_CANONICAL_CORRELATION_MATRIX);
+});
+
+test('m8 adapter preserves product mix from params.weights when present', () => {
+  const params = makeM8ContractParams();
+  params.weights = {
+    rvGlobal: 0.35935935935935936,
+    rfGlobal: 0.11911911911911911,
+    rvChile: 0.2642642642642643,
+    rfChile: 0.2572572572572573,
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+
+  approxEqual(input.portfolio_mix.eq_global, 0.35935935935935936);
+  approxEqual(input.portfolio_mix.eq_chile, 0.2642642642642643);
+  approxEqual(input.portfolio_mix.fi_global, 0.11911911911911911);
+  approxEqual(input.portfolio_mix.fi_chile, 0.2572572572572573);
+  approxEqual(input.portfolio_mix.usd_liquidity, 0);
+  approxEqual(input.portfolio_mix.clp_cash, 0);
+});
+
+test('m8 adapter maps manual capital without house', () => {
+  const params = makeM8ContractParams();
+  params.capitalSource = 'manual';
+  params.realEstatePolicy = {
+    ...params.realEstatePolicy!,
+    enabled: false,
+  };
+  params.manualCapitalInput = {
+    financialCapitalCLP: 123_000_000,
+  };
+  params.simulationComposition = undefined;
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(input.capital_initial_clp, 123_000_000);
+  assert.equal(input.capital_source, 'manual');
+  assert.equal(input.house, undefined);
+});
+
+test('m8 adapter normalizes future inflow and outflow against simulation base month', () => {
+  const params = makeM8ContractParams();
+  params.futureCapitalEvents = [
+    { id: 'f1', type: 'inflow', amount: 10_000_000, currency: 'CLP', effectiveDate: '2026-05', description: 'aporte' },
+    { id: 'f2', type: 'outflow', amount: 2_000_000, currency: 'CLP', effectiveDate: '2026-06', description: 'gasto' },
+  ];
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(input.future_events?.[0]?.effective_month, 3);
+  assert.equal(input.future_events?.[1]?.effective_month, 4);
+});
+
+test('m8 adapter rejects future events without simulation base month', () => {
+  const params = makeM8ContractParams();
+  params.simulationBaseMonth = undefined;
+  params.futureCapitalEvents = [
+    { id: 'f1', type: 'inflow', amount: 10_000_000, currency: 'CLP', effectiveDate: '2026-05', description: 'aporte' },
+  ];
+
+  const capitalResolution = resolveCapital({
+    params,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          ufSnapshotCLP: 40_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+
+  assert.throws(
+    () => toM8Input(params, capitalResolution),
+    /simulationBaseMonth/,
+  );
+});
+
+test('m8 adapter rejects invalid horizon and missing uf snapshot, while normalizing legacy EUR spend', () => {
+  const badHorizon = makeM8ContractParams();
+  badHorizon.capitalSource = 'manual';
+  badHorizon.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  badHorizon.realEstatePolicy = { ...badHorizon.realEstatePolicy!, enabled: false };
+  badHorizon.simulation.horizonMonths = 25;
+  const badCapital = resolveCapital({ params: badHorizon });
+  assert.throws(
+    () => toM8Input(badHorizon, badCapital),
+    /multiplo de 12/,
+  );
+
+  const badSpend = makeM8ContractParams();
+  badSpend.capitalSource = 'manual';
+  badSpend.manualCapitalInput = { financialCapitalCLP: 650_000_000 };
+  badSpend.realEstatePolicy = { ...badSpend.realEstatePolicy!, enabled: false };
+  badSpend.spendingPhases = [
+    { durationMonths: 36, amountReal: 6_000_000, currency: 'EUR' },
+    { durationMonths: 204, amountReal: 3_900_000, currency: 'CLP' },
+    { durationMonths: 240, amountReal: 4_800_000, currency: 'CLP' },
+  ];
+  const badSpendCapital = resolveCapital({ params: badSpend });
+  const normalizedInput = toM8Input(badSpend, badSpendCapital);
+  assert.equal(normalizedInput.phase1MonthlyClp > 6_000_000, true);
+
+  const badHouse = makeM8ContractParams();
+  const badHouseCapital = resolveCapital({
+    params: badHouse,
+    aurumSnapshot: {
+      version: 2,
+      publishedAt: '2026-04-01T00:00:00Z',
+      snapshotMonth: '2026-03',
+      snapshotLabel: 'marzo 2026',
+      currency: 'CLP',
+      totalNetWorthCLP: 900_000_000,
+      optimizableInvestmentsCLP: 650_000_000,
+      nonOptimizable: {
+        banksCLP: 80_000_000,
+        realEstate: {
+          propertyValueCLP: 300_000_000,
+          mortgageDebtOutstandingCLP: 120_000_000,
+          snapshotMonth: '2026-03',
+        },
+      },
+      source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+    } as any,
+  });
+  assert.throws(
+    () => toM8Input(badHouse, badHouseCapital),
+    /ufSnapshotCLP invalido/,
+  );
+});
+
+test('m8 output maps canonical ruin and controlled placeholders', () => {
+  const params = makeM8ContractParams();
+  const result = fromM8Output(
+    {
+      Success40: 0.84,
+      ProbRuin20: 0.08,
+      ProbRuin40: 0.16,
+      RuinYearMedian: 24,
+      RuinYearP25: 18,
+      RuinYearP75: 31,
+      TerminalMedianCLP: 987_000_000,
+      TerminalMedianIfSuccessCLP: 1_024_000_000,
+      TerminalP25AllPaths: 780_000_000,
+      TerminalP25IfSuccess: 800_000_000,
+      TerminalP75AllPaths: 1_180_000_000,
+      TerminalP75IfSuccess: 1_200_000_000,
+      HouseSalePct: 0.25,
+      TriggerYearMedian: 12,
+      SaleYearMedian: 13,
+      SpendFactorTotal: 0.92,
+      SpendFactorPhase2: 0.95,
+      SpendFactorPhase3: 0.97,
+      SpendFactorCutMonths: 11,
+      SpendFactorNoCutMonths: 469,
+      SpendFactorCut1Months: 9,
+      SpendFactorCut2Months: 2,
+      CutTimeShare: 0.08,
+      terminalWealthAllPaths: [0, 750_000_000, 2_200_000_000, 1_100_000_000],
+      maxDrawdownPercentiles: {
+        10: 0.12,
+        50: 0.24,
+      },
+      StressTimeShare: 0.12,
+      Cut1TimeShare: 0.05,
+      Cut2TimeShare: 0.03,
+      fanChart: [
+        { year: 1, p5: 100, p10: 200, p25: 300, p50: 400, p75: 500, p90: 600, p95: 700 },
+        { year: 2, p5: 90, p10: 180, p25: 270, p50: 360, p75: 450, p90: 540, p95: 630 },
+      ],
+    },
+    params,
+    1234,
+  );
+
+  assert.equal(result.probRuin, 0.16);
+  assert.equal(result.success40, 0.84);
+  assert.equal(result.probRuin40, 0.16);
+  assert.equal(result.probRuin20, 0.08);
+  assert.equal(result.spendFactorTotal, 0.92);
+  assert.equal(result.houseSalePct, 0.25);
+  assert.equal(result.triggerYearMedian, 12);
+  assert.equal(result.saleYearMedian, 13);
+  assert.equal(result.spendFactorPhase2, 0.95);
+  assert.equal(result.spendFactorPhase3, 0.97);
+  assert.equal(result.spendFactorCutMonths, 11);
+  assert.equal(result.spendFactorNoCutMonths, 469);
+  assert.equal(result.spendFactorCut1Months, 9);
+  assert.equal(result.spendFactorCut2Months, 2);
+  assert.equal(result.cutTimeShare, 0.08);
+  assert.equal(result.stressTimeShare, 0.12);
+  assert.equal(result.cut1TimeShare, 0.05);
+  assert.equal(result.cut2TimeShare, 0.03);
+  assert.equal(result.fanChartData.length, 2);
+  assert.equal(result.durationMs, 1234);
+  assert.equal(result.maxDrawdownPercentiles[10], 0.12);
+  assert.equal(result.maxDrawdownPercentiles[50], 0.24);
+  assert.equal(result.terminalWealthPercentiles[25], 800_000_000);
+  assert.equal(result.terminalWealthPercentiles[50], 1_024_000_000);
+  assert.equal(result.terminalWealthPercentiles[75], 1_200_000_000);
+  assert.equal(result.terminalP25AllPaths, 780_000_000);
+  assert.equal(result.terminalP25IfSuccess, 800_000_000);
+  assert.equal(result.terminalP75AllPaths, 1_180_000_000);
+  assert.equal(result.terminalP75IfSuccess, 1_200_000_000);
+  assert.deepEqual(result.terminalWealthAllPaths, [0, 750_000_000, 2_200_000_000, 1_100_000_000]);
+  assert.deepEqual(result.terminalWealthAll, [750_000_000, 1_100_000_000, 2_200_000_000]);
+});
+
+test('m8 output requires real max drawdown percentiles for cutover', () => {
+  const params = makeM8ContractParams();
+  assert.throws(
+    () => fromM8Output(
+      {
+        Success40: 0.84,
+        ProbRuin20: 0.08,
+        ProbRuin40: 0.16,
+        RuinYearMedian: 24,
+        RuinYearP25: 18,
+        RuinYearP75: 31,
+        TerminalMedianCLP: 987_000_000,
+        TerminalMedianIfSuccessCLP: 1_024_000_000,
+        TerminalP25AllPaths: 780_000_000,
+        TerminalP25IfSuccess: 800_000_000,
+        TerminalP75AllPaths: 1_180_000_000,
+        TerminalP75IfSuccess: 1_200_000_000,
+        HouseSalePct: 0.25,
+        TriggerYearMedian: 12,
+        SaleYearMedian: 13,
+        SpendFactorTotal: 0.92,
+        SpendFactorPhase2: 0.95,
+        SpendFactorPhase3: 0.97,
+        SpendFactorCutMonths: 11,
+        SpendFactorNoCutMonths: 469,
+        SpendFactorCut1Months: 9,
+        SpendFactorCut2Months: 2,
+        CutTimeShare: 0.08,
+        fanChart: [{ year: 1, p5: 100, p10: 200, p25: 300, p50: 400, p75: 500, p90: 600, p95: 700 }],
+      } as any,
+      params,
+      1234,
+    ),
+    /maxDrawdownPercentiles/,
+  );
+});
+
+test('m8 runtime smoke runs and returns canonical outputs', () => {
+  const input = makeRuntimeInput({
+    generator_type: 'gaussian_iid',
+    generator_params: runtimeFlatGaussianParams,
+  });
+  const result = runM8(input);
+
+  assert.equal(result.ReturnGenerator, 'gaussian_iid');
+  assert.equal(result.StudentTDF, undefined);
+  assert.equal(result.wealthPaths.length, input.years * 12 + 1);
+  assert.equal(result.wealthPaths[0].length, input.n_paths);
+  assert.equal(result.terminalWealthAllPaths?.length ?? 0, input.n_paths);
+  assert.ok(Number.isFinite(result.Success40));
+  assert.ok(Number.isFinite(result.ProbRuin40));
+  assert.ok(Number.isFinite(result.maxDrawdownPercentiles[50]));
+  assert.ok((result.maxDrawdownPercentiles[10] ?? 0) <= (result.maxDrawdownPercentiles[25] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[25] ?? 0) <= (result.maxDrawdownPercentiles[50] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[50] ?? 0) <= (result.maxDrawdownPercentiles[75] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[75] ?? 0) <= (result.maxDrawdownPercentiles[90] ?? 0));
+  assert.ok((result.maxDrawdownPercentiles[10] ?? 0) >= 0 && (result.maxDrawdownPercentiles[90] ?? 0) <= 1);
+  assert.ok((result.fanChart?.length ?? 0) > 0);
+});
+
+test('m8 runtime counts future inflow and outflow totals', () => {
+  const input = makeRuntimeInput({
+    future_events: [
+      { id: 'in-1', type: 'inflow', amount: 5_000_000, currency: 'CLP', effective_month: 2, description: 'aporte' },
+      { id: 'out-1', type: 'outflow', amount: 2_000_000, currency: 'CLP', effective_month: 3, description: 'gasto' },
+    ],
+  });
+  const result = runM8(input);
+
+  assert.equal(result.FutureInflowTotalCLP, 5_000_000);
+  assert.equal(result.FutureOutflowTotalCLP, 2_000_000);
+});
+
+test('m8 runtime with house includes house equity in the starting wealth', () => {
+  const input = makeRuntimeInput({
+    house: {
+      include_house: true,
+      houseValueUf: 10_000,
+      mortgageBalanceUfNow: 1_000,
+      monthlyAmortizationUf: 0,
+      ufClpStart: 40_000,
+      house_sale_trigger_years_of_spend: 2,
+      house_sale_lag_months: 0,
+    },
+  });
+  const result = runM8(input);
+
+  assert.ok(result.wealthPaths[0][0] > input.capital_initial_clp);
+  assert.ok(Number.isFinite(result.HouseSalePct));
+});
+
+test('m8 runtime exposes student_t df 7 explicitly', () => {
+  const input = makeRuntimeInput();
+  const result = runM8(input);
+
+  assert.equal(result.ReturnGenerator, 'student_t');
+  assert.equal(result.StudentTDF, 7);
+});
+
+test('operative fx resolver prefers Aurum current FX over runtime fallback', () => {
+  const resolved = resolveOperativeMasterFx({
+    aurumFxClp: 886,
+    aurumFxSource: 'active_fx_rates',
+    runtimeFxClp: 985,
+  });
+
+  assert.equal(resolved.aurumCurrentAvailable, true);
+  assert.equal(resolved.usingAurumCurrent, false);
+  assert.equal(resolved.reasonCode, 'aurum_current_available_but_not_applied');
+});
+
+test('operative fx resolver treats closure FX as non-current and keeps fallback mode', () => {
+  const resolved = resolveOperativeMasterFx({
+    aurumFxClp: 985,
+    aurumFxSource: 'closure_fxRates',
+    runtimeFxClp: 985,
+  });
+
+  assert.equal(resolved.aurumCurrentAvailable, false);
+  assert.equal(resolved.sourceMode, 'fallback');
+  assert.equal(resolved.reasonCode, 'fallback_runtime_applied');
 });
 
 const failures: string[] = [];

@@ -1,3 +1,8 @@
+import {
+  M8_CANONICAL_LEGACY_CORRELATION_MATRIX,
+  M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS,
+} from '../simulation/m8Calibration';
+
 export interface EconomicAssumptions {
   rvGlobalAnnual: number;
   rfGlobalAnnual: number;
@@ -20,24 +25,19 @@ export interface EconomicAssumptions {
 // La comparacion metodologica entre motores debe cambiar la capa estadistica,
 // no los supuestos base de retornos, inflacion, FX o correlaciones.
 export const BASE_ECONOMIC_ASSUMPTIONS: EconomicAssumptions = {
-  rvGlobalAnnual: 0.065,
-  rfGlobalAnnual: 0.0305,
-  rvChileAnnual: 0.075,
-  rfChileRealAnnual: 0.0102,
-  rvGlobalVolAnnual: 0.1532,
-  rfGlobalVolAnnual: 0.0368,
-  rvChileVolAnnual: 0.1141,
-  rfChileVolAnnual: 0.0237,
+  rvGlobalAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalAnnual,
+  rfGlobalAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalAnnual,
+  rvChileAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileAnnual,
+  rfChileRealAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileRealAnnual,
+  rvGlobalVolAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvGlobalVolAnnual,
+  rfGlobalVolAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfGlobalVolAnnual,
+  rvChileVolAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rvChileVolAnnual,
+  rfChileVolAnnual: M8_CANONICAL_LEGACY_RETURN_ASSUMPTIONS.rfChileVolAnnual,
   ipcChileAnnual: 0.0378,
   hicpEuroAnnual: 0.0213,
   clpUsdDriftAnnual: 0.020,
   eurUsdDriftAnnual: 0.0076,
   tcrealLT: 640.0,
   mrHalfLifeYears: 6.3,
-  correlationMatrix: [
-    [1.00, 0.15, 0.69, 0.32],
-    [0.15, 1.00, 0.33, 0.33],
-    [0.69, 0.33, 1.00, 0.23],
-    [0.32, 0.33, 0.23, 1.00],
-  ],
+  correlationMatrix: M8_CANONICAL_LEGACY_CORRELATION_MATRIX.map((row) => row.slice()),
 };

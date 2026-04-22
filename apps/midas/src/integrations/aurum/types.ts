@@ -91,6 +91,13 @@ export interface AurumOptimizableInvestmentsSnapshotV2 {
   optimizableInvestmentsCLP: number;
   optimizableInvestmentsWithRiskCLP?: number;
   riskCapital?: AurumRiskCapitalSnapshot;
+  fxReference?: {
+    clpUsd: number;
+    clpEur?: number;
+    usdEur?: number;
+    ufClp?: number;
+    source?: string;
+  };
   nonOptimizable?: {
     banksCLP?: number;
     usdLiquidityCLP?: number;

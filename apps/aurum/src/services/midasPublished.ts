@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import type { WealthMonthlyClosure } from './wealthStorage';
+import type { WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
 export type AurumOptimizableInvestmentsSnapshot = {
@@ -17,6 +17,13 @@ export type AurumOptimizableInvestmentsSnapshot = {
     clp?: number;
     usd?: number;
     source?: 'summary_riskCapitalClp' | 'analysis_delta' | 'usd_only';
+  };
+  fxReference?: {
+    clpUsd: number;
+    clpEur?: number;
+    usdEur?: number;
+    ufClp?: number;
+    source?: 'closure_fxRates' | 'active_fx_rates';
   };
   nonOptimizable?: {
     banksCLP?: number;
@@ -205,6 +212,7 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
     totalCLP: Math.round(totalCLP),
     ...(clpComponent !== null ? { clp: Math.round(clpComponent) } : {}),
     ...(usdDelta !== null ? { usd: roundUsd(usdDelta) } : {}),
+    ...(usdClp !== null ? { usdSnapshotCLP: Math.round(usdClp) } : {}),
     ...(riskCapitalFromSummary !== null
       ? { source: 'summary_riskCapitalClp' as const }
       : clpDelta !== null
@@ -213,15 +221,59 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
   };
 };
 
+const extractFxReference = (
+  closure: WealthMonthlyClosure,
+  activeFxRates?: WealthFxRates | null,
+) => {
+  const hasActiveFx =
+    !!activeFxRates &&
+    Number.isFinite(Number(activeFxRates.usdClp)) &&
+    Number(activeFxRates.usdClp) > 0;
+  const usdClp = asFiniteOrNull(activeFxRates?.usdClp) ?? asFiniteOrNull(closure.fxRates?.usdClp);
+  if (usdClp === null || usdClp <= 0) return undefined;
+  const eurClp = asFiniteOrNull(activeFxRates?.eurClp) ?? asFiniteOrNull(closure.fxRates?.eurClp);
+  const ufClp = asFiniteOrNull(activeFxRates?.ufClp) ?? asFiniteOrNull(closure.fxRates?.ufClp);
+  const usdEur =
+    eurClp !== null && eurClp > 0
+      ? usdClp / eurClp
+      : null;
+  const source: 'closure_fxRates' | 'active_fx_rates' = hasActiveFx ? 'active_fx_rates' : 'closure_fxRates';
+  return {
+    clpUsd: Math.round(usdClp),
+    ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
+    ...(usdEur !== null && Number.isFinite(usdEur) && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
+    ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
+    source,
+  };
+};
+
+const ensureSnapshotFxReference = (
+  snapshot: AurumOptimizableInvestmentsSnapshot,
+  closures: WealthMonthlyClosure[],
+  activeFxRates?: WealthFxRates | null,
+): AurumOptimizableInvestmentsSnapshot => {
+  const existing = asFiniteOrNull(snapshot.fxReference?.clpUsd);
+  if (existing !== null && existing > 0) return snapshot;
+  const latestByMonth = [...closures].sort(compareClosuresByMonthDesc)[0];
+  const fallbackFx = extractFxReference(latestByMonth, activeFxRates);
+  if (!fallbackFx) return snapshot;
+  return {
+    ...snapshot,
+    fxReference: fallbackFx,
+  };
+};
+
 export const buildAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableInvestmentsSnapshot | null => {
-  const result = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  const result = prepareAurumOptimizableInvestmentsSnapshot(closures, options);
   return result.ok ? result.snapshot : null;
 };
 
 export const prepareAurumOptimizableInvestmentsSnapshot = (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): AurumOptimizableSnapshotBuildResult => {
   const latest = [...closures]
     .sort(compareClosuresByMonthDesc)
@@ -252,6 +304,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
   const totalNetWorthWithRisk =
     asFiniteOrNull(latest.summary?.netClpWithRisk) ?? asFiniteOrNull(latest.summary?.netConsolidatedClp);
   const riskCapital = extractRiskCapital(latest);
+  const fxReference = extractFxReference(latest, options?.activeFxRates);
 
   return {
     ok: true,
@@ -266,6 +319,7 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
       optimizableInvestmentsCLP: Math.round(withoutRisk),
       ...(withRisk !== null ? { optimizableInvestmentsWithRiskCLP: Math.round(withRisk) } : {}),
       ...(riskCapital ? { riskCapital } : {}),
+      ...(fxReference ? { fxReference } : {}),
       nonOptimizable: extractNonOptimizable(latest),
       source: {
         app: 'aurum',
@@ -277,8 +331,9 @@ export const prepareAurumOptimizableInvestmentsSnapshot = (
 
 export const publishAurumOptimizableInvestmentsSnapshot = async (
   closures: WealthMonthlyClosure[],
+  options?: { activeFxRates?: WealthFxRates | null },
 ): Promise<AurumOptimizableSnapshotPublishResult> => {
-  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures);
+  const prepared = prepareAurumOptimizableInvestmentsSnapshot(closures, options);
   if (prepared.ok === false) {
     return {
       ok: false,
@@ -287,7 +342,7 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
     };
   }
 
-  const snapshot = prepared.snapshot;
+  const snapshot = ensureSnapshotFxReference(prepared.snapshot, closures, options?.activeFxRates);
   const currentUser = auth.currentUser;
   if (!currentUser) {
     return {
@@ -312,8 +367,21 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
       'Content-Type': 'application/json',
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ snapshot }),
+    body: JSON.stringify({ snapshot, activeFxRates: options?.activeFxRates ?? null }),
   });
+  try {
+    console.info(`[FX TRACE][Aurum publish] snapshot_payload_sent ${JSON.stringify({
+      collection: PUBLISHED_COLLECTION,
+      docId: OPTIMIZABLE_DOC_ID,
+      publishedAt: snapshot.publishedAt,
+      version: snapshot.version,
+      snapshotMonth: snapshot.snapshotMonth,
+      fxReferenceClpUsd: snapshot.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshot.fxReference?.source ?? null,
+    })}`);
+  } catch {
+    // ignore
+  }
 
   let payload: any = null;
   try {
@@ -323,11 +391,33 @@ export const publishAurumOptimizableInvestmentsSnapshot = async (
   }
 
   if (!response.ok || !payload?.ok) {
+    try {
+      console.info(`[FX TRACE][Aurum publish] snapshot_publish_response ${JSON.stringify({
+        ok: false,
+        status: response.status,
+        reason: String(payload?.error || 'No pude publicar el snapshot de integración en Firestore.'),
+      })}`);
+    } catch {
+      // ignore
+    }
     return {
       ok: false,
       reason: String(payload?.error || 'No pude publicar el snapshot de integración en Firestore.'),
       snapshot,
     };
+  }
+
+  try {
+    console.info(`[FX TRACE][Aurum publish] snapshot_publish_response ${JSON.stringify({
+      ok: true,
+      status: response.status,
+      collection: PUBLISHED_COLLECTION,
+      docId: OPTIMIZABLE_DOC_ID,
+      fxReferenceClpUsd: snapshot.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshot.fxReference?.source ?? null,
+    })}`);
+  } catch {
+    // ignore
   }
 
   return {

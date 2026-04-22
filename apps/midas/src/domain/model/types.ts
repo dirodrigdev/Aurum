@@ -8,6 +8,24 @@ export interface PortfolioWeights {
   rfChile:  number;
 }
 
+export type CapitalSource = 'aurum' | 'manual';
+
+export type M8GeneratorType = 'gaussian_iid' | 'student_t' | 'two_regime';
+
+export interface ManualCapitalInput {
+  financialCapitalCLP: number;
+}
+
+export interface FutureCapitalEvent {
+  id: string;
+  type: 'inflow' | 'outflow';
+  amount: number;
+  currency: 'CLP' | 'USD' | 'UF';
+  // YYYY-MM o YYYY (se normaliza en el adapter M8 a effective_month)
+  effectiveDate: string;
+  description?: string;
+}
+
 export type ManualCapitalDestination = 'liquidity' | 'investments' | 'risk' | 'other';
 
 export interface ManualCapitalAdjustment {
@@ -144,6 +162,7 @@ export interface RealEstateInput {
 }
 
 export interface RiskCapitalInput {
+  enabled?: boolean;
   totalCLP?: number;
   clp?: number;
   usd?: number;
@@ -201,8 +220,12 @@ export interface RealEstatePolicy {
 export interface ModelParameters {
   label:                string;
   capitalInitial:       number;
+  capitalSource?:       CapitalSource;
+  manualCapitalInput?:  ManualCapitalInput;
   weights:              PortfolioWeights;
   cashflowEvents:       CashflowEvent[];
+  futureCapitalEvents?: FutureCapitalEvent[];
+  simulationBaseMonth?: string;
   activeScenario:       ScenarioVariantId;
   feeAnnual:            number;
   spendingPhases:       SpendingPhase[];
@@ -210,6 +233,8 @@ export interface ModelParameters {
   returns:              ReturnAssumptions;
   inflation:            InflationAssumptions;
   fx:                   FXAssumptions;
+  generatorType?:       M8GeneratorType;
+  bucketMonths?:        number;
   simulation:           SimulationConfig;
   simulationComposition?: SimulationCompositionInput;
   realEstatePolicy?: RealEstatePolicy;
@@ -225,6 +250,10 @@ export interface FanChartPoint {
 
 export interface SimulationResults {
   probRuin:                    number;
+  // M8: probabilidad explícita de éxito al año 40.
+  success40?:                  number;
+  probRuin40?:                 number;
+  probRuin20?:                 number;
   nRuin:                       number;
   nTotal:                      number;
   // Banda de incertidumbre heurística — NO es un intervalo de confianza estadístico.
@@ -242,12 +271,39 @@ export interface SimulationResults {
   p50TerminalAllPaths?:        number;
   // Nueva métrica explícita: P50 sobre paths sobrevivientes.
   p50TerminalSurvivors?:       number;
+  // Nueva métrica explícita: P25 sobre todos los paths.
+  terminalP25AllPaths?:        number;
+  // Nueva métrica explícita: P25 sobre paths sobrevivientes.
+  terminalP25IfSuccess?:       number;
+  // Nueva métrica explícita: P75 sobre todos los paths.
+  terminalP75AllPaths?:        number;
+  // Nueva métrica explícita: P75 sobre paths sobrevivientes.
+  terminalP75IfSuccess?:       number;
   maxDrawdownPercentiles:      Record<number, number>;
   ruinTimingMedian:            number;
+  ruinTimingP10?:              number;
   ruinTimingP25:               number;
   ruinTimingP75:               number;
+  ruinTimingP90?:              number;
   fanChartData:                FanChartPoint[];
   spendingRatioMedian:         number;
+  spendFactorTotal?:           number;
+  houseSalePct?:               number;
+  triggerYearMedian?:          number;
+  saleYearMedian?:             number;
+  spendFactorPhase2?:          number;
+  spendFactorPhase3?:          number;
+  spendFactorCutMonths?:       number;
+  spendFactorNoCutMonths?:     number;
+  spendFactorCut1Months?:      number;
+  spendFactorCut2Months?:      number;
+  cutTimeShare?:               number;
+  cutScenarioPct?:             number;
+  cutSeverityMean?:            number;
+  firstCutYearMedian?:         number;
+  stressTimeShare?:            number;
+  cut1TimeShare?:              number;
+  cut2TimeShare?:              number;
   computedAt:                  Date;
   durationMs:                  number;
   params:                      ModelParameters;

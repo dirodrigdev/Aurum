@@ -10,14 +10,31 @@ const asFiniteOrNull = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    console.info(`[FX TRACE][Midas] ${stage} ${JSON.stringify(payload)}`);
+  } catch {
+    // ignore
+  }
+};
+
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
   await ensureAurumIntegrationAuth();
-  const snap = await getDoc(doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID));
+  const ref = doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID);
+  const snap = await getDoc(ref);
   if (!snap.exists()) return null;
 
   const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot> | undefined;
+  logFxTrace('snapshot_load_getdoc', {
+    docPath: ref.path,
+    publishedAt: (data as { publishedAt?: unknown })?.publishedAt ?? null,
+    version: (data as { version?: unknown })?.version ?? null,
+    rawFxReferenceClpUsd: (data as { fxReference?: { clpUsd?: unknown } })?.fxReference?.clpUsd ?? null,
+    rawFxReferenceSource: (data as { fxReference?: { source?: unknown } })?.fxReference?.source ?? null,
+  });
   return normalizeSnapshotData(data);
 }
 
@@ -48,6 +65,15 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
             return;
           }
           const data = snap.data() as Partial<AurumOptimizableInvestmentsSnapshot>;
+          logFxTrace('snapshot_subscribe_onSnapshot', {
+            docPath: snap.ref.path,
+            fromCache: snap.metadata.fromCache,
+            hasPendingWrites: snap.metadata.hasPendingWrites,
+            publishedAt: (data as { publishedAt?: unknown })?.publishedAt ?? null,
+            version: (data as { version?: unknown })?.version ?? null,
+            rawFxReferenceClpUsd: (data as { fxReference?: { clpUsd?: unknown } })?.fxReference?.clpUsd ?? null,
+            rawFxReferenceSource: (data as { fxReference?: { source?: unknown } })?.fxReference?.source ?? null,
+          });
           const normalized = normalizeSnapshotData(data);
           listener.onValue(normalized);
         },
@@ -87,6 +113,32 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
   const riskCapitalUSD = asFiniteOrNull(riskCapitalObj?.usd);
   const riskCapitalUsdSnapshotCLP = asFiniteOrNull(riskCapitalObj?.usdSnapshotCLP);
   const riskCapitalSource = typeof riskCapitalObj?.source === 'string' ? riskCapitalObj.source : undefined;
+  const fxReferenceRaw = (data as { fxReference?: unknown }).fxReference;
+  const fxReferenceObj =
+    fxReferenceRaw && typeof fxReferenceRaw === 'object'
+      ? (fxReferenceRaw as Record<string, unknown>)
+      : null;
+  const legacyFxRaw = (data as { fx?: unknown }).fx;
+  const legacyFxObj =
+    legacyFxRaw && typeof legacyFxRaw === 'object'
+      ? (legacyFxRaw as Record<string, unknown>)
+      : null;
+  const fxClpUsd = asFiniteOrNull(fxReferenceObj?.clpUsd) ?? asFiniteOrNull(legacyFxObj?.usdClp) ?? asFiniteOrNull(legacyFxObj?.clpUsd);
+  const fxClpEur = asFiniteOrNull(fxReferenceObj?.clpEur) ?? asFiniteOrNull(legacyFxObj?.eurClp) ?? asFiniteOrNull(legacyFxObj?.clpEur);
+  const fxUsdEur = asFiniteOrNull(fxReferenceObj?.usdEur) ?? asFiniteOrNull(legacyFxObj?.eurUsd);
+  const fxUfClp = asFiniteOrNull(fxReferenceObj?.ufClp) ?? asFiniteOrNull(legacyFxObj?.ufClp);
+  const fxSource = typeof fxReferenceObj?.source === 'string'
+    ? fxReferenceObj.source
+    : typeof legacyFxObj?.source === 'string'
+      ? legacyFxObj.source
+      : undefined;
+  logFxTrace('snapshot_hydration_raw', {
+    rawFxReferenceClpUsd: fxReferenceObj?.clpUsd ?? null,
+    rawFxReferenceSource: fxReferenceObj?.source ?? null,
+    rawLegacyFxUsdClp: legacyFxObj?.usdClp ?? null,
+    normalizedFxClpUsd: fxClpUsd,
+    normalizedFxSource: fxSource ?? null,
+  });
 
   const base = {
     version,
@@ -106,6 +158,17 @@ function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot
             ...(riskCapitalUSD !== null ? { usd: riskCapitalUSD } : {}),
             ...(riskCapitalUsdSnapshotCLP !== null ? { usdSnapshotCLP: riskCapitalUsdSnapshotCLP } : {}),
             ...(riskCapitalSource ? { source: riskCapitalSource } : {}),
+          },
+        }
+      : {}),
+    ...(fxClpUsd !== null && fxClpUsd > 0
+      ? {
+          fxReference: {
+            clpUsd: fxClpUsd,
+            ...(fxClpEur !== null && fxClpEur > 0 ? { clpEur: fxClpEur } : {}),
+            ...(fxUsdEur !== null && fxUsdEur > 0 ? { usdEur: fxUsdEur } : {}),
+            ...(fxUfClp !== null && fxUfClp > 0 ? { ufClp: fxUfClp } : {}),
+            ...(fxSource ? { source: fxSource } : {}),
           },
         }
       : {}),
