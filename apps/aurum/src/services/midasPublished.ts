@@ -23,7 +23,7 @@ export type AurumOptimizableInvestmentsSnapshot = {
     clpEur?: number;
     usdEur?: number;
     ufClp?: number;
-    source?: 'closure_fxRates';
+    source?: 'closure_fxRates' | 'active_fx_rates';
   };
   nonOptimizable?: {
     banksCLP?: number;
@@ -237,12 +237,13 @@ const extractFxReference = (
     eurClp !== null && eurClp > 0
       ? usdClp / eurClp
       : null;
+  const source: 'closure_fxRates' | 'active_fx_rates' = hasActiveFx ? 'active_fx_rates' : 'closure_fxRates';
   return {
     clpUsd: Math.round(usdClp),
     ...(eurClp !== null && eurClp > 0 ? { clpEur: Math.round(eurClp) } : {}),
     ...(usdEur !== null && Number.isFinite(usdEur) && usdEur > 0 ? { usdEur: Math.round(usdEur * 10_000) / 10_000 } : {}),
     ...(ufClp !== null && ufClp > 0 ? { ufClp: Math.round(ufClp) } : {}),
-    source: (hasActiveFx ? 'active_fx_rates' : 'closure_fxRates') as const,
+    source,
   };
 };
 
