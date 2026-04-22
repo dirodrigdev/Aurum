@@ -1536,7 +1536,7 @@ export default function App() {
               maxDrawdownPercentiles: heroVisibleResult.maxDrawdownPercentiles,
             }
         : null;
-      const riskCapitalEnabled = Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0;
+      const riskCapitalEnabled = Number(input.risk_capital_clp ?? 0) > 0;
       const requestId = heroVisibleResult ? (appliedRecalcRequestId ?? activeRecalcRequestId) : activeRecalcRequestId;
       const requestParams =
         requestId != null
@@ -1588,7 +1588,7 @@ export default function App() {
         capitalInitial: Number(heroParams.capitalInitial ?? 0),
         capitalSource: heroParams.capitalSource ?? 'manual',
         sourceLabel: heroParams.label || 'n/a',
-        riskCapitalEnabled: Number(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0) > 0,
+        riskCapitalEnabled: Boolean(heroParams.simulationComposition?.nonOptimizable?.riskCapital?.enabled),
         houseInclude: Boolean(heroParams.simulationComposition?.nonOptimizable?.realEstate),
         futureEventsCount: heroParams.futureCapitalEvents?.length ?? 0,
         inputHash: `error:${error instanceof Error ? error.message : String(error)}`,
@@ -1715,11 +1715,12 @@ export default function App() {
             ...baseComposition.nonOptimizable,
             banksCLP: nextBanks,
             riskCapital: {
+              enabled: riskEnabled,
               source: baseComposition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
               usdSnapshotCLP: riskUsdSnapshot,
-              usdTotal: riskUsdApplied,
-              usd: riskUsdApplied,
-              totalCLP: riskClpApplied,
+              usdTotal: riskUsdEnabledTotal,
+              usd: riskUsdEnabledTotal,
+              totalCLP: riskEnabledClpTotal,
             },
           },
         };
@@ -2014,9 +2015,9 @@ export default function App() {
                 enabled: riskCapitalEnabled,
                 source: composition.nonOptimizable?.riskCapital?.source ?? 'normalized-usd',
                 usdSnapshotCLP: riskExposure.usdSnapshotCLP,
-                usdTotal: riskCapitalEnabled ? riskExposure.usdTotal : 0,
-                usd: riskCapitalEnabled ? riskExposure.usdTotal : 0,
-                totalCLP: riskCapitalEnabled ? riskExposure.riskTotalCLP : 0,
+                usdTotal: riskExposure.usdTotal,
+                usd: riskExposure.usdTotal,
+                totalCLP: riskExposure.riskTotalCLP,
               },
             },
           }
