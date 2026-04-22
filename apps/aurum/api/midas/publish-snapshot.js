@@ -3,6 +3,7 @@ import { getAdminDb } from '../_firestoreAdmin.js';
 
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
+const WEALTH_COLLECTION = 'aurum_wealth';
 
 const setSharedHeaders = (res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -128,6 +129,17 @@ const normalizeActiveFxRates = (value) => {
   };
 };
 
+const withFxReferenceFromActiveRates = (snapshot, activeRates) => {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  if (snapshot.fxReference && asFiniteOrNull(snapshot.fxReference.clpUsd) > 0) return snapshot;
+  const derived = normalizeActiveFxRates(activeRates);
+  if (!derived) return snapshot;
+  return {
+    ...snapshot,
+    fxReference: derived,
+  };
+};
+
 const normalizeSnapshotPayload = (raw, activeFxRatesRaw) => {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'Debes enviar snapshot en el body.' };
@@ -218,27 +230,40 @@ export default async function handler(req, res) {
 
   try {
     const db = getAdminDb();
+    let snapshotToWrite = normalized.snapshot;
+    if (!snapshotToWrite.fxReference || asFiniteOrNull(snapshotToWrite.fxReference.clpUsd) === null) {
+      try {
+        const wealthSnap = await db.collection(WEALTH_COLLECTION).doc(auth.uid).get();
+        const wealthData = wealthSnap.exists ? wealthSnap.data() || {} : {};
+        snapshotToWrite = withFxReferenceFromActiveRates(snapshotToWrite, wealthData.fx);
+      } catch (err) {
+        console.info(`[FX TRACE][Aurum API publish] fx_reference_backfill_error ${JSON.stringify({
+          error: err?.message || 'No pude leer aurum_wealth para backfill FX.',
+          uid: auth.uid,
+        })}`);
+      }
+    }
     const docPath = `${PUBLISHED_COLLECTION}/${OPTIMIZABLE_DOC_ID}`;
     console.info(`[FX TRACE][Aurum API publish] write_snapshot ${JSON.stringify({
       docPath,
-      publishedAt: normalized.snapshot.publishedAt,
-      version: normalized.snapshot.version,
-      snapshotMonth: normalized.snapshot.snapshotMonth,
-      fxReferenceClpUsd: normalized.snapshot.fxReference?.clpUsd ?? null,
-      fxReferenceSource: normalized.snapshot.fxReference?.source ?? null,
+      publishedAt: snapshotToWrite.publishedAt,
+      version: snapshotToWrite.version,
+      snapshotMonth: snapshotToWrite.snapshotMonth,
+      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
       uid: auth.uid,
     })}`);
     await db.collection(PUBLISHED_COLLECTION).doc(OPTIMIZABLE_DOC_ID).set(
       {
-        ...normalized.snapshot,
+        ...snapshotToWrite,
         publishedByUid: auth.uid,
       },
       { merge: false },
     );
     console.info(`[FX TRACE][Aurum API publish] write_snapshot_ok ${JSON.stringify({
       docPath,
-      fxReferenceClpUsd: normalized.snapshot.fxReference?.clpUsd ?? null,
-      fxReferenceSource: normalized.snapshot.fxReference?.source ?? null,
+      fxReferenceClpUsd: snapshotToWrite.fxReference?.clpUsd ?? null,
+      fxReferenceSource: snapshotToWrite.fxReference?.source ?? null,
     })}`);
     return res.status(200).json({ ok: true });
   } catch (error) {
