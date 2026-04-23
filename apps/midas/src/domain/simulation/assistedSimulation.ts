@@ -80,6 +80,8 @@ export type AssistedOptimizationResult = {
   bestThreeInstruments?: AssistedCandidateResult;
   bestTwoOfThree?: AssistedCandidateResult;
   evaluatedCandidates: number;
+  inputCapitalClp: number;
+  portfolioAmountTotalClp: number;
   effectiveInitialCapitalClp: number;
   selectedInstrumentCount: number;
   entryMode: AssistedPortfolioEntryMode;
@@ -571,10 +573,11 @@ export function runAssistedSimulation(
   input: AssistedInputs,
   availableInstruments: AssistedInstrumentOption[],
 ): AssistedOptimizationResult {
-  const objective = input.optimizationObjective ?? 'max_spending';
+  const objective = input.optimizationObjective ?? (input.portfolioMode === 'optimize' ? 'max_spending' : 'max_success');
   const horizonYears = horizonYearsFromInput(input);
   const optionsById = new Map(availableInstruments.map((item) => [item.instrumentId, item]));
   const entries = resolveInstrumentEntries(input, optionsById);
+  const portfolioAmountTotalClp = entries.reduce((sum, entry) => sum + entry.amountClp, 0);
   const effectiveInitialCapital = resolveEffectiveInitialCapital(input, entries);
   const base = baseParamsFromInput(input, effectiveInitialCapital);
 
@@ -584,15 +587,23 @@ export function runAssistedSimulation(
     }
     const allocation = manualAllocationFromEntries(input, entries);
     const manualWeights = weightsFromInstrumentAllocation(allocation, optionsById);
-    const result = evaluateScenario(base, input, manualWeights, 1);
-    const success = successAtHorizon(result);
-    const feasible = success >= clamp(input.successThreshold, 0.5, 0.99);
+    const optimal = objective === 'max_spending'
+      ? maximizeSpendingScale(base, input, manualWeights)
+      : {
+          scale: 1,
+          result: evaluateScenario(base, input, manualWeights, 1),
+          feasible: true,
+        };
+    const success = successAtHorizon(optimal.result);
+    const feasible = objective === 'max_spending'
+      ? optimal.feasible && success >= clamp(input.successThreshold, 0.5, 0.99)
+      : true;
     const row = toCandidateResult(
       `Manual instrumentos · ${labelWeights(manualWeights)}`,
       input,
       manualWeights,
-      1,
-      result,
+      optimal.scale,
+      optimal.result,
       allocation,
       feasible,
     );
@@ -600,6 +611,8 @@ export function runAssistedSimulation(
       mode: 'manual',
       best: row,
       evaluatedCandidates: 1,
+      inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
+      portfolioAmountTotalClp,
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: entries.length,
       entryMode: input.portfolioEntryMode,
@@ -670,6 +683,8 @@ export function runAssistedSimulation(
       mode,
       best,
       evaluatedCandidates: evaluated.length,
+      inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
+      portfolioAmountTotalClp,
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: selectedIds.length,
       entryMode: input.portfolioEntryMode,
@@ -720,6 +735,8 @@ export function runAssistedSimulation(
     bestThreeInstruments: best,
     bestTwoOfThree,
     evaluatedCandidates: evaluated.length + subsets.length * (Math.round(100 / clamp(toStep(input.gridStepPct, 5), 5, 25)) + 1),
+    inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
+    portfolioAmountTotalClp,
     effectiveInitialCapitalClp: effectiveInitialCapital,
     selectedInstrumentCount: selectedIds.length,
     entryMode: input.portfolioEntryMode,

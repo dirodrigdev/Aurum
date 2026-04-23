@@ -217,6 +217,15 @@ export function AssistedSimulationPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const byMode: Record<AssistedQuestionMode, AssistedOptimizationObjective> = {
+      max_spending: 'max_spending',
+      duration: 'max_duration',
+      success: 'max_success',
+    };
+    setOptimizationObjective(byMode[questionMode]);
+  }, [questionMode]);
+
   const optionsById = useMemo(
     () => new Map(availableInstruments.map((item) => [item.instrumentId, item])),
     [availableInstruments],
@@ -286,6 +295,12 @@ export function AssistedSimulationPage() {
     optimizeEnabled &&
     portfolioSourceMode === 'instruments' &&
     ![0, 2, 3].includes(selectedCount);
+  const previewEffectiveCapitalClp = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && portfolioAmountTotal > 0
+    ? portfolioAmountTotal
+    : inputs.initialCapitalClp;
+  const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
+  const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
+  const durationTechnicalHorizonYears = Math.max(40, Number(inputs.horizonYears) || 40);
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
     const runtimeInputs: AssistedInputs = {
@@ -321,6 +336,10 @@ export function AssistedSimulationPage() {
       runtimeInputs.phase1MonthlyClp = Math.max(1, Number(runtimeInputs.phase1MonthlyClp) || fixed);
       runtimeInputs.phase2MonthlyClp = Math.max(1, Number(runtimeInputs.phase2MonthlyClp) || fixed);
       return { runtimeInputs, runtimeInstruments };
+    }
+
+    if (questionMode === 'duration') {
+      runtimeInputs.horizonYears = clamp(durationTechnicalHorizonYears, 12, 60);
     }
 
     if (!optimizeEnabled) runtimeInputs.portfolioMode = 'manual';
@@ -364,9 +383,15 @@ export function AssistedSimulationPage() {
   const summaryText = useMemo(() => {
     if (!result) return '';
     if (resultMode === 'max_spending') {
+      if (!result.hasFeasibleSolution) {
+        return `No hay solucion factible al umbral ${formatPct(result.successThreshold)} para el horizonte de ${result.horizonYears} anos.`;
+      }
       return `Con ${formatMoney(result.effectiveInitialCapitalClp)} y horizonte ${result.horizonYears} anos, el retiro mensual sostenible estimado es ${formatMoney(result.best.sustainableMonthlyClp)}.`;
     }
     if (resultMode === 'duration' && duration) {
+      if (duration.censoredP50) {
+        return `Con el gasto configurado, el capital no se agota dentro del horizonte maximo analizado (${result.horizonYears} anos).`;
+      }
       return `Con el gasto configurado, la duracion central estimada es ${formatDuration(duration.p50, duration.censoredP50)}.`;
     }
     return `Con los supuestos actuales, la probabilidad de exito al horizonte de ${result.horizonYears} anos es ${formatPct(result.best.successAtHorizon)}.`;
@@ -430,17 +455,26 @@ export function AssistedSimulationPage() {
             <span style={{ color: T.textMuted }}>{formatMoney(inputs.initialCapitalClp)}</span>
           </label>
 
-          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-            {questionMode === 'duration' ? 'Horizonte maximo analisis (anos)' : 'Horizonte (anos)'}
-            <input
-              type="number"
-              min={4}
-              max={60}
-              value={inputs.horizonYears}
-              onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 30)}
-              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-            />
-          </label>
+          {questionMode !== 'duration' ? (
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Horizonte (anos)
+              <input
+                type="number"
+                min={4}
+                max={60}
+                value={inputs.horizonYears}
+                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 30)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+          ) : (
+            <div style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Duracion del capital
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textSecondary, padding: '8px 10px' }}>
+                Se estima sobre un horizonte tecnico interno para evitar truncar la duracion real.
+              </div>
+            </div>
+          )}
         </div>
 
         {questionMode === 'max_spending' && (
@@ -621,6 +655,25 @@ export function AssistedSimulationPage() {
                     ? `Total portafolio ingresado: ${formatMoney(portfolioAmountTotal)}`
                     : `Suma porcentajes: ${portfolioPctTotal.toFixed(1)}%`}
                 </div>
+                {inputs.portfolioEntryMode === 'amount' && (
+                  <div style={{ color: T.textMuted, fontSize: 12 }}>
+                    Capital ingresado: {formatMoney(inputs.initialCapitalClp)} · Capital efectivo simulado: {formatMoney(previewEffectiveCapitalClp)}
+                  </div>
+                )}
+                {hasCapitalGap && (
+                  <div style={{ color: T.warning, fontSize: 12 }}>
+                    Aviso: la suma de instrumentos difiere del capital ingresado por {formatMoney(capitalGapClp)}. En modo monto, se usa la suma de instrumentos como capital efectivo.
+                  </div>
+                )}
+                {hasCapitalGap && (
+                  <button
+                    type="button"
+                    onClick={() => updateInput('initialCapitalClp', portfolioAmountTotal)}
+                    style={{ justifySelf: 'start', background: T.surfaceEl, border: `1px solid ${T.border}`, color: T.textPrimary, borderRadius: 8, padding: '6px 10px', cursor: 'pointer' }}
+                  >
+                    Sincronizar capital ingresado con instrumentos
+                  </button>
+                )}
                 {inputs.portfolioEntryMode === 'percentage' && (
                   <div style={{ color: portfolioPctStatus.color, fontSize: 12, fontWeight: 700 }}>
                     Estado suma %: {portfolioPctStatus.label}
@@ -717,7 +770,20 @@ export function AssistedSimulationPage() {
         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
       >
         <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Gasto en dos fases (avanzado)</summary>
-        <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+          <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+          {questionMode === 'duration' && (
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Horizonte tecnico maximo para estimar duracion (anos)
+              <input
+                type="number"
+                min={12}
+                max={60}
+                value={inputs.horizonYears}
+                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 40)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              />
+            </label>
+          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ color: T.textPrimary, fontSize: 12 }}>
               <input type="radio" checked={inputs.spendingMode === 'fixed'} onChange={() => updateInput('spendingMode', 'fixed')} /> Gasto fijo
@@ -822,8 +888,12 @@ export function AssistedSimulationPage() {
             {resultMode === 'max_spending' && (
               <>
                 <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Gasto mensual sostenible</div>
-                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>{formatMoney(result.best.sustainableMonthlyClp)}</div>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>
+                    {result.hasFeasibleSolution ? 'Gasto mensual maximo estimado' : 'Estado de factibilidad'}
+                  </div>
+                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>
+                    {result.hasFeasibleSolution ? formatMoney(result.best.sustainableMonthlyClp) : 'Sin solucion factible'}
+                  </div>
                 </div>
                 <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Exito al horizonte</div>
@@ -880,14 +950,18 @@ export function AssistedSimulationPage() {
 
           {!result.hasFeasibleSolution && resultMode === 'max_spending' && (
             <div style={{ background: 'rgba(245,158,11,0.12)', border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, color: T.textPrimary, fontSize: 12 }}>
-              Ninguna combinacion cumplio el umbral de exito {formatPct(result.successThreshold)} al horizonte de {result.horizonYears} anos. Se muestra mejor esfuerzo tecnico.
+              Ninguna combinacion cumplio el umbral de exito {formatPct(result.successThreshold)} al horizonte de {result.horizonYears} anos.
+              Referencia tecnica (best effort): {formatMoney(result.best.sustainableMonthlyClp)}.
             </div>
           )}
 
           <div style={{ color: T.textSecondary, fontSize: 12 }}>{summaryText}</div>
 
           <div style={{ color: T.textMuted, fontSize: 12 }}>
-            Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)} · Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'} · Candidatos evaluados: {result.evaluatedCandidates}
+            Capital ingresado: {formatMoney(result.inputCapitalClp)} · Suma instrumentos: {formatMoney(result.portfolioAmountTotalClp)} · Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'} · Horizonte usado: {result.horizonYears} anos · Candidatos evaluados: {result.evaluatedCandidates}
           </div>
 
           <MiniFanChart data={(result.best.fanChartData ?? []).map((p) => ({ year: p.year, p50: p.p50 }))} />
