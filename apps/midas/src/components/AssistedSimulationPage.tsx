@@ -159,6 +159,12 @@ const formatDuration = (years: number, censored: boolean): string => {
   return censored ? `>= ${rounded} anos` : `${rounded} anos`;
 };
 
+const formatDurationDecision = (years: number, censored: boolean): string => {
+  if (!Number.isFinite(years)) return '--';
+  const rounded = Math.round(years);
+  return censored ? `Mas de ${rounded} anos` : `${years.toFixed(1)} anos`;
+};
+
 function MiniFanChart({ data }: { data: Array<{ year: number; p50: number }> }) {
   const width = 540;
   const height = 170;
@@ -300,7 +306,7 @@ export function AssistedSimulationPage() {
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
-  const durationTechnicalHorizonYears = Math.max(40, Number(inputs.horizonYears) || 40);
+  const durationTechnicalHorizonYears = 60;
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
     const runtimeInputs: AssistedInputs = {
@@ -482,7 +488,7 @@ export function AssistedSimulationPage() {
             <div style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Duracion del capital
               <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textSecondary, padding: '8px 10px' }}>
-                Se estima sobre un horizonte tecnico interno para evitar truncar la duracion real.
+                Se estima sobre un horizonte tecnico interno de 60 anos para evitar truncar la duracion real.
               </div>
             </div>
           )}
@@ -783,17 +789,9 @@ export function AssistedSimulationPage() {
         <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Gasto en dos fases (avanzado)</summary>
           <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
           {questionMode === 'duration' && (
-            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Horizonte tecnico maximo para estimar duracion (anos)
-              <input
-                type="number"
-                min={12}
-                max={60}
-                value={inputs.horizonYears}
-                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 40)}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-              />
-            </label>
+            <div style={{ color: T.textMuted, fontSize: 12 }}>
+              Horizonte tecnico para estimar duracion: 60 anos.
+            </div>
           )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ color: T.textPrimary, fontSize: 12 }}>
@@ -919,15 +917,20 @@ export function AssistedSimulationPage() {
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 85% de exito</div>
                   <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>
                     {durationTargets
-                      ? formatDuration(durationTargets.success85.years, durationTargets.success85.censored)
+                      ? formatDurationDecision(durationTargets.success85.years, durationTargets.success85.censored)
                       : formatDuration(duration.p90, duration.censoredP90)}
                   </div>
+                  {durationTargets?.success85.censored && (
+                    <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                      No se agota dentro del horizonte tecnico analizado ({durationTargets.capYears} anos).
+                    </div>
+                  )}
                 </div>
                 <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 90% de exito</div>
                   <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
                     {durationTargets
-                      ? formatDuration(durationTargets.success90.years, durationTargets.success90.censored)
+                      ? formatDurationDecision(durationTargets.success90.years, durationTargets.success90.censored)
                       : formatDuration(duration.p50, duration.censoredP50)}
                   </div>
                 </div>
@@ -935,7 +938,7 @@ export function AssistedSimulationPage() {
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 95% de exito</div>
                   <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
                     {durationTargets
-                      ? formatDuration(durationTargets.success95.years, durationTargets.success95.censored)
+                      ? formatDurationDecision(durationTargets.success95.years, durationTargets.success95.censored)
                       : formatDuration(duration.p10, duration.censoredP10)}
                   </div>
                 </div>
@@ -943,7 +946,7 @@ export function AssistedSimulationPage() {
                   <div style={{ color: T.textMuted, fontSize: 11 }}>P50 escenario central</div>
                   <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
                     {durationTargets
-                      ? formatDuration(durationTargets.p50.years, durationTargets.p50.censored)
+                      ? formatDurationDecision(durationTargets.p50.years, durationTargets.p50.censored)
                       : formatDuration(duration.p50, duration.censoredP50)}
                   </div>
                 </div>
