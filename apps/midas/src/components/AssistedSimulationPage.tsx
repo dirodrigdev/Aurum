@@ -376,9 +376,17 @@ export function AssistedSimulationPage() {
     : 'Mejor esfuerzo fuera de umbral';
 
   const duration = useMemo(
-    () => (result ? estimateDuration(result.best, result.horizonYears) : null),
+    () => (result ? (result.best.durationMetrics ? {
+      p10: result.best.durationMetrics.success90.years,
+      p50: result.best.durationMetrics.p50.years,
+      p90: result.best.durationMetrics.success85.years,
+      censoredP10: result.best.durationMetrics.success90.censored,
+      censoredP50: result.best.durationMetrics.p50.censored,
+      censoredP90: result.best.durationMetrics.success85.censored,
+    } : estimateDuration(result.best, result.horizonYears)) : null),
     [result],
   );
+  const durationTargets = result?.best.durationMetrics ?? null;
 
   const summaryText = useMemo(() => {
     if (!result) return '';
@@ -389,13 +397,16 @@ export function AssistedSimulationPage() {
       return `Con ${formatMoney(result.effectiveInitialCapitalClp)} y horizonte ${result.horizonYears} anos, el retiro mensual sostenible estimado es ${formatMoney(result.best.sustainableMonthlyClp)}.`;
     }
     if (resultMode === 'duration' && duration) {
+      if (durationTargets) {
+        return `Duracion conservadora estimada: ${formatDuration(durationTargets.success85.years, durationTargets.success85.censored)} con 85% de exito. Escenario central P50: ${formatDuration(durationTargets.p50.years, durationTargets.p50.censored)}.`;
+      }
       if (duration.censoredP50) {
         return `Con el gasto configurado, el capital no se agota dentro del horizonte maximo analizado (${result.horizonYears} anos).`;
       }
       return `Con el gasto configurado, la duracion central estimada es ${formatDuration(duration.p50, duration.censoredP50)}.`;
     }
     return `Con los supuestos actuales, la probabilidad de exito al horizonte de ${result.horizonYears} anos es ${formatPct(result.best.successAtHorizon)}.`;
-  }, [result, resultMode, duration]);
+  }, [result, resultMode, duration, durationTargets]);
 
   const runButtonLabel = useMemo(() => {
     if (questionMode === 'max_spending') {
@@ -905,13 +916,35 @@ export function AssistedSimulationPage() {
             {resultMode === 'duration' && duration && (
               <>
                 <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion estimada P50</div>
-                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>{formatDuration(duration.p50, duration.censoredP50)}</div>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 85% de exito</div>
+                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>
+                    {durationTargets
+                      ? formatDuration(durationTargets.success85.years, durationTargets.success85.censored)
+                      : formatDuration(duration.p90, duration.censoredP90)}
+                  </div>
                 </div>
                 <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion P10 / P90</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 700 }}>
-                    {formatDuration(duration.p10, duration.censoredP10)} · {formatDuration(duration.p90, duration.censoredP90)}
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 90% de exito</div>
+                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
+                    {durationTargets
+                      ? formatDuration(durationTargets.success90.years, durationTargets.success90.censored)
+                      : formatDuration(duration.p50, duration.censoredP50)}
+                  </div>
+                </div>
+                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 95% de exito</div>
+                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
+                    {durationTargets
+                      ? formatDuration(durationTargets.success95.years, durationTargets.success95.censored)
+                      : formatDuration(duration.p10, duration.censoredP10)}
+                  </div>
+                </div>
+                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>P50 escenario central</div>
+                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
+                    {durationTargets
+                      ? formatDuration(durationTargets.p50.years, durationTargets.p50.censored)
+                      : formatDuration(duration.p50, duration.censoredP50)}
                   </div>
                 </div>
               </>

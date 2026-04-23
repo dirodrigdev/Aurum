@@ -70,6 +70,13 @@ export type AssistedCandidateResult = {
   p10: number;
   p50: number;
   p90: number;
+  durationMetrics?: {
+    success85: { years: number; censored: boolean };
+    success90: { years: number; censored: boolean };
+    success95: { years: number; censored: boolean };
+    p50: { years: number; censored: boolean };
+    capYears: number;
+  };
   fanChartData: SimulationResults['fanChartData'];
   rawResult: SimulationResults;
 };
@@ -472,6 +479,30 @@ const evaluateScenario = (
   return runSimulationCentral(candidate);
 };
 
+const evaluateScenarioAtHorizonYears = (
+  base: ModelParameters,
+  input: AssistedInputs,
+  weights: PortfolioWeights,
+  scale: number,
+  horizonYears: number,
+): SimulationResults => {
+  const boundedYears = clamp(horizonYears, 4, 60);
+  const horizonMonths = Math.max(48, Math.round(boundedYears * 12));
+  const candidateInput: AssistedInputs = {
+    ...input,
+    horizonYears: boundedYears,
+  };
+  const candidate: ModelParameters = {
+    ...base,
+    simulation: {
+      ...base.simulation,
+      horizonMonths,
+    },
+    spendingPhases: buildSpendingPhases(candidateInput, scale),
+  };
+  return runSimulationCentral(candidate);
+};
+
 const successAtHorizon = (result: SimulationResults): number =>
   // M8 mantiene nombres legacy success40/probRuin40, pero el input ya trae el horizonte de Asistida.
   result.success40 ?? (1 - (result.probRuin40 ?? result.probRuin));
@@ -545,6 +576,51 @@ const toCandidateResult = (
 
 const durationScore = (row: AssistedCandidateResult, horizonYears: number): number =>
   Number.isFinite(row.rawResult.ruinTimingMedian) ? row.rawResult.ruinTimingMedian : horizonYears;
+
+const yearsAtSuccessTarget = (
+  base: ModelParameters,
+  input: AssistedInputs,
+  weights: PortfolioWeights,
+  scale: number,
+  targetSuccess: number,
+  capYears: number,
+): { years: number; censored: boolean } => {
+  const boundedTarget = clamp(targetSuccess, 0.01, 0.99);
+  const boundedCap = clamp(capYears, 4, 60);
+  const capResult = evaluateScenarioAtHorizonYears(base, input, weights, scale, boundedCap);
+  const capSuccess = successAtHorizon(capResult);
+  if (capSuccess >= boundedTarget) return { years: boundedCap, censored: true };
+
+  let low = 4;
+  let high = boundedCap;
+  for (let i = 0; i < 14; i += 1) {
+    const mid = (low + high) / 2;
+    const midSuccess = successAtHorizon(evaluateScenarioAtHorizonYears(base, input, weights, scale, mid));
+    if (midSuccess >= boundedTarget) low = mid;
+    else high = mid;
+  }
+  return { years: low, censored: false };
+};
+
+const attachDurationMetrics = (
+  row: AssistedCandidateResult,
+  base: ModelParameters,
+  input: AssistedInputs,
+  scale: number,
+  capYears: number,
+): AssistedCandidateResult => ({
+  ...row,
+  durationMetrics: {
+    success85: yearsAtSuccessTarget(base, input, row.weights, scale, 0.85, capYears),
+    success90: yearsAtSuccessTarget(base, input, row.weights, scale, 0.9, capYears),
+    success95: yearsAtSuccessTarget(base, input, row.weights, scale, 0.95, capYears),
+    p50: {
+      years: durationScore(row, capYears),
+      censored: !Number.isFinite(row.rawResult.ruinTimingMedian),
+    },
+    capYears,
+  },
+});
 
 const pickBest = (
   rows: AssistedCandidateResult[],
@@ -677,11 +753,14 @@ export function runAssistedSimulation(
     ));
   }
   const best = pickBest(evaluated, objective, horizonYears);
+  const bestWithDuration = objective === 'max_duration'
+    ? attachDurationMetrics(best, base, input, 1, horizonYears)
+    : best;
 
   if (mode !== 'instrument_three' || !input.includeTwoOfThreeCheck || selectedIds.length !== 3) {
     return {
       mode,
-      best,
+      best: bestWithDuration,
       evaluatedCandidates: evaluated.length,
       inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
       portfolioAmountTotalClp,
@@ -690,7 +769,7 @@ export function runAssistedSimulation(
       entryMode: input.portfolioEntryMode,
       horizonYears,
       successThreshold: clamp(input.successThreshold, 0.5, 0.99),
-      hasFeasibleSolution: objective === 'max_spending' ? best.meetsThreshold : true,
+      hasFeasibleSolution: objective === 'max_spending' ? bestWithDuration.meetsThreshold : true,
     };
   }
 
@@ -728,12 +807,15 @@ export function runAssistedSimulation(
     subsetRows.push(pickBest(subsetEvaluated, objective, horizonYears));
   }
   const bestTwoOfThree = pickBest(subsetRows, objective, horizonYears);
+  const bestTwoWithDuration = objective === 'max_duration'
+    ? attachDurationMetrics(bestTwoOfThree, base, input, 1, horizonYears)
+    : bestTwoOfThree;
 
   return {
     mode,
-    best,
-    bestThreeInstruments: best,
-    bestTwoOfThree,
+    best: bestWithDuration,
+    bestThreeInstruments: bestWithDuration,
+    bestTwoOfThree: bestTwoWithDuration,
     evaluatedCandidates: evaluated.length + subsets.length * (Math.round(100 / clamp(toStep(input.gridStepPct, 5), 5, 25)) + 1),
     inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
     portfolioAmountTotalClp,
@@ -742,6 +824,6 @@ export function runAssistedSimulation(
     entryMode: input.portfolioEntryMode,
     horizonYears,
     successThreshold: clamp(input.successThreshold, 0.5, 0.99),
-    hasFeasibleSolution: objective === 'max_spending' ? best.meetsThreshold : true,
+    hasFeasibleSolution: objective === 'max_spending' ? bestWithDuration.meetsThreshold : true,
   };
 }
