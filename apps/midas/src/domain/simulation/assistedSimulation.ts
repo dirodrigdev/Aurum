@@ -16,6 +16,7 @@ import { runSimulationCentral } from './engineCentral';
 export type AssistedSpendingMode = 'fixed' | 'two_phase';
 export type AssistedPortfolioMode = 'manual' | 'optimize';
 export type AssistedPortfolioEntryMode = 'amount' | 'percentage';
+export type AssistedOptimizationObjective = 'max_spending' | 'max_duration' | 'max_success';
 
 export type AssistedInstrumentOption = {
   instrumentId: string;
@@ -48,6 +49,7 @@ export type AssistedInputs = {
   portfolioEntryMode: AssistedPortfolioEntryMode;
   portfolioEntries: AssistedPortfolioEntry[];
   includeTwoOfThreeCheck: boolean;
+  optimizationObjective?: AssistedOptimizationObjective;
   successThreshold: number;
   gridStepPct: number;
   nSim: number;
@@ -539,8 +541,26 @@ const toCandidateResult = (
   };
 };
 
-const pickBest = (rows: AssistedCandidateResult[]): AssistedCandidateResult =>
+const durationScore = (row: AssistedCandidateResult, horizonYears: number): number =>
+  Number.isFinite(row.rawResult.ruinTimingMedian) ? row.rawResult.ruinTimingMedian : horizonYears;
+
+const pickBest = (
+  rows: AssistedCandidateResult[],
+  objective: AssistedOptimizationObjective,
+  horizonYears: number,
+): AssistedCandidateResult =>
   [...rows].sort((a, b) => {
+    if (objective === 'max_success') {
+      if (b.successAtHorizon !== a.successAtHorizon) return b.successAtHorizon - a.successAtHorizon;
+      if (b.p50 !== a.p50) return b.p50 - a.p50;
+      return b.equivalentMonthlyClp - a.equivalentMonthlyClp;
+    }
+    if (objective === 'max_duration') {
+      const durationDelta = durationScore(b, horizonYears) - durationScore(a, horizonYears);
+      if (durationDelta !== 0) return durationDelta;
+      if (b.successAtHorizon !== a.successAtHorizon) return b.successAtHorizon - a.successAtHorizon;
+      return b.p50 - a.p50;
+    }
     if (a.meetsThreshold !== b.meetsThreshold) return a.meetsThreshold ? -1 : 1;
     if (b.equivalentMonthlyClp !== a.equivalentMonthlyClp) return b.equivalentMonthlyClp - a.equivalentMonthlyClp;
     if (b.successAtHorizon !== a.successAtHorizon) return b.successAtHorizon - a.successAtHorizon;
@@ -551,6 +571,8 @@ export function runAssistedSimulation(
   input: AssistedInputs,
   availableInstruments: AssistedInstrumentOption[],
 ): AssistedOptimizationResult {
+  const objective = input.optimizationObjective ?? 'max_spending';
+  const horizonYears = horizonYearsFromInput(input);
   const optionsById = new Map(availableInstruments.map((item) => [item.instrumentId, item]));
   const entries = resolveInstrumentEntries(input, optionsById);
   const effectiveInitialCapital = resolveEffectiveInitialCapital(input, entries);
@@ -581,7 +603,7 @@ export function runAssistedSimulation(
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: entries.length,
       entryMode: input.portfolioEntryMode,
-      horizonYears: horizonYearsFromInput(input),
+      horizonYears,
       successThreshold: clamp(input.successThreshold, 0.5, 0.99),
       hasFeasibleSolution: feasible,
     };
@@ -624,7 +646,13 @@ export function runAssistedSimulation(
 
   const evaluated: AssistedCandidateResult[] = [];
   for (const candidate of candidates) {
-    const optimal = maximizeSpendingScale(base, input, candidate.weights);
+    const optimal = objective === 'max_spending'
+      ? maximizeSpendingScale(base, input, candidate.weights)
+      : {
+          scale: 1,
+          result: evaluateScenario(base, input, candidate.weights, 1),
+          feasible: true,
+        };
     evaluated.push(toCandidateResult(
       candidate.name,
       input,
@@ -635,7 +663,7 @@ export function runAssistedSimulation(
       optimal.feasible,
     ));
   }
-  const best = pickBest(evaluated);
+  const best = pickBest(evaluated, objective, horizonYears);
 
   if (mode !== 'instrument_three' || !input.includeTwoOfThreeCheck || selectedIds.length !== 3) {
     return {
@@ -645,9 +673,9 @@ export function runAssistedSimulation(
       effectiveInitialCapitalClp: effectiveInitialCapital,
       selectedInstrumentCount: selectedIds.length,
       entryMode: input.portfolioEntryMode,
-      horizonYears: horizonYearsFromInput(input),
+      horizonYears,
       successThreshold: clamp(input.successThreshold, 0.5, 0.99),
-      hasFeasibleSolution: best.meetsThreshold,
+      hasFeasibleSolution: objective === 'max_spending' ? best.meetsThreshold : true,
     };
   }
 
@@ -663,7 +691,13 @@ export function runAssistedSimulation(
     const subsetEvaluated: AssistedCandidateResult[] = [];
     for (const candidate of subsetCandidates) {
       const weights = weightsFromInstrumentAllocation(candidate.allocation, optionsById);
-      const optimal = maximizeSpendingScale(base, input, weights);
+      const optimal = objective === 'max_spending'
+        ? maximizeSpendingScale(base, input, weights)
+        : {
+            scale: 1,
+            result: evaluateScenario(base, input, weights, 1),
+            feasible: true,
+          };
       subsetEvaluated.push(
         toCandidateResult(
           `Subset ${(optionsById.get(a)?.name ?? a)} + ${(optionsById.get(b)?.name ?? b)}`,
@@ -672,13 +706,13 @@ export function runAssistedSimulation(
           optimal.scale,
           optimal.result,
           candidate.allocation,
-          optimal.feasible,
+          objective === 'max_spending' ? optimal.feasible : true,
         ),
       );
     }
-    subsetRows.push(pickBest(subsetEvaluated));
+    subsetRows.push(pickBest(subsetEvaluated, objective, horizonYears));
   }
-  const bestTwoOfThree = pickBest(subsetRows);
+  const bestTwoOfThree = pickBest(subsetRows, objective, horizonYears);
 
   return {
     mode,
@@ -689,8 +723,8 @@ export function runAssistedSimulation(
     effectiveInitialCapitalClp: effectiveInitialCapital,
     selectedInstrumentCount: selectedIds.length,
     entryMode: input.portfolioEntryMode,
-    horizonYears: horizonYearsFromInput(input),
+    horizonYears,
     successThreshold: clamp(input.successThreshold, 0.5, 0.99),
-    hasFeasibleSolution: best.meetsThreshold,
+    hasFeasibleSolution: objective === 'max_spending' ? best.meetsThreshold : true,
   };
 }
