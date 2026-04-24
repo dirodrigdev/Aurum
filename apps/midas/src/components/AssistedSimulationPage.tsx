@@ -403,6 +403,10 @@ export function AssistedSimulationPage() {
   const [newInstrumentId, setNewInstrumentId] = useState<string>('');
   const [autoAdjustInstrumentAmounts, setAutoAdjustInstrumentAmounts] = useState(true);
   const [returnTiltMessage, setReturnTiltMessage] = useState<string | null>(null);
+  const [bucketEnabled, setBucketEnabled] = useState(true);
+  const [bucketInstrumentId, setBucketInstrumentId] = useState<string>('');
+  const [bucketFloorMm, setBucketFloorMm] = useState(22);
+  const [bucketFloorPct, setBucketFloorPct] = useState(16);
   const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
 
@@ -454,6 +458,14 @@ export function AssistedSimulationPage() {
     [availableInstruments, selectedIds],
   );
 
+  useEffect(() => {
+    if (selectedInstrumentRows.length === 0) return;
+    const hasCurrent = selectedInstrumentRows.some((row) => row.entry.instrumentId === bucketInstrumentId);
+    if (hasCurrent) return;
+    const preferred = selectedInstrumentRows.find((row) => row.instrument.name.toLowerCase().includes('sura renta local uf'));
+    setBucketInstrumentId(preferred?.entry.instrumentId ?? selectedInstrumentRows[0].entry.instrumentId);
+  }, [selectedInstrumentRows, bucketInstrumentId]);
+
   const updateInput = <K extends keyof AssistedInputs>(key: K, value: AssistedInputs[K]) => {
     setInputs((prev) => ({ ...prev, [key]: value }));
   };
@@ -478,6 +490,10 @@ export function AssistedSimulationPage() {
   };
 
   const removeInstrument = (instrumentId: string) => {
+    if (bucketEnabled && instrumentId === bucketInstrumentId) {
+      setReturnTiltMessage('El bucket protegido debe permanecer en la cartera. Desactiva el piso defensivo para modificar esta regla.');
+      return;
+    }
     setInputs((prev) => ({
       ...prev,
       portfolioEntries: prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId),
@@ -624,6 +640,16 @@ export function AssistedSimulationPage() {
     return { rv: rv / sum, rf: rf / sum };
   }, [selectedInstrumentExpectedRows, optionsById]);
   const canTiltForReturn = selectedInstrumentExpectedRows.length >= 2;
+  const bucketRow = selectedInstrumentExpectedRows.find((row) => row.instrumentId === bucketInstrumentId) ?? null;
+  const bucketFloorWeight = useMemo(() => {
+    if (!bucketEnabled || !bucketRow) return 0;
+    if (inputs.portfolioEntryMode === 'amount') {
+      const floorAmount = mmToClp(bucketFloorMm);
+      if (previewEffectiveCapitalClp <= 0) return 0;
+      return clamp(floorAmount / previewEffectiveCapitalClp, 0, 1);
+    }
+    return clamp(bucketFloorPct / 100, 0, 1);
+  }, [bucketEnabled, bucketRow, inputs.portfolioEntryMode, bucketFloorMm, bucketFloorPct, previewEffectiveCapitalClp]);
 
   const quickSummary = useMemo(() => {
     const profileName = profileConfigs[activeProfile].title;
@@ -637,7 +663,42 @@ export function AssistedSimulationPage() {
     return `${profileName} · Capital efectivo ${capital} · Gasto ${formatMoney(inputs.fixedMonthlyClp)} · Horizonte ${questionMode === 'duration' ? `${DURATION_TECHNICAL_HORIZON} años (técnico)` : `${inputs.horizonYears} años`} · ${portfolioText}`;
   }, [activeProfile, previewEffectiveCapitalClp, portfolioSourceMode, simpleRvPct, selectedCount, questionMode, inputs.horizonYears, inputs.fixedMonthlyClp]);
 
-  const applyMoreReturnTilt = () => {
+  const applyWeightsToEntries = (
+    nextWeights: Map<string, number>,
+  ) => {
+    setInputs((prev) => {
+      if (prev.portfolioEntryMode === 'percentage') {
+        let assigned = 0;
+        const nextEntries = prev.portfolioEntries.map((entry, idx) => {
+          const target = nextWeights.get(entry.instrumentId);
+          if (target === undefined) return entry;
+          if (idx === prev.portfolioEntries.length - 1) {
+            return { ...entry, percentage: Number(Math.max(0, 100 - assigned).toFixed(1)) };
+          }
+          const pct = Number((target * 100).toFixed(1));
+          assigned += pct;
+          return { ...entry, percentage: pct };
+        });
+        return { ...prev, portfolioEntries: nextEntries };
+      }
+
+      const targetCapital = Math.max(0, Math.round(previewEffectiveCapitalClp));
+      let assigned = 0;
+      const nextEntries = prev.portfolioEntries.map((entry, idx) => {
+        const target = nextWeights.get(entry.instrumentId);
+        if (target === undefined) return entry;
+        if (idx === prev.portfolioEntries.length - 1) {
+          return { ...entry, amountClp: Math.max(0, targetCapital - assigned) };
+        }
+        const amount = Math.max(0, Math.round(targetCapital * target));
+        assigned += amount;
+        return { ...entry, amountClp: amount };
+      });
+      return { ...prev, portfolioEntries: nextEntries };
+    });
+  };
+
+  const applyReturnTilt = (direction: 'more' | 'less') => {
     if (!canTiltForReturn) {
       setReturnTiltMessage('Selecciona al menos 2 instrumentos para ajustar retorno.');
       return;
@@ -651,49 +712,74 @@ export function AssistedSimulationPage() {
       return;
     }
 
-    const tiltedRaw = rows.map((row) => {
+    const currentBucketWeight = bucketRow?.weight ?? 0;
+    const bucketTarget = bucketEnabled && bucketRow
+      ? (direction === 'more'
+        ? clamp(bucketFloorWeight, 0, currentBucketWeight)
+        : clamp(Math.max(bucketFloorWeight, currentBucketWeight + (0.15 * (1 - currentBucketWeight))), 0, 1))
+      : 0;
+    const optimizableWeight = clamp(1 - bucketTarget, 0, 1);
+
+    const nonBucketRows = rows.filter((row) => !bucketEnabled || row.instrumentId !== bucketInstrumentId);
+    if (nonBucketRows.length === 0 && bucketRow) {
+      const next = new Map<string, number>([[bucketRow.instrumentId, 1]]);
+      applyWeightsToEntries(next);
+      setReturnTiltMessage('Bucket protegido respetado. No hay instrumentos elegibles adicionales.');
+      return;
+    }
+
+    const nonBucketTotal = nonBucketRows.reduce((sum, row) => sum + row.weight, 0);
+    if (nonBucketTotal <= 0) {
+      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket protegido.');
+      return;
+    }
+
+    const adjusted = nonBucketRows.map((row) => {
       const rel = (row.expectedReturnAnnual - portfolioExpectedReturnAnnual) / spread;
-      const desirability = clamp(1 + (0.35 * rel), 0.6, 1.6);
-      return { ...row, raw: row.weight * desirability };
+      const directional = direction === 'more' ? rel : -rel;
+      const desirability = clamp(1 + (0.45 * directional), 0.55, 1.75);
+      return { ...row, raw: (row.weight / nonBucketTotal) * desirability };
     });
-    const rawSum = tiltedRaw.reduce((sum, row) => sum + row.raw, 0);
-    if (rawSum <= 0) return;
-    const normalized = tiltedRaw.map((row) => ({ ...row, nextWeight: row.raw / rawSum }));
+    const rawSum = adjusted.reduce((sum, row) => sum + row.raw, 0);
+    if (rawSum <= 0) {
+      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket protegido.');
+      return;
+    }
+
+    const nextWeights = new Map<string, number>();
+    if (bucketEnabled && bucketRow) {
+      nextWeights.set(bucketRow.instrumentId, bucketTarget);
+    }
+    for (const row of adjusted) {
+      nextWeights.set(row.instrumentId, optimizableWeight * (row.raw / rawSum));
+    }
     const before = portfolioExpectedReturnAnnual;
-    const after = normalized.reduce((sum, row) => sum + (row.nextWeight * row.expectedReturnAnnual), 0);
+    const after = rows.reduce((sum, row) => sum + ((nextWeights.get(row.instrumentId) ?? 0) * row.expectedReturnAnnual), 0);
+    applyWeightsToEntries(nextWeights);
+    if (direction === 'more') {
+      setReturnTiltMessage(`Bucket protegido respetado. Mix ajustado hacia más retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
+    } else {
+      setReturnTiltMessage(`Bucket protegido respetado. Mix ajustado hacia menor retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
+    }
+  };
 
-    setInputs((prev) => {
-      if (prev.portfolioEntryMode === 'percentage') {
-        let assigned = 0;
-        const nextEntries = prev.portfolioEntries.map((entry, idx) => {
-          const target = normalized.find((row) => row.instrumentId === entry.instrumentId);
-          if (!target) return entry;
-          if (idx === prev.portfolioEntries.length - 1) {
-            return { ...entry, percentage: Number(Math.max(0, 100 - assigned).toFixed(1)) };
-          }
-          const pct = Number((target.nextWeight * 100).toFixed(1));
-          assigned += pct;
-          return { ...entry, percentage: pct };
-        });
-        return { ...prev, portfolioEntries: nextEntries };
-      }
+  const applyMoreReturnTilt = () => applyReturnTilt('more');
+  const applyLessReturnTilt = () => applyReturnTilt('less');
 
-      const targetCapital = Math.max(0, Math.round(previewEffectiveCapitalClp));
-      let assigned = 0;
-      const nextEntries = prev.portfolioEntries.map((entry, idx) => {
-        const target = normalized.find((row) => row.instrumentId === entry.instrumentId);
-        if (!target) return entry;
-        if (idx === prev.portfolioEntries.length - 1) {
-          return { ...entry, amountClp: Math.max(0, targetCapital - assigned) };
-        }
-        const amount = Math.max(0, Math.round(targetCapital * target.nextWeight));
-        assigned += amount;
-        return { ...entry, amountClp: amount };
-      });
-      return { ...prev, portfolioEntries: nextEntries };
-    });
-
-    setReturnTiltMessage(`Mix actualizado. Retorno esperado: ${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%. Vuelve a calcular para ver impacto.`);
+  const applyBucketPair = (keepNonBucketId: string) => {
+    if (!bucketEnabled || !bucketRow) return;
+    const nonBucket = selectedInstrumentExpectedRows.filter((row) => row.instrumentId !== bucketInstrumentId);
+    const chosen = nonBucket.find((row) => row.instrumentId === keepNonBucketId);
+    if (!chosen) return;
+    const bucketTarget = clamp(Math.max(bucketFloorWeight, bucketRow.weight), 0, 1);
+    const nextWeights = new Map<string, number>();
+    nextWeights.set(bucketInstrumentId, bucketTarget);
+    nextWeights.set(keepNonBucketId, Math.max(0, 1 - bucketTarget));
+    for (const row of nonBucket) {
+      if (row.instrumentId !== keepNonBucketId) nextWeights.set(row.instrumentId, 0);
+    }
+    applyWeightsToEntries(nextWeights);
+    setReturnTiltMessage(`Bucket protegido respetado. Probando bucket + ${chosen.name}. Recalcula para ver impacto.`);
   };
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
@@ -1225,15 +1311,17 @@ export function AssistedSimulationPage() {
                     <button
                       type="button"
                       onClick={() => removeInstrument(entry.instrumentId)}
+                      disabled={bucketEnabled && entry.instrumentId === bucketInstrumentId}
                       style={{
                         border: `1px solid ${T.border}`,
                         background: 'transparent',
-                        color: T.textMuted,
+                        color: bucketEnabled && entry.instrumentId === bucketInstrumentId ? ASSISTED_COCKPIT.accent : T.textMuted,
                         borderRadius: 8,
-                        cursor: 'pointer',
+                        cursor: bucketEnabled && entry.instrumentId === bucketInstrumentId ? 'not-allowed' : 'pointer',
+                        opacity: bucketEnabled && entry.instrumentId === bucketInstrumentId ? 0.8 : 1,
                         height: 34,
                       }}
-                      title="Quitar"
+                      title={bucketEnabled && entry.instrumentId === bucketInstrumentId ? 'Bucket protegido: no se puede excluir' : 'Quitar'}
                     >
                       ×
                     </button>
@@ -1361,6 +1449,45 @@ export function AssistedSimulationPage() {
                 gap: 6,
                 fontSize: 12,
               }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'center' }}>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    Bucket protegido
+                    <select
+                      value={bucketInstrumentId}
+                      onChange={(e) => setBucketInstrumentId(e.target.value)}
+                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
+                    >
+                      {selectedInstrumentRows.map(({ instrument, entry }) => (
+                        <option key={entry.instrumentId} value={entry.instrumentId}>{instrument.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    <span>Piso defensivo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={inputs.portfolioEntryMode === 'amount' ? 9999 : 100}
+                      step={0.1}
+                      value={inputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value) || 0);
+                        if (inputs.portfolioEntryMode === 'amount') setBucketFloorMm(v);
+                        else setBucketFloorPct(v);
+                      }}
+                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
+                    />
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    <input
+                      type="checkbox"
+                      checked={bucketEnabled}
+                      onChange={(e) => setBucketEnabled(e.target.checked)}
+                    />
+                    Piso defensivo activo
+                  </label>
+                </div>
+
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div style={{ color: T.textSecondary }}>
                     Retorno esperado: <strong style={{ color: T.textPrimary }}>{(portfolioExpectedReturnAnnual * 100).toFixed(1)}% real anual</strong>
@@ -1385,7 +1512,67 @@ export function AssistedSimulationPage() {
                   >
                     Probar más retorno
                   </button>
+                  <button
+                    type="button"
+                    onClick={applyLessReturnTilt}
+                    disabled={!canTiltForReturn}
+                    style={{
+                      borderRadius: 999,
+                      border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                      background: canTiltForReturn ? ASSISTED_COCKPIT.panel : ASSISTED_COCKPIT.panel,
+                      color: T.textPrimary,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: canTiltForReturn ? 'pointer' : 'not-allowed',
+                      opacity: canTiltForReturn ? 1 : 0.6,
+                    }}
+                  >
+                    Probar menos retorno
+                  </button>
                 </div>
+                {bucketEnabled && bucketRow && selectedInstrumentExpectedRows.length === 3 && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Probar 2 de 3:</span>
+                    <button
+                      type="button"
+                      onClick={() => setReturnTiltMessage('Manteniendo bucket + todos los instrumentos activos.')}
+                      style={{
+                        borderRadius: 999,
+                        border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                        background: ASSISTED_COCKPIT.accentSoft,
+                        color: T.textPrimary,
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Mantener bucket + todos
+                    </button>
+                    {selectedInstrumentExpectedRows
+                      .filter((row) => row.instrumentId !== bucketInstrumentId)
+                      .map((row) => (
+                        <button
+                          key={row.instrumentId}
+                          type="button"
+                          onClick={() => applyBucketPair(row.instrumentId)}
+                          style={{
+                            borderRadius: 999,
+                            border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                            background: ASSISTED_COCKPIT.panel,
+                            color: T.textPrimary,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {`Bucket + ${row.name}`}
+                        </button>
+                      ))}
+                  </div>
+                )}
                 {selectedInstrumentExpectedRows.map((row) => (
                   <div key={row.instrumentId} style={{ color: T.textSecondary }}>
                     <strong style={{ color: T.textPrimary }}>{row.name}</strong>
@@ -1422,6 +1609,7 @@ export function AssistedSimulationPage() {
                       type="checkbox"
                       checked={selectedIds.has(instrument.instrumentId)}
                       onChange={() => selectedIds.has(instrument.instrumentId) ? removeInstrument(instrument.instrumentId) : upsertInstrument(instrument.instrumentId)}
+                      disabled={bucketEnabled && instrument.instrumentId === bucketInstrumentId && selectedIds.has(instrument.instrumentId)}
                     />
                     <span>{instrument.label}</span>
                   </label>
