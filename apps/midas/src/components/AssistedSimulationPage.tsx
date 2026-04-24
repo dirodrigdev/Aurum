@@ -50,21 +50,24 @@ const defaultInputs: AssistedInputs = {
   seed: 42,
 };
 
-const modeCards: Array<{ mode: AssistedQuestionMode; title: string; subtitle: string }> = [
+const modeCards: Array<{ mode: AssistedQuestionMode; title: string; subtitle: string; icon: string }> = [
   {
     mode: 'max_spending',
     title: 'Cuánto puedo gastar',
     subtitle: 'Encuentra el retiro mensual sostenible.',
+    icon: '¤',
   },
   {
     mode: 'duration',
     title: 'Cuántos años dura',
     subtitle: 'Estima duración con 85/90/95% de confianza.',
+    icon: '⌛',
   },
   {
     mode: 'success',
     title: 'Probabilidad de éxito',
     subtitle: 'Mide chance de llegar al horizonte.',
+    icon: '%',
   },
 ];
 
@@ -123,6 +126,17 @@ const formatMm = (valueClp: number): string => `${clpToMm(valueClp).toFixed(1)} 
 const formatDuration = (years: number, censored: boolean): string => {
   if (!Number.isFinite(years)) return '--';
   return censored ? `Más de ${Math.round(years)} años` : `${years.toFixed(1)} años`;
+};
+
+const ASSISTED_COCKPIT = {
+  accent: '#B87333',
+  accentSoft: 'rgba(184,115,51,0.16)',
+  accentGlow: 'rgba(184,115,51,0.10)',
+  shell: '#121417',
+  panel: '#1A1C1E',
+  panelSoft: '#15171A',
+  border: 'rgba(255,255,255,0.10)',
+  borderSoft: 'rgba(255,255,255,0.06)',
 };
 
 const solveRequiredAnnualReturn = (
@@ -314,7 +328,7 @@ const statusLabelForResult = (
   result: AssistedOptimizationResult,
 ): { label: string; color: string } => {
   if (mode === 'max_spending') {
-    if (!result.hasFeasibleSolution) return { label: 'Bajo', color: T.warning };
+    if (!result.hasFeasibleSolution) return { label: 'Exigente', color: ASSISTED_COCKPIT.accent };
     if (result.best.successAtHorizon >= 0.85) return { label: 'Alto', color: T.positive };
     if (result.best.successAtHorizon >= 0.65) return { label: 'Medio', color: T.warning };
     return { label: 'Bajo', color: T.negative };
@@ -362,15 +376,16 @@ function MiniFanChart({
       viewBox={`0 0 ${width} ${height}`}
       width="100%"
       height={height}
-      style={{ display: 'block', background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))', borderRadius: 14, border: `1px solid ${T.border}` }}
+      style={{ display: 'block', background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))', borderRadius: 14, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}` }}
     >
-      <line x1={40} y1={height - 22} x2={width - 12} y2={height - 22} stroke={T.border} strokeWidth="1" />
-      <line x1={40} y1={16} x2={40} y2={height - 22} stroke={T.border} strokeWidth="1" />
-      <polygon points={bandPath} fill="rgba(96,165,250,0.16)" />
-      <polyline fill="none" stroke={T.primary} strokeWidth="2.8" points={p50Polyline} />
+      <line x1={40} y1={height - 22} x2={width - 12} y2={height - 22} stroke={ASSISTED_COCKPIT.borderSoft} strokeWidth="1" />
+      <line x1={40} y1={16} x2={40} y2={height - 22} stroke={ASSISTED_COCKPIT.borderSoft} strokeWidth="1" />
+      <polygon points={bandPath} fill="rgba(184,115,51,0.12)" />
+      <polyline fill="none" stroke={ASSISTED_COCKPIT.accent} strokeWidth="2.8" points={p50Polyline} />
       <text x={44} y={20} fill={T.textMuted} fontSize="10">P90</text>
       <text x={44} y={height - 28} fill={T.textMuted} fontSize="10">P10</text>
       <text x={width - 56} y={height - 8} fill={T.textMuted} fontSize="10">años</text>
+      <text x={width - 148} y={18} fill={ASSISTED_COCKPIT.accent} fontSize="10">P50</text>
     </svg>
   );
 }
@@ -727,8 +742,8 @@ export function AssistedSimulationPage() {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <section style={{
-        background: 'linear-gradient(135deg, rgba(59,130,246,0.14), rgba(16,185,129,0.06))',
-        border: `1px solid ${T.border}`,
+        background: `linear-gradient(135deg, ${ASSISTED_COCKPIT.shell}, ${ASSISTED_COCKPIT.panel})`,
+        border: `1px solid ${ASSISTED_COCKPIT.border}`,
         borderRadius: 18,
         padding: 16,
         display: 'grid',
@@ -736,7 +751,7 @@ export function AssistedSimulationPage() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <div>
-            <div style={{ color: T.textPrimary, fontWeight: 900, fontSize: 21 }}>Simulación Asistida</div>
+            <div style={{ color: ASSISTED_COCKPIT.accent, fontWeight: 900, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Simulación Asistida</div>
             <div style={{ color: T.textMuted, fontSize: 13 }}>
               Calcula gasto, duración o probabilidad de éxito sin entrar al modelo completo.
             </div>
@@ -744,10 +759,10 @@ export function AssistedSimulationPage() {
           <div style={{
             alignSelf: 'start',
             color: T.textPrimary,
-            border: `1px solid ${T.border}`,
+            border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
             borderRadius: 999,
             padding: '6px 10px',
-            background: 'rgba(255,255,255,0.04)',
+            background: ASSISTED_COCKPIT.panelSoft,
             fontSize: 12,
             fontWeight: 700,
           }}>
@@ -756,9 +771,9 @@ export function AssistedSimulationPage() {
         </div>
       </section>
 
-      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 10 }}>
-        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Perfil rápido</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 8 }}>
+      <section style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.border}`, borderRadius: 16, padding: 12, display: 'grid', gap: 10 }}>
+        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Perfil rápido</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 8 }}>
           {(Object.keys(profileConfigs) as ProfileId[]).map((profileId) => {
             const profile = profileConfigs[profileId];
             const active = activeProfile === profileId;
@@ -769,11 +784,11 @@ export function AssistedSimulationPage() {
                 onClick={() => applyProfile(profileId)}
                 style={{
                   textAlign: 'left',
-                  borderRadius: 12,
-                  border: `1px solid ${active ? T.primary : T.border}`,
-                  background: active ? 'rgba(59,130,246,0.18)' : T.surfaceEl,
+                  borderRadius: 10,
+                  border: `1px solid ${active ? ASSISTED_COCKPIT.accent : ASSISTED_COCKPIT.borderSoft}`,
+                  background: active ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
                   color: T.textPrimary,
-                  padding: '10px 12px',
+                  padding: '8px 10px',
                   cursor: 'pointer',
                 }}
               >
@@ -796,13 +811,14 @@ export function AssistedSimulationPage() {
               style={{
                 textAlign: 'left',
                 borderRadius: 14,
-                border: `1px solid ${active ? T.primary : T.border}`,
-                background: active ? 'linear-gradient(135deg, rgba(59,130,246,0.22), rgba(59,130,246,0.08))' : T.surface,
+                border: `1px solid ${active ? ASSISTED_COCKPIT.accent : ASSISTED_COCKPIT.border}`,
+                background: active ? `linear-gradient(135deg, ${ASSISTED_COCKPIT.accentSoft}, rgba(184,115,51,0.04))` : ASSISTED_COCKPIT.panel,
                 color: T.textPrimary,
                 padding: '12px 14px',
                 cursor: 'pointer',
               }}
             >
+              <div style={{ fontWeight: 900, fontSize: 16, color: active ? ASSISTED_COCKPIT.accent : T.textPrimary, marginBottom: 2 }}>{card.icon}</div>
               <div style={{ fontWeight: 800, fontSize: 15 }}>{card.title}</div>
               <div style={{ color: T.textMuted, fontSize: 12 }}>{card.subtitle}</div>
             </button>
@@ -811,8 +827,8 @@ export function AssistedSimulationPage() {
       </section>
 
       <section style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: `1px solid ${T.border}`,
+        background: ASSISTED_COCKPIT.panelSoft,
+        border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
         borderRadius: 14,
         padding: '10px 12px',
         color: T.textSecondary,
@@ -822,7 +838,9 @@ export function AssistedSimulationPage() {
         {quickSummary}
       </section>
 
-      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gap: 14 }}>
+      <section style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Supuestos esenciales</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
@@ -932,7 +950,7 @@ export function AssistedSimulationPage() {
         )}
       </section>
 
-      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 10 }}>
+      <section style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Portafolio</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
@@ -941,7 +959,7 @@ export function AssistedSimulationPage() {
             style={{
               borderRadius: 999,
               border: `1px solid ${portfolioSourceMode === 'simple' ? T.primary : T.border}`,
-              background: portfolioSourceMode === 'simple' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+              background: portfolioSourceMode === 'simple' ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
               color: T.textPrimary,
               padding: '6px 12px',
               fontWeight: 700,
@@ -956,7 +974,7 @@ export function AssistedSimulationPage() {
             style={{
               borderRadius: 999,
               border: `1px solid ${portfolioSourceMode === 'instruments' ? T.primary : T.border}`,
-              background: portfolioSourceMode === 'instruments' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+              background: portfolioSourceMode === 'instruments' ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
               color: T.textPrimary,
               padding: '6px 12px',
               fontWeight: 700,
@@ -1013,7 +1031,7 @@ export function AssistedSimulationPage() {
                 style={{
                   borderRadius: 999,
                   border: `1px solid ${inputs.portfolioEntryMode === 'amount' ? T.primary : T.border}`,
-                  background: inputs.portfolioEntryMode === 'amount' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+                  background: inputs.portfolioEntryMode === 'amount' ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
                   color: T.textPrimary,
                   padding: '6px 12px',
                   fontWeight: 700,
@@ -1031,7 +1049,7 @@ export function AssistedSimulationPage() {
                 style={{
                   borderRadius: 999,
                   border: `1px solid ${inputs.portfolioEntryMode === 'percentage' ? T.primary : T.border}`,
-                  background: inputs.portfolioEntryMode === 'percentage' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+                  background: inputs.portfolioEntryMode === 'percentage' ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
                   color: T.textPrimary,
                   padding: '6px 12px',
                   fontWeight: 700,
@@ -1160,7 +1178,7 @@ export function AssistedSimulationPage() {
                     style={{
                       borderRadius: 10,
                       border: `1px solid ${T.primary}`,
-                      background: 'rgba(59,130,246,0.16)',
+                      background: ASSISTED_COCKPIT.accentSoft,
                       color: T.textPrimary,
                       padding: '7px 10px',
                       fontWeight: 700,
@@ -1287,22 +1305,24 @@ export function AssistedSimulationPage() {
           </>
         )}
       </section>
+      </div>
+      <div style={{ display: 'grid', gap: 14 }}>
 
       <button
         type="button"
         onClick={run}
         disabled={running || optimizeSelectionInvalid}
         style={{
-          background: 'linear-gradient(135deg, #4f7cff, #3b82f6)',
+          background: `linear-gradient(135deg, ${ASSISTED_COCKPIT.accent}, #8a5a2a)`,
           color: '#fff',
-          border: 'none',
+          border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
           borderRadius: 12,
           padding: '13px 16px',
           fontWeight: 900,
           fontSize: 15,
           cursor: running ? 'not-allowed' : 'pointer',
           opacity: running ? 0.72 : 1,
-          boxShadow: '0 10px 28px rgba(59,130,246,0.28)',
+          boxShadow: '0 10px 28px rgba(184,115,51,0.24)',
         }}
       >
         {running ? 'Calculando...' : runButtonLabel}
@@ -1322,8 +1342,8 @@ export function AssistedSimulationPage() {
 
       {result && (
         <section style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
-          border: `1px solid ${T.border}`,
+          background: `linear-gradient(180deg, ${ASSISTED_COCKPIT.panel}, ${ASSISTED_COCKPIT.panelSoft})`,
+          border: `1px solid ${ASSISTED_COCKPIT.border}`,
           borderRadius: 18,
           padding: 16,
           display: 'grid',
@@ -1333,7 +1353,7 @@ export function AssistedSimulationPage() {
             <div>
               <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>{resultTitle}</div>
               <div style={{ color: T.textPrimary, fontWeight: 900, fontSize: 14 }}>{heroLabel}</div>
-              <div style={{ color: T.primary, fontWeight: 900, fontSize: 30, lineHeight: 1.1 }}>{heroValue}</div>
+              <div style={{ color: ASSISTED_COCKPIT.accent, fontWeight: 900, fontSize: 34, lineHeight: 1.05 }}>{heroValue}</div>
             </div>
             {status && (
               <div style={{ border: `1px solid ${status.color}`, color: status.color, borderRadius: 999, padding: '6px 10px', fontWeight: 800, fontSize: 12 }}>
@@ -1352,15 +1372,15 @@ export function AssistedSimulationPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 8 }}>
             {resultMode === 'duration' && durationTargets && (
               <>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Duración 90%</div>
                   <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.success90.years, durationTargets.success90.censored)}</div>
                 </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ color: T.textMuted, fontSize: 11 }}>Duración 95%</div>
                   <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.success95.years, durationTargets.success95.censored)}</div>
                 </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ color: T.textMuted, fontSize: 11 }}>P50 central</div>
                   <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.p50.years, durationTargets.p50.censored)}</div>
                 </div>
@@ -1368,21 +1388,21 @@ export function AssistedSimulationPage() {
             )}
 
             {resultMode !== 'duration' && (
-              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+              <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>Éxito al horizonte</div>
                 <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatPct(result.best.successAtHorizon)}</div>
               </div>
             )}
 
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P50</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p50)}</div>
             </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P10 / P90</div>
               <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700 }}>{formatMoney(result.best.p10)} · {formatMoney(result.best.p90)}</div>
             </div>
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>Mix</div>
               <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{`RV ${((result.best.weights.rvGlobal + result.best.weights.rvChile) * 100).toFixed(1)}% · RF ${((result.best.weights.rfGlobal + result.best.weights.rfChile) * 100).toFixed(1)}%`}</div>
             </div>
@@ -1408,7 +1428,7 @@ export function AssistedSimulationPage() {
           />
 
           {result.bestTwoOfThree && result.bestThreeInstruments && (
-            <div style={{ color: T.textPrimary, fontSize: 12, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
               Mejor 3 instrumentos: {formatMoney(result.bestThreeInstruments.equivalentMonthlyClp)} · Mejor 2-de-3: {formatMoney(result.bestTwoOfThree.equivalentMonthlyClp)}.
               {' '}
               {result.bestTwoOfThree.equivalentMonthlyClp > result.bestThreeInstruments.equivalentMonthlyClp
@@ -1418,11 +1438,14 @@ export function AssistedSimulationPage() {
           )}
         </section>
       )}
+      </div>
+      </div>
 
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 10, borderTop: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, paddingTop: 10 }}>
       <details
         open={showAdvancedParams}
         onToggle={(e) => setShowAdvancedParams((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+        style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 14, padding: 12 }}
       >
         <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Parámetros avanzados</summary>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10, marginTop: 10 }}>
@@ -1468,7 +1491,7 @@ export function AssistedSimulationPage() {
       <details
         open={showAdvancedSpending}
         onToggle={(e) => setShowAdvancedSpending((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+        style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 14, padding: 12 }}
       >
         <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Gasto en dos fases (avanzado)</summary>
         <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
@@ -1523,7 +1546,7 @@ export function AssistedSimulationPage() {
       <details
         open={showOptimization}
         onToggle={(e) => setShowOptimization((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+        style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 14, padding: 12 }}
       >
         <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Explorar mejor combinación (opcional)</summary>
         <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
@@ -1571,6 +1594,7 @@ export function AssistedSimulationPage() {
           )}
         </div>
       </details>
+      </section>
     </div>
   );
 }
