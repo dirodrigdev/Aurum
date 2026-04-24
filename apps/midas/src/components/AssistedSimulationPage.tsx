@@ -402,6 +402,7 @@ export function AssistedSimulationPage() {
   const [showUniversePicker, setShowUniversePicker] = useState(false);
   const [newInstrumentId, setNewInstrumentId] = useState<string>('');
   const [autoAdjustInstrumentAmounts, setAutoAdjustInstrumentAmounts] = useState(true);
+  const [returnTiltMessage, setReturnTiltMessage] = useState<string | null>(null);
   const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
 
@@ -495,6 +496,7 @@ export function AssistedSimulationPage() {
   const applyProfile = (profileId: ProfileId) => {
     setActiveProfile(profileId);
     setError(null);
+    setReturnTiltMessage(null);
     const profile = profileConfigs[profileId];
     if (profileId === 'custom') {
       setInputs((prev) => ({
@@ -604,6 +606,24 @@ export function AssistedSimulationPage() {
     () => selectedInstrumentExpectedRows.reduce((sum, row) => sum + (row.weight * row.expectedReturnAnnual), 0),
     [selectedInstrumentExpectedRows],
   );
+  const expectedRowsById = useMemo(
+    () => new Map(selectedInstrumentExpectedRows.map((row) => [row.instrumentId, row])),
+    [selectedInstrumentExpectedRows],
+  );
+  const portfolioRvRfMix = useMemo(() => {
+    let rv = 0;
+    let rf = 0;
+    for (const row of selectedInstrumentExpectedRows) {
+      const option = optionsById.get(row.instrumentId);
+      if (!option) continue;
+      rv += row.weight * (option.sleeveWeights.rvGlobal + option.sleeveWeights.rvChile);
+      rf += row.weight * (option.sleeveWeights.rfGlobal + option.sleeveWeights.rfChile);
+    }
+    const sum = rv + rf;
+    if (sum <= 0) return { rv: 0, rf: 0 };
+    return { rv: rv / sum, rf: rf / sum };
+  }, [selectedInstrumentExpectedRows, optionsById]);
+  const canTiltForReturn = selectedInstrumentExpectedRows.length >= 2;
 
   const quickSummary = useMemo(() => {
     const profileName = profileConfigs[activeProfile].title;
@@ -616,6 +636,65 @@ export function AssistedSimulationPage() {
     }
     return `${profileName} · Capital efectivo ${capital} · Gasto ${formatMoney(inputs.fixedMonthlyClp)} · Horizonte ${questionMode === 'duration' ? `${DURATION_TECHNICAL_HORIZON} años (técnico)` : `${inputs.horizonYears} años`} · ${portfolioText}`;
   }, [activeProfile, previewEffectiveCapitalClp, portfolioSourceMode, simpleRvPct, selectedCount, questionMode, inputs.horizonYears, inputs.fixedMonthlyClp]);
+
+  const applyMoreReturnTilt = () => {
+    if (!canTiltForReturn) {
+      setReturnTiltMessage('Selecciona al menos 2 instrumentos para ajustar retorno.');
+      return;
+    }
+    const rows = [...selectedInstrumentExpectedRows];
+    const minRet = Math.min(...rows.map((row) => row.expectedReturnAnnual));
+    const maxRet = Math.max(...rows.map((row) => row.expectedReturnAnnual));
+    const spread = maxRet - minRet;
+    if (spread <= 1e-9) {
+      setReturnTiltMessage('Los instrumentos tienen retorno esperado similar; no se aplicó ajuste.');
+      return;
+    }
+
+    const tiltedRaw = rows.map((row) => {
+      const rel = (row.expectedReturnAnnual - portfolioExpectedReturnAnnual) / spread;
+      const desirability = clamp(1 + (0.35 * rel), 0.6, 1.6);
+      return { ...row, raw: row.weight * desirability };
+    });
+    const rawSum = tiltedRaw.reduce((sum, row) => sum + row.raw, 0);
+    if (rawSum <= 0) return;
+    const normalized = tiltedRaw.map((row) => ({ ...row, nextWeight: row.raw / rawSum }));
+    const before = portfolioExpectedReturnAnnual;
+    const after = normalized.reduce((sum, row) => sum + (row.nextWeight * row.expectedReturnAnnual), 0);
+
+    setInputs((prev) => {
+      if (prev.portfolioEntryMode === 'percentage') {
+        let assigned = 0;
+        const nextEntries = prev.portfolioEntries.map((entry, idx) => {
+          const target = normalized.find((row) => row.instrumentId === entry.instrumentId);
+          if (!target) return entry;
+          if (idx === prev.portfolioEntries.length - 1) {
+            return { ...entry, percentage: Number(Math.max(0, 100 - assigned).toFixed(1)) };
+          }
+          const pct = Number((target.nextWeight * 100).toFixed(1));
+          assigned += pct;
+          return { ...entry, percentage: pct };
+        });
+        return { ...prev, portfolioEntries: nextEntries };
+      }
+
+      const targetCapital = Math.max(0, Math.round(previewEffectiveCapitalClp));
+      let assigned = 0;
+      const nextEntries = prev.portfolioEntries.map((entry, idx) => {
+        const target = normalized.find((row) => row.instrumentId === entry.instrumentId);
+        if (!target) return entry;
+        if (idx === prev.portfolioEntries.length - 1) {
+          return { ...entry, amountClp: Math.max(0, targetCapital - assigned) };
+        }
+        const amount = Math.max(0, Math.round(targetCapital * target.nextWeight));
+        assigned += amount;
+        return { ...entry, amountClp: amount };
+      });
+      return { ...prev, portfolioEntries: nextEntries };
+    });
+
+    setReturnTiltMessage(`Mix actualizado. Retorno esperado: ${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%. Vuelve a calcular para ver impacto.`);
+  };
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
     const runtimeInputs: AssistedInputs = {
@@ -738,6 +817,25 @@ export function AssistedSimulationPage() {
     if (resultMode === 'duration') return 'Duración con 85% de éxito';
     return 'Probabilidad de éxito';
   }, [resultMode]);
+  const resultExpectedReturnAnnual = useMemo(() => {
+    if (!result) return null;
+    const ret = DEFAULT_PARAMETERS.returns;
+    const w = result.best.weights;
+    return (
+      w.rvGlobal * ret.rvGlobalAnnual +
+      w.rvChile * ret.rvChileAnnual +
+      w.rfGlobal * ret.rfGlobalAnnual +
+      w.rfChile * ret.rfChileUFAnnual
+    );
+  }, [result]);
+  const resultRetiroCapitalPct = useMemo(() => {
+    if (!result) return null;
+    const baseCapital = Math.max(1, result.effectiveInitialCapitalClp);
+    const monthly = resultMode === 'max_spending'
+      ? result.best.sustainableMonthlyClp
+      : result.best.equivalentMonthlyClp;
+    return (monthly * 12) / baseCapital;
+  }, [result, resultMode]);
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -745,14 +843,14 @@ export function AssistedSimulationPage() {
         background: `linear-gradient(135deg, ${ASSISTED_COCKPIT.shell}, ${ASSISTED_COCKPIT.panel})`,
         border: `1px solid ${ASSISTED_COCKPIT.border}`,
         borderRadius: 18,
-        padding: 16,
+        padding: '10px 14px',
         display: 'grid',
-        gap: 8,
+        gap: 6,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <div>
             <div style={{ color: ASSISTED_COCKPIT.accent, fontWeight: 900, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Simulación Asistida</div>
-            <div style={{ color: T.textMuted, fontSize: 13 }}>
+            <div style={{ color: T.textMuted, fontSize: 12 }}>
               Calcula gasto, duración o probabilidad de éxito sin entrar al modelo completo.
             </div>
           </div>
@@ -763,7 +861,7 @@ export function AssistedSimulationPage() {
             borderRadius: 999,
             padding: '6px 10px',
             background: ASSISTED_COCKPIT.panelSoft,
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: 700,
           }}>
             Motor M8 real · entrada simplificada
@@ -771,32 +869,41 @@ export function AssistedSimulationPage() {
         </div>
       </section>
 
-      <section style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.border}`, borderRadius: 16, padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Perfil rápido</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 8 }}>
-          {(Object.keys(profileConfigs) as ProfileId[]).map((profileId) => {
-            const profile = profileConfigs[profileId];
-            const active = activeProfile === profileId;
-            return (
-              <button
-                key={profileId}
-                type="button"
-                onClick={() => applyProfile(profileId)}
-                style={{
-                  textAlign: 'left',
-                  borderRadius: 10,
-                  border: `1px solid ${active ? ASSISTED_COCKPIT.accent : ASSISTED_COCKPIT.borderSoft}`,
-                  background: active ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panelSoft,
-                  color: T.textPrimary,
-                  padding: '8px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                <div style={{ fontSize: 14, fontWeight: 800 }}>{profile.title}</div>
-                <div style={{ color: T.textMuted, fontSize: 11 }}>{profile.subtitle}</div>
-              </button>
-            );
-          })}
+      <section style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 14, padding: '8px 12px', display: 'grid', gap: 6 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+          <label style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Perfil</label>
+          <select
+            value={activeProfile}
+            onChange={(e) => applyProfile(e.target.value as ProfileId)}
+            style={{
+              background: ASSISTED_COCKPIT.panelSoft,
+              border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+              borderRadius: 8,
+              color: T.textPrimary,
+              padding: '6px 10px',
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            {(Object.keys(profileConfigs) as ProfileId[]).map((profileId) => (
+              <option key={profileId} value={profileId}>{profileConfigs[profileId].title}</option>
+            ))}
+          </select>
+          <span style={{ color: T.textMuted, fontSize: 12 }}>{profileConfigs[activeProfile].subtitle} · editable</span>
+        </div>
+        <div style={{
+          background: ASSISTED_COCKPIT.panelSoft,
+          border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+          borderRadius: 10,
+          padding: '6px 10px',
+          color: T.textSecondary,
+          fontSize: 12,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}>
+          {quickSummary}
         </div>
       </section>
 
@@ -814,28 +921,16 @@ export function AssistedSimulationPage() {
                 border: `1px solid ${active ? ASSISTED_COCKPIT.accent : ASSISTED_COCKPIT.border}`,
                 background: active ? `linear-gradient(135deg, ${ASSISTED_COCKPIT.accentSoft}, rgba(184,115,51,0.04))` : ASSISTED_COCKPIT.panel,
                 color: T.textPrimary,
-                padding: '12px 14px',
+                padding: '9px 12px',
                 cursor: 'pointer',
               }}
             >
-              <div style={{ fontWeight: 900, fontSize: 16, color: active ? ASSISTED_COCKPIT.accent : T.textPrimary, marginBottom: 2 }}>{card.icon}</div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>{card.title}</div>
-              <div style={{ color: T.textMuted, fontSize: 12 }}>{card.subtitle}</div>
+              <div style={{ fontWeight: 900, fontSize: 14, color: active ? ASSISTED_COCKPIT.accent : T.textPrimary, marginBottom: 1 }}>{card.icon}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{card.title}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>{card.subtitle}</div>
             </button>
           );
         })}
-      </section>
-
-      <section style={{
-        background: ASSISTED_COCKPIT.panelSoft,
-        border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
-        borderRadius: 14,
-        padding: '10px 12px',
-        color: T.textSecondary,
-        fontSize: 13,
-        fontWeight: 600,
-      }}>
-        {quickSummary}
       </section>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14, alignItems: 'start' }}>
@@ -1084,17 +1179,23 @@ export function AssistedSimulationPage() {
                 {selectedInstrumentRows.map(({ entry, instrument }) => (
                   <div key={entry.instrumentId} style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(0,1fr) 170px 34px',
+                    gridTemplateColumns: 'minmax(0,1fr) 156px 34px',
                     gap: 8,
                     alignItems: 'center',
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
+                    background: ASSISTED_COCKPIT.panelSoft,
+                    border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
                     borderRadius: 12,
-                    padding: '8px 10px',
+                    padding: '7px 9px',
                   }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{instrument.name}</div>
-                      <div style={{ color: T.textMuted, fontSize: 11 }}>{instrument.currency} · ref {formatPct(instrument.weightPortfolio)}</div>
+                      <div style={{ color: T.textMuted, fontSize: 11 }}>
+                        {(() => {
+                          const expected = expectedRowsById.get(entry.instrumentId);
+                          if (!expected) return `${instrument.currency} · ref ${formatPct(instrument.weightPortfolio)}`;
+                          return `${formatPct(expected.weight)} · Ret. esp. ${(expected.expectedReturnAnnual * 100).toFixed(1)}%`;
+                        })()}
+                      </div>
                     </div>
                     {inputs.portfolioEntryMode === 'amount' ? (
                       <input
@@ -1147,8 +1248,8 @@ export function AssistedSimulationPage() {
                 onClick={() => setShowUniversePicker((prev) => !prev)}
                 style={{
                   borderRadius: 10,
-                  border: `1px solid ${T.border}`,
-                  background: T.surfaceEl,
+                  border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                  background: ASSISTED_COCKPIT.panelSoft,
                   color: T.textPrimary,
                   padding: '7px 10px',
                   fontWeight: 700,
@@ -1198,8 +1299,8 @@ export function AssistedSimulationPage() {
             )}
 
             <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: `1px solid ${T.border}`,
+              background: ASSISTED_COCKPIT.panelSoft,
+              border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
               borderRadius: 10,
               padding: '8px 10px',
               display: 'grid',
@@ -1252,14 +1353,39 @@ export function AssistedSimulationPage() {
 
             {selectedInstrumentExpectedRows.length > 0 && (
               <div style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: `1px solid ${T.border}`,
+                background: ASSISTED_COCKPIT.panelSoft,
+                border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
                 borderRadius: 10,
                 padding: '8px 10px',
                 display: 'grid',
                 gap: 6,
                 fontSize: 12,
               }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ color: T.textSecondary }}>
+                    Retorno esperado: <strong style={{ color: T.textPrimary }}>{(portfolioExpectedReturnAnnual * 100).toFixed(1)}% real anual</strong>
+                    {' · '}
+                    Mix RV/RF <strong style={{ color: T.textPrimary }}>{`${(portfolioRvRfMix.rv * 100).toFixed(0)}/${(portfolioRvRfMix.rf * 100).toFixed(0)}`}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyMoreReturnTilt}
+                    disabled={!canTiltForReturn}
+                    style={{
+                      borderRadius: 999,
+                      border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                      background: canTiltForReturn ? ASSISTED_COCKPIT.accentSoft : ASSISTED_COCKPIT.panel,
+                      color: T.textPrimary,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: canTiltForReturn ? 'pointer' : 'not-allowed',
+                      opacity: canTiltForReturn ? 1 : 0.6,
+                    }}
+                  >
+                    Probar más retorno
+                  </button>
+                </div>
                 {selectedInstrumentExpectedRows.map((row) => (
                   <div key={row.instrumentId} style={{ color: T.textSecondary }}>
                     <strong style={{ color: T.textPrimary }}>{row.name}</strong>
@@ -1271,14 +1397,14 @@ export function AssistedSimulationPage() {
                     <strong style={{ color: T.textPrimary }}>Ret. esp. {(row.expectedReturnAnnual * 100).toFixed(1)}%</strong>
                   </div>
                 ))}
-                <div style={{ color: T.textSecondary }}>
-                  Retorno esperado ponderado:
-                  {' '}
-                  <strong style={{ color: T.textPrimary }}>{(portfolioExpectedReturnAnnual * 100).toFixed(1)}% real anual</strong>
-                </div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
                   Estimación real anual para explicar el escenario. El Monte Carlo también considera volatilidad y secuencia.
                 </div>
+                {returnTiltMessage && (
+                  <div style={{ color: ASSISTED_COCKPIT.accent, fontSize: 11, fontWeight: 700 }}>
+                    {returnTiltMessage}
+                  </div>
+                )}
                 {requiredReturnAnnual !== null && Number.isFinite(requiredReturnAnnual) && portfolioExpectedReturnAnnual < requiredReturnAnnual && (
                   <div style={{ color: T.warning }}>
                     El retorno esperado del portafolio está por debajo del retorno requerido para sostener este retiro.
@@ -1406,6 +1532,18 @@ export function AssistedSimulationPage() {
               <div style={{ color: T.textMuted, fontSize: 11 }}>Mix</div>
               <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{`RV ${((result.best.weights.rvGlobal + result.best.weights.rvChile) * 100).toFixed(1)}% · RF ${((result.best.weights.rfGlobal + result.best.weights.rfChile) * 100).toFixed(1)}%`}</div>
             </div>
+            {resultExpectedReturnAnnual !== null && (
+              <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Retorno esperado cartera</div>
+                <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{(resultExpectedReturnAnnual * 100).toFixed(1)}% real anual</div>
+              </div>
+            )}
+            {resultRetiroCapitalPct !== null && (
+              <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Retiro/capital</div>
+                <div style={{ color: ASSISTED_COCKPIT.accent, fontSize: 14, fontWeight: 800 }}>{(resultRetiroCapitalPct * 100).toFixed(1)}%</div>
+              </div>
+            )}
           </div>
 
           <div style={{ color: T.textSecondary, fontSize: 13 }}>{summaryText}</div>
