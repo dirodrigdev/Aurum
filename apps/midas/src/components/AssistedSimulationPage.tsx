@@ -13,7 +13,7 @@ import { T } from './theme';
 
 type AssistedQuestionMode = 'max_spending' | 'duration' | 'success';
 type PortfolioSourceMode = 'simple' | 'instruments';
-type ProfileId = 'parents' | 'brother' | 'me' | 'custom';
+type ProfileId = 'me_current' | 'me_scenario' | 'parents' | 'brother' | 'custom';
 
 type DurationEstimate = {
   p10: number;
@@ -77,13 +77,33 @@ const profileConfigs: Record<ProfileId, {
   capitalMm: number;
   spendingMm: number;
   horizonYears: number;
+  editable: boolean;
+  disabled?: boolean;
 }> = {
+  me_current: {
+    title: 'Yo actual',
+    subtitle: 'Importación desde Simulación pendiente',
+    capitalMm: 0,
+    spendingMm: 0,
+    horizonYears: 20,
+    editable: false,
+    disabled: true,
+  },
+  me_scenario: {
+    title: 'Yo escenario',
+    subtitle: 'Sandbox editable para probar supuestos',
+    capitalMm: 80,
+    spendingMm: 0.6,
+    horizonYears: 25,
+    editable: true,
+  },
   parents: {
     title: 'Papás',
     subtitle: 'Perfil sugerido familiar',
     capitalMm: 237,
     spendingMm: 1.4,
     horizonYears: 20,
+    editable: true,
   },
   brother: {
     title: 'Hermano',
@@ -91,13 +111,7 @@ const profileConfigs: Record<ProfileId, {
     capitalMm: 120,
     spendingMm: 0.8,
     horizonYears: 15,
-  },
-  me: {
-    title: 'Yo',
-    subtitle: 'Base conservadora editable',
-    capitalMm: 80,
-    spendingMm: 0.6,
-    horizonYears: 25,
+    editable: true,
   },
   custom: {
     title: 'Personalizado',
@@ -105,6 +119,7 @@ const profileConfigs: Record<ProfileId, {
     capitalMm: 0,
     spendingMm: 0,
     horizonYears: 20,
+    editable: true,
   },
 };
 
@@ -580,12 +595,16 @@ export function AssistedSimulationPage() {
   };
 
   const applyProfile = (profileId: ProfileId) => {
+    const profile = profileConfigs[profileId];
+    if (profile.disabled) {
+      setReturnTiltMessage('Yo actual todavía no está disponible para importación automática.');
+      return;
+    }
     setActiveProfile(profileId);
     setError(null);
     setReturnTiltMessage(null);
     setExcludedInstruments([]);
     setBucketAutoNote(null);
-    const profile = profileConfigs[profileId];
     if (profileId === 'custom') {
       setInputs((prev) => ({
         ...prev,
@@ -1132,10 +1151,15 @@ export function AssistedSimulationPage() {
             }}
           >
             {(Object.keys(profileConfigs) as ProfileId[]).map((profileId) => (
-              <option key={profileId} value={profileId}>{profileConfigs[profileId].title}</option>
+              <option key={profileId} value={profileId} disabled={!!profileConfigs[profileId].disabled}>
+                {profileConfigs[profileId].title}
+              </option>
             ))}
           </select>
-          <span style={{ color: T.textMuted, fontSize: 12 }}>{profileConfigs[activeProfile].subtitle} · editable</span>
+          <span style={{ color: T.textMuted, fontSize: 12 }}>
+            {profileConfigs[activeProfile].subtitle}
+            {profileConfigs[activeProfile].editable ? ' · editable' : ' · solo lectura'}
+          </span>
         </div>
         <div style={{
           background: ASSISTED_COCKPIT.panelSoft,
@@ -1438,8 +1462,9 @@ export function AssistedSimulationPage() {
                       <div style={{ color: T.textMuted, fontSize: 11 }}>
                         {(() => {
                           const expected = expectedRowsById.get(entry.instrumentId);
-                          if (!expected) return `${instrument.currency} · ref ${formatPct(instrument.weightPortfolio)}`;
-                          return `${formatPct(expected.weight)} · Ret. esp. ${(expected.expectedReturnAnnual * 100).toFixed(1)}%`;
+                          const bucketTag = bucketEnabled && entry.instrumentId === bucketInstrumentId ? ' · Bucket' : '';
+                          if (!expected) return `${instrument.currency} · ref ${formatPct(instrument.weightPortfolio)}${bucketTag}`;
+                          return `${formatPct(expected.weight)} · Ret. esp. ${(expected.expectedReturnAnnual * 100).toFixed(1)}%${bucketTag}`;
                         })()}
                       </div>
                     </div>
@@ -1489,56 +1514,6 @@ export function AssistedSimulationPage() {
                 ))}
               </div>
             )}
-
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button
-                type="button"
-                onClick={() => setShowUniversePicker((prev) => !prev)}
-                style={{
-                  borderRadius: 10,
-                  border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
-                  background: ASSISTED_COCKPIT.panelSoft,
-                  color: T.textPrimary,
-                  padding: '7px 10px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                + Agregar instrumento
-              </button>
-              {showUniversePicker && (
-                <>
-                  <select
-                    value={newInstrumentId}
-                    onChange={(e) => setNewInstrumentId(e.target.value)}
-                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '7px 10px' }}
-                  >
-                    <option value="">Selecciona instrumento...</option>
-                    {unselectedInstruments.map((item) => (
-                      <option key={item.instrumentId} value={item.instrumentId}>{item.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      upsertInstrument(newInstrumentId);
-                      setNewInstrumentId('');
-                    }}
-                    style={{
-                      borderRadius: 10,
-                      border: `1px solid ${T.primary}`,
-                      background: ASSISTED_COCKPIT.accentSoft,
-                      color: T.textPrimary,
-                      padding: '7px 10px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Agregar
-                  </button>
-                </>
-              )}
-            </div>
 
             {availableInstruments.length === 0 && (
               <div style={{ color: T.textMuted, fontSize: 12 }}>
@@ -1609,47 +1584,20 @@ export function AssistedSimulationPage() {
                 gap: 6,
                 fontSize: 12,
               }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'center' }}>
-                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
-                    Asignado a (bucket defensivo)
-                    <select
-                      value={bucketInstrumentId}
-                      onChange={(e) => setBucketInstrumentId(e.target.value)}
-                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
-                    >
-                      {selectedInstrumentRows.map(({ instrument, entry }) => (
-                        <option key={entry.instrumentId} value={entry.instrumentId}>{instrument.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
-                    <span>Bucket defensivo mínimo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={inputs.portfolioEntryMode === 'amount' ? 9999 : 100}
-                      step={0.1}
-                      value={inputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct}
-                      onChange={(e) => {
-                        const v = Math.max(0, Number(e.target.value) || 0);
-                        if (inputs.portfolioEntryMode === 'amount') setBucketFloorMm(v);
-                        else setBucketFloorPct(v);
-                      }}
-                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
-                    />
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
-                    <input
-                      type="checkbox"
-                      checked={bucketEnabled}
-                      onChange={(e) => setBucketEnabled(e.target.checked)}
-                    />
-                    Regla defensiva activa
-                  </label>
+                <div style={{ color: T.textSecondary }}>
+                  Bucket defensivo mínimo:{' '}
+                  <strong style={{ color: T.textPrimary }}>
+                    {inputs.portfolioEntryMode === 'amount'
+                      ? `${bucketFloorMm.toFixed(1)} MM`
+                      : `${bucketFloorPct.toFixed(1)}%`}
+                  </strong>
                 </div>
-                {bucketAutoNote && (
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>{bucketAutoNote}</div>
-                )}
+                <div style={{ color: T.textSecondary }}>
+                  {bucketRow
+                    ? <>Protegido automáticamente en: <strong style={{ color: T.textPrimary }}>{bucketRow.name}</strong></>
+                    : 'Sin instrumento defensivo asignado'}
+                </div>
+                {bucketAutoNote && <div style={{ color: T.textMuted, fontSize: 11 }}>{bucketAutoNote}</div>}
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div style={{ color: T.textSecondary }}>
@@ -1694,59 +1642,6 @@ export function AssistedSimulationPage() {
                     Probar menos retorno
                   </button>
                 </div>
-                {bucketEnabled && bucketRow && selectedInstrumentExpectedRows.length === 3 && (
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Probar 2 de 3:</span>
-                    <button
-                      type="button"
-                      onClick={() => setReturnTiltMessage('Manteniendo bucket + todos los instrumentos activos.')}
-                      style={{
-                        borderRadius: 999,
-                        border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
-                        background: ASSISTED_COCKPIT.accentSoft,
-                        color: T.textPrimary,
-                        padding: '4px 10px',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Mantener bucket + todos
-                    </button>
-                    {selectedInstrumentExpectedRows
-                      .filter((row) => row.instrumentId !== bucketInstrumentId)
-                      .map((row) => (
-                        <button
-                          key={row.instrumentId}
-                          type="button"
-                          onClick={() => applyBucketPair(row.instrumentId)}
-                          style={{
-                            borderRadius: 999,
-                            border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
-                            background: ASSISTED_COCKPIT.panel,
-                            color: T.textPrimary,
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {`Bucket + ${row.name}`}
-                        </button>
-                      ))}
-                  </div>
-                )}
-                {selectedInstrumentExpectedRows.map((row) => (
-                  <div key={row.instrumentId} style={{ color: T.textSecondary }}>
-                    <strong style={{ color: T.textPrimary }}>{row.name}</strong>
-                    {' · '}
-                    {formatMm(row.amountClp)}
-                    {' · '}
-                    {formatPct(row.weight)}
-                    {' · '}
-                    <strong style={{ color: T.textPrimary }}>Ret. esp. {(row.expectedReturnAnnual * 100).toFixed(1)}%</strong>
-                  </div>
-                ))}
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
                   Estimación real anual para explicar el escenario. El Monte Carlo también considera volatilidad y secuencia.
                 </div>
@@ -1802,21 +1697,160 @@ export function AssistedSimulationPage() {
             )}
 
             <details style={{ marginTop: 2 }}>
-              <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ver universo completo</summary>
-              <div style={{ display: 'grid', gap: 6, maxHeight: 180, overflow: 'auto', paddingTop: 8 }}>
-                {availableInstruments.map((instrument) => (
-                  <label key={instrument.instrumentId} style={{ color: T.textPrimary, fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ajustes de mix</summary>
+              <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowUniversePicker((prev) => !prev)}
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                      background: ASSISTED_COCKPIT.panelSoft,
+                      color: T.textPrimary,
+                      padding: '7px 10px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    + Agregar otro instrumento
+                  </button>
+                  {showUniversePicker && (
+                    <>
+                      <select
+                        value={newInstrumentId}
+                        onChange={(e) => setNewInstrumentId(e.target.value)}
+                        style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '7px 10px' }}
+                      >
+                        <option value="">Selecciona instrumento...</option>
+                        {unselectedInstruments.map((item) => (
+                          <option key={item.instrumentId} value={item.instrumentId}>{item.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          upsertInstrument(newInstrumentId);
+                          setNewInstrumentId('');
+                        }}
+                        style={{
+                          borderRadius: 10,
+                          border: `1px solid ${T.primary}`,
+                          background: ASSISTED_COCKPIT.accentSoft,
+                          color: T.textPrimary,
+                          padding: '7px 10px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Agregar
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'center' }}>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    Bucket defensivo mínimo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}
+                    <input
+                      type="number"
+                      min={0}
+                      max={inputs.portfolioEntryMode === 'amount' ? 9999 : 100}
+                      step={0.1}
+                      value={inputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value) || 0);
+                        if (inputs.portfolioEntryMode === 'amount') setBucketFloorMm(v);
+                        else setBucketFloorPct(v);
+                      }}
+                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    Configurar bucket defensivo
+                    <select
+                      value={bucketInstrumentId}
+                      onChange={(e) => setBucketInstrumentId(e.target.value)}
+                      style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
+                    >
+                      {selectedInstrumentRows.map(({ instrument, entry }) => (
+                        <option key={entry.instrumentId} value={entry.instrumentId}>{instrument.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
                     <input
                       type="checkbox"
-                      checked={selectedIds.has(instrument.instrumentId)}
-                      onChange={() => selectedIds.has(instrument.instrumentId) ? removeInstrument(instrument.instrumentId) : upsertInstrument(instrument.instrumentId)}
-                      disabled={bucketEnabled && instrument.instrumentId === bucketInstrumentId && selectedIds.has(instrument.instrumentId)}
+                      checked={bucketEnabled}
+                      onChange={(e) => setBucketEnabled(e.target.checked)}
                     />
-                    <span>{instrument.label}</span>
+                    Regla defensiva activa
                   </label>
-                ))}
+                </div>
+
+                {bucketEnabled && bucketRow && selectedInstrumentExpectedRows.length === 3 && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Probar 2 de 3:</span>
+                    <button
+                      type="button"
+                      onClick={() => setReturnTiltMessage('Manteniendo bucket + todos los instrumentos activos.')}
+                      style={{
+                        borderRadius: 999,
+                        border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                        background: ASSISTED_COCKPIT.accentSoft,
+                        color: T.textPrimary,
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Mantener bucket + todos
+                    </button>
+                    {selectedInstrumentExpectedRows
+                      .filter((row) => row.instrumentId !== bucketInstrumentId)
+                      .map((row) => (
+                        <button
+                          key={row.instrumentId}
+                          type="button"
+                          onClick={() => applyBucketPair(row.instrumentId)}
+                          style={{
+                            borderRadius: 999,
+                            border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                            background: ASSISTED_COCKPIT.panel,
+                            color: T.textPrimary,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {`Bucket + ${row.name}`}
+                        </button>
+                      ))}
+                  </div>
+                )}
+
+                <details>
+                  <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ver universo completo</summary>
+                  <div style={{ display: 'grid', gap: 6, maxHeight: 180, overflow: 'auto', paddingTop: 8 }}>
+                    {availableInstruments.map((instrument) => (
+                      <label key={instrument.instrumentId} style={{ color: T.textPrimary, fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(instrument.instrumentId)}
+                          onChange={() => selectedIds.has(instrument.instrumentId) ? removeInstrument(instrument.instrumentId) : upsertInstrument(instrument.instrumentId)}
+                          disabled={bucketEnabled && instrument.instrumentId === bucketInstrumentId && selectedIds.has(instrument.instrumentId)}
+                        />
+                        <span>{instrument.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
               </div>
             </details>
+
           </>
         )}
       </section>
