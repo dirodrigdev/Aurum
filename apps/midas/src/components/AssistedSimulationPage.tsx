@@ -118,10 +118,54 @@ const clamp = (value: number, low: number, high: number): number => Math.min(hig
 const mmToClp = (valueMm: number): number => Math.round(Math.max(0, valueMm) * 1_000_000);
 const clpToMm = (valueClp: number): number => Math.max(0, valueClp) / 1_000_000;
 const clpToMmInput = (valueClp: number, decimals = 1): number => Number(clpToMm(valueClp).toFixed(decimals));
+const formatMm = (valueClp: number): string => `${clpToMm(valueClp).toFixed(1)} MM`;
 
 const formatDuration = (years: number, censored: boolean): string => {
   if (!Number.isFinite(years)) return '--';
   return censored ? `Más de ${Math.round(years)} años` : `${years.toFixed(1)} años`;
+};
+
+const solveRequiredAnnualReturn = (
+  capitalClp: number,
+  monthlySpendClp: number,
+  horizonYears: number,
+): number | null => {
+  const capital = Math.max(0, Number(capitalClp || 0));
+  const spend = Math.max(0, Number(monthlySpendClp || 0));
+  const months = Math.max(1, Math.round(Number(horizonYears || 0) * 12));
+  if (capital <= 0 || spend <= 0 || months <= 0) return null;
+
+  const pvAtMonthlyRate = (r: number): number => {
+    if (Math.abs(r) < 1e-9) return spend * months;
+    return spend * (1 - (1 + r) ** (-months)) / r;
+  };
+
+  const low = -0.99;
+  const high = 0.5;
+  const fLow = pvAtMonthlyRate(low) - capital;
+  const fHigh = pvAtMonthlyRate(high) - capital;
+  if (!Number.isFinite(fLow) || !Number.isFinite(fHigh) || fLow * fHigh > 0) return null;
+
+  let a = low;
+  let b = high;
+  let fa = fLow;
+  for (let i = 0; i < 80; i += 1) {
+    const mid = (a + b) / 2;
+    const fMid = pvAtMonthlyRate(mid) - capital;
+    if (Math.abs(fMid) < 1e-9) {
+      a = mid;
+      b = mid;
+      break;
+    }
+    if ((fa < 0 && fMid < 0) || (fa > 0 && fMid > 0)) {
+      a = mid;
+      fa = fMid;
+    } else {
+      b = mid;
+    }
+  }
+  const monthly = (a + b) / 2;
+  return (1 + monthly) ** 12 - 1;
 };
 
 const selectedIdsFromEntries = (entries: AssistedPortfolioEntry[]) => entries.map((entry) => entry.instrumentId);
@@ -509,6 +553,42 @@ export function AssistedSimulationPage() {
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
+  const requiredReturnAnnual = useMemo(() => {
+    if (inputs.spendingMode !== 'fixed') return null;
+    return solveRequiredAnnualReturn(previewEffectiveCapitalClp, inputs.fixedMonthlyClp, inputs.horizonYears);
+  }, [inputs.spendingMode, previewEffectiveCapitalClp, inputs.fixedMonthlyClp, inputs.horizonYears]);
+
+  const selectedInstrumentExpectedRows = useMemo(() => {
+    const returns = DEFAULT_PARAMETERS.returns;
+    const amountTotal = selectedInstrumentRows.reduce((sum, row) => sum + Math.max(0, Number(row.entry.amountClp || 0)), 0);
+    const pctTotal = selectedInstrumentRows.reduce((sum, row) => sum + Math.max(0, Number(row.entry.percentage || 0)), 0);
+
+    return selectedInstrumentRows.map(({ entry, instrument }) => {
+      const baseWeight = inputs.portfolioEntryMode === 'amount'
+        ? (amountTotal > 0 ? Math.max(0, Number(entry.amountClp || 0)) / amountTotal : 0)
+        : (pctTotal > 0 ? Math.max(0, Number(entry.percentage || 0)) / pctTotal : 0);
+      const amountClp = inputs.portfolioEntryMode === 'amount'
+        ? Math.max(0, Number(entry.amountClp || 0))
+        : Math.max(0, previewEffectiveCapitalClp * baseWeight);
+      const expectedReturnAnnual =
+        instrument.sleeveWeights.rvGlobal * returns.rvGlobalAnnual +
+        instrument.sleeveWeights.rvChile * returns.rvChileAnnual +
+        instrument.sleeveWeights.rfGlobal * returns.rfGlobalAnnual +
+        instrument.sleeveWeights.rfChile * returns.rfChileUFAnnual;
+      return {
+        instrumentId: entry.instrumentId,
+        name: instrument.name,
+        amountClp,
+        weight: baseWeight,
+        expectedReturnAnnual,
+      };
+    });
+  }, [selectedInstrumentRows, inputs.portfolioEntryMode, previewEffectiveCapitalClp]);
+
+  const portfolioExpectedReturnAnnual = useMemo(
+    () => selectedInstrumentExpectedRows.reduce((sum, row) => sum + (row.weight * row.expectedReturnAnnual), 0),
+    [selectedInstrumentExpectedRows],
+  );
 
   const quickSummary = useMemo(() => {
     const profileName = profileConfigs[activeProfile].title;
@@ -1151,6 +1231,43 @@ export function AssistedSimulationPage() {
                 </div>
               )}
             </div>
+
+            {selectedInstrumentExpectedRows.length > 0 && (
+              <div style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: `1px solid ${T.border}`,
+                borderRadius: 10,
+                padding: '8px 10px',
+                display: 'grid',
+                gap: 6,
+                fontSize: 12,
+              }}>
+                {selectedInstrumentExpectedRows.map((row) => (
+                  <div key={row.instrumentId} style={{ color: T.textSecondary }}>
+                    <strong style={{ color: T.textPrimary }}>{row.name}</strong>
+                    {' · '}
+                    {formatMm(row.amountClp)}
+                    {' · '}
+                    {formatPct(row.weight)}
+                    {' · '}
+                    <strong style={{ color: T.textPrimary }}>Ret. esp. {(row.expectedReturnAnnual * 100).toFixed(1)}%</strong>
+                  </div>
+                ))}
+                <div style={{ color: T.textSecondary }}>
+                  Retorno esperado ponderado:
+                  {' '}
+                  <strong style={{ color: T.textPrimary }}>{(portfolioExpectedReturnAnnual * 100).toFixed(1)}% real anual</strong>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>
+                  Estimación real anual para explicar el escenario. El Monte Carlo también considera volatilidad y secuencia.
+                </div>
+                {requiredReturnAnnual !== null && Number.isFinite(requiredReturnAnnual) && portfolioExpectedReturnAnnual < requiredReturnAnnual && (
+                  <div style={{ color: T.warning }}>
+                    El retorno esperado del portafolio está por debajo del retorno requerido para sostener este retiro.
+                  </div>
+                )}
+              </div>
+            )}
 
             <details style={{ marginTop: 2 }}>
               <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ver universo completo</summary>
