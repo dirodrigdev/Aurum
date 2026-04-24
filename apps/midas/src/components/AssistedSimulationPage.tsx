@@ -117,6 +117,7 @@ const formatPct = (value: number): string => Number.isFinite(value) ? `${(value 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 const mmToClp = (valueMm: number): number => Math.round(Math.max(0, valueMm) * 1_000_000);
 const clpToMm = (valueClp: number): number => Math.max(0, valueClp) / 1_000_000;
+const clpToMmInput = (valueClp: number, decimals = 1): number => Number(clpToMm(valueClp).toFixed(decimals));
 
 const formatDuration = (years: number, censored: boolean): string => {
   if (!Number.isFinite(years)) return '--';
@@ -217,6 +218,24 @@ const buildProfileInstrumentEntries = (
       percentage: 0,
     };
   });
+};
+
+const buildParentsConservativeEntries = (
+  instruments: AssistedInstrumentOption[],
+): AssistedPortfolioEntry[] | null => {
+  const byContains = (token: string): AssistedInstrumentOption | undefined =>
+    instruments.find((item) => item.name.toLowerCase().includes(token.toLowerCase()));
+
+  const conservadora = byContains('btg pactual gestión conservadora');
+  const activa = byContains('btg pactual gestión activa');
+  const suraUf = byContains('sura renta local uf');
+  if (!conservadora || !activa || !suraUf) return null;
+
+  return [
+    { instrumentId: conservadora.instrumentId, amountClp: mmToClp(72), percentage: 0 },
+    { instrumentId: activa.instrumentId, amountClp: mmToClp(132), percentage: 0 },
+    { instrumentId: suraUf.instrumentId, amountClp: mmToClp(33), percentage: 0 },
+  ];
 };
 
 const statusLabelForResult = (
@@ -399,8 +418,13 @@ export function AssistedSimulationPage() {
     const spendingClp = mmToClp(profile.spendingMm);
     const useInstruments = availableInstruments.length > 0;
 
-    setPortfolioSourceMode(useInstruments ? 'instruments' : 'simple');
-    setSimpleRvPct(55);
+    const parentsPresetEntries = profileId === 'parents'
+      ? buildParentsConservativeEntries(availableInstruments)
+      : null;
+    const shouldUseInstruments = useInstruments && (profileId !== 'parents' || !!parentsPresetEntries);
+
+    setPortfolioSourceMode(shouldUseInstruments ? 'instruments' : 'simple');
+    setSimpleRvPct(profileId === 'parents' ? 35 : 55);
     setOptimizeEnabled(false);
 
     setInputs((prev) => ({
@@ -413,7 +437,9 @@ export function AssistedSimulationPage() {
       phase2MonthlyClp: spendingClp,
       phase1Years: Math.max(4, Math.round(profile.horizonYears * 0.4)),
       portfolioEntryMode: 'amount',
-      portfolioEntries: useInstruments ? buildProfileInstrumentEntries(availableInstruments, capitalClp) : prev.portfolioEntries,
+      portfolioEntries: shouldUseInstruments
+        ? (parentsPresetEntries ?? buildProfileInstrumentEntries(availableInstruments, capitalClp))
+        : [],
       extraContributionEnabled: false,
       extraContributionClp: 0,
       extraContributionYear: 5,
@@ -683,7 +709,7 @@ export function AssistedSimulationPage() {
               type="number"
               min={0}
               step={1}
-              value={clpToMm(inputs.initialCapitalClp)}
+              value={clpToMmInput(inputs.initialCapitalClp)}
               onChange={(e) => updateInput('initialCapitalClp', mmToClp(Number(e.target.value) || 0))}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
             />
@@ -711,7 +737,7 @@ export function AssistedSimulationPage() {
                 type="number"
                 min={0}
                 step={0.1}
-                value={clpToMm(inputs.fixedMonthlyClp)}
+                value={clpToMmInput(inputs.fixedMonthlyClp)}
                 onChange={(e) => {
                   const value = mmToClp(Number(e.target.value) || 0);
                   updateInput('fixedMonthlyClp', value);
@@ -747,7 +773,7 @@ export function AssistedSimulationPage() {
                 type="number"
                 min={0}
                 step={1}
-                value={clpToMm(inputs.extraContributionClp)}
+                value={clpToMmInput(inputs.extraContributionClp)}
                 onChange={(e) => updateInput('extraContributionClp', mmToClp(Number(e.target.value) || 0))}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
@@ -889,7 +915,7 @@ export function AssistedSimulationPage() {
                         type="number"
                         min={0}
                         step={0.5}
-                        value={clpToMm(entry.amountClp)}
+                        value={clpToMmInput(entry.amountClp)}
                         onChange={(e) => updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) })}
                         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
                       />
@@ -1233,7 +1259,7 @@ export function AssistedSimulationPage() {
                   type="number"
                   min={0}
                   step={0.1}
-                  value={clpToMm(inputs.phase1MonthlyClp)}
+                  value={clpToMmInput(inputs.phase1MonthlyClp)}
                   onChange={(e) => updateInput('phase1MonthlyClp', mmToClp(Number(e.target.value) || 0))}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />
@@ -1255,7 +1281,7 @@ export function AssistedSimulationPage() {
                   type="number"
                   min={0}
                   step={0.1}
-                  value={clpToMm(inputs.phase2MonthlyClp)}
+                  value={clpToMmInput(inputs.phase2MonthlyClp)}
                   onChange={(e) => updateInput('phase2MonthlyClp', mmToClp(Number(e.target.value) || 0))}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />

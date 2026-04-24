@@ -486,7 +486,7 @@ const evaluateScenarioAtHorizonYears = (
   scale: number,
   horizonYears: number,
 ): SimulationResults => {
-  const boundedYears = clamp(horizonYears, 4, 60);
+  const boundedYears = clamp(Math.round(horizonYears), 4, 60);
   const horizonMonths = Math.max(48, Math.round(boundedYears * 12));
   const candidateInput: AssistedInputs = {
     ...input,
@@ -586,15 +586,15 @@ const yearsAtSuccessTarget = (
   capYears: number,
 ): { years: number; censored: boolean } => {
   const boundedTarget = clamp(targetSuccess, 0.01, 0.99);
-  const boundedCap = clamp(capYears, 4, 60);
+  const boundedCap = clamp(Math.round(capYears), 4, 60);
   const capResult = evaluateScenarioAtHorizonYears(base, input, weights, scale, boundedCap);
   const capSuccess = successAtHorizon(capResult);
   if (capSuccess >= boundedTarget) return { years: boundedCap, censored: true };
 
   let low = 4;
   let high = boundedCap;
-  for (let i = 0; i < 14; i += 1) {
-    const mid = (low + high) / 2;
+  while (high - low > 1) {
+    const mid = Math.floor((low + high) / 2);
     const midSuccess = successAtHorizon(evaluateScenarioAtHorizonYears(base, input, weights, scale, mid));
     if (midSuccess >= boundedTarget) low = mid;
     else high = mid;
@@ -683,9 +683,12 @@ export function runAssistedSimulation(
       allocation,
       feasible,
     );
+    const rowWithDuration = objective === 'max_duration'
+      ? attachDurationMetrics(row, base, input, 1, horizonYears)
+      : row;
     return {
       mode: 'manual',
-      best: row,
+      best: rowWithDuration,
       evaluatedCandidates: 1,
       inputCapitalClp: Math.max(1, Number(input.initialCapitalClp || 0)),
       portfolioAmountTotalClp,
