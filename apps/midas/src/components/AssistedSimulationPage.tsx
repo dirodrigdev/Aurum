@@ -238,33 +238,30 @@ const buildParentsConservativeEntries = (
   ];
 };
 
-const distributeAdditionalToBtgOnly = (
+const redistributeEntriesToCapital = (
   entries: AssistedPortfolioEntry[],
-  optionsById: Map<string, AssistedInstrumentOption>,
-  extraClp: number,
+  totalCapitalClp: number,
 ): AssistedPortfolioEntry[] => {
-  const extra = Math.max(0, Math.round(extraClp));
-  if (extra <= 0) return entries;
-  const activaEntry = entries.find((entry) => optionsById.get(entry.instrumentId)?.name.toLowerCase().includes('btg pactual gestión activa'));
-  const conservadoraEntry = entries.find((entry) => optionsById.get(entry.instrumentId)?.name.toLowerCase().includes('btg pactual gestión conservadora'));
-  if (!activaEntry || !conservadoraEntry) return entries;
+  const target = Math.max(0, Math.round(totalCapitalClp));
+  if (entries.length === 0) return entries;
+  const current = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0);
+  if (current <= 0) {
+    const even = Math.floor(target / entries.length);
+    return entries.map((entry, idx) => ({
+      ...entry,
+      amountClp: idx === entries.length - 1 ? Math.max(0, target - even * (entries.length - 1)) : even,
+    }));
+  }
 
-  const baseActiva = Math.max(0, Number(activaEntry.amountClp || 0));
-  const baseConservadora = Math.max(0, Number(conservadoraEntry.amountClp || 0));
-  const baseTotal = baseActiva + baseConservadora;
-  if (baseTotal <= 0) return entries;
-
-  const extraActiva = Math.round(extra * (baseActiva / baseTotal));
-  const extraConservadora = extra - extraActiva;
-
-  return entries.map((entry) => {
-    if (entry.instrumentId === activaEntry.instrumentId) {
-      return { ...entry, amountClp: baseActiva + extraActiva };
+  let assigned = 0;
+  return entries.map((entry, idx) => {
+    if (idx === entries.length - 1) {
+      return { ...entry, amountClp: Math.max(0, target - assigned) };
     }
-    if (entry.instrumentId === conservadoraEntry.instrumentId) {
-      return { ...entry, amountClp: baseConservadora + extraConservadora };
-    }
-    return entry;
+    const weight = Math.max(0, Number(entry.amountClp || 0)) / current;
+    const amount = Math.max(0, Math.round(target * weight));
+    assigned += amount;
+    return { ...entry, amountClp: amount };
   });
 };
 
@@ -345,6 +342,7 @@ export function AssistedSimulationPage() {
   const [showAdvancedParams, setShowAdvancedParams] = useState(false);
   const [showUniversePicker, setShowUniversePicker] = useState(false);
   const [newInstrumentId, setNewInstrumentId] = useState<string>('');
+  const [autoAdjustInstrumentAmounts, setAutoAdjustInstrumentAmounts] = useState(true);
   const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
 
@@ -409,9 +407,12 @@ export function AssistedSimulationPage() {
     if (!instrumentId) return;
     setInputs((prev) => {
       if (prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return prev;
+      const nextEntries = [...prev.portfolioEntries, { instrumentId, amountClp: 0, percentage: 0 }];
       return {
         ...prev,
-        portfolioEntries: [...prev.portfolioEntries, { instrumentId, amountClp: 0, percentage: 0 }],
+        portfolioEntries: autoAdjustInstrumentAmounts && prev.portfolioEntryMode === 'amount'
+          ? redistributeEntriesToCapital(nextEntries, prev.initialCapitalClp)
+          : nextEntries,
       };
     });
   };
@@ -456,6 +457,7 @@ export function AssistedSimulationPage() {
     setPortfolioSourceMode(shouldUseInstruments ? 'instruments' : 'simple');
     setSimpleRvPct(profileId === 'parents' ? 35 : 55);
     setOptimizeEnabled(false);
+    setAutoAdjustInstrumentAmounts(true);
 
     setInputs((prev) => ({
       ...prev,
@@ -468,7 +470,10 @@ export function AssistedSimulationPage() {
       phase1Years: Math.max(4, Math.round(profile.horizonYears * 0.4)),
       portfolioEntryMode: 'amount',
       portfolioEntries: shouldUseInstruments
-        ? (parentsPresetEntries ?? buildProfileInstrumentEntries(availableInstruments, capitalClp))
+        ? redistributeEntriesToCapital(
+            (parentsPresetEntries ?? buildProfileInstrumentEntries(availableInstruments, capitalClp)),
+            capitalClp,
+          )
         : [],
       extraContributionEnabled: false,
       extraContributionClp: 0,
@@ -495,8 +500,12 @@ export function AssistedSimulationPage() {
 
   const selectedCount = inputs.portfolioEntries.length;
   const optimizeSelectionInvalid = optimizeEnabled && portfolioSourceMode === 'instruments' && ![0, 2, 3].includes(selectedCount);
-  const previewEffectiveCapitalClp = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && portfolioAmountTotal > 0
-    ? (activeProfile === 'parents' ? Math.max(portfolioAmountTotal, inputs.initialCapitalClp) : portfolioAmountTotal)
+  const previewEffectiveCapitalClp = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount'
+    ? (
+      autoAdjustInstrumentAmounts
+        ? inputs.initialCapitalClp
+        : (portfolioAmountTotal > 0 ? portfolioAmountTotal : inputs.initialCapitalClp)
+    )
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
@@ -541,12 +550,8 @@ export function AssistedSimulationPage() {
       }
     }
 
-    if (activeProfile === 'parents' && portfolioSourceMode === 'instruments' && runtimeInputs.portfolioEntryMode === 'amount') {
-      const amountSum = runtimeInputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0);
-      const additional = Math.max(0, runtimeInputs.initialCapitalClp - amountSum);
-      if (additional > 0) {
-        runtimeInputs.portfolioEntries = distributeAdditionalToBtgOnly(runtimeInputs.portfolioEntries, optionsById, additional);
-      }
+    if (portfolioSourceMode === 'instruments' && runtimeInputs.portfolioEntryMode === 'amount' && autoAdjustInstrumentAmounts && runtimeInputs.portfolioEntries.length > 0) {
+      runtimeInputs.portfolioEntries = redistributeEntriesToCapital(runtimeInputs.portfolioEntries, runtimeInputs.initialCapitalClp);
     }
 
     if (questionMode === 'duration') {
@@ -746,9 +751,25 @@ export function AssistedSimulationPage() {
             <input
               type="number"
               min={0}
-              step={1}
+              step={0.1}
               value={clpToMmInput(inputs.initialCapitalClp)}
-              onChange={(e) => updateInput('initialCapitalClp', mmToClp(Number(e.target.value) || 0))}
+              onChange={(e) => {
+                const nextCapital = mmToClp(Number(e.target.value) || 0);
+                if (
+                  portfolioSourceMode === 'instruments' &&
+                  inputs.portfolioEntryMode === 'amount' &&
+                  autoAdjustInstrumentAmounts &&
+                  inputs.portfolioEntries.length > 0
+                ) {
+                  setInputs((prev) => ({
+                    ...prev,
+                    initialCapitalClp: nextCapital,
+                    portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, nextCapital),
+                  }));
+                  return;
+                }
+                updateInput('initialCapitalClp', nextCapital);
+              }}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
             />
             <span style={{ color: T.textMuted }}>{`${clpToMm(inputs.initialCapitalClp).toFixed(1)} MM = ${formatMoney(inputs.initialCapitalClp)}`}</span>
@@ -901,7 +922,14 @@ export function AssistedSimulationPage() {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                onClick={() => updateInput('portfolioEntryMode', 'amount')}
+                onClick={() => {
+                  updateInput('portfolioEntryMode', 'amount');
+                  setAutoAdjustInstrumentAmounts(true);
+                  setInputs((prev) => ({
+                    ...prev,
+                    portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, prev.initialCapitalClp),
+                  }));
+                }}
                 style={{
                   borderRadius: 999,
                   border: `1px solid ${inputs.portfolioEntryMode === 'amount' ? T.primary : T.border}`,
@@ -916,7 +944,10 @@ export function AssistedSimulationPage() {
               </button>
               <button
                 type="button"
-                onClick={() => updateInput('portfolioEntryMode', 'percentage')}
+                onClick={() => {
+                  updateInput('portfolioEntryMode', 'percentage');
+                  setAutoAdjustInstrumentAmounts(false);
+                }}
                 style={{
                   borderRadius: 999,
                   border: `1px solid ${inputs.portfolioEntryMode === 'percentage' ? T.primary : T.border}`,
@@ -933,6 +964,25 @@ export function AssistedSimulationPage() {
 
             {selectedInstrumentRows.length > 0 && (
               <div style={{ display: 'grid', gap: 8 }}>
+                {inputs.portfolioEntryMode === 'amount' && (
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: T.textPrimary, fontSize: 12, fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={autoAdjustInstrumentAmounts}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setAutoAdjustInstrumentAmounts(enabled);
+                        if (enabled) {
+                          setInputs((prev) => ({
+                            ...prev,
+                            portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, prev.initialCapitalClp),
+                          }));
+                        }
+                      }}
+                    />
+                    Autoajustar al capital total
+                  </label>
+                )}
                 {selectedInstrumentRows.map(({ entry, instrument }) => (
                   <div key={entry.instrumentId} style={{
                     display: 'grid',
@@ -954,7 +1004,12 @@ export function AssistedSimulationPage() {
                         min={0}
                         step={0.5}
                         value={clpToMmInput(entry.amountClp)}
-                        onChange={(e) => updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) })}
+                        onChange={(e) => {
+                          if (autoAdjustInstrumentAmounts) {
+                            setAutoAdjustInstrumentAmounts(false);
+                          }
+                          updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) });
+                        }}
                         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
                       />
                     ) : (
@@ -1065,15 +1120,34 @@ export function AssistedSimulationPage() {
               )}
               {hasCapitalGap && (
                 <div style={{ color: T.warning }}>
-                  Hay diferencia de {formatMoney(capitalGapClp)} entre capital y suma de instrumentos.
-                  {' '}
-                  <button
-                    type="button"
-                    onClick={() => updateInput('initialCapitalClp', portfolioAmountTotal)}
-                    style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800 }}
-                  >
-                    Sincronizar capital
-                  </button>
+                  {capitalGapClp < 0
+                    ? `Faltan ${formatMoney(Math.abs(capitalGapClp))} por asignar en instrumentos.`
+                    : `Los instrumentos exceden el capital ingresado en ${formatMoney(capitalGapClp)}.`}
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateInput('initialCapitalClp', portfolioAmountTotal);
+                        setAutoAdjustInstrumentAmounts(false);
+                      }}
+                      style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800, padding: 0 }}
+                    >
+                      Usar suma como capital
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoAdjustInstrumentAmounts(true);
+                        setInputs((prev) => ({
+                          ...prev,
+                          portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, prev.initialCapitalClp),
+                        }));
+                      }}
+                      style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800, padding: 0 }}
+                    >
+                      Repartir capital en instrumentos
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
