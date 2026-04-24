@@ -13,6 +13,7 @@ import { T } from './theme';
 
 type AssistedQuestionMode = 'max_spending' | 'duration' | 'success';
 type PortfolioSourceMode = 'simple' | 'instruments';
+type ProfileId = 'parents' | 'brother' | 'me' | 'custom';
 
 type DurationEstimate = {
   p10: number;
@@ -25,19 +26,7 @@ type DurationEstimate = {
 
 const SIMPLE_RV_ID = '__assisted_simple_rv__';
 const SIMPLE_RF_ID = '__assisted_simple_rf__';
-
-const formatMoney = (value: number): string => {
-  if (!Number.isFinite(value)) return '--';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
-  return `$${Math.round(value).toLocaleString('es-CL')}`;
-};
-
-const formatPct = (value: number): string => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '--';
-const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
-const mmToClp = (valueMm: number): number => Math.round(Math.max(0, valueMm) * 1_000_000);
-const clpToMm = (valueClp: number): number => Math.max(0, valueClp) / 1_000_000;
+const DURATION_TECHNICAL_HORIZON = 60;
 
 const defaultInputs: AssistedInputs = {
   initialCapitalClp: 1_500_000_000,
@@ -54,6 +43,7 @@ const defaultInputs: AssistedInputs = {
   portfolioEntryMode: 'amount',
   portfolioEntries: [],
   includeTwoOfThreeCheck: true,
+  optimizationObjective: 'max_spending',
   successThreshold: 0.85,
   gridStepPct: 5,
   nSim: 1000,
@@ -63,28 +53,77 @@ const defaultInputs: AssistedInputs = {
 const modeCards: Array<{ mode: AssistedQuestionMode; title: string; subtitle: string }> = [
   {
     mode: 'max_spending',
-    title: 'Cuanto puedo gastar por mes',
-    subtitle: 'Calcula el retiro mensual maximo sostenible para tu horizonte.',
+    title: 'Cuánto puedo gastar',
+    subtitle: 'Encuentra el retiro mensual sostenible.',
   },
   {
     mode: 'duration',
-    title: 'Cuantos anos dura mi plata',
-    subtitle: 'Estima la duracion esperada de tu capital con el gasto actual.',
+    title: 'Cuántos años dura',
+    subtitle: 'Estima duración con 85/90/95% de confianza.',
   },
   {
     mode: 'success',
-    title: 'Que probabilidad de exito tengo',
-    subtitle: 'Mide la probabilidad de llegar al horizonte configurado.',
+    title: 'Probabilidad de éxito',
+    subtitle: 'Mide chance de llegar al horizonte.',
   },
 ];
 
-const selectedIdsFromEntries = (entries: AssistedPortfolioEntry[]) => entries.map((entry) => entry.instrumentId);
-
-const mixLabel = (weights: AssistedOptimizationResult['best']['weights']): string => {
-  const rv = (weights.rvGlobal + weights.rvChile) * 100;
-  const rf = (weights.rfGlobal + weights.rfChile) * 100;
-  return `RV ${rv.toFixed(1)}% · RF ${rf.toFixed(1)}%`;
+const profileConfigs: Record<ProfileId, {
+  title: string;
+  subtitle: string;
+  capitalMm: number;
+  spendingMm: number;
+  horizonYears: number;
+}> = {
+  parents: {
+    title: 'Papás',
+    subtitle: 'Perfil sugerido familiar',
+    capitalMm: 237,
+    spendingMm: 1.4,
+    horizonYears: 20,
+  },
+  brother: {
+    title: 'Hermano',
+    subtitle: 'Perfil sugerido ahorro activo',
+    capitalMm: 120,
+    spendingMm: 0.8,
+    horizonYears: 15,
+  },
+  me: {
+    title: 'Yo',
+    subtitle: 'Base conservadora editable',
+    capitalMm: 80,
+    spendingMm: 0.6,
+    horizonYears: 25,
+  },
+  custom: {
+    title: 'Personalizado',
+    subtitle: 'Sin precarga, editable total',
+    capitalMm: 0,
+    spendingMm: 0,
+    horizonYears: 20,
+  },
 };
+
+const formatMoney = (value: number): string => {
+  if (!Number.isFinite(value)) return '--';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
+  return `$${Math.round(value).toLocaleString('es-CL')}`;
+};
+
+const formatPct = (value: number): string => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '--';
+const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
+const mmToClp = (valueMm: number): number => Math.round(Math.max(0, valueMm) * 1_000_000);
+const clpToMm = (valueClp: number): number => Math.max(0, valueClp) / 1_000_000;
+
+const formatDuration = (years: number, censored: boolean): string => {
+  if (!Number.isFinite(years)) return '--';
+  return censored ? `Más de ${Math.round(years)} años` : `${years.toFixed(1)} años`;
+};
+
+const selectedIdsFromEntries = (entries: AssistedPortfolioEntry[]) => entries.map((entry) => entry.instrumentId);
 
 const resolveSimpleSleeveShares = (): { rvGlobalShare: number; rvChileShare: number; rfGlobalShare: number; rfChileShare: number } => {
   const base = DEFAULT_PARAMETERS.weights;
@@ -132,18 +171,17 @@ const buildSimpleInstruments = (): AssistedInstrumentOption[] => {
   ];
 };
 
-const firstNonPositiveYear = (points: AssistedOptimizationResult['best']['fanChartData'], key: 'p10' | 'p50' | 'p90'): number | null => {
-  for (const point of points) {
-    if ((point[key] ?? Number.NaN) <= 0) return point.year;
-  }
-  return null;
-};
-
 const estimateDuration = (row: AssistedOptimizationResult['best'], horizonYears: number): DurationEstimate => {
   const points = [...(row.fanChartData ?? [])].sort((a, b) => a.year - b.year);
-  const p10Hit = firstNonPositiveYear(points, 'p10');
-  const p50Hit = firstNonPositiveYear(points, 'p50');
-  const p90Hit = firstNonPositiveYear(points, 'p90');
+  const firstNonPositive = (key: 'p10' | 'p50' | 'p90'): number | null => {
+    for (const point of points) {
+      if ((point[key] ?? Number.NaN) <= 0) return point.year;
+    }
+    return null;
+  };
+  const p10Hit = firstNonPositive('p10');
+  const p50Hit = firstNonPositive('p50');
+  const p90Hit = firstNonPositive('p90');
   return {
     p10: p10Hit ?? horizonYears,
     p50: p50Hit ?? horizonYears,
@@ -154,59 +192,116 @@ const estimateDuration = (row: AssistedOptimizationResult['best'], horizonYears:
   };
 };
 
-const formatDuration = (years: number, censored: boolean): string => {
-  const rounded = Number.isFinite(years) ? years.toFixed(1) : '--';
-  return censored ? `>= ${rounded} anos` : `${rounded} anos`;
+const buildProfileInstrumentEntries = (
+  instruments: AssistedInstrumentOption[],
+  totalCapitalClp: number,
+): AssistedPortfolioEntry[] => {
+  const usable = instruments
+    .filter((item) => !item.instrumentId.startsWith('__assisted_simple_'))
+    .slice()
+    .sort((a, b) => b.weightPortfolio - a.weightPortfolio)
+    .slice(0, 3);
+  if (usable.length === 0) return [];
+  const sumWeights = usable.reduce((sum, item) => sum + Math.max(0, item.weightPortfolio), 0);
+  return usable.map((item, index) => {
+    const normalized = sumWeights > 0 ? Math.max(0, item.weightPortfolio) / sumWeights : 1 / usable.length;
+    const amount = index === usable.length - 1
+      ? Math.max(0, totalCapitalClp - usable.slice(0, -1).reduce((acc, prev) => {
+          const prevNorm = sumWeights > 0 ? Math.max(0, prev.weightPortfolio) / sumWeights : 1 / usable.length;
+          return acc + Math.round(totalCapitalClp * prevNorm);
+        }, 0))
+      : Math.round(totalCapitalClp * normalized);
+    return {
+      instrumentId: item.instrumentId,
+      amountClp: amount,
+      percentage: 0,
+    };
+  });
 };
 
-const formatDurationDecision = (years: number, censored: boolean): string => {
-  if (!Number.isFinite(years)) return '--';
-  const rounded = Math.round(years);
-  return censored ? `Mas de ${rounded} anos` : `${years.toFixed(1)} anos`;
+const statusLabelForResult = (
+  mode: AssistedQuestionMode,
+  result: AssistedOptimizationResult,
+): { label: string; color: string } => {
+  if (mode === 'max_spending') {
+    if (!result.hasFeasibleSolution) return { label: 'Bajo', color: T.warning };
+    if (result.best.successAtHorizon >= 0.85) return { label: 'Alto', color: T.positive };
+    if (result.best.successAtHorizon >= 0.65) return { label: 'Medio', color: T.warning };
+    return { label: 'Bajo', color: T.negative };
+  }
+  if (mode === 'duration') {
+    const years = result.best.durationMetrics?.success85.years ?? result.best.rawResult.ruinTimingMedian ?? 0;
+    if (years >= 25) return { label: 'Alto', color: T.positive };
+    if (years >= 12) return { label: 'Medio', color: T.warning };
+    return { label: 'Bajo', color: T.negative };
+  }
+  if (result.best.successAtHorizon >= 0.8) return { label: 'Alto', color: T.positive };
+  if (result.best.successAtHorizon >= 0.6) return { label: 'Medio', color: T.warning };
+  return { label: 'Bajo', color: T.negative };
 };
 
-function MiniFanChart({ data }: { data: Array<{ year: number; p50: number }> }) {
-  const width = 540;
-  const height = 170;
+function MiniFanChart({
+  data,
+  height = 200,
+}: {
+  data: Array<{ year: number; p10?: number; p50: number; p90?: number }>;
+  height?: number;
+}) {
+  const width = 640;
   if (!data || data.length < 2) {
     return <div style={{ color: T.textMuted, fontSize: 12 }}>Sin trayectoria suficiente para graficar.</div>;
   }
   const xs = data.map((p) => p.year);
-  const ys = data.map((p) => p.p50);
+  const ys = data.flatMap((p) => [p.p10 ?? p.p50, p.p50, p.p90 ?? p.p50]).filter((v) => Number.isFinite(v));
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   const rangeX = Math.max(1e-9, maxX - minX);
   const rangeY = Math.max(1e-9, maxY - minY);
-  const points = data
-    .map((p) => {
-      const x = ((p.year - minX) / rangeX) * (width - 24) + 12;
-      const y = height - 12 - ((p.p50 - minY) / rangeY) * (height - 24);
-      return `${x},${y}`;
-    })
-    .join(' ');
+  const xOf = (x: number) => ((x - minX) / rangeX) * (width - 56) + 40;
+  const yOf = (y: number) => height - 22 - ((y - minY) / rangeY) * (height - 44);
+
+  const p50Polyline = data.map((p) => `${xOf(p.year)},${yOf(p.p50)}`).join(' ');
+  const p90Points = data.map((p) => `${xOf(p.year)},${yOf(p.p90 ?? p.p50)}`);
+  const p10Points = data.slice().reverse().map((p) => `${xOf(p.year)},${yOf(p.p10 ?? p.p50)}`);
+  const bandPath = `${p90Points.concat(p10Points).join(' ')} `;
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ display: 'block', background: T.surfaceEl, borderRadius: 10, border: `1px solid ${T.border}` }}>
-      <line x1={12} y1={height - 12} x2={width - 12} y2={height - 12} stroke={T.border} strokeWidth="1" />
-      <line x1={12} y1={12} x2={12} y2={height - 12} stroke={T.border} strokeWidth="1" />
-      <polyline fill="none" stroke={T.primary} strokeWidth="2.5" points={points} />
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      width="100%"
+      height={height}
+      style={{ display: 'block', background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))', borderRadius: 14, border: `1px solid ${T.border}` }}
+    >
+      <line x1={40} y1={height - 22} x2={width - 12} y2={height - 22} stroke={T.border} strokeWidth="1" />
+      <line x1={40} y1={16} x2={40} y2={height - 22} stroke={T.border} strokeWidth="1" />
+      <polygon points={bandPath} fill="rgba(96,165,250,0.16)" />
+      <polyline fill="none" stroke={T.primary} strokeWidth="2.8" points={p50Polyline} />
+      <text x={44} y={20} fill={T.textMuted} fontSize="10">P90</text>
+      <text x={44} y={height - 28} fill={T.textMuted} fontSize="10">P10</text>
+      <text x={width - 56} y={height - 8} fill={T.textMuted} fontSize="10">años</text>
     </svg>
   );
 }
 
 export function AssistedSimulationPage() {
-  const [questionMode, setQuestionMode] = useState<AssistedQuestionMode>('max_spending');
+  const [questionMode, setQuestionMode] = useState<AssistedQuestionMode>('success');
+  const [activeProfile, setActiveProfile] = useState<ProfileId>('custom');
   const [portfolioSourceMode, setPortfolioSourceMode] = useState<PortfolioSourceMode>('instruments');
   const [optimizeEnabled, setOptimizeEnabled] = useState(false);
   const [simpleRvPct, setSimpleRvPct] = useState(60);
   const [showOptimization, setShowOptimization] = useState(false);
   const [showAdvancedSpending, setShowAdvancedSpending] = useState(false);
-  const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_spending');
+  const [showAdvancedParams, setShowAdvancedParams] = useState(false);
+  const [showUniversePicker, setShowUniversePicker] = useState(false);
+  const [newInstrumentId, setNewInstrumentId] = useState<string>('');
+  const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
+  const [objectiveOverridden, setObjectiveOverridden] = useState(false);
 
   const [inputs, setInputs] = useState<AssistedInputs>(defaultInputs);
   const [result, setResult] = useState<AssistedOptimizationResult | null>(null);
-  const [resultMode, setResultMode] = useState<AssistedQuestionMode>('max_spending');
+  const [resultMode, setResultMode] = useState<AssistedQuestionMode>('success');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availableInstruments, setAvailableInstruments] = useState<AssistedInstrumentOption[]>(() => loadAssistedInstrumentOptions());
@@ -224,13 +319,14 @@ export function AssistedSimulationPage() {
   }, []);
 
   useEffect(() => {
+    if (objectiveOverridden) return;
     const byMode: Record<AssistedQuestionMode, AssistedOptimizationObjective> = {
       max_spending: 'max_spending',
       duration: 'max_duration',
       success: 'max_success',
     };
     setOptimizationObjective(byMode[questionMode]);
-  }, [questionMode]);
+  }, [questionMode, objectiveOverridden]);
 
   const optionsById = useMemo(
     () => new Map(availableInstruments.map((item) => [item.instrumentId, item])),
@@ -239,44 +335,89 @@ export function AssistedSimulationPage() {
 
   const selectedIds = useMemo(() => new Set(selectedIdsFromEntries(inputs.portfolioEntries)), [inputs.portfolioEntries]);
 
+  const selectedInstrumentRows = useMemo(
+    () => inputs.portfolioEntries
+      .map((entry) => ({ entry, instrument: optionsById.get(entry.instrumentId) }))
+      .filter((item): item is { entry: AssistedPortfolioEntry; instrument: AssistedInstrumentOption } => !!item.instrument),
+    [inputs.portfolioEntries, optionsById],
+  );
+
+  const unselectedInstruments = useMemo(
+    () => availableInstruments.filter((instrument) => !selectedIds.has(instrument.instrumentId)),
+    [availableInstruments, selectedIds],
+  );
+
   const updateInput = <K extends keyof AssistedInputs>(key: K, value: AssistedInputs[K]) => {
     setInputs((prev) => ({ ...prev, [key]: value }));
   };
 
-  const toggleInstrument = (instrumentId: string) => {
+  const setQuestionModeAndResetError = (mode: AssistedQuestionMode) => {
+    setQuestionMode(mode);
+    setError(null);
+  };
+
+  const upsertInstrument = (instrumentId: string) => {
+    if (!instrumentId) return;
     setInputs((prev) => {
-      const exists = prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId);
-      if (exists) {
-        return {
-          ...prev,
-          portfolioEntries: prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId),
-        };
-      }
+      if (prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return prev;
       return {
         ...prev,
-        portfolioEntries: [
-          ...prev.portfolioEntries,
-          {
-            instrumentId,
-            amountClp: 0,
-            percentage: 0,
-          },
-        ],
+        portfolioEntries: [...prev.portfolioEntries, { instrumentId, amountClp: 0, percentage: 0 }],
       };
     });
+  };
+
+  const removeInstrument = (instrumentId: string) => {
+    setInputs((prev) => ({
+      ...prev,
+      portfolioEntries: prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId),
+    }));
   };
 
   const updateEntry = (instrumentId: string, patch: Partial<AssistedPortfolioEntry>) => {
     setInputs((prev) => ({
       ...prev,
-      portfolioEntries: prev.portfolioEntries.map((entry) =>
-        entry.instrumentId === instrumentId
-          ? {
-              ...entry,
-              ...patch,
-            }
-          : entry,
-      ),
+      portfolioEntries: prev.portfolioEntries.map((entry) => (
+        entry.instrumentId === instrumentId ? { ...entry, ...patch } : entry
+      )),
+    }));
+  };
+
+  const applyProfile = (profileId: ProfileId) => {
+    setActiveProfile(profileId);
+    setError(null);
+    const profile = profileConfigs[profileId];
+    if (profileId === 'custom') {
+      setInputs((prev) => ({
+        ...prev,
+        initialCapitalClp: prev.initialCapitalClp,
+      }));
+      return;
+    }
+
+    const capitalClp = mmToClp(profile.capitalMm);
+    const spendingClp = mmToClp(profile.spendingMm);
+    const useInstruments = availableInstruments.length > 0;
+
+    setPortfolioSourceMode(useInstruments ? 'instruments' : 'simple');
+    setSimpleRvPct(55);
+    setOptimizeEnabled(false);
+
+    setInputs((prev) => ({
+      ...prev,
+      initialCapitalClp: capitalClp,
+      horizonYears: profile.horizonYears,
+      spendingMode: 'fixed',
+      fixedMonthlyClp: spendingClp,
+      phase1MonthlyClp: spendingClp,
+      phase2MonthlyClp: spendingClp,
+      phase1Years: Math.max(4, Math.round(profile.horizonYears * 0.4)),
+      portfolioEntryMode: 'amount',
+      portfolioEntries: useInstruments ? buildProfileInstrumentEntries(availableInstruments, capitalClp) : prev.portfolioEntries,
+      extraContributionEnabled: false,
+      extraContributionClp: 0,
+      extraContributionYear: 5,
+      portfolioMode: 'manual',
     }));
   };
 
@@ -293,20 +434,28 @@ export function AssistedSimulationPage() {
   const portfolioPctStatus = useMemo(() => {
     if (portfolioPctTotal > 100.5) return { label: 'Excede 100%', color: T.negative };
     if (portfolioPctTotal < 99.5) return { label: 'Falta para 100%', color: T.warning };
-    return { label: 'Suma correcta', color: T.positive };
+    return { label: 'Suma 100%', color: T.positive };
   }, [portfolioPctTotal]);
 
   const selectedCount = inputs.portfolioEntries.length;
-  const optimizeSelectionInvalid =
-    optimizeEnabled &&
-    portfolioSourceMode === 'instruments' &&
-    ![0, 2, 3].includes(selectedCount);
+  const optimizeSelectionInvalid = optimizeEnabled && portfolioSourceMode === 'instruments' && ![0, 2, 3].includes(selectedCount);
   const previewEffectiveCapitalClp = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && portfolioAmountTotal > 0
     ? portfolioAmountTotal
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
-  const durationTechnicalHorizonYears = 60;
+
+  const quickSummary = useMemo(() => {
+    const profileName = profileConfigs[activeProfile].title;
+    const capital = formatMoney(previewEffectiveCapitalClp);
+    const portfolioText = portfolioSourceMode === 'simple'
+      ? `Mix simple RV ${simpleRvPct.toFixed(0)}% / RF ${(100 - simpleRvPct).toFixed(0)}%`
+      : `${selectedCount} instrumentos`;
+    if (questionMode === 'max_spending') {
+      return `${profileName} · Capital efectivo ${capital} · Horizonte ${inputs.horizonYears} años · ${portfolioText}`;
+    }
+    return `${profileName} · Capital efectivo ${capital} · Gasto ${formatMoney(inputs.fixedMonthlyClp)} · Horizonte ${questionMode === 'duration' ? `${DURATION_TECHNICAL_HORIZON} años (técnico)` : `${inputs.horizonYears} años`} · ${portfolioText}`;
+  }, [activeProfile, previewEffectiveCapitalClp, portfolioSourceMode, simpleRvPct, selectedCount, questionMode, inputs.horizonYears, inputs.fixedMonthlyClp]);
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
     const runtimeInputs: AssistedInputs = {
@@ -336,20 +485,16 @@ export function AssistedSimulationPage() {
       }
     }
 
+    if (questionMode === 'duration') {
+      runtimeInputs.horizonYears = DURATION_TECHNICAL_HORIZON;
+    }
+
     if (questionMode === 'max_spending') {
       const fixed = Math.max(1, Number(runtimeInputs.fixedMonthlyClp) || 1_000_000);
       runtimeInputs.fixedMonthlyClp = fixed;
       runtimeInputs.phase1MonthlyClp = Math.max(1, Number(runtimeInputs.phase1MonthlyClp) || fixed);
       runtimeInputs.phase2MonthlyClp = Math.max(1, Number(runtimeInputs.phase2MonthlyClp) || fixed);
-      return { runtimeInputs, runtimeInstruments };
-    }
-
-    if (questionMode === 'duration') {
-      runtimeInputs.horizonYears = clamp(durationTechnicalHorizonYears, 12, 60);
-    }
-
-    if (!optimizeEnabled) runtimeInputs.portfolioMode = 'manual';
-    if (runtimeInputs.spendingMode === 'fixed') {
+    } else if (runtimeInputs.spendingMode === 'fixed') {
       runtimeInputs.fixedMonthlyClp = Math.max(1, Number(runtimeInputs.fixedMonthlyClp) || 0);
       runtimeInputs.phase1MonthlyClp = runtimeInputs.fixedMonthlyClp;
       runtimeInputs.phase2MonthlyClp = runtimeInputs.fixedMonthlyClp;
@@ -377,9 +522,8 @@ export function AssistedSimulationPage() {
     }
   };
 
-  const resultTitle = result?.hasFeasibleSolution
-    ? 'Resultado principal'
-    : 'Mejor esfuerzo fuera de umbral';
+  const resultTitle = result?.hasFeasibleSolution ? 'Resultado principal' : 'Resultado de referencia';
+  const status = result ? statusLabelForResult(resultMode, result) : null;
 
   const duration = useMemo(
     () => (result ? (result.best.durationMetrics ? {
@@ -398,144 +542,205 @@ export function AssistedSimulationPage() {
     if (!result) return '';
     if (resultMode === 'max_spending') {
       if (!result.hasFeasibleSolution) {
-        return `No hay solucion factible al umbral ${formatPct(result.successThreshold)} para el horizonte de ${result.horizonYears} anos.`;
+        return `No encontramos una combinación que cumpla el umbral de éxito ${formatPct(result.successThreshold)}. Te mostramos mejor esfuerzo como referencia técnica.`;
       }
-      return `Con ${formatMoney(result.effectiveInitialCapitalClp)} y horizonte ${result.horizonYears} anos, el retiro mensual sostenible estimado es ${formatMoney(result.best.sustainableMonthlyClp)}.`;
+      return `Para mantener ${formatPct(result.successThreshold)} de éxito al horizonte, el retiro mensual estimado es ${formatMoney(result.best.sustainableMonthlyClp)}.`;
     }
-    if (resultMode === 'duration' && duration) {
-      if (durationTargets) {
-        return `Duracion conservadora estimada: ${formatDuration(durationTargets.success85.years, durationTargets.success85.censored)} con 85% de exito. Escenario central P50: ${formatDuration(durationTargets.p50.years, durationTargets.p50.censored)}.`;
-      }
-      if (duration.censoredP50) {
-        return `Con el gasto configurado, el capital no se agota dentro del horizonte maximo analizado (${result.horizonYears} anos).`;
-      }
-      return `Con el gasto configurado, la duracion central estimada es ${formatDuration(duration.p50, duration.censoredP50)}.`;
+    if (resultMode === 'duration' && durationTargets) {
+      return `Con 85% de confianza, el capital dura ${formatDuration(durationTargets.success85.years, durationTargets.success85.censored)}. Escenario central P50: ${formatDuration(durationTargets.p50.years, durationTargets.p50.censored)}.`;
     }
-    return `Con los supuestos actuales, la probabilidad de exito al horizonte de ${result.horizonYears} anos es ${formatPct(result.best.successAtHorizon)}.`;
-  }, [result, resultMode, duration, durationTargets]);
+    return `Con estos supuestos, la probabilidad de éxito al horizonte de ${result.horizonYears} años es ${formatPct(result.best.successAtHorizon)}.`;
+  }, [result, resultMode, durationTargets]);
 
   const runButtonLabel = useMemo(() => {
-    if (questionMode === 'max_spending') {
-      return optimizeEnabled ? 'Calcular gasto mensual maximo' : 'Calcular gasto mensual maximo';
+    if (questionMode === 'max_spending') return 'Calcular gasto máximo';
+    if (questionMode === 'duration') return 'Calcular duración';
+    return 'Calcular probabilidad';
+  }, [questionMode]);
+
+  const heroValue = useMemo(() => {
+    if (!result) return '--';
+    if (resultMode === 'max_spending') {
+      return result.hasFeasibleSolution ? formatMoney(result.best.sustainableMonthlyClp) : 'Sin solución factible';
     }
-    if (questionMode === 'duration') return 'Calcular duracion del capital';
-    return 'Calcular probabilidad de exito';
-  }, [questionMode, optimizeEnabled]);
+    if (resultMode === 'duration' && durationTargets) {
+      return formatDuration(durationTargets.success85.years, durationTargets.success85.censored);
+    }
+    return formatPct(result.best.successAtHorizon);
+  }, [result, resultMode, durationTargets]);
+
+  const heroLabel = useMemo(() => {
+    if (resultMode === 'max_spending') return 'Gasto mensual máximo estimado';
+    if (resultMode === 'duration') return 'Duración con 85% de éxito';
+    return 'Probabilidad de éxito';
+  }, [resultMode]);
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}>
-        <div style={{ color: T.textPrimary, fontWeight: 800, fontSize: 18 }}>Simulacion Asistida</div>
-        <div style={{ color: T.textMuted, fontSize: 12, marginTop: 2 }}>
-          Hoja independiente de Simulacion. Entrada con mix simple o instrumentos reales del Universe y proyeccion con motor M8 agregado.
+    <div style={{ display: 'grid', gap: 14 }}>
+      <section style={{
+        background: 'linear-gradient(135deg, rgba(59,130,246,0.14), rgba(16,185,129,0.06))',
+        border: `1px solid ${T.border}`,
+        borderRadius: 18,
+        padding: 16,
+        display: 'grid',
+        gap: 8,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <div>
+            <div style={{ color: T.textPrimary, fontWeight: 900, fontSize: 21 }}>Simulación Asistida</div>
+            <div style={{ color: T.textMuted, fontSize: 13 }}>
+              Calcula gasto, duración o probabilidad de éxito sin entrar al modelo completo.
+            </div>
+          </div>
+          <div style={{
+            alignSelf: 'start',
+            color: T.textPrimary,
+            border: `1px solid ${T.border}`,
+            borderRadius: 999,
+            padding: '6px 10px',
+            background: 'rgba(255,255,255,0.04)',
+            fontSize: 12,
+            fontWeight: 700,
+          }}>
+            Motor M8 real · entrada simplificada
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div style={{ display: 'grid', gap: 8 }}>
+      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 10 }}>
+        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Perfil rápido</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 8 }}>
+          {(Object.keys(profileConfigs) as ProfileId[]).map((profileId) => {
+            const profile = profileConfigs[profileId];
+            const active = activeProfile === profileId;
+            return (
+              <button
+                key={profileId}
+                type="button"
+                onClick={() => applyProfile(profileId)}
+                style={{
+                  textAlign: 'left',
+                  borderRadius: 12,
+                  border: `1px solid ${active ? T.primary : T.border}`,
+                  background: active ? 'rgba(59,130,246,0.18)' : T.surfaceEl,
+                  color: T.textPrimary,
+                  padding: '10px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{profile.title}</div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>{profile.subtitle}</div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 8 }}>
         {modeCards.map((card) => {
           const active = questionMode === card.mode;
           return (
             <button
               key={card.mode}
               type="button"
-              onClick={() => setQuestionMode(card.mode)}
+              onClick={() => setQuestionModeAndResetError(card.mode)}
               style={{
                 textAlign: 'left',
-                borderRadius: 12,
+                borderRadius: 14,
                 border: `1px solid ${active ? T.primary : T.border}`,
-                background: active ? 'rgba(59,130,246,0.16)' : T.surface,
+                background: active ? 'linear-gradient(135deg, rgba(59,130,246,0.22), rgba(59,130,246,0.08))' : T.surface,
+                color: T.textPrimary,
                 padding: '12px 14px',
                 cursor: 'pointer',
               }}
             >
-              <div style={{ color: T.textPrimary, fontWeight: 800, fontSize: 14 }}>{card.title}</div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{card.title}</div>
               <div style={{ color: T.textMuted, fontSize: 12 }}>{card.subtitle}</div>
             </button>
           );
         })}
-      </div>
+      </section>
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Supuestos base</div>
+      <section style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: `1px solid ${T.border}`,
+        borderRadius: 14,
+        padding: '10px 12px',
+        color: T.textSecondary,
+        fontSize: 13,
+        fontWeight: 600,
+      }}>
+        {quickSummary}
+      </section>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 12 }}>
+        <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Supuestos esenciales</div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-            Capital inicial (MM CLP)
+            Capital total (MM CLP)
             <input
               type="number"
               min={0}
               step={1}
               value={clpToMm(inputs.initialCapitalClp)}
               onChange={(e) => updateInput('initialCapitalClp', mmToClp(Number(e.target.value) || 0))}
-              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
             />
-            <span style={{ color: T.textMuted }}>{formatMoney(inputs.initialCapitalClp)}</span>
+            <span style={{ color: T.textMuted }}>{`${clpToMm(inputs.initialCapitalClp).toFixed(1)} MM = ${formatMoney(inputs.initialCapitalClp)}`}</span>
           </label>
 
-          {questionMode !== 'duration' ? (
+          {questionMode !== 'duration' && (
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Horizonte (anos)
+              Horizonte (años)
               <input
                 type="number"
                 min={4}
                 max={60}
                 value={inputs.horizonYears}
-                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 30)}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 20)}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
-          ) : (
+          )}
+
+          {(questionMode === 'duration' || questionMode === 'success') && inputs.spendingMode === 'fixed' && (
+            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+              Gasto mensual (MM CLP)
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={clpToMm(inputs.fixedMonthlyClp)}
+                onChange={(e) => {
+                  const value = mmToClp(Number(e.target.value) || 0);
+                  updateInput('fixedMonthlyClp', value);
+                  updateInput('phase1MonthlyClp', value);
+                  updateInput('phase2MonthlyClp', value);
+                }}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
+              />
+              <span style={{ color: T.textMuted }}>{`${clpToMm(inputs.fixedMonthlyClp).toFixed(1)} MM = ${formatMoney(inputs.fixedMonthlyClp)}`}</span>
+            </label>
+          )}
+
+          {questionMode === 'duration' && (
             <div style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Duracion del capital
-              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textSecondary, padding: '8px 10px' }}>
-                Se estima sobre un horizonte tecnico interno de 60 anos para evitar truncar la duracion real.
+              Horizonte técnico
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textSecondary, padding: '9px 11px' }}>
+                {DURATION_TECHNICAL_HORIZON} años (interno)
               </div>
             </div>
           )}
         </div>
 
-        {questionMode === 'max_spending' && (
-          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-            Umbral minimo de exito
-            <input
-              type="number"
-              min={0.5}
-              max={0.99}
-              step={0.01}
-              value={inputs.successThreshold}
-              onChange={(e) => updateInput('successThreshold', Number(e.target.value) || 0.85)}
-              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-            />
-          </label>
-        )}
-
-        {(questionMode === 'success' || questionMode === 'duration') && inputs.spendingMode === 'fixed' && (
-          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-            Retiro mensual (MM CLP)
-            <input
-              type="number"
-              min={0}
-              step={0.1}
-              value={clpToMm(inputs.fixedMonthlyClp)}
-              onChange={(e) => {
-                const value = mmToClp(Number(e.target.value) || 0);
-                updateInput('fixedMonthlyClp', value);
-                updateInput('phase1MonthlyClp', value);
-                updateInput('phase2MonthlyClp', value);
-              }}
-              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-            />
-            <span style={{ color: T.textMuted }}>{formatMoney(inputs.fixedMonthlyClp)}</span>
-          </label>
-        )}
-
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: T.textPrimary, fontSize: 12 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: T.textPrimary, fontSize: 12, fontWeight: 600 }}>
           <input type="checkbox" checked={inputs.extraContributionEnabled} onChange={(e) => updateInput('extraContributionEnabled', e.target.checked)} />
-          Incluir aporte unico adicional
+          Incluir aporte único adicional
         </label>
 
         {inputs.extraContributionEnabled && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Aporte (MM CLP)
               <input
@@ -544,40 +749,71 @@ export function AssistedSimulationPage() {
                 step={1}
                 value={clpToMm(inputs.extraContributionClp)}
                 onChange={(e) => updateInput('extraContributionClp', mmToClp(Number(e.target.value) || 0))}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Ano aporte
+              Año aporte
               <input
                 type="number"
                 min={0}
                 max={40}
                 value={inputs.extraContributionYear}
                 onChange={(e) => updateInput('extraContributionYear', Number(e.target.value) || 0)}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
           </div>
         )}
-      </div>
+      </section>
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
+      <section style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, display: 'grid', gap: 10 }}>
         <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>Portafolio</div>
-
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}>
-            <input type="radio" checked={portfolioSourceMode === 'simple'} onChange={() => setPortfolioSourceMode('simple')} /> Mix simple RF/RV
-          </label>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}>
-            <input type="radio" checked={portfolioSourceMode === 'instruments'} onChange={() => setPortfolioSourceMode('instruments')} /> Instrumentos reales
-          </label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setPortfolioSourceMode('simple')}
+            style={{
+              borderRadius: 999,
+              border: `1px solid ${portfolioSourceMode === 'simple' ? T.primary : T.border}`,
+              background: portfolioSourceMode === 'simple' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+              color: T.textPrimary,
+              padding: '6px 12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Mix simple RF/RV
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortfolioSourceMode('instruments')}
+            style={{
+              borderRadius: 999,
+              border: `1px solid ${portfolioSourceMode === 'instruments' ? T.primary : T.border}`,
+              background: portfolioSourceMode === 'instruments' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+              color: T.textPrimary,
+              padding: '6px 12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Instrumentos reales
+          </button>
         </div>
 
         {portfolioSourceMode === 'simple' ? (
-          <div style={{ display: 'grid', gap: 6 }}>
-            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              RV objetivo (%)
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 6, color: T.textPrimary, fontSize: 12 }}>
+              RV (%)
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={simpleRvPct}
+                onChange={(e) => setSimpleRvPct(clamp(Number(e.target.value) || 0, 0, 100))}
+              />
               <input
                 type="number"
                 min={0}
@@ -585,301 +821,241 @@ export function AssistedSimulationPage() {
                 step={1}
                 value={simpleRvPct}
                 onChange={(e) => setSimpleRvPct(clamp(Number(e.target.value) || 0, 0, 100))}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
+                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
               />
             </label>
-            <div style={{ color: T.textMuted, fontSize: 12 }}>Asignacion simple: RV {simpleRvPct.toFixed(0)}% · RF {(100 - simpleRvPct).toFixed(0)}%</div>
+            <div style={{ display: 'grid', gap: 6, color: T.textPrimary, fontSize: 12 }}>
+              <span>RF (%)</span>
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '10px 12px', fontWeight: 800 }}>
+                {(100 - simpleRvPct).toFixed(0)}%
+              </div>
+              <span style={{ color: T.textMuted }}>Suma total: {(simpleRvPct + (100 - simpleRvPct)).toFixed(0)}%</span>
+            </div>
           </div>
         ) : (
           <>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <label style={{ color: T.textPrimary, fontSize: 12 }}>
-                <input
-                  type="radio"
-                  checked={inputs.portfolioEntryMode === 'amount'}
-                  onChange={() => updateInput('portfolioEntryMode', 'amount')}
-                />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => updateInput('portfolioEntryMode', 'amount')}
+                style={{
+                  borderRadius: 999,
+                  border: `1px solid ${inputs.portfolioEntryMode === 'amount' ? T.primary : T.border}`,
+                  background: inputs.portfolioEntryMode === 'amount' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+                  color: T.textPrimary,
+                  padding: '6px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
                 Monto por instrumento
-              </label>
-              <label style={{ color: T.textPrimary, fontSize: 12 }}>
-                <input
-                  type="radio"
-                  checked={inputs.portfolioEntryMode === 'percentage'}
-                  onChange={() => updateInput('portfolioEntryMode', 'percentage')}
-                />
+              </button>
+              <button
+                type="button"
+                onClick={() => updateInput('portfolioEntryMode', 'percentage')}
+                style={{
+                  borderRadius: 999,
+                  border: `1px solid ${inputs.portfolioEntryMode === 'percentage' ? T.primary : T.border}`,
+                  background: inputs.portfolioEntryMode === 'percentage' ? 'rgba(59,130,246,0.16)' : T.surfaceEl,
+                  color: T.textPrimary,
+                  padding: '6px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
                 Porcentaje por instrumento
-              </label>
+              </button>
             </div>
 
-            {availableInstruments.length === 0 ? (
-              <div style={{ color: T.textMuted, fontSize: 12 }}>
-                No hay instrumentos disponibles en `instrument-universe`. Carga el JSON en Ajustes para construir portafolio en Asistida.
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: 8, maxHeight: 220, overflow: 'auto', paddingRight: 4 }}>
-                {availableInstruments.map((instrument) => (
-                  <label key={instrument.instrumentId} style={{ color: T.textPrimary, fontSize: 12, display: 'grid', gap: 3 }}>
-                    <span>
+            {selectedInstrumentRows.length > 0 && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {selectedInstrumentRows.map(({ entry, instrument }) => (
+                  <div key={entry.instrumentId} style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0,1fr) 170px 34px',
+                    gap: 8,
+                    alignItems: 'center',
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 12,
+                    padding: '8px 10px',
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{instrument.name}</div>
+                      <div style={{ color: T.textMuted, fontSize: 11 }}>{instrument.currency} · ref {formatPct(instrument.weightPortfolio)}</div>
+                    </div>
+                    {inputs.portfolioEntryMode === 'amount' ? (
                       <input
-                        type="checkbox"
-                        checked={selectedIds.has(instrument.instrumentId)}
-                        onChange={() => toggleInstrument(instrument.instrumentId)}
-                      />{' '}
-                      {instrument.label}
-                    </span>
-                    <span style={{ color: T.textMuted, fontSize: 11 }}>
-                      Peso ref: {(instrument.weightPortfolio * 100).toFixed(1)}% · Monto ref: {formatMoney(instrument.amountClp)}
-                    </span>
-                  </label>
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={clpToMm(entry.amountClp)}
+                        onChange={(e) => updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) })}
+                        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.1}
+                        value={entry.percentage}
+                        onChange={(e) => updateEntry(entry.instrumentId, { percentage: Number(e.target.value) || 0 })}
+                        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeInstrument(entry.instrumentId)}
+                      style={{
+                        border: `1px solid ${T.border}`,
+                        background: 'transparent',
+                        color: T.textMuted,
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        height: 34,
+                      }}
+                      title="Quitar"
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
 
-            {inputs.portfolioEntries.length > 0 && (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {inputs.portfolioEntries.map((entry) => {
-                  const instrument = optionsById.get(entry.instrumentId);
-                  if (!instrument) return null;
-                  return (
-                    <div key={entry.instrumentId} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 220px', gap: 8, alignItems: 'center' }}>
-                      <div style={{ color: T.textPrimary, fontSize: 12 }}>{instrument.name}</div>
-                      {inputs.portfolioEntryMode === 'amount' ? (
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          value={clpToMm(entry.amountClp)}
-                          onChange={(e) => updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) })}
-                          placeholder="Monto MM CLP"
-                          style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                        />
-                      ) : (
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={entry.percentage}
-                          onChange={(e) => updateEntry(entry.instrumentId, { percentage: Number(e.target.value) || 0 })}
-                          placeholder="%"
-                          style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-                <div style={{ color: T.textMuted, fontSize: 12 }}>
-                  {inputs.portfolioEntryMode === 'amount'
-                    ? `Total portafolio ingresado: ${formatMoney(portfolioAmountTotal)}`
-                    : `Suma porcentajes: ${portfolioPctTotal.toFixed(1)}%`}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setShowUniversePicker((prev) => !prev)}
+                style={{
+                  borderRadius: 10,
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  color: T.textPrimary,
+                  padding: '7px 10px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                + Agregar instrumento
+              </button>
+              {showUniversePicker && (
+                <>
+                  <select
+                    value={newInstrumentId}
+                    onChange={(e) => setNewInstrumentId(e.target.value)}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '7px 10px' }}
+                  >
+                    <option value="">Selecciona instrumento...</option>
+                    {unselectedInstruments.map((item) => (
+                      <option key={item.instrumentId} value={item.instrumentId}>{item.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      upsertInstrument(newInstrumentId);
+                      setNewInstrumentId('');
+                    }}
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${T.primary}`,
+                      background: 'rgba(59,130,246,0.16)',
+                      color: T.textPrimary,
+                      padding: '7px 10px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Agregar
+                  </button>
+                </>
+              )}
+            </div>
+
+            {availableInstruments.length === 0 && (
+              <div style={{ color: T.textMuted, fontSize: 12 }}>
+                No hay instrumentos cargados desde Universe. Puedes usar mix simple RF/RV mientras tanto.
+              </div>
+            )}
+
+            <div style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: '8px 10px',
+              display: 'grid',
+              gap: 4,
+              fontSize: 12,
+            }}>
+              <div style={{ color: T.textSecondary }}>
+                Capital ingresado: <strong style={{ color: T.textPrimary }}>{formatMoney(inputs.initialCapitalClp)}</strong> ·
+                Suma instrumentos: <strong style={{ color: T.textPrimary }}>{formatMoney(portfolioAmountTotal)}</strong> ·
+                Capital efectivo usado: <strong style={{ color: T.textPrimary }}>{formatMoney(previewEffectiveCapitalClp)}</strong>
+              </div>
+              {inputs.portfolioEntryMode === 'percentage' && (
+                <div style={{ color: portfolioPctStatus.color, fontWeight: 700 }}>
+                  {`Suma porcentajes: ${portfolioPctTotal.toFixed(1)}% · ${portfolioPctStatus.label}`}
                 </div>
-                {inputs.portfolioEntryMode === 'amount' && (
-                  <div style={{ color: T.textMuted, fontSize: 12 }}>
-                    Capital ingresado: {formatMoney(inputs.initialCapitalClp)} · Capital efectivo simulado: {formatMoney(previewEffectiveCapitalClp)}
-                  </div>
-                )}
-                {hasCapitalGap && (
-                  <div style={{ color: T.warning, fontSize: 12 }}>
-                    Aviso: la suma de instrumentos difiere del capital ingresado por {formatMoney(capitalGapClp)}. En modo monto, se usa la suma de instrumentos como capital efectivo.
-                  </div>
-                )}
-                {hasCapitalGap && (
+              )}
+              {hasCapitalGap && (
+                <div style={{ color: T.warning }}>
+                  Hay diferencia de {formatMoney(capitalGapClp)} entre capital y suma de instrumentos.
+                  {' '}
                   <button
                     type="button"
                     onClick={() => updateInput('initialCapitalClp', portfolioAmountTotal)}
-                    style={{ justifySelf: 'start', background: T.surfaceEl, border: `1px solid ${T.border}`, color: T.textPrimary, borderRadius: 8, padding: '6px 10px', cursor: 'pointer' }}
+                    style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800 }}
                   >
-                    Sincronizar capital ingresado con instrumentos
+                    Sincronizar capital
                   </button>
-                )}
-                {inputs.portfolioEntryMode === 'percentage' && (
-                  <div style={{ color: portfolioPctStatus.color, fontSize: 12, fontWeight: 700 }}>
-                    Estado suma %: {portfolioPctStatus.label}
-                  </div>
-                )}
+                </div>
+              )}
+            </div>
+
+            <details style={{ marginTop: 2 }}>
+              <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ver universo completo</summary>
+              <div style={{ display: 'grid', gap: 6, maxHeight: 180, overflow: 'auto', paddingTop: 8 }}>
+                {availableInstruments.map((instrument) => (
+                  <label key={instrument.instrumentId} style={{ color: T.textPrimary, fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(instrument.instrumentId)}
+                      onChange={() => selectedIds.has(instrument.instrumentId) ? removeInstrument(instrument.instrumentId) : upsertInstrument(instrument.instrumentId)}
+                    />
+                    <span>{instrument.label}</span>
+                  </label>
+                ))}
               </div>
-            )}
+            </details>
           </>
         )}
-      </div>
-
-      <details
-        open={showOptimization}
-        onToggle={(e) => setShowOptimization((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
-      >
-        <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Explorar mejor combinacion (opcional)</summary>
-        <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-          <label style={{ color: T.textPrimary, fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={optimizeEnabled}
-              onChange={(e) => setOptimizeEnabled(e.target.checked)}
-            />{' '}
-            Explorar combinaciones automaticamente
-          </label>
-
-          {optimizeEnabled && (
-            <>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Objetivo de optimizacion
-                <select
-                  value={optimizationObjective}
-                  onChange={(e) => setOptimizationObjective(e.target.value as AssistedOptimizationObjective)}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                >
-                  <option value="max_spending">Maximizar gasto mensual</option>
-                  <option value="max_duration">Maximizar duracion del capital</option>
-                  <option value="max_success">Maximizar probabilidad de exito</option>
-                </select>
-              </label>
-              {portfolioSourceMode === 'instruments' && inputs.portfolioEntries.length === 3 && (
-                <label style={{ color: T.textPrimary, fontSize: 12 }}>
-                  <input type="checkbox" checked={inputs.includeTwoOfThreeCheck} onChange={(e) => updateInput('includeTwoOfThreeCheck', e.target.checked)} /> Evaluar tambien mejor combinacion 2-de-3
-                </label>
-              )}
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Paso de grilla (%)
-                <input
-                  type="number"
-                  min={5}
-                  max={25}
-                  step={5}
-                  value={inputs.gridStepPct}
-                  onChange={(e) => updateInput('gridStepPct', Number(e.target.value) || 5)}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-            </>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              nSim
-              <input
-                type="number"
-                min={200}
-                max={5000}
-                step={100}
-                value={inputs.nSim}
-                onChange={(e) => updateInput('nSim', Number(e.target.value) || 1000)}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Seed
-              <input
-                type="number"
-                min={1}
-                max={999999}
-                step={1}
-                value={inputs.seed}
-                onChange={(e) => updateInput('seed', Number(e.target.value) || 42)}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-              />
-            </label>
-          </div>
-        </div>
-      </details>
-
-      <details
-        open={showAdvancedSpending}
-        onToggle={(e) => setShowAdvancedSpending((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
-      >
-        <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Gasto en dos fases (avanzado)</summary>
-          <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-          {questionMode === 'duration' && (
-            <div style={{ color: T.textMuted, fontSize: 12 }}>
-              Horizonte tecnico para estimar duracion: 60 anos.
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <label style={{ color: T.textPrimary, fontSize: 12 }}>
-              <input type="radio" checked={inputs.spendingMode === 'fixed'} onChange={() => updateInput('spendingMode', 'fixed')} /> Gasto fijo
-            </label>
-            <label style={{ color: T.textPrimary, fontSize: 12 }}>
-              <input type="radio" checked={inputs.spendingMode === 'two_phase'} onChange={() => updateInput('spendingMode', 'two_phase')} /> Dos fases
-            </label>
-          </div>
-
-          {inputs.spendingMode === 'fixed' ? (
-            <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-              Gasto mensual fijo (MM CLP)
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={clpToMm(inputs.fixedMonthlyClp)}
-                onChange={(e) => {
-                  const amount = mmToClp(Number(e.target.value) || 0);
-                  updateInput('fixedMonthlyClp', amount);
-                  updateInput('phase1MonthlyClp', amount);
-                  updateInput('phase2MonthlyClp', amount);
-                }}
-                style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-              />
-            </label>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Fase 1 mensual (MM CLP)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={clpToMm(inputs.phase1MonthlyClp)}
-                  onChange={(e) => updateInput('phase1MonthlyClp', mmToClp(Number(e.target.value) || 0))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Fase 1 anos
-                <input
-                  type="number"
-                  min={1}
-                  max={40}
-                  value={inputs.phase1Years}
-                  onChange={(e) => updateInput('phase1Years', Number(e.target.value) || 1)}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Fase 2 mensual (MM CLP)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={clpToMm(inputs.phase2MonthlyClp)}
-                  onChange={(e) => updateInput('phase2MonthlyClp', mmToClp(Number(e.target.value) || 0))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-            </div>
-          )}
-        </div>
-      </details>
+      </section>
 
       <button
         type="button"
         onClick={run}
         disabled={running || optimizeSelectionInvalid}
         style={{
-          background: T.primary,
+          background: 'linear-gradient(135deg, #4f7cff, #3b82f6)',
           color: '#fff',
           border: 'none',
-          borderRadius: 9,
-          padding: '11px 14px',
-          fontWeight: 800,
+          borderRadius: 12,
+          padding: '13px 16px',
+          fontWeight: 900,
+          fontSize: 15,
           cursor: running ? 'not-allowed' : 'pointer',
-          opacity: running ? 0.7 : 1,
+          opacity: running ? 0.72 : 1,
+          boxShadow: '0 10px 28px rgba(59,130,246,0.28)',
         }}
       >
         {running ? 'Calculando...' : runButtonLabel}
       </button>
 
       {optimizeSelectionInvalid && (
-        <div style={{ color: T.negative, fontSize: 12 }}>
-          En exploracion automatica con instrumentos reales debes seleccionar 0, 2 o 3 instrumentos.
+        <div style={{ color: T.warning, fontSize: 12 }}>
+          Para explorar combinación con instrumentos reales, selecciona 0, 2 o 3 instrumentos.
         </div>
       )}
 
@@ -890,129 +1066,256 @@ export function AssistedSimulationPage() {
       )}
 
       {result && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
-          <div style={{ color: T.textMuted, fontSize: 11 }}>{resultTitle}</div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
-            {resultMode === 'max_spending' && (
-              <>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>
-                    {result.hasFeasibleSolution ? 'Gasto mensual maximo estimado' : 'Estado de factibilidad'}
-                  </div>
-                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>
-                    {result.hasFeasibleSolution ? formatMoney(result.best.sustainableMonthlyClp) : 'Sin solucion factible'}
-                  </div>
-                </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Exito al horizonte</div>
-                  <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatPct(result.best.successAtHorizon)}</div>
-                </div>
-              </>
-            )}
-
-            {resultMode === 'duration' && duration && (
-              <>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 85% de exito</div>
-                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>
-                    {durationTargets
-                      ? formatDurationDecision(durationTargets.success85.years, durationTargets.success85.censored)
-                      : formatDuration(duration.p90, duration.censoredP90)}
-                  </div>
-                  {durationTargets?.success85.censored && (
-                    <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                      No se agota dentro del horizonte tecnico analizado ({durationTargets.capYears} anos).
-                    </div>
-                  )}
-                </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 90% de exito</div>
-                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
-                    {durationTargets
-                      ? formatDurationDecision(durationTargets.success90.years, durationTargets.success90.censored)
-                      : formatDuration(duration.p50, duration.censoredP50)}
-                  </div>
-                </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duracion con 95% de exito</div>
-                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
-                    {durationTargets
-                      ? formatDurationDecision(durationTargets.success95.years, durationTargets.success95.censored)
-                      : formatDuration(duration.p10, duration.censoredP10)}
-                  </div>
-                </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>P50 escenario central</div>
-                  <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>
-                    {durationTargets
-                      ? formatDurationDecision(durationTargets.p50.years, durationTargets.p50.censored)
-                      : formatDuration(duration.p50, duration.censoredP50)}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {resultMode === 'success' && (
-              <>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Probabilidad de exito</div>
-                  <div style={{ color: T.primary, fontSize: 18, fontWeight: 900 }}>{formatPct(result.best.successAtHorizon)}</div>
-                </div>
-                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-                  <div style={{ color: T.textMuted, fontSize: 11 }}>Retiro mensual usado</div>
-                  <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.equivalentMonthlyClp)}</div>
-                </div>
-              </>
-            )}
-
-            <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P10</div>
-              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p10)}</div>
+        <section style={{
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
+          border: `1px solid ${T.border}`,
+          borderRadius: 18,
+          padding: 16,
+          display: 'grid',
+          gap: 12,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>{resultTitle}</div>
+              <div style={{ color: T.textPrimary, fontWeight: 900, fontSize: 14 }}>{heroLabel}</div>
+              <div style={{ color: T.primary, fontWeight: 900, fontSize: 30, lineHeight: 1.1 }}>{heroValue}</div>
             </div>
+            {status && (
+              <div style={{ border: `1px solid ${status.color}`, color: status.color, borderRadius: 999, padding: '6px 10px', fontWeight: 800, fontSize: 12 }}>
+                Estado: {status.label}
+              </div>
+            )}
+          </div>
+
+          {!result.hasFeasibleSolution && resultMode === 'max_spending' && (
+            <div style={{ background: 'rgba(245,158,11,0.12)', border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, color: T.textPrimary, fontSize: 12 }}>
+              No hay solución factible al umbral {formatPct(result.successThreshold)}.
+              Referencia técnica best effort: {formatMoney(result.best.sustainableMonthlyClp)}.
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 8 }}>
+            {resultMode === 'duration' && durationTargets && (
+              <>
+                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duración 90%</div>
+                  <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.success90.years, durationTargets.success90.censored)}</div>
+                </div>
+                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>Duración 95%</div>
+                  <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.success95.years, durationTargets.success95.censored)}</div>
+                </div>
+                <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>P50 central</div>
+                  <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatDuration(durationTargets.p50.years, durationTargets.p50.censored)}</div>
+                </div>
+              </>
+            )}
+
+            {resultMode !== 'duration' && (
+              <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Éxito al horizonte</div>
+                <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatPct(result.best.successAtHorizon)}</div>
+              </div>
+            )}
+
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P50</div>
               <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p50)}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P90</div>
-              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800 }}>{formatMoney(result.best.p90)}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Terminal P10 / P90</div>
+              <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700 }}>{formatMoney(result.best.p10)} · {formatMoney(result.best.p90)}</div>
             </div>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
-              <div style={{ color: T.textMuted, fontSize: 11 }}>Mix recomendado</div>
-              <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{mixLabel(result.best.weights)}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Mix</div>
+              <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{`RV ${((result.best.weights.rvGlobal + result.best.weights.rvChile) * 100).toFixed(1)}% · RF ${((result.best.weights.rfGlobal + result.best.weights.rfChile) * 100).toFixed(1)}%`}</div>
             </div>
           </div>
 
-          {!result.hasFeasibleSolution && resultMode === 'max_spending' && (
-            <div style={{ background: 'rgba(245,158,11,0.12)', border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, color: T.textPrimary, fontSize: 12 }}>
-              Ninguna combinacion cumplio el umbral de exito {formatPct(result.successThreshold)} al horizonte de {result.horizonYears} anos.
-              Referencia tecnica (best effort): {formatMoney(result.best.sustainableMonthlyClp)}.
-            </div>
-          )}
-
-          <div style={{ color: T.textSecondary, fontSize: 12 }}>{summaryText}</div>
+          <div style={{ color: T.textSecondary, fontSize: 13 }}>{summaryText}</div>
 
           <div style={{ color: T.textMuted, fontSize: 12 }}>
-            Capital ingresado: {formatMoney(result.inputCapitalClp)} · Suma instrumentos: {formatMoney(result.portfolioAmountTotalClp)} · Capital efectivo usado: {formatMoney(result.effectiveInitialCapitalClp)}
+            Capital ingresado {formatMoney(result.inputCapitalClp)} · Suma instrumentos {formatMoney(result.portfolioAmountTotalClp)} · Capital efectivo {formatMoney(result.effectiveInitialCapitalClp)}
           </div>
           <div style={{ color: T.textMuted, fontSize: 12 }}>
-            Entrada: {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'} · Horizonte usado: {result.horizonYears} anos · Candidatos evaluados: {result.evaluatedCandidates}
+            Horizonte usado {result.horizonYears} años · Entrada {result.entryMode === 'amount' ? 'Monto' : 'Porcentaje'} · Candidatos {result.evaluatedCandidates}
           </div>
 
-          <MiniFanChart data={(result.best.fanChartData ?? []).map((p) => ({ year: p.year, p50: p.p50 }))} />
+          <MiniFanChart
+            data={(result.best.fanChartData ?? []).map((p) => ({
+              year: p.year,
+              p10: p.p10,
+              p50: p.p50,
+              p90: p.p90,
+            }))}
+            height={190}
+          />
 
           {result.bestTwoOfThree && result.bestThreeInstruments && (
             <div style={{ color: T.textPrimary, fontSize: 12, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
               Mejor 3 instrumentos: {formatMoney(result.bestThreeInstruments.equivalentMonthlyClp)} · Mejor 2-de-3: {formatMoney(result.bestTwoOfThree.equivalentMonthlyClp)}.
               {' '}
               {result.bestTwoOfThree.equivalentMonthlyClp > result.bestThreeInstruments.equivalentMonthlyClp
-                ? 'La alternativa 2-de-3 es superior en este escenario.'
-                : 'La combinacion de 3 instrumentos mantiene ventaja o empate.'}
+                ? 'La alternativa 2-de-3 mejora este caso.'
+                : 'La combinación de 3 instrumentos mantiene ventaja o empate.'}
+            </div>
+          )}
+        </section>
+      )}
+
+      <details
+        open={showAdvancedParams}
+        onToggle={(e) => setShowAdvancedParams((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+      >
+        <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Parámetros avanzados</summary>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10, marginTop: 10 }}>
+          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+            Umbral mínimo de éxito
+            <input
+              type="number"
+              min={0.5}
+              max={0.99}
+              step={0.01}
+              value={inputs.successThreshold}
+              onChange={(e) => updateInput('successThreshold', Number(e.target.value) || 0.85)}
+              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+            nSim
+            <input
+              type="number"
+              min={200}
+              max={5000}
+              step={100}
+              value={inputs.nSim}
+              onChange={(e) => updateInput('nSim', Number(e.target.value) || 1000)}
+              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+            Seed
+            <input
+              type="number"
+              min={1}
+              max={999999}
+              step={1}
+              value={inputs.seed}
+              onChange={(e) => updateInput('seed', Number(e.target.value) || 42)}
+              style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+            />
+          </label>
+        </div>
+      </details>
+
+      <details
+        open={showAdvancedSpending}
+        onToggle={(e) => setShowAdvancedSpending((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+      >
+        <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Gasto en dos fases (avanzado)</summary>
+        <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ color: T.textPrimary, fontSize: 12 }}>
+              <input type="radio" checked={inputs.spendingMode === 'fixed'} onChange={() => updateInput('spendingMode', 'fixed')} /> Fijo
+            </label>
+            <label style={{ color: T.textPrimary, fontSize: 12 }}>
+              <input type="radio" checked={inputs.spendingMode === 'two_phase'} onChange={() => updateInput('spendingMode', 'two_phase')} /> Dos fases
+            </label>
+          </div>
+          {inputs.spendingMode === 'two_phase' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 8 }}>
+              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                Fase 1 mensual (MM)
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={clpToMm(inputs.phase1MonthlyClp)}
+                  onChange={(e) => updateInput('phase1MonthlyClp', mmToClp(Number(e.target.value) || 0))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                Años fase 1
+                <input
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={inputs.phase1Years}
+                  onChange={(e) => updateInput('phase1Years', Number(e.target.value) || 1)}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                Fase 2 mensual (MM)
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={clpToMm(inputs.phase2MonthlyClp)}
+                  onChange={(e) => updateInput('phase2MonthlyClp', mmToClp(Number(e.target.value) || 0))}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                />
+              </label>
             </div>
           )}
         </div>
-      )}
+      </details>
+
+      <details
+        open={showOptimization}
+        onToggle={(e) => setShowOptimization((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: 14 }}
+      >
+        <summary style={{ color: T.textPrimary, fontWeight: 700, cursor: 'pointer' }}>Explorar mejor combinación (opcional)</summary>
+        <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+          <div style={{ color: T.textMuted, fontSize: 12 }}>
+            Después de calcular, puedes explorar si otra combinación mejora el resultado.
+          </div>
+          <label style={{ color: T.textPrimary, fontSize: 12 }}>
+            <input type="checkbox" checked={optimizeEnabled} onChange={(e) => setOptimizeEnabled(e.target.checked)} /> Activar exploración de combinación
+          </label>
+          {optimizeEnabled && (
+            <>
+              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                Objetivo de optimización
+                <select
+                  value={optimizationObjective}
+                  onChange={(e) => {
+                    setOptimizationObjective(e.target.value as AssistedOptimizationObjective);
+                    setObjectiveOverridden(true);
+                  }}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                >
+                  <option value="max_spending">Maximizar gasto mensual</option>
+                  <option value="max_duration">Maximizar duración</option>
+                  <option value="max_success">Maximizar probabilidad de éxito</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                Paso de grilla (%)
+                <input
+                  type="number"
+                  min={5}
+                  max={25}
+                  step={5}
+                  value={inputs.gridStepPct}
+                  onChange={(e) => updateInput('gridStepPct', Number(e.target.value) || 5)}
+                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                />
+              </label>
+              {portfolioSourceMode === 'instruments' && inputs.portfolioEntries.length === 3 && (
+                <label style={{ color: T.textPrimary, fontSize: 12 }}>
+                  <input type="checkbox" checked={inputs.includeTwoOfThreeCheck} onChange={(e) => updateInput('includeTwoOfThreeCheck', e.target.checked)} /> Evaluar también mejor alternativa 2-de-3
+                </label>
+              )}
+            </>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
