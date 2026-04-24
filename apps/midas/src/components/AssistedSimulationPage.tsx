@@ -323,6 +323,29 @@ const redistributeEntriesToCapital = (
   });
 };
 
+const redistributeEntriesToPercentage = (
+  entries: AssistedPortfolioEntry[],
+): AssistedPortfolioEntry[] => {
+  if (entries.length === 0) return entries;
+  const total = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry.percentage || 0)), 0);
+  if (total <= 0) {
+    const even = Number((100 / entries.length).toFixed(1));
+    return entries.map((entry, idx) => ({
+      ...entry,
+      percentage: idx === entries.length - 1 ? Number((100 - even * (entries.length - 1)).toFixed(1)) : even,
+    }));
+  }
+  let assigned = 0;
+  return entries.map((entry, idx) => {
+    if (idx === entries.length - 1) {
+      return { ...entry, percentage: Number(Math.max(0, 100 - assigned).toFixed(1)) };
+    }
+    const pct = Number((((Math.max(0, Number(entry.percentage || 0)) / total) * 100)).toFixed(1));
+    assigned += pct;
+    return { ...entry, percentage: pct };
+  });
+};
+
 const statusLabelForResult = (
   mode: AssistedQuestionMode,
   result: AssistedOptimizationResult,
@@ -391,6 +414,12 @@ function MiniFanChart({
 }
 
 export function AssistedSimulationPage() {
+  type ExcludedInstrumentEntry = {
+    instrumentId: string;
+    amountClp: number;
+    percentage: number;
+  };
+
   const [questionMode, setQuestionMode] = useState<AssistedQuestionMode>('success');
   const [activeProfile, setActiveProfile] = useState<ProfileId>('custom');
   const [portfolioSourceMode, setPortfolioSourceMode] = useState<PortfolioSourceMode>('instruments');
@@ -407,6 +436,8 @@ export function AssistedSimulationPage() {
   const [bucketInstrumentId, setBucketInstrumentId] = useState<string>('');
   const [bucketFloorMm, setBucketFloorMm] = useState(22);
   const [bucketFloorPct, setBucketFloorPct] = useState(16);
+  const [bucketAutoNote, setBucketAutoNote] = useState<string | null>(null);
+  const [excludedInstruments, setExcludedInstruments] = useState<ExcludedInstrumentEntry[]>([]);
   const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
 
@@ -458,14 +489,6 @@ export function AssistedSimulationPage() {
     [availableInstruments, selectedIds],
   );
 
-  useEffect(() => {
-    if (selectedInstrumentRows.length === 0) return;
-    const hasCurrent = selectedInstrumentRows.some((row) => row.entry.instrumentId === bucketInstrumentId);
-    if (hasCurrent) return;
-    const preferred = selectedInstrumentRows.find((row) => row.instrument.name.toLowerCase().includes('sura renta local uf'));
-    setBucketInstrumentId(preferred?.entry.instrumentId ?? selectedInstrumentRows[0].entry.instrumentId);
-  }, [selectedInstrumentRows, bucketInstrumentId]);
-
   const updateInput = <K extends keyof AssistedInputs>(key: K, value: AssistedInputs[K]) => {
     setInputs((prev) => ({ ...prev, [key]: value }));
   };
@@ -487,17 +510,64 @@ export function AssistedSimulationPage() {
           : nextEntries,
       };
     });
+    setExcludedInstruments((prev) => prev.filter((entry) => entry.instrumentId !== instrumentId));
   };
 
   const removeInstrument = (instrumentId: string) => {
     if (bucketEnabled && instrumentId === bucketInstrumentId) {
-      setReturnTiltMessage('El bucket protegido debe permanecer en la cartera. Desactiva el piso defensivo para modificar esta regla.');
+      setReturnTiltMessage('Este instrumento sostiene el bucket defensivo. Desactiva o reasigna el bucket antes de eliminarlo.');
       return;
     }
-    setInputs((prev) => ({
-      ...prev,
-      portfolioEntries: prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId),
-    }));
+    setInputs((prev) => {
+      const removed = prev.portfolioEntries.find((entry) => entry.instrumentId === instrumentId);
+      if (removed) {
+        setExcludedInstruments((list) => {
+          const without = list.filter((entry) => entry.instrumentId !== instrumentId);
+          return [...without, { ...removed }];
+        });
+      }
+      const remaining = prev.portfolioEntries.filter((entry) => entry.instrumentId !== instrumentId);
+      if (remaining.length === 0) {
+        return { ...prev, portfolioEntries: remaining };
+      }
+      if (prev.portfolioEntryMode === 'amount') {
+        const base = autoAdjustInstrumentAmounts
+          ? redistributeEntriesToCapital(remaining, prev.initialCapitalClp)
+          : remaining;
+        return {
+          ...prev,
+          portfolioEntries: enforceBucketFloor(base, 'amount', prev.initialCapitalClp),
+        };
+      }
+      return {
+        ...prev,
+        portfolioEntries: enforceBucketFloor(redistributeEntriesToPercentage(remaining), 'percentage', prev.initialCapitalClp),
+      };
+    });
+  };
+
+  const restoreExcludedInstrument = (instrumentId: string) => {
+    const excluded = excludedInstruments.find((entry) => entry.instrumentId === instrumentId);
+    if (!excluded) return;
+    setInputs((prev) => {
+      if (prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return prev;
+      const nextEntries = [...prev.portfolioEntries, { ...excluded }];
+      if (prev.portfolioEntryMode === 'amount') {
+        const base = autoAdjustInstrumentAmounts
+          ? redistributeEntriesToCapital(nextEntries, prev.initialCapitalClp)
+          : nextEntries;
+        return {
+          ...prev,
+          portfolioEntries: enforceBucketFloor(base, 'amount', prev.initialCapitalClp),
+        };
+      }
+      return {
+        ...prev,
+        portfolioEntries: enforceBucketFloor(redistributeEntriesToPercentage(nextEntries), 'percentage', prev.initialCapitalClp),
+      };
+    });
+    setExcludedInstruments((prev) => prev.filter((entry) => entry.instrumentId !== instrumentId));
+    setReturnTiltMessage('Instrumento restaurado y capital redistribuido entre posiciones activas.');
   };
 
   const updateEntry = (instrumentId: string, patch: Partial<AssistedPortfolioEntry>) => {
@@ -513,6 +583,8 @@ export function AssistedSimulationPage() {
     setActiveProfile(profileId);
     setError(null);
     setReturnTiltMessage(null);
+    setExcludedInstruments([]);
+    setBucketAutoNote(null);
     const profile = profileConfigs[profileId];
     if (profileId === 'custom') {
       setInputs((prev) => ({
@@ -586,6 +658,7 @@ export function AssistedSimulationPage() {
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
+  const hasUnassignedCapital = hasCapitalGap;
   const requiredReturnAnnual = useMemo(() => {
     if (inputs.spendingMode !== 'fixed') return null;
     return solveRequiredAnnualReturn(previewEffectiveCapitalClp, inputs.fixedMonthlyClp, inputs.horizonYears);
@@ -617,6 +690,30 @@ export function AssistedSimulationPage() {
       };
     });
   }, [selectedInstrumentRows, inputs.portfolioEntryMode, previewEffectiveCapitalClp]);
+
+  useEffect(() => {
+    if (selectedInstrumentExpectedRows.length === 0) return;
+    const hasCurrent = selectedInstrumentExpectedRows.some((row) => row.instrumentId === bucketInstrumentId);
+    if (hasCurrent) return;
+
+    const ranked = [...selectedInstrumentExpectedRows].sort((a, b) => {
+      if (a.expectedReturnAnnual !== b.expectedReturnAnnual) return a.expectedReturnAnnual - b.expectedReturnAnnual;
+      const aOpt = optionsById.get(a.instrumentId);
+      const bOpt = optionsById.get(b.instrumentId);
+      const aRf = aOpt ? (aOpt.sleeveWeights.rfGlobal + aOpt.sleeveWeights.rfChile) : 0;
+      const bRf = bOpt ? (bOpt.sleeveWeights.rfGlobal + bOpt.sleeveWeights.rfChile) : 0;
+      if (aRf !== bRf) return bRf - aRf;
+      const aName = (aOpt?.name ?? '').toLowerCase();
+      const bName = (bOpt?.name ?? '').toLowerCase();
+      const aHint = aName.includes('renta local uf') ? 1 : 0;
+      const bHint = bName.includes('renta local uf') ? 1 : 0;
+      return bHint - aHint;
+    });
+    const chosen = ranked[0];
+    if (!chosen) return;
+    setBucketInstrumentId(chosen.instrumentId);
+    setBucketAutoNote(`Asignado automáticamente a ${chosen.name}.`);
+  }, [selectedInstrumentExpectedRows, bucketInstrumentId, optionsById]);
 
   const portfolioExpectedReturnAnnual = useMemo(
     () => selectedInstrumentExpectedRows.reduce((sum, row) => sum + (row.weight * row.expectedReturnAnnual), 0),
@@ -650,6 +747,69 @@ export function AssistedSimulationPage() {
     }
     return clamp(bucketFloorPct / 100, 0, 1);
   }, [bucketEnabled, bucketRow, inputs.portfolioEntryMode, bucketFloorMm, bucketFloorPct, previewEffectiveCapitalClp]);
+
+  const enforceBucketFloor = (
+    entries: AssistedPortfolioEntry[],
+    mode: AssistedInputs['portfolioEntryMode'],
+    capitalClp: number,
+  ): AssistedPortfolioEntry[] => {
+    if (!bucketEnabled || !bucketInstrumentId) return entries;
+    const bucketIdx = entries.findIndex((entry) => entry.instrumentId === bucketInstrumentId);
+    if (bucketIdx < 0) return entries;
+    const next = entries.map((entry) => ({ ...entry }));
+    if (mode === 'amount') {
+      const floor = mmToClp(bucketFloorMm);
+      const bucketCurrent = Math.max(0, Number(next[bucketIdx].amountClp || 0));
+      if (bucketCurrent >= floor) return next;
+      let deficit = floor - bucketCurrent;
+      const otherIdx = next.map((_, idx) => idx).filter((idx) => idx !== bucketIdx);
+      const othersTotal = otherIdx.reduce((sum, idx) => sum + Math.max(0, Number(next[idx].amountClp || 0)), 0);
+      if (othersTotal <= 0) return next;
+      for (const idx of otherIdx) {
+        const available = Math.max(0, Number(next[idx].amountClp || 0));
+        const cut = Math.min(available, Math.round((available / othersTotal) * deficit));
+        next[idx].amountClp = Math.max(0, available - cut);
+        deficit -= cut;
+      }
+      if (deficit > 0) {
+        for (const idx of otherIdx) {
+          if (deficit <= 0) break;
+          const available = Math.max(0, Number(next[idx].amountClp || 0));
+          const cut = Math.min(available, deficit);
+          next[idx].amountClp = available - cut;
+          deficit -= cut;
+        }
+      }
+      const totalAfter = next.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0);
+      next[bucketIdx].amountClp = Math.max(floor, totalAfter - otherIdx.reduce((sum, idx) => sum + Math.max(0, Number(next[idx].amountClp || 0)), 0));
+      return redistributeEntriesToCapital(next, Math.max(0, Math.round(capitalClp)));
+    }
+
+    const floorPct = clamp(bucketFloorPct, 0, 100);
+    const bucketCurrent = Math.max(0, Number(next[bucketIdx].percentage || 0));
+    if (bucketCurrent >= floorPct) return redistributeEntriesToPercentage(next);
+    let deficit = floorPct - bucketCurrent;
+    const otherIdx = next.map((_, idx) => idx).filter((idx) => idx !== bucketIdx);
+    const othersTotal = otherIdx.reduce((sum, idx) => sum + Math.max(0, Number(next[idx].percentage || 0)), 0);
+    if (othersTotal <= 0) return redistributeEntriesToPercentage(next);
+    for (const idx of otherIdx) {
+      const available = Math.max(0, Number(next[idx].percentage || 0));
+      const cut = Math.min(available, Number(((available / othersTotal) * deficit).toFixed(1)));
+      next[idx].percentage = Math.max(0, Number((available - cut).toFixed(1)));
+      deficit = Number((deficit - cut).toFixed(1));
+    }
+    if (deficit > 0) {
+      for (const idx of otherIdx) {
+        if (deficit <= 0) break;
+        const available = Math.max(0, Number(next[idx].percentage || 0));
+        const cut = Math.min(available, deficit);
+        next[idx].percentage = Number((available - cut).toFixed(1));
+        deficit = Number((deficit - cut).toFixed(1));
+      }
+    }
+    next[bucketIdx].percentage = floorPct;
+    return redistributeEntriesToPercentage(next);
+  };
 
   const quickSummary = useMemo(() => {
     const profileName = profileConfigs[activeProfile].title;
@@ -724,13 +884,13 @@ export function AssistedSimulationPage() {
     if (nonBucketRows.length === 0 && bucketRow) {
       const next = new Map<string, number>([[bucketRow.instrumentId, 1]]);
       applyWeightsToEntries(next);
-      setReturnTiltMessage('Bucket protegido respetado. No hay instrumentos elegibles adicionales.');
+      setReturnTiltMessage('Bucket defensivo respetado. No hay instrumentos elegibles adicionales.');
       return;
     }
 
     const nonBucketTotal = nonBucketRows.reduce((sum, row) => sum + row.weight, 0);
     if (nonBucketTotal <= 0) {
-      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket protegido.');
+      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket defensivo.');
       return;
     }
 
@@ -742,7 +902,7 @@ export function AssistedSimulationPage() {
     });
     const rawSum = adjusted.reduce((sum, row) => sum + row.raw, 0);
     if (rawSum <= 0) {
-      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket protegido.');
+      setReturnTiltMessage('No hay margen para ajustar sin romper el bucket defensivo.');
       return;
     }
 
@@ -757,9 +917,9 @@ export function AssistedSimulationPage() {
     const after = rows.reduce((sum, row) => sum + ((nextWeights.get(row.instrumentId) ?? 0) * row.expectedReturnAnnual), 0);
     applyWeightsToEntries(nextWeights);
     if (direction === 'more') {
-      setReturnTiltMessage(`Bucket protegido respetado. Mix ajustado hacia más retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
+      setReturnTiltMessage(`Bucket defensivo respetado. Mix ajustado hacia más retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
     } else {
-      setReturnTiltMessage(`Bucket protegido respetado. Mix ajustado hacia menor retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
+      setReturnTiltMessage(`Bucket defensivo respetado. Mix ajustado hacia menor retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
     }
   };
 
@@ -779,7 +939,7 @@ export function AssistedSimulationPage() {
       if (row.instrumentId !== keepNonBucketId) nextWeights.set(row.instrumentId, 0);
     }
     applyWeightsToEntries(nextWeights);
-    setReturnTiltMessage(`Bucket protegido respetado. Probando bucket + ${chosen.name}. Recalcula para ver impacto.`);
+    setReturnTiltMessage(`Bucket defensivo respetado. Probando bucket + ${chosen.name}. Recalcula para ver impacto.`);
   };
 
   const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
@@ -1321,7 +1481,7 @@ export function AssistedSimulationPage() {
                         opacity: bucketEnabled && entry.instrumentId === bucketInstrumentId ? 0.8 : 1,
                         height: 34,
                       }}
-                      title={bucketEnabled && entry.instrumentId === bucketInstrumentId ? 'Bucket protegido: no se puede excluir' : 'Quitar'}
+                      title={bucketEnabled && entry.instrumentId === bucketInstrumentId ? 'Bucket defensivo: no se puede excluir' : 'Quitar'}
                     >
                       ×
                     </button>
@@ -1451,7 +1611,7 @@ export function AssistedSimulationPage() {
               }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'center' }}>
                   <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
-                    Bucket protegido
+                    Asignado a (bucket defensivo)
                     <select
                       value={bucketInstrumentId}
                       onChange={(e) => setBucketInstrumentId(e.target.value)}
@@ -1463,7 +1623,7 @@ export function AssistedSimulationPage() {
                     </select>
                   </label>
                   <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
-                    <span>Piso defensivo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}</span>
+                    <span>Bucket defensivo mínimo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}</span>
                     <input
                       type="number"
                       min={0}
@@ -1484,9 +1644,12 @@ export function AssistedSimulationPage() {
                       checked={bucketEnabled}
                       onChange={(e) => setBucketEnabled(e.target.checked)}
                     />
-                    Piso defensivo activo
+                    Regla defensiva activa
                   </label>
                 </div>
+                {bucketAutoNote && (
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>{bucketAutoNote}</div>
+                )}
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div style={{ color: T.textSecondary }}>
@@ -1600,6 +1763,44 @@ export function AssistedSimulationPage() {
               </div>
             )}
 
+            {excludedInstruments.length > 0 && (
+              <div style={{
+                background: ASSISTED_COCKPIT.panelSoft,
+                border: `1px dashed ${ASSISTED_COCKPIT.borderSoft}`,
+                borderRadius: 10,
+                padding: '8px 10px',
+                display: 'grid',
+                gap: 6,
+                fontSize: 12,
+              }}>
+                <div style={{ color: T.textSecondary, fontWeight: 700 }}>Instrumentos excluidos</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {excludedInstruments.map((entry) => {
+                    const option = optionsById.get(entry.instrumentId);
+                    return (
+                      <button
+                        key={entry.instrumentId}
+                        type="button"
+                        onClick={() => restoreExcludedInstrument(entry.instrumentId)}
+                        style={{
+                          borderRadius: 999,
+                          border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                          background: ASSISTED_COCKPIT.panel,
+                          color: T.textPrimary,
+                          padding: '4px 10px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {`Restaurar ${option?.name ?? entry.instrumentId}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <details style={{ marginTop: 2 }}>
               <summary style={{ color: T.textMuted, fontSize: 12, cursor: 'pointer' }}>Ver universo completo</summary>
               <div style={{ display: 'grid', gap: 6, maxHeight: 180, overflow: 'auto', paddingTop: 8 }}>
@@ -1625,7 +1826,7 @@ export function AssistedSimulationPage() {
       <button
         type="button"
         onClick={run}
-        disabled={running || optimizeSelectionInvalid}
+        disabled={running || optimizeSelectionInvalid || hasUnassignedCapital}
         style={{
           background: `linear-gradient(135deg, ${ASSISTED_COCKPIT.accent}, #8a5a2a)`,
           color: '#fff',
@@ -1634,8 +1835,8 @@ export function AssistedSimulationPage() {
           padding: '13px 16px',
           fontWeight: 900,
           fontSize: 15,
-          cursor: running ? 'not-allowed' : 'pointer',
-          opacity: running ? 0.72 : 1,
+          cursor: (running || optimizeSelectionInvalid || hasUnassignedCapital) ? 'not-allowed' : 'pointer',
+          opacity: (running || optimizeSelectionInvalid || hasUnassignedCapital) ? 0.72 : 1,
           boxShadow: '0 10px 28px rgba(184,115,51,0.24)',
         }}
       >
@@ -1645,6 +1846,11 @@ export function AssistedSimulationPage() {
       {optimizeSelectionInvalid && (
         <div style={{ color: T.warning, fontSize: 12 }}>
           Para explorar combinación con instrumentos reales, selecciona 0, 2 o 3 instrumentos.
+        </div>
+      )}
+      {hasUnassignedCapital && (
+        <div style={{ color: T.warning, fontSize: 12 }}>
+          Hay capital sin asignar. Usa “Repartir capital en instrumentos” o “Usar suma como capital” antes de calcular.
         </div>
       )}
 
