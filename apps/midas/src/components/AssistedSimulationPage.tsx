@@ -232,10 +232,40 @@ const buildParentsConservativeEntries = (
   if (!conservadora || !activa || !suraUf) return null;
 
   return [
-    { instrumentId: conservadora.instrumentId, amountClp: mmToClp(72), percentage: 0 },
-    { instrumentId: activa.instrumentId, amountClp: mmToClp(132), percentage: 0 },
-    { instrumentId: suraUf.instrumentId, amountClp: mmToClp(33), percentage: 0 },
+    { instrumentId: activa.instrumentId, amountClp: mmToClp(72), percentage: 0 },
+    { instrumentId: conservadora.instrumentId, amountClp: mmToClp(42), percentage: 0 },
+    { instrumentId: suraUf.instrumentId, amountClp: mmToClp(22), percentage: 0 },
   ];
+};
+
+const distributeAdditionalToBtgOnly = (
+  entries: AssistedPortfolioEntry[],
+  optionsById: Map<string, AssistedInstrumentOption>,
+  extraClp: number,
+): AssistedPortfolioEntry[] => {
+  const extra = Math.max(0, Math.round(extraClp));
+  if (extra <= 0) return entries;
+  const activaEntry = entries.find((entry) => optionsById.get(entry.instrumentId)?.name.toLowerCase().includes('btg pactual gestión activa'));
+  const conservadoraEntry = entries.find((entry) => optionsById.get(entry.instrumentId)?.name.toLowerCase().includes('btg pactual gestión conservadora'));
+  if (!activaEntry || !conservadoraEntry) return entries;
+
+  const baseActiva = Math.max(0, Number(activaEntry.amountClp || 0));
+  const baseConservadora = Math.max(0, Number(conservadoraEntry.amountClp || 0));
+  const baseTotal = baseActiva + baseConservadora;
+  if (baseTotal <= 0) return entries;
+
+  const extraActiva = Math.round(extra * (baseActiva / baseTotal));
+  const extraConservadora = extra - extraActiva;
+
+  return entries.map((entry) => {
+    if (entry.instrumentId === activaEntry.instrumentId) {
+      return { ...entry, amountClp: baseActiva + extraActiva };
+    }
+    if (entry.instrumentId === conservadoraEntry.instrumentId) {
+      return { ...entry, amountClp: baseConservadora + extraConservadora };
+    }
+    return entry;
+  });
 };
 
 const statusLabelForResult = (
@@ -466,7 +496,7 @@ export function AssistedSimulationPage() {
   const selectedCount = inputs.portfolioEntries.length;
   const optimizeSelectionInvalid = optimizeEnabled && portfolioSourceMode === 'instruments' && ![0, 2, 3].includes(selectedCount);
   const previewEffectiveCapitalClp = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && portfolioAmountTotal > 0
-    ? portfolioAmountTotal
+    ? (activeProfile === 'parents' ? Math.max(portfolioAmountTotal, inputs.initialCapitalClp) : portfolioAmountTotal)
     : inputs.initialCapitalClp;
   const capitalGapClp = portfolioAmountTotal - inputs.initialCapitalClp;
   const hasCapitalGap = portfolioSourceMode === 'instruments' && inputs.portfolioEntryMode === 'amount' && inputs.portfolioEntries.length > 0 && Math.abs(capitalGapClp) > 1;
@@ -508,6 +538,14 @@ export function AssistedSimulationPage() {
           { instrumentId: SIMPLE_RV_ID, amountClp: 0, percentage: clamp(simpleRvPct, 0, 100) },
           { instrumentId: SIMPLE_RF_ID, amountClp: 0, percentage: clamp(100 - simpleRvPct, 0, 100) },
         ];
+      }
+    }
+
+    if (activeProfile === 'parents' && portfolioSourceMode === 'instruments' && runtimeInputs.portfolioEntryMode === 'amount') {
+      const amountSum = runtimeInputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0);
+      const additional = Math.max(0, runtimeInputs.initialCapitalClp - amountSum);
+      if (additional > 0) {
+        runtimeInputs.portfolioEntries = distributeAdditionalToBtgOnly(runtimeInputs.portfolioEntries, optionsById, additional);
       }
     }
 
