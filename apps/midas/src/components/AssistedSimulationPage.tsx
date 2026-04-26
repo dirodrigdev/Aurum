@@ -452,6 +452,22 @@ export function AssistedSimulationPage() {
     percentage: number;
   };
 
+  type AssistedScenarioSnapshot = {
+    profileId: ProfileId;
+    portfolioSourceMode: PortfolioSourceMode;
+    simpleRvPct: number;
+    autoAdjustInstrumentAmounts: boolean;
+    optimizeEnabled: boolean;
+    bucketEnabled: boolean;
+    bucketInstrumentId: string;
+    bucketFloorMm: number;
+    bucketFloorPct: number;
+    inputs: AssistedInputs;
+    excludedInstruments: ExcludedInstrumentEntry[];
+    numericDrafts: Record<string, string>;
+    numericIssues: Record<string, string>;
+  };
+
   const [questionMode, setQuestionMode] = useState<AssistedQuestionMode>('success');
   const [activeProfile, setActiveProfile] = useState<ProfileId>('custom');
   const [portfolioSourceMode, setPortfolioSourceMode] = useState<PortfolioSourceMode>('instruments');
@@ -474,6 +490,8 @@ export function AssistedSimulationPage() {
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
   const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>({});
   const [numericIssues, setNumericIssues] = useState<Record<string, string>>({});
+  const [baseScenarioSnapshot, setBaseScenarioSnapshot] = useState<AssistedScenarioSnapshot | null>(null);
+  const [historySnapshots, setHistorySnapshots] = useState<AssistedScenarioSnapshot[]>([]);
 
   const [inputs, setInputs] = useState<AssistedInputs>(defaultInputs);
   const [result, setResult] = useState<AssistedOptimizationResult | null>(null);
@@ -578,6 +596,69 @@ export function AssistedSimulationPage() {
     return formatter ? formatter(committedValue) : String(committedValue);
   };
 
+  const cloneInputs = (source: AssistedInputs): AssistedInputs => ({
+    ...source,
+    portfolioEntries: source.portfolioEntries.map((entry) => ({ ...entry })),
+  });
+
+  const cloneExcluded = (source: ExcludedInstrumentEntry[]): ExcludedInstrumentEntry[] =>
+    source.map((entry) => ({ ...entry }));
+
+  const createScenarioSnapshot = (): AssistedScenarioSnapshot => ({
+    profileId: activeProfile,
+    portfolioSourceMode,
+    simpleRvPct,
+    autoAdjustInstrumentAmounts,
+    optimizeEnabled,
+    bucketEnabled,
+    bucketInstrumentId,
+    bucketFloorMm,
+    bucketFloorPct,
+    inputs: cloneInputs(inputs),
+    excludedInstruments: cloneExcluded(excludedInstruments),
+    numericDrafts: { ...numericDrafts },
+    numericIssues: { ...numericIssues },
+  });
+
+  const applyScenarioSnapshot = (snapshot: AssistedScenarioSnapshot) => {
+    setActiveProfile(snapshot.profileId);
+    setPortfolioSourceMode(snapshot.portfolioSourceMode);
+    setSimpleRvPct(snapshot.simpleRvPct);
+    setAutoAdjustInstrumentAmounts(snapshot.autoAdjustInstrumentAmounts);
+    setOptimizeEnabled(snapshot.optimizeEnabled);
+    setBucketEnabled(snapshot.bucketEnabled);
+    setBucketInstrumentId(snapshot.bucketInstrumentId);
+    setBucketFloorMm(snapshot.bucketFloorMm);
+    setBucketFloorPct(snapshot.bucketFloorPct);
+    setInputs(cloneInputs(snapshot.inputs));
+    setExcludedInstruments(cloneExcluded(snapshot.excludedInstruments));
+    setNumericDrafts({ ...snapshot.numericDrafts });
+    setNumericIssues({ ...snapshot.numericIssues });
+    setError(null);
+  };
+
+  const pushScenarioHistory = () => {
+    const current = createScenarioSnapshot();
+    setHistorySnapshots((prev) => [...prev.slice(-14), current]);
+  };
+
+  const scenarioComparable = (snapshot: AssistedScenarioSnapshot | null) => {
+    if (!snapshot) return null;
+    return JSON.stringify({
+      profileId: snapshot.profileId,
+      portfolioSourceMode: snapshot.portfolioSourceMode,
+      simpleRvPct: Number(snapshot.simpleRvPct.toFixed(4)),
+      autoAdjustInstrumentAmounts: snapshot.autoAdjustInstrumentAmounts,
+      optimizeEnabled: snapshot.optimizeEnabled,
+      bucketEnabled: snapshot.bucketEnabled,
+      bucketInstrumentId: snapshot.bucketInstrumentId,
+      bucketFloorMm: Number(snapshot.bucketFloorMm.toFixed(4)),
+      bucketFloorPct: Number(snapshot.bucketFloorPct.toFixed(4)),
+      inputs: snapshot.inputs,
+      excludedInstruments: snapshot.excludedInstruments,
+    });
+  };
+
   const selectedIds = useMemo(() => new Set(selectedIdsFromEntries(inputs.portfolioEntries)), [inputs.portfolioEntries]);
 
   const selectedInstrumentRows = useMemo(
@@ -603,8 +684,9 @@ export function AssistedSimulationPage() {
 
   const upsertInstrument = (instrumentId: string) => {
     if (!instrumentId) return;
+    if (inputs.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return;
+    pushScenarioHistory();
     setInputs((prev) => {
-      if (prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return prev;
       const nextEntries = [...prev.portfolioEntries, { instrumentId, amountClp: 0, percentage: 0 }];
       return {
         ...prev,
@@ -621,6 +703,8 @@ export function AssistedSimulationPage() {
       setReturnTiltMessage('Este instrumento sostiene el bucket defensivo. Desactiva o reasigna el bucket antes de eliminarlo.');
       return;
     }
+    if (!inputs.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return;
+    pushScenarioHistory();
     setInputs((prev) => {
       const removed = prev.portfolioEntries.find((entry) => entry.instrumentId === instrumentId);
       if (removed) {
@@ -652,6 +736,7 @@ export function AssistedSimulationPage() {
   const restoreExcludedInstrument = (instrumentId: string) => {
     const excluded = excludedInstruments.find((entry) => entry.instrumentId === instrumentId);
     if (!excluded) return;
+    pushScenarioHistory();
     setInputs((prev) => {
       if (prev.portfolioEntries.some((entry) => entry.instrumentId === instrumentId)) return prev;
       const nextEntries = [...prev.portfolioEntries, { ...excluded }];
@@ -696,10 +781,27 @@ export function AssistedSimulationPage() {
     setNumericDrafts({});
     setNumericIssues({});
     if (profileId === 'custom') {
-      setInputs((prev) => ({
-        ...prev,
-        initialCapitalClp: prev.initialCapitalClp,
-      }));
+      const customSnapshot: AssistedScenarioSnapshot = {
+        profileId,
+        portfolioSourceMode,
+        simpleRvPct,
+        autoAdjustInstrumentAmounts,
+        optimizeEnabled: false,
+        bucketEnabled,
+        bucketInstrumentId,
+        bucketFloorMm,
+        bucketFloorPct,
+        inputs: cloneInputs({
+          ...inputs,
+          initialCapitalClp: inputs.initialCapitalClp,
+        }),
+        excludedInstruments: [],
+        numericDrafts: {},
+        numericIssues: {},
+      };
+      applyScenarioSnapshot(customSnapshot);
+      setBaseScenarioSnapshot(customSnapshot);
+      setHistorySnapshots([]);
       return;
     }
 
@@ -712,13 +814,8 @@ export function AssistedSimulationPage() {
       : null;
     const shouldUseInstruments = useInstruments && (profileId !== 'parents' || !!parentsPresetEntries);
 
-    setPortfolioSourceMode(shouldUseInstruments ? 'instruments' : 'simple');
-    setSimpleRvPct(profileId === 'parents' ? 35 : 55);
-    setOptimizeEnabled(false);
-    setAutoAdjustInstrumentAmounts(true);
-
-    setInputs((prev) => ({
-      ...prev,
+    const nextInputs: AssistedInputs = {
+      ...inputs,
       initialCapitalClp: capitalClp,
       horizonYears: profile.horizonYears,
       spendingMode: 'fixed',
@@ -737,7 +834,25 @@ export function AssistedSimulationPage() {
       extraContributionClp: 0,
       extraContributionYear: 5,
       portfolioMode: 'manual',
-    }));
+    };
+    const profileSnapshot: AssistedScenarioSnapshot = {
+      profileId,
+      portfolioSourceMode: shouldUseInstruments ? 'instruments' : 'simple',
+      simpleRvPct: profileId === 'parents' ? 35 : 55,
+      autoAdjustInstrumentAmounts: true,
+      optimizeEnabled: false,
+      bucketEnabled,
+      bucketInstrumentId,
+      bucketFloorMm,
+      bucketFloorPct,
+      inputs: cloneInputs(nextInputs),
+      excludedInstruments: [],
+      numericDrafts: {},
+      numericIssues: {},
+    };
+    applyScenarioSnapshot(profileSnapshot);
+    setBaseScenarioSnapshot(profileSnapshot);
+    setHistorySnapshots([]);
   };
 
   const portfolioAmountTotal = useMemo(
@@ -932,6 +1047,47 @@ export function AssistedSimulationPage() {
     return `${profileName} · Capital efectivo ${capital} · Gasto ${formatMoney(inputs.fixedMonthlyClp)} · Horizonte ${questionMode === 'duration' ? `${DURATION_TECHNICAL_HORIZON} años (técnico)` : `${inputs.horizonYears} años`} · ${portfolioText}`;
   }, [activeProfile, previewEffectiveCapitalClp, portfolioSourceMode, simpleRvPct, selectedCount, questionMode, inputs.horizonYears, inputs.fixedMonthlyClp]);
 
+  useEffect(() => {
+    if (baseScenarioSnapshot) return;
+    const initial = createScenarioSnapshot();
+    setBaseScenarioSnapshot(initial);
+  }, [baseScenarioSnapshot]);
+
+  const hasScenarioChanges = useMemo(() => {
+    if (!baseScenarioSnapshot) return false;
+    return scenarioComparable(createScenarioSnapshot()) !== scenarioComparable(baseScenarioSnapshot);
+  }, [
+    baseScenarioSnapshot,
+    activeProfile,
+    portfolioSourceMode,
+    simpleRvPct,
+    autoAdjustInstrumentAmounts,
+    optimizeEnabled,
+    bucketEnabled,
+    bucketInstrumentId,
+    bucketFloorMm,
+    bucketFloorPct,
+    inputs,
+    excludedInstruments,
+    numericDrafts,
+    numericIssues,
+  ]);
+
+  const undoLastAdjustment = () => {
+    if (historySnapshots.length === 0) return;
+    const previous = historySnapshots[historySnapshots.length - 1];
+    setHistorySnapshots((prev) => prev.slice(0, -1));
+    applyScenarioSnapshot(previous);
+    setReturnTiltMessage('Último ajuste deshecho.');
+  };
+
+  const restoreBaseScenario = () => {
+    if (!baseScenarioSnapshot) return;
+    applyScenarioSnapshot(baseScenarioSnapshot);
+    setHistorySnapshots([]);
+    setReturnTiltMessage('Escenario base restaurado.');
+  };
+
   const applyWeightsToEntries = (
     nextWeights: Map<string, number>,
   ) => {
@@ -1024,6 +1180,7 @@ export function AssistedSimulationPage() {
     }
     const before = portfolioExpectedReturnAnnual;
     const after = rows.reduce((sum, row) => sum + ((nextWeights.get(row.instrumentId) ?? 0) * row.expectedReturnAnnual), 0);
+    pushScenarioHistory();
     applyWeightsToEntries(nextWeights);
     if (direction === 'more') {
       setReturnTiltMessage(`Bucket defensivo respetado. Mix ajustado hacia más retorno (${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%). Recalcula para ver impacto.`);
@@ -1047,8 +1204,24 @@ export function AssistedSimulationPage() {
     for (const row of nonBucket) {
       if (row.instrumentId !== keepNonBucketId) nextWeights.set(row.instrumentId, 0);
     }
+    pushScenarioHistory();
     applyWeightsToEntries(nextWeights);
     setReturnTiltMessage(`Bucket defensivo respetado. Probando bucket + ${chosen.name}. Recalcula para ver impacto.`);
+  };
+
+  const applyBucketAll = () => {
+    if (!bucketEnabled || !bucketRow || selectedInstrumentExpectedRows.length < 2) return;
+    const nonBucket = selectedInstrumentExpectedRows.filter((row) => row.instrumentId !== bucketInstrumentId);
+    if (nonBucket.length === 0) return;
+    const bucketTarget = clamp(Math.max(bucketFloorWeight, bucketRow.weight), 0, 1);
+    const remaining = Math.max(0, 1 - bucketTarget);
+    const split = remaining / nonBucket.length;
+    const nextWeights = new Map<string, number>();
+    nextWeights.set(bucketInstrumentId, bucketTarget);
+    for (const row of nonBucket) nextWeights.set(row.instrumentId, split);
+    pushScenarioHistory();
+    applyWeightsToEntries(nextWeights);
+    setReturnTiltMessage('Mix ajustado. Manteniendo bucket + todos los instrumentos activos. Recalcula para ver impacto.');
   };
 
   const buildRuntimeContext = (
@@ -1928,8 +2101,10 @@ export function AssistedSimulationPage() {
                     <button
                       type="button"
                       onClick={() => {
+                        pushScenarioHistory();
                         updateInput('initialCapitalClp', portfolioAmountTotal);
                         setAutoAdjustInstrumentAmounts(false);
+                        setReturnTiltMessage('Capital sincronizado con la suma de instrumentos.');
                       }}
                       style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800, padding: 0 }}
                     >
@@ -1938,11 +2113,13 @@ export function AssistedSimulationPage() {
                     <button
                       type="button"
                       onClick={() => {
+                        pushScenarioHistory();
                         setAutoAdjustInstrumentAmounts(true);
                         setInputs((prev) => ({
                           ...prev,
                           portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, prev.initialCapitalClp),
                         }));
+                        setReturnTiltMessage('Instrumentos repartidos para cuadrar el capital total.');
                       }}
                       style={{ border: 'none', background: 'transparent', color: T.primary, cursor: 'pointer', fontWeight: 800, padding: 0 }}
                     >
@@ -2027,6 +2204,63 @@ export function AssistedSimulationPage() {
                 {returnTiltMessage && (
                   <div style={{ color: ASSISTED_COCKPIT.accent, fontSize: 11, fontWeight: 700 }}>
                     {returnTiltMessage}
+                  </div>
+                )}
+                {baseScenarioSnapshot && (
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: ASSISTED_COCKPIT.panel,
+                    border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                  }}>
+                    <span style={{ color: T.textMuted, fontSize: 11 }}>
+                      {hasScenarioChanges
+                        ? 'Mix modificado · pendiente de recalcular'
+                        : `Escenario base ${profileConfigs[activeProfile].title}`}
+                    </span>
+                    {hasScenarioChanges && (
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={undoLastAdjustment}
+                          disabled={historySnapshots.length === 0}
+                          style={{
+                            borderRadius: 999,
+                            border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                            background: ASSISTED_COCKPIT.panelSoft,
+                            color: T.textPrimary,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: historySnapshots.length === 0 ? 'not-allowed' : 'pointer',
+                            opacity: historySnapshots.length === 0 ? 0.6 : 1,
+                          }}
+                        >
+                          Deshacer último ajuste
+                        </button>
+                        <button
+                          type="button"
+                          onClick={restoreBaseScenario}
+                          style={{
+                            borderRadius: 999,
+                            border: `1px solid ${ASSISTED_COCKPIT.accent}`,
+                            background: ASSISTED_COCKPIT.accentSoft,
+                            color: T.textPrimary,
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {`Restaurar base ${profileConfigs[activeProfile].title}`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {requiredReturnAnnual !== null && Number.isFinite(requiredReturnAnnual) && portfolioExpectedReturnAnnual < requiredReturnAnnual && (
@@ -2188,7 +2422,7 @@ export function AssistedSimulationPage() {
                     <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>Probar 2 de 3:</span>
                     <button
                       type="button"
-                      onClick={() => setReturnTiltMessage('Manteniendo bucket + todos los instrumentos activos.')}
+                      onClick={applyBucketAll}
                       style={{
                         borderRadius: 999,
                         border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
