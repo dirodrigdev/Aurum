@@ -214,6 +214,54 @@ const solveRequiredAnnualReturn = (
   return (1 + monthly) ** 12 - 1;
 };
 
+const solveRequiredAnnualReturnForCashflows = (
+  capitalClp: number,
+  monthlyCashflowsClp: number[],
+): number | null => {
+  const capital = Math.max(0, Number(capitalClp || 0));
+  const flows = monthlyCashflowsClp
+    .map((value) => Math.max(0, Number(value || 0)))
+    .filter((value) => Number.isFinite(value));
+  if (capital <= 0 || flows.length === 0) return null;
+
+  const terminalBalanceAtMonthlyRate = (r: number): number => {
+    let balance = capital;
+    for (const flow of flows) {
+      balance = (balance * (1 + r)) - flow;
+      if (!Number.isFinite(balance)) return Number.NaN;
+    }
+    return balance;
+  };
+
+  const low = -0.99;
+  const high = 0.5;
+  const fLow = terminalBalanceAtMonthlyRate(low);
+  const fHigh = terminalBalanceAtMonthlyRate(high);
+  if (!Number.isFinite(fLow) || !Number.isFinite(fHigh) || fLow * fHigh > 0) return null;
+
+  let a = low;
+  let b = high;
+  let fa = fLow;
+  for (let i = 0; i < 90; i += 1) {
+    const mid = (a + b) / 2;
+    const fMid = terminalBalanceAtMonthlyRate(mid);
+    if (!Number.isFinite(fMid)) return null;
+    if (Math.abs(fMid) < 1e-8) {
+      a = mid;
+      b = mid;
+      break;
+    }
+    if ((fa < 0 && fMid < 0) || (fa > 0 && fMid > 0)) {
+      a = mid;
+      fa = fMid;
+    } else {
+      b = mid;
+    }
+  }
+  const monthly = (a + b) / 2;
+  return (1 + monthly) ** 12 - 1;
+};
+
 const selectedIdsFromEntries = (entries: AssistedPortfolioEntry[]) => entries.map((entry) => entry.instrumentId);
 
 const resolveSimpleSleeveShares = (): { rvGlobalShare: number; rvChileShare: number; rfGlobalShare: number; rfChileShare: number } => {
@@ -1616,11 +1664,35 @@ export function AssistedSimulationPage() {
   const deterministicRequiredReturn = useMemo(() => {
     if (!result) return null;
     const baseCapital = Math.max(1, result.effectiveInitialCapitalClp);
+    if (inputs.spendingMode === 'two_phase') {
+      const totalMonths = Math.max(1, Math.round(diagnosticHorizonYears * 12));
+      const phase1Months = clamp(Math.round(inputs.phase1Years * 12), 1, totalMonths);
+      const phase2Months = Math.max(0, totalMonths - phase1Months);
+      const phase1Monthly = resultMode === 'max_spending'
+        ? Math.max(0, result.best.phase1MonthlyClp)
+        : Math.max(0, inputs.phase1MonthlyClp);
+      const phase2Monthly = resultMode === 'max_spending'
+        ? Math.max(0, result.best.phase2MonthlyClp)
+        : Math.max(0, inputs.phase2MonthlyClp);
+      const flows = [
+        ...Array.from({ length: phase1Months }, () => phase1Monthly),
+        ...Array.from({ length: phase2Months }, () => phase2Monthly),
+      ];
+      return solveRequiredAnnualReturnForCashflows(baseCapital, flows);
+    }
     const monthly = resultMode === 'max_spending'
       ? result.best.sustainableMonthlyClp
       : result.best.equivalentMonthlyClp;
     return solveRequiredAnnualReturn(baseCapital, monthly, diagnosticHorizonYears);
-  }, [result, resultMode, diagnosticHorizonYears]);
+  }, [
+    result,
+    resultMode,
+    diagnosticHorizonYears,
+    inputs.spendingMode,
+    inputs.phase1Years,
+    inputs.phase1MonthlyClp,
+    inputs.phase2MonthlyClp,
+  ]);
 
   const returnGapAnnual = useMemo(() => {
     if (resultExpectedReturnAnnual === null || deterministicRequiredReturn === null) return null;
@@ -1749,14 +1821,30 @@ export function AssistedSimulationPage() {
         return low;
       })();
 
-      const monthlyForRequired = resultMode === 'max_spending'
-        ? compatibleMonthly
-        : Math.max(0, baseForLevers.fixedMonthlyClp);
-      const returnRequired = solveRequiredAnnualReturn(
-        Math.max(1, baseForLevers.initialCapitalClp),
-        monthlyForRequired,
-        resultMode === 'duration' ? DURATION_TECHNICAL_HORIZON : baseForLevers.horizonYears,
-      );
+      const returnRequired = (() => {
+        const horizonYears = resultMode === 'duration' ? DURATION_TECHNICAL_HORIZON : baseForLevers.horizonYears;
+        if (baseForLevers.spendingMode === 'two_phase') {
+          const totalMonths = Math.max(1, Math.round(horizonYears * 12));
+          const phase1Months = clamp(Math.round(baseForLevers.phase1Years * 12), 1, totalMonths);
+          const phase2Months = Math.max(0, totalMonths - phase1Months);
+          const flows = [
+            ...Array.from({ length: phase1Months }, () => Math.max(0, baseForLevers.phase1MonthlyClp)),
+            ...Array.from({ length: phase2Months }, () => Math.max(0, baseForLevers.phase2MonthlyClp)),
+          ];
+          return solveRequiredAnnualReturnForCashflows(
+            Math.max(1, baseForLevers.initialCapitalClp),
+            flows,
+          );
+        }
+        const monthlyForRequired = resultMode === 'max_spending'
+          ? compatibleMonthly
+          : Math.max(0, baseForLevers.fixedMonthlyClp);
+        return solveRequiredAnnualReturn(
+          Math.max(1, baseForLevers.initialCapitalClp),
+          monthlyForRequired,
+          horizonYears,
+        );
+      })();
 
       setLeversResult({
         targetSuccess: target,
@@ -2796,11 +2884,13 @@ export function AssistedSimulationPage() {
                 Retorno esperado cartera: <strong style={{ color: T.textPrimary }}>{resultExpectedReturnAnnual !== null ? `${(resultExpectedReturnAnnual * 100).toFixed(1)}% real anual` : '--'}</strong>
               </div>
               <div style={{ color: T.textSecondary, fontSize: 12 }}>
-                Retorno requerido aprox.: <strong style={{ color: T.textPrimary }}>{deterministicRequiredReturn !== null ? `${(deterministicRequiredReturn * 100).toFixed(1)}% real anual` : '--'}</strong>
+                Retorno requerido aprox.: <strong style={{ color: T.textPrimary }}>
+                  {deterministicRequiredReturn !== null ? `${(deterministicRequiredReturn * 100).toFixed(1)}% real anual` : 'No disponible para estos flujos'}
+                </strong>
               </div>
               <div style={{ color: T.textSecondary, fontSize: 12 }}>
                 Brecha: <strong style={{ color: returnGapAnnual !== null && returnGapAnnual < 0 ? T.warning : T.textPrimary }}>
-                  {returnGapAnnual !== null ? `${returnGapAnnual >= 0 ? '+' : ''}${(returnGapAnnual * 100).toFixed(1)} pp` : '--'}
+                  {returnGapAnnual !== null ? `${returnGapAnnual >= 0 ? '+' : ''}${(returnGapAnnual * 100).toFixed(1)} pp` : 'No disponible para estos flujos'}
                 </strong>
               </div>
               <div style={{ color: T.textSecondary, fontSize: 12 }}>
@@ -2836,7 +2926,7 @@ export function AssistedSimulationPage() {
                     justifySelf: 'start',
                   }}
                 >
-                  {leversLoading ? 'Calculando palancas...' : 'Calcular palancas 85%'}
+                  {leversLoading ? 'Calculando palancas...' : 'Ver qué cambiar para llegar a 85%'}
                 </button>
               )}
               {leversResult && (
@@ -3009,65 +3099,80 @@ export function AssistedSimulationPage() {
             </label>
           </div>
           {inputs.spendingMode === 'two_phase' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 8 }}>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Fase 1 mensual (MM)
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={numericDisplayValue('phase1MonthlyClpMm', clpToMmInput(inputs.phase1MonthlyClp), (v) => v.toFixed(1))}
-                  onChange={(e) => handleNumericDraftChange('phase1MonthlyClpMm', e.target.value, 'decimal')}
-                  onBlur={() => {
-                    commitNumericDraft({
-                      key: 'phase1MonthlyClpMm',
-                      mode: 'decimal',
-                      min: 0,
-                      apply: (value) => updateInput('phase1MonthlyClp', mmToClp(value)),
-                      requiredMessage: 'Completa el gasto mensual de fase 1.',
-                    });
-                  }}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Años fase 1
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={numericDisplayValue('phase1Years', inputs.phase1Years)}
-                  onChange={(e) => handleNumericDraftChange('phase1Years', e.target.value, 'integer')}
-                  onBlur={() => {
-                    commitNumericDraft({
-                      key: 'phase1Years',
-                      mode: 'integer',
-                      min: 1,
-                      max: 40,
-                      apply: (value) => updateInput('phase1Years', value),
-                      requiredMessage: 'Completa la duración de fase 1.',
-                    });
-                  }}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
-                Fase 2 mensual (MM)
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={numericDisplayValue('phase2MonthlyClpMm', clpToMmInput(inputs.phase2MonthlyClp), (v) => v.toFixed(1))}
-                  onChange={(e) => handleNumericDraftChange('phase2MonthlyClpMm', e.target.value, 'decimal')}
-                  onBlur={() => {
-                    commitNumericDraft({
-                      key: 'phase2MonthlyClpMm',
-                      mode: 'decimal',
-                      min: 0,
-                      apply: (value) => updateInput('phase2MonthlyClp', mmToClp(value)),
-                      requiredMessage: 'Completa el gasto mensual de fase 2.',
-                    });
-                  }}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
-                />
-              </label>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                {`Fase 1: ${clpToMm(inputs.phase1MonthlyClp).toFixed(1)} MM por ${inputs.phase1Years} años · Fase 2: ${clpToMm(inputs.phase2MonthlyClp).toFixed(1)} MM por ${Math.max(0, inputs.horizonYears - inputs.phase1Years)} años`}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 8 }}>
+                <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 8, display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Fase 1</div>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                    Gasto mensual (MM)
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={numericDisplayValue('phase1MonthlyClpMm', clpToMmInput(inputs.phase1MonthlyClp), (v) => v.toFixed(1))}
+                      onChange={(e) => handleNumericDraftChange('phase1MonthlyClpMm', e.target.value, 'decimal')}
+                      onBlur={() => {
+                        commitNumericDraft({
+                          key: 'phase1MonthlyClpMm',
+                          mode: 'decimal',
+                          min: 0,
+                          apply: (value) => updateInput('phase1MonthlyClp', mmToClp(value)),
+                          requiredMessage: 'Completa el gasto mensual de fase 1.',
+                        });
+                      }}
+                      style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                    Años fase 1
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={numericDisplayValue('phase1Years', inputs.phase1Years)}
+                      onChange={(e) => handleNumericDraftChange('phase1Years', e.target.value, 'integer')}
+                      onBlur={() => {
+                        commitNumericDraft({
+                          key: 'phase1Years',
+                          mode: 'integer',
+                          min: 1,
+                          max: 40,
+                          apply: (value) => updateInput('phase1Years', value),
+                          requiredMessage: 'Completa la duración de fase 1.',
+                        });
+                      }}
+                      style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 8, display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Fase 2</div>
+                  <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
+                    Gasto mensual (MM)
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={numericDisplayValue('phase2MonthlyClpMm', clpToMmInput(inputs.phase2MonthlyClp), (v) => v.toFixed(1))}
+                      onChange={(e) => handleNumericDraftChange('phase2MonthlyClpMm', e.target.value, 'decimal')}
+                      onBlur={() => {
+                        commitNumericDraft({
+                          key: 'phase2MonthlyClpMm',
+                          mode: 'decimal',
+                          min: 0,
+                          apply: (value) => updateInput('phase2MonthlyClp', mmToClp(value)),
+                          requiredMessage: 'Completa el gasto mensual de fase 2.',
+                        });
+                      }}
+                      style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
+                    />
+                  </label>
+                  <div style={{ color: T.textMuted, fontSize: 11 }}>
+                    {`Duración estimada: ${Math.max(0, inputs.horizonYears - inputs.phase1Years)} años (resto del horizonte)`}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
