@@ -498,6 +498,16 @@ export function AssistedSimulationPage() {
   const [resultMode, setResultMode] = useState<AssistedQuestionMode>('success');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [leversLoading, setLeversLoading] = useState(false);
+  const [leversError, setLeversError] = useState<string | null>(null);
+  const [leversResult, setLeversResult] = useState<{
+    targetSuccess: number;
+    compatibleMonthlyClp: number | null;
+    requiredCapitalClp: number | null;
+    horizon85Years: number | null;
+    returnRequiredAnnual: number | null;
+  } | null>(null);
+  const [leversScenarioSignature, setLeversScenarioSignature] = useState<string | null>(null);
   const [availableInstruments, setAvailableInstruments] = useState<AssistedInstrumentOption[]>(() => loadAssistedInstrumentOptions());
 
   useEffect(() => {
@@ -1588,6 +1598,181 @@ export function AssistedSimulationPage() {
     return (monthly * 12) / baseCapital;
   }, [result, resultMode]);
 
+  const retiroCapitalLabel = useMemo(() => {
+    if (resultRetiroCapitalPct === null) return null;
+    const pct = resultRetiroCapitalPct * 100;
+    if (pct < 4) return 'Cómodo';
+    if (pct < 7) return 'Moderado';
+    if (pct < 10) return 'Exigente';
+    return 'Muy exigente';
+  }, [resultRetiroCapitalPct]);
+
+  const diagnosticHorizonYears = useMemo(() => {
+    if (!result) return inputs.horizonYears;
+    if (resultMode === 'duration') return DURATION_TECHNICAL_HORIZON;
+    return result.horizonYears;
+  }, [result, resultMode, inputs.horizonYears]);
+
+  const deterministicRequiredReturn = useMemo(() => {
+    if (!result) return null;
+    const baseCapital = Math.max(1, result.effectiveInitialCapitalClp);
+    const monthly = resultMode === 'max_spending'
+      ? result.best.sustainableMonthlyClp
+      : result.best.equivalentMonthlyClp;
+    return solveRequiredAnnualReturn(baseCapital, monthly, diagnosticHorizonYears);
+  }, [result, resultMode, diagnosticHorizonYears]);
+
+  const returnGapAnnual = useMemo(() => {
+    if (resultExpectedReturnAnnual === null || deterministicRequiredReturn === null) return null;
+    return resultExpectedReturnAnnual - deterministicRequiredReturn;
+  }, [resultExpectedReturnAnnual, deterministicRequiredReturn]);
+
+  const whyResultText = useMemo(() => {
+    if (!result || resultExpectedReturnAnnual === null || deterministicRequiredReturn === null || resultRetiroCapitalPct === null || !retiroCapitalLabel) {
+      return null;
+    }
+    const expectedPct = resultExpectedReturnAnnual * 100;
+    const requiredPct = deterministicRequiredReturn * 100;
+    const retiroPct = resultRetiroCapitalPct * 100;
+    if (expectedPct < requiredPct) {
+      return `El retiro anual representa ${retiroPct.toFixed(1)}% del capital (${retiroCapitalLabel}) y el retorno esperado de la cartera está por debajo del retorno requerido.`;
+    }
+    return `El retiro anual representa ${retiroPct.toFixed(1)}% del capital (${retiroCapitalLabel}) y existe margen determinístico frente al retorno requerido.`;
+  }, [result, resultExpectedReturnAnnual, deterministicRequiredReturn, resultRetiroCapitalPct, retiroCapitalLabel]);
+
+  const currentScenarioSignature = useMemo(
+    () => scenarioComparable(createScenarioSnapshot()),
+    [
+      activeProfile,
+      portfolioSourceMode,
+      simpleRvPct,
+      autoAdjustInstrumentAmounts,
+      optimizeEnabled,
+      bucketEnabled,
+      bucketInstrumentId,
+      bucketFloorMm,
+      bucketFloorPct,
+      inputs,
+      excludedInstruments,
+      numericDrafts,
+      numericIssues,
+    ],
+  );
+  const leversAreStale = !!leversResult && !!leversScenarioSignature && leversScenarioSignature !== currentScenarioSignature;
+
+  const calculateLevers85 = () => {
+    if (leversLoading) return;
+    setLeversError(null);
+    const { nextInputs, nextSimpleRvPct, error: draftError } = resolveNumericDraftsForRun();
+    if (draftError) {
+      setLeversError(draftError);
+      return;
+    }
+    setLeversLoading(true);
+    try {
+      const target = 0.85;
+      const { runtimeInputs, runtimeInstruments } = buildRuntimeContext(nextInputs, nextSimpleRvPct);
+      const baseForLevers: AssistedInputs = {
+        ...runtimeInputs,
+        optimizationObjective: 'max_success',
+        successThreshold: target,
+      };
+
+      const normalizeForCapital = (candidate: AssistedInputs, capitalClp: number): AssistedInputs => {
+        const out: AssistedInputs = { ...candidate, initialCapitalClp: Math.max(1, Math.round(capitalClp)) };
+        if (portfolioSourceMode === 'instruments' && out.portfolioEntryMode === 'amount' && out.portfolioEntries.length > 0) {
+          out.portfolioEntries = redistributeEntriesToCapital(out.portfolioEntries, out.initialCapitalClp);
+        }
+        return out;
+      };
+
+      const runFor = (candidate: AssistedInputs): AssistedOptimizationResult =>
+        runAssistedSimulation(candidate, runtimeInstruments);
+
+      const compatibleMonthly = (() => {
+        if (resultMode === 'max_spending' && result) return result.best.sustainableMonthlyClp;
+        const spendingInput: AssistedInputs = {
+          ...baseForLevers,
+          optimizationObjective: 'max_spending',
+        };
+        const out = runFor(spendingInput);
+        return out.best.sustainableMonthlyClp;
+      })();
+
+      const requiredCapital = (() => {
+        const baseCapital = Math.max(1, baseForLevers.initialCapitalClp);
+        const successAt = (capital: number): number => {
+          const candidate = normalizeForCapital(baseForLevers, capital);
+          return runFor(candidate).best.successAtHorizon;
+        };
+        if (successAt(baseCapital) >= target) return baseCapital;
+        let low = baseCapital;
+        let high = baseCapital;
+        let guard = 0;
+        while (successAt(high) < target && guard < 14) {
+          low = high;
+          high *= 1.5;
+          guard += 1;
+        }
+        if (guard >= 14 && successAt(high) < target) return null;
+        for (let i = 0; i < 18; i += 1) {
+          const mid = Math.round((low + high) / 2);
+          if (successAt(mid) >= target) high = mid;
+          else low = mid;
+        }
+        return Math.round(high);
+      })();
+
+      const horizon85 = (() => {
+        if (resultMode === 'duration' && result?.best.durationMetrics?.success85?.years) {
+          return result.best.durationMetrics.success85.years;
+        }
+        const candidateBase: AssistedInputs = {
+          ...baseForLevers,
+          optimizationObjective: 'max_success',
+        };
+        const successAtYears = (years: number): number => {
+          const candidate: AssistedInputs = { ...candidateBase, horizonYears: clamp(Math.round(years), 4, 60) };
+          return runFor(candidate).best.successAtHorizon;
+        };
+        const minYears = 4;
+        const maxYears = 60;
+        if (successAtYears(minYears) < target) return minYears;
+        if (successAtYears(maxYears) >= target) return maxYears;
+        let low = minYears;
+        let high = maxYears;
+        while (high - low > 1) {
+          const mid = Math.floor((low + high) / 2);
+          if (successAtYears(mid) >= target) low = mid;
+          else high = mid;
+        }
+        return low;
+      })();
+
+      const monthlyForRequired = resultMode === 'max_spending'
+        ? compatibleMonthly
+        : Math.max(0, baseForLevers.fixedMonthlyClp);
+      const returnRequired = solveRequiredAnnualReturn(
+        Math.max(1, baseForLevers.initialCapitalClp),
+        monthlyForRequired,
+        resultMode === 'duration' ? DURATION_TECHNICAL_HORIZON : baseForLevers.horizonYears,
+      );
+
+      setLeversResult({
+        targetSuccess: target,
+        compatibleMonthlyClp: Number.isFinite(compatibleMonthly) ? compatibleMonthly : null,
+        requiredCapitalClp: requiredCapital,
+        horizon85Years: Number.isFinite(horizon85) ? horizon85 : null,
+        returnRequiredAnnual: returnRequired,
+      });
+      setLeversScenarioSignature(currentScenarioSignature ?? null);
+    } catch (e) {
+      setLeversError(e instanceof Error ? e.message : 'No se pudieron calcular las palancas de 85%.');
+    } finally {
+      setLeversLoading(false);
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <section style={{
@@ -2603,6 +2788,108 @@ export function AssistedSimulationPage() {
           </div>
 
           <div style={{ color: T.textSecondary, fontSize: 13 }}>{summaryText}</div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
+            <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10, display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Por qué este resultado</div>
+              <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                Retorno esperado cartera: <strong style={{ color: T.textPrimary }}>{resultExpectedReturnAnnual !== null ? `${(resultExpectedReturnAnnual * 100).toFixed(1)}% real anual` : '--'}</strong>
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                Retorno requerido aprox.: <strong style={{ color: T.textPrimary }}>{deterministicRequiredReturn !== null ? `${(deterministicRequiredReturn * 100).toFixed(1)}% real anual` : '--'}</strong>
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                Brecha: <strong style={{ color: returnGapAnnual !== null && returnGapAnnual < 0 ? T.warning : T.textPrimary }}>
+                  {returnGapAnnual !== null ? `${returnGapAnnual >= 0 ? '+' : ''}${(returnGapAnnual * 100).toFixed(1)} pp` : '--'}
+                </strong>
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                Retiro/capital: <strong style={{ color: T.textPrimary }}>
+                  {resultRetiroCapitalPct !== null ? `${(resultRetiroCapitalPct * 100).toFixed(1)}%` : '--'}
+                  {retiroCapitalLabel ? ` · ${retiroCapitalLabel}` : ''}
+                </strong>
+              </div>
+              {whyResultText && (
+                <div style={{ color: T.textMuted, fontSize: 11 }}>
+                  {whyResultText}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: ASSISTED_COCKPIT.panelSoft, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 10, padding: 10, display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Para llegar a 85% de éxito</div>
+              {!leversResult && (
+                <button
+                  type="button"
+                  onClick={calculateLevers85}
+                  disabled={leversLoading}
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${ASSISTED_COCKPIT.accent}`,
+                    background: ASSISTED_COCKPIT.accentSoft,
+                    color: T.textPrimary,
+                    padding: '7px 10px',
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: leversLoading ? 'not-allowed' : 'pointer',
+                    opacity: leversLoading ? 0.7 : 1,
+                    justifySelf: 'start',
+                  }}
+                >
+                  {leversLoading ? 'Calculando palancas...' : 'Calcular palancas 85%'}
+                </button>
+              )}
+              {leversResult && (
+                <>
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    Gasto compatible: <strong style={{ color: T.textPrimary }}>
+                      {leversResult.compatibleMonthlyClp !== null ? formatMoney(leversResult.compatibleMonthlyClp) : '--'}
+                    </strong>
+                  </div>
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    Capital requerido: <strong style={{ color: T.textPrimary }}>
+                      {leversResult.requiredCapitalClp !== null ? formatMoney(leversResult.requiredCapitalClp) : '--'}
+                    </strong>
+                  </div>
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    Horizonte 85%: <strong style={{ color: T.textPrimary }}>
+                      {leversResult.horizon85Years !== null ? `${leversResult.horizon85Years.toFixed(1)} años` : '--'}
+                    </strong>
+                  </div>
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    Retorno requerido: <strong style={{ color: T.textPrimary }}>
+                      {leversResult.returnRequiredAnnual !== null ? `${(leversResult.returnRequiredAnnual * 100).toFixed(1)}% real anual` : '--'}
+                    </strong>
+                  </div>
+                  {leversAreStale && (
+                    <div style={{ color: T.warning, fontSize: 11 }}>Estos valores quedaron desactualizados por cambios recientes. Vuelve a calcular palancas.</div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={calculateLevers85}
+                    disabled={leversLoading}
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+                      background: ASSISTED_COCKPIT.panel,
+                      color: T.textPrimary,
+                      padding: '6px 10px',
+                      fontWeight: 700,
+                      fontSize: 11,
+                      cursor: leversLoading ? 'not-allowed' : 'pointer',
+                      opacity: leversLoading ? 0.7 : 1,
+                      justifySelf: 'start',
+                    }}
+                  >
+                    {leversLoading ? 'Recalculando...' : 'Recalcular palancas 85%'}
+                  </button>
+                </>
+              )}
+              {leversError && (
+                <div style={{ color: T.warning, fontSize: 11 }}>{leversError}</div>
+              )}
+            </div>
+          </div>
 
           <div style={{ color: T.textMuted, fontSize: 12 }}>
             Capital ingresado {formatMoney(result.inputCapitalClp)} · Suma instrumentos {formatMoney(result.portfolioAmountTotalClp)} · Capital efectivo {formatMoney(result.effectiveInitialCapitalClp)}
