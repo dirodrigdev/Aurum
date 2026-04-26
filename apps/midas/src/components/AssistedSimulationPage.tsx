@@ -137,6 +137,23 @@ const mmToClp = (valueMm: number): number => Math.round(Math.max(0, valueMm) * 1
 const clpToMm = (valueClp: number): number => Math.max(0, valueClp) / 1_000_000;
 const clpToMmInput = (valueClp: number, decimals = 1): number => Number(clpToMm(valueClp).toFixed(decimals));
 const formatMm = (valueClp: number): string => `${clpToMm(valueClp).toFixed(1)} MM`;
+const DECIMAL_INPUT_PATTERN = /^\d*(?:[.,]\d*)?$/;
+const INTEGER_INPUT_PATTERN = /^\d*$/;
+
+const parseDecimalInput = (raw: string): number | null => {
+  const sanitized = (raw ?? '').trim().replace(/\s+/g, '').replace(',', '.');
+  if (!sanitized || sanitized === '.') return null;
+  const normalized = sanitized.startsWith('.') ? `0${sanitized}` : sanitized;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseIntegerInput = (raw: string): number | null => {
+  const sanitized = (raw ?? '').trim().replace(/\s+/g, '');
+  if (!sanitized) return null;
+  const parsed = Number.parseInt(sanitized, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const formatDuration = (years: number, censored: boolean): string => {
   if (!Number.isFinite(years)) return '--';
@@ -455,6 +472,8 @@ export function AssistedSimulationPage() {
   const [excludedInstruments, setExcludedInstruments] = useState<ExcludedInstrumentEntry[]>([]);
   const [optimizationObjective, setOptimizationObjective] = useState<AssistedOptimizationObjective>('max_success');
   const [objectiveOverridden, setObjectiveOverridden] = useState(false);
+  const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>({});
+  const [numericIssues, setNumericIssues] = useState<Record<string, string>>({});
 
   const [inputs, setInputs] = useState<AssistedInputs>(defaultInputs);
   const [result, setResult] = useState<AssistedOptimizationResult | null>(null);
@@ -489,6 +508,75 @@ export function AssistedSimulationPage() {
     () => new Map(availableInstruments.map((item) => [item.instrumentId, item])),
     [availableInstruments],
   );
+
+  const setNumericIssue = (key: string, message: string | null) => {
+    setNumericIssues((prev) => {
+      if (!message) {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: message };
+    });
+  };
+
+  const handleNumericDraftChange = (
+    key: string,
+    raw: string,
+    mode: 'decimal' | 'integer',
+  ) => {
+    const compact = raw.replace(/\s+/g, '');
+    const pattern = mode === 'decimal' ? DECIMAL_INPUT_PATTERN : INTEGER_INPUT_PATTERN;
+    if (!pattern.test(compact)) return;
+    setNumericDrafts((prev) => ({ ...prev, [key]: compact }));
+    setNumericIssue(key, null);
+  };
+
+  const commitNumericDraft = ({
+    key,
+    mode,
+    min,
+    max,
+    apply,
+    requiredMessage,
+  }: {
+    key: string;
+    mode: 'decimal' | 'integer';
+    min?: number;
+    max?: number;
+    apply: (value: number) => void;
+    requiredMessage: string;
+  }): boolean => {
+    const raw = numericDrafts[key];
+    if (raw === undefined) return true;
+    const parsed = mode === 'decimal' ? parseDecimalInput(raw) : parseIntegerInput(raw);
+    if (parsed === null) {
+      setNumericIssue(key, requiredMessage);
+      return false;
+    }
+    let value = parsed;
+    if (min !== undefined) value = Math.max(min, value);
+    if (max !== undefined) value = Math.min(max, value);
+    if (mode === 'integer') value = Math.round(value);
+    apply(value);
+    setNumericDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setNumericIssue(key, null);
+    return true;
+  };
+
+  const numericDisplayValue = (
+    key: string,
+    committedValue: number,
+    formatter?: (value: number) => string,
+  ): string => {
+    if (key in numericDrafts) return numericDrafts[key];
+    return formatter ? formatter(committedValue) : String(committedValue);
+  };
 
   const selectedIds = useMemo(() => new Set(selectedIdsFromEntries(inputs.portfolioEntries)), [inputs.portfolioEntries]);
 
@@ -605,6 +693,8 @@ export function AssistedSimulationPage() {
     setReturnTiltMessage(null);
     setExcludedInstruments([]);
     setBucketAutoNote(null);
+    setNumericDrafts({});
+    setNumericIssues({});
     if (profileId === 'custom') {
       setInputs((prev) => ({
         ...prev,
@@ -961,14 +1051,17 @@ export function AssistedSimulationPage() {
     setReturnTiltMessage(`Bucket defensivo respetado. Probando bucket + ${chosen.name}. Recalcula para ver impacto.`);
   };
 
-  const buildRuntimeContext = (): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
+  const buildRuntimeContext = (
+    baseInputs: AssistedInputs,
+    baseSimpleRvPct: number,
+  ): { runtimeInputs: AssistedInputs; runtimeInstruments: AssistedInstrumentOption[] } => {
     const runtimeInputs: AssistedInputs = {
-      ...inputs,
-      horizonYears: clamp(Number(inputs.horizonYears) || 30, 4, 60),
-      nSim: Math.max(200, Number(inputs.nSim) || 1000),
-      seed: Math.max(1, Math.round(Number(inputs.seed) || 42)),
-      successThreshold: clamp(Number(inputs.successThreshold) || 0.85, 0.5, 0.99),
-      gridStepPct: clamp(Number(inputs.gridStepPct) || 5, 5, 25),
+      ...baseInputs,
+      horizonYears: clamp(Number(baseInputs.horizonYears) || 30, 4, 60),
+      nSim: Math.max(200, Number(baseInputs.nSim) || 1000),
+      seed: Math.max(1, Math.round(Number(baseInputs.seed) || 42)),
+      successThreshold: clamp(Number(baseInputs.successThreshold) || 0.85, 0.5, 0.99),
+      gridStepPct: clamp(Number(baseInputs.gridStepPct) || 5, 5, 25),
       portfolioMode: optimizeEnabled ? 'optimize' : 'manual',
       optimizationObjective,
     };
@@ -983,8 +1076,8 @@ export function AssistedSimulationPage() {
       } else {
         runtimeInputs.portfolioEntryMode = 'percentage';
         runtimeInputs.portfolioEntries = [
-          { instrumentId: SIMPLE_RV_ID, amountClp: 0, percentage: clamp(simpleRvPct, 0, 100) },
-          { instrumentId: SIMPLE_RF_ID, amountClp: 0, percentage: clamp(100 - simpleRvPct, 0, 100) },
+          { instrumentId: SIMPLE_RV_ID, amountClp: 0, percentage: clamp(baseSimpleRvPct, 0, 100) },
+          { instrumentId: SIMPLE_RF_ID, amountClp: 0, percentage: clamp(100 - baseSimpleRvPct, 0, 100) },
         ];
       }
     }
@@ -1014,12 +1107,232 @@ export function AssistedSimulationPage() {
     return { runtimeInputs, runtimeInstruments };
   };
 
+  const resolveNumericDraftsForRun = (): { nextInputs: AssistedInputs; nextSimpleRvPct: number; error: string | null } => {
+    const nextInputs: AssistedInputs = {
+      ...inputs,
+      portfolioEntries: inputs.portfolioEntries.map((entry) => ({ ...entry })),
+    };
+    let nextSimpleRv = simpleRvPct;
+    let firstError: string | null = null;
+    const remainingDrafts = { ...numericDrafts };
+    const nextIssues = { ...numericIssues };
+
+    const takeValue = ({
+      key,
+      mode,
+      current,
+      min,
+      max,
+      requiredMessage,
+    }: {
+      key: string;
+      mode: 'decimal' | 'integer';
+      current: number;
+      min?: number;
+      max?: number;
+      requiredMessage: string;
+    }): number => {
+      if (!(key in remainingDrafts)) return current;
+      const raw = remainingDrafts[key];
+      const parsed = mode === 'decimal' ? parseDecimalInput(raw) : parseIntegerInput(raw);
+      if (parsed === null) {
+        nextIssues[key] = requiredMessage;
+        if (!firstError) firstError = requiredMessage;
+        return current;
+      }
+      let value = parsed;
+      if (min !== undefined) value = Math.max(min, value);
+      if (max !== undefined) value = Math.min(max, value);
+      if (mode === 'integer') value = Math.round(value);
+      delete remainingDrafts[key];
+      delete nextIssues[key];
+      return value;
+    };
+
+    nextInputs.initialCapitalClp = mmToClp(takeValue({
+      key: 'initialCapitalClpMm',
+      mode: 'decimal',
+      current: clpToMm(nextInputs.initialCapitalClp),
+      min: 0,
+      requiredMessage: 'Completa el capital total.',
+    }));
+
+    if (questionMode !== 'duration') {
+      nextInputs.horizonYears = takeValue({
+        key: 'horizonYears',
+        mode: 'integer',
+        current: nextInputs.horizonYears,
+        min: 4,
+        max: 60,
+        requiredMessage: 'Completa el horizonte en años.',
+      });
+    }
+
+    if ((questionMode === 'duration' || questionMode === 'success') && nextInputs.spendingMode === 'fixed') {
+      const fixedMm = takeValue({
+        key: 'fixedMonthlyClpMm',
+        mode: 'decimal',
+        current: clpToMm(nextInputs.fixedMonthlyClp),
+        min: 0,
+        requiredMessage: 'Completa el gasto mensual.',
+      });
+      const fixedClp = mmToClp(fixedMm);
+      nextInputs.fixedMonthlyClp = fixedClp;
+      nextInputs.phase1MonthlyClp = fixedClp;
+      nextInputs.phase2MonthlyClp = fixedClp;
+    }
+
+    if (nextInputs.extraContributionEnabled) {
+      nextInputs.extraContributionClp = mmToClp(takeValue({
+        key: 'extraContributionClpMm',
+        mode: 'decimal',
+        current: clpToMm(nextInputs.extraContributionClp),
+        min: 0,
+        requiredMessage: 'Completa el aporte único adicional.',
+      }));
+      nextInputs.extraContributionYear = takeValue({
+        key: 'extraContributionYear',
+        mode: 'integer',
+        current: nextInputs.extraContributionYear,
+        min: 0,
+        max: 40,
+        requiredMessage: 'Completa el año del aporte adicional.',
+      });
+    }
+
+    if (portfolioSourceMode === 'simple') {
+      nextSimpleRv = clamp(takeValue({
+        key: 'simpleRvPct',
+        mode: 'integer',
+        current: nextSimpleRv,
+        min: 0,
+        max: 100,
+        requiredMessage: 'Completa el porcentaje RV.',
+      }), 0, 100);
+    }
+
+    if (portfolioSourceMode === 'instruments') {
+      nextInputs.portfolioEntries = nextInputs.portfolioEntries.map((entry) => {
+        if (nextInputs.portfolioEntryMode === 'amount') {
+          return {
+            ...entry,
+            amountClp: mmToClp(takeValue({
+              key: `amount_${entry.instrumentId}`,
+              mode: 'decimal',
+              current: clpToMm(entry.amountClp),
+              min: 0,
+              requiredMessage: 'Completa los montos por instrumento.',
+            })),
+          };
+        }
+        return {
+          ...entry,
+          percentage: takeValue({
+            key: `pct_${entry.instrumentId}`,
+            mode: 'decimal',
+            current: entry.percentage,
+            min: 0,
+            max: 100,
+            requiredMessage: 'Completa los porcentajes por instrumento.',
+          }),
+        };
+      });
+
+      if (bucketEnabled) {
+        const key = nextInputs.portfolioEntryMode === 'amount' ? 'bucketFloorMm' : 'bucketFloorPct';
+        const value = takeValue({
+          key,
+          mode: 'decimal',
+          current: nextInputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct,
+          min: 0,
+          max: nextInputs.portfolioEntryMode === 'amount' ? 9999 : 100,
+          requiredMessage: 'Completa el bucket defensivo mínimo.',
+        });
+        if (nextInputs.portfolioEntryMode === 'amount') setBucketFloorMm(value);
+        else setBucketFloorPct(value);
+      }
+    }
+
+    nextInputs.successThreshold = takeValue({
+      key: 'successThreshold',
+      mode: 'decimal',
+      current: nextInputs.successThreshold,
+      min: 0.5,
+      max: 0.99,
+      requiredMessage: 'Completa el umbral mínimo de éxito.',
+    });
+    nextInputs.nSim = takeValue({
+      key: 'nSim',
+      mode: 'integer',
+      current: nextInputs.nSim,
+      min: 200,
+      max: 5000,
+      requiredMessage: 'Completa nSim.',
+    });
+    nextInputs.seed = takeValue({
+      key: 'seed',
+      mode: 'integer',
+      current: nextInputs.seed,
+      min: 1,
+      max: 999999,
+      requiredMessage: 'Completa la seed.',
+    });
+    nextInputs.gridStepPct = takeValue({
+      key: 'gridStepPct',
+      mode: 'integer',
+      current: nextInputs.gridStepPct,
+      min: 5,
+      max: 25,
+      requiredMessage: 'Completa el paso de grilla.',
+    });
+
+    if (nextInputs.spendingMode === 'two_phase') {
+      nextInputs.phase1MonthlyClp = mmToClp(takeValue({
+        key: 'phase1MonthlyClpMm',
+        mode: 'decimal',
+        current: clpToMm(nextInputs.phase1MonthlyClp),
+        min: 0,
+        requiredMessage: 'Completa el gasto mensual de fase 1.',
+      }));
+      nextInputs.phase1Years = takeValue({
+        key: 'phase1Years',
+        mode: 'integer',
+        current: nextInputs.phase1Years,
+        min: 1,
+        max: 40,
+        requiredMessage: 'Completa la duración de fase 1.',
+      });
+      nextInputs.phase2MonthlyClp = mmToClp(takeValue({
+        key: 'phase2MonthlyClpMm',
+        mode: 'decimal',
+        current: clpToMm(nextInputs.phase2MonthlyClp),
+        min: 0,
+        requiredMessage: 'Completa el gasto mensual de fase 2.',
+      }));
+    }
+
+    setNumericDrafts(remainingDrafts);
+    setNumericIssues(nextIssues);
+    if (!firstError) {
+      const lingering = Object.values(nextIssues)[0];
+      if (lingering) firstError = lingering;
+    }
+    return { nextInputs, nextSimpleRvPct: nextSimpleRv, error: firstError };
+  };
+
   const run = () => {
-    setRunning(true);
     setError(null);
     setResult(null);
+    const { nextInputs, nextSimpleRvPct, error: draftError } = resolveNumericDraftsForRun();
+    if (draftError) {
+      setError(draftError);
+      return;
+    }
+    setInputs(nextInputs);
+    setSimpleRvPct(nextSimpleRvPct);
+    setRunning(true);
     try {
-      const { runtimeInputs, runtimeInstruments } = buildRuntimeContext();
+      const { runtimeInputs, runtimeInstruments } = buildRuntimeContext(nextInputs, nextSimpleRvPct);
       const output = runAssistedSimulation(runtimeInputs, runtimeInstruments);
       setResult(output);
       setResultMode(questionMode);
@@ -1212,26 +1525,34 @@ export function AssistedSimulationPage() {
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
             Capital total (MM CLP)
             <input
-              type="number"
-              min={0}
-              step={0.1}
-              value={clpToMmInput(inputs.initialCapitalClp)}
-              onChange={(e) => {
-                const nextCapital = mmToClp(Number(e.target.value) || 0);
-                if (
-                  portfolioSourceMode === 'instruments' &&
-                  inputs.portfolioEntryMode === 'amount' &&
-                  autoAdjustInstrumentAmounts &&
-                  inputs.portfolioEntries.length > 0
-                ) {
-                  setInputs((prev) => ({
-                    ...prev,
-                    initialCapitalClp: nextCapital,
-                    portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, nextCapital),
-                  }));
-                  return;
-                }
-                updateInput('initialCapitalClp', nextCapital);
+              type="text"
+              inputMode="decimal"
+              value={numericDisplayValue('initialCapitalClpMm', clpToMmInput(inputs.initialCapitalClp), (v) => v.toFixed(1))}
+              onChange={(e) => handleNumericDraftChange('initialCapitalClpMm', e.target.value, 'decimal')}
+              onBlur={() => {
+                commitNumericDraft({
+                  key: 'initialCapitalClpMm',
+                  mode: 'decimal',
+                  min: 0,
+                  apply: (value) => {
+                    const nextCapital = mmToClp(value);
+                    if (
+                      portfolioSourceMode === 'instruments' &&
+                      inputs.portfolioEntryMode === 'amount' &&
+                      autoAdjustInstrumentAmounts &&
+                      inputs.portfolioEntries.length > 0
+                    ) {
+                      setInputs((prev) => ({
+                        ...prev,
+                        initialCapitalClp: nextCapital,
+                        portfolioEntries: redistributeEntriesToCapital(prev.portfolioEntries, nextCapital),
+                      }));
+                      return;
+                    }
+                    updateInput('initialCapitalClp', nextCapital);
+                  },
+                  requiredMessage: 'Completa el capital total.',
+                });
               }}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
             />
@@ -1242,11 +1563,20 @@ export function AssistedSimulationPage() {
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Horizonte (años)
               <input
-                type="number"
-                min={4}
-                max={60}
-                value={inputs.horizonYears}
-                onChange={(e) => updateInput('horizonYears', Number(e.target.value) || 20)}
+                type="text"
+                inputMode="numeric"
+                value={numericDisplayValue('horizonYears', inputs.horizonYears)}
+                onChange={(e) => handleNumericDraftChange('horizonYears', e.target.value, 'integer')}
+                onBlur={() => {
+                  commitNumericDraft({
+                    key: 'horizonYears',
+                    mode: 'integer',
+                    min: 4,
+                    max: 60,
+                    apply: (value) => updateInput('horizonYears', value),
+                    requiredMessage: 'Completa el horizonte en años.',
+                  });
+                }}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
@@ -1256,15 +1586,23 @@ export function AssistedSimulationPage() {
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Gasto mensual (MM CLP)
               <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={clpToMmInput(inputs.fixedMonthlyClp)}
-                onChange={(e) => {
-                  const value = mmToClp(Number(e.target.value) || 0);
-                  updateInput('fixedMonthlyClp', value);
-                  updateInput('phase1MonthlyClp', value);
-                  updateInput('phase2MonthlyClp', value);
+                type="text"
+                inputMode="decimal"
+                value={numericDisplayValue('fixedMonthlyClpMm', clpToMmInput(inputs.fixedMonthlyClp), (v) => v.toFixed(1))}
+                onChange={(e) => handleNumericDraftChange('fixedMonthlyClpMm', e.target.value, 'decimal')}
+                onBlur={() => {
+                  commitNumericDraft({
+                    key: 'fixedMonthlyClpMm',
+                    mode: 'decimal',
+                    min: 0,
+                    apply: (value) => {
+                      const clp = mmToClp(value);
+                      updateInput('fixedMonthlyClp', clp);
+                      updateInput('phase1MonthlyClp', clp);
+                      updateInput('phase2MonthlyClp', clp);
+                    },
+                    requiredMessage: 'Completa el gasto mensual.',
+                  });
                 }}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
@@ -1292,22 +1630,39 @@ export function AssistedSimulationPage() {
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Aporte (MM CLP)
               <input
-                type="number"
-                min={0}
-                step={1}
-                value={clpToMmInput(inputs.extraContributionClp)}
-                onChange={(e) => updateInput('extraContributionClp', mmToClp(Number(e.target.value) || 0))}
+                type="text"
+                inputMode="decimal"
+                value={numericDisplayValue('extraContributionClpMm', clpToMmInput(inputs.extraContributionClp), (v) => v.toFixed(1))}
+                onChange={(e) => handleNumericDraftChange('extraContributionClpMm', e.target.value, 'decimal')}
+                onBlur={() => {
+                  commitNumericDraft({
+                    key: 'extraContributionClpMm',
+                    mode: 'decimal',
+                    min: 0,
+                    apply: (value) => updateInput('extraContributionClp', mmToClp(value)),
+                    requiredMessage: 'Completa el aporte único adicional.',
+                  });
+                }}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
             <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
               Año aporte
               <input
-                type="number"
-                min={0}
-                max={40}
-                value={inputs.extraContributionYear}
-                onChange={(e) => updateInput('extraContributionYear', Number(e.target.value) || 0)}
+                type="text"
+                inputMode="numeric"
+                value={numericDisplayValue('extraContributionYear', inputs.extraContributionYear)}
+                onChange={(e) => handleNumericDraftChange('extraContributionYear', e.target.value, 'integer')}
+                onBlur={() => {
+                  commitNumericDraft({
+                    key: 'extraContributionYear',
+                    mode: 'integer',
+                    min: 0,
+                    max: 40,
+                    apply: (value) => updateInput('extraContributionYear', value),
+                    requiredMessage: 'Completa el año del aporte adicional.',
+                  });
+                }}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '9px 11px' }}
               />
             </label>
@@ -1363,12 +1718,20 @@ export function AssistedSimulationPage() {
                 onChange={(e) => setSimpleRvPct(clamp(Number(e.target.value) || 0, 0, 100))}
               />
               <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={simpleRvPct}
-                onChange={(e) => setSimpleRvPct(clamp(Number(e.target.value) || 0, 0, 100))}
+                type="text"
+                inputMode="numeric"
+                value={numericDisplayValue('simpleRvPct', simpleRvPct)}
+                onChange={(e) => handleNumericDraftChange('simpleRvPct', e.target.value, 'integer')}
+                onBlur={() => {
+                  commitNumericDraft({
+                    key: 'simpleRvPct',
+                    mode: 'integer',
+                    min: 0,
+                    max: 100,
+                    apply: (value) => setSimpleRvPct(clamp(value, 0, 100)),
+                    requiredMessage: 'Completa el porcentaje RV.',
+                  });
+                }}
                 style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
               />
             </label>
@@ -1470,26 +1833,42 @@ export function AssistedSimulationPage() {
                     </div>
                     {inputs.portfolioEntryMode === 'amount' ? (
                       <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={clpToMmInput(entry.amountClp)}
+                        type="text"
+                        inputMode="decimal"
+                        value={numericDisplayValue(`amount_${entry.instrumentId}`, clpToMmInput(entry.amountClp), (v) => v.toFixed(1))}
                         onChange={(e) => {
                           if (autoAdjustInstrumentAmounts) {
                             setAutoAdjustInstrumentAmounts(false);
                           }
-                          updateEntry(entry.instrumentId, { amountClp: mmToClp(Number(e.target.value) || 0) });
+                          handleNumericDraftChange(`amount_${entry.instrumentId}`, e.target.value, 'decimal');
+                        }}
+                        onBlur={() => {
+                          commitNumericDraft({
+                            key: `amount_${entry.instrumentId}`,
+                            mode: 'decimal',
+                            min: 0,
+                            apply: (value) => updateEntry(entry.instrumentId, { amountClp: mmToClp(value) }),
+                            requiredMessage: `Completa el monto de ${instrument.name}.`,
+                          });
                         }}
                         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
                       />
                     ) : (
                       <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={0.1}
-                        value={entry.percentage}
-                        onChange={(e) => updateEntry(entry.instrumentId, { percentage: Number(e.target.value) || 0 })}
+                        type="text"
+                        inputMode="decimal"
+                        value={numericDisplayValue(`pct_${entry.instrumentId}`, entry.percentage, (v) => v.toFixed(1))}
+                        onChange={(e) => handleNumericDraftChange(`pct_${entry.instrumentId}`, e.target.value, 'decimal')}
+                        onBlur={() => {
+                          commitNumericDraft({
+                            key: `pct_${entry.instrumentId}`,
+                            mode: 'decimal',
+                            min: 0,
+                            max: 100,
+                            apply: (value) => updateEntry(entry.instrumentId, { percentage: value }),
+                            requiredMessage: `Completa el porcentaje de ${instrument.name}.`,
+                          });
+                        }}
                         style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, color: T.textPrimary, padding: '8px 10px' }}
                       />
                     )}
@@ -1754,15 +2133,30 @@ export function AssistedSimulationPage() {
                   <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
                     Bucket defensivo mínimo {inputs.portfolioEntryMode === 'amount' ? '(MM)' : '(%)'}
                     <input
-                      type="number"
-                      min={0}
-                      max={inputs.portfolioEntryMode === 'amount' ? 9999 : 100}
-                      step={0.1}
-                      value={inputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct}
-                      onChange={(e) => {
-                        const v = Math.max(0, Number(e.target.value) || 0);
-                        if (inputs.portfolioEntryMode === 'amount') setBucketFloorMm(v);
-                        else setBucketFloorPct(v);
+                      type="text"
+                      inputMode="decimal"
+                      value={numericDisplayValue(
+                        inputs.portfolioEntryMode === 'amount' ? 'bucketFloorMm' : 'bucketFloorPct',
+                        inputs.portfolioEntryMode === 'amount' ? bucketFloorMm : bucketFloorPct,
+                        (v) => v.toFixed(1),
+                      )}
+                      onChange={(e) => handleNumericDraftChange(
+                        inputs.portfolioEntryMode === 'amount' ? 'bucketFloorMm' : 'bucketFloorPct',
+                        e.target.value,
+                        'decimal',
+                      )}
+                      onBlur={() => {
+                        commitNumericDraft({
+                          key: inputs.portfolioEntryMode === 'amount' ? 'bucketFloorMm' : 'bucketFloorPct',
+                          mode: 'decimal',
+                          min: 0,
+                          max: inputs.portfolioEntryMode === 'amount' ? 9999 : 100,
+                          apply: (value) => {
+                            if (inputs.portfolioEntryMode === 'amount') setBucketFloorMm(value);
+                            else setBucketFloorPct(value);
+                          },
+                          requiredMessage: 'Completa el bucket defensivo mínimo.',
+                        });
                       }}
                       style={{ background: ASSISTED_COCKPIT.panel, border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`, borderRadius: 8, color: T.textPrimary, padding: '6px 8px' }}
                     />
@@ -2018,36 +2412,60 @@ export function AssistedSimulationPage() {
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
             Umbral mínimo de éxito
             <input
-              type="number"
-              min={0.5}
-              max={0.99}
-              step={0.01}
-              value={inputs.successThreshold}
-              onChange={(e) => updateInput('successThreshold', Number(e.target.value) || 0.85)}
+              type="text"
+              inputMode="decimal"
+              value={numericDisplayValue('successThreshold', inputs.successThreshold, (v) => v.toFixed(2))}
+              onChange={(e) => handleNumericDraftChange('successThreshold', e.target.value, 'decimal')}
+              onBlur={() => {
+                commitNumericDraft({
+                  key: 'successThreshold',
+                  mode: 'decimal',
+                  min: 0.5,
+                  max: 0.99,
+                  apply: (value) => updateInput('successThreshold', value),
+                  requiredMessage: 'Completa el umbral mínimo de éxito.',
+                });
+              }}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
             />
           </label>
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
             nSim
             <input
-              type="number"
-              min={200}
-              max={5000}
-              step={100}
-              value={inputs.nSim}
-              onChange={(e) => updateInput('nSim', Number(e.target.value) || 1000)}
+              type="text"
+              inputMode="numeric"
+              value={numericDisplayValue('nSim', inputs.nSim)}
+              onChange={(e) => handleNumericDraftChange('nSim', e.target.value, 'integer')}
+              onBlur={() => {
+                commitNumericDraft({
+                  key: 'nSim',
+                  mode: 'integer',
+                  min: 200,
+                  max: 5000,
+                  apply: (value) => updateInput('nSim', value),
+                  requiredMessage: 'Completa nSim.',
+                });
+              }}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
             />
           </label>
           <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
             Seed
             <input
-              type="number"
-              min={1}
-              max={999999}
-              step={1}
-              value={inputs.seed}
-              onChange={(e) => updateInput('seed', Number(e.target.value) || 42)}
+              type="text"
+              inputMode="numeric"
+              value={numericDisplayValue('seed', inputs.seed)}
+              onChange={(e) => handleNumericDraftChange('seed', e.target.value, 'integer')}
+              onBlur={() => {
+                commitNumericDraft({
+                  key: 'seed',
+                  mode: 'integer',
+                  min: 1,
+                  max: 999999,
+                  apply: (value) => updateInput('seed', value),
+                  requiredMessage: 'Completa la seed.',
+                });
+              }}
               style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
             />
           </label>
@@ -2074,33 +2492,58 @@ export function AssistedSimulationPage() {
               <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
                 Fase 1 mensual (MM)
                 <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={clpToMmInput(inputs.phase1MonthlyClp)}
-                  onChange={(e) => updateInput('phase1MonthlyClp', mmToClp(Number(e.target.value) || 0))}
+                  type="text"
+                  inputMode="decimal"
+                  value={numericDisplayValue('phase1MonthlyClpMm', clpToMmInput(inputs.phase1MonthlyClp), (v) => v.toFixed(1))}
+                  onChange={(e) => handleNumericDraftChange('phase1MonthlyClpMm', e.target.value, 'decimal')}
+                  onBlur={() => {
+                    commitNumericDraft({
+                      key: 'phase1MonthlyClpMm',
+                      mode: 'decimal',
+                      min: 0,
+                      apply: (value) => updateInput('phase1MonthlyClp', mmToClp(value)),
+                      requiredMessage: 'Completa el gasto mensual de fase 1.',
+                    });
+                  }}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />
               </label>
               <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
                 Años fase 1
                 <input
-                  type="number"
-                  min={1}
-                  max={40}
-                  value={inputs.phase1Years}
-                  onChange={(e) => updateInput('phase1Years', Number(e.target.value) || 1)}
+                  type="text"
+                  inputMode="numeric"
+                  value={numericDisplayValue('phase1Years', inputs.phase1Years)}
+                  onChange={(e) => handleNumericDraftChange('phase1Years', e.target.value, 'integer')}
+                  onBlur={() => {
+                    commitNumericDraft({
+                      key: 'phase1Years',
+                      mode: 'integer',
+                      min: 1,
+                      max: 40,
+                      apply: (value) => updateInput('phase1Years', value),
+                      requiredMessage: 'Completa la duración de fase 1.',
+                    });
+                  }}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />
               </label>
               <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
                 Fase 2 mensual (MM)
                 <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={clpToMmInput(inputs.phase2MonthlyClp)}
-                  onChange={(e) => updateInput('phase2MonthlyClp', mmToClp(Number(e.target.value) || 0))}
+                  type="text"
+                  inputMode="decimal"
+                  value={numericDisplayValue('phase2MonthlyClpMm', clpToMmInput(inputs.phase2MonthlyClp), (v) => v.toFixed(1))}
+                  onChange={(e) => handleNumericDraftChange('phase2MonthlyClpMm', e.target.value, 'decimal')}
+                  onBlur={() => {
+                    commitNumericDraft({
+                      key: 'phase2MonthlyClpMm',
+                      mode: 'decimal',
+                      min: 0,
+                      apply: (value) => updateInput('phase2MonthlyClp', mmToClp(value)),
+                      requiredMessage: 'Completa el gasto mensual de fase 2.',
+                    });
+                  }}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />
               </label>
@@ -2142,12 +2585,20 @@ export function AssistedSimulationPage() {
               <label style={{ display: 'grid', gap: 4, color: T.textPrimary, fontSize: 12 }}>
                 Paso de grilla (%)
                 <input
-                  type="number"
-                  min={5}
-                  max={25}
-                  step={5}
-                  value={inputs.gridStepPct}
-                  onChange={(e) => updateInput('gridStepPct', Number(e.target.value) || 5)}
+                  type="text"
+                  inputMode="numeric"
+                  value={numericDisplayValue('gridStepPct', inputs.gridStepPct)}
+                  onChange={(e) => handleNumericDraftChange('gridStepPct', e.target.value, 'integer')}
+                  onBlur={() => {
+                    commitNumericDraft({
+                      key: 'gridStepPct',
+                      mode: 'integer',
+                      min: 5,
+                      max: 25,
+                      apply: (value) => updateInput('gridStepPct', value),
+                      requiredMessage: 'Completa el paso de grilla.',
+                    });
+                  }}
                   style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, color: T.textPrimary, padding: '8px 10px' }}
                 />
               </label>
