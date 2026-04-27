@@ -191,6 +191,7 @@ export const computeMonthlyRows = (
       fxAuditable,
       fxMissing: fxResolution.missingKeys,
       gastosStatus: spend.status,
+      gastosSource: spend.source,
       netClp,
       prevNetClp,
       invalidNet,

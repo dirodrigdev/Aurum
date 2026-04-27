@@ -64,6 +64,8 @@ type AppliedTraceRow = {
   impact: string;
 };
 
+type FreshnessStatus = 'fresh' | 'aging' | 'stale' | 'unknown';
+
 export type SimulationPreset = ScenarioVariantId | 'custom';
 
 export type SimulationOverrides = {
@@ -108,6 +110,43 @@ const formatSessionMoment = (atMs: number | null) => {
   const seconds = atMs / 1000;
   if (seconds < 60) return `t+${seconds.toFixed(1)}s`;
   return `t+${(seconds / 60).toFixed(1)}min`;
+};
+
+const parseIsoTimestamp = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatRelativePublishedAt = (value: string | null | undefined) => {
+  const parsed = parseIsoTimestamp(value);
+  if (parsed === null) return 'Sin fecha';
+  const diffMs = Date.now() - parsed;
+  if (!Number.isFinite(diffMs) || diffMs < 0) return 'Fecha inválida';
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours < 1) return 'Hace menos de 1h';
+  if (diffHours < 48) return `Hace ${Math.round(diffHours)}h`;
+  const diffDays = diffHours / 24;
+  if (diffDays < 14) return `Hace ${diffDays.toFixed(diffDays < 7 ? 1 : 0)}d`;
+  return `Hace ${Math.round(diffDays)}d`;
+};
+
+const getFreshnessStatus = (publishedAt: string | null | undefined): FreshnessStatus => {
+  const parsed = parseIsoTimestamp(publishedAt);
+  if (parsed === null) return 'unknown';
+  const diffMs = Date.now() - parsed;
+  if (!Number.isFinite(diffMs) || diffMs < 0) return 'unknown';
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours <= 48) return 'fresh';
+  if (diffHours <= 24 * 7) return 'aging';
+  return 'stale';
+};
+
+const freshnessPresentation = (status: FreshnessStatus) => {
+  if (status === 'fresh') return { label: 'Fresh', color: T.positive };
+  if (status === 'aging') return { label: 'Revisar', color: T.warning };
+  if (status === 'stale') return { label: 'Stale', color: T.negative };
+  return { label: 'Sin fecha', color: T.textMuted };
 };
 
 const cloneModelParams = (params: ModelParameters): ModelParameters => JSON.parse(JSON.stringify(params)) as ModelParameters;
@@ -166,6 +205,7 @@ export function SimulationPage({
   isScenarioAdjusted,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
+  aurumSnapshotPublishedAt,
   baseUpdatePending,
   hasPendingSnapshot,
   pendingSnapshotLabel,
@@ -179,6 +219,7 @@ export function SimulationPage({
   riskCapitalEnabled,
   riskCapitalEffective,
   riskCapitalCLP,
+  riskCapitalUsdSnapshotCLP,
   recalcWorkerStatus,
   activeRecalcRequestId,
   appliedRecalcRequestId,
@@ -198,6 +239,7 @@ export function SimulationPage({
   operativeFxResolution,
   weightsSourceMode,
   weightsSourceLabel,
+  universeSourceOrigin,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -233,6 +275,7 @@ export function SimulationPage({
   isScenarioAdjusted: boolean;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
+  aurumSnapshotPublishedAt: string | null;
   baseUpdatePending: boolean;
   hasPendingSnapshot: boolean;
   pendingSnapshotLabel: string | null;
@@ -246,6 +289,7 @@ export function SimulationPage({
   riskCapitalEnabled: boolean;
   riskCapitalEffective: boolean;
   riskCapitalCLP: number;
+  riskCapitalUsdSnapshotCLP: number;
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
   activeRecalcRequestId: number | null;
   appliedRecalcRequestId: number | null;
@@ -273,6 +317,7 @@ export function SimulationPage({
   operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
+  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -951,6 +996,46 @@ export function SimulationPage({
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
   const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
+  const snapshotFreshness = useMemo(
+    () => getFreshnessStatus(aurumSnapshotPublishedAt),
+    [aurumSnapshotPublishedAt],
+  );
+  const snapshotFreshnessUi = freshnessPresentation(snapshotFreshness);
+  const snapshotPublishedRelative = useMemo(
+    () => formatRelativePublishedAt(aurumSnapshotPublishedAt),
+    [aurumSnapshotPublishedAt],
+  );
+  const mixTrustSourceLabel = useMemo(() => {
+    if (weightsSourceMode === 'instrument-universe') {
+      return universeSourceOrigin === 'firestore'
+        ? 'Instrument Universe · Firestore'
+        : 'Instrument Universe · cache local';
+    }
+    if (weightsSourceMode === 'instrument-base') return 'Instrument Base · fallback';
+    if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
+    if (weightsSourceMode === 'simulation') return 'Override manual temporal';
+    return weightsSourceLabel;
+  }, [universeSourceOrigin, weightsSourceLabel, weightsSourceMode]);
+  const riskFxMismatchPct = useMemo(() => {
+    const riskFx = Number(riskCapitalUsdSnapshotCLP ?? NaN);
+    const operativeFx = Number(operativeFxResolution.appliedClp ?? NaN);
+    if (!Number.isFinite(riskFx) || riskFx <= 0 || !Number.isFinite(operativeFx) || operativeFx <= 0) return null;
+    return Math.abs(riskFx - operativeFx) / operativeFx;
+  }, [operativeFxResolution.appliedClp, riskCapitalUsdSnapshotCLP]);
+  const capitalSentToMotorClp = useMemo(() => {
+    const optimizable = Number(compositionSource?.optimizableInvestmentsCLP ?? NaN);
+    const banks = Number(compositionSource?.nonOptimizable?.banksCLP ?? NaN);
+    if (!Number.isFinite(optimizable)) return null;
+    return Math.max(0, optimizable) + (Number.isFinite(banks) ? Math.max(0, banks) : 0);
+  }, [compositionSource]);
+  const totalNetWorthVisibleClp = useMemo(() => {
+    const total = Number(compositionSource?.totalNetWorthCLP ?? NaN);
+    return Number.isFinite(total) && total > 0 ? total : null;
+  }, [compositionSource]);
+  const nonOptimizableVisibleClp = useMemo(() => {
+    if (!Number.isFinite(totalNetWorthVisibleClp) || totalNetWorthVisibleClp === null || capitalSentToMotorClp === null) return null;
+    return totalNetWorthVisibleClp - capitalSentToMotorClp;
+  }, [capitalSentToMotorClp, totalNetWorthVisibleClp]);
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -1598,6 +1683,138 @@ export function SimulationPage({
             );
           })}
         </div>
+      </div>
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+            Data Trust Layer
+          </div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+            Fuente, frescura y fallback de los datos que más mueven la corrida.
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))',
+            gap: 8,
+          }}
+        >
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Snapshot Aurum</div>
+              <span style={{ color: snapshotFreshnessUi.color, border: `1px solid ${snapshotFreshnessUi.color}33`, background: `${snapshotFreshnessUi.color}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                {snapshotFreshnessUi.label}
+              </span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+            </div>
+            {snapshotFreshness !== 'fresh' && (
+              <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
+                Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+              </div>
+            )}
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX operativo</div>
+              <span style={{ color: operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning, border: `1px solid ${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}33`, background: `${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                {operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? 'OK' : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? 'Alerta' : 'Aviso'}
+              </span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{usingPrimaryFx ? 'Aurum current' : operativeFxResolution.reasonCode === 'manual_override_applied' ? 'Manual' : operativeFxResolution.aurumSource?.includes('closure') ? 'Aurum cierre' : 'Fallback runtime'}</span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+              <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Cache local' : 'Fallback'}
+              </span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
+            </div>
+            {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
+              <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
+                {weightsSourceMode === 'instrument-universe'
+                  ? 'Se usa Instrument Universe desde cache local; confirma sincronización en Firestore si necesitas máxima confianza.'
+                  : 'Se está usando un respaldo del mix, no la fuente principal universe-first en la nube.'}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+            Reconciliación Aurum → MIDAS
+          </div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+            Patrimonio total y capital simulable no son el mismo número.
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
+            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital simulable motor</div>
+            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
+            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
+            <div style={{ color: riskCapitalEffective ? T.positive : T.warning, fontSize: 10, marginTop: 2 }}>
+              {riskCapitalEffective ? 'Incluido por separado en M8' : 'Excluido del motor por toggle'}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>No optimizable visible</div>
+            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+          </div>
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Snapshot: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+        </div>
+        {riskFxMismatchPct !== null && riskCapitalUsdSnapshotCLP > 0 && riskFxMismatchPct > 0.02 && (
+          <div style={{ color: riskFxMismatchPct > 0.05 ? T.negative : riskFxMismatchPct > 0.02 ? T.warning : T.textMuted, fontSize: 10 }}>
+            Capital de riesgo USD convertido con FX {formatNumber(riskCapitalUsdSnapshotCLP)}; FX operativo actual {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : '—'}. Diferencia {(riskFxMismatchPct * 100).toFixed(2)}%.
+          </div>
+        )}
       </div>
       <div
         style={{

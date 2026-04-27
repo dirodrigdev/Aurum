@@ -16,6 +16,7 @@ export type MonthlyReturnRow = {
   fxAuditable: boolean;
   fxMissing: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   gastosStatus: 'complete' | 'pending' | 'missing';
+  gastosSource: 'gastapp_firestore' | 'legacy_static';
   netClp: number | null;
   prevNetClp: number | null;
   invalidNet: boolean;

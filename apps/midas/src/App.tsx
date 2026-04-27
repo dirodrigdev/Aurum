@@ -509,6 +509,7 @@ function resolveInitialDistributionState(): {
   weightsSourceMode: WeightsSourceMode;
   activeWeightsSavedAt: string | null;
   fallbackReason: string | null;
+  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
 } {
   const universeSnapshot = loadInstrumentUniverseSnapshot();
   const universeDerived = deriveInstrumentUniverseDistributionWeights({
@@ -533,6 +534,7 @@ function resolveInitialDistributionState(): {
     weightsSourceMode: resolved.weightsSourceMode,
     activeWeightsSavedAt: resolved.activeWeightsSavedAt,
     fallbackReason: resolved.fallbackReason,
+    universeSourceOrigin: universeSnapshot ? 'cache-local' : 'none',
   };
 }
 
@@ -629,6 +631,7 @@ export default function App() {
     details: null,
   });
   const [aurumSnapshotMonth, setAurumSnapshotMonth] = useState<string | null>(null);
+  const [aurumSnapshotPublishedAt, setAurumSnapshotPublishedAt] = useState<string | null>(null);
   const [riskCapitalCLP, setRiskCapitalCLP] = useState(0);
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
@@ -646,6 +649,9 @@ export default function App() {
   );
   const [weightsFallbackReason, setWeightsFallbackReason] = useState<string | null>(
     () => initialDistributionRef.current.fallbackReason,
+  );
+  const [universeSourceOrigin, setUniverseSourceOrigin] = useState<'firestore' | 'cache-local' | 'none'>(
+    () => initialDistributionRef.current.universeSourceOrigin,
   );
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
@@ -676,6 +682,7 @@ export default function App() {
   const manualCommitInFlightRef = useRef(false);
   const activeWeightsRef = useRef<PortfolioWeights>(activeWeights);
   const weightsSourceModeRef = useRef<WeightsSourceMode>(weightsSourceMode);
+  const instrumentUniverseHydratedFromFirestoreRef = useRef(false);
   const recalcRequestIdRef = useRef(0);
   const activeRecalcOwnerRequestIdRef = useRef<number | null>(null);
   const baseSnapshotRequestIdRef = useRef(0);
@@ -728,6 +735,11 @@ export default function App() {
 
     setUniverseWeights(resolved.universeWeights);
     setInstrumentBaseWeights(resolved.instrumentBaseWeights);
+    setUniverseSourceOrigin(
+      resolved.universeWeights
+        ? (instrumentUniverseHydratedFromFirestoreRef.current ? 'firestore' : 'cache-local')
+        : 'none',
+    );
 
     const keepSimulationMode = weightsSourceModeRef.current === 'simulation' && sanitizePortfolioWeights(activeWeightsRef.current);
     if (keepSimulationMode) {
@@ -746,6 +758,7 @@ export default function App() {
     void hydrateInstrumentUniverseCacheFromFirestore()
       .then((result) => {
         if (cancelled || !result.ok) return;
+        instrumentUniverseHydratedFromFirestoreRef.current = true;
         refreshOfficialDistribution();
         window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
       })
@@ -2817,6 +2830,7 @@ export default function App() {
     if (!aurumIntegrationConfigured) {
       setAurumIntegrationStatus('unconfigured');
       setAurumSnapshotLabel(null);
+      setAurumSnapshotPublishedAt(null);
       setSnapshotApplied(false);
       setRiskCapitalCLP(0);
       setRiskCapitalUsdTotal(0);
@@ -2878,6 +2892,7 @@ export default function App() {
         setAurumIntegrationStatus('missing');
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
+        setAurumSnapshotPublishedAt(null);
         setSnapshotApplied(false);
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
@@ -2907,6 +2922,7 @@ export default function App() {
       setAurumIntegrationStatus(isPartialComposition ? 'partial' : 'available');
       setAurumSnapshotLabel(snapshot.snapshotLabel || 'ultimo cierre confirmado');
       setRiskCapitalCLP(riskExposure.riskTotalCLP);
+      setAurumSnapshotPublishedAt(typeof snapshot.publishedAt === 'string' ? snapshot.publishedAt : null);
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
@@ -2984,6 +3000,7 @@ export default function App() {
         setAurumIntegrationStatus('error');
         setAurumSnapshotLabel(null);
         setAurumSnapshotMonth(null);
+        setAurumSnapshotPublishedAt(null);
         setRiskCapitalCLP(0);
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
@@ -3176,6 +3193,7 @@ export default function App() {
       isScenarioAdjusted={isScenarioAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
+      aurumSnapshotPublishedAt={aurumSnapshotPublishedAt}
       baseUpdatePending={baseUpdatePending}
       hasPendingSnapshot={hasPendingSnapshot}
       pendingSnapshotLabel={pendingSnapshotLabel}
@@ -3189,6 +3207,7 @@ export default function App() {
       riskCapitalEnabled={riskCapitalEnabled}
       riskCapitalEffective={riskCapitalEffective}
       riskCapitalCLP={riskCapitalCLP}
+      riskCapitalUsdSnapshotCLP={riskCapitalUsdSnapshotCLP}
       recalcWorkerStatus={recalcWorkerStatus}
       activeRecalcRequestId={activeRecalcRequestId}
       appliedRecalcRequestId={appliedRecalcRequestId}
@@ -3208,6 +3227,7 @@ export default function App() {
       operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
+      universeSourceOrigin={universeSourceOrigin}
       officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}

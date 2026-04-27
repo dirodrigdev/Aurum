@@ -454,6 +454,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 }) => {
   const pendingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
   const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
+  const legacySpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
+  const firestoreSpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'gastapp_firestore').map((row) => row.monthKey);
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
 
   const historyRows = React.useMemo(
@@ -515,6 +517,24 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   return (
   <>
+    {(legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0) && (
+      <Card className={cn(
+        'p-3 text-xs',
+        legacySpendMonths.length > 0 ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      )}>
+        <div className="font-semibold">
+          {legacySpendMonths.length > 0
+            ? 'Gasto observado desde respaldo legacy'
+            : 'Gasto observado desde GastApp / Firestore'}
+        </div>
+        <div className="mt-1">
+          {legacySpendMonths.length > 0
+            ? 'Este retorno económico usa gasto mensual desde GASTAPP_TOTALS como fallback legacy, no desde periodos actuales sincronizados.'
+            : 'Este retorno económico usa gasto mensual observado desde aurum_monthly_from_periods_v1.'}
+        </div>
+      </Card>
+    )}
+
     {fxExcludedMonths.length > 0 && (
       <Card className="border-amber-200 bg-amber-50/80 p-2.5 text-[11px] text-amber-700">
         {fxExcludedMonths.length === 1
