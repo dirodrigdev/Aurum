@@ -2,24 +2,96 @@ import { collection, getDocs } from 'firebase/firestore';
 import { GASTAPP_TOTALS } from '../data/gastappTotals';
 
 export type GastosMonthStatus = 'complete' | 'pending' | 'missing';
+export type GastosContractStatus = GastosMonthStatus | 'stale';
 export type GastosMonthSource = 'gastapp_firestore' | 'legacy_static';
+export type GastosMonthDataQuality = 'ok' | 'warning' | 'error';
 
 export type GastosMonthResolution = {
   monthKey: string;
   status: GastosMonthStatus;
   gastosEur: number | null;
   source: GastosMonthSource;
+  contractStatus?: GastosContractStatus | null;
+  dataQuality?: GastosMonthDataQuality | null;
+  isStale?: boolean;
+  staleReason?: string | null;
+  dayToDaySource?: string | null;
+  contractSource?: string | null;
+  schemaVersion?: string | null;
+  methodologyVersion?: string | null;
+  periodKey?: string | null;
+  publishedAt?: string | null;
+  updatedAt?: string | null;
+  closedAt?: string | null;
+  reportUpdatedAt?: string | null;
+  summaryUpdatedAt?: string | null;
+  lastExpenseUpdatedAt?: string | null;
+  revision?: number | null;
+  reportTotalEur?: number | null;
+  summaryTotalEur?: number | null;
+  directExpenseTotalEur?: number | null;
+  reportVsDirectDiffEur?: number | null;
+  summaryVsDirectDiffEur?: number | null;
+  reportVsSummaryDiffEur?: number | null;
+  categoryGapEur?: number | null;
 };
 
 type GastappMonthlyContableDoc = {
   monthKey?: unknown;
   status?: unknown;
   total_contable_eur?: unknown;
+  dataQuality?: unknown;
+  data_quality?: unknown;
+  isStale?: unknown;
+  staleReason?: unknown;
+  stale_reason?: unknown;
+  schema_version?: unknown;
+  methodology_version?: unknown;
+  periodKey?: unknown;
+  source?: unknown;
+  day_to_day_source?: unknown;
+  closedAt?: unknown;
+  reportUpdatedAt?: unknown;
+  summaryUpdatedAt?: unknown;
+  lastExpenseUpdatedAt?: unknown;
+  publishedAt?: unknown;
+  updated_at?: unknown;
+  revision?: unknown;
+  reportTotalEur?: unknown;
+  summaryTotalEur?: unknown;
+  directExpenseTotalEur?: unknown;
+  reportVsDirectDiffEur?: unknown;
+  summaryVsDirectDiffEur?: unknown;
+  reportVsSummaryDiffEur?: unknown;
+  categoryGapEur?: unknown;
 };
 
 type GastappMonthlyContableEntry = {
   status: GastosMonthStatus;
+  contractStatus: GastosContractStatus | null;
   gastosEur: number | null;
+  dataQuality: GastosMonthDataQuality | null;
+  isStale: boolean;
+  staleReason: string | null;
+  dayToDaySource: string | null;
+  contractSource: string | null;
+  schemaVersion: string | null;
+  methodologyVersion: string | null;
+  periodKey: string | null;
+  publishedAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+  reportUpdatedAt: string | null;
+  summaryUpdatedAt: string | null;
+  lastExpenseUpdatedAt: string | null;
+  revision: number | null;
+  reportTotalEur: number | null;
+  summaryTotalEur: number | null;
+  directExpenseTotalEur: number | null;
+  reportVsDirectDiffEur: number | null;
+  summaryVsDirectDiffEur: number | null;
+  reportVsSummaryDiffEur: number | null;
+  categoryGapEur: number | null;
 };
 
 export const GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT = 'aurum:gastapp-monthly-source-updated';
@@ -106,6 +178,17 @@ export const isGastappMonthClosed = (monthKey: string, now = new Date(), closing
 const inferStatusWithoutTotal = (monthKey: string, now: Date): GastosMonthStatus =>
   isGastappMonthClosed(monthKey, now) ? 'missing' : 'pending';
 
+const readString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() ? value.trim() : null;
+
+const readBoolean = (value: unknown): boolean | null =>
+  typeof value === 'boolean' ? value : null;
+
+const readNumber = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 // TEMP LEGACY FALLBACK (deprecado): se mantiene solo para transición controlada.
 // Retirar cuando la lectura desde `aurum_monthly_from_periods_v1` esté validada al 100%.
 const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution => {
@@ -116,6 +199,12 @@ const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution =
       status: 'complete',
       gastosEur: Number(raw),
       source: 'legacy_static',
+      contractStatus: null,
+      dataQuality: 'warning',
+      isStale: false,
+      staleReason: null,
+      dayToDaySource: 'legacy',
+      contractSource: 'legacy_static',
     };
   }
 
@@ -124,11 +213,22 @@ const resolveFromLegacy = (monthKey: string, now: Date): GastosMonthResolution =
     status: inferStatusWithoutTotal(monthKey, now),
     gastosEur: null,
     source: 'legacy_static',
+    contractStatus: null,
+    dataQuality: 'warning',
+    isStale: false,
+    staleReason: null,
+    dayToDaySource: 'legacy',
+    contractSource: 'legacy_static',
   };
 };
 
-const normalizeDocStatus = (value: unknown): GastosMonthStatus | null => {
-  if (value === 'complete' || value === 'pending' || value === 'missing') return value;
+const normalizeDocStatus = (value: unknown): GastosContractStatus | null => {
+  if (value === 'complete' || value === 'pending' || value === 'missing' || value === 'stale') return value;
+  return null;
+};
+
+const normalizeDataQuality = (value: unknown): GastosMonthDataQuality | null => {
+  if (value === 'ok' || value === 'warning' || value === 'error') return value;
   return null;
 };
 
@@ -180,6 +280,29 @@ const resolveFromFirestore = (monthKey: string, now: Date): GastosMonthResolutio
       status: fromMap.status,
       gastosEur: fromMap.gastosEur,
       source: 'gastapp_firestore',
+      contractStatus: fromMap.contractStatus,
+      dataQuality: fromMap.dataQuality,
+      isStale: fromMap.isStale,
+      staleReason: fromMap.staleReason,
+      dayToDaySource: fromMap.dayToDaySource,
+      contractSource: fromMap.contractSource,
+      schemaVersion: fromMap.schemaVersion,
+      methodologyVersion: fromMap.methodologyVersion,
+      periodKey: fromMap.periodKey,
+      publishedAt: fromMap.publishedAt,
+      updatedAt: fromMap.updatedAt,
+      closedAt: fromMap.closedAt,
+      reportUpdatedAt: fromMap.reportUpdatedAt,
+      summaryUpdatedAt: fromMap.summaryUpdatedAt,
+      lastExpenseUpdatedAt: fromMap.lastExpenseUpdatedAt,
+      revision: fromMap.revision,
+      reportTotalEur: fromMap.reportTotalEur,
+      summaryTotalEur: fromMap.summaryTotalEur,
+      directExpenseTotalEur: fromMap.directExpenseTotalEur,
+      reportVsDirectDiffEur: fromMap.reportVsDirectDiffEur,
+      summaryVsDirectDiffEur: fromMap.summaryVsDirectDiffEur,
+      reportVsSummaryDiffEur: fromMap.reportVsSummaryDiffEur,
+      categoryGapEur: fromMap.categoryGapEur,
     };
     logMarchResolutionIfNeeded('firestore', resolution, 'doc_found_in_firestore');
     return resolution;
@@ -190,6 +313,12 @@ const resolveFromFirestore = (monthKey: string, now: Date): GastosMonthResolutio
     status: inferStatusWithoutTotal(monthKey, now),
     gastosEur: null,
     source: 'gastapp_firestore',
+    contractStatus: null,
+    dataQuality: null,
+    isStale: false,
+    staleReason: null,
+    dayToDaySource: null,
+    contractSource: null,
   };
   const reason =
     gastappMonthlyRuntime.status === 'ready'
@@ -271,10 +400,16 @@ const loadGastappMonthlyContable = async () => {
         if (!rawMonthKey) return;
 
         const normalizedStatus = normalizeDocStatus(data.status);
+        const normalizedDataQuality = normalizeDataQuality(data.dataQuality ?? data.data_quality);
         const rawTotal = Number(data.total_contable_eur);
         const hasTotal = Number.isFinite(rawTotal);
+        const explicitIsStale = readBoolean(data.isStale);
+        const staleReason = readString(data.staleReason ?? data.stale_reason);
 
-        let status: GastosMonthStatus = normalizedStatus ?? inferStatusWithoutTotal(rawMonthKey, now);
+        let status: GastosMonthStatus =
+          normalizedStatus === 'complete' || normalizedStatus === 'stale'
+            ? 'complete'
+            : normalizedStatus ?? inferStatusWithoutTotal(rawMonthKey, now);
         let gastosEur: number | null = hasTotal ? rawTotal : null;
 
         if (status === 'complete' && gastosEur === null) {
@@ -286,7 +421,30 @@ const loadGastappMonthlyContable = async () => {
 
         loaded[rawMonthKey] = {
           status,
+          contractStatus: normalizedStatus,
           gastosEur,
+          dataQuality: normalizedDataQuality,
+          isStale: explicitIsStale ?? normalizedStatus === 'stale',
+          staleReason,
+          dayToDaySource: readString(data.day_to_day_source),
+          contractSource: readString(data.source),
+          schemaVersion: readString(data.schema_version),
+          methodologyVersion: readString(data.methodology_version),
+          periodKey: readString(data.periodKey),
+          publishedAt: readString(data.publishedAt),
+          updatedAt: readString(data.updated_at),
+          closedAt: readString(data.closedAt),
+          reportUpdatedAt: readString(data.reportUpdatedAt),
+          summaryUpdatedAt: readString(data.summaryUpdatedAt),
+          lastExpenseUpdatedAt: readString(data.lastExpenseUpdatedAt),
+          revision: readNumber(data.revision),
+          reportTotalEur: readNumber(data.reportTotalEur),
+          summaryTotalEur: readNumber(data.summaryTotalEur),
+          directExpenseTotalEur: readNumber(data.directExpenseTotalEur),
+          reportVsDirectDiffEur: readNumber(data.reportVsDirectDiffEur),
+          summaryVsDirectDiffEur: readNumber(data.summaryVsDirectDiffEur),
+          reportVsSummaryDiffEur: readNumber(data.reportVsSummaryDiffEur),
+          categoryGapEur: readNumber(data.categoryGapEur),
         };
       });
 

@@ -1,4 +1,5 @@
 import type { WealthCurrency, WealthFxRates } from '../../services/wealthStorage';
+import type { GastosContractStatus, GastosMonthDataQuality, GastosMonthSource, GastosMonthStatus } from '../../services/gastosMonthly';
 
 export type AnalysisTab = 'returns' | 'freedom' | 'lab';
 
@@ -15,8 +16,31 @@ export type MonthlyReturnRow = {
   fxMethod: 'real_closure' | 'default_fallback';
   fxAuditable: boolean;
   fxMissing: Array<'usdClp' | 'eurClp' | 'ufClp'>;
-  gastosStatus: 'complete' | 'pending' | 'missing';
-  gastosSource: 'gastapp_firestore' | 'legacy_static';
+  gastosStatus: GastosMonthStatus;
+  gastosSource: GastosMonthSource;
+  gastosContractStatus: GastosContractStatus | null;
+  gastosDataQuality: GastosMonthDataQuality | null;
+  gastosIsStale: boolean;
+  gastosStaleReason: string | null;
+  gastosDayToDaySource: string | null;
+  gastosContractSource: string | null;
+  gastosSchemaVersion: string | null;
+  gastosMethodologyVersion: string | null;
+  gastosPeriodKey: string | null;
+  gastosPublishedAt: string | null;
+  gastosUpdatedAt: string | null;
+  gastosClosedAt: string | null;
+  gastosReportUpdatedAt: string | null;
+  gastosSummaryUpdatedAt: string | null;
+  gastosLastExpenseUpdatedAt: string | null;
+  gastosRevision: number | null;
+  gastosReportTotalEur: number | null;
+  gastosSummaryTotalEur: number | null;
+  gastosDirectExpenseTotalEur: number | null;
+  gastosReportVsDirectDiffEur: number | null;
+  gastosSummaryVsDirectDiffEur: number | null;
+  gastosReportVsSummaryDiffEur: number | null;
+  gastosCategoryGapEur: number | null;
   netClp: number | null;
   prevNetClp: number | null;
   invalidNet: boolean;

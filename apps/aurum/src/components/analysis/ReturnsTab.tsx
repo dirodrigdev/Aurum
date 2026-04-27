@@ -2,7 +2,7 @@ import React from 'react';
 import { CalendarDays, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
-import { formatCurrency, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
+import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import type {
   AggregatedSummary,
   CrpContributionInsight,
@@ -20,6 +20,28 @@ const monthLabelShort = (monthKey: string) => {
   const month = Number(monthRaw);
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return monthKey;
   return `${MONTH_SHORT_ES[month - 1]} ${year}`;
+};
+
+type SpendTrustSeverity = 'ok' | 'warning' | 'alert';
+
+const humanizeDayToDaySource = (source: string | null) => {
+  if (source === 'monthly_reports') return 'reporte mensual';
+  if (source === 'direct_sum') return 'suma directa';
+  if (source === 'period_summaries') return 'resumen de periodos';
+  if (source === 'legacy') return 'respaldo legacy';
+  return source || null;
+};
+
+const spendTrustTone = (severity: SpendTrustSeverity) => {
+  if (severity === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+  if (severity === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800';
+  return 'border-rose-200 bg-rose-50 text-rose-700';
+};
+
+const spendTrustBadge = (severity: SpendTrustSeverity) => {
+  if (severity === 'ok') return 'OK';
+  if (severity === 'warning') return 'Aviso';
+  return 'Alerta';
 };
 
 type ReturnsTabProps = {
@@ -456,6 +478,114 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
   const legacySpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
   const firestoreSpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'gastapp_firestore').map((row) => row.monthKey);
+  const latestGastappSpendRow = React.useMemo(
+    () =>
+      monthlyRowsDesc.find((row) =>
+        row.gastosSource === 'gastapp_firestore' && (
+          row.gastosContractStatus !== null
+          || row.gastosDataQuality !== null
+          || row.gastosIsStale
+          || row.gastosStaleReason !== null
+          || row.gastosDayToDaySource !== null
+          || row.gastosPublishedAt !== null
+          || row.gastosUpdatedAt !== null
+          || row.gastosPeriodKey !== null
+          || row.gastosRevision !== null
+          || row.gastosReportVsDirectDiffEur !== null
+          || row.gastosSummaryVsDirectDiffEur !== null
+          || row.gastosReportVsSummaryDiffEur !== null
+          || row.gastosCategoryGapEur !== null
+        ),
+      ) ?? monthlyRowsDesc.find((row) => row.gastosSource === 'gastapp_firestore') ?? null,
+    [monthlyRowsDesc],
+  );
+  const spendTrustState = React.useMemo(() => {
+    if (legacySpendMonths.length > 0) {
+      return {
+        severity: 'warning' as SpendTrustSeverity,
+        title: 'Gasto de respaldo legacy',
+        body: 'Gasto de respaldo legacy, no desde periodos actuales sincronizados.',
+      };
+    }
+    const row = latestGastappSpendRow;
+    if (!row) {
+      return null;
+    }
+    const hasAlert =
+      row.gastosIsStale
+      || row.gastosDataQuality === 'error'
+      || row.gastosContractStatus === 'stale'
+      || row.gastosContractStatus === 'missing';
+    const hasWarning =
+      row.gastosDataQuality === 'warning'
+      || row.gastosContractStatus === 'pending';
+    if (hasAlert) {
+      return {
+        severity: 'alert' as SpendTrustSeverity,
+        title: 'Gasto observado con alerta',
+        body: row.gastosIsStale || row.gastosContractStatus === 'stale'
+          ? 'Gasto observado marcado como stale por GastApp. Revisa o reconstruye el cierre.'
+          : 'Gasto observado con alerta de calidad o estado incompleto del contrato.',
+      };
+    }
+    if (hasWarning) {
+      return {
+        severity: 'warning' as SpendTrustSeverity,
+        title: 'Gasto observado con advertencia',
+        body: 'Gasto observado con advertencia: cierre desfasado respecto a movimientos recientes.',
+      };
+    }
+    return {
+      severity: 'ok' as SpendTrustSeverity,
+      title: 'Gasto observado desde GastApp por periodo',
+      body: 'Gasto observado desde GastApp por periodo · contrato actualizado.',
+    };
+  }, [latestGastappSpendRow, legacySpendMonths.length]);
+  const spendTrustDetails = React.useMemo(() => {
+    const row = latestGastappSpendRow;
+    if (!row || legacySpendMonths.length > 0) return [];
+    const details: string[] = [];
+    if (row.gastosContractStatus || row.gastosDataQuality) {
+      details.push(
+        `Estado contrato: ${row.gastosContractStatus || 'n/d'}${row.gastosDataQuality ? ` · Calidad: ${row.gastosDataQuality}` : ''}`,
+      );
+    }
+    if (row.gastosContractSource) {
+      details.push(`Fuente contrato: ${row.gastosContractSource}`);
+    }
+    const dayToDaySource = humanizeDayToDaySource(row.gastosDayToDaySource);
+    if (dayToDaySource) {
+      details.push(`Fuente diaria: ${dayToDaySource}`);
+    }
+    if (row.gastosPeriodKey) {
+      details.push(`Periodo: ${row.gastosPeriodKey}`);
+    }
+    if (row.gastosSchemaVersion || row.gastosMethodologyVersion) {
+      details.push(
+        `Contrato: ${row.gastosSchemaVersion || 'schema n/d'}${row.gastosMethodologyVersion ? ` · metodología ${row.gastosMethodologyVersion}` : ''}`,
+      );
+    }
+    if (row.gastosRevision !== null) {
+      details.push(`Revisión: ${row.gastosRevision}`);
+    }
+    if (row.gastosPublishedAt || row.gastosUpdatedAt) {
+      details.push(
+        `Actualizado: ${formatIsoDateTime(row.gastosPublishedAt || row.gastosUpdatedAt || undefined)}`,
+      );
+    }
+    return details;
+  }, [latestGastappSpendRow, legacySpendMonths.length]);
+  const spendTrustDiffs = React.useMemo(() => {
+    const row = latestGastappSpendRow;
+    if (!row || legacySpendMonths.length > 0) return [];
+    const diffEntries = [
+      { label: 'cierre vs suma directa', value: row.gastosReportVsDirectDiffEur },
+      { label: 'resumen vs suma directa', value: row.gastosSummaryVsDirectDiffEur },
+      { label: 'cierre vs resumen', value: row.gastosReportVsSummaryDiffEur },
+      { label: 'brecha de categorías', value: row.gastosCategoryGapEur },
+    ].filter((entry) => entry.value !== null && Math.abs(Number(entry.value)) > 0.01);
+    return diffEntries.map((entry) => `Diferencia detectada entre ${entry.label}: ${formatCurrency(Number(entry.value), 'EUR')}`);
+  }, [latestGastappSpendRow, legacySpendMonths.length]);
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
 
   const historyRows = React.useMemo(
@@ -517,21 +647,44 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   return (
   <>
-    {(legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0) && (
+    {spendTrustState && (legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0) && (
       <Card className={cn(
         'p-3 text-xs',
-        legacySpendMonths.length > 0 ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+        spendTrustTone(spendTrustState.severity),
       )}>
-        <div className="font-semibold">
-          {legacySpendMonths.length > 0
-            ? 'Gasto observado desde respaldo legacy'
-            : 'Gasto observado desde GastApp / Firestore'}
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-semibold">{spendTrustState.title}</div>
+          <span className="rounded-full border border-current/20 bg-white/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+            {spendTrustBadge(spendTrustState.severity)}
+          </span>
         </div>
         <div className="mt-1">
-          {legacySpendMonths.length > 0
-            ? 'Este retorno económico usa un gasto de respaldo legacy, no los periodos actuales sincronizados.'
-            : 'Este retorno económico usa gasto mensual observado desde aurum_monthly_from_periods_v1.'}
+          {spendTrustState.body}
         </div>
+        {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (
+          <div className="mt-1 text-[11px]">
+            Motivo: {latestGastappSpendRow.gastosStaleReason}
+          </div>
+        )}
+        {spendTrustDetails.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {spendTrustDetails.map((detail) => (
+              <span
+                key={detail}
+                className="rounded-full border border-current/15 bg-white/40 px-2 py-0.5 text-[10px]"
+              >
+                {detail}
+              </span>
+            ))}
+          </div>
+        )}
+        {spendTrustDiffs.length > 0 && (
+          <div className="mt-2 space-y-1 text-[11px]">
+            {spendTrustDiffs.map((detail) => (
+              <div key={detail}>{detail}</div>
+            ))}
+          </div>
+        )}
       </Card>
     )}
 
