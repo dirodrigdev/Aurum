@@ -1009,7 +1009,7 @@ export function SimulationPage({
     if (weightsSourceMode === 'instrument-universe') {
       return universeSourceOrigin === 'firestore'
         ? 'Instrument Universe · Firestore'
-        : 'Instrument Universe · cache local';
+        : 'Instrument Universe · copia local';
     }
     if (weightsSourceMode === 'instrument-base') return 'Instrument Base · fallback';
     if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
@@ -1269,6 +1269,37 @@ export function SimulationPage({
     warning: appliedTraceRows.filter((row) => row.severity === 'Aviso').length,
     alert: appliedTraceRows.filter((row) => row.severity === 'Alerta').length,
   }), [appliedTraceRows]);
+  const trustLayerStatusCounts = useMemo(() => {
+    const snapshotLevel = snapshotFreshness === 'fresh' ? 'ok' : snapshotFreshness === 'aging' ? 'warning' : 'alert';
+    const fxLevel = operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh'
+      ? 'ok'
+      : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale'
+        ? 'alert'
+        : 'warning';
+    const mixLevel = weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore'
+      ? 'ok'
+      : weightsSourceMode === 'instrument-universe'
+        ? 'warning'
+        : 'alert';
+    const riskLevel = riskFxMismatchPct === null || riskCapitalUsdSnapshotCLP <= 0 || riskFxMismatchPct <= 0.02
+      ? 'ok'
+      : riskFxMismatchPct > 0.05
+        ? 'alert'
+        : 'warning';
+    const levels = [snapshotLevel, fxLevel, mixLevel, riskLevel];
+    return {
+      ok: levels.filter((level) => level === 'ok').length,
+      warning: levels.filter((level) => level === 'warning').length,
+      alert: levels.filter((level) => level === 'alert').length,
+    };
+  }, [
+    operativeFxResolution.reasonCode,
+    riskCapitalUsdSnapshotCLP,
+    riskFxMismatchPct,
+    snapshotFreshness,
+    universeSourceOrigin,
+    weightsSourceMode,
+  ]);
   const toggleTraceRow = useCallback((id: string) => {
     setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
@@ -1689,9 +1720,9 @@ export function SimulationPage({
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
-          padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          padding: isMobileViewport ? '7px 8px' : '9px 10px',
           display: 'grid',
-          gap: 8,
+          gap: 6,
         }}
       >
         <div style={{ display: 'grid', gap: 2 }}>
@@ -1699,83 +1730,168 @@ export function SimulationPage({
             Data Trust Layer
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            Fuente, frescura y fallback de los datos que más mueven la corrida.
+            Fuente, frescura y respaldo de los datos que más mueven la corrida.
           </div>
         </div>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))',
-            gap: 8,
-          }}
-        >
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Snapshot Aurum</div>
-              <span style={{ color: snapshotFreshnessUi.color, border: `1px solid ${snapshotFreshnessUi.color}33`, background: `${snapshotFreshnessUi.color}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                {snapshotFreshnessUi.label}
-              </span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
-            </div>
-            {snapshotFreshness !== 'fresh' && (
-              <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
-                Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+        {isMobileViewport ? (
+          <details>
+            <summary
+              style={{
+                cursor: 'pointer',
+                listStyle: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                color: T.textPrimary,
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              <span>Datos: {trustLayerStatusCounts.ok} OK · {trustLayerStatusCounts.warning} avisos · {trustLayerStatusCounts.alert} alertas</span>
+              <span style={{ color: T.textMuted, fontSize: 10 }}>Ver detalle</span>
+            </summary>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0,1fr)',
+                gap: 6,
+                marginTop: 6,
+              }}
+            >
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Snapshot Aurum</div>
+                  <span style={{ color: snapshotFreshnessUi.color, border: `1px solid ${snapshotFreshnessUi.color}33`, background: `${snapshotFreshnessUi.color}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                    {snapshotFreshnessUi.label}
+                  </span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+                </div>
+                {snapshotFreshness !== 'fresh' && (
+                  <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
+                    Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX operativo</div>
-              <span style={{ color: operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning, border: `1px solid ${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}33`, background: `${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                {operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? 'OK' : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? 'Alerta' : 'Aviso'}
-              </span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{usingPrimaryFx ? 'Aurum current' : operativeFxResolution.reasonCode === 'manual_override_applied' ? 'Manual' : operativeFxResolution.aurumSource?.includes('closure') ? 'Aurum cierre' : 'Fallback runtime'}</span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
-            </div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
-              <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Cache local' : 'Fallback'}
-              </span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span>
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
-            </div>
-            {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
-              <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
-                {weightsSourceMode === 'instrument-universe'
-                  ? 'Se usa Instrument Universe desde cache local; confirma sincronización en Firestore si necesitas máxima confianza.'
-                  : 'Se está usando un respaldo del mix, no la fuente principal universe-first en la nube.'}
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX operativo</div>
+                  <span style={{ color: operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning, border: `1px solid ${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}33`, background: `${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                    {operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? 'OK' : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? 'Alerta' : 'Aviso'}
+                  </span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{usingPrimaryFx ? 'Aurum current' : operativeFxResolution.reasonCode === 'manual_override_applied' ? 'Manual' : operativeFxResolution.aurumSource?.includes('closure') ? 'Aurum cierre' : 'Respaldo interno'}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+                </div>
+                {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
+                  <div style={{ color: T.warning, fontSize: 10 }}>
+                    Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                  </div>
+                )}
               </div>
-            )}
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                  <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                    {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                  </span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
+                </div>
+                {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
+                  <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
+                    {weightsSourceMode === 'instrument-universe'
+                      ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
+                      : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </details>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0,1fr))',
+              gap: 6,
+            }}
+          >
+            <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Snapshot Aurum</div>
+                <span style={{ color: snapshotFreshnessUi.color, border: `1px solid ${snapshotFreshnessUi.color}33`, background: `${snapshotFreshnessUi.color}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                  {snapshotFreshnessUi.label}
+                </span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
+              </div>
+              {snapshotFreshness !== 'fresh' && (
+                <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
+                  Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                </div>
+              )}
+            </div>
+            <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX operativo</div>
+                <span style={{ color: operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning, border: `1px solid ${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}33`, background: `${operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? T.positive : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? T.negative : T.warning}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                  {operativeFxResolution.reasonCode === 'aurum_current_applied' && snapshotFreshness === 'fresh' ? 'OK' : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale' ? 'Alerta' : 'Aviso'}
+                </span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{usingPrimaryFx ? 'Aurum current' : operativeFxResolution.reasonCode === 'manual_override_applied' ? 'Manual' : operativeFxResolution.aurumSource?.includes('closure') ? 'Aurum cierre' : 'Respaldo interno'}</span>
+              </div>
+              {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
+                <div style={{ color: T.warning, fontSize: 10 }}>
+                  Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                </div>
+              )}
+            </div>
+            <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                  {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                </span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
+              </div>
+              {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
+                <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
+                  {weightsSourceMode === 'instrument-universe'
+                    ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
+                    : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
       <div
         style={{
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
-          padding: isMobileViewport ? '8px 9px' : '10px 12px',
+          padding: isMobileViewport ? '7px 8px' : '9px 10px',
           display: 'grid',
-          gap: 8,
+          gap: 6,
         }}
       >
         <div style={{ display: 'grid', gap: 2 }}>
@@ -1786,33 +1902,36 @@ export function SimulationPage({
             Patrimonio total y capital simulable no son el mismo número.
           </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 8 }}>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
             <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
             <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
           </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
             <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital simulable motor</div>
             <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
           </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
             <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
             <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
             <div style={{ color: riskCapitalEffective ? T.positive : T.warning, fontSize: 10, marginTop: 2 }}>
               {riskCapitalEffective ? 'Incluido por separado en M8' : 'Excluido del motor por toggle'}
             </div>
           </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>No optimizable visible</div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
             <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
           </div>
         </div>
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Snapshot: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
         </div>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Parte del patrimonio que se muestra en Aurum pero no entra en esta simulación.
+        </div>
         {riskFxMismatchPct !== null && riskCapitalUsdSnapshotCLP > 0 && riskFxMismatchPct > 0.02 && (
           <div style={{ color: riskFxMismatchPct > 0.05 ? T.negative : riskFxMismatchPct > 0.02 ? T.warning : T.textMuted, fontSize: 10 }}>
-            Capital de riesgo USD convertido con FX {formatNumber(riskCapitalUsdSnapshotCLP)}; FX operativo actual {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : '—'}. Diferencia {(riskFxMismatchPct * 100).toFixed(2)}%.
+            El capital de riesgo usa un FX distinto del operativo actual (dif. {(riskFxMismatchPct * 100).toFixed(2)}%).
           </div>
         )}
       </div>

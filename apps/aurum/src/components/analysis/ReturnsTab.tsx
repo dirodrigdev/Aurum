@@ -529,7 +529,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         </div>
         <div className="mt-1">
           {legacySpendMonths.length > 0
-            ? 'Este retorno económico usa gasto mensual desde GASTAPP_TOTALS como fallback legacy, no desde periodos actuales sincronizados.'
+            ? 'Este retorno económico usa un gasto de respaldo legacy, no los periodos actuales sincronizados.'
             : 'Este retorno económico usa gasto mensual observado desde aurum_monthly_from_periods_v1.'}
         </div>
       </Card>
