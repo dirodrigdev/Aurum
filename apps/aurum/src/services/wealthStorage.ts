@@ -81,6 +81,11 @@ export interface WealthSnapshotSummary {
   investmentClpWithRisk?: number;
   netClp?: number;
   netClpWithRisk?: number;
+  bankClp?: number;
+  nonMortgageDebtClp?: number;
+  realEstateNetClp?: number;
+  realEstateAssetsClp?: number;
+  mortgageDebtClp?: number;
 }
 
 export interface WealthMonthlyClosure {
@@ -1963,6 +1968,31 @@ export const summarizeWealth = (records: WealthRecord[], fxRates: WealthFxRates)
   };
 };
 
+export const buildCanonicalClosureSummary = (
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+): WealthSnapshotSummary => {
+  const deduped = dedupeLatestByAsset(records);
+  const summary = summarizeWealth(deduped, fxRates);
+  const withRiskBreakdown = buildWealthNetBreakdown(deduped, fxRates);
+  const withoutRiskRecords = filterRecordsByRiskCapitalPreference(deduped, false);
+  const withoutRiskBreakdown = buildWealthNetBreakdown(withoutRiskRecords, fxRates);
+
+  return {
+    ...summary,
+    investmentClp: withoutRiskBreakdown.investmentClp,
+    riskCapitalClp: Math.max(0, withRiskBreakdown.investmentClp - withoutRiskBreakdown.investmentClp),
+    investmentClpWithRisk: withRiskBreakdown.investmentClp,
+    netClp: withoutRiskBreakdown.netClp,
+    netClpWithRisk: withRiskBreakdown.netClp,
+    bankClp: withRiskBreakdown.bankClp,
+    nonMortgageDebtClp: withRiskBreakdown.nonMortgageDebtClp,
+    realEstateNetClp: withRiskBreakdown.realEstateNetClp,
+    realEstateAssetsClp: withRiskBreakdown.realEstateAssetsClp,
+    mortgageDebtClp: withRiskBreakdown.mortgageDebtClp,
+  };
+};
+
 const buildSummaryFromNetClp = (netClp: number): WealthSnapshotSummary => {
   const roundedNet = Math.round(Number(netClp) || 0);
   const assetsByCurrency = emptyCurrencyMap();
@@ -2413,7 +2443,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
 
         const summary =
           records && records.length
-            ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+            ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
             : item?.summary;
 
         const previousVersionsRaw = Array.isArray(item?.previousVersions)
@@ -3049,7 +3079,7 @@ export const upsertMonthlyClosure = (input: {
   const normalizedMonthKey = normalizeMonthKey(input.monthKey) || currentMonthKey();
   const closures = loadClosures();
   const latest = dedupeLatestByAsset(input.records);
-  const summary = summarizeWealth(latest, input.fxRates);
+  const summary = buildCanonicalClosureSummary(latest, input.fxRates);
   const closedAt = String(input.closedAt || nowIso());
   const existingSameMonth =
     closures.find((closure) => closure.monthKey === normalizedMonthKey) || null;
