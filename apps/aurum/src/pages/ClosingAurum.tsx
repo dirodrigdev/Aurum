@@ -47,6 +47,7 @@ import {
   WEALTH_DATA_UPDATED_EVENT,
   isMortgageMetaDebtLabel,
   isMortgagePrincipalDebtLabel,
+  isNonMortgageDebtRecord,
   isSyntheticAggregateRecord,
   isRiskCapitalInvestmentLabel,
   latestRecordsForMonth,
@@ -431,6 +432,8 @@ interface ClosureSummaryEditDraft {
   nonMortgageDebtClp: string;
 }
 
+type ClosureEditDirtyFields = Partial<Record<EditableFieldKey, boolean>>;
+
 const buildComparableVersionFields = (
   records: WealthRecord[] | undefined,
   summaryNetClp: number,
@@ -497,6 +500,97 @@ const getChangedFieldLabels = (
   return changed;
 };
 
+export const buildEditedClosureRecordsFromDraft = ({
+  records,
+  draft,
+  dirtyFields,
+  monthKey,
+  createdAt,
+}: {
+  records: WealthRecord[];
+  draft: Record<EditableFieldKey, string>;
+  dirtyFields: ClosureEditDirtyFields;
+  monthKey: string;
+  createdAt: string;
+}): {
+  records: WealthRecord[];
+  expectedEditedFields: Array<{
+    label: string;
+    canonicalLabel: string;
+    amount: number;
+    currency: WealthCurrency;
+  }>;
+} => {
+  let nextRecords = dedupeClosureRecords(records.map((record) => ({ ...record })));
+  const snapshotDate = `${monthKey}-01`;
+  const expectedEditedFields: Array<{
+    label: string;
+    canonicalLabel: string;
+    amount: number;
+    currency: WealthCurrency;
+  }> = [];
+
+  CLOSURE_EDITABLE_FIELDS.forEach((field) => {
+    if (!dirtyFields[field.key]) return;
+    const raw = draft[field.key];
+    const existing = findRecordByCanonicalLabel(nextRecords, field.canonicalLabel);
+    if (String(raw || '').trim() === '') return;
+
+    if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
+      nextRecords = nextRecords.filter(
+        (record) =>
+          !(
+            record.block === 'bank' &&
+            record.currency === field.currency &&
+            !isNonMortgageDebtRecord(record)
+          ),
+      );
+    } else if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
+      nextRecords = nextRecords.filter(
+        (record) =>
+          !(
+            record.block === 'debt' &&
+            record.currency === field.currency &&
+            !isMortgagePrincipalDebtLabel(record.label) &&
+            !isMortgageMetaDebtLabel(record.label)
+          ),
+      );
+    } else {
+      nextRecords = nextRecords.filter(
+        (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
+      );
+    }
+
+    const parsed = parseStrictNumber(raw);
+    if (!Number.isFinite(parsed)) return;
+    const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
+    const targetCurrency =
+      field.key === 'tenencia' && existing?.currency ? existing.currency : field.currency;
+    expectedEditedFields.push({
+      label: field.label,
+      canonicalLabel: field.canonicalLabel,
+      amount: normalized,
+      currency: targetCurrency,
+    });
+    nextRecords.push({
+      id: existing?.id || crypto.randomUUID(),
+      block: field.block,
+      source: 'Edición cierre',
+      label: field.label,
+      amount: normalized,
+      currency: targetCurrency,
+      createdAt,
+      snapshotDate,
+      note: `Edición manual cierre ${monthKey}`,
+    });
+  });
+
+  return {
+    records: dedupeClosureRecords(nextRecords),
+    expectedEditedFields,
+  };
+};
+
 
 export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('cierre');
@@ -525,6 +619,7 @@ export const ClosingAurum: React.FC = () => {
         return acc;
       }, {} as Record<EditableFieldKey, string>),
   );
+  const [closureEditDirtyFields, setClosureEditDirtyFields] = useState<ClosureEditDirtyFields>({});
   const [closureEditRates, setClosureEditRates] = useState({
     usdClp: '',
     eurUsd: '',
@@ -1031,6 +1126,7 @@ export const ClosingAurum: React.FC = () => {
         ufClp: String(Math.round(selectedClosureFx.ufClp)),
       });
       setClosureEditError('');
+      setClosureEditDirtyFields({});
       setClosureEditOpen(true);
       return;
     }
@@ -1064,6 +1160,7 @@ export const ClosingAurum: React.FC = () => {
       return acc;
     }, {} as Record<EditableFieldKey, string>);
     setClosureEditDraft(nextDraft);
+    setClosureEditDirtyFields({});
     setClosureEditRates({
       usdClp: String(Math.round(selectedClosureFx.usdClp)),
       eurUsd: String(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp)),
@@ -1222,18 +1319,7 @@ export const ClosingAurum: React.FC = () => {
       return;
     }
 
-    let nextRecords = dedupeClosureRecords(
-      selectedClosureRecordsRaw.map((record) => ({ ...record })),
-    );
-
-    const snapshotDate = `${selectedClosure.monthKey}-01`;
     const createdAt = new Date().toISOString();
-    const expectedEditedFields: Array<{
-      label: string;
-      canonicalLabel: string;
-      amount: number;
-      currency: WealthCurrency;
-    }> = [];
 
     console.info('[Closing][edit-before]', {
       monthKey: selectedClosure.monthKey,
@@ -1244,6 +1330,7 @@ export const ClosingAurum: React.FC = () => {
     });
 
     for (const field of CLOSURE_EDITABLE_FIELDS) {
+      if (!closureEditDirtyFields[field.key]) continue;
       const raw = closureEditDraft[field.key];
       if (String(raw || '').trim() === '') continue;
       const parsed = parseStrictNumber(raw);
@@ -1253,58 +1340,17 @@ export const ClosingAurum: React.FC = () => {
       }
     }
 
-    CLOSURE_EDITABLE_FIELDS.forEach((field) => {
-      const raw = closureEditDraft[field.key];
-      const existing = findRecordByCanonicalLabel(nextRecords, field.canonicalLabel);
-      if (String(raw || '').trim() === '') {
-        return;
-      }
-      // [PRODUCT RULE] Editar es la fuente de verdad del cierre: campos agregados reemplazan
-      // completamente su bloque para evitar mezclas con detalle previo.
-      if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
-        nextRecords = nextRecords.filter(
-          (record) => !(record.block === 'bank' && record.currency === field.currency),
-        );
-      } else if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
-        nextRecords = nextRecords.filter(
-          (record) =>
-            !(
-              record.block === 'debt' &&
-              record.currency === field.currency &&
-              !isMortgagePrincipalDebtLabel(record.label) &&
-              !isMortgageMetaDebtLabel(record.label)
-            ),
-        );
-      } else {
-        nextRecords = nextRecords.filter(
-          (record) => !matchCanonicalWithAliases(record.label, field.canonicalLabel),
-        );
-      }
-      const parsed = parseStrictNumber(raw);
-      if (!Number.isFinite(parsed)) return;
-      const normalized = field.normalizeAmount ? field.normalizeAmount(parsed) : parsed;
-      const targetCurrency =
-        field.key === 'tenencia' && existing?.currency ? existing.currency : field.currency;
-      expectedEditedFields.push({
-        label: field.label,
-        canonicalLabel: field.canonicalLabel,
-        amount: normalized,
-        currency: targetCurrency,
-      });
-      nextRecords.push({
-        id: existing?.id || crypto.randomUUID(),
-        block: field.block,
-        source: 'Edición cierre',
-        label: field.label,
-        amount: normalized,
-        currency: targetCurrency,
-        createdAt,
-        snapshotDate,
-        note: `Edición manual cierre ${selectedClosure.monthKey}`,
-      });
+    const {
+      records: normalizedNextRecords,
+      expectedEditedFields,
+    } = buildEditedClosureRecordsFromDraft({
+      records: selectedClosureRecordsRaw,
+      draft: closureEditDraft,
+      dirtyFields: closureEditDirtyFields,
+      monthKey: selectedClosure.monthKey,
+      createdAt,
     });
 
-    const normalizedNextRecords = dedupeClosureRecords(nextRecords);
     const expectedSummary = summarizeWealth(normalizedNextRecords, nextFx);
     const expectedRiskOffNet = buildWealthNetBreakdown(
       resolveRiskCapitalRecordsForTotals(normalizedNextRecords, false).recordsForTotals,
@@ -1831,9 +1877,10 @@ export const ClosingAurum: React.FC = () => {
                         </label>
                         <Input
                           value={closureEditDraft[field.key]}
-                          onChange={(e) =>
-                            setClosureEditDraft((prev) => ({ ...prev, [field.key]: e.target.value }))
-                          }
+                          onChange={(e) => {
+                            setClosureEditDraft((prev) => ({ ...prev, [field.key]: e.target.value }));
+                            setClosureEditDirtyFields((prev) => ({ ...prev, [field.key]: true }));
+                          }}
                           inputMode="decimal"
                         />
                       </div>

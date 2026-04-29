@@ -2256,6 +2256,7 @@ export const buildWealthNetBreakdown = (
     if (record.block !== 'bank') return false;
     if (record.currency !== 'CLP') return false;
     if (isSyntheticAggregateRecord(record)) return false;
+    if (isNonMortgageDebtRecord(record)) return false;
     const normalizedLabel = normalizeText(record.label);
     return !AGGREGATE_BANK_LABELS_CLP.has(normalizedLabel) && !PROVIDER_BANK_LABELS_CLP.has(normalizedLabel);
   });
@@ -2263,6 +2264,7 @@ export const buildWealthNetBreakdown = (
     if (record.block !== 'bank') return false;
     if (record.currency !== 'USD') return false;
     if (isSyntheticAggregateRecord(record)) return false;
+    if (isNonMortgageDebtRecord(record)) return false;
     const normalizedLabel = normalizeText(record.label);
     return !AGGREGATE_BANK_LABELS_USD.has(normalizedLabel) && !PROVIDER_BANK_LABELS_USD.has(normalizedLabel);
   });
