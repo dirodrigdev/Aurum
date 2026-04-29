@@ -1448,6 +1448,36 @@ export const ClosingAurum: React.FC = () => {
       }),
     [selectedAuditSnapshot, previousAuditCandidates, comparisonMonthBankRows.length, comparisonMonthBankClp],
   );
+  const closureAuditSummary = useMemo(() => {
+    const versionCount = rawSelectedClosure?.previousVersions?.length || 0;
+    if (!selectedAuditSnapshot) {
+      return {
+        label: 'Sin records',
+        tone: 'neutral' as const,
+        detail: 'No se pudo recalcular',
+        deltaText: 'Δ —',
+        versionText: `${versionCount} versiones`,
+      };
+    }
+    if (!selectedAuditSnapshot.canonical || !selectedAuditSnapshot.persisted || !selectedAuditSnapshot.delta) {
+      return {
+        label: 'Sin records',
+        tone: 'neutral' as const,
+        detail: 'Sin cálculo canónico',
+        deltaText: 'Δ —',
+        versionText: `${versionCount} versiones`,
+      };
+    }
+    const deltaTotal = selectedAuditSnapshot.delta.netClp;
+    const hasDelta = Math.abs(deltaTotal) > 1;
+    return {
+      label: hasDelta ? 'Revisar' : 'OK',
+      tone: hasDelta ? 'warning' as const : 'ok' as const,
+      detail: hasDelta ? 'Hay diferencias con cálculo canónico' : 'Persistido = canónico',
+      deltaText: `Δ ${formatDelta(deltaTotal, 'CLP')}`,
+      versionText: `${versionCount} versiones`,
+    };
+  }, [rawSelectedClosure?.previousVersions?.length, selectedAuditSnapshot]);
   const aprilRepairPreview = useMemo(
     () =>
       buildApril2026BankRepairPreview({
@@ -2334,15 +2364,32 @@ export const ClosingAurum: React.FC = () => {
                 </details>
               )}
 
-              <details className="rounded-xl border border-[#d8cfbd] bg-[#fcfaf4] p-3 text-xs text-slate-700" open={selectedClosure.monthKey === '2026-04'}>
-                <summary className="cursor-pointer font-semibold text-slate-800">
-                  Auditoría read-only del cierre
+              <details className="group rounded-xl border border-[#d8cfbd] bg-[#fcfaf4] text-xs text-slate-700">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold text-slate-800 marker:hidden">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span>Auditoría avanzada</span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                        closureAuditSummary.tone === 'ok'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : closureAuditSummary.tone === 'warning'
+                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                            : 'border-slate-200 bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      {closureAuditSummary.label}
+                    </span>
+                    <span className="text-[11px] font-normal text-slate-500">{closureAuditSummary.detail}</span>
+                    <span className="text-[11px] font-normal text-slate-500">{closureAuditSummary.deltaText}</span>
+                    <span className="text-[11px] font-normal text-slate-500">{closureAuditSummary.versionText}</span>
+                  </div>
+                  <span className="shrink-0 text-slate-400 transition group-open:rotate-180">⌄</span>
                 </summary>
-                <div className="mt-3 space-y-3">
+                <div className="space-y-3 border-t border-[#e7ddcc] px-3 pb-3 pt-3">
                   <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                     <div>
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Preview forense
+                        Auditoría read-only del cierre
                       </div>
                       <div className="text-[11px] text-slate-500">
                         Lee el cierre crudo desde storage, recalcula el summary canónico en memoria y compara previousVersions sin escribir datos.
