@@ -10,6 +10,8 @@ interface ConfirmActionModalProps {
   cancelText?: string;
   auxiliaryText?: string;
   tone?: 'danger' | 'default';
+  confirmDisabled?: boolean;
+  children?: React.ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
   onAuxiliaryAction?: () => void;
@@ -24,6 +26,8 @@ export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
   cancelText = 'Cancelar',
   auxiliaryText,
   tone = 'default',
+  confirmDisabled = false,
+  children,
   onConfirm,
   onCancel,
   onAuxiliaryAction,
@@ -43,6 +47,7 @@ export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
           <div className={`text-lg font-semibold ${isDanger ? 'text-red-800' : 'text-slate-900'}`}>{title}</div>
           <div className="mt-2 text-sm text-slate-600">{message}</div>
         </div>
+        {children}
         <div className="flex justify-end gap-2">
           {onAuxiliaryAction && auxiliaryText && (
             <Button variant="ghost" onClick={onAuxiliaryAction} disabled={busy}>
@@ -52,7 +57,7 @@ export const ConfirmActionModal: React.FC<ConfirmActionModalProps> = ({
           <Button variant="outline" onClick={onCancel} disabled={busy}>
             {cancelText}
           </Button>
-          <Button variant={isDanger ? 'danger' : 'secondary'} onClick={onConfirm} disabled={busy}>
+          <Button variant={isDanger ? 'danger' : 'secondary'} onClick={onConfirm} disabled={busy || confirmDisabled}>
             {busy ? 'Procesando...' : confirmText}
           </Button>
         </div>

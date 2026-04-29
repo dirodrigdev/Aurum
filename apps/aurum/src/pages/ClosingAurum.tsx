@@ -1089,6 +1089,7 @@ export const ClosingAurum: React.FC = () => {
   const [undoCloseBusy, setUndoCloseBusy] = useState(false);
   const [undoCloseMessage, setUndoCloseMessage] = useState('');
   const [undoClosePreview, setUndoClosePreview] = useState<WealthMonthlyCloseUndoPreview | null>(null);
+  const [undoLocalCheckpointAcknowledged, setUndoLocalCheckpointAcknowledged] = useState(false);
   const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
   const [aprilRepairBusy, setAprilRepairBusy] = useState(false);
   const [aprilRepairMessage, setAprilRepairMessage] = useState('');
@@ -2131,6 +2132,10 @@ export const ClosingAurum: React.FC = () => {
 
   const applyUndoMonthlyClose = async () => {
     if (undoCloseBusy || !selectedClosureMonthKey) return;
+    if (undoClosePreview?.checkpointSource === 'local' && !undoLocalCheckpointAcknowledged) {
+      setUndoCloseMessage('Confirma que entiendes que este checkpoint sólo existe en este navegador.');
+      return;
+    }
     setUndoCloseBusy(true);
     setUndoCloseMessage('');
     try {
@@ -2603,6 +2608,28 @@ export const ClosingAurum: React.FC = () => {
                             <div className="mt-1 text-[11px] text-slate-600">
                               Esta acción volverá al estado exacto anterior al cierre de este mes. Las ediciones posteriores dejarán de ser el estado activo, pero se guardará una copia de seguridad antes de deshacer.
                             </div>
+                            <div
+                              className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                undoClosePreview?.checkpointSource === 'cloud'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : undoClosePreview?.checkpointSource === 'local'
+                                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                    : 'border-slate-200 bg-slate-50 text-slate-500'
+                              }`}
+                            >
+                              {undoClosePreview?.checkpointSource === 'cloud'
+                                ? 'Checkpoint: cloud'
+                                : undoClosePreview?.checkpointSource === 'local'
+                                  ? 'Checkpoint: solo local'
+                                  : 'Checkpoint: no disponible'}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              {undoClosePreview?.checkpointSource === 'cloud'
+                                ? 'Respaldo de cierre en la nube.'
+                                : undoClosePreview?.checkpointSource === 'local'
+                                  ? 'Respaldo solo en este dispositivo.'
+                                  : 'Sin respaldo previo para deshacer.'}
+                            </div>
                             {!undoClosePreview?.ok ? (
                               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
                                 {undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.'}
@@ -2644,7 +2671,10 @@ export const ClosingAurum: React.FC = () => {
                             variant="outline"
                             className="shrink-0"
                             disabled={!undoClosePreview?.ok || undoCloseBusy}
-                            onClick={() => setUndoCloseConfirmOpen(true)}
+                            onClick={() => {
+                              setUndoLocalCheckpointAcknowledged(false);
+                              setUndoCloseConfirmOpen(true);
+                            }}
                           >
                             Deshacer cierre y volver al estado previo
                           </Button>
@@ -3095,11 +3125,15 @@ export const ClosingAurum: React.FC = () => {
       <ConfirmActionModal
         open={undoCloseConfirmOpen}
         busy={undoCloseBusy}
-        title="Deshacer cierre mensual"
+        title={undoClosePreview?.checkpointSource === 'local' ? 'Deshacer con checkpoint local' : 'Deshacer cierre mensual'}
+        tone={undoClosePreview?.checkpointSource === 'local' ? 'danger' : 'default'}
         message={
           !undoClosePreview?.ok
             ? undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.'
-            : `${undoClosePreview.message || ''}\n\nActual: total ${formatCurrency(
+            : `${undoClosePreview.checkpointSource === 'local'
+                ? 'Este checkpoint existe solo en este navegador y no está sincronizado en la nube. Úsalo solo si reconoces este cierre y estás seguro.'
+                : undoClosePreview.message || ''
+              }\n\nActual: total ${formatCurrency(
                 undoClosePreview.current?.netClp || 0,
                 'CLP',
               )}, inversiones ${formatCurrency(undoClosePreview.current?.investmentClp || 0, 'CLP')}, bancos ${formatCurrency(
@@ -3140,14 +3174,31 @@ export const ClosingAurum: React.FC = () => {
                 'CLP',
               )}.`
         }
-        confirmText="Confirmar deshacer cierre"
+        confirmText={undoClosePreview?.checkpointSource === 'local' ? 'Deshacer usando checkpoint local' : 'Confirmar deshacer cierre'}
+        confirmDisabled={undoClosePreview?.checkpointSource === 'local' && !undoLocalCheckpointAcknowledged}
         cancelText="Cancelar"
         onCancel={() => {
           if (undoCloseBusy) return;
           setUndoCloseConfirmOpen(false);
+          setUndoLocalCheckpointAcknowledged(false);
         }}
         onConfirm={applyUndoMonthlyClose}
-      />
+      >
+        {undoClosePreview?.checkpointSource === 'local' && (
+          <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-amber-300"
+              checked={undoLocalCheckpointAcknowledged}
+              onChange={(event) => setUndoLocalCheckpointAcknowledged(event.target.checked)}
+              disabled={undoCloseBusy}
+            />
+            <span>
+              Entiendo que este respaldo existe solo en este navegador y quiero usarlo para deshacer este cierre.
+            </span>
+          </label>
+        )}
+      </ConfirmActionModal>
 
       <ConfirmActionModal
         open={closureEditConfirmOpen}

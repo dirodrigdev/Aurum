@@ -2770,10 +2770,6 @@ const toComparableClosureSummary = (
 
 export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthMonthlyCloseUndoPreview> => {
   const normalizedMonthKey = normalizeMonthKey(monthKey) || monthKey;
-  const cloudCheckpoint = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
-  if (!cloudCheckpoint) {
-    await syncLocalCheckpointToCloudBestEffort(normalizedMonthKey);
-  }
   const checkpointFromCloud = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
   const checkpointLocal = getMonthlyCloseCheckpoint(normalizedMonthKey);
   const checkpoint = checkpointFromCloud || checkpointLocal;
@@ -2782,6 +2778,9 @@ export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthM
     : checkpointLocal
       ? 'local'
       : null;
+  if (!checkpointFromCloud && checkpointLocal) {
+    void syncLocalCheckpointToCloudBestEffort(normalizedMonthKey);
+  }
   const currentClosure =
     loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
   if (!checkpoint) {

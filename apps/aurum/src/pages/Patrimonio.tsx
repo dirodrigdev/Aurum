@@ -5260,7 +5260,7 @@ export const Patrimonio: React.FC = () => {
   const completeMonthlyClose = async (
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
-  ) => {
+  ): Promise<{ ok: true } | { ok: false; errorMessage: string }> => {
     const carriedIntoClose = fillMissingWithPreviousClosure(
       targetMonthKey,
       visualMonthSnapshotDate(targetMonthKey),
@@ -5282,7 +5282,7 @@ export const Patrimonio: React.FC = () => {
     } catch (error: any) {
       const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
       setCloseError(message);
-      return;
+      return { ok: false, errorMessage: message };
     }
     refreshRecords();
     refreshClosures();
@@ -5312,7 +5312,7 @@ export const Patrimonio: React.FC = () => {
     const advanced = nextVisualMonth !== targetMonthKey;
     if (!advanced) {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
-      return;
+      return { ok: true };
     }
     if (carryResult.added > 0) {
       setCarryMessage(
@@ -5331,6 +5331,7 @@ export const Patrimonio: React.FC = () => {
         }. ${monthLabel(nextVisualMonth)} quedó sin cambios adicionales porque no había valores nuevos para arrastrar.`,
       );
     }
+    return { ok: true };
   };
   const finalizeMonthlyClose = async (
     targetMonthKey: string,
@@ -5339,7 +5340,12 @@ export const Patrimonio: React.FC = () => {
   ) => {
     setPendingCloseOverwrite(null);
     setCloseOverwriteConfirmOpen(false);
-    await completeMonthlyClose(targetMonthKey, fxForClose);
+    const result = await completeMonthlyClose(targetMonthKey, fxForClose);
+    if (result.ok === false) {
+      setCarryMessage('');
+      setCloseError(result.errorMessage);
+      return;
+    }
     if (carriedCount) {
       setCarryMessage(
         `Cierre realizado con ${carriedCount} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,

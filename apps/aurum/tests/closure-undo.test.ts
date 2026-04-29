@@ -387,4 +387,19 @@ describe('monthly close undo checkpoint', () => {
     expect(preview.checkpointSource).toBe('cloud');
     expect(Number(preview.previous?.bankClp || 0)).not.toBe(1);
   });
+
+  it('marks preview as local-only when checkpoint is not in cloud', async () => {
+    upsertMonthlyClosure({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 12_000_000, 1_500_000),
+      fxRates,
+      closedAt: '2026-04-15T12:00:00.000Z',
+    });
+    captureMonthlyCloseCheckpoint('2026-04', { overwrite: true });
+
+    const preview = await previewUndoMonthlyClose('2026-04');
+    expect(preview.ok).toBe(true);
+    expect(preview.checkpointSource).toBe('local');
+    expect(preview.message).toContain('Checkpoint solo local');
+  });
 });
