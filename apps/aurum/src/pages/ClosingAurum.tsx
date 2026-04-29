@@ -64,6 +64,7 @@ import {
   undoMonthlyCloseToCheckpoint,
   WEALTH_LABEL_CATALOG,
   WealthMonthlyClosure,
+  WealthMonthlyCloseUndoPreview,
   WealthSnapshotSummary,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
@@ -1087,6 +1088,7 @@ export const ClosingAurum: React.FC = () => {
   const [undoCloseConfirmOpen, setUndoCloseConfirmOpen] = useState(false);
   const [undoCloseBusy, setUndoCloseBusy] = useState(false);
   const [undoCloseMessage, setUndoCloseMessage] = useState('');
+  const [undoClosePreview, setUndoClosePreview] = useState<WealthMonthlyCloseUndoPreview | null>(null);
   const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
   const [aprilRepairBusy, setAprilRepairBusy] = useState(false);
   const [aprilRepairMessage, setAprilRepairMessage] = useState('');
@@ -1483,10 +1485,20 @@ export const ClosingAurum: React.FC = () => {
       versionText: `${versionCount} versiones`,
     };
   }, [rawSelectedClosure?.previousVersions?.length, selectedAuditSnapshot]);
-  const undoClosePreview = useMemo(
-    () => (selectedClosureMonthKey ? previewUndoMonthlyClose(selectedClosureMonthKey) : null),
-    [selectedClosureMonthKey, revision],
-  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedClosureMonthKey) {
+      setUndoClosePreview(null);
+      return;
+    }
+    void previewUndoMonthlyClose(selectedClosureMonthKey).then((preview) => {
+      if (cancelled) return;
+      setUndoClosePreview(preview);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClosureMonthKey, revision]);
   const aprilRepairPreview = useMemo(
     () =>
       buildApril2026BankRepairPreview({
@@ -2117,12 +2129,12 @@ export const ClosingAurum: React.FC = () => {
     }
   };
 
-  const applyUndoMonthlyClose = () => {
+  const applyUndoMonthlyClose = async () => {
     if (undoCloseBusy || !selectedClosureMonthKey) return;
     setUndoCloseBusy(true);
     setUndoCloseMessage('');
     try {
-      const result = undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
+      const result = await undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
       if (!result.ok) {
         setUndoCloseMessage(result.message || 'No pude deshacer este cierre.');
         return;

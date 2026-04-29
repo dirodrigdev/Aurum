@@ -144,6 +144,7 @@ export interface WealthMonthlyCloseUndoPreview {
   ok: boolean;
   monthKey: string;
   message?: string;
+  checkpointSource: 'cloud' | 'local' | null;
   checkpoint: WealthMonthlyCloseCheckpoint | null;
   currentClosure: WealthMonthlyClosure | null;
   current: ComparableClosureSummary | null;
@@ -270,6 +271,8 @@ export const WEALTH_DATA_UPDATED_EVENT = 'aurum:wealth-data-updated';
 export const RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT = 'aurum:risk-capital-totals-updated';
 const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
 const WEALTH_CLOUD_BACKUPS_COLLECTION = 'backups';
+const WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_COLLECTION = 'monthly_close_checkpoints';
+const WEALTH_CLOUD_MONTHLY_CLOSE_UNDO_AUDIT_COLLECTION = 'monthly_close_undo_audit';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
@@ -2628,6 +2631,63 @@ export const getMonthlyCloseCheckpoint = (monthKey: string): WealthMonthlyCloseC
   return loadMonthlyCloseCheckpoints().find((item) => item.monthKey === normalizedMonthKey) || null;
 };
 
+const saveMonthlyCloseCheckpointToLocalCache = (checkpoint: WealthMonthlyCloseCheckpoint) => {
+  const checkpoints = loadMonthlyCloseCheckpoints();
+  const next = [checkpoint, ...checkpoints.filter((item) => item.monthKey !== checkpoint.monthKey)];
+  saveMonthlyCloseCheckpoints(next);
+};
+
+const loadMonthlyCloseCheckpointFromCloud = async (
+  monthKey: string,
+): Promise<WealthMonthlyCloseCheckpoint | null> => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
+  if (!checkpointsRef) return null;
+  try {
+    const checkpointRef = doc(checkpointsRef, normalizedMonthKey);
+    const snap = await getDoc(checkpointRef);
+    if (!snap.exists()) return null;
+    const normalized = normalizeCheckpoint(snap.data());
+    if (!normalized) return null;
+    saveMonthlyCloseCheckpointToLocalCache(normalized);
+    return normalized;
+  } catch {
+    return null;
+  }
+};
+
+const saveMonthlyCloseCheckpointToCloud = async (
+  checkpoint: WealthMonthlyCloseCheckpoint,
+): Promise<boolean> => {
+  const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
+  if (!checkpointsRef) return false;
+  try {
+    const checkpointRef = doc(checkpointsRef, checkpoint.monthKey);
+    await setDoc(
+      checkpointRef,
+      stripUndefinedDeep({
+        ...checkpoint,
+        source: 'aurum',
+      }),
+      { merge: true },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const syncLocalCheckpointToCloudBestEffort = async (monthKey: string) => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return;
+  const local = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  if (!local) return;
+  const cloud = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
+  if (cloud) return;
+  await saveMonthlyCloseCheckpointToCloud(local);
+};
+
 export const captureMonthlyCloseCheckpoint = (
   monthKey: string,
   options?: { overwrite?: boolean },
@@ -2650,6 +2710,17 @@ export const captureMonthlyCloseCheckpoint = (
   };
   const next = [checkpoint, ...checkpoints.filter((item) => item.monthKey !== normalizedMonthKey)];
   saveMonthlyCloseCheckpoints(next);
+  return checkpoint;
+};
+
+export const captureMonthlyCloseCheckpointCloudFirst = async (
+  monthKey: string,
+  options?: { overwrite?: boolean },
+): Promise<WealthMonthlyCloseCheckpoint | null> => {
+  const checkpoint = captureMonthlyCloseCheckpoint(monthKey, options);
+  if (!checkpoint) return null;
+  const cloudOk = await saveMonthlyCloseCheckpointToCloud(checkpoint);
+  if (!cloudOk) return null;
   return checkpoint;
 };
 
@@ -2697,9 +2768,20 @@ const toComparableClosureSummary = (
   };
 };
 
-export const previewUndoMonthlyClose = (monthKey: string): WealthMonthlyCloseUndoPreview => {
+export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthMonthlyCloseUndoPreview> => {
   const normalizedMonthKey = normalizeMonthKey(monthKey) || monthKey;
-  const checkpoint = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  const cloudCheckpoint = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
+  if (!cloudCheckpoint) {
+    await syncLocalCheckpointToCloudBestEffort(normalizedMonthKey);
+  }
+  const checkpointFromCloud = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
+  const checkpointLocal = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  const checkpoint = checkpointFromCloud || checkpointLocal;
+  const checkpointSource: 'cloud' | 'local' | null = checkpointFromCloud
+    ? 'cloud'
+    : checkpointLocal
+      ? 'local'
+      : null;
   const currentClosure =
     loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
   if (!checkpoint) {
@@ -2707,6 +2789,7 @@ export const previewUndoMonthlyClose = (monthKey: string): WealthMonthlyCloseUnd
       ok: false,
       monthKey: normalizedMonthKey,
       message: 'No hay checkpoint previo para deshacer este cierre de forma segura.',
+      checkpointSource: null,
       checkpoint: null,
       currentClosure,
       current: toComparableClosureSummary(currentClosure),
@@ -2728,14 +2811,18 @@ export const previewUndoMonthlyClose = (monthKey: string): WealthMonthlyCloseUnd
   return {
     ok: true,
     monthKey: normalizedMonthKey,
+    checkpointSource,
     checkpoint,
     currentClosure,
     current,
     previous,
     delta,
-    message: checkpoint.hadPreviousClosure
-      ? 'Antes de este cierre existía un cierre previo. Al deshacer, se restaurará ese cierre.'
-      : 'Antes de este cierre no existía cierre para este mes. Al deshacer, el mes quedará sin cierre.',
+    message:
+      checkpointSource === 'local'
+        ? 'Checkpoint solo local. Este respaldo no está sincronizado.'
+        : checkpoint.hadPreviousClosure
+          ? 'Antes de este cierre existía un cierre previo. Al deshacer, se restaurará ese cierre.'
+          : 'Antes de este cierre no existía cierre para este mes. Al deshacer, el mes quedará sin cierre.',
   };
 };
 
@@ -2768,8 +2855,20 @@ const saveMonthlyCloseUndoAudit = (entries: WealthMonthlyCloseUndoAuditEntry[]) 
   localStorage.setItem(MONTHLY_CLOSE_UNDO_AUDIT_KEY, JSON.stringify(entries));
 };
 
-export const undoMonthlyCloseToCheckpoint = (monthKey: string): UndoMonthlyCloseResult => {
-  const preview = previewUndoMonthlyClose(monthKey);
+const appendMonthlyCloseUndoAuditCloud = async (entry: WealthMonthlyCloseUndoAuditEntry) => {
+  const auditRef = await getMonthlyCloseUndoAuditCollectionRef();
+  if (!auditRef) return false;
+  try {
+    const entryRef = doc(auditRef, entry.id);
+    await setDoc(entryRef, stripUndefinedDeep(entry), { merge: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<UndoMonthlyCloseResult> => {
+  const preview = await previewUndoMonthlyClose(monthKey);
   if (!preview.ok || !preview.checkpoint) {
     return {
       ok: false,
@@ -2833,6 +2932,7 @@ export const undoMonthlyCloseToCheckpoint = (monthKey: string): UndoMonthlyClose
     backupVersionId: backupVersion?.id || null,
   };
   saveMonthlyCloseUndoAudit([auditEntry, ...auditEntries].slice(0, 64));
+  await appendMonthlyCloseUndoAuditCloud(auditEntry);
 
   return {
     ok: true,
@@ -2908,6 +3008,18 @@ const getWealthBackupsCollectionRef = async () => {
   const wealthRef = await getWealthCloudRef();
   if (!wealthRef) return null;
   return collection(wealthRef, WEALTH_CLOUD_BACKUPS_COLLECTION);
+};
+
+const getMonthlyCloseCheckpointsCollectionRef = async () => {
+  const wealthRef = await getWealthCloudRef();
+  if (!wealthRef) return null;
+  return collection(wealthRef, WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_COLLECTION);
+};
+
+const getMonthlyCloseUndoAuditCollectionRef = async () => {
+  const wealthRef = await getWealthCloudRef();
+  if (!wealthRef) return null;
+  return collection(wealthRef, WEALTH_CLOUD_MONTHLY_CLOSE_UNDO_AUDIT_COLLECTION);
 };
 
 let wealthCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3495,12 +3607,12 @@ export const createMonthlyClosure = (
   });
 };
 
-export const closeMonthlyWithCheckpoint = (input: {
+export const closeMonthlyWithCheckpoint = async (input: {
   monthKey: string;
   records: WealthRecord[];
   fxRates: WealthFxRates;
   closedAt?: string;
-}): WealthMonthlyClosure => {
+}): Promise<WealthMonthlyClosure> => {
   const normalizedMonthKey = normalizeMonthKey(input.monthKey);
   if (!normalizedMonthKey) {
     return upsertMonthlyClosure({
@@ -3510,7 +3622,14 @@ export const closeMonthlyWithCheckpoint = (input: {
       closedAt: input.closedAt || nowIso(),
     });
   }
-  captureMonthlyCloseCheckpoint(normalizedMonthKey, { overwrite: true });
+  const checkpoint = await captureMonthlyCloseCheckpointCloudFirst(normalizedMonthKey, {
+    overwrite: true,
+  });
+  if (!checkpoint) {
+    throw new Error(
+      'No se pudo guardar el punto de respaldo del cierre. Por seguridad, el cierre no se ejecutó.',
+    );
+  }
   return upsertMonthlyClosure({
     monthKey: normalizedMonthKey,
     records: input.records,

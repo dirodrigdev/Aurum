@@ -5257,7 +5257,7 @@ export const Patrimonio: React.FC = () => {
     markStartMonthStepApplied(monthToStart, 'realEstate');
   };
 
-  const completeMonthlyClose = (
+  const completeMonthlyClose = async (
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
   ) => {
@@ -5272,12 +5272,18 @@ export const Patrimonio: React.FC = () => {
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
-    closeMonthlyWithCheckpoint({
-      monthKey: targetMonthKey,
-      records: targetRecords,
-      fxRates: fxForClose,
-      closedAt: new Date(toCloseDateFromMonthKey(targetMonthKey)).toISOString(),
-    });
+    try {
+      await closeMonthlyWithCheckpoint({
+        monthKey: targetMonthKey,
+        records: targetRecords,
+        fxRates: fxForClose,
+        closedAt: new Date(toCloseDateFromMonthKey(targetMonthKey)).toISOString(),
+      });
+    } catch (error: any) {
+      const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
+      setCloseError(message);
+      return;
+    }
     refreshRecords();
     refreshClosures();
     const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || null;
@@ -5326,14 +5332,14 @@ export const Patrimonio: React.FC = () => {
       );
     }
   };
-  const finalizeMonthlyClose = (
+  const finalizeMonthlyClose = async (
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
     carriedCount: number,
   ) => {
     setPendingCloseOverwrite(null);
     setCloseOverwriteConfirmOpen(false);
-    completeMonthlyClose(targetMonthKey, fxForClose);
+    await completeMonthlyClose(targetMonthKey, fxForClose);
     if (carriedCount) {
       setCarryMessage(
         `Cierre realizado con ${carriedCount} valor(es) arrastrados de mes anterior. Puedes actualizarlos luego para el mes en curso.`,
@@ -5892,7 +5898,7 @@ export const Patrimonio: React.FC = () => {
       setCloseOverwriteConfirmOpen(true);
       return;
     }
-    finalizeMonthlyClose(targetMonthKey, fxForClose, carried.length);
+    void finalizeMonthlyClose(targetMonthKey, fxForClose, carried.length);
   };
 
   const runMonthlyClose = () => {
@@ -6476,7 +6482,7 @@ export const Patrimonio: React.FC = () => {
         cancelText="Volver"
         onConfirm={() => {
           if (!pendingCloseOverwrite) return;
-          finalizeMonthlyClose(
+          void finalizeMonthlyClose(
             pendingCloseOverwrite.targetMonthKey,
             pendingCloseOverwrite.fxForClose,
             pendingCloseOverwrite.carriedCount,
