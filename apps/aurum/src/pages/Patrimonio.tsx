@@ -32,7 +32,7 @@ import {
   WealthInvestmentInstrument,
   WealthMonthlyClosure,
   WealthRecord,
-  createMonthlyClosure,
+  closeMonthlyWithCheckpoint,
   currentMonthKey,
   defaultFxRates,
   applyMortgageAutoCalculation,
@@ -5272,7 +5272,12 @@ export const Patrimonio: React.FC = () => {
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
-    createMonthlyClosure(targetRecords, fxForClose, toCloseDateFromMonthKey(targetMonthKey));
+    closeMonthlyWithCheckpoint({
+      monthKey: targetMonthKey,
+      records: targetRecords,
+      fxRates: fxForClose,
+      closedAt: new Date(toCloseDateFromMonthKey(targetMonthKey)).toISOString(),
+    });
     refreshRecords();
     refreshClosures();
     const persistedClosure = loadClosures().find((closure) => closure.monthKey === targetMonthKey) || null;

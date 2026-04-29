@@ -110,6 +110,56 @@ export interface WealthMonthlyClosureVersion {
   records?: WealthRecord[];
 }
 
+export interface WealthMonthlyCloseCheckpoint {
+  id: string;
+  monthKey: string;
+  createdAt: string;
+  reason: 'before_monthly_close';
+  schemaVersion: number;
+  hadPreviousClosure: boolean;
+  previousClosure: WealthMonthlyClosure | null;
+}
+
+export interface WealthMonthlyCloseUndoAuditEntry {
+  id: string;
+  monthKey: string;
+  createdAt: string;
+  reason: 'undo_monthly_close_to_pre_close_checkpoint';
+  checkpointId: string;
+  checkpointCreatedAt: string;
+  hadPreviousClosure: boolean;
+  restoredToNoClosure: boolean;
+  backupVersionId: string | null;
+}
+
+type ComparableClosureSummary = {
+  bankClp: number;
+  investmentClp: number;
+  realEstateNetClp: number;
+  nonMortgageDebtClp: number;
+  netClp: number;
+};
+
+export interface WealthMonthlyCloseUndoPreview {
+  ok: boolean;
+  monthKey: string;
+  message?: string;
+  checkpoint: WealthMonthlyCloseCheckpoint | null;
+  currentClosure: WealthMonthlyClosure | null;
+  current: ComparableClosureSummary | null;
+  previous: ComparableClosureSummary | null;
+  delta: ComparableClosureSummary | null;
+}
+
+export interface UndoMonthlyCloseResult {
+  ok: boolean;
+  monthKey: string;
+  message: string;
+  restoredToNoClosure: boolean;
+  restoredClosure: WealthMonthlyClosure | null;
+  checkpoint: WealthMonthlyCloseCheckpoint | null;
+}
+
 export interface WealthClosureCompleteness {
   monthKey: string;
   missingFieldLabels: string[];
@@ -205,6 +255,8 @@ const DELETED_RECORD_IDS_KEY = 'wealth_deleted_record_ids_v1';
 const DELETED_RECORD_ASSET_MONTH_KEYS_KEY = 'wealth_deleted_record_asset_month_keys_v1';
 const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 const WEALTH_LAST_REMOTE_UPDATED_AT_KEY = 'wealth_last_remote_updated_at_v1';
+const MONTHLY_CLOSE_CHECKPOINTS_KEY = 'wealth_monthly_close_checkpoints_v1';
+const MONTHLY_CLOSE_UNDO_AUDIT_KEY = 'wealth_monthly_close_undo_audit_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
@@ -2483,6 +2535,317 @@ export const saveClosures = (closures: WealthMonthlyClosure[], options?: Persist
   if (!options?.skipCloudSync) scheduleWealthCloudSync();
 };
 
+const cloneClosureForCheckpoint = (closure: WealthMonthlyClosure | null): WealthMonthlyClosure | null => {
+  if (!closure) return null;
+  return {
+    ...closure,
+    fxRates: closure.fxRates ? { ...closure.fxRates } : undefined,
+    fxMissing: Array.isArray(closure.fxMissing) ? [...closure.fxMissing] : undefined,
+    records: Array.isArray(closure.records) ? closure.records.map((record) => ({ ...record })) : undefined,
+    previousVersions: Array.isArray(closure.previousVersions)
+      ? closure.previousVersions.map((version) => ({
+          ...version,
+          fxRates: version.fxRates ? { ...version.fxRates } : undefined,
+          fxMissing: Array.isArray(version.fxMissing) ? [...version.fxMissing] : undefined,
+          records: Array.isArray(version.records) ? version.records.map((record) => ({ ...record })) : undefined,
+        }))
+      : undefined,
+  };
+};
+
+const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthMonthlyClosure | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const monthKey = normalizeMonthKey(raw.monthKey) || normalizeMonthKey(fallbackMonthKey);
+  if (!monthKey) return null;
+  const fxRates = normalizeClosureFxRates(raw.fxRates);
+  const fxMissing = mergeFxMissingKeys(
+    normalizeFxMissingKeys(raw.fxMissing),
+    inferFxMissingFromRawFx(raw.fxRates),
+  );
+  const records = normalizeClosureRecords(raw.records);
+  const summary =
+    records && records.length
+      ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+      : raw.summary;
+  if (!summary) return null;
+  const previousVersionsRaw = Array.isArray(raw.previousVersions) ? raw.previousVersions : [];
+  const previousVersions = mergeClosureVersions(
+    previousVersionsRaw
+      .map((version: any) => normalizeClosureVersion(version, monthKey))
+      .filter((version: WealthMonthlyClosureVersion | null): version is WealthMonthlyClosureVersion => !!version),
+  );
+  return {
+    id: String(raw.id || crypto.randomUUID()),
+    monthKey,
+    closedAt: String(raw.closedAt || nowIso()),
+    summary,
+    fxRates,
+    fxMissing: fxMissing.length ? fxMissing : undefined,
+    records,
+    previousVersions: previousVersions.length ? previousVersions : undefined,
+  };
+};
+
+const normalizeCheckpoint = (raw: any): WealthMonthlyCloseCheckpoint | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const monthKey = normalizeMonthKey(raw.monthKey);
+  if (!monthKey) return null;
+  const previousClosure = normalizeCheckpointClosure(raw.previousClosure, monthKey);
+  const hadPreviousClosure = Boolean(raw.hadPreviousClosure || previousClosure);
+  return {
+    id: String(raw.id || crypto.randomUUID()),
+    monthKey,
+    createdAt: String(raw.createdAt || nowIso()),
+    reason: 'before_monthly_close',
+    schemaVersion: Number(raw.schemaVersion || 1),
+    hadPreviousClosure,
+    previousClosure: hadPreviousClosure ? previousClosure : null,
+  };
+};
+
+export const loadMonthlyCloseCheckpoints = (): WealthMonthlyCloseCheckpoint[] => {
+  try {
+    const raw = localStorage.getItem(MONTHLY_CLOSE_CHECKPOINTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item: any) => normalizeCheckpoint(item))
+      .filter((item: WealthMonthlyCloseCheckpoint | null): item is WealthMonthlyCloseCheckpoint => !!item)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch {
+    return [];
+  }
+};
+
+export const saveMonthlyCloseCheckpoints = (checkpoints: WealthMonthlyCloseCheckpoint[]) => {
+  localStorage.setItem(MONTHLY_CLOSE_CHECKPOINTS_KEY, JSON.stringify(checkpoints));
+};
+
+export const getMonthlyCloseCheckpoint = (monthKey: string): WealthMonthlyCloseCheckpoint | null => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  return loadMonthlyCloseCheckpoints().find((item) => item.monthKey === normalizedMonthKey) || null;
+};
+
+export const captureMonthlyCloseCheckpoint = (
+  monthKey: string,
+  options?: { overwrite?: boolean },
+): WealthMonthlyCloseCheckpoint | null => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  const checkpoints = loadMonthlyCloseCheckpoints();
+  const existing = checkpoints.find((item) => item.monthKey === normalizedMonthKey) || null;
+  if (existing && !options?.overwrite) return existing;
+  const existingClosure =
+    loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
+  const checkpoint: WealthMonthlyCloseCheckpoint = {
+    id: crypto.randomUUID(),
+    monthKey: normalizedMonthKey,
+    createdAt: nowIso(),
+    reason: 'before_monthly_close',
+    schemaVersion: 1,
+    hadPreviousClosure: !!existingClosure,
+    previousClosure: cloneClosureForCheckpoint(existingClosure),
+  };
+  const next = [checkpoint, ...checkpoints.filter((item) => item.monthKey !== normalizedMonthKey)];
+  saveMonthlyCloseCheckpoints(next);
+  return checkpoint;
+};
+
+const toComparableClosureSummary = (
+  closure: WealthMonthlyClosure | null,
+): ComparableClosureSummary | null => {
+  if (!closure || !closure.summary) return null;
+  const fx = closure.fxRates || defaultFxRates;
+  const canonical = Array.isArray(closure.records) && closure.records.length
+    ? buildCanonicalClosureSummary(dedupeLatestByAsset(closure.records), fx)
+    : closure.summary;
+  const bankClp = Number(
+    (canonical as WealthSnapshotSummary).bankClp ??
+      canonical.byBlock?.bank?.CLP ??
+      0,
+  );
+  const investmentClp = Number(
+    (canonical as WealthSnapshotSummary).investmentClpWithRisk ??
+      (canonical as WealthSnapshotSummary).investmentClp ??
+      canonical.byBlock?.investment?.CLP ??
+      0,
+  );
+  const realEstateNetClp = Number(
+    (canonical as WealthSnapshotSummary).realEstateNetClp ??
+      canonical.byBlock?.real_estate?.CLP ??
+      0,
+  );
+  const nonMortgageDebtClp = Number(
+    (canonical as WealthSnapshotSummary).nonMortgageDebtClp ??
+      canonical.byBlock?.debt?.CLP ??
+      0,
+  );
+  const netClp = Number(
+    (canonical as WealthSnapshotSummary).netClpWithRisk ??
+      (canonical as WealthSnapshotSummary).netClp ??
+      canonical.netConsolidatedClp ??
+      0,
+  );
+  return {
+    bankClp,
+    investmentClp,
+    realEstateNetClp,
+    nonMortgageDebtClp,
+    netClp,
+  };
+};
+
+export const previewUndoMonthlyClose = (monthKey: string): WealthMonthlyCloseUndoPreview => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey) || monthKey;
+  const checkpoint = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  const currentClosure =
+    loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
+  if (!checkpoint) {
+    return {
+      ok: false,
+      monthKey: normalizedMonthKey,
+      message: 'No hay checkpoint previo para deshacer este cierre de forma segura.',
+      checkpoint: null,
+      currentClosure,
+      current: toComparableClosureSummary(currentClosure),
+      previous: null,
+      delta: null,
+    };
+  }
+  const current = toComparableClosureSummary(currentClosure);
+  const previous = toComparableClosureSummary(checkpoint.previousClosure);
+  const delta = current && previous
+    ? {
+        bankClp: previous.bankClp - current.bankClp,
+        investmentClp: previous.investmentClp - current.investmentClp,
+        realEstateNetClp: previous.realEstateNetClp - current.realEstateNetClp,
+        nonMortgageDebtClp: previous.nonMortgageDebtClp - current.nonMortgageDebtClp,
+        netClp: previous.netClp - current.netClp,
+      }
+    : null;
+  return {
+    ok: true,
+    monthKey: normalizedMonthKey,
+    checkpoint,
+    currentClosure,
+    current,
+    previous,
+    delta,
+    message: checkpoint.hadPreviousClosure
+      ? 'Antes de este cierre existía un cierre previo. Al deshacer, se restaurará ese cierre.'
+      : 'Antes de este cierre no existía cierre para este mes. Al deshacer, el mes quedará sin cierre.',
+  };
+};
+
+const loadMonthlyCloseUndoAudit = (): WealthMonthlyCloseUndoAuditEntry[] => {
+  try {
+    const raw = localStorage.getItem(MONTHLY_CLOSE_UNDO_AUDIT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => !!item && typeof item === 'object')
+      .map((item) => ({
+        id: String(item.id || crypto.randomUUID()),
+        monthKey: String(item.monthKey || ''),
+        createdAt: String(item.createdAt || nowIso()),
+        reason: 'undo_monthly_close_to_pre_close_checkpoint' as const,
+        checkpointId: String(item.checkpointId || ''),
+        checkpointCreatedAt: String(item.checkpointCreatedAt || nowIso()),
+        hadPreviousClosure: Boolean(item.hadPreviousClosure),
+        restoredToNoClosure: Boolean(item.restoredToNoClosure),
+        backupVersionId: item.backupVersionId ? String(item.backupVersionId) : null,
+      }))
+      .filter((item) => !!item.monthKey);
+  } catch {
+    return [];
+  }
+};
+
+const saveMonthlyCloseUndoAudit = (entries: WealthMonthlyCloseUndoAuditEntry[]) => {
+  localStorage.setItem(MONTHLY_CLOSE_UNDO_AUDIT_KEY, JSON.stringify(entries));
+};
+
+export const undoMonthlyCloseToCheckpoint = (monthKey: string): UndoMonthlyCloseResult => {
+  const preview = previewUndoMonthlyClose(monthKey);
+  if (!preview.ok || !preview.checkpoint) {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: preview.message || 'No hay checkpoint disponible.',
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: null,
+    };
+  }
+  const checkpoint = preview.checkpoint;
+  const closures = loadClosures();
+  const current = closures.find((closure) => closure.monthKey === preview.monthKey) || null;
+  const replacedAt = nowIso();
+  const backupVersion = current ? toClosureVersion(current, replacedAt) : null;
+  let nextClosures = closures.filter((closure) => closure.monthKey !== preview.monthKey);
+  let restoredClosure: WealthMonthlyClosure | null = null;
+
+  if (checkpoint.hadPreviousClosure) {
+    if (!checkpoint.previousClosure?.summary) {
+      return {
+        ok: false,
+        monthKey: preview.monthKey,
+        message: 'Checkpoint incompleto: no tiene cierre previo válido para restaurar.',
+        restoredToNoClosure: false,
+        restoredClosure: null,
+        checkpoint,
+      };
+    }
+    restoredClosure = cloneClosureForCheckpoint(checkpoint.previousClosure);
+    if (!restoredClosure) {
+      return {
+        ok: false,
+        monthKey: preview.monthKey,
+        message: 'No pude reconstruir el cierre previo desde el checkpoint.',
+        restoredToNoClosure: false,
+        restoredClosure: null,
+        checkpoint,
+      };
+    }
+    if (backupVersion) {
+      restoredClosure.previousVersions = mergeClosureVersions(
+        restoredClosure.previousVersions,
+        [backupVersion],
+      );
+    }
+    nextClosures = [restoredClosure, ...nextClosures].sort(compareClosuresByMonthDesc);
+  }
+
+  saveClosures(nextClosures);
+  const auditEntries = loadMonthlyCloseUndoAudit();
+  const auditEntry: WealthMonthlyCloseUndoAuditEntry = {
+    id: crypto.randomUUID(),
+    monthKey: preview.monthKey,
+    createdAt: replacedAt,
+    reason: 'undo_monthly_close_to_pre_close_checkpoint',
+    checkpointId: checkpoint.id,
+    checkpointCreatedAt: checkpoint.createdAt,
+    hadPreviousClosure: checkpoint.hadPreviousClosure,
+    restoredToNoClosure: !checkpoint.hadPreviousClosure,
+    backupVersionId: backupVersion?.id || null,
+  };
+  saveMonthlyCloseUndoAudit([auditEntry, ...auditEntries].slice(0, 64));
+
+  return {
+    ok: true,
+    monthKey: preview.monthKey,
+    message: checkpoint.hadPreviousClosure
+      ? 'Cierre restaurado al estado previo al cierre mensual.'
+      : 'Cierre deshecho: el mes volvió a estado sin cierre.',
+    restoredToNoClosure: !checkpoint.hadPreviousClosure,
+    restoredClosure,
+    checkpoint,
+  };
+};
+
 export const getClosureCompleteness = (closure: WealthMonthlyClosure): WealthClosureCompleteness => {
   const records = Array.isArray(closure.records) ? closure.records : [];
   const latestByCanonical = new Map<string, WealthRecord>();
@@ -3129,6 +3492,30 @@ export const createMonthlyClosure = (
     records,
     fxRates,
     closedAt: nowIso(),
+  });
+};
+
+export const closeMonthlyWithCheckpoint = (input: {
+  monthKey: string;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  closedAt?: string;
+}): WealthMonthlyClosure => {
+  const normalizedMonthKey = normalizeMonthKey(input.monthKey);
+  if (!normalizedMonthKey) {
+    return upsertMonthlyClosure({
+      monthKey: input.monthKey,
+      records: input.records,
+      fxRates: input.fxRates,
+      closedAt: input.closedAt || nowIso(),
+    });
+  }
+  captureMonthlyCloseCheckpoint(normalizedMonthKey, { overwrite: true });
+  return upsertMonthlyClosure({
+    monthKey: normalizedMonthKey,
+    records: input.records,
+    fxRates: input.fxRates,
+    closedAt: input.closedAt || nowIso(),
   });
 };
 

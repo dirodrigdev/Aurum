@@ -60,6 +60,8 @@ import {
   saveClosures,
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
+  previewUndoMonthlyClose,
+  undoMonthlyCloseToCheckpoint,
   WEALTH_LABEL_CATALOG,
   WealthMonthlyClosure,
   WealthSnapshotSummary,
@@ -1082,6 +1084,9 @@ export const ClosingAurum: React.FC = () => {
     ufClp: '',
   });
   const [auditCopied, setAuditCopied] = useState(false);
+  const [undoCloseConfirmOpen, setUndoCloseConfirmOpen] = useState(false);
+  const [undoCloseBusy, setUndoCloseBusy] = useState(false);
+  const [undoCloseMessage, setUndoCloseMessage] = useState('');
   const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
   const [aprilRepairBusy, setAprilRepairBusy] = useState(false);
   const [aprilRepairMessage, setAprilRepairMessage] = useState('');
@@ -1478,6 +1483,10 @@ export const ClosingAurum: React.FC = () => {
       versionText: `${versionCount} versiones`,
     };
   }, [rawSelectedClosure?.previousVersions?.length, selectedAuditSnapshot]);
+  const undoClosePreview = useMemo(
+    () => (selectedClosureMonthKey ? previewUndoMonthlyClose(selectedClosureMonthKey) : null),
+    [selectedClosureMonthKey, revision],
+  );
   const aprilRepairPreview = useMemo(
     () =>
       buildApril2026BankRepairPreview({
@@ -2108,6 +2117,30 @@ export const ClosingAurum: React.FC = () => {
     }
   };
 
+  const applyUndoMonthlyClose = () => {
+    if (undoCloseBusy || !selectedClosureMonthKey) return;
+    setUndoCloseBusy(true);
+    setUndoCloseMessage('');
+    try {
+      const result = undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
+      if (!result.ok) {
+        setUndoCloseMessage(result.message || 'No pude deshacer este cierre.');
+        return;
+      }
+      setUndoCloseMessage(result.message);
+      setUndoCloseConfirmOpen(false);
+      setRevision((value) => value + 1);
+      if (result.restoredToNoClosure) {
+        const refreshed = loadClosures();
+        if (refreshed.length > 0) {
+          setSelectedClosureMonthKey(refreshed[0].monthKey);
+        }
+      }
+    } finally {
+      setUndoCloseBusy(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-2.5">
       <Card className="p-2 border-[#d5d7ce] bg-gradient-to-r from-[#f5f2e8] to-[#edf3ec]">
@@ -2547,6 +2580,63 @@ export const ClosingAurum: React.FC = () => {
                             </li>
                           ))}
                         </ul>
+                      </Card>
+
+                      <Card className="border border-slate-200 bg-white p-3">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Deshacer cierre y volver al estado previo
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              Esta acción volverá al estado exacto anterior al cierre de este mes. Las ediciones posteriores dejarán de ser el estado activo, pero se guardará una copia de seguridad antes de deshacer.
+                            </div>
+                            {!undoClosePreview?.ok ? (
+                              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                                {undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.'}
+                              </div>
+                            ) : (
+                              <div className="mt-2 grid gap-1 text-[11px] text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Mes</div>
+                                  <div className="font-medium text-slate-800">{monthLabel(undoClosePreview.monthKey)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Delta total</div>
+                                  <div className="font-medium text-slate-800">
+                                    {formatDelta(undoClosePreview.delta?.netClp ?? null, 'CLP')}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Delta bancos</div>
+                                  <div className="font-medium text-slate-800">
+                                    {formatDelta(undoClosePreview.delta?.bankClp ?? null, 'CLP')}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Checkpoint</div>
+                                  <div className="font-medium text-slate-800">
+                                    {undoClosePreview.checkpoint ? formatCloseTimestamp(undoClosePreview.checkpoint.createdAt) : '—'}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {!!undoCloseMessage && (
+                              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700">
+                                {undoCloseMessage}
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            disabled={!undoClosePreview?.ok || undoCloseBusy}
+                            onClick={() => setUndoCloseConfirmOpen(true)}
+                          >
+                            Deshacer cierre y volver al estado previo
+                          </Button>
+                        </div>
                       </Card>
 
                       {selectedAuditSnapshot.monthKey === APRIL_2026_REPAIR_MONTH_KEY && (
@@ -2989,6 +3079,63 @@ export const ClosingAurum: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ConfirmActionModal
+        open={undoCloseConfirmOpen}
+        busy={undoCloseBusy}
+        title="Deshacer cierre mensual"
+        message={
+          !undoClosePreview?.ok
+            ? undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.'
+            : `${undoClosePreview.message || ''}\n\nActual: total ${formatCurrency(
+                undoClosePreview.current?.netClp || 0,
+                'CLP',
+              )}, inversiones ${formatCurrency(undoClosePreview.current?.investmentClp || 0, 'CLP')}, bancos ${formatCurrency(
+                undoClosePreview.current?.bankClp || 0,
+                'CLP',
+              )}, bienes raíces ${formatCurrency(undoClosePreview.current?.realEstateNetClp || 0, 'CLP')}, deudas no hipotecarias ${formatCurrency(
+                -(undoClosePreview.current?.nonMortgageDebtClp || 0),
+                'CLP',
+              )}.\n\nEstado previo: total ${formatCurrency(
+                undoClosePreview.previous?.netClp || 0,
+                'CLP',
+              )}, inversiones ${formatCurrency(
+                undoClosePreview.previous?.investmentClp || 0,
+                'CLP',
+              )}, bancos ${formatCurrency(
+                undoClosePreview.previous?.bankClp || 0,
+                'CLP',
+              )}, bienes raíces ${formatCurrency(
+                undoClosePreview.previous?.realEstateNetClp || 0,
+                'CLP',
+              )}, deudas no hipotecarias ${formatCurrency(
+                -(undoClosePreview.previous?.nonMortgageDebtClp || 0),
+                'CLP',
+              )}.\n\nDelta: total ${formatDelta(
+                undoClosePreview.delta?.netClp || 0,
+                'CLP',
+              )}, inversiones ${formatDelta(
+                undoClosePreview.delta?.investmentClp || 0,
+                'CLP',
+              )}, bancos ${formatDelta(
+                undoClosePreview.delta?.bankClp || 0,
+                'CLP',
+              )}, bienes raíces ${formatDelta(
+                undoClosePreview.delta?.realEstateNetClp || 0,
+                'CLP',
+              )}, deudas no hipotecarias ${formatDelta(
+                undoClosePreview.delta?.nonMortgageDebtClp || 0,
+                'CLP',
+              )}.`
+        }
+        confirmText="Confirmar deshacer cierre"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (undoCloseBusy) return;
+          setUndoCloseConfirmOpen(false);
+        }}
+        onConfirm={applyUndoMonthlyClose}
+      />
 
       <ConfirmActionModal
         open={closureEditConfirmOpen}
