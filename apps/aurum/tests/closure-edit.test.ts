@@ -8,6 +8,7 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import {
+  buildApril2026BankRepairPreview,
   buildClosureAuditDiagnosis,
   buildClosureAuditSnapshot,
   buildEditedClosureRecordsFromDraft,
@@ -21,6 +22,8 @@ import {
   buildCanonicalClosureSummary,
   createMonthlyClosure,
   loadClosures,
+  saveClosures,
+  upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
 
@@ -257,5 +260,110 @@ describe('closure edit record draft', () => {
     expect(diagnosis.recommendedCandidateId).toBe('prev-april');
     expect(diagnosis.messages.some((message) => message.includes('Actual parece incompleto en bancos'))).toBe(true);
     expect(diagnosis.messages.some((message) => message.includes('contiene más bancos'))).toBe(true);
+  });
+
+  it('restores only banks from previousVersion 2 and preserves current debt and investment', () => {
+    const currentRecords = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 5_315_725,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 93_256_478,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'investment',
+        source: 'Manual',
+        label: TENENCIA_CXC_PREFIX_LABEL,
+        amount: 999_000,
+        currency: 'CLP',
+      }),
+    ];
+    const sourceRecords = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 5_315_725,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_CLP_LABEL,
+        amount: 26_170_993,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'investment',
+        source: 'Manual',
+        label: TENENCIA_CXC_PREFIX_LABEL,
+        amount: 1_000_000,
+        currency: 'CLP',
+      }),
+    ];
+    const currentClosure = {
+      id: 'current-april',
+      monthKey: '2026-04',
+      closedAt: '2026-04-30T23:59:59.000Z',
+      summary: buildCanonicalClosureSummary(currentRecords, fxRates),
+      fxRates,
+      records: currentRecords,
+      previousVersions: [
+        {
+          id: 'prev-1',
+          monthKey: '2026-04',
+          closedAt: '2026-04-30T22:00:00.000Z',
+          summary: buildCanonicalClosureSummary(currentRecords, fxRates),
+          fxRates,
+          records: currentRecords,
+        },
+        {
+          id: 'prev-2',
+          monthKey: '2026-04',
+          closedAt: '2026-04-30T21:00:00.000Z',
+          summary: buildCanonicalClosureSummary(sourceRecords, fxRates),
+          fxRates,
+          records: sourceRecords,
+        },
+      ],
+    };
+    const preview = buildApril2026BankRepairPreview({
+      currentClosure,
+      sourceVersion: currentClosure.previousVersions[1],
+      includeRiskCapitalInTotals: false,
+      fallbackFx: fxRates,
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.proposed?.bankClp).toBe(31_486_718);
+    expect(preview.proposed?.nonMortgageDebtClp).toBe(93_256_478);
+    expect(preview.proposed?.investmentClp).toBe(999_000);
+    expect(preview.records.some((record) => record.label === BANK_SCOTIA_CLP_LABEL)).toBe(true);
+    expect(preview.records.some((record) => record.label === BANK_BALANCE_CLP_LABEL)).toBe(false);
+    expect(preview.records.some((record) => record.label === DEBT_CARD_CLP_LABEL)).toBe(true);
+
+    saveClosures([currentClosure]);
+    const repaired = upsertMonthlyClosure({
+      monthKey: '2026-04',
+      records: preview.records,
+      fxRates,
+      closedAt: '2026-05-01T00:00:00.000Z',
+    });
+    const persisted = loadClosures().find((closure) => closure.monthKey === '2026-04');
+
+    expect(repaired.summary.bankClp).toBe(31_486_718);
+    expect(repaired.summary.nonMortgageDebtClp).toBe(93_256_478);
+    expect(repaired.summary.investmentClp).toBe(999_000);
+    expect(persisted?.previousVersions?.[0]?.summary.bankClp).toBe(5_315_725);
+    expect(persisted?.previousVersions?.[0]?.summary.nonMortgageDebtClp).toBe(93_256_478);
   });
 });

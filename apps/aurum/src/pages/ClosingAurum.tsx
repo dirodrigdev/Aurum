@@ -71,6 +71,10 @@ type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
 type EvolutionKind = 'cierre' | 'hoy';
 const PREFERRED_CLOSING_CURRENCY_KEY = 'aurum.preferred.closing.currency';
 const RAW_CLOSURES_STORAGE_KEY = 'wealth_closures_v1';
+const APRIL_2026_REPAIR_MONTH_KEY = '2026-04';
+const APRIL_2026_REPAIR_SOURCE_INDEX = 1;
+const APRIL_2026_REPAIR_REASON =
+  'Reparación auditada abril 2026: bancos restaurados desde previousVersion 2';
 const ANKRE_DEEP_GREEN = '#0f3f3a';
 const ANKRE_BRONZE = '#9c6b36';
 const ANKRE_BRONZE_DARK = '#7f5528';
@@ -124,6 +128,18 @@ interface ClosureAuditCandidate extends ClosureAuditSnapshot {
 interface ClosureAuditDiagnosis {
   messages: string[];
   recommendedCandidateId: string | null;
+}
+
+interface AprilBankRepairPreview {
+  ok: boolean;
+  error?: string;
+  records: WealthRecord[];
+  summary: WealthSnapshotSummary | null;
+  current: ComparableVersionFields | null;
+  source: ComparableVersionFields | null;
+  proposed: ComparableVersionFields | null;
+  bankDeltaClp: number;
+  sourceBankRecordCount: number;
 }
 
 const formatCloseTimestamp = (iso?: string) => {
@@ -557,21 +573,11 @@ const normalizeAuditRecords = (records: unknown): WealthRecord[] => {
     .filter((record) => !!record.label && !!record.block && !!record.currency);
 };
 
-const buildBankAuditRows = (records: WealthRecord[], fx: WealthFxRates): ClosureAuditRecordRow[] => {
+const resolveBankLiquidityIndexes = (records: WealthRecord[]) => {
   const providerClp = new Set(WEALTH_LABEL_CATALOG.bank.providersClp.map((label) => labelMatchKey(label)));
   const providerUsd = new Set(WEALTH_LABEL_CATALOG.bank.providersUsd.map((label) => labelMatchKey(label)));
-  const aggregateClp = new Set(
-    [...WEALTH_LABEL_CATALOG.bank.aggregate, ...WEALTH_LABEL_CATALOG.bank.aggregateLegacyAliases]
-      .filter((label) => label.includes('CLP'))
-      .map((label) => labelMatchKey(label)),
-  );
-  const aggregateUsd = new Set(
-    [...WEALTH_LABEL_CATALOG.bank.aggregate, ...WEALTH_LABEL_CATALOG.bank.aggregateLegacyAliases]
-      .filter((label) => label.includes('USD'))
-      .map((label) => labelMatchKey(label)),
-  );
   const nonDebtBankRows = records.filter(
-    (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record) && !isNonMortgageDebtRecord(record),
+    (record) => record.block === 'bank' && !isNonMortgageDebtRecord(record),
   );
   const hasProviderClp = nonDebtBankRows.some(
     (record) => record.currency === 'CLP' && providerClp.has(labelMatchKey(record.label)),
@@ -579,23 +585,33 @@ const buildBankAuditRows = (records: WealthRecord[], fx: WealthFxRates): Closure
   const hasProviderUsd = nonDebtBankRows.some(
     (record) => record.currency === 'USD' && providerUsd.has(labelMatchKey(record.label)),
   );
+  const indexes = new Set<number>();
+
+  records.forEach((record, index) => {
+    const labelKey = labelMatchKey(record.label);
+    if (record.block !== 'bank' || isNonMortgageDebtRecord(record)) return;
+    if (record.currency === 'CLP') {
+      if (hasProviderClp ? providerClp.has(labelKey) : true) indexes.add(index);
+      return;
+    }
+    if (record.currency === 'USD') {
+      if (hasProviderUsd ? providerUsd.has(labelKey) : true) indexes.add(index);
+      return;
+    }
+    indexes.add(index);
+  });
+
+  return indexes;
+};
+
+const buildBankAuditRows = (records: WealthRecord[], fx: WealthFxRates): ClosureAuditRecordRow[] => {
+  const bankIndexes = resolveBankLiquidityIndexes(records);
 
   return records
     .filter((record) => record.block === 'bank' || isNonMortgageDebtRecord(record))
     .map((record) => {
-      const labelKey = labelMatchKey(record.label);
       const isDebt = isNonMortgageDebtRecord(record);
-      const synthetic = isSyntheticAggregateRecord(record);
-      let countsForBank = false;
-      if (record.block === 'bank' && !isDebt && !synthetic) {
-        if (record.currency === 'CLP') {
-          countsForBank = hasProviderClp ? providerClp.has(labelKey) : !aggregateClp.has(labelKey);
-        } else if (record.currency === 'USD') {
-          countsForBank = hasProviderUsd ? providerUsd.has(labelKey) : !aggregateUsd.has(labelKey);
-        } else {
-          countsForBank = true;
-        }
-      }
+      const recordIndex = records.indexOf(record);
 
       return {
         label: record.label,
@@ -606,7 +622,7 @@ const buildBankAuditRows = (records: WealthRecord[], fx: WealthFxRates): Closure
         note: String(record.note || ''),
         block: record.block,
         isNonMortgageDebt: isDebt,
-        countsForBank,
+        countsForBank: bankIndexes.has(recordIndex),
         countsForDebt: isDebt,
       };
     })
@@ -690,6 +706,134 @@ export const buildClosureAuditDiagnosis = ({
   return {
     messages,
     recommendedCandidateId: best?.id || null,
+  };
+};
+
+export const buildApril2026BankRepairPreview = ({
+  currentClosure,
+  sourceVersion,
+  includeRiskCapitalInTotals,
+  fallbackFx,
+  createdAt = new Date().toISOString(),
+}: {
+  currentClosure: ClosureAuditLike | null;
+  sourceVersion: ClosureAuditLike | null;
+  includeRiskCapitalInTotals: boolean;
+  fallbackFx: WealthFxRates;
+  createdAt?: string;
+}): AprilBankRepairPreview => {
+  if (!currentClosure) {
+    return {
+      ok: false,
+      error: 'No hay cierre actual para reparar.',
+      records: [],
+      summary: null,
+      current: null,
+      source: null,
+      proposed: null,
+      bankDeltaClp: 0,
+      sourceBankRecordCount: 0,
+    };
+  }
+  if (currentClosure.monthKey !== APRIL_2026_REPAIR_MONTH_KEY) {
+    return {
+      ok: false,
+      error: 'La reparación auditada está limitada a abril 2026.',
+      records: [],
+      summary: null,
+      current: null,
+      source: null,
+      proposed: null,
+      bankDeltaClp: 0,
+      sourceBankRecordCount: 0,
+    };
+  }
+  if (!sourceVersion) {
+    return {
+      ok: false,
+      error: 'No existe PreviousVersion 2 para restaurar bancos.',
+      records: [],
+      summary: null,
+      current: null,
+      source: null,
+      proposed: null,
+      bankDeltaClp: 0,
+      sourceBankRecordCount: 0,
+    };
+  }
+
+  const fx = currentClosure.fxRates || sourceVersion.fxRates || fallbackFx;
+  const currentRecords = normalizeAuditRecords(currentClosure.records);
+  const sourceRecords = normalizeAuditRecords(sourceVersion.records);
+  const currentSnapshot = buildClosureAuditSnapshot({
+    closure: currentClosure,
+    includeRiskCapitalInTotals,
+    fallbackFx: fx,
+  });
+  const sourceSnapshot = buildClosureAuditSnapshot({
+    closure: sourceVersion,
+    includeRiskCapitalInTotals,
+    fallbackFx: sourceVersion.fxRates || fx,
+  });
+  const currentBankIndexes = resolveBankLiquidityIndexes(currentRecords);
+  const sourceBankIndexes = resolveBankLiquidityIndexes(sourceRecords);
+  const sourceBankRecords = sourceRecords.filter((_, index) => sourceBankIndexes.has(index));
+  const currentBankClp = currentRecords
+    .filter((_, index) => currentBankIndexes.has(index))
+    .reduce((sum, record) => sum + toClp(Number(record.amount || 0), record.currency, fx), 0);
+  const sourceBankClp = sourceBankRecords.reduce(
+    (sum, record) => sum + toClp(Number(record.amount || 0), record.currency, sourceVersion.fxRates || fx),
+    0,
+  );
+
+  if (!currentRecords.length) {
+    return {
+      ok: false,
+      error: 'El cierre actual no tiene records para reparar de forma trazable.',
+      records: [],
+      summary: null,
+      current: currentSnapshot.persisted,
+      source: sourceSnapshot.canonical || sourceSnapshot.persisted,
+      proposed: null,
+      bankDeltaClp: 0,
+      sourceBankRecordCount: sourceBankRecords.length,
+    };
+  }
+  if (!sourceBankRecords.length || sourceBankClp <= currentBankClp + 1) {
+    return {
+      ok: false,
+      error: 'PreviousVersion 2 no contiene bancos suficientes para restaurar.',
+      records: [],
+      summary: null,
+      current: currentSnapshot.persisted,
+      source: sourceSnapshot.canonical || sourceSnapshot.persisted,
+      proposed: null,
+      bankDeltaClp: sourceBankClp - currentBankClp,
+      sourceBankRecordCount: sourceBankRecords.length,
+    };
+  }
+
+  const currentWithoutBank = currentRecords.filter((_, index) => !currentBankIndexes.has(index));
+  const restoredBankRecords = sourceBankRecords.map((record) => ({
+    ...record,
+    id: crypto.randomUUID(),
+    snapshotDate: currentRecords[0]?.snapshotDate || record.snapshotDate,
+    createdAt,
+    note: [record.note, APRIL_2026_REPAIR_REASON].filter(Boolean).join(' · '),
+  }));
+  const records = dedupeClosureRecords([...currentWithoutBank, ...restoredBankRecords]);
+  const summary = buildCanonicalClosureSummary(records, fx);
+  const proposed = toComparableFields(summary, includeRiskCapitalInTotals);
+
+  return {
+    ok: true,
+    records,
+    summary,
+    current: currentSnapshot.persisted,
+    source: sourceSnapshot.canonical || sourceSnapshot.persisted,
+    proposed,
+    bankDeltaClp: sourceBankClp - currentBankClp,
+    sourceBankRecordCount: sourceBankRecords.length,
   };
 };
 
@@ -938,6 +1082,9 @@ export const ClosingAurum: React.FC = () => {
     ufClp: '',
   });
   const [auditCopied, setAuditCopied] = useState(false);
+  const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
+  const [aprilRepairBusy, setAprilRepairBusy] = useState(false);
+  const [aprilRepairMessage, setAprilRepairMessage] = useState('');
   const [may2023HotfixConfirmOpen, setMay2023HotfixConfirmOpen] = useState(false);
   const [may2023HotfixBusy, setMay2023HotfixBusy] = useState(false);
   const [may2023HotfixMessage, setMay2023HotfixMessage] = useState('');
@@ -1300,6 +1447,16 @@ export const ClosingAurum: React.FC = () => {
         comparisonBankClp: comparisonMonthBankRows.length ? comparisonMonthBankClp : null,
       }),
     [selectedAuditSnapshot, previousAuditCandidates, comparisonMonthBankRows.length, comparisonMonthBankClp],
+  );
+  const aprilRepairPreview = useMemo(
+    () =>
+      buildApril2026BankRepairPreview({
+        currentClosure: rawSelectedClosure,
+        sourceVersion: rawSelectedClosure?.previousVersions?.[APRIL_2026_REPAIR_SOURCE_INDEX] || null,
+        includeRiskCapitalInTotals,
+        fallbackFx: currentFx,
+      }),
+    [rawSelectedClosure, includeRiskCapitalInTotals, currentFx],
   );
 
 
@@ -1871,6 +2028,56 @@ export const ClosingAurum: React.FC = () => {
     }
   };
 
+  const applyAprilBankRepair = () => {
+    if (aprilRepairBusy) return;
+    setAprilRepairBusy(true);
+    try {
+      const sourceVersion = rawSelectedClosure?.previousVersions?.[APRIL_2026_REPAIR_SOURCE_INDEX] || null;
+      const createdAt = new Date().toISOString();
+      const preview = buildApril2026BankRepairPreview({
+        currentClosure: rawSelectedClosure,
+        sourceVersion,
+        includeRiskCapitalInTotals,
+        fallbackFx: currentFx,
+        createdAt,
+      });
+      if (!preview.ok || !rawSelectedClosure) {
+        setAprilRepairMessage(preview.error || 'No pude preparar la reparación auditada.');
+        setAprilRepairConfirmOpen(false);
+        return;
+      }
+
+      const fx = rawSelectedClosure.fxRates || sourceVersion?.fxRates || currentFx;
+      const repaired = upsertMonthlyClosure({
+        monthKey: APRIL_2026_REPAIR_MONTH_KEY,
+        records: preview.records,
+        fxRates: fx,
+        closedAt: createdAt,
+      });
+      const repairedSummary = repaired.summary;
+      const bankOk = Math.abs(Number(repairedSummary.bankClp || 0) - Number(preview.proposed?.bankClp || 0)) <= 1;
+      const debtOk =
+        Math.abs(
+          Number(repairedSummary.nonMortgageDebtClp || 0) - Number(preview.proposed?.nonMortgageDebtClp || 0),
+        ) <= 1;
+      if (!bankOk || !debtOk) {
+        setAprilRepairMessage('La reparación se guardó, pero el resumen no coincide con el preview esperado.');
+      } else {
+        setAprilRepairMessage(
+          `Reparación aplicada: bancos ${formatCurrency(Number(repairedSummary.bankClp || 0), 'CLP')} · deuda ${formatCurrency(
+            -Number(repairedSummary.nonMortgageDebtClp || 0),
+            'CLP',
+          )} · total ${formatCurrency(Number(repairedSummary.netClp || 0), 'CLP')}.`,
+        );
+      }
+      setAprilRepairConfirmOpen(false);
+      setRevision((value) => value + 1);
+      setSelectedClosureMonthKey(APRIL_2026_REPAIR_MONTH_KEY);
+    } finally {
+      setAprilRepairBusy(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-2.5">
       <Card className="p-2 border-[#d5d7ce] bg-gradient-to-r from-[#f5f2e8] to-[#edf3ec]">
@@ -2295,6 +2502,62 @@ export const ClosingAurum: React.FC = () => {
                         </ul>
                       </Card>
 
+                      {selectedAuditSnapshot.monthKey === APRIL_2026_REPAIR_MONTH_KEY && (
+                        <Card className="border border-amber-200 bg-amber-50/70 p-3">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                                Reparación auditada disponible
+                              </div>
+                              <div className="mt-1 text-[11px] text-amber-900">
+                                Restaura solo bancos desde PreviousVersion 2 sobre el cierre actual. Mantiene deuda, inversiones y bienes raíces actuales.
+                              </div>
+                              <div className="mt-2 grid gap-1 text-[11px] text-amber-950 sm:grid-cols-2 lg:grid-cols-4">
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-amber-800">Actual</div>
+                                  <div>Bancos {aprilRepairPreview.current ? formatCurrency(aprilRepairPreview.current.bankClp ?? 0, 'CLP') : '—'}</div>
+                                  <div>Total {aprilRepairPreview.current ? formatCurrency(aprilRepairPreview.current.netClp, 'CLP') : '—'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-amber-800">PreviousVersion 2</div>
+                                  <div>Bancos {aprilRepairPreview.source ? formatCurrency(aprilRepairPreview.source.bankClp ?? 0, 'CLP') : '—'}</div>
+                                  <div>Deuda {aprilRepairPreview.source ? formatCurrency(-(aprilRepairPreview.source.nonMortgageDebtClp ?? 0), 'CLP') : '—'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-amber-800">Propuesto</div>
+                                  <div>Bancos {aprilRepairPreview.proposed ? formatCurrency(aprilRepairPreview.proposed.bankClp ?? 0, 'CLP') : '—'}</div>
+                                  <div>Total {aprilRepairPreview.proposed ? formatCurrency(aprilRepairPreview.proposed.netClp, 'CLP') : '—'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] uppercase tracking-wide text-amber-800">Delta</div>
+                                  <div>Bancos {formatDelta(aprilRepairPreview.bankDeltaClp, 'CLP')}</div>
+                                  <div>Records fuente {aprilRepairPreview.sourceBankRecordCount}</div>
+                                </div>
+                              </div>
+                              {!!aprilRepairMessage && (
+                                <div className="mt-2 rounded-lg border border-amber-200 bg-white/70 px-2 py-1 text-[11px] text-amber-900">
+                                  {aprilRepairMessage}
+                                </div>
+                              )}
+                              {!aprilRepairPreview.ok && (
+                                <div className="mt-2 text-[11px] font-medium text-amber-900">
+                                  {aprilRepairPreview.error || 'No hay evidencia suficiente para activar esta reparación.'}
+                                </div>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={!aprilRepairPreview.ok || aprilRepairBusy}
+                              onClick={() => setAprilRepairConfirmOpen(true)}
+                              className="shrink-0 border border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                            >
+                              Restaurar bancos desde PreviousVersion 2
+                            </Button>
+                          </div>
+                        </Card>
+                      )}
+
                       <Card className="border border-slate-200 bg-white p-3">
                         <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           PreviousVersions
@@ -2695,6 +2958,27 @@ export const ClosingAurum: React.FC = () => {
           setClosureEditConfirmOpen(false);
           applyClosureEdit();
         }}
+      />
+
+      <ConfirmActionModal
+        open={aprilRepairConfirmOpen}
+        busy={aprilRepairBusy}
+        title="Restaurar bancos abril 2026"
+        message={
+          aprilRepairPreview.ok
+            ? `Se reemplazarán solo los records bancarios del cierre actual por los bancos de PreviousVersion 2. Bancos ${formatDelta(
+                aprilRepairPreview.bankDeltaClp,
+                'CLP',
+              )}; total propuesto ${formatCurrency(aprilRepairPreview.proposed?.netClp || 0, 'CLP')}. Se guardará el cierre actual como previousVersion antes de modificar.`
+            : aprilRepairPreview.error || 'No hay evidencia suficiente para aplicar esta reparación.'
+        }
+        confirmText="Confirmar reparación"
+        cancelText="Cancelar"
+        onCancel={() => {
+          if (aprilRepairBusy) return;
+          setAprilRepairConfirmOpen(false);
+        }}
+        onConfirm={applyAprilBankRepair}
       />
 
       <ConfirmActionModal
