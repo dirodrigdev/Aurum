@@ -1,14 +1,6 @@
-import { labelMatchKey } from '../utils/wealthLabels';
 import type { WealthFxRates, WealthMonthlyClosure, WealthRecord } from './wealthStorage';
+import { buildWealthFreshnessModel, type WealthFreshnessModel } from './wealthFreshness';
 import { buildMonthlyWithdrawalPlan } from './financialFreedom';
-import {
-  DEBT_CARD_CLP_LABEL,
-  DEBT_CARD_USD_LABEL,
-  DEBT_CARD_CLP_LEGACY_LABEL,
-  DEBT_CARD_USD_LEGACY_LABEL,
-  MORTGAGE_DEBT_BALANCE_LABEL,
-  REAL_ESTATE_PROPERTY_VALUE_LABEL,
-} from './wealthStorage';
 
 // Inputs fijos de la lectura ejecutiva actual. Si el KPI principal cambia,
 // debe cambiarse aquí y no en la UI.
@@ -25,20 +17,7 @@ export const DASHBOARD_EXECUTIVE_ASSUMPTIONS = {
 
 export type DashboardCoverageTone = 'positive' | 'warning' | 'negative' | 'neutral';
 
-export type DashboardFreshnessBucket = 'fresh' | 'aging' | 'stale';
-
-export type DashboardFreshnessModel = {
-  status: 'ok' | 'unavailable';
-  fresh7dPct: number | null;
-  aging30dPct: number | null;
-  stalePct: number | null;
-  totalWeightedClp: number;
-  laggards: Array<{
-    label: string;
-    weightPct: number;
-    ageDays: number;
-  }>;
-};
+export type DashboardFreshnessModel = WealthFreshnessModel;
 
 export type DashboardCapRiskDependenceLevel = 'Baja' | 'Media' | 'Alta' | '—';
 
@@ -98,182 +77,9 @@ const clampFinite = (value: number | null): number | null => {
   return value;
 };
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const SMALL_MARGIN_CLP = 500_000;
 const LOW_FRESHNESS_THRESHOLD = 0.6;
 const CAPRISK_JUST_REACHES_THRESHOLD = 1.01;
-const RISK_CAPITAL_LABEL_KEYS = new Set([
-  labelMatchKey('Capital de riesgo CLP'),
-  labelMatchKey('Capital de riesgo USD'),
-]);
-
-const isRiskCapitalLabel = (label: string) => RISK_CAPITAL_LABEL_KEYS.has(labelMatchKey(label));
-
-const makeDashboardAssetKey = (record: Pick<WealthRecord, 'block' | 'label' | 'currency'>) =>
-  `${record.block}::${labelMatchKey(record.label)}::${record.currency}`;
-
-const isCarriedNote = (note?: string) => {
-  const normalized = String(note || '').toLowerCase();
-  return normalized.includes('arrastrado') || normalized.includes('mes anterior');
-};
-
-const isStableAssetRecord = (record: WealthRecord) => {
-  const key = labelMatchKey(record.label);
-  if (record.block === 'real_estate') {
-    return (
-      key === labelMatchKey(REAL_ESTATE_PROPERTY_VALUE_LABEL) ||
-      key === labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL)
-    );
-  }
-  if (record.block === 'debt') {
-    return (
-      key === labelMatchKey(DEBT_CARD_CLP_LABEL) ||
-      key === labelMatchKey(DEBT_CARD_USD_LABEL) ||
-      key === labelMatchKey(DEBT_CARD_CLP_LEGACY_LABEL) ||
-      key === labelMatchKey(DEBT_CARD_USD_LEGACY_LABEL)
-    );
-  }
-  return false;
-};
-
-const monthKeyToEndDateMs = (monthKey: string) => {
-  const [year, month] = monthKey.split('-').map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return NaN;
-  const lastDay = new Date(year, month, 0).getDate();
-  return new Date(`${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T12:00:00`).getTime();
-};
-
-const carriedSourceMonthFromNote = (note?: string) => {
-  const match = String(note || '').match(/cierre\s+(\d{4}-\d{2})/i);
-  return match?.[1] || null;
-};
-
-const recordDateMs = (record: WealthRecord): number => {
-  if (isCarriedNote(record.note) && !isStableAssetRecord(record)) {
-    const sourceMonth = carriedSourceMonthFromNote(record.note);
-    const sourceDate = sourceMonth ? monthKeyToEndDateMs(sourceMonth) : NaN;
-    if (Number.isFinite(sourceDate)) return sourceDate;
-    return NaN;
-  }
-  const created = new Date(record.createdAt).getTime();
-  if (Number.isFinite(created) && created > 0) return created;
-  const snapshot = new Date(`${record.snapshotDate}T12:00:00`).getTime();
-  return Number.isFinite(snapshot) ? snapshot : NaN;
-};
-
-const convertRecordToClp = (record: WealthRecord, fx: WealthFxRates): number => {
-  if (!Number.isFinite(record.amount)) return 0;
-  if (record.currency === 'CLP') return record.amount;
-  if (record.currency === 'USD') return record.amount * fx.usdClp;
-  if (record.currency === 'EUR') return record.amount * fx.eurClp;
-  return record.amount * fx.ufClp;
-};
-
-const bucketFromAgeDays = (days: number): DashboardFreshnessBucket => {
-  if (days <= 7) return 'fresh';
-  if (days <= 30) return 'aging';
-  return 'stale';
-};
-
-const buildFreshnessModel = (
-  records: WealthRecord[],
-  fx: WealthFxRates,
-  includeRiskCapitalInTotals: boolean,
-): DashboardFreshnessModel => {
-  const latestByAsset = new Map<string, WealthRecord>();
-  for (const record of records) {
-    if (!includeRiskCapitalInTotals && isRiskCapitalLabel(record.label)) continue;
-    const key = makeDashboardAssetKey(record);
-    const prev = latestByAsset.get(key);
-    if (!prev) {
-      latestByAsset.set(key, record);
-      continue;
-    }
-    if ((recordDateMs(record) || 0) >= (recordDateMs(prev) || 0)) {
-      latestByAsset.set(key, record);
-    }
-  }
-
-  const latestRecords = [...latestByAsset.values()];
-  if (!latestRecords.length) {
-    return {
-      status: 'unavailable',
-      fresh7dPct: null,
-      aging30dPct: null,
-      stalePct: null,
-      totalWeightedClp: 0,
-      laggards: [],
-    };
-  }
-
-  const now = Date.now();
-  let fresh = 0;
-  let aging = 0;
-  let stale = 0;
-  let total = 0;
-
-  for (const record of latestRecords) {
-    const valueClp = Math.abs(convertRecordToClp(record, fx));
-    if (!Number.isFinite(valueClp) || valueClp <= 0) continue;
-    const ageMs = now - recordDateMs(record);
-    const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
-    const bucket = isStableAssetRecord(record) ? 'fresh' : bucketFromAgeDays(ageDays);
-    total += valueClp;
-    if (bucket === 'fresh') fresh += valueClp;
-    else if (bucket === 'aging') aging += valueClp;
-    else stale += valueClp;
-  }
-
-  if (total <= 0) {
-    return {
-      status: 'unavailable',
-      fresh7dPct: null,
-      aging30dPct: null,
-      stalePct: null,
-      totalWeightedClp: 0,
-      laggards: [],
-    };
-  }
-
-  const laggards = latestRecords
-    .map((record) => {
-      const valueClp = Math.abs(convertRecordToClp(record, fx));
-      const ageMs = now - recordDateMs(record);
-      const ageDays = Number.isFinite(ageMs) && ageMs >= 0 ? ageMs / MS_PER_DAY : Number.POSITIVE_INFINITY;
-      const bucket = Number.isFinite(ageDays) ? bucketFromAgeDays(ageDays) : 'stale';
-      return {
-        label: record.label,
-        valueClp,
-        ageDays: Number.isFinite(ageDays) ? Math.round(ageDays) : 0,
-        bucket,
-        isStable: isStableAssetRecord(record),
-      };
-    })
-    .filter(
-      (item) =>
-        Number.isFinite(item.valueClp) &&
-        item.valueClp > 0 &&
-        Number.isFinite(item.ageDays) &&
-        item.bucket !== 'fresh' &&
-        !item.isStable,
-    )
-    .map((item) => ({
-      label: item.label,
-      weightPct: total > 0 ? item.valueClp / total : 0,
-      ageDays: item.ageDays,
-    }))
-    .sort((a, b) => b.weightPct - a.weightPct)
-    .slice(0, 5);
-
-  return {
-    status: 'ok',
-    fresh7dPct: fresh / total,
-    aging30dPct: aging / total,
-    stalePct: stale / total,
-    totalWeightedClp: total,
-    laggards,
-  };
-};
 
 const buildCapRiskDependence = (
   coverageWithoutRisk: number | null,
@@ -441,7 +247,7 @@ export const buildExecutiveDashboardModel = ({
     alternativeMonthlySustainableClp === null ? null : alternativeMonthlySustainableClp / baseline;
   const marginClp = monthlySustainableClp === null ? null : monthlySustainableClp - baseline;
   const heroSensitivity = buildHeroSensitivity(closures, includeRiskCapitalInTotals, baseline);
-  const freshness = buildFreshnessModel(records, fx, includeRiskCapitalInTotals);
+  const freshness = buildWealthFreshnessModel(records, fx, { includeRiskCapitalInTotals });
   const coverageWithoutRisk = includeRiskCapitalInTotals ? alternativeCoverageRatio : coverageRatio;
   const coverageWithRisk = includeRiskCapitalInTotals ? coverageRatio : alternativeCoverageRatio;
   const capRiskDependence = buildCapRiskDependence(

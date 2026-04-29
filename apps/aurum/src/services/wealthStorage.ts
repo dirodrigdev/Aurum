@@ -1907,7 +1907,7 @@ const emptyBlockMap = (): Record<WealthBlock, Record<WealthCurrency, number>> =>
 
 const dateToComparable = (date: string) => String(date || '').replace(/-/g, '');
 
-const dedupeLatestByAsset = (records: WealthRecord[]): WealthRecord[] => {
+export const dedupeLatestByAsset = (records: WealthRecord[]): WealthRecord[] => {
   const map = new Map<string, WealthRecord>();
 
   const ordered = [...records].sort((a, b) => {
@@ -2134,7 +2134,7 @@ const PROVIDER_BANK_LABELS_USD = new Set(
   BANK_PROVIDER_USD_LABELS.map(normalizeText),
 );
 
-const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
+export const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
   const value = Number(amount);
   if (!Number.isFinite(value)) return 0;
   if ((record.currency !== 'USD' && record.currency !== 'EUR') || !Number.isInteger(value) || Math.abs(value) < 100000) {

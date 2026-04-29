@@ -256,6 +256,10 @@ export const DashboardAurum: React.FC = () => {
           </div>
           <div className="mt-4 text-[2.4rem] font-semibold tracking-[-0.04em] text-white">{freshnessKpi}</div>
           <div className="mt-1 text-sm text-slate-200/82">Patrimonio actualizado ≤ 7 días</div>
+          <div className="mt-1 text-[11px] text-slate-300/64">
+            Calculado sobre exposición patrimonial absoluta.
+            {model.freshness.riskCapitalExcluded ? ' CapRiesgo excluido.' : ''}
+          </div>
           <div className="mt-5">
             <DashboardBar
               values={freshnessBarSegments.map((segment) => ({
@@ -272,10 +276,10 @@ export const DashboardAurum: React.FC = () => {
               </div>
               <ul className="space-y-1">
                 {model.freshness.laggards.map((item) => (
-                  <li key={`${item.label}-${item.ageDays}`} className="flex items-center justify-between gap-2">
+                  <li key={`${item.id}-${item.daysOld ?? 'unknown'}`} className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate">{item.label}</span>
                     <span className="shrink-0 text-slate-200/70">
-                      {Math.round(item.weightPct * 100)}% · {item.ageDays}d
+                      {Math.round(item.weightPct * 100)}% · {item.daysOld === null ? 'sin fecha' : `${item.daysOld}d`}
                     </span>
                   </li>
                 ))}

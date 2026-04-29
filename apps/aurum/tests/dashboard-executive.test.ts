@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../src/services/firebase', () => ({
+  db: {},
+  auth: { currentUser: null },
+  ensureAuthPersistence: vi.fn(async () => undefined),
+  getCurrentUid: vi.fn(() => null),
+}));
+
 import type { WealthMonthlyClosure, WealthRecord } from '../src/services/wealthStorage';
 import {
   DASHBOARD_LIFE_BASELINE_CLP,
