@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/services/firebase', () => ({
   auth: {},
@@ -15,6 +15,8 @@ import {
   DEBT_CARD_CLP_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
   buildCanonicalClosureSummary,
+  createMonthlyClosure,
+  loadClosures,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
 
@@ -32,6 +34,26 @@ const makeRecord = (
   createdAt: '2026-04-30T12:00:00.000Z',
   ...input,
 });
+
+const makeMemoryStorage = () => {
+  const map = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => (map.has(key) ? map.get(key)! : null)),
+    setItem: vi.fn((key: string, value: string) => {
+      map.set(key, String(value));
+    }),
+    removeItem: vi.fn((key: string) => {
+      map.delete(key);
+    }),
+    clear: vi.fn(() => {
+      map.clear();
+    }),
+    key: vi.fn((index: number) => [...map.keys()][index] ?? null),
+    get length() {
+      return map.size;
+    },
+  };
+};
 
 const baseRecords = (): WealthRecord[] => [
   makeRecord({
@@ -83,6 +105,10 @@ const emptyDraft = {
 };
 
 describe('closure edit record draft', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+  });
+
   it('preserves bank records when only tenencia is edited', () => {
     const { records } = buildEditedClosureRecordsFromDraft({
       records: baseRecords(),
@@ -139,6 +165,33 @@ describe('closure edit record draft', () => {
 
     const summary = buildCanonicalClosureSummary(records, fxRates);
     expect(records.some((record) => record.block === 'bank' && record.label === DEBT_CARD_CLP_LABEL)).toBe(true);
+    expect(summary.nonMortgageDebtClp).toBe(93_256_478);
+  });
+
+  it('preserves bank and non-mortgage debt through close then minor investment edit', () => {
+    const created = createMonthlyClosure(baseRecords(), fxRates, new Date('2026-04-30T23:59:59.000Z'));
+    const persisted = loadClosures().find((closure) => closure.monthKey === created.monthKey);
+
+    expect(persisted?.summary.bankClp).toBe(31_486_718);
+    expect(persisted?.summary.nonMortgageDebtClp).toBe(93_256_478);
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: persisted?.records || [],
+      draft: {
+        ...emptyDraft,
+        bancosClp: '5315725',
+        tenencia: '999000',
+      },
+      dirtyFields: { tenencia: true },
+      monthKey: '2026-04',
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    const summary = buildCanonicalClosureSummary(records, fxRates);
+    expect(records.some((record) => record.label === BANK_BCHILE_CLP_LABEL)).toBe(true);
+    expect(records.some((record) => record.label === BANK_SCOTIA_CLP_LABEL)).toBe(true);
+    expect(records.some((record) => record.label === DEBT_CARD_CLP_LABEL)).toBe(true);
+    expect(summary.bankClp).toBe(31_486_718);
     expect(summary.nonMortgageDebtClp).toBe(93_256_478);
   });
 });

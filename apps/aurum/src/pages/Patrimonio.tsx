@@ -121,6 +121,7 @@ const PREFERRED_DISPLAY_CURRENCY_KEY = 'aurum.preferred.display.currency';
 const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const NAVIGATE_PATRIMONIO_HOME_EVENT = 'aurum:navigate-patrimonio-home';
+const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
 const BANKS_LAST_AUTO_SYNC_DAY_KEY = 'aurum:banks:last-auto-sync-day:v1';
 const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
@@ -162,6 +163,17 @@ const sectionLabel: Record<MainSection, string> = {
   real_estate: 'Bienes raíces',
   bank: 'Bancos',
 };
+
+type ClosureSectionAmounts = ReturnType<typeof computeWealthHomeSectionAmounts>;
+
+interface PostCloseSummaryState {
+  closure: WealthMonthlyClosure;
+  previousClosure: WealthMonthlyClosure | null;
+  amounts: ClosureSectionAmounts;
+  previousAmounts: ClosureSectionAmounts | null;
+  fxRates: { usdClp: number; eurClp: number; ufClp: number };
+  alerts: string[];
+}
 
 const readBanksLastAutoSyncDay = () => {
   try {
@@ -615,6 +627,225 @@ const buildCloseFxDraft = (rates: { usdClp: number; eurClp: number; ufClp: numbe
   eurClp: String(Math.round(Number(rates.eurClp) || 0)),
   ufClp: String(Math.round(Number(rates.ufClp) || 0)),
 });
+
+const formatDeltaClp = (current: number, previous: number | null) => {
+  if (previous === null || !Number.isFinite(previous)) return 'Sin comparación previa';
+  const delta = current - previous;
+  const pct = previous !== 0 ? (delta / Math.abs(previous)) * 100 : null;
+  const pctText =
+    pct === null
+      ? ''
+      : ` (${pct >= 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1,
+        }).format(pct)}%)`;
+  return `${delta >= 0 ? '+' : ''}${formatCurrency(delta, 'CLP')}${pctText}`;
+};
+
+const buildPostCloseAlerts = (
+  closure: WealthMonthlyClosure,
+  amounts: ClosureSectionAmounts,
+  previousAmounts: ClosureSectionAmounts | null,
+) => {
+  const alerts: string[] = [];
+  const summary = closure.summary as WealthMonthlyClosure['summary'] & {
+    bankClp?: number;
+    nonMortgageDebtClp?: number;
+    realEstateNetClp?: number;
+  };
+  if (closure.fxMissing?.length) {
+    alerts.push(`TC/UF incompletos en el cierre: ${closure.fxMissing.join(', ')}.`);
+  }
+  if (
+    !Number.isFinite(summary.bankClp) ||
+    !Number.isFinite(summary.nonMortgageDebtClp) ||
+    !Number.isFinite(summary.realEstateNetClp)
+  ) {
+    alerts.push('El cierre no trae todos los subtotales canónicos; revisar antes de usarlo como base.');
+  }
+  if (!closure.records?.length) {
+    alerts.push('Cierre sin detalle de records; se está leyendo desde resumen agregado.');
+  }
+  if (!previousAmounts) {
+    return alerts;
+  }
+
+  const checks = [
+    { label: 'patrimonio total', current: amounts.totalNetClp, previous: previousAmounts.totalNetClp, pctLimit: 0.15 },
+    { label: 'inversiones', current: amounts.investment, previous: previousAmounts.investment, pctLimit: 0.3 },
+    { label: 'bancos', current: amounts.bank, previous: previousAmounts.bank, pctLimit: 0.3 },
+    { label: 'bienes raíces', current: amounts.realEstateNet, previous: previousAmounts.realEstateNet, pctLimit: 0.3 },
+    {
+      label: 'deudas no hipotecarias',
+      current: amounts.nonMortgageDebt,
+      previous: previousAmounts.nonMortgageDebt,
+      pctLimit: 0.3,
+    },
+  ];
+  checks.forEach((check) => {
+    if (!Number.isFinite(check.previous) || Math.abs(check.previous) < 1) return;
+    const delta = check.current - check.previous;
+    const pct = Math.abs(delta) / Math.abs(check.previous);
+    if (Math.abs(delta) >= 5_000_000 && pct >= check.pctLimit) {
+      alerts.push(`Variación alta en ${check.label}: ${formatDeltaClp(check.current, check.previous)}.`);
+    }
+  });
+  return alerts;
+};
+
+const PostCloseSummaryModal: React.FC<{
+  summary: PostCloseSummaryState | null;
+  onViewClosure: () => void;
+  onEditClosure: () => void;
+  onClose: () => void;
+}> = ({ summary, onViewClosure, onEditClosure, onClose }) => {
+  const [copied, setCopied] = useState(false);
+  if (!summary) return null;
+
+  const { closure, previousClosure, amounts, previousAmounts, fxRates, alerts } = summary;
+  const hasUsd = Number.isFinite(fxRates.usdClp) && fxRates.usdClp > 0;
+  const hasEur = Number.isFinite(fxRates.eurClp) && fxRates.eurClp > 0;
+  const variationRows = [
+    { label: 'Total', current: amounts.totalNetClp, previous: previousAmounts?.totalNetClp ?? null },
+    { label: 'Inversiones', current: amounts.investment, previous: previousAmounts?.investment ?? null },
+    { label: 'Bancos', current: amounts.bank, previous: previousAmounts?.bank ?? null },
+    { label: 'Bienes raíces', current: amounts.realEstateNet, previous: previousAmounts?.realEstateNet ?? null },
+    {
+      label: 'Deudas no hipotecarias',
+      current: amounts.nonMortgageDebt,
+      previous: previousAmounts?.nonMortgageDebt ?? null,
+    },
+  ];
+  const breakdownRows = [
+    { label: 'Inversiones', value: amounts.investment },
+    { label: 'Bancos', value: amounts.bank },
+    { label: 'Bienes raíces', value: amounts.realEstateNet },
+    { label: 'Deudas no hipotecarias', value: -Math.abs(amounts.nonMortgageDebt) },
+  ];
+  const copyLines = [
+    `Cierre realizado: ${monthLabel(closure.monthKey)}`,
+    `Patrimonio total: ${formatCurrency(amounts.totalNetClp, 'CLP')}`,
+    hasUsd ? `Equivalente USD: ${formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'USD', fxRates), 'USD')}` : '',
+    hasEur ? `Equivalente EUR: ${formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'EUR', fxRates), 'EUR')}` : '',
+    `FX: USD/CLP ${Math.round(fxRates.usdClp).toLocaleString('es-CL')} · EUR/CLP ${Math.round(fxRates.eurClp).toLocaleString('es-CL')} · UF/CLP ${Math.round(fxRates.ufClp).toLocaleString('es-CL')}`,
+    previousClosure ? `Comparado con: ${monthLabel(previousClosure.monthKey)}` : 'Sin comparación previa',
+    ...variationRows.map((row) => `${row.label}: ${formatDeltaClp(row.current, row.previous)}`),
+    ...breakdownRows.map((row) => `${row.label}: ${formatCurrency(row.value, 'CLP')}`),
+    alerts.length ? `Alertas: ${alerts.join(' ')}` : 'Alertas: sin alertas automáticas.',
+  ].filter(Boolean);
+
+  const copySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(copyLines.join('\n'));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/40 p-4 sm:items-center">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+              <CheckCircle2 size={13} />
+              Cierre realizado
+            </div>
+            <div className="mt-2 text-lg font-semibold text-slate-900">{monthLabel(closure.monthKey)}</div>
+            <div className="text-xs text-slate-500">
+              Guardado: {closure.closedAt ? new Date(closure.closedAt).toLocaleString('es-CL') : 'sin fecha'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Cerrar resumen de cierre"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1.2fr]">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Patrimonio cerrado</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(amounts.totalNetClp, 'CLP')}</div>
+            <div className="mt-2 space-y-1 text-xs text-slate-600">
+              {hasUsd && <div>USD: {formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'USD', fxRates), 'USD')}</div>}
+              {hasEur && <div>EUR: {formatCurrency(fromClpUsingFx(amounts.totalNetClp, 'EUR', fxRates), 'EUR')}</div>}
+              <div>
+                FX: USD {Math.round(fxRates.usdClp).toLocaleString('es-CL')} · EUR{' '}
+                {Math.round(fxRates.eurClp).toLocaleString('es-CL')} · UF{' '}
+                {Math.round(fxRates.ufClp).toLocaleString('es-CL')}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Variación vs cierre anterior</div>
+              <div className="text-[11px] text-slate-500">
+                {previousClosure ? monthLabel(previousClosure.monthKey) : 'sin comparación previa'}
+              </div>
+            </div>
+            <div className="mt-2 grid gap-1 text-xs">
+              {variationRows.map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">{row.label}</span>
+                  <span className="font-medium text-slate-900">{formatDeltaClp(row.current, row.previous)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-slate-200 p-3">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Desglose del cierre</div>
+          <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+            {breakdownRows.map((row) => (
+              <div key={row.label} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                <span className="text-slate-600">{row.label}</span>
+                <span className="font-semibold text-slate-900">{formatCurrency(row.value, 'CLP')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className={`mt-3 rounded-xl border px-3 py-2 text-xs ${
+            alerts.length ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          }`}
+        >
+          {alerts.length ? (
+            <div className="space-y-1">
+              <div className="font-semibold">Alertas para revisar</div>
+              {alerts.map((alert, idx) => (
+                <div key={`${alert}-${idx}`}>{alert}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="font-semibold">Sin alertas automáticas en el cierre.</div>
+          )}
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Button variant="outline" onClick={onViewClosure}>
+            Ver cierre
+          </Button>
+          <Button variant="outline" onClick={onEditClosure}>
+            Editar cierre
+          </Button>
+          <Button variant="outline" onClick={copySummary}>
+            {copied ? 'Copiado' : 'Copiar resumen'}
+          </Button>
+          <Button onClick={onClose}>Cerrar</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface EditableSuggestion extends ParsedWealthSuggestion {
   snapshotDate: string;
@@ -3925,6 +4156,7 @@ export const Patrimonio: React.FC = () => {
     fxForClose: { usdClp: number; eurClp: number; ufClp: number };
     carriedCount: number;
   } | null>(null);
+  const [postCloseSummary, setPostCloseSummary] = useState<PostCloseSummaryState | null>(null);
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
@@ -4175,6 +4407,27 @@ export const Patrimonio: React.FC = () => {
       hasBankData: bank !== 0,
       hasRealEstateCoreData: realEstateNet !== 0,
       hasAllCoreSubtotalsData: investment !== 0 && bank !== 0 && realEstateNet !== 0,
+    };
+  };
+
+  const buildPostCloseSummaryState = (
+    closure: WealthMonthlyClosure,
+    allClosures: WealthMonthlyClosure[],
+  ): PostCloseSummaryState => {
+    const previousClosure =
+      allClosures
+        .filter((candidate) => candidate.monthKey < closure.monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
+    const amounts = resolveSectionAmountsFromClosure(closure);
+    const previousAmounts = previousClosure ? resolveSectionAmountsFromClosure(previousClosure) : null;
+    const fxRates = closure.fxRates || fx;
+    return {
+      closure,
+      previousClosure,
+      amounts,
+      previousAmounts,
+      fxRates,
+      alerts: buildPostCloseAlerts(closure, amounts, previousAmounts),
     };
   };
 
@@ -5031,6 +5284,10 @@ export const Patrimonio: React.FC = () => {
       Math.abs((persistedFx.ufClp || 0) - fxForClose.ufClp) < 1e-6;
     if (!fxMatches) {
       setCloseError('El cierre se guardó, pero no pude confirmar TC/UF persistidos.');
+    }
+    if (persistedClosure) {
+      const persistedClosures = loadClosures();
+      setPostCloseSummary(buildPostCloseSummaryState(persistedClosure, persistedClosures));
     }
     const nextVisualMonth = monthAfterKey(targetMonthKey) || currentMonthKey();
     const carryResult = fillMissingWithPreviousClosure(
@@ -6225,6 +6482,26 @@ export const Patrimonio: React.FC = () => {
           setPendingCloseOverwrite(null);
           setCloseConfirmOpen(true);
         }}
+      />
+
+      <PostCloseSummaryModal
+        summary={postCloseSummary}
+        onViewClosure={() => {
+          if (postCloseSummary) {
+            setMonthKey(postCloseSummary.closure.monthKey);
+            setActiveSection(null);
+          }
+          setPostCloseSummary(null);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onEditClosure={() => {
+          if (postCloseSummary) {
+            window.localStorage.setItem(CLOSING_FOCUS_MONTH_KEY, postCloseSummary.closure.monthKey);
+          }
+          setPostCloseSummary(null);
+          window.location.hash = '#/closing';
+        }}
+        onClose={() => setPostCloseSummary(null)}
       />
 
       {showCurrentMonthActionBar && (
