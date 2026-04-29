@@ -3,6 +3,7 @@ import { CalendarDays, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
+import { buildPendingOfficialReturnInfo, buildPendingReturnEstimate } from '../../services/returnsAnalysis';
 import type {
   AggregatedSummary,
   CrpContributionInsight,
@@ -587,6 +588,21 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     return diffEntries.map((entry) => `Diferencia detectada entre ${entry.label}: ${formatCurrency(Number(entry.value), 'EUR')}`);
   }, [latestGastappSpendRow, legacySpendMonths.length]);
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
+  const pendingOfficialRows = React.useMemo(
+    () =>
+      monthlyRowsDesc
+        .filter((row) => row.gastosStatus === 'pending' && row.varPatrimonioDisplay !== null)
+        .map((row) => ({
+          row,
+          info: buildPendingOfficialReturnInfo(row),
+        })),
+    [monthlyRowsDesc],
+  );
+  const mainPendingOfficial = pendingOfficialRows[0] || null;
+  const provisionalEstimate = React.useMemo(
+    () => buildPendingReturnEstimate(monthlyRowsAsc),
+    [monthlyRowsAsc],
+  );
 
   const historyRows = React.useMemo(
     () =>
@@ -594,11 +610,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         const retornoDisplay = row.retornoRealDisplay;
         const varDisplay = row.varPatrimonioDisplay;
         const gastosDisplay = row.gastosDisplay;
+        const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
         return {
           monthKey: row.monthKey,
           month: monthLabelShort(row.monthKey),
-          pct: formatPct(row.pct),
-          retorno: retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency),
+          pct: row.gastosStatus === 'pending' ? 'Pendiente gasto' : formatPct(row.pct),
+          retorno:
+            row.gastosStatus === 'pending'
+              ? pendingInfo?.availabilityLabel
+                ? `Disponible ${pendingInfo.availabilityLabel}`
+                : 'Pendiente gasto'
+              : retornoDisplay === null
+                ? '—'
+                : formatCurrency(retornoDisplay, currency),
           varPat: varDisplay === null ? '—' : formatCurrency(varDisplay, currency),
           gastos:
             row.gastosStatus === 'missing'
@@ -731,10 +755,64 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         )}
         {pendingSpendMonths.length > 0 && (
           <div className={missingSpendMonths.length > 0 ? 'mt-1' : ''}>
-            Meses pendientes de cierre de gasto: {pendingSpendMonths.map((m) => monthLabel(m)).join(', ')}.
-            Se muestran, pero no entran en agregados cerrados.
+            {mainPendingOfficial
+              ? `${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial estará disponible ${
+                  mainPendingOfficial.info.availabilityLabel ? `el ${mainPendingOfficial.info.availabilityLabel}` : 'cuando cierre GastApp'
+                }${
+                  mainPendingOfficial.info.periodRangeLabel
+                    ? `, cuando cierre el periodo de gasto ${mainPendingOfficial.info.periodRangeLabel}.`
+                    : '.'
+                }`
+              : `Meses pendientes de cierre de gasto: ${pendingSpendMonths.map((m) => monthLabel(m)).join(', ')}.`}
+            {' '}Se muestran, pero no entran en agregados cerrados.
           </div>
         )}
+      </Card>
+    )}
+
+    {provisionalEstimate && (
+      <Card className="border-dashed border-amber-300 bg-white p-3 text-xs text-slate-700">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-slate-900">Estimación provisional</span>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                Estimado
+              </span>
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Usa el cierre patrimonial actual y un gasto supuesto. Se reemplazará por el dato oficial cuando cierre GastApp.
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {monthLabel(provisionalEstimate.monthKey)}
+              {provisionalEstimate.availabilityLabel ? ` · oficial disponible ${provisionalEstimate.availabilityLabel}` : ''}
+              {provisionalEstimate.periodRangeLabel ? ` · periodo ${provisionalEstimate.periodRangeLabel}` : ''}
+            </div>
+          </div>
+          <div className="text-right text-[11px] text-slate-500">
+            Var.Pat. visible: {formatCurrency(provisionalEstimate.varPatrimonioDisplay, currency)}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {provisionalEstimate.scenarios.map((scenario) => (
+            <div key={scenario.key} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                <span className="text-slate-500">Gasto usado</span>
+                <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
+                <span className="text-slate-500">Ret.Econ. estimado</span>
+                <span className={cn('text-right font-semibold', scenario.retornoRealDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                  {formatCurrency(scenario.retornoRealDisplay, currency)}
+                </span>
+                <span className="text-slate-500">Tasa estimada</span>
+                <span className={cn('text-right font-semibold', (scenario.pct ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                  {formatPct(scenario.pct)}
+                </span>
+              </div>
+              <div className="mt-2 text-[10px] font-medium text-amber-700">Estimado, no cierre oficial.</div>
+            </div>
+          ))}
+        </div>
       </Card>
     )}
 
@@ -778,14 +856,27 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               const gastosDisplay = row.gastosDisplay;
               const retornoDisplay = row.retornoRealDisplay;
               const positive = (retornoDisplay || 0) >= 0;
+              const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
               return (
                 <tr key={row.monthKey} className="border-t border-slate-100">
                   <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabelShort(row.monthKey)}</td>
-                  <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                    {formatPct(row.pct)}
+                  <td className={cn(
+                    'py-1.5 pr-2 text-right font-semibold',
+                    row.gastosStatus === 'pending' ? 'text-amber-700' : positive ? 'text-emerald-700' : 'text-rose-700',
+                  )}>
+                    {row.gastosStatus === 'pending' ? 'Pendiente gasto' : formatPct(row.pct)}
                   </td>
-                  <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
-                    {retornoDisplay === null ? '—' : formatCurrency(retornoDisplay, currency)}
+                  <td className={cn(
+                    'py-1.5 pr-2 text-right font-semibold',
+                    row.gastosStatus === 'pending' ? 'text-amber-700' : positive ? 'text-emerald-700' : 'text-rose-700',
+                  )}>
+                    {row.gastosStatus === 'pending'
+                      ? pendingInfo?.availabilityLabel
+                        ? `Disponible ${pendingInfo.availabilityLabel}`
+                        : 'Pendiente gasto'
+                      : retornoDisplay === null
+                        ? '—'
+                        : formatCurrency(retornoDisplay, currency)}
                   </td>
                   <td className="py-1.5 pr-2 text-right text-slate-700">
                     {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}

@@ -23,12 +23,16 @@ vi.mock('../src/services/gastosMonthly', () => ({
       status: 'pending' as const,
       gastosEur: null,
       source: 'gastapp_firestore' as const,
+      contractStatus: 'pending' as const,
+      periodKey: `${monthKey}-12__${monthKey.slice(0, 5)}${String(Number(monthKey.slice(5, 7)) + 1).padStart(2, '0')}-11`,
     };
   },
 }));
 
 import {
   aggregateRows,
+  buildPendingOfficialReturnInfo,
+  buildPendingReturnEstimate,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
   computeMonthlyRows,
@@ -254,5 +258,37 @@ describe('returns analysis helpers', () => {
     expect(curveEur.points[1].value).toBeCloseTo(100 * (1 + pctEur / 100), 6);
     expect(patrEur.points.map((point) => point.value)).toEqual([netEurJan, netEurFeb]);
     expect(spendEur.kind).toBe('negative-return');
+  });
+
+  it('explains pending official returns and builds provisional estimates without closed aggregates', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_000_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    );
+    const april = rows.find((row) => row.monthKey === '2026-04');
+    expect(april?.gastosStatus).toBe('pending');
+
+    const info = buildPendingOfficialReturnInfo(april!);
+    expect(info.availabilityLabel).toBe('12 may');
+    expect(info.periodRangeLabel).toBe('12 abr - 11 may');
+
+    const estimate = buildPendingReturnEstimate(rows);
+    expect(estimate?.monthKey).toBe('2026-04');
+    expect(estimate?.availabilityLabel).toBe('12 may');
+    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['previous_closed', 'closed_average']);
+
+    const previousScenario = estimate?.scenarios.find((scenario) => scenario.key === 'previous_closed');
+    expect(previousScenario?.spendClp).toBeCloseTo(TEST_GASTOS_EUR['2026-03'] * 1000, 6);
+    expect(previousScenario?.retornoRealClp).toBeCloseTo(20_000_000 + TEST_GASTOS_EUR['2026-03'] * 1000, 6);
+
+    const summary = aggregateRows('with-pending', 'With pending', rows, rows[0].netDisplay);
+    expect(summary.validMonths).toBe(3);
   });
 });

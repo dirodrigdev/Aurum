@@ -27,6 +27,71 @@ const previousMonthKey = (monthKey: string) => {
   return `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
 };
 
+const MONTH_SHORT_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'] as const;
+
+const parseYmd = (value: string): Date | null => {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+const addDays = (date: Date, days: number) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate() + days, 12, 0, 0, 0);
+
+const formatCompactDate = (date: Date | null) => {
+  if (!date) return null;
+  return `${date.getDate()} ${MONTH_SHORT_ES[date.getMonth()]}`;
+};
+
+const fallbackAvailabilityDate = (monthKey: string): Date | null => {
+  const parsed = monthKey.match(/^(\d{4})-(\d{2})$/);
+  if (!parsed) return null;
+  const year = Number(parsed[1]);
+  const month = Number(parsed[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  return new Date(year, month, 12, 12, 0, 0, 0);
+};
+
+export const buildPendingOfficialReturnInfo = (
+  row: Pick<MonthlyReturnRow, 'monthKey' | 'gastosPeriodKey'>,
+) => {
+  const parts = String(row.gastosPeriodKey || '').split('__');
+  const start = parts.length === 2 ? parseYmd(parts[0]) : null;
+  const end = parts.length === 2 ? parseYmd(parts[1]) : null;
+  const availabilityDate = end ? addDays(end, 1) : fallbackAvailabilityDate(row.monthKey);
+  const startLabel = formatCompactDate(start);
+  const endLabel = formatCompactDate(end);
+  const availabilityLabel = formatCompactDate(availabilityDate);
+  return {
+    availabilityDate,
+    availabilityLabel,
+    periodRangeLabel: startLabel && endLabel ? `${startLabel} - ${endLabel}` : null,
+  };
+};
+
+export type ProvisionalReturnScenario = {
+  key: 'previous_closed' | 'closed_average';
+  label: string;
+  spendDisplay: number;
+  spendClp: number;
+  retornoRealDisplay: number;
+  retornoRealClp: number;
+  pct: number | null;
+  monthsUsed: number;
+};
+
+export type PendingReturnEstimate = {
+  monthKey: string;
+  availabilityLabel: string | null;
+  periodRangeLabel: string | null;
+  varPatrimonioDisplay: number;
+  scenarios: ProvisionalReturnScenario[];
+};
+
 const monthAfter = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return null;
@@ -327,6 +392,118 @@ export const aggregateRows = (
     varPatrimonioAvgDisplay,
     gastosAvgDisplay,
     retornoRealAvgDisplay,
+  };
+};
+
+const validClosedSpendRow = (
+  row: MonthlyReturnRow,
+): row is MonthlyReturnRow & {
+  gastosClp: number;
+  gastosDisplay: number;
+} =>
+  row.fxAuditable &&
+  row.gastosStatus === 'complete' &&
+  row.gastosClp !== null &&
+  row.gastosDisplay !== null &&
+  !row.gastosIsStale &&
+  row.gastosDataQuality !== 'warning' &&
+  row.gastosDataQuality !== 'error' &&
+  row.gastosContractStatus !== 'stale' &&
+  row.gastosContractStatus !== 'pending' &&
+  row.gastosContractStatus !== 'missing';
+
+const buildProvisionalScenario = ({
+  key,
+  label,
+  row,
+  spendDisplay,
+  spendClp,
+  monthsUsed,
+}: {
+  key: ProvisionalReturnScenario['key'];
+  label: string;
+  row: MonthlyReturnRow;
+  spendDisplay: number;
+  spendClp: number;
+  monthsUsed: number;
+}): ProvisionalReturnScenario | null => {
+  if (row.varPatrimonioDisplay === null || row.varPatrimonioClp === null) return null;
+  const retornoRealDisplay = row.varPatrimonioDisplay + spendDisplay;
+  const retornoRealClp = row.varPatrimonioClp + spendClp;
+  const pct =
+    row.prevNetDisplay !== null && row.prevNetDisplay > 0
+      ? (retornoRealDisplay / row.prevNetDisplay) * 100
+      : null;
+  return {
+    key,
+    label,
+    spendDisplay,
+    spendClp,
+    retornoRealDisplay,
+    retornoRealClp,
+    pct,
+    monthsUsed,
+  };
+};
+
+export const buildPendingReturnEstimate = (
+  monthlyRowsAsc: MonthlyReturnRow[],
+): PendingReturnEstimate | null => {
+  const pendingRow = [...monthlyRowsAsc]
+    .reverse()
+    .find(
+      (row) =>
+        row.gastosStatus === 'pending' &&
+        row.varPatrimonioDisplay !== null &&
+        row.varPatrimonioClp !== null &&
+        row.prevNetDisplay !== null,
+    );
+  if (!pendingRow || pendingRow.varPatrimonioDisplay === null) return null;
+
+  const closedRows = monthlyRowsAsc
+    .filter((row) => row.monthKey < pendingRow.monthKey)
+    .filter(validClosedSpendRow);
+  const previousClosed = closedRows[closedRows.length - 1] || null;
+  const lastSix = closedRows.slice(-6);
+  const info = buildPendingOfficialReturnInfo(pendingRow);
+  const scenarios: ProvisionalReturnScenario[] = [];
+
+  if (previousClosed) {
+    const scenario = buildProvisionalScenario({
+      key: 'previous_closed',
+      label: `Gasto del mes anterior cerrado (${previousClosed.monthKey})`,
+      row: pendingRow,
+      spendDisplay: previousClosed.gastosDisplay,
+      spendClp: previousClosed.gastosClp,
+      monthsUsed: 1,
+    });
+    if (scenario) scenarios.push(scenario);
+  }
+
+  if (lastSix.length >= 2) {
+    const avgDisplay = sumNumbers(lastSix.map((row) => row.gastosDisplay)) / lastSix.length;
+    const avgClp = sumNumbers(lastSix.map((row) => row.gastosClp)) / lastSix.length;
+    const scenario = buildProvisionalScenario({
+      key: 'closed_average',
+      label:
+        lastSix.length >= 6
+          ? 'Promedio últimos 6 meses cerrados'
+          : `Promedio disponible (${lastSix.length} meses cerrados)`,
+      row: pendingRow,
+      spendDisplay: avgDisplay,
+      spendClp: avgClp,
+      monthsUsed: lastSix.length,
+    });
+    if (scenario) scenarios.push(scenario);
+  }
+
+  if (!scenarios.length) return null;
+  return {
+    monthKey: pendingRow.monthKey,
+    availabilityLabel: info.availabilityLabel,
+    periodRangeLabel: info.periodRangeLabel,
+    varPatrimonioDisplay: pendingRow.varPatrimonioDisplay,
+    scenarios,
   };
 };
 
