@@ -19,6 +19,7 @@ import {
   BANK_BALANCE_CLP_LEGACY_LABEL,
   BANK_BALANCE_USD_LABEL,
   BANK_BALANCE_USD_LEGACY_LABEL,
+  buildCanonicalClosureSummary,
   buildWealthNetBreakdown,
   DEBT_CARD_CLP_LABEL,
   DEBT_CARD_CLP_LEGACY_LABEL,
@@ -59,6 +60,8 @@ import {
   saveClosures,
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
+  WEALTH_LABEL_CATALOG,
+  WealthMonthlyClosure,
   WealthSnapshotSummary,
   upsertMonthlyClosure,
 } from '../services/wealthStorage';
@@ -67,6 +70,7 @@ import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
 type EvolutionKind = 'cierre' | 'hoy';
 const PREFERRED_CLOSING_CURRENCY_KEY = 'aurum.preferred.closing.currency';
+const RAW_CLOSURES_STORAGE_KEY = 'wealth_closures_v1';
 const ANKRE_DEEP_GREEN = '#0f3f3a';
 const ANKRE_BRONZE = '#9c6b36';
 const ANKRE_BRONZE_DARK = '#7f5528';
@@ -80,6 +84,47 @@ interface EvolutionRow {
 }
 
 type NetBreakdown = WealthNetBreakdownClp;
+
+interface ClosureAuditRecordRow {
+  label: string;
+  currency: WealthCurrency;
+  amount: number;
+  amountClp: number;
+  source: string;
+  note: string;
+  block: WealthRecord['block'];
+  isNonMortgageDebt: boolean;
+  countsForBank: boolean;
+  countsForDebt: boolean;
+}
+
+interface ClosureAuditSnapshot {
+  id: string;
+  monthKey: string;
+  closedAt: string;
+  replacedAt?: string;
+  persisted: ComparableVersionFields | null;
+  canonical: ComparableVersionFields | null;
+  delta: ComparableVersionFields | null;
+  recordCount: number;
+  hasRecords: boolean;
+  hasSummary: boolean;
+  hasSummaryExtended: boolean;
+  bankRows: ClosureAuditRecordRow[];
+}
+
+interface ClosureAuditCandidate extends ClosureAuditSnapshot {
+  bankDeltaVsCurrent: number | null;
+  debtDeltaVsCurrent: number | null;
+  totalDeltaVsCurrent: number | null;
+  candidateScore: number | null;
+  candidateReason: string | null;
+}
+
+interface ClosureAuditDiagnosis {
+  messages: string[];
+  recommendedCandidateId: string | null;
+}
 
 const formatCloseTimestamp = (iso?: string) => {
   return formatIsoDateTime(iso, {
@@ -103,6 +148,37 @@ const fromClp = (amountClp: number, currency: WealthCurrency, fx: WealthFxRates)
   if (currency === 'USD') return amountClp / Math.max(1, fx.usdClp);
   if (currency === 'EUR') return amountClp / Math.max(1, fx.eurClp);
   return amountClp / Math.max(1, fx.ufClp);
+};
+
+const toClp = (amount: number, currency: WealthCurrency, fx: WealthFxRates) => {
+  if (currency === 'CLP') return amount;
+  if (currency === 'USD') return amount * Math.max(1, fx.usdClp);
+  if (currency === 'EUR') return amount * Math.max(1, fx.eurClp);
+  return amount * Math.max(1, fx.ufClp);
+};
+
+const nextMonthKey = (monthKey: string) => {
+  const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return monthKey;
+  const month = monthRaw === 12 ? 1 : monthRaw + 1;
+  const year = monthRaw === 12 ? yearRaw + 1 : yearRaw;
+  return `${year}-${String(month).padStart(2, '0')}`;
+};
+
+const formatDelta = (value: number | null, currency: WealthCurrency) => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value >= 0 ? '+' : ''}${formatCurrency(value, currency)}`;
+};
+
+const formatAuditSummary = (fields: ComparableVersionFields | null, currency: WealthCurrency, fx: WealthFxRates) => {
+  if (!fields) return 'Sin summary';
+  return [
+    `Total ${formatCurrency(fromClp(fields.netClp, currency, fx), currency)}`,
+    `Inv. ${formatCurrency(fromClp(fields.investmentClp ?? 0, currency, fx), currency)}`,
+    `Bancos ${formatCurrency(fromClp(fields.bankClp ?? 0, currency, fx), currency)}`,
+    `BR ${formatCurrency(fromClp(fields.realEstateNetClp ?? 0, currency, fx), currency)}`,
+    `Deuda ${formatCurrency(fromClp(fields.nonMortgageDebtClp ?? 0, currency, fx), currency)}`,
+  ].join(' · ');
 };
 
 const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
@@ -416,6 +492,242 @@ const buildSummaryBreakdown = (
   };
 };
 
+const toComparableFields = (
+  summary: WealthSnapshotSummary,
+  includeRiskCapitalInTotals: boolean,
+): ComparableVersionFields => {
+  const breakdown = buildSummaryBreakdown(summary, includeRiskCapitalInTotals);
+  return {
+    bankClp: breakdown.bankClp,
+    investmentClp: breakdown.investmentClp,
+    realEstateNetClp: breakdown.realEstateNetClp,
+    nonMortgageDebtClp: breakdown.nonMortgageDebtClp,
+    netClp: breakdown.netClp,
+  };
+};
+
+const hasExtendedSummaryFields = (summary: WealthSnapshotSummary | undefined | null) => {
+  const extended = summary as {
+    bankClp?: number;
+    nonMortgageDebtClp?: number;
+    realEstateNetClp?: number;
+    realEstateAssetsClp?: number;
+    mortgageDebtClp?: number;
+  } | null;
+  if (!extended) return false;
+  return [
+    extended.bankClp,
+    extended.nonMortgageDebtClp,
+    extended.realEstateNetClp,
+    extended.realEstateAssetsClp,
+    extended.mortgageDebtClp,
+  ].some((value) => Number.isFinite(Number(value)));
+};
+
+const buildComparableDelta = (
+  left: ComparableVersionFields | null,
+  right: ComparableVersionFields | null,
+): ComparableVersionFields | null => {
+  if (!left || !right) return null;
+  return {
+    bankClp: (left.bankClp ?? 0) - (right.bankClp ?? 0),
+    investmentClp: (left.investmentClp ?? 0) - (right.investmentClp ?? 0),
+    realEstateNetClp: (left.realEstateNetClp ?? 0) - (right.realEstateNetClp ?? 0),
+    nonMortgageDebtClp: (left.nonMortgageDebtClp ?? 0) - (right.nonMortgageDebtClp ?? 0),
+    netClp: left.netClp - right.netClp,
+  };
+};
+
+const normalizeAuditRecords = (records: unknown): WealthRecord[] => {
+  if (!Array.isArray(records)) return [];
+  return records
+    .filter((record): record is WealthRecord => !!record && typeof record === 'object')
+    .map((record) => ({
+      ...record,
+      id: String((record as WealthRecord).id || crypto.randomUUID()),
+      block: (record as WealthRecord).block,
+      source: String((record as WealthRecord).source || ''),
+      label: String((record as WealthRecord).label || ''),
+      amount: Number((record as WealthRecord).amount || 0),
+      currency: (record as WealthRecord).currency,
+      snapshotDate: String((record as WealthRecord).snapshotDate || ''),
+      createdAt: String((record as WealthRecord).createdAt || ''),
+      note: String((record as WealthRecord).note || ''),
+    }))
+    .filter((record) => !!record.label && !!record.block && !!record.currency);
+};
+
+const buildBankAuditRows = (records: WealthRecord[], fx: WealthFxRates): ClosureAuditRecordRow[] => {
+  const providerClp = new Set(WEALTH_LABEL_CATALOG.bank.providersClp.map((label) => labelMatchKey(label)));
+  const providerUsd = new Set(WEALTH_LABEL_CATALOG.bank.providersUsd.map((label) => labelMatchKey(label)));
+  const aggregateClp = new Set(
+    [...WEALTH_LABEL_CATALOG.bank.aggregate, ...WEALTH_LABEL_CATALOG.bank.aggregateLegacyAliases]
+      .filter((label) => label.includes('CLP'))
+      .map((label) => labelMatchKey(label)),
+  );
+  const aggregateUsd = new Set(
+    [...WEALTH_LABEL_CATALOG.bank.aggregate, ...WEALTH_LABEL_CATALOG.bank.aggregateLegacyAliases]
+      .filter((label) => label.includes('USD'))
+      .map((label) => labelMatchKey(label)),
+  );
+  const nonDebtBankRows = records.filter(
+    (record) => record.block === 'bank' && !isSyntheticAggregateRecord(record) && !isNonMortgageDebtRecord(record),
+  );
+  const hasProviderClp = nonDebtBankRows.some(
+    (record) => record.currency === 'CLP' && providerClp.has(labelMatchKey(record.label)),
+  );
+  const hasProviderUsd = nonDebtBankRows.some(
+    (record) => record.currency === 'USD' && providerUsd.has(labelMatchKey(record.label)),
+  );
+
+  return records
+    .filter((record) => record.block === 'bank' || isNonMortgageDebtRecord(record))
+    .map((record) => {
+      const labelKey = labelMatchKey(record.label);
+      const isDebt = isNonMortgageDebtRecord(record);
+      const synthetic = isSyntheticAggregateRecord(record);
+      let countsForBank = false;
+      if (record.block === 'bank' && !isDebt && !synthetic) {
+        if (record.currency === 'CLP') {
+          countsForBank = hasProviderClp ? providerClp.has(labelKey) : !aggregateClp.has(labelKey);
+        } else if (record.currency === 'USD') {
+          countsForBank = hasProviderUsd ? providerUsd.has(labelKey) : !aggregateUsd.has(labelKey);
+        } else {
+          countsForBank = true;
+        }
+      }
+
+      return {
+        label: record.label,
+        currency: record.currency,
+        amount: Number(record.amount || 0),
+        amountClp: toClp(Number(record.amount || 0), record.currency, fx),
+        source: String(record.source || ''),
+        note: String(record.note || ''),
+        block: record.block,
+        isNonMortgageDebt: isDebt,
+        countsForBank,
+        countsForDebt: isDebt,
+      };
+    })
+    .sort((a, b) => a.currency.localeCompare(b.currency) || a.label.localeCompare(b.label));
+};
+
+type ClosureAuditLike = Pick<WealthMonthlyClosure, 'id' | 'monthKey' | 'closedAt' | 'summary' | 'fxRates'> & {
+  replacedAt?: string;
+  records?: WealthRecord[];
+  previousVersions?: ClosureAuditLike[];
+};
+
+export const buildClosureAuditSnapshot = ({
+  closure,
+  includeRiskCapitalInTotals,
+  fallbackFx,
+}: {
+  closure: ClosureAuditLike;
+  includeRiskCapitalInTotals: boolean;
+  fallbackFx: WealthFxRates;
+}): ClosureAuditSnapshot => {
+  const records = normalizeAuditRecords(closure.records);
+  const fx = closure.fxRates || fallbackFx;
+  const persisted = closure.summary ? toComparableFields(closure.summary, includeRiskCapitalInTotals) : null;
+  const canonicalSummary = records.length ? buildCanonicalClosureSummary(dedupeClosureRecords(records), fx) : null;
+  const canonical = canonicalSummary ? toComparableFields(canonicalSummary, includeRiskCapitalInTotals) : null;
+  return {
+    id: String(closure.id || crypto.randomUUID()),
+    monthKey: String(closure.monthKey || ''),
+    closedAt: String(closure.closedAt || ''),
+    replacedAt: closure.replacedAt ? String(closure.replacedAt) : undefined,
+    persisted,
+    canonical,
+    delta: buildComparableDelta(canonical, persisted),
+    recordCount: records.length,
+    hasRecords: records.length > 0,
+    hasSummary: !!closure.summary,
+    hasSummaryExtended: hasExtendedSummaryFields(closure.summary),
+    bankRows: buildBankAuditRows(records, fx),
+  };
+};
+
+export const buildClosureAuditDiagnosis = ({
+  current,
+  previousVersions,
+  comparisonBankClp,
+}: {
+  current: ClosureAuditSnapshot | null;
+  previousVersions: ClosureAuditCandidate[];
+  comparisonBankClp: number | null;
+}): ClosureAuditDiagnosis => {
+  if (!current) {
+    return { messages: ['No hay cierre seleccionado para auditar.'], recommendedCandidateId: null };
+  }
+
+  const messages: string[] = [];
+  if ((current.persisted?.bankClp ?? 0) <= 0 && current.bankRows.some((row) => row.countsForBank)) {
+    messages.push('El cierre actual no muestra bancos válidos pese a tener records bancarios en detalle.');
+  }
+  if (comparisonBankClp !== null && (current.persisted?.bankClp ?? 0) + 1 < comparisonBankClp) {
+    messages.push('Actual parece incompleto en bancos frente al mes siguiente.');
+  }
+  if (current.canonical && current.persisted && Math.abs((current.delta?.bankClp ?? 0)) > 1) {
+    messages.push('El summary persistido diverge del canónico recalculado en bancos.');
+  }
+  if (!previousVersions.length) {
+    messages.push('No hay versión previa utilizable para comparar.');
+    return { messages, recommendedCandidateId: null };
+  }
+
+  const sortedCandidates = [...previousVersions]
+    .filter((candidate) => candidate.candidateScore !== null)
+    .sort((a, b) => Number(a.candidateScore) - Number(b.candidateScore));
+  const best = sortedCandidates[0] || null;
+  if (best?.candidateReason) {
+    messages.push(best.candidateReason);
+  }
+  if (!best) {
+    messages.push('No reparar sin inspección manual: ninguna previousVersion aparece claramente superior.');
+  }
+  return {
+    messages,
+    recommendedCandidateId: best?.id || null,
+  };
+};
+
+const loadRawClosuresReadOnly = (): ClosureAuditLike[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(RAW_CLOSURES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item: ClosureAuditLike) => !!item && typeof item === 'object')
+      .map((item) => ({
+        id: String(item.id || crypto.randomUUID()),
+        monthKey: String(item.monthKey || ''),
+        closedAt: String(item.closedAt || ''),
+        replacedAt: item.replacedAt ? String(item.replacedAt) : undefined,
+        summary: item.summary,
+        fxRates: item.fxRates,
+        records: normalizeAuditRecords(item.records),
+        previousVersions: Array.isArray(item.previousVersions)
+          ? item.previousVersions.map((version) => ({
+              id: String(version?.id || crypto.randomUUID()),
+              monthKey: String(version?.monthKey || item.monthKey || ''),
+              closedAt: String(version?.closedAt || ''),
+              replacedAt: version?.replacedAt ? String(version.replacedAt) : undefined,
+              summary: version?.summary,
+              fxRates: version?.fxRates,
+              records: normalizeAuditRecords(version?.records),
+            }))
+          : undefined,
+      }))
+      .filter((item) => !!item.monthKey);
+  } catch {
+    return [];
+  }
+};
+
 interface ComparableVersionFields {
   bankClp: number | null;
   investmentClp: number | null;
@@ -625,6 +937,7 @@ export const ClosingAurum: React.FC = () => {
     eurUsd: '',
     ufClp: '',
   });
+  const [auditCopied, setAuditCopied] = useState(false);
   const [may2023HotfixConfirmOpen, setMay2023HotfixConfirmOpen] = useState(false);
   const [may2023HotfixBusy, setMay2023HotfixBusy] = useState(false);
   const [may2023HotfixMessage, setMay2023HotfixMessage] = useState('');
@@ -891,8 +1204,103 @@ export const ClosingAurum: React.FC = () => {
       closures
         .filter((closure) => closure.monthKey < selectedClosure.monthKey)
         .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null
-    );
+      );
   }, [closures, selectedClosure]);
+
+  const rawAuditClosures = useMemo(() => loadRawClosuresReadOnly(), [revision]);
+  const rawSelectedClosure = useMemo(
+    () => rawAuditClosures.find((closure) => closure.monthKey === selectedClosureMonthKey) || null,
+    [rawAuditClosures, selectedClosureMonthKey],
+  );
+  const selectedAuditSnapshot = useMemo(
+    () =>
+      rawSelectedClosure
+        ? buildClosureAuditSnapshot({
+            closure: rawSelectedClosure,
+            includeRiskCapitalInTotals,
+            fallbackFx: currentFx,
+          })
+        : null,
+    [rawSelectedClosure, includeRiskCapitalInTotals, currentFx],
+  );
+  const previousAuditCandidates = useMemo(() => {
+    if (!rawSelectedClosure?.previousVersions?.length || !selectedAuditSnapshot) return [] as ClosureAuditCandidate[];
+    return rawSelectedClosure.previousVersions.map((version, index) => {
+      const snapshot = buildClosureAuditSnapshot({
+        closure: version,
+        includeRiskCapitalInTotals,
+        fallbackFx: version.fxRates || rawSelectedClosure.fxRates || currentFx,
+      });
+      const bankDeltaVsCurrent =
+        snapshot.canonical && selectedAuditSnapshot.persisted
+          ? (snapshot.canonical.bankClp ?? 0) - (selectedAuditSnapshot.persisted.bankClp ?? 0)
+          : snapshot.persisted && selectedAuditSnapshot.persisted
+            ? (snapshot.persisted.bankClp ?? 0) - (selectedAuditSnapshot.persisted.bankClp ?? 0)
+            : null;
+      const debtDeltaVsCurrent =
+        snapshot.canonical && selectedAuditSnapshot.persisted
+          ? (snapshot.canonical.nonMortgageDebtClp ?? 0) - (selectedAuditSnapshot.persisted.nonMortgageDebtClp ?? 0)
+          : snapshot.persisted && selectedAuditSnapshot.persisted
+            ? (snapshot.persisted.nonMortgageDebtClp ?? 0) - (selectedAuditSnapshot.persisted.nonMortgageDebtClp ?? 0)
+            : null;
+      const totalDeltaVsCurrent =
+        snapshot.canonical
+          ? snapshot.canonical.netClp - (selectedAuditSnapshot.persisted?.netClp ?? 0)
+          : snapshot.persisted
+            ? snapshot.persisted.netClp - (selectedAuditSnapshot.persisted?.netClp ?? 0)
+            : null;
+      const comparable = snapshot.canonical || snapshot.persisted;
+      const currentComparable = selectedAuditSnapshot.persisted;
+      let candidateScore: number | null = null;
+      let candidateReason: string | null = null;
+      if (comparable && currentComparable) {
+        candidateScore =
+          Math.abs((comparable.nonMortgageDebtClp ?? 0) - (currentComparable.nonMortgageDebtClp ?? 0)) +
+          Math.abs((comparable.realEstateNetClp ?? 0) - (currentComparable.realEstateNetClp ?? 0)) +
+          Math.abs((comparable.investmentClp ?? 0) - (currentComparable.investmentClp ?? 0)) * 0.1 -
+          Math.abs((comparable.bankClp ?? 0) - (currentComparable.bankClp ?? 0)) * 0.05;
+        if ((comparable.bankClp ?? 0) > (currentComparable.bankClp ?? 0) + 1) {
+          candidateReason = `PreviousVersion ${index + 1} contiene más bancos que la versión actual.`;
+        }
+      }
+      return {
+        ...snapshot,
+        bankDeltaVsCurrent,
+        debtDeltaVsCurrent,
+        totalDeltaVsCurrent,
+        candidateScore,
+        candidateReason,
+      };
+    });
+  }, [rawSelectedClosure, selectedAuditSnapshot, includeRiskCapitalInTotals, currentFx]);
+  const comparisonMonthKey = useMemo(
+    () => (selectedClosure ? nextMonthKey(selectedClosure.monthKey) : ''),
+    [selectedClosure],
+  );
+  const comparisonMonthRecords = useMemo(
+    () => (comparisonMonthKey ? latestRecordsForMonth(loadWealthRecords(), comparisonMonthKey) : []),
+    [comparisonMonthKey, revision],
+  );
+  const comparisonMonthBankRows = useMemo(
+    () => buildBankAuditRows(comparisonMonthRecords, currentFx),
+    [comparisonMonthRecords, currentFx],
+  );
+  const comparisonMonthBankClp = useMemo(
+    () =>
+      comparisonMonthBankRows
+        .filter((row) => row.countsForBank)
+        .reduce((sum, row) => sum + row.amountClp, 0),
+    [comparisonMonthBankRows],
+  );
+  const closureAuditDiagnosis = useMemo(
+    () =>
+      buildClosureAuditDiagnosis({
+        current: selectedAuditSnapshot,
+        previousVersions: previousAuditCandidates,
+        comparisonBankClp: comparisonMonthBankRows.length ? comparisonMonthBankClp : null,
+      }),
+    [selectedAuditSnapshot, previousAuditCandidates, comparisonMonthBankRows.length, comparisonMonthBankClp],
+  );
 
 
   const closureDisplayNetByMonth = useMemo(() => {
@@ -1430,6 +1838,39 @@ export const ClosingAurum: React.FC = () => {
     setRevision((v) => v + 1);
   };
 
+  const copyAuditPreview = async () => {
+    if (!selectedAuditSnapshot) return;
+    const lines = [
+      `Cierre auditado: ${monthLabel(selectedAuditSnapshot.monthKey)}`,
+      `Cierre actual persistido: ${formatAuditSummary(selectedAuditSnapshot.persisted, 'CLP', currentFx)}`,
+      `Cierre actual canónico: ${formatAuditSummary(selectedAuditSnapshot.canonical, 'CLP', currentFx)}`,
+      selectedAuditSnapshot.delta
+        ? `Delta canónico-persistido: bancos ${formatDelta(selectedAuditSnapshot.delta.bankClp, 'CLP')} · deuda ${formatDelta(selectedAuditSnapshot.delta.nonMortgageDebtClp, 'CLP')} · total ${formatDelta(selectedAuditSnapshot.delta.netClp, 'CLP')}`
+        : 'Delta canónico-persistido: sin records para recalcular',
+      comparisonMonthBankRows.length
+        ? `Bancos ${monthLabel(comparisonMonthKey)}: ${formatCurrency(comparisonMonthBankClp, 'CLP')}`
+        : `Bancos ${monthLabel(comparisonMonthKey)}: sin records para comparar`,
+      ...previousAuditCandidates.map((candidate, index) => {
+        const comparable = candidate.canonical || candidate.persisted;
+        return [
+          `PreviousVersion ${index + 1}: ${formatCloseTimestamp(candidate.closedAt)}`,
+          formatAuditSummary(comparable, 'CLP', currentFx),
+          `Delta bancos vs actual: ${formatDelta(candidate.bankDeltaVsCurrent, 'CLP')}`,
+          `Delta deuda vs actual: ${formatDelta(candidate.debtDeltaVsCurrent, 'CLP')}`,
+          candidate.candidateReason || 'Sin diagnóstico automático',
+        ].join(' · ');
+      }),
+      ...closureAuditDiagnosis.messages.map((message) => `Diagnóstico: ${message}`),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setAuditCopied(true);
+      window.setTimeout(() => setAuditCopied(false), 1800);
+    } catch {
+      setAuditCopied(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-2.5">
       <Card className="p-2 border-[#d5d7ce] bg-gradient-to-r from-[#f5f2e8] to-[#edf3ec]">
@@ -1685,6 +2126,325 @@ export const ClosingAurum: React.FC = () => {
                   </div>
                 </details>
               )}
+
+              <details className="rounded-xl border border-[#d8cfbd] bg-[#fcfaf4] p-3 text-xs text-slate-700" open={selectedClosure.monthKey === '2026-04'}>
+                <summary className="cursor-pointer font-semibold text-slate-800">
+                  Auditoría read-only del cierre
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Preview forense
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Lee el cierre crudo desde storage, recalcula el summary canónico en memoria y compara previousVersions sin escribir datos.
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={selectedClosureMonthKey}
+                        onChange={(event) => setSelectedClosureMonthKey(event.target.value)}
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                      >
+                        {closures.map((closure) => (
+                          <option key={`audit-${closure.id}`} value={closure.monthKey}>
+                            {monthLabel(closure.monthKey)}
+                          </option>
+                        ))}
+                      </select>
+                      <Button size="sm" variant="outline" onClick={copyAuditPreview} disabled={!selectedAuditSnapshot}>
+                        {auditCopied ? 'Preview copiado' : 'Copiar preview'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!rawSelectedClosure || !selectedAuditSnapshot ? (
+                    <Card className="border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+                      No encontré el cierre crudo en `wealth_closures_v1`. La auditoría read-only necesita el snapshot persistido local para comparar summary actual vs canónico.
+                    </Card>
+                  ) : (
+                    <>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <Card className="border border-slate-200 bg-white p-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Cierre actual persistido
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                            <div>Mes</div>
+                            <div className="font-medium text-slate-800">{selectedAuditSnapshot.monthKey}</div>
+                            <div>Cerrado</div>
+                            <div className="font-medium text-slate-800">{formatCloseTimestamp(selectedAuditSnapshot.closedAt)}</div>
+                            <div>Actualizado</div>
+                            <div className="font-medium text-slate-800">
+                              {formatCloseTimestamp(rawSelectedClosure.replacedAt || rawSelectedClosure.closedAt)}
+                            </div>
+                            <div>Total</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.persisted
+                                ? formatCurrency(selectedAuditSnapshot.persisted.netClp, 'CLP')
+                                : 'Sin summary'}
+                            </div>
+                            <div>Inversiones</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.persisted
+                                ? formatCurrency(selectedAuditSnapshot.persisted.investmentClp ?? 0, 'CLP')
+                                : '—'}
+                            </div>
+                            <div>Bancos</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.persisted
+                                ? formatCurrency(selectedAuditSnapshot.persisted.bankClp ?? 0, 'CLP')
+                                : '—'}
+                            </div>
+                            <div>Bienes raíces</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.persisted
+                                ? formatCurrency(selectedAuditSnapshot.persisted.realEstateNetClp ?? 0, 'CLP')
+                                : '—'}
+                            </div>
+                            <div>Deudas no hipotecarias</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.persisted
+                                ? formatCurrency(-(selectedAuditSnapshot.persisted.nonMortgageDebtClp ?? 0), 'CLP')
+                                : '—'}
+                            </div>
+                            <div>Records</div>
+                            <div className="font-medium text-slate-800">{selectedAuditSnapshot.recordCount}</div>
+                            <div>Summary extendido</div>
+                            <div className="font-medium text-slate-800">
+                              {selectedAuditSnapshot.hasSummaryExtended ? 'Sí' : 'No'}
+                            </div>
+                            <div>PreviousVersions</div>
+                            <div className="font-medium text-slate-800">
+                              {rawSelectedClosure.previousVersions?.length || 0}
+                            </div>
+                          </div>
+                        </Card>
+
+                        <Card className="border border-slate-200 bg-white p-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Recalculado en memoria
+                          </div>
+                          <div className="mt-2 grid grid-cols-4 gap-2 text-[11px]">
+                            <div className="font-semibold text-slate-500">Campo</div>
+                            <div className="font-semibold text-slate-500">Persistido</div>
+                            <div className="font-semibold text-slate-500">Canónico</div>
+                            <div className="font-semibold text-slate-500">Delta</div>
+                            {[
+                              ['Total', 'netClp'],
+                              ['Inversiones', 'investmentClp'],
+                              ['Bancos', 'bankClp'],
+                              ['Bienes raíces', 'realEstateNetClp'],
+                              ['Deuda no hip.', 'nonMortgageDebtClp'],
+                            ].map(([label, key]) => (
+                              <React.Fragment key={key}>
+                                <div>{label}</div>
+                                <div>
+                                  {selectedAuditSnapshot.persisted
+                                    ? formatCurrency(
+                                        Number(selectedAuditSnapshot.persisted[key as keyof ComparableVersionFields] || 0),
+                                        'CLP',
+                                      )
+                                    : '—'}
+                                </div>
+                                <div>
+                                  {selectedAuditSnapshot.canonical
+                                    ? formatCurrency(
+                                        Number(selectedAuditSnapshot.canonical[key as keyof ComparableVersionFields] || 0),
+                                        'CLP',
+                                      )
+                                    : 'Sin records'}
+                                </div>
+                                <div className="font-medium text-slate-800">
+                                  {selectedAuditSnapshot.delta
+                                    ? formatDelta(
+                                        Number(selectedAuditSnapshot.delta[key as keyof ComparableVersionFields] || 0),
+                                        'CLP',
+                                      )
+                                    : '—'}
+                                </div>
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </Card>
+                      </div>
+
+                      <Card className="border border-slate-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Diagnóstico automático
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              Señales para decidir si vale la pena preparar una reparación posterior.
+                            </div>
+                          </div>
+                          {closureAuditDiagnosis.recommendedCandidateId && (
+                            <span className="rounded-full border border-[#c8b38a] bg-[#f5efe2] px-2 py-1 text-[10px] font-semibold text-[#6d5432]">
+                              Candidato sugerido detectado
+                            </span>
+                          )}
+                        </div>
+                        <ul className="mt-2 space-y-1 text-[11px] text-slate-700">
+                          {closureAuditDiagnosis.messages.map((message, index) => (
+                            <li key={`audit-msg-${index}`} className="rounded-lg bg-slate-50 px-2 py-1">
+                              {message}
+                            </li>
+                          ))}
+                        </ul>
+                      </Card>
+
+                      <Card className="border border-slate-200 bg-white p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          PreviousVersions
+                        </div>
+                        {!previousAuditCandidates.length ? (
+                          <div className="mt-2 text-[11px] text-slate-500">
+                            Este cierre no tiene previousVersions útiles para comparar.
+                          </div>
+                        ) : (
+                          <div className="mt-2 space-y-2">
+                            {previousAuditCandidates.map((candidate, index) => {
+                              const isRecommended = closureAuditDiagnosis.recommendedCandidateId === candidate.id;
+                              const comparable = candidate.canonical || candidate.persisted;
+                              return (
+                                <div
+                                  key={`audit-prev-${candidate.id}-${candidate.closedAt}`}
+                                  className={`rounded-xl border p-3 ${
+                                    isRecommended ? 'border-[#c8b38a] bg-[#f9f3e8]' : 'border-slate-200 bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-semibold text-slate-800">
+                                      PreviousVersion {index + 1} · {formatCloseTimestamp(candidate.closedAt)}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {candidate.replacedAt && (
+                                        <span className="text-[10px] text-slate-500">
+                                          Reemplazada {formatCloseTimestamp(candidate.replacedAt)}
+                                        </span>
+                                      )}
+                                      {isRecommended && (
+                                        <span className="rounded-full border border-[#c8b38a] bg-white px-2 py-0.5 text-[10px] font-semibold text-[#6d5432]">
+                                          Mejor candidata
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                                    <div>Total persistido</div>
+                                    <div>{candidate.persisted ? formatCurrency(candidate.persisted.netClp, 'CLP') : 'Sin summary'}</div>
+                                    <div>Total canónico</div>
+                                    <div>{candidate.canonical ? formatCurrency(candidate.canonical.netClp, 'CLP') : 'Sin records'}</div>
+                                    <div>Bancos canónicos</div>
+                                    <div>{comparable ? formatCurrency(comparable.bankClp ?? 0, 'CLP') : '—'}</div>
+                                    <div>Deuda canónica</div>
+                                    <div>{comparable ? formatCurrency(-(comparable.nonMortgageDebtClp ?? 0), 'CLP') : '—'}</div>
+                                    <div>Inversiones canónicas</div>
+                                    <div>{comparable ? formatCurrency(comparable.investmentClp ?? 0, 'CLP') : '—'}</div>
+                                    <div>Bienes raíces canónicos</div>
+                                    <div>{comparable ? formatCurrency(comparable.realEstateNetClp ?? 0, 'CLP') : '—'}</div>
+                                    <div>Records</div>
+                                    <div>{candidate.recordCount}</div>
+                                    <div>Delta bancos vs actual</div>
+                                    <div>{formatDelta(candidate.bankDeltaVsCurrent, 'CLP')}</div>
+                                    <div>Delta deuda vs actual</div>
+                                    <div>{formatDelta(candidate.debtDeltaVsCurrent, 'CLP')}</div>
+                                    <div>Delta total vs actual</div>
+                                    <div>{formatDelta(candidate.totalDeltaVsCurrent, 'CLP')}</div>
+                                  </div>
+                                  <div className="mt-2 text-[11px] text-slate-600">
+                                    {candidate.candidateReason || 'Sin lectura automática concluyente.'}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Card>
+
+                      <div className="grid gap-3 xl:grid-cols-2">
+                        <Card className="border border-slate-200 bg-white p-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Records bancarios del cierre actual
+                          </div>
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="min-w-full text-[11px]">
+                              <thead className="text-slate-500">
+                                <tr className="border-b border-slate-200">
+                                  <th className="px-2 py-1 text-left font-semibold">Label</th>
+                                  <th className="px-2 py-1 text-left font-semibold">Mon.</th>
+                                  <th className="px-2 py-1 text-right font-semibold">Monto</th>
+                                  <th className="px-2 py-1 text-right font-semibold">CLP</th>
+                                  <th className="px-2 py-1 text-left font-semibold">Lectura</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedAuditSnapshot.bankRows.map((row, index) => (
+                                  <tr key={`current-bank-${row.label}-${row.currency}-${index}`} className="border-b border-slate-100 align-top">
+                                    <td className="px-2 py-1">
+                                      <div className="font-medium text-slate-800">{row.label}</div>
+                                      <div className="text-[10px] text-slate-500">{row.source || row.note || 'Sin metadata'}</div>
+                                    </td>
+                                    <td className="px-2 py-1">{row.currency}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(row.amount, row.currency)}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(row.amountClp, 'CLP')}</td>
+                                    <td className="px-2 py-1">
+                                      {row.countsForBank ? 'Cuenta para bancos' : row.countsForDebt ? 'Cuenta para deuda' : 'No suma'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </Card>
+
+                        <Card className="border border-slate-200 bg-white p-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Bancos del mes siguiente ({monthLabel(comparisonMonthKey)})
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-500">
+                            Referencia para explicar diferencias de bancos entre abril y mayo. No se mezcla con el cierre auditado.
+                          </div>
+                          <div className="mt-2 text-[11px] font-semibold text-slate-800">
+                            Total bancos que cuentan: {comparisonMonthBankRows.length ? formatCurrency(comparisonMonthBankClp, 'CLP') : 'Sin records'}
+                          </div>
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="min-w-full text-[11px]">
+                              <thead className="text-slate-500">
+                                <tr className="border-b border-slate-200">
+                                  <th className="px-2 py-1 text-left font-semibold">Label</th>
+                                  <th className="px-2 py-1 text-left font-semibold">Mon.</th>
+                                  <th className="px-2 py-1 text-right font-semibold">Monto</th>
+                                  <th className="px-2 py-1 text-right font-semibold">CLP</th>
+                                  <th className="px-2 py-1 text-left font-semibold">Lectura</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {comparisonMonthBankRows.map((row, index) => (
+                                  <tr key={`compare-bank-${row.label}-${row.currency}-${index}`} className="border-b border-slate-100 align-top">
+                                    <td className="px-2 py-1">
+                                      <div className="font-medium text-slate-800">{row.label}</div>
+                                      <div className="text-[10px] text-slate-500">{row.source || row.note || 'Sin metadata'}</div>
+                                    </td>
+                                    <td className="px-2 py-1">{row.currency}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(row.amount, row.currency)}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(row.amountClp, 'CLP')}</td>
+                                    <td className="px-2 py-1">
+                                      {row.countsForBank ? 'Cuenta para bancos' : row.countsForDebt ? 'Cuenta para deuda' : 'No suma'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </Card>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </details>
             </>
           )}
           <button

@@ -7,7 +7,11 @@ vi.mock('../src/services/firebase', () => ({
   getCurrentUid: vi.fn(() => null),
 }));
 
-import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
+import {
+  buildClosureAuditDiagnosis,
+  buildClosureAuditSnapshot,
+  buildEditedClosureRecordsFromDraft,
+} from '../src/pages/ClosingAurum';
 import {
   BANK_BCHILE_CLP_LABEL,
   BANK_BALANCE_CLP_LABEL,
@@ -193,5 +197,65 @@ describe('closure edit record draft', () => {
     expect(records.some((record) => record.label === DEBT_CARD_CLP_LABEL)).toBe(true);
     expect(summary.bankClp).toBe(31_486_718);
     expect(summary.nonMortgageDebtClp).toBe(93_256_478);
+  });
+
+  it('flags a partial bank closure and prefers a richer previous version in audit preview', () => {
+    const currentSummary = {
+      netClp: 1_660_054_327,
+      netClpWithRisk: 1_660_054_327,
+      netConsolidatedClp: 1_660_054_327,
+      investmentClp: 1_499_488_194,
+      riskCapitalClp: 0,
+      investmentClpWithRisk: 1_499_488_194,
+      bankClp: 5_315_725,
+      nonMortgageDebtClp: 93_256_478,
+      realEstateNetClp: 248_506_886,
+    };
+    const previousSummary = buildCanonicalClosureSummary(baseRecords(), fxRates);
+    const currentSnapshot = buildClosureAuditSnapshot({
+      closure: {
+        id: 'current-april',
+        monthKey: '2026-04',
+        closedAt: '2026-04-30T23:59:59.000Z',
+        summary: currentSummary,
+        fxRates,
+        records: [
+          baseRecords()[0],
+          baseRecords()[2],
+          baseRecords()[3],
+        ],
+      },
+      includeRiskCapitalInTotals: false,
+      fallbackFx: fxRates,
+    });
+    const previousCandidate = {
+      ...buildClosureAuditSnapshot({
+        closure: {
+          id: 'prev-april',
+          monthKey: '2026-04',
+          closedAt: '2026-04-30T21:00:00.000Z',
+          summary: previousSummary,
+          fxRates,
+          records: baseRecords(),
+        },
+        includeRiskCapitalInTotals: false,
+        fallbackFx: fxRates,
+      }),
+      bankDeltaVsCurrent: 31_486_718 - 5_315_725,
+      debtDeltaVsCurrent: 93_256_478 - 93_256_478,
+      totalDeltaVsCurrent: previousSummary.netClp - currentSummary.netClp,
+      candidateScore: 0,
+      candidateReason: 'PreviousVersion 1 contiene más bancos que la versión actual.',
+    };
+
+    const diagnosis = buildClosureAuditDiagnosis({
+      current: currentSnapshot,
+      previousVersions: [previousCandidate],
+      comparisonBankClp: 31_486_718,
+    });
+
+    expect(diagnosis.recommendedCandidateId).toBe('prev-april');
+    expect(diagnosis.messages.some((message) => message.includes('Actual parece incompleto en bancos'))).toBe(true);
+    expect(diagnosis.messages.some((message) => message.includes('contiene más bancos'))).toBe(true);
   });
 });
