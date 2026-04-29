@@ -1061,7 +1061,7 @@ const normalizeClosureVersion = (
   const records = normalizeClosureRecords(raw?.records);
   const summary =
     records && records.length
-      ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+      ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
       : raw?.summary;
   if (!summary) return null;
 
@@ -2911,7 +2911,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
   }
 };
 
-const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
+export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
   return parsed
     .map((item: any) => {
       const monthKey = String(item?.monthKey || '');
@@ -2923,7 +2923,9 @@ const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
       const records = normalizeClosureRecords(item?.records);
 
       const summary =
-        records && records.length ? summarizeWealth(dedupeLatestByAsset(records), fxRates || defaultFxRates) : item?.summary;
+        records && records.length
+          ? buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates || defaultFxRates)
+          : item?.summary;
 
       const previousVersionsRaw = Array.isArray(item?.previousVersions)
         ? item.previousVersions
@@ -4424,7 +4426,7 @@ const importHistoricalClosuresFromCsvByMode = async (
       dedupedRecords = dedupeLatestByAsset(records);
       summary =
         dedupedRecords.length > 0
-          ? summarizeWealth(dedupedRecords, fx)
+          ? buildCanonicalClosureSummary(dedupedRecords, fx)
           : buildSummaryFromNetClp(Number(netClpSimple || 0));
     }
 

@@ -57,7 +57,7 @@ import {
   seedDemoWealthTimeline,
   saveWealthRecords,
   setInvestmentInstrumentMonthExcluded,
-  summarizeWealth,
+  buildCanonicalClosureSummary,
   syncWealthNow,
   validateFxRange,
   WealthBackupSnapshotMeta,
@@ -1196,7 +1196,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           nextClosure = {
             ...nextClosure,
             records: filtered,
-            summary: summarizeWealth(filtered, toSafeFxRates(nextClosure.fxRates)),
+            summary: buildCanonicalClosureSummary(filtered, toSafeFxRates(nextClosure.fxRates)),
           };
         }
       }
@@ -1212,7 +1212,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           return {
             ...version,
             records: filteredVersionRecords,
-            summary: summarizeWealth(filteredVersionRecords, toSafeFxRates(version.fxRates)),
+            summary: buildCanonicalClosureSummary(filteredVersionRecords, toSafeFxRates(version.fxRates)),
           };
         });
         nextClosure = { ...nextClosure, previousVersions: nextVersions };
