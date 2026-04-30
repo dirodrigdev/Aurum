@@ -2674,6 +2674,27 @@ const saveMonthlyCloseCheckpointToLocalCache = (checkpoint: WealthMonthlyCloseCh
   saveMonthlyCloseCheckpoints(next);
 };
 
+const buildMonthlyCloseCheckpoint = (
+  monthKey: string,
+  options?: { overwrite?: boolean },
+): WealthMonthlyCloseCheckpoint | null => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return null;
+  const existing = getMonthlyCloseCheckpoint(normalizedMonthKey);
+  if (existing && !options?.overwrite) return existing;
+  const existingClosure =
+    loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
+  return {
+    id: crypto.randomUUID(),
+    monthKey: normalizedMonthKey,
+    createdAt: nowIso(),
+    reason: 'before_monthly_close',
+    schemaVersion: 1,
+    hadPreviousClosure: !!existingClosure,
+    previousClosure: cloneClosureForCheckpoint(existingClosure),
+  };
+};
+
 const loadMonthlyCloseCheckpointFromCloud = async (
   monthKey: string,
 ): Promise<WealthMonthlyCloseCheckpoint | null> => {
@@ -2729,24 +2750,9 @@ export const captureMonthlyCloseCheckpoint = (
   monthKey: string,
   options?: { overwrite?: boolean },
 ): WealthMonthlyCloseCheckpoint | null => {
-  const normalizedMonthKey = normalizeMonthKey(monthKey);
-  if (!normalizedMonthKey) return null;
-  const checkpoints = loadMonthlyCloseCheckpoints();
-  const existing = checkpoints.find((item) => item.monthKey === normalizedMonthKey) || null;
-  if (existing && !options?.overwrite) return existing;
-  const existingClosure =
-    loadClosures().find((closure) => closure.monthKey === normalizedMonthKey) || null;
-  const checkpoint: WealthMonthlyCloseCheckpoint = {
-    id: crypto.randomUUID(),
-    monthKey: normalizedMonthKey,
-    createdAt: nowIso(),
-    reason: 'before_monthly_close',
-    schemaVersion: 1,
-    hadPreviousClosure: !!existingClosure,
-    previousClosure: cloneClosureForCheckpoint(existingClosure),
-  };
-  const next = [checkpoint, ...checkpoints.filter((item) => item.monthKey !== normalizedMonthKey)];
-  saveMonthlyCloseCheckpoints(next);
+  const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
+  if (!checkpoint) return null;
+  saveMonthlyCloseCheckpointToLocalCache(checkpoint);
   return checkpoint;
 };
 
@@ -2754,10 +2760,11 @@ export const captureMonthlyCloseCheckpointCloudFirst = async (
   monthKey: string,
   options?: { overwrite?: boolean },
 ): Promise<WealthMonthlyCloseCheckpoint | null> => {
-  const checkpoint = captureMonthlyCloseCheckpoint(monthKey, options);
+  const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
   if (!checkpoint) return null;
   const cloudOk = await saveMonthlyCloseCheckpointToCloud(checkpoint);
   if (!cloudOk) return null;
+  saveMonthlyCloseCheckpointToLocalCache(checkpoint);
   return checkpoint;
 };
 

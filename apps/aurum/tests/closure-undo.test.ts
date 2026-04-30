@@ -357,6 +357,11 @@ describe('monthly close undo checkpoint', () => {
       }),
     ).rejects.toThrow('No se pudo guardar el punto de respaldo del cierre');
     expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(false);
+    expect(getMonthlyCloseCheckpoint('2026-04')).toBeNull();
+
+    const preview = await previewUndoMonthlyClose('2026-04');
+    expect(preview.ok).toBe(false);
+    expect(preview.checkpointSource).toBeNull();
   });
 
   it('prefers cloud checkpoint and keeps local as fallback only', async () => {

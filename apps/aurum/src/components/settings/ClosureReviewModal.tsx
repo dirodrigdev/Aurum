@@ -3,9 +3,9 @@ import { Button, Card, Input } from '../Components';
 import { parseStrictNumber } from '../../utils/numberUtils';
 import { formatCurrency, formatMonthLabel, formatRateInt } from '../../utils/wealthFormat';
 import {
-  computeWealthHomeSectionAmounts,
   defaultFxRates,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  resolveClosureSectionAmounts,
   WealthFxRates,
   WealthMonthlyClosure,
   WealthRecord,
@@ -39,6 +39,8 @@ interface ClosureComputedSummary {
   realEstateNetClp: number;
   nonMortgageDebtClp: number;
   totalNetClp: number;
+  source: string;
+  warnings: string[];
 }
 
 const ensureFx = (fx?: WealthFxRates): WealthFxRates => ({
@@ -46,14 +48,6 @@ const ensureFx = (fx?: WealthFxRates): WealthFxRates => ({
   eurClp: Number.isFinite(fx?.eurClp) && (fx?.eurClp || 0) > 0 ? (fx?.eurClp as number) : defaultFxRates.eurClp,
   ufClp: Number.isFinite(fx?.ufClp) && (fx?.ufClp || 0) > 0 ? (fx?.ufClp as number) : defaultFxRates.ufClp,
 });
-
-const convertToClp = (amount: number, currency: string, fx: WealthFxRates): number => {
-  if (!Number.isFinite(amount)) return 0;
-  if (currency === 'USD') return amount * fx.usdClp;
-  if (currency === 'EUR') return amount * fx.eurClp;
-  if (currency === 'UF') return amount * fx.ufClp;
-  return amount;
-};
 
 const hasMissingFx = (closure: WealthMonthlyClosure) => {
   if (Array.isArray(closure.fxMissing) && closure.fxMissing.length > 0) return true;
@@ -67,64 +61,29 @@ const containsPropertyRecord = (records: WealthRecord[]) =>
     (record) => record.block === 'real_estate' && sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
   );
 
-const computeClosureSummary = (closure: WealthMonthlyClosure): ClosureComputedSummary => {
+export const computeClosureSummary = (closure: WealthMonthlyClosure): ClosureComputedSummary => {
   const fx = ensureFx(closure.fxRates);
   const records = Array.isArray(closure.records) ? closure.records : [];
   const hasRecords = records.length > 0;
   const missingFx = hasMissingFx(closure);
-
-  if (hasRecords) {
-    const computed = computeWealthHomeSectionAmounts(records, fx);
-    return {
-      hasRecords: true,
-      hasPropertyRecord: containsPropertyRecord(records),
-      isSummaryOnly: false,
-      hasMissingFx: missingFx,
-      investmentClp: computed.investment,
-      bankClp: computed.bank,
-      realEstateNetClp: computed.realEstateNet,
-      nonMortgageDebtClp: computed.nonMortgageDebt,
-      totalNetClp: computed.totalNetClp,
-    };
-  }
-
-  const summary = closure.summary;
-  const byBlock = summary?.byBlock;
-  const investmentClp = byBlock
-    ? convertToClp(byBlock.investment.CLP, 'CLP', fx) +
-      convertToClp(byBlock.investment.USD, 'USD', fx) +
-      convertToClp(byBlock.investment.EUR, 'EUR', fx) +
-      convertToClp(byBlock.investment.UF, 'UF', fx)
-    : 0;
-  const bankClp = byBlock
-    ? convertToClp(byBlock.bank.CLP, 'CLP', fx) +
-      convertToClp(byBlock.bank.USD, 'USD', fx) +
-      convertToClp(byBlock.bank.EUR, 'EUR', fx) +
-      convertToClp(byBlock.bank.UF, 'UF', fx)
-    : 0;
-  const realEstateNetClp = byBlock
-    ? convertToClp(byBlock.real_estate.CLP, 'CLP', fx) +
-      convertToClp(byBlock.real_estate.USD, 'USD', fx) +
-      convertToClp(byBlock.real_estate.EUR, 'EUR', fx) +
-      convertToClp(byBlock.real_estate.UF, 'UF', fx)
-    : 0;
-  const debtTotalClp = byBlock
-    ? convertToClp(byBlock.debt.CLP, 'CLP', fx) +
-      convertToClp(byBlock.debt.USD, 'USD', fx) +
-      convertToClp(byBlock.debt.EUR, 'EUR', fx) +
-      convertToClp(byBlock.debt.UF, 'UF', fx)
-    : 0;
+  const resolved = resolveClosureSectionAmounts({
+    closure,
+    fxRates: fx,
+    includeRiskCapitalInTotals: false,
+  });
 
   return {
-    hasRecords: false,
-    hasPropertyRecord: false,
-    isSummaryOnly: true,
+    hasRecords,
+    hasPropertyRecord: hasRecords ? containsPropertyRecord(records) : false,
+    isSummaryOnly: !hasRecords,
     hasMissingFx: missingFx,
-    investmentClp,
-    bankClp,
-    realEstateNetClp,
-    nonMortgageDebtClp: Math.abs(debtTotalClp),
-    totalNetClp: Number(summary?.netConsolidatedClp || 0),
+    investmentClp: resolved.investmentClp,
+    bankClp: resolved.bankClp,
+    realEstateNetClp: resolved.realEstateNetClp,
+    nonMortgageDebtClp: resolved.nonMortgageDebtClp,
+    totalNetClp: resolved.totalNetClp,
+    source: resolved.source,
+    warnings: resolved.warnings,
   };
 };
 
@@ -345,6 +304,11 @@ export const ClosureReviewModal: React.FC<ClosureReviewModalProps> = ({
                   <div className="mt-2 rounded-lg border border-slate-200 bg-[#f3eadb] px-3 py-2 text-sm text-slate-900">
                     Patrimonio total: <span className="font-semibold">{formatCurrency(currentSummary.totalNetClp, 'CLP')}</span>
                   </div>
+                  {currentSummary.warnings.includes('legacy_byBlock_fallback') && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Fuente legacy: este cierre no trae records ni subtotales canónicos; se revisa con `byBlock` como respaldo.
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
