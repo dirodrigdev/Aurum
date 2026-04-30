@@ -39,12 +39,6 @@ const spendTrustTone = (severity: SpendTrustSeverity) => {
   return 'border-rose-200 bg-rose-50 text-rose-700';
 };
 
-const spendTrustBadge = (severity: SpendTrustSeverity) => {
-  if (severity === 'ok') return 'OK';
-  if (severity === 'warning') return 'Aviso';
-  return 'Alerta';
-};
-
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
   heroLast12: AggregatedSummary | null;
@@ -522,11 +516,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       return null;
     }
     const hasAlert =
-      row.gastosIsStale
-      || row.gastosDataQuality === 'error'
-      || row.gastosContractStatus === 'stale'
+      row.gastosDataQuality === 'error'
       || row.gastosContractStatus === 'missing';
     const hasWarning =
+      row.gastosIsStale
+      || row.gastosContractStatus === 'stale'
       row.gastosDataQuality === 'warning'
       || row.gastosContractStatus === 'pending';
     if (hasAlert) {
@@ -718,16 +712,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           onClick={() => setIsSpendTrustExpanded((prev) => !prev)}
           aria-expanded={isSpendTrustExpanded}
         >
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">Avisos de datos</div>
-            <div className="truncate text-[11px] opacity-90">{spendTrustCollapsedLine}</div>
+          <div className="min-w-0 truncate text-[12px] font-semibold">
+            {`Avisos · ${spendTrustCollapsedLine}`}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="rounded-full border border-current/20 bg-white/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-              {spendTrustBadge(spendTrustState.severity)}
-            </span>
-            <ChevronDown size={16} className={cn('transition-transform', isSpendTrustExpanded ? 'rotate-180' : 'rotate-0')} />
-          </div>
+          <ChevronDown size={16} className={cn('shrink-0 transition-transform', isSpendTrustExpanded ? 'rotate-180' : 'rotate-0')} />
         </button>
         {isSpendTrustExpanded && (
           <div className="mt-2 border-t border-current/15 pt-2">
