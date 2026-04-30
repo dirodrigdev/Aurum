@@ -1,5 +1,5 @@
 import { auth } from './firebase';
-import type { WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
+import { resolveClosureSectionAmounts, type WealthFxRates, type WealthMonthlyClosure } from './wealthStorage';
 import { formatMonthLabel } from '../utils/wealthFormat';
 
 export type AurumOptimizableInvestmentsSnapshot = {
@@ -107,18 +107,11 @@ const toClp = (amount: number, currency: string, fxRates?: WealthMonthlyClosure[
 };
 
 const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
-  const summary = closure.summary as WealthMonthlyClosure['summary'] & {
-    bankClp?: number;
-    nonMortgageDebtClp?: number;
-  };
+  const resolved = resolveClosureSectionAmounts({ closure, includeRiskCapitalInTotals: true });
   const records = Array.isArray(closure.records) ? closure.records : [];
 
-  const summaryBankClp =
-    asFiniteOrNull(summary.bankClp) ??
-    asFiniteOrNull(summary.byBlock?.bank?.CLP) ??
-    0;
-
-  const summaryNonMortgageDebtClp = asFiniteOrNull(summary.nonMortgageDebtClp);
+  const summaryBankClp = asFiniteOrNull(resolved.bankClp) ?? 0;
+  const summaryNonMortgageDebtClp = asFiniteOrNull(resolved.nonMortgageDebtClp);
 
   let propertyValueCLP = 0;
   let mortgageDebtOutstandingCLP = 0;
@@ -174,6 +167,7 @@ const extractNonOptimizable = (closure: WealthMonthlyClosure) => {
 };
 
 const extractRiskCapital = (closure: WealthMonthlyClosure) => {
+  const resolved = resolveClosureSectionAmounts({ closure, includeRiskCapitalInTotals: true });
   const summary = closure.summary as WealthMonthlyClosure['summary'] & {
     analysisByCurrency?: {
       clpWithRisk?: number;
@@ -182,11 +176,11 @@ const extractRiskCapital = (closure: WealthMonthlyClosure) => {
       usdWithoutRisk?: number;
     };
   };
-  const riskCapitalFromSummary = asFiniteOrNull(summary?.riskCapitalClp);
-  const clpWithRisk = asFiniteOrNull(summary?.analysisByCurrency?.clpWithRisk);
-  const clpWithoutRisk = asFiniteOrNull(summary?.analysisByCurrency?.clpWithoutRisk);
-  const usdWithRisk = asFiniteOrNull(summary?.analysisByCurrency?.usdWithRisk);
-  const usdWithoutRisk = asFiniteOrNull(summary?.analysisByCurrency?.usdWithoutRisk);
+  const riskCapitalFromSummary = asFiniteOrNull(resolved.riskCapitalTotalClp);
+  const clpWithRisk = asFiniteOrNull(summary.analysisByCurrency?.clpWithRisk);
+  const clpWithoutRisk = asFiniteOrNull(summary.analysisByCurrency?.clpWithoutRisk);
+  const usdWithRisk = asFiniteOrNull(summary.analysisByCurrency?.usdWithRisk);
+  const usdWithoutRisk = asFiniteOrNull(summary.analysisByCurrency?.usdWithoutRisk);
   const usdDelta = usdWithRisk !== null && usdWithoutRisk !== null
     ? Math.max(0, usdWithRisk - usdWithoutRisk)
     : null;

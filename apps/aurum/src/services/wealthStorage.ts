@@ -170,6 +170,29 @@ export interface WealthClosureCompleteness {
   missingFx: boolean;
 }
 
+export type ClosureSectionAmountsSource =
+  | 'records_canonical'
+  | 'summary_extended'
+  | 'legacy_byBlock_fallback'
+  | 'missing';
+
+export interface ClosureSectionAmountsResolved {
+  totalNetClp: number;
+  investmentClp: number;
+  investmentClpWithRisk: number;
+  bankClp: number;
+  realEstateAssetsClp: number;
+  mortgageDebtClp: number;
+  realEstateNetClp: number;
+  nonMortgageDebtClp: number;
+  riskCapitalClp: number;
+  riskCapitalUsd: number | null;
+  riskCapitalTotalClp: number;
+  hasCanonicalSummary: boolean;
+  source: ClosureSectionAmountsSource;
+  warnings: string[];
+}
+
 export interface WealthInvestmentInstrument {
   id: string;
   label: string;
@@ -2738,47 +2761,160 @@ export const captureMonthlyCloseCheckpointCloudFirst = async (
   return checkpoint;
 };
 
+const finiteOr = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const finiteOrNull = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const hasExtendedSummaryAmounts = (summary: WealthSnapshotSummary | null | undefined): boolean => {
+  if (!summary) return false;
+  const required = [
+    summary.investmentClp,
+    summary.investmentClpWithRisk,
+    summary.bankClp,
+    summary.realEstateAssetsClp,
+    summary.mortgageDebtClp,
+    summary.realEstateNetClp,
+    summary.nonMortgageDebtClp,
+    summary.netClp,
+    summary.netClpWithRisk,
+  ];
+  return required.every((value) => Number.isFinite(Number(value)));
+};
+
+const readRiskCapitalUsd = (summary: WealthSnapshotSummary | null | undefined): number | null => {
+  const usdWithRisk = finiteOrNull(summary?.analysisByCurrency?.usdWithRisk);
+  const usdWithoutRisk = finiteOrNull(summary?.analysisByCurrency?.usdWithoutRisk);
+  if (usdWithRisk === null || usdWithoutRisk === null) return null;
+  return Math.max(0, usdWithRisk - usdWithoutRisk);
+};
+
+const toResolvedClosureSectionAmounts = (
+  summary: WealthSnapshotSummary | null | undefined,
+  source: ClosureSectionAmountsSource,
+  includeRiskCapitalInTotals: boolean,
+  warnings: string[] = [],
+): ClosureSectionAmountsResolved => {
+  const investmentClp = Math.max(0, finiteOr(summary?.investmentClp));
+  const investmentClpWithRisk = Math.max(
+    0,
+    finiteOr(summary?.investmentClpWithRisk, investmentClp),
+  );
+  const bankClp = Math.max(0, finiteOr(summary?.bankClp));
+  const realEstateAssetsClp = Math.max(0, finiteOr(summary?.realEstateAssetsClp));
+  const mortgageDebtClp = Math.max(0, finiteOr(summary?.mortgageDebtClp));
+  const realEstateNetClp = Math.max(
+    0,
+    finiteOr(summary?.realEstateNetClp, Math.max(0, realEstateAssetsClp - mortgageDebtClp)),
+  );
+  const nonMortgageDebtClp = Math.max(0, finiteOr(summary?.nonMortgageDebtClp));
+  const riskCapitalFromSummary = Math.max(0, finiteOr(summary?.riskCapitalClp));
+  const riskCapitalByDelta = Math.max(0, investmentClpWithRisk - investmentClp);
+  const riskCapitalClp = Math.max(riskCapitalFromSummary, riskCapitalByDelta);
+  const riskCapitalUsd = readRiskCapitalUsd(summary);
+  const totalNetClp = includeRiskCapitalInTotals
+    ? finiteOr(summary?.netClpWithRisk, investmentClpWithRisk + bankClp + realEstateNetClp - nonMortgageDebtClp)
+    : finiteOr(summary?.netClp, investmentClp + bankClp + realEstateNetClp - nonMortgageDebtClp);
+
+  return {
+    totalNetClp,
+    investmentClp,
+    investmentClpWithRisk,
+    bankClp,
+    realEstateAssetsClp,
+    mortgageDebtClp,
+    realEstateNetClp,
+    nonMortgageDebtClp,
+    riskCapitalClp,
+    riskCapitalUsd,
+    riskCapitalTotalClp: riskCapitalClp,
+    hasCanonicalSummary: hasExtendedSummaryAmounts(summary),
+    source,
+    warnings,
+  };
+};
+
+export const resolveClosureSectionAmounts = (input: {
+  closure?: WealthMonthlyClosure | null;
+  summary?: WealthSnapshotSummary | null;
+  records?: WealthRecord[] | null;
+  fxRates?: WealthFxRates | null;
+  includeRiskCapitalInTotals?: boolean;
+}): ClosureSectionAmountsResolved => {
+  const includeRiskCapitalInTotals = !!input.includeRiskCapitalInTotals;
+  const closure = input.closure || null;
+  const records = Array.isArray(input.records)
+    ? input.records
+    : Array.isArray(closure?.records)
+      ? closure.records || []
+      : [];
+  const summary = input.summary || closure?.summary || null;
+  const fxRates = input.fxRates || closure?.fxRates || defaultFxRates;
+
+  if (records.length > 0) {
+    const canonical = buildCanonicalClosureSummary(dedupeLatestByAsset(records), fxRates);
+    return toResolvedClosureSectionAmounts(canonical, 'records_canonical', includeRiskCapitalInTotals);
+  }
+
+  if (hasExtendedSummaryAmounts(summary)) {
+    return toResolvedClosureSectionAmounts(summary, 'summary_extended', includeRiskCapitalInTotals);
+  }
+
+  if (summary?.byBlock) {
+    const legacySummary: WealthSnapshotSummary = {
+      ...summary,
+      investmentClp: finiteOr(summary.investmentClp, summary.byBlock.investment?.CLP),
+      investmentClpWithRisk: finiteOr(
+        summary.investmentClpWithRisk,
+        summary.investmentClp ?? summary.byBlock.investment?.CLP,
+      ),
+      bankClp: finiteOr(summary.bankClp, summary.byBlock.bank?.CLP),
+      realEstateAssetsClp: finiteOr(summary.realEstateAssetsClp, summary.byBlock.real_estate?.CLP),
+      mortgageDebtClp: finiteOr(summary.mortgageDebtClp),
+      realEstateNetClp: finiteOr(summary.realEstateNetClp, summary.byBlock.real_estate?.CLP),
+      nonMortgageDebtClp: finiteOr(summary.nonMortgageDebtClp, Math.abs(finiteOr(summary.byBlock.debt?.CLP))),
+      netClp: finiteOr(summary.netClp, summary.netConsolidatedClp),
+      netClpWithRisk: finiteOr(summary.netClpWithRisk, summary.netConsolidatedClp),
+    };
+    return toResolvedClosureSectionAmounts(legacySummary, 'legacy_byBlock_fallback', includeRiskCapitalInTotals, [
+      'legacy_byBlock_fallback',
+    ]);
+  }
+
+  return {
+    totalNetClp: 0,
+    investmentClp: 0,
+    investmentClpWithRisk: 0,
+    bankClp: 0,
+    realEstateAssetsClp: 0,
+    mortgageDebtClp: 0,
+    realEstateNetClp: 0,
+    nonMortgageDebtClp: 0,
+    riskCapitalClp: 0,
+    riskCapitalUsd: null,
+    riskCapitalTotalClp: 0,
+    hasCanonicalSummary: false,
+    source: 'missing',
+    warnings: ['missing_summary_and_records'],
+  };
+};
+
 const toComparableClosureSummary = (
   closure: WealthMonthlyClosure | null,
 ): ComparableClosureSummary | null => {
   if (!closure || !closure.summary) return null;
-  const fx = closure.fxRates || defaultFxRates;
-  const canonical = Array.isArray(closure.records) && closure.records.length
-    ? buildCanonicalClosureSummary(dedupeLatestByAsset(closure.records), fx)
-    : closure.summary;
-  const bankClp = Number(
-    (canonical as WealthSnapshotSummary).bankClp ??
-      canonical.byBlock?.bank?.CLP ??
-      0,
-  );
-  const investmentClp = Number(
-    (canonical as WealthSnapshotSummary).investmentClpWithRisk ??
-      (canonical as WealthSnapshotSummary).investmentClp ??
-      canonical.byBlock?.investment?.CLP ??
-      0,
-  );
-  const realEstateNetClp = Number(
-    (canonical as WealthSnapshotSummary).realEstateNetClp ??
-      canonical.byBlock?.real_estate?.CLP ??
-      0,
-  );
-  const nonMortgageDebtClp = Number(
-    (canonical as WealthSnapshotSummary).nonMortgageDebtClp ??
-      canonical.byBlock?.debt?.CLP ??
-      0,
-  );
-  const netClp = Number(
-    (canonical as WealthSnapshotSummary).netClpWithRisk ??
-      (canonical as WealthSnapshotSummary).netClp ??
-      canonical.netConsolidatedClp ??
-      0,
-  );
+  const resolved = resolveClosureSectionAmounts({ closure, includeRiskCapitalInTotals: true });
   return {
-    bankClp,
-    investmentClp,
-    realEstateNetClp,
-    nonMortgageDebtClp,
-    netClp,
+    bankClp: resolved.bankClp,
+    investmentClp: resolved.investmentClpWithRisk,
+    realEstateNetClp: resolved.realEstateNetClp,
+    nonMortgageDebtClp: resolved.nonMortgageDebtClp,
+    netClp: resolved.totalNetClp,
   };
 };
 

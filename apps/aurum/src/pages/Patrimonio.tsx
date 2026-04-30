@@ -64,6 +64,7 @@ import {
   RISK_CAPITAL_LABEL_USD,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   removeWealthRecordForMonthAsset,
+  resolveClosureSectionAmounts,
   saveBankTokens,
   saveFxRates,
   saveIncludeRiskCapitalInTotals,
@@ -4366,35 +4367,16 @@ export const Patrimonio: React.FC = () => {
   const resolveSectionAmountsFromClosure = (
     closure: WealthMonthlyClosure,
   ): ReturnType<typeof computeWealthHomeSectionAmounts> => {
-    const summary = closure.summary as WealthMonthlyClosure['summary'] & {
-      realEstateNetClp?: number;
-      bankClp?: number;
-      nonMortgageDebtClp?: number;
-    };
+    const resolved = resolveClosureSectionAmounts({
+      closure,
+      includeRiskCapitalInTotals,
+    });
     const investment = includeRiskCapitalInTotals
-      ? Number.isFinite(summary?.investmentClpWithRisk)
-        ? Number(summary.investmentClpWithRisk)
-        : Number.isFinite(summary?.byBlock?.investment?.CLP)
-          ? Number(summary.byBlock.investment.CLP)
-          : 0
-      : Number.isFinite(summary?.investmentClp)
-        ? Number(summary.investmentClp)
-        : 0;
-    const realEstateNet = Number.isFinite(summary?.realEstateNetClp)
-      ? Number(summary.realEstateNetClp)
-      : Number.isFinite(summary?.byBlock?.real_estate?.CLP)
-        ? Number(summary.byBlock.real_estate.CLP)
-        : 0;
-    const bank = Number.isFinite(summary?.bankClp)
-      ? Number(summary.bankClp)
-      : Number.isFinite(summary?.byBlock?.bank?.CLP)
-        ? Number(summary.byBlock.bank.CLP)
-        : 0;
-    const nonMortgageDebt = Number.isFinite(summary?.nonMortgageDebtClp)
-      ? Number(summary.nonMortgageDebtClp)
-      : Number.isFinite(summary?.byBlock?.debt?.CLP)
-        ? Number(summary.byBlock.debt.CLP)
-        : 0;
+      ? resolved.investmentClpWithRisk
+      : resolved.investmentClp;
+    const realEstateNet = resolved.realEstateNetClp;
+    const bank = resolved.bankClp;
+    const nonMortgageDebt = resolved.nonMortgageDebtClp;
     const totalNetClp = investment + realEstateNet + bank - nonMortgageDebt;
     return {
       investment,
@@ -4667,50 +4649,20 @@ export const Patrimonio: React.FC = () => {
   const previousClosureSectionAmounts = useMemo(() => {
     if (!previousClosureForComparisons) return null;
     const closureFx = previousClosureForComparisons.fxRates || activeDisplayFx;
-    if (previousClosureForComparisons.records?.length) {
-      const recordsForTotals = resolveRiskCapitalRecordsForTotals(
-        previousClosureForComparisons.records,
-        includeRiskCapitalInTotals,
-      ).recordsForTotals;
-      const fromRecords = computeWealthHomeSectionAmounts(recordsForTotals, closureFx);
-      return {
-        investment: fromRecords.investment,
-        realEstateNet: fromRecords.realEstateNet,
-        bank: fromRecords.bank,
-        nonMortgageDebt: fromRecords.nonMortgageDebt,
-        fxRates: closureFx,
-      };
-    }
-    const summary = previousClosureForComparisons.summary as WealthMonthlyClosure['summary'] & {
-      realEstateNetClp?: number;
-      bankClp?: number;
-      nonMortgageDebtClp?: number;
-    };
+    const resolved = resolveClosureSectionAmounts({
+      closure: previousClosureForComparisons,
+      includeRiskCapitalInTotals,
+    });
     const investment = includeRiskCapitalInTotals
-      ? Number.isFinite(summary?.investmentClpWithRisk)
-        ? Number(summary.investmentClpWithRisk)
-        : Number.isFinite(summary?.byBlock?.investment?.CLP)
-          ? Number(summary.byBlock.investment.CLP)
-          : null
-      : Number.isFinite(summary?.investmentClp)
-        ? Number(summary.investmentClp)
-        : null;
-    const realEstateNet = Number.isFinite(summary?.realEstateNetClp)
-      ? Number(summary.realEstateNetClp)
-      : Number.isFinite(summary?.byBlock?.real_estate?.CLP)
-        ? Number(summary.byBlock.real_estate.CLP)
-        : null;
-    const bank = Number.isFinite(summary?.bankClp)
-      ? Number(summary.bankClp)
-      : Number.isFinite(summary?.byBlock?.bank?.CLP)
-        ? Number(summary.byBlock.bank.CLP)
-        : null;
-    const nonMortgageDebt = Number.isFinite(summary?.nonMortgageDebtClp)
-      ? Number(summary.nonMortgageDebtClp)
-      : Number.isFinite(summary?.byBlock?.debt?.CLP)
-        ? Number(summary.byBlock.debt.CLP)
-        : null;
-    return { investment, realEstateNet, bank, nonMortgageDebt, fxRates: closureFx };
+      ? resolved.investmentClpWithRisk
+      : resolved.investmentClp;
+    return {
+      investment,
+      realEstateNet: resolved.realEstateNetClp,
+      bank: resolved.bankClp,
+      nonMortgageDebt: resolved.nonMortgageDebtClp,
+      fxRates: closureFx,
+    };
   }, [previousClosureForComparisons, includeRiskCapitalInTotals, activeDisplayFx]);
 
   const blockVariationsDisplay = useMemo(() => {

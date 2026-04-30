@@ -53,4 +53,59 @@ describe('midasPublished fxReference source-of-truth', () => {
     expect(prepared.snapshot.fxReference?.clpUsd).toBe(985);
     expect(prepared.snapshot.fxReference?.source).toBe('closure_fxRates');
   });
+
+  it('uses canonical records for non-optimizable subtotals instead of legacy byBlock when records exist', () => {
+    const closure = makeClosure(985);
+    closure.summary.byBlock.bank.CLP = 999_999_999;
+    closure.summary.byBlock.debt.CLP = -999_999_999;
+    closure.records = [
+      {
+        id: 'bank-real',
+        block: 'bank',
+        source: 'Fintoc',
+        label: 'Banco de Chile CLP',
+        amount: 120_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-03-31',
+        createdAt: '2026-03-31T12:00:00Z',
+      },
+      {
+        id: 'card-debt',
+        block: 'bank',
+        source: 'Fintoc',
+        label: 'Deuda tarjetas CLP',
+        amount: 20_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-03-31',
+        createdAt: '2026-03-31T12:00:00Z',
+      },
+      {
+        id: 'property',
+        block: 'real_estate',
+        source: 'Manual',
+        label: 'Valor propiedad',
+        amount: 300_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-03-31',
+        createdAt: '2026-03-31T12:00:00Z',
+      },
+      {
+        id: 'mortgage',
+        block: 'debt',
+        source: 'Banco',
+        label: 'Saldo deuda hipotecaria',
+        amount: 120_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-03-31',
+        createdAt: '2026-03-31T12:00:00Z',
+      },
+    ];
+    const prepared = prepareAurumOptimizableInvestmentsSnapshot([closure]);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.snapshot.nonOptimizable?.banksCLP).toBe(120_000_000);
+    expect(prepared.snapshot.nonOptimizable?.nonMortgageDebtCLP).toBe(20_000_000);
+    expect(prepared.snapshot.nonOptimizable?.realEstate?.propertyValueCLP).toBe(300_000_000);
+    expect(prepared.snapshot.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP).toBe(120_000_000);
+  });
 });
