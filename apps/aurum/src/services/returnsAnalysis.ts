@@ -92,6 +92,24 @@ export type PendingReturnEstimate = {
   scenarios: ProvisionalReturnScenario[];
 };
 
+export type EstimatedMonthMeta = {
+  monthKey: string;
+  estimateMethod: 'avg_12m_closed' | 'avg_available_closed';
+  estimatedSpendClp: number;
+  estimatedSpendDisplay: number;
+  estimatedFromMonthsCount: number;
+  officialAvailableDate: string | null;
+  gastosPeriodKey: string | null;
+  referencePreviousMonthSpendClp: number | null;
+};
+
+export type ReturnsSeriesView = {
+  officialRows: MonthlyReturnRow[];
+  estimatedRows: MonthlyReturnRow[];
+  hasEstimatedMonth: boolean;
+  pendingEstimate: EstimatedMonthMeta | null;
+};
+
 const monthAfter = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return null;
@@ -504,6 +522,93 @@ export const buildPendingReturnEstimate = (
     periodRangeLabel: info.periodRangeLabel,
     varPatrimonioDisplay: pendingRow.varPatrimonioDisplay,
     scenarios,
+  };
+};
+
+export const buildReturnsSeriesView = (
+  officialRows: MonthlyReturnRow[],
+): ReturnsSeriesView => {
+  const pendingRow = [...officialRows]
+    .reverse()
+    .find(
+      (row) =>
+        row.gastosStatus === 'pending' &&
+        row.varPatrimonioClp !== null &&
+        row.varPatrimonioDisplay !== null &&
+        row.prevNetDisplay !== null &&
+        row.prevNetClp !== null &&
+        row.fxAuditable,
+    );
+
+  if (!pendingRow) {
+    return {
+      officialRows,
+      estimatedRows: officialRows,
+      hasEstimatedMonth: false,
+      pendingEstimate: null,
+    };
+  }
+
+  const closedRows = officialRows
+    .filter((row) => row.monthKey < pendingRow.monthKey)
+    .filter(validClosedSpendRow);
+  if (!closedRows.length) {
+    return {
+      officialRows,
+      estimatedRows: officialRows,
+      hasEstimatedMonth: false,
+      pendingEstimate: null,
+    };
+  }
+
+  const sample = closedRows.slice(-12);
+  const spendSampleClp = sumNumbers(sample.map((row) => row.gastosClp)) / sample.length;
+  const spendSampleDisplay = sumNumbers(sample.map((row) => row.gastosDisplay)) / sample.length;
+  const estimateMethod: EstimatedMonthMeta['estimateMethod'] =
+    sample.length >= 12 ? 'avg_12m_closed' : 'avg_available_closed';
+  const prevClosed = closedRows[closedRows.length - 1] || null;
+  const info = buildPendingOfficialReturnInfo(pendingRow);
+  const estimatedRetornoClp = Number(pendingRow.varPatrimonioClp) + spendSampleClp;
+  const estimatedRetornoDisplay = Number(pendingRow.varPatrimonioDisplay) + spendSampleDisplay;
+  const estimatedPct =
+    pendingRow.prevNetDisplay && pendingRow.prevNetDisplay > 0
+      ? (estimatedRetornoDisplay / pendingRow.prevNetDisplay) * 100
+      : null;
+
+  const estimatedRow: MonthlyReturnRow = {
+    ...pendingRow,
+    gastosStatus: 'complete',
+    gastosSource: 'gastapp_firestore',
+    gastosDataQuality: null,
+    gastosContractStatus: 'pending',
+    gastosClp: spendSampleClp,
+    gastosDisplay: spendSampleDisplay,
+    retornoRealClp: estimatedRetornoClp,
+    retornoRealDisplay: estimatedRetornoDisplay,
+    pct: estimatedPct,
+    isEstimated: true,
+    estimateMethod,
+    estimatedSpendClp: spendSampleClp,
+    estimatedFromMonthsCount: sample.length,
+    officialAvailableDate: info.availabilityLabel,
+    referencePreviousMonthSpendClp: prevClosed?.gastosClp ?? null,
+  };
+
+  const estimatedRows = officialRows.map((row) => (row.monthKey === pendingRow.monthKey ? estimatedRow : row));
+  return {
+    officialRows,
+    estimatedRows,
+    hasEstimatedMonth: true,
+    pendingEstimate: {
+      monthKey: pendingRow.monthKey,
+      estimateMethod,
+      estimatedSpendClp: spendSampleClp,
+      estimatedSpendDisplay: spendSampleDisplay,
+      estimatedFromMonthsCount: sample.length,
+      officialAvailableDate: info.availabilityLabel,
+      gastosPeriodKey: pendingRow.gastosPeriodKey,
+      referencePreviousMonthSpendClp: prevClosed?.gastosClp ?? null,
+    },
   };
 };
 

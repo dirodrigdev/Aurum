@@ -46,6 +46,19 @@ type ReturnsTabProps = {
   heroLastMonth: AggregatedSummary | null;
   heroLastMonthPctMonthly: number | null;
   currency: WealthCurrency;
+  includeEstimatedMonth: boolean;
+  hasEstimatedMonth: boolean;
+  estimatedMonthMeta: {
+    monthKey: string;
+    estimateMethod: 'avg_12m_closed' | 'avg_available_closed';
+    estimatedSpendClp: number;
+    estimatedSpendDisplay: number;
+    estimatedFromMonthsCount: number;
+    officialAvailableDate: string | null;
+    gastosPeriodKey: string | null;
+    referencePreviousMonthSpendClp: number | null;
+  } | null;
+  onToggleIncludeEstimatedMonth: () => void;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
   crpContributionInsight: CrpContributionInsight | null;
@@ -53,6 +66,7 @@ type ReturnsTabProps = {
     anomalyRaw: MonthlyReturnRow | null;
   };
   fxExcludedMonths: string[];
+  officialMonthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsDesc: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
@@ -126,6 +140,7 @@ const ReturnRealHero: React.FC<{
   lastMonth: AggregatedSummary | null;
   lastMonthPctMonthly: number | null;
   currency: WealthCurrency;
+  includeEstimatedMonth: boolean;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
   crpContributionInsight: CrpContributionInsight | null;
@@ -136,14 +151,15 @@ const ReturnRealHero: React.FC<{
   lastMonth,
   lastMonthPctMonthly,
   currency,
+  includeEstimatedMonth,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
   crpContributionInsight,
 }) => {
   const rows = [
-    { key: 'inicio', label: 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
-    { key: '12m', label: 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
-    { key: 'ytd', label: 'YTD 2026', value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
+    { key: 'inicio', label: includeEstimatedMonth ? 'DESDE INICIO (E)' : 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
+    { key: '12m', label: includeEstimatedMonth ? 'ÚLT. 12M (E)' : 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
+    { key: 'ytd', label: includeEstimatedMonth ? 'YTD 2026 (E)' : 'YTD 2026', value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
     { key: 'mes', label: 'ÚLT. MES VÁLIDO', value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
   const spendClass = (value: AggregatedSummary | null | undefined) => {
@@ -457,11 +473,16 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   heroLastMonth,
   heroLastMonthPctMonthly,
   currency,
+  includeEstimatedMonth,
+  hasEstimatedMonth,
+  estimatedMonthMeta,
+  onToggleIncludeEstimatedMonth,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
   crpContributionInsight,
   analysisDiagnostics,
   fxExcludedMonths,
+  officialMonthlyRowsAsc,
   monthlyRowsAsc,
   monthlyRowsDesc,
   periodSummaries,
@@ -471,13 +492,15 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 }) => {
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
-  const pendingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
-  const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
-  const legacySpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
-  const firestoreSpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'gastapp_firestore').map((row) => row.monthKey);
+  const pendingSpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
+  const missingSpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
+  const legacySpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
+  const firestoreSpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosSource === 'gastapp_firestore').map((row) => row.monthKey);
   const latestGastappSpendRow = React.useMemo(
     () =>
-      monthlyRowsDesc.find((row) =>
+      [...officialMonthlyRowsAsc]
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
+        .find((row) =>
         row.gastosSource === 'gastapp_firestore' && (
           row.gastosContractStatus !== null
           || row.gastosDataQuality !== null
@@ -493,8 +516,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           || row.gastosReportVsSummaryDiffEur !== null
           || row.gastosCategoryGapEur !== null
         ),
-      ) ?? monthlyRowsDesc.find((row) => row.gastosSource === 'gastapp_firestore') ?? null,
-    [monthlyRowsDesc],
+      ) ?? [...officialMonthlyRowsAsc]
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
+        .find((row) => row.gastosSource === 'gastapp_firestore') ?? null,
+    [officialMonthlyRowsAsc],
   );
   const spendTrustState = React.useMemo(() => {
     if (missingSpendMonths.length > 0) {
@@ -521,7 +546,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     const hasWarning =
       row.gastosIsStale
       || row.gastosContractStatus === 'stale'
-      row.gastosDataQuality === 'warning'
+      || row.gastosDataQuality === 'warning'
       || row.gastosContractStatus === 'pending';
     if (hasAlert) {
       return {
@@ -593,18 +618,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
   const pendingOfficialRows = React.useMemo(
     () =>
-      monthlyRowsDesc
+      [...officialMonthlyRowsAsc]
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
         .filter((row) => row.gastosStatus === 'pending' && row.varPatrimonioDisplay !== null)
         .map((row) => ({
           row,
           info: buildPendingOfficialReturnInfo(row),
         })),
-    [monthlyRowsDesc],
+    [officialMonthlyRowsAsc],
   );
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = React.useMemo(
-    () => buildPendingReturnEstimate(monthlyRowsAsc),
-    [monthlyRowsAsc],
+    () => buildPendingReturnEstimate(officialMonthlyRowsAsc),
+    [officialMonthlyRowsAsc],
   );
   const spendTrustCollapsedLine = React.useMemo(() => {
     if (mainPendingOfficial?.info?.availabilityLabel) {
@@ -629,10 +655,15 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         const varDisplay = row.varPatrimonioDisplay;
         const gastosDisplay = row.gastosDisplay;
         const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
+        const estimatedSuffix = row.isEstimated ? ' (E)' : '';
         return {
           monthKey: row.monthKey,
+          isEstimated: Boolean(row.isEstimated),
+          estimateMethod: row.estimateMethod || '',
+          estimatedSpendClp: row.estimatedSpendClp,
+          officialAvailableDate: row.officialAvailableDate || '',
           month: monthLabelShort(row.monthKey),
-          pct: row.gastosStatus === 'pending' ? 'Pendiente gasto' : formatPct(row.pct),
+          pct: row.gastosStatus === 'pending' ? 'Pendiente gasto' : `${formatPct(row.pct)}${estimatedSuffix}`,
           retorno:
             row.gastosStatus === 'pending'
               ? pendingInfo?.availabilityLabel
@@ -640,7 +671,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                 : 'Pendiente gasto'
               : retornoDisplay === null
                 ? '—'
-                : formatCurrency(retornoDisplay, currency),
+                : `${formatCurrency(retornoDisplay, currency)}${estimatedSuffix}`,
           varPat: varDisplay === null ? '—' : formatCurrency(varDisplay, currency),
           gastos:
             row.gastosStatus === 'missing'
@@ -649,17 +680,28 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                 ? 'Pendiente'
                 : gastosDisplay === null
                   ? '—'
-                  : formatCurrency(gastosDisplay, currency),
+                  : `${formatCurrency(gastosDisplay, currency)}${estimatedSuffix}`,
         };
       }),
     [monthlyRowsDesc, currency],
   );
 
   const copyTable = React.useCallback(async () => {
-    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos', 'isEstimated', 'estimateMethod', 'estimatedSpendClp', 'officialAvailableDate'];
     const lines = [
       header.join('\t'),
-      ...historyRows.map((row) => [row.monthKey, row.month, row.pct, row.retorno, row.varPat, row.gastos].join('\t')),
+      ...historyRows.map((row) => [
+        row.monthKey,
+        row.month,
+        row.pct,
+        row.retorno,
+        row.varPat,
+        row.gastos,
+        row.isEstimated ? 'true' : 'false',
+        row.estimateMethod,
+        row.estimatedSpendClp ?? '',
+        row.officialAvailableDate,
+      ].join('\t')),
     ];
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
@@ -672,10 +714,21 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   const exportCsv = React.useCallback(() => {
     const escape = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
-    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos'];
+    const header = ['monthKey', 'Mes', '%', 'Ret.Econ.', 'Var.Pat', 'Gastos', 'isEstimated', 'estimateMethod', 'estimatedSpendClp', 'officialAvailableDate'];
     const lines = [
       header.map(escape).join(','),
-      ...historyRows.map((row) => [row.monthKey, row.month, row.pct, row.retorno, row.varPat, row.gastos].map(escape).join(',')),
+      ...historyRows.map((row) => [
+        row.monthKey,
+        row.month,
+        row.pct,
+        row.retorno,
+        row.varPat,
+        row.gastos,
+        row.isEstimated ? 'true' : 'false',
+        row.estimateMethod,
+        String(row.estimatedSpendClp ?? ''),
+        row.officialAvailableDate,
+      ].map(escape).join(',')),
     ];
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -696,10 +749,35 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       lastMonth={heroLastMonth}
       lastMonthPctMonthly={heroLastMonthPctMonthly}
       currency={currency}
+      includeEstimatedMonth={includeEstimatedMonth}
       includeRiskCapitalInTotals={includeRiskCapitalInTotals}
       onToggleRiskMode={onToggleRiskMode}
       crpContributionInsight={crpContributionInsight}
     />
+
+    {hasEstimatedMonth && estimatedMonthMeta && (
+      <Card className="border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+        <label className="flex cursor-pointer items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold">Incluir último mes estimado (E)</div>
+            <div className="mt-0.5 text-[11px] text-amber-800">
+              Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
+            </div>
+            {includeEstimatedMonth && (
+              <div className="mt-1 text-[11px] font-medium text-amber-900">
+                {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} (E)${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
+              </div>
+            )}
+          </div>
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-amber-400 text-amber-700 focus:ring-amber-500"
+            checked={includeEstimatedMonth}
+            onChange={onToggleIncludeEstimatedMonth}
+          />
+        </label>
+      </Card>
+    )}
 
     {spendTrustState && (legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0 || pendingSpendMonths.length > 0 || missingSpendMonths.length > 0) && (
       <Card className={cn(
@@ -814,14 +892,24 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               const retornoDisplay = row.retornoRealDisplay;
               const positive = (retornoDisplay || 0) >= 0;
               const pendingInfo = row.gastosStatus === 'pending' ? buildPendingOfficialReturnInfo(row) : null;
+              const estimated = Boolean(row.isEstimated);
               return (
-                <tr key={row.monthKey} className="border-t border-slate-100">
-                  <td className="py-1.5 pr-2 font-medium text-slate-700">{monthLabelShort(row.monthKey)}</td>
+                <tr key={row.monthKey} className={cn('border-t border-slate-100', estimated && 'bg-amber-50/40')}>
+                  <td className="py-1.5 pr-2 font-medium text-slate-700">
+                    <div className="inline-flex items-center gap-1.5">
+                      <span>{monthLabelShort(row.monthKey)}</span>
+                      {estimated && (
+                        <span className="rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                          E
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className={cn(
                     'py-1.5 pr-2 text-right font-semibold',
                     row.gastosStatus === 'pending' ? 'text-amber-700' : positive ? 'text-emerald-700' : 'text-rose-700',
                   )}>
-                    {row.gastosStatus === 'pending' ? 'Pendiente gasto' : formatPct(row.pct)}
+                    {row.gastosStatus === 'pending' ? 'Pendiente gasto' : `${formatPct(row.pct)}${estimated ? ' (E)' : ''}`}
                   </td>
                   <td className={cn(
                     'py-1.5 pr-2 text-right font-semibold',
@@ -833,7 +921,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                         : 'Pendiente gasto'
                       : retornoDisplay === null
                         ? '—'
-                        : formatCurrency(retornoDisplay, currency)}
+                        : `${formatCurrency(retornoDisplay, currency)}${estimated ? ' (E)' : ''}`}
                   </td>
                   <td className="py-1.5 pr-2 text-right text-slate-700">
                     {varDisplay === null ? '—' : formatCurrency(varDisplay, currency)}

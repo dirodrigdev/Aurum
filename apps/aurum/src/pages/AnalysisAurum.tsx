@@ -30,6 +30,7 @@ import {
 } from '../services/financialFreedom';
 import {
   aggregateRows,
+  buildReturnsSeriesView,
   buildTrailingSummary,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
@@ -84,6 +85,7 @@ export const AnalysisAurum: React.FC = () => {
     loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey)),
   );
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
+  const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
     annualRatePct: '5',
@@ -160,7 +162,7 @@ export const AnalysisAurum: React.FC = () => {
     };
   }, [refreshClosures]);
 
-  const monthlyRowsAsc = useMemo(
+  const officialMonthlyRowsAsc = useMemo(
     () => computeMonthlyRows(closures, includeRiskCapitalInTotals, currency),
     [closures, includeRiskCapitalInTotals, currency, gastosSourceVersion],
   );
@@ -168,10 +170,22 @@ export const AnalysisAurum: React.FC = () => {
     () => computeMonthlyRows(closures, false, currency),
     [closures, currency, gastosSourceVersion],
   );
+  const returnsSeriesView = useMemo(
+    () => buildReturnsSeriesView(officialMonthlyRowsAsc),
+    [officialMonthlyRowsAsc],
+  );
+  const monthlyRowsAsc = includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
+    ? returnsSeriesView.estimatedRows
+    : returnsSeriesView.officialRows;
   const monthlyRowsDesc = useMemo(
     () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
     [monthlyRowsAsc],
   );
+  useEffect(() => {
+    if (!returnsSeriesView.hasEstimatedMonth) {
+      setIncludeEstimatedMonth(false);
+    }
+  }, [returnsSeriesView.hasEstimatedMonth]);
   const trajectoryCurve = useMemo(() => buildTrajectoryCurve(monthlyRowsAsc), [monthlyRowsAsc]);
   const patrimonyCurve = useMemo(() => buildPatrimonyCurve(monthlyRowsAsc), [monthlyRowsAsc]);
   const crpContributionInsight = useMemo(() => {
@@ -180,19 +194,19 @@ export const AnalysisAurum: React.FC = () => {
   }, [includeRiskCapitalInTotals, monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency]);
 
   const analysisDiagnostics = useMemo(() => {
-    const eurScaleOutliers = monthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
-    const invalidNetMonths = monthlyRowsAsc.filter((row) => row.invalidNet).map((row) => row.monthKey);
-    const anomalyRaw = [...monthlyRowsAsc]
+    const eurScaleOutliers = officialMonthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
+    const invalidNetMonths = officialMonthlyRowsAsc.filter((row) => row.invalidNet).map((row) => row.monthKey);
+    const anomalyRaw = [...officialMonthlyRowsAsc]
       .filter((row) => row.pct !== null)
       .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
-    const missingSpendMonths = monthlyRowsAsc
+    const missingSpendMonths = officialMonthlyRowsAsc
       .filter((row) => row.gastosStatus === 'missing')
       .map((row) => row.monthKey);
-    const fxExcludedMonths = monthlyRowsAsc
+    const fxExcludedMonths = officialMonthlyRowsAsc
       .filter((row) => !row.fxAuditable)
       .map((row) => row.monthKey);
     return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths, fxExcludedMonths };
-  }, [monthlyRowsAsc]);
+  }, [officialMonthlyRowsAsc]);
 
   useEffect(() => {
     if (analysisDiagnostics.invalidNetMonths.length > 0) {
@@ -218,7 +232,7 @@ export const AnalysisAurum: React.FC = () => {
       return;
     }
 
-    const suspectPost = monthlyRowsAsc.find(
+    const suspectPost = officialMonthlyRowsAsc.find(
       (row) => row.gastosClp !== null && Math.abs(row.gastosClp) > 100_000_000,
     );
     if (suspectPost) {
@@ -229,7 +243,7 @@ export const AnalysisAurum: React.FC = () => {
     }
 
     setErrorMessage('');
-  }, [analysisDiagnostics, monthlyRowsAsc]);
+  }, [analysisDiagnostics, officialMonthlyRowsAsc]);
 
   const periodSummaries = useMemo(() => {
     const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
@@ -286,15 +300,15 @@ export const AnalysisAurum: React.FC = () => {
   }, [monthlyRowsAsc]);
 
   const heroLastMonth = useMemo(() => {
-    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     if (!row) return null;
     return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay);
-  }, [monthlyRowsAsc]);
+  }, [returnsSeriesView.officialRows]);
 
   const heroLastMonthPctMonthly = useMemo(() => {
-    const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     return row?.pct ?? null;
-  }, [monthlyRowsAsc]);
+  }, [returnsSeriesView.officialRows]);
 
   const wealthLabModel = useMemo(
     () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
@@ -408,11 +422,16 @@ export const AnalysisAurum: React.FC = () => {
           heroLastMonth={heroLastMonth}
           heroLastMonthPctMonthly={heroLastMonthPctMonthly}
           currency={currency}
+          includeEstimatedMonth={includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth}
+          hasEstimatedMonth={returnsSeriesView.hasEstimatedMonth}
+          estimatedMonthMeta={returnsSeriesView.pendingEstimate}
+          onToggleIncludeEstimatedMonth={() => setIncludeEstimatedMonth((prev) => !prev)}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
           crpContributionInsight={crpContributionInsight}
           analysisDiagnostics={{ anomalyRaw: analysisDiagnostics.anomalyRaw }}
           fxExcludedMonths={analysisDiagnostics.fxExcludedMonths}
+          officialMonthlyRowsAsc={returnsSeriesView.officialRows}
           monthlyRowsAsc={monthlyRowsAsc}
           monthlyRowsDesc={monthlyRowsDesc}
           periodSummaries={periodSummaries}

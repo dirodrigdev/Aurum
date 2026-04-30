@@ -9,7 +9,7 @@ const TEST_GASTOS_EUR: Record<string, number> = {
 
 vi.mock('../src/services/gastosMonthly', () => ({
   resolveGastappMonthlySpend: (monthKey: string) => {
-    const value = TEST_GASTOS_EUR[monthKey];
+    const value = TEST_GASTOS_EUR[monthKey] ?? (monthKey.startsWith('2025-') ? 4200 : undefined);
     if (Number.isFinite(value)) {
       return {
         monthKey,
@@ -33,6 +33,7 @@ import {
   aggregateRows,
   buildPendingOfficialReturnInfo,
   buildPendingReturnEstimate,
+  buildReturnsSeriesView,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
   computeMonthlyRows,
@@ -290,5 +291,50 @@ describe('returns analysis helpers', () => {
 
     const summary = aggregateRows('with-pending', 'With pending', rows, rows[0].netDisplay);
     expect(summary.validMonths).toBe(3);
+  });
+
+  it('builds a dual returns series and keeps official rows unchanged', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_000_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    );
+    const view = buildReturnsSeriesView(rows);
+    expect(view.hasEstimatedMonth).toBe(true);
+    expect(view.pendingEstimate?.monthKey).toBe('2026-04');
+    expect(view.pendingEstimate?.estimateMethod).toBe('avg_available_closed');
+    expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(4);
+
+    const officialApril = view.officialRows.find((row) => row.monthKey === '2026-04');
+    const estimatedApril = view.estimatedRows.find((row) => row.monthKey === '2026-04');
+    expect(officialApril?.gastosStatus).toBe('pending');
+    expect(estimatedApril?.gastosStatus).toBe('complete');
+    expect(estimatedApril?.isEstimated).toBe(true);
+    expect(estimatedApril?.estimateMethod).toBe('avg_available_closed');
+    expect(estimatedApril?.retornoRealClp).not.toBeNull();
+  });
+
+  it('uses 12 closed months average as primary estimate method when available', () => {
+    const closures: WealthMonthlyClosure[] = [];
+    for (let i = 4; i <= 12; i += 1) {
+      const month = String(i).padStart(2, '0');
+      closures.push(makeClosure(`2025-${month}`, { netClp: 800_000_000 + i * 10_000_000, eurClp: 1000 }));
+    }
+    closures.push(makeClosure('2026-01', { netClp: 980_000_000, eurClp: 1000 }));
+    closures.push(makeClosure('2026-02', { netClp: 990_000_000, eurClp: 1000 }));
+    closures.push(makeClosure('2026-03', { netClp: 1_000_000_000, eurClp: 1000 }));
+    closures.push(makeClosure('2026-04', { netClp: 1_010_000_000, eurClp: 1000 }));
+    const rows = computeMonthlyRows(closures, false, 'CLP');
+    const view = buildReturnsSeriesView(rows);
+    expect(view.hasEstimatedMonth).toBe(true);
+    expect(view.pendingEstimate?.monthKey).toBe('2026-04');
+    expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
+    expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(12);
   });
 });

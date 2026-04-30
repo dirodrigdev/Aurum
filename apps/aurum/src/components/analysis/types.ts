@@ -53,6 +53,12 @@ export type MonthlyReturnRow = {
   gastosDisplay: number | null;
   retornoRealDisplay: number | null;
   pct: number | null;
+  isEstimated?: boolean;
+  estimateMethod?: 'avg_12m_closed' | 'avg_available_closed' | null;
+  estimatedSpendClp?: number | null;
+  estimatedFromMonthsCount?: number | null;
+  officialAvailableDate?: string | null;
+  referencePreviousMonthSpendClp?: number | null;
 };
 
 export type AggregatedSummary = {
