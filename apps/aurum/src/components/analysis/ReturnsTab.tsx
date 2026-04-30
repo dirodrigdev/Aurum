@@ -157,10 +157,10 @@ const ReturnRealHero: React.FC<{
   crpContributionInsight,
 }) => {
   const rows = [
-    { key: 'inicio', label: includeEstimatedMonth ? 'DESDE INICIO (E)' : 'DESDE INICIO', value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
-    { key: '12m', label: includeEstimatedMonth ? 'ÚLT. 12M (E)' : 'ÚLT. 12M', value: last12, pct: last12?.pctRetorno ?? null },
-    { key: 'ytd', label: includeEstimatedMonth ? 'YTD 2026 (E)' : 'YTD 2026', value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
-    { key: 'mes', label: 'ÚLT. MES VÁLIDO', value: lastMonth, pct: lastMonthPctMonthly },
+    { key: 'inicio', label: 'DESDE INICIO', showEstimatedBadge: includeEstimatedMonth, value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
+    { key: '12m', label: 'ÚLT. 12M', showEstimatedBadge: includeEstimatedMonth, value: last12, pct: last12?.pctRetorno ?? null },
+    { key: 'ytd', label: 'YTD 2026', showEstimatedBadge: includeEstimatedMonth, value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
+    { key: 'mes', label: 'ÚLT. MES VÁLIDO', showEstimatedBadge: false, value: lastMonth, pct: lastMonthPctMonthly },
   ] as const;
   const spendClass = (value: AggregatedSummary | null | undefined) => {
     const insight = buildReturnSpendInsight(value);
@@ -230,8 +230,15 @@ const ReturnRealHero: React.FC<{
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                    {row.label}
+                  <div className="flex items-center gap-1.5">
+                    <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      {row.label}
+                    </div>
+                    {row.showEstimatedBadge && (
+                      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-amber-300 bg-amber-100 px-1 text-[9px] font-bold leading-none text-amber-800">
+                        E
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 text-[10px] text-slate-500">
                     {row.key === 'mes'
