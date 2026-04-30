@@ -132,14 +132,28 @@ const carriedSourceMonthFromNote = (note?: string) => {
   return match?.[1] || null;
 };
 
+const parseDateMs = (value?: string | null): number => {
+  const parsed = new Date(String(value || '')).getTime();
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
+};
+
 const recordDateMs = (record: WealthRecord): number => {
+  // Explicit touch metadata wins over carried notes. This covers OCR/image,
+  // manual edits, and future confirmation/refresh flows without making pure
+  // carry-forward records look fresh just because they were copied this month.
+  for (const value of [record.refreshedAt, record.confirmedAt, record.updatedAt]) {
+    const touched = parseDateMs(value);
+    if (Number.isFinite(touched)) return touched;
+  }
+
   if (isCarriedNote(record.note)) {
     const sourceMonth = carriedSourceMonthFromNote(record.note);
     const sourceDate = sourceMonth ? monthKeyToEndDateMs(sourceMonth) : NaN;
     if (Number.isFinite(sourceDate)) return sourceDate;
   }
-  const created = new Date(record.createdAt).getTime();
-  if (Number.isFinite(created) && created > 0) return created;
+
+  const created = parseDateMs(record.createdAt);
+  if (Number.isFinite(created)) return created;
   const snapshot = new Date(`${record.snapshotDate}T12:00:00`).getTime();
   return Number.isFinite(snapshot) ? snapshot : NaN;
 };

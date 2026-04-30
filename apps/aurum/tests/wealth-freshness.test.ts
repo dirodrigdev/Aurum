@@ -13,6 +13,7 @@ import {
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   RISK_CAPITAL_LABEL_CLP,
+  TENENCIA_CXC_PREFIX_LABEL,
   type WealthBlock,
   type WealthCurrency,
   type WealthFxRates,
@@ -32,6 +33,10 @@ const record = ({
   createdAt,
   snapshotDate = '2026-04-30',
   source = 'manual',
+  note,
+  updatedAt,
+  refreshedAt,
+  confirmedAt,
 }: {
   id: string;
   block?: WealthBlock;
@@ -41,6 +46,10 @@ const record = ({
   createdAt: string;
   snapshotDate?: string;
   source?: string;
+  note?: string;
+  updatedAt?: string;
+  refreshedAt?: string;
+  confirmedAt?: string;
 }): WealthRecord => ({
   id,
   block,
@@ -50,6 +59,10 @@ const record = ({
   currency,
   snapshotDate,
   createdAt,
+  ...(note ? { note } : {}),
+  ...(updatedAt ? { updatedAt } : {}),
+  ...(refreshedAt ? { refreshedAt } : {}),
+  ...(confirmedAt ? { confirmedAt } : {}),
 });
 
 describe('wealth freshness model', () => {
@@ -92,6 +105,84 @@ describe('wealth freshness model', () => {
 
     expect(model.totalExposureClp).toBe(100);
     expect(model.components.map((item) => item.label).sort()).toEqual([BANK_BCHILE_CLP_LABEL, BANK_SCOTIA_CLP_LABEL].sort());
+  });
+
+
+  it('mantiene stale un record sólo arrastrado, aunque haya sido copiado este mes', () => {
+    const model = buildWealthFreshnessModel(
+      [
+        record({
+          id: 'carried-tenencia-usd',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} USD`,
+          amount: 1_000,
+          currency: 'USD',
+          source: 'Imagen',
+          snapshotDate: '2026-04-30',
+          createdAt: '2026-04-29T18:17:00Z',
+          note: 'Mes anterior: cierre 2026-03',
+        }),
+      ],
+      fx,
+      { includeRiskCapitalInTotals: false, now: new Date('2026-05-10T12:00:00Z') },
+    );
+
+    expect(model.components[0].bucket).toBe('stale');
+    expect(model.laggards[0].label).toBe(`${TENENCIA_CXC_PREFIX_LABEL} USD`);
+  });
+
+  it('usa updatedAt/refreshedAt/confirmedAt para records tocados y los saca de laggards', () => {
+    const model = buildWealthFreshnessModel(
+      [
+        record({
+          id: 'updated-tenencia-usd',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} USD`,
+          amount: 1_000,
+          currency: 'USD',
+          source: 'Imagen',
+          snapshotDate: '2026-04-30',
+          createdAt: '2026-04-01T10:00:00Z',
+          updatedAt: '2026-04-29T18:17:00Z',
+          note: 'Mes anterior: cierre 2026-03',
+        }),
+      ],
+      fx,
+      { includeRiskCapitalInTotals: false, now },
+    );
+
+    expect(model.components[0].bucket).toBe('fresh');
+    expect(model.components[0].daysOld).toBe(0);
+    expect(model.laggards).toHaveLength(0);
+  });
+
+  it('dedupe elige el record con updatedAt más reciente para el mismo asset', () => {
+    const model = buildWealthFreshnessModel(
+      [
+        record({
+          id: 'old-tenencia-usd',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} USD`,
+          amount: 1_000,
+          currency: 'USD',
+          source: 'Imagen',
+          createdAt: '2026-04-01T10:00:00Z',
+        }),
+        record({
+          id: 'new-tenencia-usd',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} USD`,
+          amount: 2_000,
+          currency: 'USD',
+          source: 'Imagen',
+          createdAt: '2026-04-01T09:00:00Z',
+          updatedAt: '2026-04-29T18:17:00Z',
+        }),
+      ],
+      fx,
+      { includeRiskCapitalInTotals: false, now },
+    );
+
+    expect(model.components).toHaveLength(1);
+    expect(model.components[0].recordIds).toEqual(['new-tenencia-usd']);
+    expect(model.components[0].amountClp).toBe(1_900_000);
+    expect(model.components[0].bucket).toBe('fresh');
   });
 
   it('excluye o incluye CapRiesgo según el toggle global', () => {

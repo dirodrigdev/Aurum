@@ -28,6 +28,9 @@ export interface WealthRecord {
   currency: WealthCurrency;
   snapshotDate: string;
   createdAt: string;
+  updatedAt?: string;
+  refreshedAt?: string;
+  confirmedAt?: string;
   note?: string;
 }
 
@@ -890,10 +893,15 @@ const normalizeRecord = (item: any): WealthRecord | null => {
     currency: (item?.currency || 'CLP') as WealthCurrency,
     snapshotDate: String(item?.snapshotDate || localYmd()),
     createdAt: String(item?.createdAt || nowIso()),
-  } satisfies Omit<WealthRecord, 'note'>;
+  } satisfies Omit<WealthRecord, 'note' | 'updatedAt' | 'refreshedAt' | 'confirmedAt'>;
 
+  const optionalDates = {
+    ...(item?.updatedAt ? { updatedAt: String(item.updatedAt) } : {}),
+    ...(item?.refreshedAt ? { refreshedAt: String(item.refreshedAt) } : {}),
+    ...(item?.confirmedAt ? { confirmedAt: String(item.confirmedAt) } : {}),
+  };
   const note = item?.note ? String(item.note) : '';
-  return note ? { ...base, note } : base;
+  return note ? { ...base, ...optionalDates, note } : { ...base, ...optionalDates };
 };
 
 const normalizeMonthKey = (value: unknown): string | null => {
@@ -1176,8 +1184,12 @@ const isSameCanonicalAssetMonth = (
   sameCanonicalLabel(left.label, right.label);
 
 const recordTimestamp = (record: WealthRecord) => {
-  const t = new Date(record.createdAt).getTime();
-  return Number.isFinite(t) ? t : 0;
+  const candidates = [record.refreshedAt, record.confirmedAt, record.updatedAt, record.createdAt];
+  for (const candidate of candidates) {
+    const t = new Date(String(candidate || '')).getTime();
+    if (Number.isFinite(t) && t > 0) return t;
+  }
+  return 0;
 };
 
 const pickLatestRecord = (a: WealthRecord, b: WealthRecord): WealthRecord => {
@@ -1240,7 +1252,7 @@ const normalizeFxRates = (raw: any): WealthFxRates => ({
 });
 
 const serializeRecord = (r: WealthRecord) =>
-  `${r.id}|${r.block}|${r.source}|${r.label}|${r.amount}|${r.currency}|${r.snapshotDate}|${r.createdAt}|${r.note || ''}`;
+  `${r.id}|${r.block}|${r.source}|${r.label}|${r.amount}|${r.currency}|${r.snapshotDate}|${r.createdAt}|${r.updatedAt || ''}|${r.refreshedAt || ''}|${r.confirmedAt || ''}|${r.note || ''}`;
 
 const sameRecords = (a: WealthRecord[], b: WealthRecord[]) => {
   if (a.length !== b.length) return false;
@@ -1578,11 +1590,13 @@ export const upsertWealthRecord = (input: Omit<WealthRecord, 'id' | 'createdAt'>
   const numericAmount = toNumber(input.amount);
   const normalizedAmount = input.block === 'debt' ? Math.abs(numericAmount) : numericAmount;
 
+  const effectiveUpdatedAt = nextMonotonicIsoAgainstRemote();
   const nextBase = {
     id,
     // En Aurum usamos createdAt como "última actualización efectiva" para resolver
     // cuál registro manda dentro del mismo activo/mes.
-    createdAt: nextMonotonicIsoAgainstRemote(),
+    createdAt: effectiveUpdatedAt,
+    updatedAt: effectiveUpdatedAt,
     block: input.block,
     source: input.source,
     label: input.label,
@@ -1912,7 +1926,7 @@ export const dedupeLatestByAsset = (records: WealthRecord[]): WealthRecord[] => 
 
   const ordered = [...records].sort((a, b) => {
     // Prioridad principal: la última edición/guardado hecha por el usuario.
-    const byCreated = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    const byCreated = recordTimestamp(b) - recordTimestamp(a);
     if (byCreated !== 0) return byCreated;
     // Si empatan por timestamp, usa snapshotDate como desempate.
     return dateToComparable(b.snapshotDate).localeCompare(dateToComparable(a.snapshotDate));
