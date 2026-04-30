@@ -222,6 +222,7 @@ const ReturnRealHero: React.FC<{
       <div className="relative mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
         {rows.map((row) => {
           const spendInsight = buildReturnSpendInsight(row.value);
+          const cleanLabel = row.label.replace(/\s*\(E\)\s*$/u, '');
 
           return (
             <div
@@ -232,10 +233,14 @@ const ReturnRealHero: React.FC<{
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <div className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      {row.label}
+                      {cleanLabel}
                     </div>
                     {row.showEstimatedBadge && (
-                      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-amber-300 bg-amber-100 px-1 text-[9px] font-bold leading-none text-amber-800">
+                      <span
+                        className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-amber-200 bg-amber-300/95 px-1 text-[9px] font-bold leading-none text-amber-950 shadow-[0_0_0_1px_rgba(251,191,36,0.35)]"
+                        aria-label="Estimado"
+                        title="Estimado"
+                      >
                         E
                       </span>
                     )}
