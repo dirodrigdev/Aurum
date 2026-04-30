@@ -185,6 +185,41 @@ describe('wealth freshness model', () => {
     expect(model.components[0].bucket).toBe('fresh');
   });
 
+  it('consolida Tenencia/CxC y usa la fecha más reciente para evitar contradicciones con Patrimonio', () => {
+    const model = buildWealthFreshnessModel(
+      [
+        record({
+          id: 'tenencia-usd-carried',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} USD`,
+          amount: 13_500,
+          currency: 'USD',
+          source: 'Imagen',
+          snapshotDate: '2026-05-01',
+          createdAt: '2026-04-03T10:00:00Z',
+          note: 'Mes anterior: cierre 2026-03',
+        }),
+        record({
+          id: 'tenencia-clp-updated',
+          label: `${TENENCIA_CXC_PREFIX_LABEL} CLP`,
+          amount: 2_000_000,
+          currency: 'CLP',
+          source: 'Imagen',
+          snapshotDate: '2026-05-01',
+          createdAt: '2026-04-29T18:17:00Z',
+          updatedAt: '2026-04-29T18:17:00Z',
+        }),
+      ],
+      fx,
+      { includeRiskCapitalInTotals: false, now },
+    );
+
+    expect(model.components).toHaveLength(1);
+    expect(model.components[0].label).toBe(TENENCIA_CXC_PREFIX_LABEL);
+    expect(model.components[0].bucket).toBe('fresh');
+    expect(model.components[0].daysOld).toBe(0);
+    expect(model.laggards).toHaveLength(0);
+  });
+
   it('excluye o incluye CapRiesgo según el toggle global', () => {
     const records = [
       record({ id: 'core', label: 'BTG total valorización', amount: 100, createdAt: '2026-04-30T09:00:00Z' }),

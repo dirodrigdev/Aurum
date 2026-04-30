@@ -20,6 +20,7 @@ import {
   isSyntheticAggregateRecord,
   makeAssetKey,
   maybeNormalizeMinorUnitAmount,
+  TENENCIA_CXC_PREFIX_LABEL,
   type WealthFxRates,
   type WealthRecord,
 } from './wealthStorage';
@@ -79,6 +80,11 @@ const AGGREGATE_DEBT_LABELS_USD = keySet([DEBT_CARD_USD_LABEL, DEBT_CARD_USD_LEG
 const MANUAL_CARD_LABEL_KEYS = keySet(MANUAL_CARD_LABELS);
 
 const hasKey = (set: Set<string>, label: string) => set.has(labelMatchKey(label));
+const TENENCIA_BASE_KEY = labelMatchKey(TENENCIA_CXC_PREFIX_LABEL);
+const isTenenciaLabel = (label: string) => {
+  const key = labelMatchKey(label);
+  return key === TENENCIA_BASE_KEY || key.startsWith(`${TENENCIA_BASE_KEY} `);
+};
 
 const isAggregateBankLabel = (record: Pick<WealthRecord, 'label' | 'currency'>) => {
   if (record.currency === 'CLP') return hasKey(AGGREGATE_BANK_LABELS_CLP, record.label);
@@ -274,7 +280,36 @@ export const buildWealthFreshnessModel = (
     })
     .filter((component) => Number.isFinite(component.amountClp) && component.amountClp > 0);
 
-  const totalExposureClp = rawComponents.reduce((sum, component) => sum + component.amountClp, 0);
+  const mergedTenencia = (() => {
+    const tenencia = rawComponents.filter(
+      (component) => component.group === 'investment' && isTenenciaLabel(component.label),
+    );
+    if (tenencia.length <= 1) return rawComponents;
+
+    const newest = tenencia.reduce((latest, current) => {
+      const latestDays = latest.daysOld ?? Number.POSITIVE_INFINITY;
+      const currentDays = current.daysOld ?? Number.POSITIVE_INFINITY;
+      return currentDays < latestDays ? current : latest;
+    }, tenencia[0]);
+
+    const merged: WealthFreshnessComponent = {
+      id: `investment::${TENENCIA_BASE_KEY}::ALL`,
+      label: TENENCIA_CXC_PREFIX_LABEL,
+      group: 'investment',
+      amountClp: tenencia.reduce((sum, component) => sum + component.amountClp, 0),
+      weightPct: 0,
+      daysOld: newest.daysOld,
+      bucket: newest.bucket,
+      isDebt: false,
+      isRiskCapital: false,
+      source: newest.source,
+      recordIds: Array.from(new Set(tenencia.flatMap((component) => component.recordIds))),
+    };
+
+    return [...rawComponents.filter((component) => !tenencia.includes(component)), merged];
+  })();
+
+  const totalExposureClp = mergedTenencia.reduce((sum, component) => sum + component.amountClp, 0);
   const riskCapitalIncluded = options.includeRiskCapitalInTotals && hasRiskCapital;
   const riskCapitalExcluded = !options.includeRiskCapitalInTotals && hasRiskCapital;
   if (totalExposureClp <= 0) {
@@ -293,7 +328,7 @@ export const buildWealthFreshnessModel = (
     };
   }
 
-  const components = rawComponents
+  const components = mergedTenencia
     .map((component) => ({ ...component, weightPct: component.amountClp / totalExposureClp }))
     .sort((a, b) => b.weightPct - a.weightPct);
   const pctFor = (buckets: WealthFreshnessBucket[]) =>
