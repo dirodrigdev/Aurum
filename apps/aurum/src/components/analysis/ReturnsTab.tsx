@@ -3,7 +3,8 @@ import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
-import { buildPendingOfficialReturnInfo, buildPendingReturnEstimate } from '../../services/returnsAnalysis';
+import { buildPendingOfficialReturnInfo } from '../../services/returnsAnalysis';
+import type { ProvisionalReturnScenario } from '../../services/returnsAnalysis';
 import type {
   AggregatedSummary,
   CrpContributionInsight,
@@ -57,6 +58,13 @@ type ReturnsTabProps = {
     officialAvailableDate: string | null;
     gastosPeriodKey: string | null;
     referencePreviousMonthSpendClp: number | null;
+  } | null;
+  pendingEstimateDetail: {
+    monthKey: string;
+    availabilityLabel: string | null;
+    periodRangeLabel: string | null;
+    varPatrimonioDisplay: number;
+    scenarios: ProvisionalReturnScenario[];
   } | null;
   onToggleIncludeEstimatedMonth: () => void;
   includeRiskCapitalInTotals: boolean;
@@ -488,6 +496,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   includeEstimatedMonth,
   hasEstimatedMonth,
   estimatedMonthMeta,
+  pendingEstimateDetail,
   onToggleIncludeEstimatedMonth,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
@@ -640,10 +649,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     [officialMonthlyRowsAsc],
   );
   const mainPendingOfficial = pendingOfficialRows[0] || null;
-  const provisionalEstimate = React.useMemo(
-    () => buildPendingReturnEstimate(officialMonthlyRowsAsc),
-    [officialMonthlyRowsAsc],
-  );
+  const provisionalEstimate = pendingEstimateDetail;
   const spendTrustCollapsedLine = React.useMemo(() => {
     if (mainPendingOfficial?.info?.availabilityLabel) {
       return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de gasto · Oficial disponible ${mainPendingOfficial.info.availabilityLabel}`;

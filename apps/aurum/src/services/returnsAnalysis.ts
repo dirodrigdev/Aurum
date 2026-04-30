@@ -74,7 +74,7 @@ export const buildPendingOfficialReturnInfo = (
 };
 
 export type ProvisionalReturnScenario = {
-  key: 'previous_closed' | 'closed_average';
+  key: 'closed_average' | 'previous_closed';
   label: string;
   spendDisplay: number;
   spendClp: number;
@@ -108,6 +108,7 @@ export type ReturnsSeriesView = {
   estimatedRows: MonthlyReturnRow[];
   hasEstimatedMonth: boolean;
   pendingEstimate: EstimatedMonthMeta | null;
+  pendingEstimateDetail: PendingReturnEstimate | null;
 };
 
 const monthAfter = (monthKey: string) => {
@@ -482,9 +483,26 @@ export const buildPendingReturnEstimate = (
     .filter((row) => row.monthKey < pendingRow.monthKey)
     .filter(validClosedSpendRow);
   const previousClosed = closedRows[closedRows.length - 1] || null;
-  const lastSix = closedRows.slice(-6);
+  const averageSample = closedRows.slice(-12);
   const info = buildPendingOfficialReturnInfo(pendingRow);
   const scenarios: ProvisionalReturnScenario[] = [];
+
+  if (averageSample.length >= 2) {
+    const avgDisplay = sumNumbers(averageSample.map((row) => row.gastosDisplay)) / averageSample.length;
+    const avgClp = sumNumbers(averageSample.map((row) => row.gastosClp)) / averageSample.length;
+    const scenario = buildProvisionalScenario({
+      key: 'closed_average',
+      label:
+        averageSample.length >= 12
+          ? 'Promedio últimos 12 meses cerrados'
+          : `Promedio disponible cerrado (${averageSample.length} meses)`,
+      row: pendingRow,
+      spendDisplay: avgDisplay,
+      spendClp: avgClp,
+      monthsUsed: averageSample.length,
+    });
+    if (scenario) scenarios.push(scenario);
+  }
 
   if (previousClosed) {
     const scenario = buildProvisionalScenario({
@@ -494,23 +512,6 @@ export const buildPendingReturnEstimate = (
       spendDisplay: previousClosed.gastosDisplay,
       spendClp: previousClosed.gastosClp,
       monthsUsed: 1,
-    });
-    if (scenario) scenarios.push(scenario);
-  }
-
-  if (lastSix.length >= 2) {
-    const avgDisplay = sumNumbers(lastSix.map((row) => row.gastosDisplay)) / lastSix.length;
-    const avgClp = sumNumbers(lastSix.map((row) => row.gastosClp)) / lastSix.length;
-    const scenario = buildProvisionalScenario({
-      key: 'closed_average',
-      label:
-        lastSix.length >= 6
-          ? 'Promedio últimos 6 meses cerrados'
-          : `Promedio disponible (${lastSix.length} meses cerrados)`,
-      row: pendingRow,
-      spendDisplay: avgDisplay,
-      spendClp: avgClp,
-      monthsUsed: lastSix.length,
     });
     if (scenario) scenarios.push(scenario);
   }
@@ -528,17 +529,10 @@ export const buildPendingReturnEstimate = (
 export const buildReturnsSeriesView = (
   officialRows: MonthlyReturnRow[],
 ): ReturnsSeriesView => {
-  const pendingRow = [...officialRows]
-    .reverse()
-    .find(
-      (row) =>
-        row.gastosStatus === 'pending' &&
-        row.varPatrimonioClp !== null &&
-        row.varPatrimonioDisplay !== null &&
-        row.prevNetDisplay !== null &&
-        row.prevNetClp !== null &&
-        row.fxAuditable,
-    );
+  const pendingEstimateDetail = buildPendingReturnEstimate(officialRows);
+  const pendingRow = pendingEstimateDetail
+    ? officialRows.find((row) => row.monthKey === pendingEstimateDetail.monthKey) ?? null
+    : null;
 
   if (!pendingRow) {
     return {
@@ -546,34 +540,24 @@ export const buildReturnsSeriesView = (
       estimatedRows: officialRows,
       hasEstimatedMonth: false,
       pendingEstimate: null,
+      pendingEstimateDetail: null,
     };
   }
 
-  const closedRows = officialRows
-    .filter((row) => row.monthKey < pendingRow.monthKey)
-    .filter(validClosedSpendRow);
-  if (!closedRows.length) {
+  const primaryScenario = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'closed_average') ?? null;
+  if (!primaryScenario) {
     return {
       officialRows,
       estimatedRows: officialRows,
       hasEstimatedMonth: false,
       pendingEstimate: null,
+      pendingEstimateDetail: pendingEstimateDetail ?? null,
     };
   }
 
-  const sample = closedRows.slice(-12);
-  const spendSampleClp = sumNumbers(sample.map((row) => row.gastosClp)) / sample.length;
-  const spendSampleDisplay = sumNumbers(sample.map((row) => row.gastosDisplay)) / sample.length;
   const estimateMethod: EstimatedMonthMeta['estimateMethod'] =
-    sample.length >= 12 ? 'avg_12m_closed' : 'avg_available_closed';
-  const prevClosed = closedRows[closedRows.length - 1] || null;
-  const info = buildPendingOfficialReturnInfo(pendingRow);
-  const estimatedRetornoClp = Number(pendingRow.varPatrimonioClp) + spendSampleClp;
-  const estimatedRetornoDisplay = Number(pendingRow.varPatrimonioDisplay) + spendSampleDisplay;
-  const estimatedPct =
-    pendingRow.prevNetDisplay && pendingRow.prevNetDisplay > 0
-      ? (estimatedRetornoDisplay / pendingRow.prevNetDisplay) * 100
-      : null;
+    primaryScenario.monthsUsed >= 12 ? 'avg_12m_closed' : 'avg_available_closed';
+  const previousClosedScenario = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'previous_closed') ?? null;
 
   const estimatedRow: MonthlyReturnRow = {
     ...pendingRow,
@@ -581,17 +565,17 @@ export const buildReturnsSeriesView = (
     gastosSource: 'gastapp_firestore',
     gastosDataQuality: null,
     gastosContractStatus: 'pending',
-    gastosClp: spendSampleClp,
-    gastosDisplay: spendSampleDisplay,
-    retornoRealClp: estimatedRetornoClp,
-    retornoRealDisplay: estimatedRetornoDisplay,
-    pct: estimatedPct,
+    gastosClp: primaryScenario.spendClp,
+    gastosDisplay: primaryScenario.spendDisplay,
+    retornoRealClp: primaryScenario.retornoRealClp,
+    retornoRealDisplay: primaryScenario.retornoRealDisplay,
+    pct: primaryScenario.pct,
     isEstimated: true,
     estimateMethod,
-    estimatedSpendClp: spendSampleClp,
-    estimatedFromMonthsCount: sample.length,
-    officialAvailableDate: info.availabilityLabel,
-    referencePreviousMonthSpendClp: prevClosed?.gastosClp ?? null,
+    estimatedSpendClp: primaryScenario.spendClp,
+    estimatedFromMonthsCount: primaryScenario.monthsUsed,
+    officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
+    referencePreviousMonthSpendClp: previousClosedScenario?.spendClp ?? null,
   };
 
   const estimatedRows = officialRows.map((row) => (row.monthKey === pendingRow.monthKey ? estimatedRow : row));
@@ -602,13 +586,14 @@ export const buildReturnsSeriesView = (
     pendingEstimate: {
       monthKey: pendingRow.monthKey,
       estimateMethod,
-      estimatedSpendClp: spendSampleClp,
-      estimatedSpendDisplay: spendSampleDisplay,
-      estimatedFromMonthsCount: sample.length,
-      officialAvailableDate: info.availabilityLabel,
+      estimatedSpendClp: primaryScenario.spendClp,
+      estimatedSpendDisplay: primaryScenario.spendDisplay,
+      estimatedFromMonthsCount: primaryScenario.monthsUsed,
+      officialAvailableDate: pendingEstimateDetail?.availabilityLabel ?? null,
       gastosPeriodKey: pendingRow.gastosPeriodKey,
-      referencePreviousMonthSpendClp: prevClosed?.gastosClp ?? null,
+      referencePreviousMonthSpendClp: previousClosedScenario?.spendClp ?? null,
     },
+    pendingEstimateDetail,
   };
 };
 

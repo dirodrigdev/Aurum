@@ -283,7 +283,9 @@ describe('returns analysis helpers', () => {
     const estimate = buildPendingReturnEstimate(rows);
     expect(estimate?.monthKey).toBe('2026-04');
     expect(estimate?.availabilityLabel).toBe('12 may');
-    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['previous_closed', 'closed_average']);
+    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['closed_average', 'previous_closed']);
+    const averageScenario = estimate?.scenarios.find((scenario) => scenario.key === 'closed_average');
+    expect(averageScenario?.label).toBe('Promedio disponible cerrado (4 meses)');
 
     const previousScenario = estimate?.scenarios.find((scenario) => scenario.key === 'previous_closed');
     expect(previousScenario?.spendClp).toBeCloseTo(TEST_GASTOS_EUR['2026-03'] * 1000, 6);
@@ -318,6 +320,9 @@ describe('returns analysis helpers', () => {
     expect(estimatedApril?.isEstimated).toBe(true);
     expect(estimatedApril?.estimateMethod).toBe('avg_available_closed');
     expect(estimatedApril?.retornoRealClp).not.toBeNull();
+    expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('closed_average');
+    expect(view.pendingEstimateDetail?.scenarios[1]?.key).toBe('previous_closed');
+    expect(estimatedApril?.estimatedSpendClp).toBeCloseTo(view.pendingEstimate?.estimatedSpendClp ?? 0, 6);
   });
 
   it('uses 12 closed months average as primary estimate method when available', () => {
@@ -336,5 +341,6 @@ describe('returns analysis helpers', () => {
     expect(view.pendingEstimate?.monthKey).toBe('2026-04');
     expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
     expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(12);
+    expect(view.pendingEstimateDetail?.scenarios[0]?.label).toBe('Promedio últimos 12 meses cerrados');
   });
 });

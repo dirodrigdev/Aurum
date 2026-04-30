@@ -425,6 +425,7 @@ export const AnalysisAurum: React.FC = () => {
           includeEstimatedMonth={includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth}
           hasEstimatedMonth={returnsSeriesView.hasEstimatedMonth}
           estimatedMonthMeta={returnsSeriesView.pendingEstimate}
+          pendingEstimateDetail={returnsSeriesView.pendingEstimateDetail}
           onToggleIncludeEstimatedMonth={() => setIncludeEstimatedMonth((prev) => !prev)}
           includeRiskCapitalInTotals={includeRiskCapitalInTotals}
           onToggleRiskMode={() => setIncludeRiskCapitalInTotals((prev) => !prev)}
