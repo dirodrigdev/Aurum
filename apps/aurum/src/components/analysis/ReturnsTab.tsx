@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, LineChart, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
@@ -475,6 +475,8 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   trajectoryCurve,
   patrimonyCurve,
 }) => {
+  const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
+  const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
   const pendingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
   const missingSpendMonths = monthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
   const legacySpendMonths = monthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
@@ -501,6 +503,13 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     [monthlyRowsDesc],
   );
   const spendTrustState = React.useMemo(() => {
+    if (missingSpendMonths.length > 0) {
+      return {
+        severity: 'alert' as SpendTrustSeverity,
+        title: 'Gasto observado faltante',
+        body: `Meses cerrados sin gasto contable final: ${missingSpendMonths.map((m) => monthLabel(m)).join(', ')}. No se incluyen en agregados cerrados.`,
+      };
+    }
     if (legacySpendMonths.length > 0) {
       return {
         severity: 'warning' as SpendTrustSeverity,
@@ -541,7 +550,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       title: 'Gasto observado desde GastApp por periodo',
       body: 'Gasto observado desde GastApp por periodo · contrato actualizado.',
     };
-  }, [latestGastappSpendRow, legacySpendMonths.length]);
+  }, [latestGastappSpendRow, legacySpendMonths.length, missingSpendMonths]);
   const spendTrustDetails = React.useMemo(() => {
     const row = latestGastappSpendRow;
     if (!row || legacySpendMonths.length > 0) return [];
@@ -603,6 +612,21 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     () => buildPendingReturnEstimate(monthlyRowsAsc),
     [monthlyRowsAsc],
   );
+  const spendTrustCollapsedLine = React.useMemo(() => {
+    if (mainPendingOfficial?.info?.availabilityLabel) {
+      return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de gasto · Oficial disponible ${mainPendingOfficial.info.availabilityLabel}`;
+    }
+    if (missingSpendMonths.length > 0) {
+      return `${missingSpendMonths.length} mes(es) sin gasto final · no entra(n) en cerrados`;
+    }
+    if (pendingSpendMonths.length > 0) {
+      return `${pendingSpendMonths.length} mes(es) pendiente(s) de gasto · Retorno oficial en espera`;
+    }
+    if (spendTrustState?.severity === 'alert') return 'Revisar calidad de gasto observado';
+    if (spendTrustState?.severity === 'warning') return 'Gasto observado con advertencia';
+    if (spendTrustState?.severity === 'ok') return 'Gasto observado desde fuente principal';
+    return 'Sin avisos de datos';
+  }, [mainPendingOfficial, pendingSpendMonths.length, missingSpendMonths.length, spendTrustState]);
 
   const historyRows = React.useMemo(
     () =>
@@ -671,42 +695,73 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
   return (
   <>
-    {spendTrustState && (legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0) && (
+    <ReturnRealHero
+      sinceStart={heroSinceStart}
+      last12={heroLast12}
+      ytd2026={heroYtd2026}
+      lastMonth={heroLastMonth}
+      lastMonthPctMonthly={heroLastMonthPctMonthly}
+      currency={currency}
+      includeRiskCapitalInTotals={includeRiskCapitalInTotals}
+      onToggleRiskMode={onToggleRiskMode}
+      crpContributionInsight={crpContributionInsight}
+    />
+
+    {spendTrustState && (legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0 || pendingSpendMonths.length > 0 || missingSpendMonths.length > 0) && (
       <Card className={cn(
-        'p-3 text-xs',
+        'p-2.5 text-xs',
         spendTrustTone(spendTrustState.severity),
       )}>
-        <div className="flex items-center justify-between gap-2">
-          <div className="font-semibold">{spendTrustState.title}</div>
-          <span className="rounded-full border border-current/20 bg-white/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-            {spendTrustBadge(spendTrustState.severity)}
-          </span>
-        </div>
-        <div className="mt-1">
-          {spendTrustState.body}
-        </div>
-        {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (
-          <div className="mt-1 text-[11px]">
-            Motivo: {latestGastappSpendRow.gastosStaleReason}
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left"
+          onClick={() => setIsSpendTrustExpanded((prev) => !prev)}
+          aria-expanded={isSpendTrustExpanded}
+        >
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">Avisos de datos</div>
+            <div className="truncate text-[11px] opacity-90">{spendTrustCollapsedLine}</div>
           </div>
-        )}
-        {spendTrustDetails.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {spendTrustDetails.map((detail) => (
-              <span
-                key={detail}
-                className="rounded-full border border-current/15 bg-white/40 px-2 py-0.5 text-[10px]"
-              >
-                {detail}
-              </span>
-            ))}
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-current/20 bg-white/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+              {spendTrustBadge(spendTrustState.severity)}
+            </span>
+            <ChevronDown size={16} className={cn('transition-transform', isSpendTrustExpanded ? 'rotate-180' : 'rotate-0')} />
           </div>
-        )}
-        {spendTrustDiffs.length > 0 && (
-          <div className="mt-2 space-y-1 text-[11px]">
-            {spendTrustDiffs.map((detail) => (
-              <div key={detail}>{detail}</div>
-            ))}
+        </button>
+        {isSpendTrustExpanded && (
+          <div className="mt-2 border-t border-current/15 pt-2">
+            <div>{spendTrustState.body}</div>
+            {mainPendingOfficial && (
+              <div className="mt-1">
+                {`${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial estará disponible ${
+                  mainPendingOfficial.info.availabilityLabel ? `el ${mainPendingOfficial.info.availabilityLabel}` : 'cuando cierre GastApp'
+                }${
+                  mainPendingOfficial.info.periodRangeLabel
+                    ? `, cuando cierre el periodo de gasto ${mainPendingOfficial.info.periodRangeLabel}.`
+                    : '.'
+                }`}
+              </div>
+            )}
+            {latestGastappSpendRow?.gastosStaleReason && legacySpendMonths.length === 0 && (
+              <div className="mt-1 text-[11px]">Motivo: {latestGastappSpendRow.gastosStaleReason}</div>
+            )}
+            {spendTrustDetails.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {spendTrustDetails.map((detail) => (
+                  <span key={detail} className="rounded-full border border-current/15 bg-white/40 px-2 py-0.5 text-[10px]">
+                    {detail}
+                  </span>
+                ))}
+              </div>
+            )}
+            {spendTrustDiffs.length > 0 && (
+              <div className="mt-2 space-y-1 text-[11px]">
+                {spendTrustDiffs.map((detail) => (
+                  <div key={detail}>{detail}</div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -720,18 +775,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       </Card>
     )}
 
-    <ReturnRealHero
-      sinceStart={heroSinceStart}
-      last12={heroLast12}
-      ytd2026={heroYtd2026}
-      lastMonth={heroLastMonth}
-      lastMonthPctMonthly={heroLastMonthPctMonthly}
-      currency={currency}
-      includeRiskCapitalInTotals={includeRiskCapitalInTotals}
-      onToggleRiskMode={onToggleRiskMode}
-      crpContributionInsight={crpContributionInsight}
-    />
-
     {analysisDiagnostics.anomalyRaw && Math.abs(Number(analysisDiagnostics.anomalyRaw.pct || 0)) >= 200 && (
       <Card className="border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
         Diagnóstico previo: mes anómalo detectado en {analysisDiagnostics.anomalyRaw.monthKey}
@@ -739,80 +782,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         {` · Gastos ${analysisDiagnostics.anomalyRaw.gastosClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.gastosClp, 'CLP')}`}
         {` · Ret.Econ. ${analysisDiagnostics.anomalyRaw.retornoRealClp === null ? '—' : formatCurrency(analysisDiagnostics.anomalyRaw.retornoRealClp, 'CLP')}`}
         {` · % ${formatPct(analysisDiagnostics.anomalyRaw.pct)}`}
-      </Card>
-    )}
-
-    {(pendingSpendMonths.length > 0 || missingSpendMonths.length > 0) && (
-      <Card className={cn(
-        'p-3 text-xs',
-        missingSpendMonths.length > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-amber-200 bg-amber-50 text-amber-800'
-      )}>
-        {missingSpendMonths.length > 0 && (
-          <div>
-            Meses cerrados sin gasto contable final: {missingSpendMonths.map((m) => monthLabel(m)).join(', ')}.
-            No se incluyen en agregados cerrados.
-          </div>
-        )}
-        {pendingSpendMonths.length > 0 && (
-          <div className={missingSpendMonths.length > 0 ? 'mt-1' : ''}>
-            {mainPendingOfficial
-              ? `${monthLabel(mainPendingOfficial.row.monthKey)} tiene cierre patrimonial, pero el gasto asociado aún no está cerrado. El retorno económico oficial estará disponible ${
-                  mainPendingOfficial.info.availabilityLabel ? `el ${mainPendingOfficial.info.availabilityLabel}` : 'cuando cierre GastApp'
-                }${
-                  mainPendingOfficial.info.periodRangeLabel
-                    ? `, cuando cierre el periodo de gasto ${mainPendingOfficial.info.periodRangeLabel}.`
-                    : '.'
-                }`
-              : `Meses pendientes de cierre de gasto: ${pendingSpendMonths.map((m) => monthLabel(m)).join(', ')}.`}
-            {' '}Se muestran, pero no entran en agregados cerrados.
-          </div>
-        )}
-      </Card>
-    )}
-
-    {provisionalEstimate && (
-      <Card className="border-dashed border-amber-300 bg-white p-3 text-xs text-slate-700">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-slate-900">Estimación provisional</span>
-              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
-                Estimado
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Usa el cierre patrimonial actual y un gasto supuesto. Se reemplazará por el dato oficial cuando cierre GastApp.
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              {monthLabel(provisionalEstimate.monthKey)}
-              {provisionalEstimate.availabilityLabel ? ` · oficial disponible ${provisionalEstimate.availabilityLabel}` : ''}
-              {provisionalEstimate.periodRangeLabel ? ` · periodo ${provisionalEstimate.periodRangeLabel}` : ''}
-            </div>
-          </div>
-          <div className="text-right text-[11px] text-slate-500">
-            Var.Pat. visible: {formatCurrency(provisionalEstimate.varPatrimonioDisplay, currency)}
-          </div>
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          {provisionalEstimate.scenarios.map((scenario) => (
-            <div key={scenario.key} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
-              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                <span className="text-slate-500">Gasto usado</span>
-                <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
-                <span className="text-slate-500">Ret.Econ. estimado</span>
-                <span className={cn('text-right font-semibold', scenario.retornoRealDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatCurrency(scenario.retornoRealDisplay, currency)}
-                </span>
-                <span className="text-slate-500">Tasa estimada</span>
-                <span className={cn('text-right font-semibold', (scenario.pct ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
-                  {formatPct(scenario.pct)}
-                </span>
-              </div>
-              <div className="mt-2 text-[10px] font-medium text-amber-700">Estimado, no cierre oficial.</div>
-            </div>
-          ))}
-        </div>
       </Card>
     )}
 
@@ -911,6 +880,63 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         </table>
       </div>
     </Card>
+
+    {provisionalEstimate && (
+      <Card className="border-dashed border-amber-300 bg-white p-2.5 text-xs text-slate-700">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left"
+          onClick={() => setIsProvisionalExpanded((prev) => !prev)}
+          aria-expanded={isProvisionalExpanded}
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-slate-900">Estimación provisional</span>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                Estimado
+              </span>
+            </div>
+            <div className="truncate text-[11px] text-slate-500">
+              {`${monthLabel(provisionalEstimate.monthKey)} · ${provisionalEstimate.availabilityLabel ? `oficial disponible ${provisionalEstimate.availabilityLabel}` : 'no oficial'}`}
+            </div>
+          </div>
+          <ChevronDown size={16} className={cn('shrink-0 transition-transform', isProvisionalExpanded ? 'rotate-180' : 'rotate-0')} />
+        </button>
+        {isProvisionalExpanded && (
+          <div className="mt-2 border-t border-slate-200 pt-2">
+            <div className="text-[11px] text-slate-500">
+              Estimado, no cierre oficial. Se reemplazará por el dato oficial cuando cierre GastApp.
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {provisionalEstimate.periodRangeLabel ? `Periodo ${provisionalEstimate.periodRangeLabel}` : 'Periodo pendiente de cierre'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Var.Pat. visible: {formatCurrency(provisionalEstimate.varPatrimonioDisplay, currency)}
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {provisionalEstimate.scenarios.map((scenario) => (
+                <div key={scenario.key} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                    <span className="text-slate-500">Gasto usado</span>
+                    <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
+                    <span className="text-slate-500">Ret.Econ. estimado</span>
+                    <span className={cn('text-right font-semibold', scenario.retornoRealDisplay >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                      {formatCurrency(scenario.retornoRealDisplay, currency)}
+                    </span>
+                    <span className="text-slate-500">Tasa estimada</span>
+                    <span className={cn('text-right font-semibold', (scenario.pct ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                      {formatPct(scenario.pct)}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[10px] font-medium text-amber-700">Estimado, no cierre oficial.</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+    )}
 
     <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} />
     <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} />
