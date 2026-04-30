@@ -34,9 +34,9 @@ const humanizeDayToDaySource = (source: string | null) => {
 };
 
 const spendTrustTone = (severity: SpendTrustSeverity) => {
-  if (severity === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-800';
-  if (severity === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800';
-  return 'border-rose-200 bg-rose-50 text-rose-700';
+  if (severity === 'ok') return 'border-slate-200 bg-slate-50/70 text-slate-700';
+  if (severity === 'warning') return 'border-amber-200 bg-amber-50/60 text-amber-900';
+  return 'border-rose-200 bg-rose-50/70 text-rose-800';
 };
 
 type ReturnsTabProps = {
@@ -756,22 +756,22 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     />
 
     {hasEstimatedMonth && estimatedMonthMeta && (
-      <Card className="border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+      <Card className="border-slate-200 bg-slate-50/70 p-2.5 text-xs text-slate-700 shadow-none">
         <label className="flex cursor-pointer items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-semibold">Incluir último mes estimado (E)</div>
-            <div className="mt-0.5 text-[11px] text-amber-800">
+            <div className="font-semibold text-slate-900">Incluir último mes estimado (E)</div>
+            <div className="mt-0.5 text-[11px] text-slate-600">
               Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
             </div>
             {includeEstimatedMonth && (
-              <div className="mt-1 text-[11px] font-medium text-amber-900">
+              <div className="mt-1 text-[11px] font-medium text-slate-800">
                 {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} (E)${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
               </div>
             )}
           </div>
           <input
             type="checkbox"
-            className="mt-0.5 h-4 w-4 rounded border-amber-400 text-amber-700 focus:ring-amber-500"
+            className="mt-0.5 h-4 w-4 rounded border-slate-400 text-slate-700 focus:ring-slate-500"
             checked={includeEstimatedMonth}
             onChange={onToggleIncludeEstimatedMonth}
           />
@@ -781,22 +781,34 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
     {spendTrustState && (legacySpendMonths.length > 0 || firestoreSpendMonths.length > 0 || pendingSpendMonths.length > 0 || missingSpendMonths.length > 0) && (
       <Card className={cn(
-        'p-2.5 text-xs',
+        'p-2 text-xs shadow-none',
         spendTrustTone(spendTrustState.severity),
       )}>
         <button
           type="button"
-          className="flex w-full items-center justify-between gap-3 text-left"
+          className="flex w-full items-center justify-between gap-2 text-left"
           onClick={() => setIsSpendTrustExpanded((prev) => !prev)}
           aria-expanded={isSpendTrustExpanded}
         >
-          <div className="min-w-0 truncate text-[12px] font-semibold">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={cn(
+                'h-1.5 w-1.5 shrink-0 rounded-full',
+                spendTrustState.severity === 'alert'
+                  ? 'bg-rose-500'
+                  : spendTrustState.severity === 'warning'
+                    ? 'bg-amber-500'
+                    : 'bg-slate-400',
+              )}
+            />
+            <div className="truncate text-[12px] font-semibold">
             {`Avisos · ${spendTrustCollapsedLine}`}
+            </div>
           </div>
           <ChevronDown size={16} className={cn('shrink-0 transition-transform', isSpendTrustExpanded ? 'rotate-180' : 'rotate-0')} />
         </button>
         {isSpendTrustExpanded && (
-          <div className="mt-2 border-t border-current/15 pt-2">
+          <div className="mt-2 border-t border-current/15 pt-2.5">
             <div>{spendTrustState.body}</div>
             {mainPendingOfficial && (
               <div className="mt-1">
