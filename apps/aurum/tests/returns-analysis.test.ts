@@ -343,4 +343,39 @@ describe('returns analysis helpers', () => {
     expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(12);
     expect(view.pendingEstimateDetail?.scenarios[0]?.label).toBe('Promedio últimos 12 meses cerrados');
   });
+
+  it('emits official availability notice only for recent clean official months', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    );
+    const enrichedRows = rows.map((row) =>
+      row.monthKey === '2026-02'
+        ? {
+            ...row,
+            gastosStatus: 'complete' as const,
+            gastosDataQuality: 'ok' as const,
+            gastosIsStale: false,
+            gastosPublishedAt: new Date().toISOString(),
+          }
+        : row,
+    );
+    const view = buildReturnsSeriesView(enrichedRows);
+    expect(view.officialAvailabilityNotice?.monthKey).toBe('2026-02');
+    expect(view.officialAvailabilityNotice?.officialReturnClp).not.toBeNull();
+    expect(view.officialAvailabilityNotice?.officialRatePct).not.toBeNull();
+    expect(view.officialAvailabilityNotice?.officialSpendClp).not.toBeNull();
+
+    const staleRows = enrichedRows.map((row) =>
+      row.monthKey === '2026-02'
+        ? { ...row, gastosIsStale: true }
+        : row,
+    );
+    const staleView = buildReturnsSeriesView(staleRows);
+    expect(staleView.officialAvailabilityNotice).toBeNull();
+  });
 });

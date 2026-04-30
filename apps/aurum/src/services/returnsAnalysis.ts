@@ -109,6 +109,19 @@ export type ReturnsSeriesView = {
   hasEstimatedMonth: boolean;
   pendingEstimate: EstimatedMonthMeta | null;
   pendingEstimateDetail: PendingReturnEstimate | null;
+  officialAvailabilityNotice: {
+    monthKey: string;
+    monthLabel: string;
+    officialReturnDisplay: number;
+    officialReturnClp: number;
+    officialRatePct: number;
+    officialSpendDisplay: number;
+    officialSpendClp: number;
+    officialAvailableDate: string | null;
+    status: 'official';
+    wasEstimatedOrPending: boolean;
+    source: 'returns_series_official';
+  } | null;
 };
 
 const monthAfter = (monthKey: string) => {
@@ -188,6 +201,56 @@ const resolveFxForAnalysis = (
     method: auditable ? 'real_closure' : 'default_fallback',
     auditable,
     missingKeys,
+  };
+};
+
+const parseIsoDate = (value: string | null | undefined): Date | null => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+};
+
+const buildOfficialAvailabilityNotice = (officialRows: MonthlyReturnRow[]) => {
+  const sortedDesc = [...officialRows].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  const candidate = sortedDesc.find(
+    (row) =>
+      row.gastosStatus === 'complete' &&
+      row.gastosDataQuality === 'ok' &&
+      !row.gastosIsStale &&
+      row.fxAuditable &&
+      row.retornoRealDisplay !== null &&
+      row.retornoRealClp !== null &&
+      row.gastosDisplay !== null &&
+      row.gastosClp !== null &&
+      row.pct !== null,
+  );
+  if (!candidate) return null;
+
+  const sourceDate =
+    parseIsoDate(candidate.gastosPublishedAt) ||
+    parseIsoDate(candidate.gastosUpdatedAt) ||
+    parseIsoDate(candidate.gastosClosedAt);
+  if (!sourceDate) return null;
+
+  const ageMs = Date.now() - sourceDate.getTime();
+  const maxAgeMs = 10 * 24 * 60 * 60 * 1000;
+  if (ageMs < 0 || ageMs > maxAgeMs) return null;
+
+  const info = buildPendingOfficialReturnInfo(candidate);
+  const [yearRaw, monthRaw] = candidate.monthKey.split('-').map(Number);
+  const monthName = MONTH_SHORT_ES[(monthRaw || 1) - 1] ?? candidate.monthKey;
+  return {
+    monthKey: candidate.monthKey,
+    monthLabel: `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${yearRaw}`,
+    officialReturnDisplay: Number(candidate.retornoRealDisplay),
+    officialReturnClp: Number(candidate.retornoRealClp),
+    officialRatePct: Number(candidate.pct),
+    officialSpendDisplay: Number(candidate.gastosDisplay),
+    officialSpendClp: Number(candidate.gastosClp),
+    officialAvailableDate: info.availabilityLabel,
+    status: 'official' as const,
+    wasEstimatedOrPending: true,
+    source: 'returns_series_official' as const,
   };
 };
 
@@ -541,6 +604,7 @@ export const buildReturnsSeriesView = (
       hasEstimatedMonth: false,
       pendingEstimate: null,
       pendingEstimateDetail: null,
+      officialAvailabilityNotice: buildOfficialAvailabilityNotice(officialRows),
     };
   }
 
@@ -552,6 +616,7 @@ export const buildReturnsSeriesView = (
       hasEstimatedMonth: false,
       pendingEstimate: null,
       pendingEstimateDetail: pendingEstimateDetail ?? null,
+      officialAvailabilityNotice: buildOfficialAvailabilityNotice(officialRows),
     };
   }
 
@@ -594,6 +659,7 @@ export const buildReturnsSeriesView = (
       referencePreviousMonthSpendClp: previousClosedScenario?.spendClp ?? null,
     },
     pendingEstimateDetail,
+    officialAvailabilityNotice: buildOfficialAvailabilityNotice(officialRows),
   };
 };
 

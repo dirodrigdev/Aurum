@@ -66,6 +66,17 @@ type ReturnsTabProps = {
     varPatrimonioDisplay: number;
     scenarios: ProvisionalReturnScenario[];
   } | null;
+  officialAvailabilityNotice: {
+    monthKey: string;
+    monthLabel: string;
+    officialReturnDisplay: number;
+    officialRatePct: number;
+    officialSpendDisplay: number;
+    officialAvailableDate: string | null;
+    status: 'official';
+    wasEstimatedOrPending: boolean;
+    source: 'returns_series_official';
+  } | null;
   onToggleIncludeEstimatedMonth: () => void;
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
@@ -497,6 +508,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   hasEstimatedMonth,
   estimatedMonthMeta,
   pendingEstimateDetail,
+  officialAvailabilityNotice,
   onToggleIncludeEstimatedMonth,
   includeRiskCapitalInTotals,
   onToggleRiskMode,
@@ -513,6 +525,10 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 }) => {
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
+  const [isOfficialNoticeDismissed, setIsOfficialNoticeDismissed] = React.useState(false);
+  React.useEffect(() => {
+    setIsOfficialNoticeDismissed(false);
+  }, [officialAvailabilityNotice?.monthKey]);
   const pendingSpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosStatus === 'pending').map((row) => row.monthKey);
   const missingSpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosStatus === 'missing').map((row) => row.monthKey);
   const legacySpendMonths = officialMonthlyRowsAsc.filter((row) => row.gastosSource === 'legacy_static').map((row) => row.monthKey);
@@ -794,6 +810,47 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             onChange={onToggleIncludeEstimatedMonth}
           />
         </label>
+      </Card>
+    )}
+
+    {officialAvailabilityNotice && !isOfficialNoticeDismissed && (
+      <Card className="border-emerald-200 bg-emerald-50/70 p-2.5 text-xs text-emerald-900 shadow-none">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-semibold">
+              {`${officialAvailabilityNotice.monthLabel} ya tiene retorno oficial`}
+            </div>
+            <div className="mt-0.5 text-[11px] text-emerald-800">
+              El gasto real de GastApp está cerrado y este mes ya entra en la serie oficial.
+            </div>
+            {includeEstimatedMonth && (
+              <div className="mt-1 text-[11px] text-emerald-800">
+                El modo estimado ya no aplica para este mes.
+              </div>
+            )}
+            <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+              <span className="rounded-full border border-emerald-200 bg-white/80 px-2 py-0.5">
+                {`Retorno oficial: ${formatCurrency(officialAvailabilityNotice.officialReturnDisplay, currency)}`}
+              </span>
+              <span className="rounded-full border border-emerald-200 bg-white/80 px-2 py-0.5">
+                {`Tasa oficial: ${formatPct(officialAvailabilityNotice.officialRatePct)}`}
+              </span>
+              <span className="rounded-full border border-emerald-200 bg-white/80 px-2 py-0.5">
+                {`Gasto real: ${formatCurrency(officialAvailabilityNotice.officialSpendDisplay, currency)}`}
+              </span>
+              <span className="rounded-full border border-emerald-200 bg-white/80 px-2 py-0.5">
+                {`Estado: Oficial cerrado${officialAvailabilityNotice.officialAvailableDate ? ` · ${officialAvailabilityNotice.officialAvailableDate}` : ''}`}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsOfficialNoticeDismissed(true)}
+            className="rounded border border-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 transition hover:bg-emerald-100"
+          >
+            Ocultar
+          </button>
+        </div>
       </Card>
     )}
 
