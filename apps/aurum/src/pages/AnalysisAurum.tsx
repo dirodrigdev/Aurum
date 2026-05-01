@@ -33,7 +33,6 @@ import {
   buildWealthEvolutionComparisonModel,
   buildReturnsSeriesView,
   buildTrailingSummary,
-  buildTrajectoryCurve,
   computeMonthlyRows,
   monthYear,
 } from '../services/returnsAnalysis';
@@ -186,7 +185,6 @@ export const AnalysisAurum: React.FC = () => {
       setIncludeEstimatedMonth(false);
     }
   }, [returnsSeriesView.hasEstimatedMonth]);
-  const trajectoryCurve = useMemo(() => buildTrajectoryCurve(monthlyRowsAsc), [monthlyRowsAsc]);
   const wealthEvolutionModel = useMemo(
     () => buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals),
     [closures, includeRiskCapitalInTotals],
@@ -437,11 +435,9 @@ export const AnalysisAurum: React.FC = () => {
           analysisDiagnostics={{ anomalyRaw: analysisDiagnostics.anomalyRaw }}
           fxExcludedMonths={analysisDiagnostics.fxExcludedMonths}
           officialMonthlyRowsAsc={returnsSeriesView.officialRows}
-          monthlyRowsAsc={monthlyRowsAsc}
           monthlyRowsDesc={monthlyRowsDesc}
           periodSummaries={periodSummaries}
           yearlySummaries={yearlySummaries}
-          trajectoryCurve={trajectoryCurve}
           wealthEvolutionModel={wealthEvolutionModel}
         />
       )}

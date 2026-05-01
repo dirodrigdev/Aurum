@@ -88,11 +88,9 @@ type ReturnsTabProps = {
   };
   fxExcludedMonths: string[];
   officialMonthlyRowsAsc: MonthlyReturnRow[];
-  monthlyRowsAsc: MonthlyReturnRow[];
   monthlyRowsDesc: MonthlyReturnRow[];
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
-  trajectoryCurve: ReturnCurveModel;
   wealthEvolutionModel: WealthEvolutionComparisonModel;
 };
 
@@ -583,7 +581,7 @@ const WealthUfChartCard: React.FC<{
         Patrimonio en UF
       </div>
       <div className="mt-0.5 text-[11px] text-slate-500">
-        Evolución del patrimonio expresado en UF, basada en cierres patrimoniales registrados.
+        Evolución del patrimonio total expresado en UF, basada en cierres patrimoniales registrados.
       </div>
       <div className="mt-3">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-44 w-full">
@@ -713,7 +711,7 @@ const WealthBase100ComparisonCard: React.FC<{
         Variación comparada
       </div>
       <div className="mt-0.5 text-[11px] text-slate-500">
-        Índice base 100 para comparar la forma de evolución en CLP, UF, USD y EUR.
+        Índice base 100 para comparar la evolución relativa en CLP, UF, USD y EUR.
       </div>
       <div className="mt-3">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full">
@@ -812,11 +810,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   analysisDiagnostics,
   fxExcludedMonths,
   officialMonthlyRowsAsc,
-  monthlyRowsAsc,
   monthlyRowsDesc,
   periodSummaries,
   yearlySummaries,
-  trajectoryCurve,
   wealthEvolutionModel,
 }) => {
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
@@ -1402,14 +1398,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
     <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} />
     <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} />
-    <ReturnsChart rows={monthlyRowsAsc} />
-    <TrendLineCard
-      title="Trayectoria acumulada"
-      subtitle="Base 100"
-      curve={trajectoryCurve}
-      stroke="#0f766e"
-      formatter={(value) => `${value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
-    />
   </>
   );
 };
