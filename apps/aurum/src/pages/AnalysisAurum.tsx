@@ -30,9 +30,9 @@ import {
 } from '../services/financialFreedom';
 import {
   aggregateRows,
+  buildWealthEvolutionComparisonModel,
   buildReturnsSeriesView,
   buildTrailingSummary,
-  buildPatrimonyCurve,
   buildTrajectoryCurve,
   computeMonthlyRows,
   monthYear,
@@ -187,7 +187,10 @@ export const AnalysisAurum: React.FC = () => {
     }
   }, [returnsSeriesView.hasEstimatedMonth]);
   const trajectoryCurve = useMemo(() => buildTrajectoryCurve(monthlyRowsAsc), [monthlyRowsAsc]);
-  const patrimonyCurve = useMemo(() => buildPatrimonyCurve(monthlyRowsAsc), [monthlyRowsAsc]);
+  const wealthEvolutionModel = useMemo(
+    () => buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals),
+    [closures, includeRiskCapitalInTotals],
+  );
   const crpContributionInsight = useMemo(() => {
     if (!includeRiskCapitalInTotals) return null;
     return buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency);
@@ -439,7 +442,7 @@ export const AnalysisAurum: React.FC = () => {
           periodSummaries={periodSummaries}
           yearlySummaries={yearlySummaries}
           trajectoryCurve={trajectoryCurve}
-          patrimonyCurve={patrimonyCurve}
+          wealthEvolutionModel={wealthEvolutionModel}
         />
       )}
 

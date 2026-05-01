@@ -31,6 +31,7 @@ vi.mock('../src/services/gastosMonthly', () => ({
 
 import {
   aggregateRows,
+  buildWealthEvolutionComparisonModel,
   buildPendingOfficialReturnInfo,
   buildPendingReturnEstimate,
   buildReturnsSeriesView,
@@ -377,5 +378,50 @@ describe('returns analysis helpers', () => {
     );
     const staleView = buildReturnsSeriesView(staleRows);
     expect(staleView.officialAvailabilityNotice).toBeNull();
+  });
+
+  it('builds a canonical wealth evolution comparison model without mutating closures', () => {
+    const closures = [
+      makeClosure('2025-12', { netClp: 800_000_000, usdClp: 800, eurClp: 900, ufClp: 35_000 }),
+      makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000, ufClp: 40_000 }),
+      makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200, ufClp: 42_000 }),
+    ];
+    const snapshot = JSON.parse(JSON.stringify(closures));
+
+    const model = buildWealthEvolutionComparisonModel(closures, false);
+
+    expect(model.source).toBe('returns_analysis_closures');
+    expect(model.baseMonth).toBe('2025-12');
+    expect(model.clpSeries.points.map((point) => point.value)).toEqual([800_000_000, 1_000_000_000, 1_050_000_000]);
+    expect(model.ufSeries.points.map((point) => point.value)).toEqual([
+      800_000_000 / 35_000,
+      1_000_000_000 / 40_000,
+      1_050_000_000 / 42_000,
+    ]);
+    expect(model.usdSeries.points.map((point) => point.value)).toEqual([
+      800_000_000 / 800,
+      1_000_000_000 / 1000,
+      1_050_000_000 / 1050,
+    ]);
+    expect(model.base100Series.CLP.points.map((point) => point.value)).toEqual([100, 125, 131.25]);
+    expect(model.ufTrendSeries.points).toHaveLength(1);
+    expect(closures).toEqual(snapshot);
+  });
+
+  it('omits missing UF and FX months instead of inventing conversions', () => {
+    const closures = [
+      makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000, ufClp: 40_000 }),
+      makeClosure('2026-02', { netClp: 1_050_000_000, fxMissing: ['ufClp'] }),
+      makeClosure('2026-03', { netClp: 1_100_000_000, fxMissing: ['eurClp'] }),
+    ];
+
+    const model = buildWealthEvolutionComparisonModel(closures, false);
+
+    expect(model.missingUfMonths).toContain('2026-02');
+    expect(model.missingFxMonths).toContain('2026-02');
+    expect(model.missingFxMonths).toContain('2026-03');
+    expect(model.points.find((point) => point.monthKey === '2026-02')?.netUf).toBeNull();
+    expect(model.points.find((point) => point.monthKey === '2026-03')?.netEur).toBeNull();
+    expect(model.hasIncompleteConversion).toBe(true);
   });
 });

@@ -124,6 +124,34 @@ export type ReturnsSeriesView = {
   } | null;
 };
 
+export type WealthEvolutionCurrency = 'CLP' | 'UF' | 'USD' | 'EUR';
+
+export type WealthEvolutionPoint = {
+  id: string;
+  monthKey: string;
+  netClp: number | null;
+  netUf: number | null;
+  netUsd: number | null;
+  netEur: number | null;
+  ufClp: number | null;
+  fxAuditable: boolean;
+};
+
+export type WealthEvolutionComparisonModel = {
+  source: 'returns_analysis_closures';
+  baseMonth: string | null;
+  missingFxMonths: string[];
+  missingUfMonths: string[];
+  hasIncompleteConversion: boolean;
+  points: WealthEvolutionPoint[];
+  clpSeries: ReturnCurveModel;
+  ufSeries: ReturnCurveModel;
+  usdSeries: ReturnCurveModel;
+  eurSeries: ReturnCurveModel;
+  ufTrendSeries: ReturnCurveModel;
+  base100Series: Record<WealthEvolutionCurrency, ReturnCurveModel>;
+};
+
 const monthAfter = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return null;
@@ -706,6 +734,108 @@ const buildCurveDomain = (values: number[]) => {
   };
 };
 
+const buildCurveFromNumericPoints = (points: ReturnCurvePoint[]): ReturnCurveModel => {
+  if (points.length < 2) {
+    return {
+      status: 'insufficient_data',
+      points,
+      markers: [],
+      domainMin: null,
+      domainMax: null,
+      minValue: null,
+      maxValue: null,
+    };
+  }
+
+  const values = points.map((point) => point.value);
+  const { minValue, maxValue, domainMin, domainMax } = buildCurveDomain(values);
+  return {
+    status: 'ok',
+    points,
+    markers: buildMarkerList(points),
+    domainMin,
+    domainMax,
+    minValue,
+    maxValue,
+  };
+};
+
+const buildCurveFromWealthPoints = (
+  points: WealthEvolutionPoint[],
+  selector: (point: WealthEvolutionPoint) => number | null,
+): ReturnCurveModel =>
+  buildCurveFromNumericPoints(
+    points
+      .map((point) => {
+        const value = selector(point);
+        if (value === null || !Number.isFinite(value)) return null;
+        return {
+          id: point.id,
+          monthKey: point.monthKey,
+          value: Number(value),
+        } satisfies ReturnCurvePoint;
+      })
+      .filter((point): point is ReturnCurvePoint => !!point),
+  );
+
+const buildBase100CurveFromWealthPoints = (
+  points: WealthEvolutionPoint[],
+  selector: (point: WealthEvolutionPoint) => number | null,
+): ReturnCurveModel => {
+  const basePoint = points.find((point) => {
+    const value = selector(point);
+    return value !== null && Number.isFinite(value) && value > 0;
+  });
+  const baseValue = basePoint ? selector(basePoint) : null;
+  if (baseValue === null || !Number.isFinite(baseValue) || baseValue <= 0) {
+    return buildCurveFromNumericPoints([]);
+  }
+  return buildCurveFromNumericPoints(
+    points
+      .map((point) => {
+        const value = selector(point);
+        if (value === null || !Number.isFinite(value) || value <= 0) return null;
+        return {
+          id: point.id,
+          monthKey: point.monthKey,
+          value: (Number(value) / Number(baseValue)) * 100,
+        } satisfies ReturnCurvePoint;
+      })
+      .filter((point): point is ReturnCurvePoint => !!point),
+  );
+};
+
+const buildMovingAverageCurve = (
+  points: WealthEvolutionPoint[],
+  selector: (point: WealthEvolutionPoint) => number | null,
+  windowSize = 3,
+): ReturnCurveModel => {
+  const validPoints = points
+    .map((point) => {
+      const value = selector(point);
+      if (value === null || !Number.isFinite(value)) return null;
+      return {
+        id: point.id,
+        monthKey: point.monthKey,
+        value: Number(value),
+      };
+    })
+    .filter((point): point is ReturnCurvePoint => !!point);
+  if (validPoints.length < windowSize) {
+    return buildCurveFromNumericPoints([]);
+  }
+  const averagedPoints = validPoints.map((point, index) => {
+    if (index < windowSize - 1) return null;
+    const window = validPoints.slice(index - (windowSize - 1), index + 1);
+    return {
+      id: `${point.id}-trend`,
+      monthKey: point.monthKey,
+      value: sumNumbers(window.map((item) => item.value)) / window.length,
+    } satisfies ReturnCurvePoint;
+  }).filter((point): point is ReturnCurvePoint => !!point);
+  return buildCurveFromNumericPoints(averagedPoints);
+};
+
 const buildMarkerList = (points: ReturnCurvePoint[]) => {
   const markerByPointId = new Map<string, ReturnCurveMarker>();
 
@@ -832,5 +962,69 @@ export const buildPatrimonyCurve = (rows: MonthlyReturnRow[]): ReturnCurveModel 
     domainMax,
     minValue,
     maxValue,
+  };
+};
+
+export const buildWealthEvolutionComparisonModel = (
+  closures: WealthMonthlyClosure[],
+  includeRiskCapitalInTotals: boolean,
+): WealthEvolutionComparisonModel => {
+  const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+  const calendarCurrent = currentOperationalMonthKey(closures);
+  const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
+
+  const points: WealthEvolutionPoint[] = filtered.map((closure) => {
+    const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
+    const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
+    const fxResolution = resolveFxForAnalysis(closure);
+    const fx = fxResolution.fx;
+    const hasAuditableFx = fxResolution.auditable;
+    const validNetClp = invalidNet ? null : Number(netClp);
+    return {
+      id: closure.id || closure.monthKey,
+      monthKey: closure.monthKey,
+      netClp: validNetClp,
+      netUf:
+        validNetClp !== null && hasAuditableFx && fx.ufClp > 0
+          ? validNetClp / fx.ufClp
+          : null,
+      netUsd:
+        validNetClp !== null && hasAuditableFx && fx.usdClp > 0
+          ? validNetClp / fx.usdClp
+          : null,
+      netEur:
+        validNetClp !== null && hasAuditableFx && fx.eurClp > 0
+          ? validNetClp / fx.eurClp
+          : null,
+      ufClp: hasAuditableFx && fx.ufClp > 0 ? fx.ufClp : null,
+      fxAuditable: hasAuditableFx,
+    };
+  });
+
+  const missingFxMonths = points
+    .filter((point) => point.netClp !== null && (!point.fxAuditable || point.netUsd === null || point.netEur === null))
+    .map((point) => point.monthKey);
+  const missingUfMonths = points
+    .filter((point) => point.netClp !== null && point.netUf === null)
+    .map((point) => point.monthKey);
+
+  return {
+    source: 'returns_analysis_closures',
+    baseMonth: points.find((point) => point.netClp !== null)?.monthKey || null,
+    missingFxMonths,
+    missingUfMonths,
+    hasIncompleteConversion: missingFxMonths.length > 0 || missingUfMonths.length > 0,
+    points,
+    clpSeries: buildCurveFromWealthPoints(points, (point) => point.netClp),
+    ufSeries: buildCurveFromWealthPoints(points, (point) => point.netUf),
+    usdSeries: buildCurveFromWealthPoints(points, (point) => point.netUsd),
+    eurSeries: buildCurveFromWealthPoints(points, (point) => point.netEur),
+    ufTrendSeries: buildMovingAverageCurve(points, (point) => point.netUf, 3),
+    base100Series: {
+      CLP: buildBase100CurveFromWealthPoints(points, (point) => point.netClp),
+      UF: buildBase100CurveFromWealthPoints(points, (point) => point.netUf),
+      USD: buildBase100CurveFromWealthPoints(points, (point) => point.netUsd),
+      EUR: buildBase100CurveFromWealthPoints(points, (point) => point.netEur),
+    },
   };
 };

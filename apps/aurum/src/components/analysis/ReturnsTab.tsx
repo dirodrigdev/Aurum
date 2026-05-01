@@ -5,12 +5,14 @@ import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
 import { buildPendingOfficialReturnInfo } from '../../services/returnsAnalysis';
 import type { ProvisionalReturnScenario } from '../../services/returnsAnalysis';
+import type { WealthEvolutionComparisonModel } from '../../services/returnsAnalysis';
 import type {
   AggregatedSummary,
   CrpContributionInsight,
   MonthlyReturnRow,
   ReturnCurveMarker,
   ReturnCurveModel,
+  ReturnCurvePoint,
 } from './types';
 import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
@@ -91,7 +93,7 @@ type ReturnsTabProps = {
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
   trajectoryCurve: ReturnCurveModel;
-  patrimonyCurve: ReturnCurveModel;
+  wealthEvolutionModel: WealthEvolutionComparisonModel;
 };
 
 const SummaryTable: React.FC<{
@@ -497,6 +499,300 @@ const TrendLineCard: React.FC<{
   );
 };
 
+type MultiSeriesSpec = {
+  key: string;
+  label: string;
+  stroke: string;
+  curve: ReturnCurveModel;
+  dashed?: boolean;
+  pointFill?: string;
+};
+
+const buildSeriesPath = (
+  points: ReturnCurvePoint[],
+  monthIndex: Map<string, number>,
+  pointX: (index: number) => number,
+  pointY: (value: number) => number,
+) =>
+  points
+    .map((point, index) => {
+      const xIndex = monthIndex.get(point.monthKey);
+      if (xIndex === undefined) return null;
+      return `${index === 0 ? 'M' : 'L'} ${pointX(xIndex).toFixed(2)} ${pointY(point.value).toFixed(2)}`;
+    })
+    .filter((segment): segment is string => !!segment)
+    .join(' ');
+
+const WealthUfChartCard: React.FC<{
+  model: WealthEvolutionComparisonModel;
+}> = ({ model }) => {
+  const months = model.points.map((point) => point.monthKey);
+  const monthIndex = new Map(months.map((monthKey, index) => [monthKey, index]));
+  const visibleSeries: MultiSeriesSpec[] = [
+    {
+      key: 'uf',
+      label: 'Patrimonio UF',
+      stroke: '#1d4ed8',
+      pointFill: '#1d4ed8',
+      curve: model.ufSeries,
+    },
+    {
+      key: 'trend',
+      label: 'Tendencia 3M',
+      stroke: '#94a3b8',
+      pointFill: '#94a3b8',
+      curve: model.ufTrendSeries,
+      dashed: true,
+    },
+  ].filter((series) => series.curve.points.length > 0);
+
+  if (!model.ufSeries.points.length || model.ufSeries.status !== 'ok') {
+    return (
+      <Card className="border-slate-200 p-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <LineChart size={14} />
+          Patrimonio en UF
+        </div>
+        <div className="mt-0.5 text-[11px] text-slate-500">
+          Evolución del patrimonio expresado en UF, basada en cierres patrimoniales registrados.
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          Aún no hay suficientes cierres con UF auditable para dibujar esta curva.
+        </div>
+      </Card>
+    );
+  }
+
+  const width = 640;
+  const height = 180;
+  const padding = { top: 16, right: 16, bottom: 28, left: 16 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const pointX = (index: number) =>
+    padding.left + (months.length <= 1 ? innerWidth / 2 : (innerWidth * index) / Math.max(1, months.length - 1));
+  const allValues = visibleSeries.flatMap((series) => series.curve.points.map((point) => point.value));
+  const domainMin = Math.min(...allValues);
+  const domainMax = Math.max(...allValues);
+  const pointY = (value: number) =>
+    padding.top + ((domainMax - value) / Math.max(1e-6, domainMax - domainMin || 1)) * innerHeight;
+
+  return (
+    <Card className="border-slate-200 p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <LineChart size={14} />
+        Patrimonio en UF
+      </div>
+      <div className="mt-0.5 text-[11px] text-slate-500">
+        Evolución del patrimonio expresado en UF, basada en cierres patrimoniales registrados.
+      </div>
+      <div className="mt-3">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-44 w-full">
+          {months.map((monthKey, index) => {
+            const x = pointX(index);
+            const point = model.points.find((item) => item.monthKey === monthKey) || null;
+            const tooltip = point
+              ? [
+                  monthLabel(point.monthKey),
+                  point.netUf !== null ? `Patrimonio UF: ${point.netUf.toLocaleString('es-CL', { maximumFractionDigits: 2 })}` : 'Patrimonio UF: n/d',
+                  point.netClp !== null ? `Patrimonio CLP: ${formatCurrency(point.netClp, 'CLP')}` : 'Patrimonio CLP: n/d',
+                  point.ufClp !== null ? `UF usada: ${Math.round(point.ufClp).toLocaleString('es-CL')}` : 'UF usada: n/d',
+                ].join('\n')
+              : monthLabel(monthKey);
+            return (
+              <g key={`uf-hover-${monthKey}`}>
+                <rect x={x - Math.max(8, innerWidth / Math.max(1, months.length * 3))} y={padding.top} width={Math.max(16, innerWidth / Math.max(1, months.length * 1.5))} height={innerHeight} fill="transparent">
+                  <title>{tooltip}</title>
+                </rect>
+                {(index % 6 === 0 || index === months.length - 1) && (
+                  <text x={x} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
+                    {xLabelFromMonthKey(monthKey)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {visibleSeries.map((series) => {
+            const path = buildSeriesPath(series.curve.points, monthIndex, pointX, pointY);
+            return (
+              <g key={series.key}>
+                <path
+                  d={path}
+                  fill="none"
+                  stroke={series.stroke}
+                  strokeWidth={series.key === 'uf' ? '2.5' : '2'}
+                  strokeLinecap="round"
+                  strokeDasharray={series.dashed ? '6 4' : undefined}
+                  opacity={series.key === 'uf' ? 1 : 0.9}
+                />
+                {series.curve.points.map((point) => {
+                  const xIndex = monthIndex.get(point.monthKey);
+                  if (xIndex === undefined) return null;
+                  return (
+                    <circle
+                      key={`${series.key}-${point.id}`}
+                      cx={pointX(xIndex)}
+                      cy={pointY(point.value)}
+                      r={series.key === 'uf' ? 3 : 2}
+                      fill={series.pointFill || series.stroke}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
+        {visibleSeries.map((series) => (
+          <span key={series.key} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1">
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: series.stroke, opacity: series.key === 'uf' ? 1 : 0.7 }}
+            />
+            {series.label}
+          </span>
+        ))}
+      </div>
+      {(model.missingUfMonths.length > 0 || model.missingFxMonths.length > 0) && (
+        <div className="mt-2 text-[11px] text-slate-500">
+          {model.missingUfMonths.length > 0
+            ? `UF no disponible en: ${model.missingUfMonths.join(', ')}.`
+            : `Conversión incompleta en: ${model.missingFxMonths.join(', ')}.`}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+const WealthBase100ComparisonCard: React.FC<{
+  model: WealthEvolutionComparisonModel;
+}> = ({ model }) => {
+  const months = model.points.map((point) => point.monthKey);
+  const monthIndex = new Map(months.map((monthKey, index) => [monthKey, index]));
+  const visibleSeries: MultiSeriesSpec[] = [
+    { key: 'CLP', label: 'CLP', stroke: '#0f766e', pointFill: '#0f766e', curve: model.base100Series.CLP },
+    { key: 'UF', label: 'UF', stroke: '#1d4ed8', pointFill: '#1d4ed8', curve: model.base100Series.UF },
+    { key: 'USD', label: 'USD', stroke: '#7c3aed', pointFill: '#7c3aed', curve: model.base100Series.USD },
+    { key: 'EUR', label: 'EUR', stroke: '#c2410c', pointFill: '#c2410c', curve: model.base100Series.EUR },
+  ].filter((series) => series.curve.points.length > 0);
+
+  if (visibleSeries.length < 2) {
+    return (
+      <Card className="border-slate-200 p-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <LineChart size={14} />
+          Variación comparada
+        </div>
+        <div className="mt-0.5 text-[11px] text-slate-500">
+          Índice base 100 para comparar la forma de evolución en CLP, UF, USD y EUR.
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          Aún no hay suficientes cierres auditables para comparar CLP, UF, USD y EUR en base 100.
+        </div>
+      </Card>
+    );
+  }
+
+  const width = 640;
+  const height = 190;
+  const padding = { top: 16, right: 16, bottom: 28, left: 16 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const pointX = (index: number) =>
+    padding.left + (months.length <= 1 ? innerWidth / 2 : (innerWidth * index) / Math.max(1, months.length - 1));
+  const allValues = visibleSeries.flatMap((series) => series.curve.points.map((point) => point.value));
+  const domainMin = Math.min(...allValues);
+  const domainMax = Math.max(...allValues);
+  const pointY = (value: number) =>
+    padding.top + ((domainMax - value) / Math.max(1e-6, domainMax - domainMin || 1)) * innerHeight;
+
+  return (
+    <Card className="border-slate-200 p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <LineChart size={14} />
+        Variación comparada
+      </div>
+      <div className="mt-0.5 text-[11px] text-slate-500">
+        Índice base 100 para comparar la forma de evolución en CLP, UF, USD y EUR.
+      </div>
+      <div className="mt-3">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full">
+          {months.map((monthKey, index) => {
+            const x = pointX(index);
+            const base100AtMonth = visibleSeries
+              .map((series) => {
+                const point = series.curve.points.find((item) => item.monthKey === monthKey);
+                return point ? `${series.label}: ${point.value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}` : null;
+              })
+              .filter((item): item is string => !!item);
+            const rawPoint = model.points.find((item) => item.monthKey === monthKey) || null;
+            const tooltip = [
+              monthLabel(monthKey),
+              ...base100AtMonth,
+              rawPoint?.netClp !== null ? `CLP: ${formatCurrency(rawPoint.netClp, 'CLP')}` : null,
+              rawPoint?.netUf !== null ? `UF: ${rawPoint.netUf.toLocaleString('es-CL', { maximumFractionDigits: 2 })}` : null,
+              rawPoint?.netUsd !== null ? `USD: ${rawPoint.netUsd.toLocaleString('es-CL', { maximumFractionDigits: 2 })}` : null,
+              rawPoint?.netEur !== null ? `EUR: ${rawPoint.netEur.toLocaleString('es-CL', { maximumFractionDigits: 2 })}` : null,
+            ].filter((line): line is string => !!line).join('\n');
+            return (
+              <g key={`base100-hover-${monthKey}`}>
+                <rect x={x - Math.max(8, innerWidth / Math.max(1, months.length * 3))} y={padding.top} width={Math.max(16, innerWidth / Math.max(1, months.length * 1.5))} height={innerHeight} fill="transparent">
+                  <title>{tooltip}</title>
+                </rect>
+                {(index % 6 === 0 || index === months.length - 1) && (
+                  <text x={x} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">
+                    {xLabelFromMonthKey(monthKey)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {visibleSeries.map((series) => {
+            const path = buildSeriesPath(series.curve.points, monthIndex, pointX, pointY);
+            return (
+              <g key={series.key}>
+                <path
+                  d={path}
+                  fill="none"
+                  stroke={series.stroke}
+                  strokeWidth={series.key === 'CLP' ? '2.5' : '2'}
+                  strokeLinecap="round"
+                  opacity={series.key === 'CLP' ? 1 : 0.85}
+                />
+                {series.curve.points.map((point) => {
+                  const xIndex = monthIndex.get(point.monthKey);
+                  if (xIndex === undefined) return null;
+                  return (
+                    <circle
+                      key={`${series.key}-${point.id}`}
+                      cx={pointX(xIndex)}
+                      cy={pointY(point.value)}
+                      r={series.key === 'CLP' ? 3 : 2.5}
+                      fill={series.pointFill || series.stroke}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
+        {visibleSeries.map((series) => (
+          <span key={series.key} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: series.stroke }} />
+            {series.label}
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 text-[11px] text-slate-500">
+        Base 100 desde {model.baseMonth ? monthLabel(model.baseMonth) : 'el primer cierre válido'}.
+        {model.hasIncompleteConversion ? ' Conversión incompleta en algunos meses; se omiten sin inventar FX/UF.' : ''}
+      </div>
+    </Card>
+  );
+};
+
 export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   heroSinceStart,
   heroLast12,
@@ -521,7 +817,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   periodSummaries,
   yearlySummaries,
   trajectoryCurve,
-  patrimonyCurve,
+  wealthEvolutionModel,
 }) => {
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
@@ -1044,6 +1340,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       </div>
     </Card>
 
+    <WealthUfChartCard model={wealthEvolutionModel} />
+    <WealthBase100ComparisonCard model={wealthEvolutionModel} />
+
     {provisionalEstimate && (
       <Card className="border-dashed border-amber-300 bg-white p-2.5 text-xs text-slate-700">
         <button
@@ -1110,14 +1409,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       curve={trajectoryCurve}
       stroke="#0f766e"
       formatter={(value) => `${value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
-    />
-    <TrendLineCard
-      title="Evolución del patrimonio"
-      subtitle={`${currency} por cierre`}
-      curve={patrimonyCurve}
-      stroke="#1d4ed8"
-      currency={currency}
-      formatter={(value) => formatCompactCurrency(value, currency)}
     />
   </>
   );
