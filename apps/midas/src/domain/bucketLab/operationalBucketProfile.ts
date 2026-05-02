@@ -43,6 +43,8 @@ export type BucketInstrumentRow = {
 
 export type OperationalBucketProfile = {
   source: 'instrument_universe' | 'missing';
+  amountSource: 'instrument_amount_clp' | 'weight_scaled_optimizable' | 'mixed';
+  optimizableInvestmentsClp: number | null;
   coveragePctByClp: number;
   hardCashClp: number;
   nearCashClp: number;
@@ -73,6 +75,7 @@ export type BuildOperationalBucketProfileInput = {
   monthlySpendClp: number;
   includeCaptive: boolean;
   includeRiskCapital: boolean;
+  optimizableInvestmentsClp?: number | null;
 };
 
 type Mix = { rv: number; rf: number; cash: number; other: number };
@@ -183,6 +186,8 @@ export function buildOperationalBucketProfile(
   if (!snapshot || !Array.isArray(snapshot.instruments) || snapshot.instruments.length === 0) {
     return {
       source: 'missing',
+      amountSource: 'instrument_amount_clp',
+      optimizableInvestmentsClp: null,
       coveragePctByClp: 0,
       hardCashClp: 0,
       nearCashClp: 0,
@@ -224,11 +229,51 @@ export function buildOperationalBucketProfile(
   let embeddedEquityClp = 0;
   let embeddedFixedIncomeClp = 0;
   const warnings: string[] = [];
-  const valid = snapshot.instruments.filter((item) => Number.isFinite(item.amountClp) && Number(item.amountClp) > 0);
-  const totalAmount = valid.reduce((sum, item) => sum + Number(item.amountClp || 0), 0);
+  const optimizableInvestmentsClp = Number.isFinite(input.optimizableInvestmentsClp)
+    ? Math.max(0, Number(input.optimizableInvestmentsClp))
+    : null;
+  const directAmountSum = snapshot.instruments.reduce((sum, item) => {
+    const amount = Number(item.amountClp ?? NaN);
+    return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+  }, 0);
+  const weightSum = snapshot.instruments.reduce((sum, item) => {
+    const weight = Number(item.weightPortfolio ?? NaN);
+    return Number.isFinite(weight) && weight > 0 ? sum + weight : sum;
+  }, 0);
+  const hasOptimizableTarget = Number.isFinite(optimizableInvestmentsClp) && (optimizableInvestmentsClp ?? 0) > 0;
+  const relAmountDiff =
+    hasOptimizableTarget && directAmountSum > 0
+      ? Math.abs(directAmountSum - (optimizableInvestmentsClp ?? 0)) / Math.max(optimizableInvestmentsClp ?? 1, 1)
+      : 0;
+  const shouldScaleByWeight =
+    Boolean(hasOptimizableTarget) && weightSum > 0 && (directAmountSum <= 0 || relAmountDiff > 0.05);
+  if (shouldScaleByWeight && directAmountSum > 0) {
+    warnings.push(
+      `Instrument Universe amountClp difiere del optimizable vigente (${Math.round(
+        relAmountDiff * 100,
+      )}%); se escala por weightPortfolio.`,
+    );
+  }
+  let usedScaledAmounts = 0;
+  let usedDirectAmounts = 0;
+  let totalAmount = 0;
 
-  for (const instrument of valid) {
-    const amountClp = Math.max(0, Number(instrument.amountClp || 0));
+  for (const instrument of snapshot.instruments) {
+    const directAmount = Number(instrument.amountClp ?? NaN);
+    const weight = Number(instrument.weightPortfolio ?? NaN);
+    let amountClp = Number.isFinite(directAmount) && directAmount > 0 ? directAmount : 0;
+    if (shouldScaleByWeight && Number.isFinite(weight) && weight > 0 && hasOptimizableTarget) {
+      amountClp = (optimizableInvestmentsClp ?? 0) * (weight / weightSum);
+      usedScaledAmounts += 1;
+    } else if (amountClp > 0) {
+      usedDirectAmounts += 1;
+    } else if (hasOptimizableTarget && Number.isFinite(weight) && weight > 0 && weightSum > 0) {
+      amountClp = (optimizableInvestmentsClp ?? 0) * (weight / weightSum);
+      usedScaledAmounts += 1;
+      warnings.push(`${instrument.instrumentId}: amountClp faltante; se deriva desde weightPortfolio.`);
+    }
+    if (!(Number.isFinite(amountClp) && amountClp > 0)) continue;
+    totalAmount += amountClp;
     const mix = normalizeMix(instrument.currentMixUsed);
     const layerInfo = inferLayer(instrument, mix, input.includeCaptive, input.includeRiskCapital);
     const eqEmbedded = amountClp * (mix?.rv ?? 0);
@@ -294,8 +339,16 @@ export function buildOperationalBucketProfile(
 
   const classifiedAmount =
     totalAmount - totalsByLayer.unknown - totalsByLayer.restricted;
+  const amountSource: OperationalBucketProfile['amountSource'] =
+    usedScaledAmounts > 0 && usedDirectAmounts > 0
+      ? 'mixed'
+      : usedScaledAmounts > 0
+        ? 'weight_scaled_optimizable'
+        : 'instrument_amount_clp';
   return {
     source: 'instrument_universe',
+    amountSource,
+    optimizableInvestmentsClp,
     coveragePctByClp: totalAmount > 0 ? Math.max(0, classifiedAmount) / totalAmount : 0,
     hardCashClp,
     nearCashClp,

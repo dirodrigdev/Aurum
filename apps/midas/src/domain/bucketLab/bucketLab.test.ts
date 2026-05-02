@@ -188,6 +188,55 @@ test('helpers do not mutate snapshot inputs', () => {
   assert.equal(JSON.stringify(snapshot), original);
 });
 
+test('uses weight scaling when universe amount mismatches optimizable capital', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('a', 70_000_000, {
+      name: 'Balanceado A',
+      weightPortfolio: 0.5,
+      currentMixUsed: { rv: 0.4, rf: 0.6, cash: 0, other: 0 },
+    }),
+    makeInstrument('b', 30_000_000, {
+      name: 'Balanceado B',
+      weightPortfolio: 0.5,
+      currentMixUsed: { rv: 0.4, rf: 0.6, cash: 0, other: 0 },
+    }),
+  ]);
+  const profile = buildOperationalBucketProfile({
+    snapshot,
+    monthlySpendClp: 1_000_000,
+    includeCaptive: false,
+    includeRiskCapital: false,
+    optimizableInvestmentsClp: 200_000_000,
+  });
+  assert.equal(profile.amountSource, 'weight_scaled_optimizable');
+  assert.equal(Math.round(profile.mixedFundClp), 200_000_000);
+  assert.ok(profile.warnings.some((warning) => warning.includes('difiere del optimizable vigente')));
+});
+
+test('keeps direct amount when universe amount reasonably matches optimizable capital', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('a', 101_000_000, {
+      name: 'Balanceado A',
+      weightPortfolio: 0.5,
+      currentMixUsed: { rv: 0.4, rf: 0.6, cash: 0, other: 0 },
+    }),
+    makeInstrument('b', 99_000_000, {
+      name: 'Balanceado B',
+      weightPortfolio: 0.5,
+      currentMixUsed: { rv: 0.4, rf: 0.6, cash: 0, other: 0 },
+    }),
+  ]);
+  const profile = buildOperationalBucketProfile({
+    snapshot,
+    monthlySpendClp: 1_000_000,
+    includeCaptive: false,
+    includeRiskCapital: false,
+    optimizableInvestmentsClp: 200_000_000,
+  });
+  assert.equal(profile.amountSource, 'instrument_amount_clp');
+  assert.equal(Math.round(profile.mixedFundClp), 200_000_000);
+});
+
 const failures: string[] = [];
 for (const entry of tests) {
   try {

@@ -64,6 +64,10 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const [stressSensitivity, setStressSensitivity] = useState<'moderada' | 'severa' | 'extrema'>('severa');
 
   const universeSnapshot = useMemo(() => loadInstrumentUniverseSnapshot(), []);
+  const optimizableInvestmentsClp = useMemo(() => {
+    const value = Number(params.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }, [params.simulationComposition?.optimizableInvestmentsCLP]);
 
   const profile = useMemo(
     () =>
@@ -72,8 +76,9 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         monthlySpendClp,
         includeCaptive,
         includeRiskCapital,
+        optimizableInvestmentsClp,
       }),
-    [universeSnapshot, monthlySpendClp, includeCaptive, includeRiskCapital],
+    [universeSnapshot, monthlySpendClp, includeCaptive, includeRiskCapital, optimizableInvestmentsClp],
   );
 
   const stressScenarios = useMemo(() => {
@@ -196,7 +201,19 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         <MetricCard title="Defensa limpia" value={formatCompactMoney(profile.cleanDefensiveClp)} subtitle={formatMonths(profile.cleanDefensiveRunwayMonths)} />
         <MetricCard title="Defensa mixta" value={formatCompactMoney(profile.mixedFundClp)} subtitle={`+${formatMonths(profile.mixedFundRunwayMonths)} (vende balanceados)`} />
         <MetricCard title="RV embebida si uso balanceados" value={formatCompactMoney(profile.embeddedEquityClp)} subtitle={formatPct(profile.embeddedEquitySoldPct)} />
-        <MetricCard title="Cobertura de datos" value={formatPct(profile.coveragePctByClp)} subtitle={profile.source === 'instrument_universe' ? 'Instrument Universe' : 'Sin fuente'} />
+        <MetricCard
+          title="Cobertura de datos"
+          value={formatPct(profile.coveragePctByClp)}
+          subtitle={
+            profile.source === 'instrument_universe'
+              ? profile.amountSource === 'weight_scaled_optimizable'
+                ? 'Universe + optimizable vigente'
+                : profile.amountSource === 'mixed'
+                  ? 'Universe mixto (directo + escalado)'
+                  : 'Instrument Universe (amountClp)'
+              : 'Sin fuente'
+          }
+        />
       </div>
 
       <TableCard title="Capas defensivas">
