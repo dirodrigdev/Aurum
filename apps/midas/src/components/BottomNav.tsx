@@ -1,7 +1,7 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'sim' | 'assist' | 'sens' | 'stress' | 'optv0' | 'opt' | 'settings';
+type TabId = 'sim' | 'assist' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
   sim: (
@@ -27,6 +27,12 @@ const icons: Record<TabId, JSX.Element> = {
   stress: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M9.5 2 4 11h5l-1 7 6-10h-5l1.5-6Z" fill="currentColor" />
+    </svg>
+  ),
+  bucketlab: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M4 6.2h12M6.2 10h7.6M8.2 13.8h3.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.6" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   ),
   opt: (
@@ -57,13 +63,14 @@ export function BottomNav({
   active: TabId;
   onChange: (tab: TabId) => void;
 }) {
-  const items: Array<{ id: TabId; label: string }> = [
+  const items: Array<{ id: TabId; label: string; legacy?: boolean }> = [
     { id: 'sim', label: 'Simulación' },
     { id: 'assist', label: 'Asistida' },
     { id: 'sens', label: 'Palancas' },
     { id: 'stress', label: 'Stress' },
-    { id: 'optv0', label: 'OPT' },
-    { id: 'opt', label: 'Optimizador' },
+    { id: 'bucketlab', label: 'Bucket Lab' },
+    { id: 'optv0', label: 'OPT', legacy: true },
+    { id: 'opt', label: 'Optimizador', legacy: true },
     { id: 'settings', label: 'Ajustes' },
   ];
   return (
@@ -76,7 +83,7 @@ export function BottomNav({
         height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         display: 'grid',
-        gridTemplateColumns: 'repeat(7, 1fr)',
+        gridTemplateColumns: 'repeat(8, 1fr)',
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,
@@ -106,7 +113,24 @@ export function BottomNav({
             }}
           >
             {icons[item.id]}
-            <span>{item.label}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={item.legacy ? { textDecoration: 'line-through' } : undefined}>{item.label}</span>
+              {item.legacy ? (
+                <span
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 999,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: T.textMuted,
+                    padding: '1px 4px',
+                    lineHeight: 1.2,
+                  }}
+                >
+                  legacy
+                </span>
+              ) : null}
+            </span>
           </button>
         );
       })}

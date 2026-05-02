@@ -24,6 +24,7 @@ import { OptPage } from './components/OptPage';
 import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { AssistedSimulationPage } from './components/AssistedSimulationPage';
+import { BucketLabPage } from './components/BucketLabPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
 import { loadInstrumentUniverseSnapshot } from './domain/instrumentUniverse';
@@ -3259,6 +3260,8 @@ export default function App() {
     />
   ) : activeTab === 'stress' ? (
     <StressPage params={simParams} stateLabel={stateLabel} />
+  ) : activeTab === 'bucketlab' ? (
+    <BucketLabPage params={simParams} />
   ) : activeTab === 'settings' ? (
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
