@@ -72,15 +72,52 @@ export type InstrumentUniverseSnapshot = {
   methodology: unknown;
 };
 
+export type InstrumentUniverseSnapshotMetadata = {
+  loadedAt: string;
+  importedAt: string;
+  fileName: string | null;
+  source: string;
+  instrumentsCount: number;
+  validInstrumentsCount: number;
+  totalWeightPortfolio: number;
+  totalAmountClp: number;
+  hasUsableAmounts: boolean;
+  hasUsableWeights: boolean;
+  hasUsableMix: boolean;
+  warnings: string[];
+  amountSource: 'amount_clp' | 'weight_portfolio' | 'mixed' | 'unknown';
+  checksum: string;
+  schemaVersion: number;
+  lastValid: true;
+};
+
+export type InstrumentUniverseFailedImport = {
+  attemptedAt: string;
+  fileName: string | null;
+  source: string;
+  errors: string[];
+  warnings: string[];
+};
+
 export type InstrumentUniverseValidation = {
   ok: boolean;
   errors: string[];
   warnings: string[];
   snapshot: InstrumentUniverseSnapshot | null;
   summary: InstrumentUniverseSummary | null;
+  instrumentsCount: number;
+  validInstrumentsCount: number;
+  totalWeightPortfolio: number;
+  totalAmountClp: number;
+  hasUsableAmounts: boolean;
+  hasUsableWeights: boolean;
+  hasUsableMix: boolean;
+  schemaVersion: number | null;
 };
 
 const STORAGE_KEY = 'midas.instrument-universe.v1';
+const STORAGE_META_KEY = 'midas.instrument-universe.meta.v1';
+const STORAGE_FAILED_KEY = 'midas.instrument-universe.failed-import.v1';
 const VERSION = 1 as const;
 const MIX_KEYS: InstrumentUniverseMixKey[] = ['rv', 'rf', 'cash', 'other'];
 const CRITICAL_FIELDS = [
@@ -231,6 +268,15 @@ const exposureWarning = (label: string, exposure: InstrumentUniverseExposureUsed
   if (!exposure || exposure.global === null || exposure.local === null) return null;
   const sum = exposure.global + exposure.local;
   return Math.abs(sum - 1) > 0.03 ? `${label}: global + local suma ${(sum * 100).toFixed(1)}%.` : null;
+};
+
+const hashString = (value: string) => {
+  let hash = 0x811c9dc5;
+  for (let idx = 0; idx < value.length; idx += 1) {
+    hash ^= value.charCodeAt(idx);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 };
 
 const buildInstrument = (source: Record<string, unknown>): InstrumentUniverseInstrument => {
@@ -422,17 +468,59 @@ export const validateInstrumentUniverseJson = (
 ): InstrumentUniverseValidation => {
   const trimmed = String(rawJson || '').trim();
   if (!trimmed) {
-    return { ok: false, errors: ['Pega o carga un instrument_universe.json antes de validar.'], warnings: [], snapshot: null, summary: null };
+    return {
+      ok: false,
+      errors: ['La carga no se aplicó. El archivo está vacío o no contiene instrumentos válidos. Se mantiene la última carga válida.'],
+      warnings: [],
+      snapshot: null,
+      summary: null,
+      instrumentsCount: 0,
+      validInstrumentsCount: 0,
+      totalWeightPortfolio: 0,
+      totalAmountClp: 0,
+      hasUsableAmounts: false,
+      hasUsableWeights: false,
+      hasUsableMix: false,
+      schemaVersion: null,
+    };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    return { ok: false, errors: ['El JSON instrument_universe no es válido.'], warnings: [], snapshot: null, summary: null };
+    return {
+      ok: false,
+      errors: ['La carga no se aplicó. El archivo no es JSON válido. Se mantiene la última carga válida.'],
+      warnings: [],
+      snapshot: null,
+      summary: null,
+      instrumentsCount: 0,
+      validInstrumentsCount: 0,
+      totalWeightPortfolio: 0,
+      totalAmountClp: 0,
+      hasUsableAmounts: false,
+      hasUsableWeights: false,
+      hasUsableMix: false,
+      schemaVersion: null,
+    };
   }
   if (!isRecord(parsed)) {
-    return { ok: false, errors: ['El JSON instrument_universe debe ser un objeto.'], warnings: [], snapshot: null, summary: null };
+    return {
+      ok: false,
+      errors: ['La carga no se aplicó. El instrument_universe debe ser un objeto JSON. Se mantiene la última carga válida.'],
+      warnings: [],
+      snapshot: null,
+      summary: null,
+      instrumentsCount: 0,
+      validInstrumentsCount: 0,
+      totalWeightPortfolio: 0,
+      totalAmountClp: 0,
+      hasUsableAmounts: false,
+      hasUsableWeights: false,
+      hasUsableMix: false,
+      schemaVersion: null,
+    };
   }
 
   const topLevelRows = [
@@ -484,10 +572,18 @@ export const validateInstrumentUniverseJson = (
   if (instrumentRows.size === 0) {
     return {
       ok: false,
-      errors: ['No encontré instrumentos en instrument_master / instrument_mix_profile / portfolio_position.'],
+      errors: ['La carga no se aplicó. El archivo no contiene instrumentos válidos. Se mantiene la última carga válida.'],
       warnings: [],
       snapshot: null,
       summary: null,
+      instrumentsCount: 0,
+      validInstrumentsCount: 0,
+      totalWeightPortfolio: 0,
+      totalAmountClp: 0,
+      hasUsableAmounts: false,
+      hasUsableWeights: false,
+      hasUsableMix: false,
+      schemaVersion: null,
     };
   }
 
@@ -501,22 +597,130 @@ export const validateInstrumentUniverseJson = (
     portfolioSummary: parsed.portfolio_summary ?? parsed.portfolioSummary ?? null,
     methodology: parsed.methodology ?? null,
   };
+  return validateInstrumentUniverseSnapshot(snapshot, targetWeights);
+};
+
+export const validateInstrumentUniverseSnapshot = (
+  snapshot: InstrumentUniverseSnapshot | null,
+  targetWeights?: PortfolioWeights | null,
+): InstrumentUniverseValidation => {
+  if (!snapshot) {
+    return {
+      ok: false,
+      errors: ['La carga no se aplicó. El archivo no contiene instrumentos válidos. Se mantiene la última carga válida.'],
+      warnings: [],
+      snapshot: null,
+      summary: null,
+      instrumentsCount: 0,
+      validInstrumentsCount: 0,
+      totalWeightPortfolio: 0,
+      totalAmountClp: 0,
+      hasUsableAmounts: false,
+      hasUsableWeights: false,
+      hasUsableMix: false,
+      schemaVersion: null,
+    };
+  }
   const summary = summarizeInstrumentUniverse(snapshot, targetWeights);
+  const instrumentsCount = snapshot.instruments.length;
+  const validInstrumentsCount = snapshot.instruments.filter((item) => item.usable).length;
+  const totalWeightPortfolio = snapshot.instruments.reduce((sum, item) => sum + Math.max(0, item.weightPortfolio ?? 0), 0);
+  const totalAmountClp = snapshot.instruments.reduce((sum, item) => sum + Math.max(0, item.amountClp ?? 0), 0);
+  const hasUsableAmounts = snapshot.instruments.some((item) => Number(item.amountClp ?? 0) > 0);
+  const hasUsableWeights = snapshot.instruments.some((item) => Number(item.weightPortfolio ?? 0) > 0);
+  const hasUsableMix = snapshot.instruments.some((item) => !!item.currentMixUsed);
   const warnings = summary?.warnings ?? [];
+  const errors: string[] = [];
+
+  if (instrumentsCount === 0) errors.push('El archivo no contiene instrumentos.');
+  if (!hasUsableAmounts) errors.push('Todos los amountClp vienen en cero o faltan.');
+  if (!hasUsableWeights) errors.push('Todos los weightPortfolio vienen en cero o faltan.');
+  if (!hasUsableMix) errors.push('No hay currentMixUsed utilizable en ningún instrumento.');
+  if (!hasUsableAmounts && Math.abs(totalWeightPortfolio - 1) > 0.08) {
+    errors.push('El peso total está muy lejos de 100% y no hay montos utilizables para respaldar la carga.');
+  }
 
   return {
-    ok: true,
-    errors: [],
+    ok: errors.length === 0,
+    errors:
+      errors.length > 0
+        ? [
+            'La carga no se aplicó. El archivo está vacío o no contiene instrumentos válidos. Se mantiene la última carga válida.',
+            ...errors,
+          ]
+        : [],
     warnings,
-    snapshot,
+    snapshot: errors.length === 0 ? snapshot : null,
     summary,
+    instrumentsCount,
+    validInstrumentsCount,
+    totalWeightPortfolio,
+    totalAmountClp,
+    hasUsableAmounts,
+    hasUsableWeights,
+    hasUsableMix,
+    schemaVersion: snapshot.version,
   };
 };
 
+export const buildInstrumentUniverseSnapshotMetadata = (
+  snapshot: InstrumentUniverseSnapshot,
+  validation: InstrumentUniverseValidation,
+  input?: { fileName?: string | null; source?: string; loadedAt?: string },
+): InstrumentUniverseSnapshotMetadata => {
+  const loadedAt = input?.loadedAt ?? new Date().toISOString();
+  const amountSource = validation.hasUsableAmounts
+    ? validation.hasUsableWeights
+      ? 'mixed'
+      : 'amount_clp'
+    : validation.hasUsableWeights
+      ? 'weight_portfolio'
+      : 'unknown';
+  return {
+    loadedAt,
+    importedAt: snapshot.savedAt,
+    fileName: input?.fileName ?? null,
+    source: input?.source ?? 'manual_upload',
+    instrumentsCount: validation.instrumentsCount,
+    validInstrumentsCount: validation.validInstrumentsCount,
+    totalWeightPortfolio: validation.totalWeightPortfolio,
+    totalAmountClp: validation.totalAmountClp,
+    hasUsableAmounts: validation.hasUsableAmounts,
+    hasUsableWeights: validation.hasUsableWeights,
+    hasUsableMix: validation.hasUsableMix,
+    warnings: validation.warnings,
+    amountSource,
+    checksum: hashString(snapshot.rawJson),
+    schemaVersion: validation.schemaVersion ?? VERSION,
+    lastValid: true,
+  };
+};
 export const parseStoredInstrumentUniverseSnapshot = (raw: string): InstrumentUniverseSnapshot | null => {
   try {
-    const parsed = JSON.parse(raw) as InstrumentUniverseSnapshot | null;
-    if (parsed && parsed.version === VERSION && Array.isArray(parsed.instruments)) return parsed;
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && 'active' in parsed) {
+      const active = (parsed as { active?: unknown }).active;
+      if (
+        active &&
+        typeof active === 'object' &&
+        'version' in active &&
+        'instruments' in active &&
+        (active as { version?: unknown }).version === VERSION &&
+        Array.isArray((active as { instruments?: unknown }).instruments)
+      ) {
+        return active as InstrumentUniverseSnapshot;
+      }
+    }
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'version' in parsed &&
+      'instruments' in parsed &&
+      (parsed as { version?: unknown }).version === VERSION &&
+      Array.isArray((parsed as { instruments?: unknown }).instruments)
+    ) {
+      return parsed as InstrumentUniverseSnapshot;
+    }
   } catch {
     // Fall through to schema validation: old cache entries may contain the raw uploaded JSON.
   }
@@ -540,7 +744,53 @@ export const saveInstrumentUniverseSnapshot = (snapshot: InstrumentUniverseSnaps
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
 };
 
+export const loadInstrumentUniverseSnapshotMetadata = (): InstrumentUniverseSnapshotMetadata | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_META_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InstrumentUniverseSnapshotMetadata | null;
+    if (!parsed || typeof parsed !== 'object' || parsed.lastValid !== true) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const saveInstrumentUniverseSnapshotWithMetadata = (
+  snapshot: InstrumentUniverseSnapshot,
+  metadata: InstrumentUniverseSnapshotMetadata,
+) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  window.localStorage.setItem(STORAGE_META_KEY, JSON.stringify(metadata));
+};
+
+export const loadLastFailedInstrumentUniverseImport = (): InstrumentUniverseFailedImport | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_FAILED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InstrumentUniverseFailedImport | null;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.attemptedAt !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const saveLastFailedInstrumentUniverseImport = (failed: InstrumentUniverseFailedImport) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(STORAGE_FAILED_KEY, JSON.stringify(failed));
+};
+
+export const clearLastFailedInstrumentUniverseImport = () => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(STORAGE_FAILED_KEY);
+};
+
 export const clearInstrumentUniverseSnapshot = () => {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.removeItem(STORAGE_META_KEY);
 };

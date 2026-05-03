@@ -1,7 +1,9 @@
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
+  buildInstrumentUniverseSnapshotMetadata,
   parseStoredInstrumentUniverseSnapshot,
-  saveInstrumentUniverseSnapshot,
+  saveInstrumentUniverseSnapshotWithMetadata,
+  validateInstrumentUniverseSnapshot,
   validateInstrumentUniverseJson,
   type InstrumentUniverseSnapshot,
 } from '../../domain/instrumentUniverse';
@@ -15,9 +17,18 @@ export type PersistedInstrumentUniverseVersion = {
   savedAt: string;
   hash: string;
   fileName: string | null;
+  source: string;
   payloadJson: string;
   instrumentCount: number;
   usableInstrumentCount: number;
+  totalWeightPortfolio: number;
+  totalAmountClp: number;
+  hasUsableAmounts: boolean;
+  hasUsableWeights: boolean;
+  hasUsableMix: boolean;
+  warnings: string[];
+  amountSource: 'amount_clp' | 'weight_portfolio' | 'mixed' | 'unknown';
+  lastValid: true;
 };
 
 type PersistedInstrumentUniverseDocument = {
@@ -45,16 +56,31 @@ const hashString = (value: string) => {
 export function buildPersistedInstrumentUniverseVersion(
   snapshot: InstrumentUniverseSnapshot,
   fileName: string | null = null,
+  source = 'settings_upload',
 ): PersistedInstrumentUniverseVersion {
-  const summary = validateInstrumentUniverseJson(snapshot.rawJson).summary;
+  const validation = validateInstrumentUniverseSnapshot(snapshot);
+  const metadata = buildInstrumentUniverseSnapshotMetadata(snapshot, validation, {
+    fileName,
+    source,
+    loadedAt: snapshot.savedAt,
+  });
   return {
     schemaVersion: 1,
     savedAt: snapshot.savedAt || new Date().toISOString(),
     hash: hashString(snapshot.rawJson),
     fileName,
+    source,
     payloadJson: snapshot.rawJson,
     instrumentCount: snapshot.instruments.length,
-    usableInstrumentCount: summary?.usableInstrumentCount ?? snapshot.instruments.filter((item) => item.usable).length,
+    usableInstrumentCount: metadata.validInstrumentsCount,
+    totalWeightPortfolio: metadata.totalWeightPortfolio,
+    totalAmountClp: metadata.totalAmountClp,
+    hasUsableAmounts: metadata.hasUsableAmounts,
+    hasUsableWeights: metadata.hasUsableWeights,
+    hasUsableMix: metadata.hasUsableMix,
+    warnings: metadata.warnings,
+    amountSource: metadata.amountSource,
+    lastValid: true,
   };
 }
 
@@ -93,6 +119,7 @@ export async function loadActiveInstrumentUniverseFromFirestore(): Promise<LoadP
 export async function persistInstrumentUniverseActiveToFirestore(input: {
   snapshot: InstrumentUniverseSnapshot;
   fileName?: string | null;
+  source?: string;
 }): Promise<PersistInstrumentUniverseResult> {
   const docRef = ref();
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
@@ -101,7 +128,11 @@ export async function persistInstrumentUniverseActiveToFirestore(input: {
     const existing = await getDoc(docRef);
     const existingData = existing.exists() ? (existing.data() as PersistedInstrumentUniverseDocument) : {};
     const previous = isPersistedVersion(existingData.active) ? existingData.active : null;
-    const active = buildPersistedInstrumentUniverseVersion(input.snapshot, input.fileName ?? null);
+    const active = buildPersistedInstrumentUniverseVersion(
+      input.snapshot,
+      input.fileName ?? null,
+      input.source ?? 'settings_upload',
+    );
     await setDoc(docRef, {
       active,
       previous,
@@ -118,6 +149,14 @@ export async function persistInstrumentUniverseActiveToFirestore(input: {
 
 export async function hydrateInstrumentUniverseCacheFromFirestore(): Promise<LoadPersistedInstrumentUniverseResult> {
   const loaded = await loadActiveInstrumentUniverseFromFirestore();
-  if (loaded.ok) saveInstrumentUniverseSnapshot(loaded.snapshot);
+  if (loaded.ok) {
+    const validation = validateInstrumentUniverseSnapshot(loaded.snapshot);
+    const metadata = buildInstrumentUniverseSnapshotMetadata(loaded.snapshot, validation, {
+      fileName: loaded.active.fileName,
+      source: loaded.active.source || 'firestore_active',
+      loadedAt: loaded.active.savedAt,
+    });
+    saveInstrumentUniverseSnapshotWithMetadata(loaded.snapshot, metadata);
+  }
   return loaded;
 }

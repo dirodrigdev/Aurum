@@ -4,9 +4,10 @@ import { loadInstrumentUniverseSnapshot } from '../domain/instrumentUniverse';
 import { buildOperationalBucketProfile } from '../domain/bucketLab/operationalBucketProfile';
 import { runOperationalBucketStress } from '../domain/bucketLab/operationalBucketStress';
 import { runBucketTradeoffAnalysis } from '../domain/bucketLab/bucketTradeoff';
+import { buildBucketDecisionSummary } from '../domain/bucketLab/bucketDecisionSummary';
 import { T } from './theme';
 
-const candidateBuckets = [24, 36, 48, 60, 72, 96, 120];
+const baseCandidateBuckets = [24, 36, 48, 60, 72, 96, 120];
 
 const formatMoney = (value: number) => `$${Math.round(value).toLocaleString('es-CL')}`;
 const formatCompactMoney = (value: number) =>
@@ -68,6 +69,11 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     const value = Number(params.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
     return Number.isFinite(value) && value > 0 ? value : null;
   }, [params.simulationComposition?.optimizableInvestmentsCLP]);
+
+  const candidateBuckets = useMemo(
+    () => Array.from(new Set([...baseCandidateBuckets, Math.round(bucketCurrentMonths)])).filter((value) => value > 0).sort((a, b) => a - b),
+    [bucketCurrentMonths],
+  );
 
   const profile = useMemo(
     () =>
@@ -133,6 +139,17 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     ],
   );
 
+  const decision = useMemo(
+    () =>
+      buildBucketDecisionSummary({
+        profile,
+        stressRows,
+        tradeoffRows,
+        targetBucketMonths: bucketCurrentMonths,
+      }),
+    [profile, stressRows, tradeoffRows, bucketCurrentMonths],
+  );
+
   const recommendation = useMemo(() => {
     if (profile.cleanDefensiveRunwayMonths >= 48) {
       return 'El bucket hard no cuenta toda la defensa. La defensa limpia total parece más relevante que el cash puro.';
@@ -145,13 +162,74 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${
+            decision.recommendation === 'review_data'
+              ? T.negative
+              : decision.recommendation === 'consider_increase' || decision.recommendation === 'increase'
+                ? T.warning
+                : T.border
+          }`,
+          borderRadius: 18,
+          padding: 14,
+          display: 'grid',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+              Lectura ejecutiva
+            </div>
+            <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 800 }}>{decision.headline}</div>
+            <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.45, maxWidth: 760 }}>
+              {decision.oneLineSummary}
+            </div>
+          </div>
+          <div style={{ display: 'inline-flex', width: 'fit-content', border: `1px solid ${T.warning}`, borderRadius: 999, padding: '3px 8px', color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            Read-only
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+          <MetricCard title="Defensa limpia" value={formatMonths(decision.currentCleanDefenseMonths)} subtitle="Cash, near-cash y RF pura vendible" />
+          <MetricCard title={`Brecha a ${decision.targetBucketMonths}m`} value={formatCompactMoney(decision.gapClp)} subtitle={`${decision.gapMonths.toFixed(1).replace('.', ',')} meses por completar`} />
+          <MetricCard
+            title={
+              decision.nextBucketCandidateMonths
+                ? `Subir a ${decision.nextBucketCandidateMonths}m`
+                : 'Siguiente bucket'
+            }
+            value={formatCompactMoney(decision.nextBucketOpportunityCostAnnualClp ?? 0)}
+            subtitle="Costo permanente aprox. por año"
+          />
+        </div>
+
+        <div style={{ display: 'grid', gap: 5 }}>
+          {decision.decisionRationale.map((item) => (
+            <div key={item} style={{ color: T.textSecondary, fontSize: 12 }}>
+              • {item}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          Subir bucket tiene costo en todos los escenarios. Vender balanceados tiene costo solo si la crisis supera la defensa limpia.
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          Defensa limpia incluye solo cash, near-cash y RF pura vendible. La RF dentro de balanceados se muestra como defensa mixta porque al venderla también se vende RV embebida.
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          El scroll muestra el detalle del stress y del costo de oportunidad.
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gap: 4 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Bucket Lab</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
           Compara el costo de tener más defensa desde el inicio versus el riesgo de vender balanceados en una crisis larga.
-        </div>
-        <div style={{ display: 'inline-flex', width: 'fit-content', border: `1px solid ${T.warning}`, borderRadius: 999, padding: '3px 8px', color: T.warning, fontSize: 11, fontWeight: 700 }}>
-          Read-only
         </div>
       </div>
 

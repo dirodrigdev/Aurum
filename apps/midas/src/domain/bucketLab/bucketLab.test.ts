@@ -3,6 +3,7 @@ import type { InstrumentUniverseInstrument, InstrumentUniverseSnapshot } from '.
 import { buildOperationalBucketProfile } from './operationalBucketProfile';
 import { runOperationalBucketStress } from './operationalBucketStress';
 import { runBucketTradeoffAnalysis } from './bucketTradeoff';
+import { buildBucketDecisionSummary } from './bucketDecisionSummary';
 
 type TestFn = () => void;
 const tests: Array<{ name: string; fn: TestFn }> = [];
@@ -108,6 +109,20 @@ test('conservative balanced has lower embedded equity than moderate', () => {
   assert.ok(consEq < modEq);
 });
 
+test('80/20 balanced is conservative and does not count as clean defense', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('bal-80-20', 10_000_000, {
+      name: 'Balanceado 80 RF 20 RV',
+      currentMixUsed: { rv: 0.2, rf: 0.8, cash: 0, other: 0 },
+    }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  assert.equal(profile.instruments[0].layer, 'conservative_balanced');
+  assert.equal(profile.cleanDefensiveClp, 0);
+  assert.equal(profile.mixedFundClp, 10_000_000);
+  assert.equal(profile.embeddedEquityClp, 2_000_000);
+});
+
 test('missing mix lands in unknown layer', () => {
   const snapshot = makeSnapshot([
     makeInstrument('unknown-1', 7_000_000, { currentMixUsed: null }),
@@ -168,6 +183,88 @@ test('tradeoff computes annual opportunity cost', () => {
   assert.equal(rows.length, 2);
   assert.equal(rows[1].extraDefensiveCapitalClp, 72_000_000);
   assert.equal(rows[1].opportunityCostAnnual, 3_600_000);
+});
+
+test('decision summary recommends maintain near target', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 45_400_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({
+    profile,
+    scenarios: [{ crisisMonths: 60, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  assert.equal(summary.recommendation, 'maintain');
+  assert.ok(summary.gapMonths < 3);
+});
+
+test('decision summary recommends consider increase below 36 months', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 30_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({ profile, scenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }] });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [36, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  assert.equal(summary.recommendation, 'consider_increase');
+});
+
+test('decision summary recommends review data with low coverage', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('unknown', 10_000_000, { name: 'Sin mix', currentMixUsed: null }),
+    makeInstrument('cash', 10_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({ profile, scenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }] });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  assert.equal(summary.recommendation, 'review_data');
+});
+
+test('decision summary calculates gap and first stress failure', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 24_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({
+    profile,
+    scenarios: [
+      { crisisMonths: 24, equityDrawdown: -0.2, fixedIncomeShock: 0 },
+      { crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+    ],
+  });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  assert.equal(summary.gapMonths, 24);
+  assert.equal(summary.gapClp, 24_000_000);
+  assert.equal(summary.stressFirstFailureMonths, 48);
 });
 
 test('helpers do not mutate snapshot inputs', () => {

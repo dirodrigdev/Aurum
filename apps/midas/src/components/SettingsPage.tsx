@@ -11,11 +11,19 @@ import {
   type InstrumentBaseValidation,
 } from '../domain/instrumentBase';
 import {
+  buildInstrumentUniverseSnapshotMetadata,
+  clearLastFailedInstrumentUniverseImport,
   clearInstrumentUniverseSnapshot,
+  loadInstrumentUniverseSnapshotMetadata,
+  loadLastFailedInstrumentUniverseImport,
   loadInstrumentUniverseSnapshot,
-  saveInstrumentUniverseSnapshot,
+  saveInstrumentUniverseSnapshotWithMetadata,
+  saveLastFailedInstrumentUniverseImport,
   summarizeInstrumentUniverse,
+  validateInstrumentUniverseSnapshot,
   validateInstrumentUniverseJson,
+  type InstrumentUniverseFailedImport,
+  type InstrumentUniverseSnapshotMetadata,
   type InstrumentUniverseSnapshot,
   type InstrumentUniverseSummary,
   type InstrumentUniverseValidation,
@@ -316,6 +324,17 @@ function aurumBaseSubtitle(status: AurumIntegrationStatus, optimizableBaseRefere
   return 'Integración Aurum no configurada';
 }
 
+const deriveUniverseMetadataFallback = (
+  snapshot: InstrumentUniverseSnapshot | null,
+): InstrumentUniverseSnapshotMetadata | null => {
+  if (!snapshot) return null;
+  const validation = validateInstrumentUniverseSnapshot(snapshot);
+  return buildInstrumentUniverseSnapshotMetadata(snapshot, validation, {
+    source: 'local_cache_legacy',
+    loadedAt: snapshot.savedAt,
+  });
+};
+
 export function SettingsPage({
   optimizableBaseReference,
   aurumIntegrationStatus,
@@ -330,6 +349,12 @@ export function SettingsPage({
   const [validation, setValidation] = useState<InstrumentBaseValidation | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [savedUniverseSnapshot, setSavedUniverseSnapshot] = useState(() => loadInstrumentUniverseSnapshot());
+  const [savedUniverseMetadata, setSavedUniverseMetadata] = useState<InstrumentUniverseSnapshotMetadata | null>(
+    () => loadInstrumentUniverseSnapshotMetadata() ?? deriveUniverseMetadataFallback(loadInstrumentUniverseSnapshot()),
+  );
+  const [lastFailedUniverseImport, setLastFailedUniverseImport] = useState<InstrumentUniverseFailedImport | null>(
+    () => loadLastFailedInstrumentUniverseImport(),
+  );
   const [universeEditorValue, setUniverseEditorValue] = useState(() => loadInstrumentUniverseSnapshot()?.rawJson || '');
   const [universeOriginalFileName, setUniverseOriginalFileName] = useState<string | null>(null);
   const [universeValidation, setUniverseValidation] = useState<InstrumentUniverseValidation | null>(null);
@@ -349,6 +374,7 @@ export function SettingsPage({
       .then((result) => {
         if (cancelled || !result.ok) return;
         setSavedUniverseSnapshot(result.snapshot);
+        setSavedUniverseMetadata(loadInstrumentUniverseSnapshotMetadata() ?? deriveUniverseMetadataFallback(result.snapshot));
         if (!universeEditorValue.trim()) {
           setUniverseEditorValue(result.snapshot.rawJson);
         }
@@ -403,7 +429,11 @@ export function SettingsPage({
   const runUniverseValidation = () => {
     const next = validateInstrumentUniverseJson(universeEditorValue, targetWeights);
     setUniverseValidation(next);
-    setUniverseStatusMessage(next.ok ? 'Universe válido. Puedes guardarlo como fuente principal de mix.' : 'Corrige el universe antes de guardar.');
+    setUniverseStatusMessage(
+      next.ok
+        ? 'Mix válido. Puedes guardarlo como fuente principal.'
+        : 'La carga no se aplicó. Corrige el archivo y se mantendrá la última versión válida.',
+    );
     return next;
   };
 
@@ -413,21 +443,40 @@ export function SettingsPage({
       : validateInstrumentUniverseJson(universeEditorValue, targetWeights);
     setUniverseValidation(next);
     if (!next.ok || !next.snapshot) {
-      setUniverseStatusMessage('No pude guardar instrument_universe. Revisa errores.');
+      const failed: InstrumentUniverseFailedImport = {
+        attemptedAt: new Date().toISOString(),
+        fileName: universeOriginalFileName,
+        source: 'settings_upload',
+        errors: next.errors,
+        warnings: next.warnings,
+      };
+      saveLastFailedInstrumentUniverseImport(failed);
+      setLastFailedUniverseImport(failed);
+      setUniverseStatusMessage(
+        'La carga no se aplicó. El archivo está vacío o no contiene instrumentos válidos. Se mantiene la última carga válida.',
+      );
       return;
     }
     setUniverseStatusMessage('Guardando instrument_universe como active persistente...');
     const persisted = await persistInstrumentUniverseActiveToFirestore({
       snapshot: next.snapshot,
       fileName: universeOriginalFileName,
+      source: 'settings_upload',
     });
-    saveInstrumentUniverseSnapshot(next.snapshot);
+    const metadata = buildInstrumentUniverseSnapshotMetadata(next.snapshot, next, {
+      fileName: universeOriginalFileName,
+      source: persisted.ok ? 'settings_upload' : 'local_cache',
+    });
+    saveInstrumentUniverseSnapshotWithMetadata(next.snapshot, metadata);
+    clearLastFailedInstrumentUniverseImport();
     window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(next.snapshot);
+    setSavedUniverseMetadata(metadata);
+    setLastFailedUniverseImport(null);
     setUniverseStatusMessage(
       persisted.ok
-        ? `Instrument universe guardado en Firestore como active (${persisted.active.hash}). Cache local actualizado.`
-        : `Cache local actualizado, pero Firestore no quedó persistido: ${persisted.reason}`,
+        ? `Última carga válida actualizada: ${metadata.instrumentsCount} instrumentos · peso total ${formatPct(metadata.totalWeightPortfolio)}.`
+        : `Última carga válida actualizada localmente, pero Firestore no quedó persistido: ${persisted.reason}`,
     );
   };
 
@@ -435,6 +484,7 @@ export function SettingsPage({
     clearInstrumentUniverseSnapshot();
     window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
     setSavedUniverseSnapshot(null);
+    setSavedUniverseMetadata(null);
     setUniverseValidation(null);
     setUniverseStatusMessage('Cache local eliminado. La versión active persistida en Firestore no se borra desde esta acción.');
   };
@@ -704,6 +754,57 @@ export function SettingsPage({
           </div>
         </div>
 
+        <div
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.surfaceEl,
+            borderRadius: 18,
+            padding: 14,
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: T.textMuted }}>
+            Mix de instrumentos
+          </div>
+          {savedUniverseSnapshot && savedUniverseMetadata ? (
+            <>
+              <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 700 }}>
+                Última carga válida: {formatDateTime(savedUniverseMetadata.loadedAt)} · {savedUniverseMetadata.instrumentsCount} instrumentos · peso total {formatPct(savedUniverseMetadata.totalWeightPortfolio)}
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
+                Fuente: {savedUniverseMetadata.source} · archivo {savedUniverseMetadata.fileName || 'manual'} · monto total {formatMoneyClp(savedUniverseMetadata.totalAmountClp)} · estado válido
+              </div>
+              {savedUniverseMetadata.warnings.length > 0 && (
+                <div style={{ color: T.warning, fontSize: 12, display: 'grid', gap: 5 }}>
+                  {savedUniverseMetadata.warnings.slice(0, 4).map((warning) => (
+                    <div key={warning}>• {warning}</div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: T.textSecondary, fontSize: 13 }}>
+              Sin mix de instrumentos cargado. MIDAS usará el fallback configurado.
+            </div>
+          )}
+          {lastFailedUniverseImport && (
+            <div
+              style={{
+                borderRadius: 14,
+                border: `1px solid rgba(212,90,90,0.35)`,
+                background: 'rgba(212,90,90,0.08)',
+                color: T.negative,
+                padding: '10px 12px',
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              No se aplicó la última carga. El archivo no contiene instrumentos válidos. Se mantiene la última versión válida.
+            </div>
+          )}
+        </div>
+
         {savedUniverseSummary && (
           <>
             <UniverseSummaryPanel summary={savedUniverseSummary} />
@@ -727,7 +828,7 @@ export function SettingsPage({
               Cargar instrument_universe.json
             </div>
             <div style={{ marginTop: 6, color: T.textSecondary, fontSize: 13 }}>
-              Acepta archivo JSON o pegado manual. Se guarda como active en Firestore y en cache local midas.instrument-universe.v1.
+              Acepta archivo JSON o pegado manual. Solo se aplica si valida correctamente; si falla, se conserva la última carga válida.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
