@@ -1,3 +1,4 @@
+import type { BucketExpectedCostAnalysis } from './bucketExpectedCostAnalysis';
 import type { BucketTradeoffRow } from './bucketTradeoff';
 import type { OperationalBucketProfile } from './operationalBucketProfile';
 import type { OperationalBucketStressRow } from './operationalBucketStress';
@@ -24,6 +25,11 @@ export type BucketDecisionSummary = {
   stressFirstFailureMonths: number | null;
   embeddedEquitySoldAtFirstFailureClp: number;
   embeddedEquitySoldAtSevereStressClp: number;
+  currentBucketExpectedTotalCostClp: number;
+  bestBucketMonths: number;
+  bestBucketExpectedTotalCostClp: number;
+  differenceVsCurrentClp: number;
+  breakEvenProbability: number | null;
   decisionRationale: string[];
   warnings: string[];
 };
@@ -33,6 +39,7 @@ export type BuildBucketDecisionSummaryInput = {
   stressRows: OperationalBucketStressRow[];
   tradeoffRows: BucketTradeoffRow[];
   targetBucketMonths: number;
+  expectedCostAnalysis: BucketExpectedCostAnalysis;
 };
 
 const sortByCrisis = (rows: OperationalBucketStressRow[]) =>
@@ -59,11 +66,15 @@ export function buildBucketDecisionSummary(
   const gapOpportunityCostAnnualClp = gapClp * annualOpportunityRate;
   const warnings = [...input.profile.warnings];
   const decisionRationale: string[] = [];
+  const bestCostRow = input.expectedCostAnalysis.rows[0];
+  const currentCostRow =
+    input.expectedCostAnalysis.rows.find((row) => row.bucketMonths === input.expectedCostAnalysis.currentBucketMonths) ??
+    bestCostRow;
 
   let recommendation: BucketDecisionRecommendation = 'maintain';
   let headline = 'Mantener bucket actual';
   let oneLineSummary =
-    `La defensa limpia cubre ${currentCleanDefenseMonths.toFixed(1).replace('.', ',')} meses y hoy no sugiere un ajuste urgente del bucket.`;
+    `La defensa limpia cubre ${currentCleanDefenseMonths.toFixed(1).replace('.', ',')} meses y el bucket actual minimiza el costo esperado bajo estos supuestos.`;
 
   if (input.profile.coveragePctByClp < 0.8) {
     recommendation = 'review_data';
@@ -72,46 +83,44 @@ export function buildBucketDecisionSummary(
       'La cobertura del mix de instrumentos es insuficiente para recomendar un bucket con confianza.';
     decisionRationale.push('La cobertura de datos está bajo 80% del universo utilizable.');
     decisionRationale.push('Antes de mover bucket conviene revisar el Instrument Universe cargado.');
-  } else if (currentCleanDefenseMonths >= targetBucketMonths * 0.945) {
+  } else if (bestCostRow.bucketMonths === currentCostRow.bucketMonths) {
     recommendation = 'maintain';
     headline = 'Mantener bucket actual';
     oneLineSummary =
-      `La defensa limpia ya cubre ${currentCleanDefenseMonths.toFixed(1).replace('.', ',')} meses, muy cerca del objetivo de ${targetBucketMonths} meses.`;
-    decisionRationale.push('La brecha al objetivo es pequeña frente al costo permanente de subir bucket.');
-    if (firstFailure) {
-      decisionRationale.push(`La venta de balanceados aparece recién en crisis de ${firstFailure.crisisMonths} meses.`);
-    }
-  } else if (currentCleanDefenseMonths >= targetBucketMonths * 0.85 && gapClp <= input.profile.monthlySpendClp * 12) {
+      `El costo permanente de mover bucket no compensa el costo esperado de crisis bajo los supuestos actuales.`;
+    decisionRationale.push(
+      `Actual ${currentCostRow.bucketMonths}m: costo esperado ${Math.round(currentCostRow.expectedTotalCostClp).toLocaleString('es-CL')} CLP.`,
+    );
+  } else if (bestCostRow.bucketMonths < currentCostRow.bucketMonths) {
     recommendation = 'top_up_to_target';
-    headline = 'Completar brecha menor';
+    headline = 'Evaluar bajar bucket';
     oneLineSummary =
-      `La defensa limpia está cerca del objetivo; cerrar la brecha de ${gapMonths.toFixed(1).replace('.', ',')} meses parece un ajuste fino, no un cambio estructural.`;
-    decisionRationale.push(`Cerrar la brecha exige aproximadamente ${Math.round(gapClp).toLocaleString('es-CL')} CLP.`);
-    decisionRationale.push('El costo permanente de completar esa brecha parece acotado.');
-  } else if (currentCleanDefenseMonths < 24) {
+      `Bajar a ${bestCostRow.bucketMonths}m libera capital y mejora el costo esperado bajo los supuestos actuales.`;
+    decisionRationale.push(
+      `El mejor alternativo (${bestCostRow.bucketMonths}m) mejora en ${Math.round(
+        currentCostRow.expectedTotalCostClp - bestCostRow.expectedTotalCostClp,
+      ).toLocaleString('es-CL')} CLP/año esperado.`,
+    );
+  } else if (bestCostRow.bucketMonths > currentCostRow.bucketMonths && currentCleanDefenseMonths < 24) {
     recommendation = 'increase';
-    headline = 'Defensa limpia insuficiente';
+    headline = 'Subir bucket sí compensa';
     oneLineSummary =
-      'La defensa limpia actual es baja y deja demasiado peso en vender balanceados si la crisis se prolonga.';
-    decisionRationale.push('La defensa limpia queda bajo 24 meses.');
-    if (firstFailure) {
-      decisionRationale.push(`La defensa limpia falla desde crisis de ${firstFailure.crisisMonths} meses.`);
-    }
-  } else if (currentCleanDefenseMonths < 36) {
+      `Bajo estos supuestos, subir a ${bestCostRow.bucketMonths}m reduce el costo esperado total más que su costo permanente.`;
+  } else if (bestCostRow.bucketMonths > currentCostRow.bucketMonths) {
     recommendation = 'consider_increase';
     headline = 'Considerar subir bucket';
     oneLineSummary =
-      'La defensa limpia es limitada; parte importante del colchón depende de balanceados y venta de RV embebida.';
-    decisionRationale.push('La defensa limpia queda bajo 36 meses.');
-    if (firstFailure) {
-      decisionRationale.push(`El uso de balanceados empieza en crisis de ${firstFailure.crisisMonths} meses.`);
-    }
+      `El costo esperado de crisis largas supera el costo permanente de aumentar defensa bajo estos supuestos.`;
   }
 
   if (input.profile.mixedFundClp > input.profile.cleanDefensiveClp) {
     decisionRationale.push('Parte importante de la defensa depende de balanceados; al usarlos se vende RV embebida.');
   }
-  if (nextBucketRow) {
+  if (bestCostRow.breakEvenProbability !== null) {
+    decisionRationale.push(
+      `Break-even para subir bucket: crisis largas > ${(bestCostRow.breakEvenProbability * 100).toFixed(1).replace('.', ',')}%.`,
+    );
+  } else if (nextBucketRow) {
     decisionRationale.push(
       `Subir a ${nextBucketRow.bucketMonths} meses agrega un costo permanente aprox. de ${Math.round(
         nextBucketRow.opportunityCostAnnual,
@@ -134,6 +143,11 @@ export function buildBucketDecisionSummary(
     stressFirstFailureMonths: firstFailure?.crisisMonths ?? null,
     embeddedEquitySoldAtFirstFailureClp: firstFailure?.embeddedEquitySoldClp ?? 0,
     embeddedEquitySoldAtSevereStressClp: severeStress?.embeddedEquitySoldClp ?? 0,
+    currentBucketExpectedTotalCostClp: currentCostRow.expectedTotalCostClp,
+    bestBucketMonths: bestCostRow.bucketMonths,
+    bestBucketExpectedTotalCostClp: bestCostRow.expectedTotalCostClp,
+    differenceVsCurrentClp: bestCostRow.expectedTotalCostClp - currentCostRow.expectedTotalCostClp,
+    breakEvenProbability: bestCostRow.breakEvenProbability,
     decisionRationale: decisionRationale.slice(0, 3),
     warnings,
   };

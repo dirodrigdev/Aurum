@@ -4,6 +4,7 @@ import { loadInstrumentUniverseSnapshot } from '../domain/instrumentUniverse';
 import { buildOperationalBucketProfile } from '../domain/bucketLab/operationalBucketProfile';
 import { runOperationalBucketStress } from '../domain/bucketLab/operationalBucketStress';
 import { runBucketTradeoffAnalysis } from '../domain/bucketLab/bucketTradeoff';
+import { buildBucketExpectedCostAnalysis } from '../domain/bucketLab/bucketExpectedCostAnalysis';
 import { buildBucketDecisionSummary } from '../domain/bucketLab/bucketDecisionSummary';
 import { T } from './theme';
 
@@ -63,6 +64,13 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const [includeCaptive, setIncludeCaptive] = useState(false);
   const [includeRiskCapital, setIncludeRiskCapital] = useState(false);
   const [stressSensitivity, setStressSensitivity] = useState<'moderada' | 'severa' | 'extrema'>('severa');
+  const [forcedSalePenaltyPct, setForcedSalePenaltyPct] = useState(0.3);
+  const [prob36, setProb36] = useState(0.12);
+  const [prob48, setProb48] = useState(0.08);
+  const [prob60, setProb60] = useState(0.05);
+  const [prob72, setProb72] = useState(0.03);
+  const [prob96, setProb96] = useState(0.02);
+  const [showAssumptions, setShowAssumptions] = useState(false);
 
   const universeSnapshot = useMemo(() => loadInstrumentUniverseSnapshot(), []);
   const optimizableInvestmentsClp = useMemo(() => {
@@ -90,17 +98,20 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const stressScenarios = useMemo(() => {
     if (stressSensitivity === 'moderada') {
       return [
-        { crisisMonths: 24, equityDrawdown: -0.2, fixedIncomeShock: 0 },
-        { crisisMonths: 36, equityDrawdown: -0.2, fixedIncomeShock: -0.05 },
-        { crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+        { crisisMonths: 36, equityDrawdown: -0.2, fixedIncomeShock: 0 },
+        { crisisMonths: 48, equityDrawdown: -0.2, fixedIncomeShock: -0.05 },
+        { crisisMonths: 60, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+        { crisisMonths: 72, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+        { crisisMonths: 96, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
       ];
     }
     if (stressSensitivity === 'extrema') {
       return [
-        { crisisMonths: 60, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+        { crisisMonths: 36, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+        { crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.1 },
+        { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
         { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
         { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
-        { crisisMonths: 120, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
       ];
     }
     return [
@@ -108,6 +119,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       { crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.1 },
       { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
       { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
     ];
   }, [stressSensitivity]);
 
@@ -139,6 +151,24 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     ],
   );
 
+  const expectedCostAnalysis = useMemo(
+    () =>
+      buildBucketExpectedCostAnalysis({
+        profile,
+        tradeoffRows,
+        currentBucketMonths: bucketCurrentMonths,
+        forcedSalePenaltyPct,
+        crisisScenarioProbabilities: [
+          { crisisMonths: 36, probability: prob36 },
+          { crisisMonths: 48, probability: prob48 },
+          { crisisMonths: 60, probability: prob60 },
+          { crisisMonths: 72, probability: prob72 },
+          { crisisMonths: 96, probability: prob96 },
+        ],
+      }),
+    [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, prob36, prob48, prob60, prob72, prob96],
+  );
+
   const decision = useMemo(
     () =>
       buildBucketDecisionSummary({
@@ -146,19 +176,10 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         stressRows,
         tradeoffRows,
         targetBucketMonths: bucketCurrentMonths,
+        expectedCostAnalysis,
       }),
-    [profile, stressRows, tradeoffRows, bucketCurrentMonths],
+    [profile, stressRows, tradeoffRows, bucketCurrentMonths, expectedCostAnalysis],
   );
-
-  const recommendation = useMemo(() => {
-    if (profile.cleanDefensiveRunwayMonths >= 48) {
-      return 'El bucket hard no cuenta toda la defensa. La defensa limpia total parece más relevante que el cash puro.';
-    }
-    if (profile.cleanDefensiveRunwayMonths < 24) {
-      return 'La defensa limpia parece limitada; parte importante del colchón depende de vender balanceados.';
-    }
-    return 'Este análisis no cambia el motor M8. Sirve para evaluar si el bucket actual parece razonable o si conviene testear un escenario operativo más conservador.';
-  }, [profile.cleanDefensiveRunwayMonths]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -194,16 +215,24 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         </div>
 
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-          <MetricCard title="Defensa limpia" value={formatMonths(decision.currentCleanDefenseMonths)} subtitle="Cash, near-cash y RF pura vendible" />
-          <MetricCard title={`Brecha a ${decision.targetBucketMonths}m`} value={formatCompactMoney(decision.gapClp)} subtitle={`${decision.gapMonths.toFixed(1).replace('.', ',')} meses por completar`} />
+          <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual" />
+          <MetricCard title={`Mejor ${decision.bestBucketMonths}m`} value={formatCompactMoney(decision.bestBucketExpectedTotalCostClp)} subtitle={`Dif. ${formatSignedMoney(decision.differenceVsCurrentClp)}`} />
           <MetricCard
             title={
-              decision.nextBucketCandidateMonths
-                ? `Subir a ${decision.nextBucketCandidateMonths}m`
-                : 'Siguiente bucket'
+              decision.breakEvenProbability !== null
+                ? `Break-even subir`
+                : 'Supuesto clave'
             }
-            value={formatCompactMoney(decision.nextBucketOpportunityCostAnnualClp ?? 0)}
-            subtitle="Costo permanente aprox. por año"
+            value={
+              decision.breakEvenProbability !== null
+                ? formatPct(decision.breakEvenProbability)
+                : formatPct(forcedSalePenaltyPct)
+            }
+            subtitle={
+              decision.breakEvenProbability !== null
+                ? 'Prob. mínima de crisis larga'
+                : 'Penalización venta en baja'
+            }
           />
         </div>
 
@@ -222,7 +251,10 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           Defensa limpia incluye solo cash, near-cash y RF pura vendible. La RF dentro de balanceados se muestra como defensa mixta porque al venderla también se vende RV embebida.
         </div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          El scroll muestra el detalle del stress y del costo de oportunidad.
+          Estas probabilidades son supuestos para valorar escenarios, no predicciones.
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
+          El scroll muestra el detalle del stress, los supuestos y el costo esperado comparado.
         </div>
       </div>
 
@@ -272,6 +304,42 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <option value="extrema">Extrema</option>
           </select>
         </div>
+      </div>
+
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => setShowAssumptions((prev) => !prev)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: T.textPrimary,
+            fontWeight: 700,
+            textAlign: 'left',
+            padding: 0,
+            cursor: 'pointer',
+          }}
+        >
+          Supuestos de valorización {showAssumptions ? '▾' : '▸'}
+        </button>
+        {showAssumptions ? (
+          <>
+            <div style={{ color: T.textSecondary, fontSize: 12 }}>
+              El bucket grande se paga siempre vía menor crecimiento esperado. El bucket chico se paga solo si una crisis supera la defensa limpia y obliga a vender balanceados con RV embebida.
+            </div>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+              <InputNumber label="Prob. crisis 36m" value={prob36} onChange={setProb36} step={0.01} />
+              <InputNumber label="Prob. crisis 48m" value={prob48} onChange={setProb48} step={0.01} />
+              <InputNumber label="Prob. crisis 60m" value={prob60} onChange={setProb60} step={0.01} />
+              <InputNumber label="Prob. crisis 72m" value={prob72} onChange={setProb72} step={0.01} />
+              <InputNumber label="Prob. crisis 96m" value={prob96} onChange={setProb96} step={0.01} />
+              <InputNumber label="Penalización vender RV en baja" value={forcedSalePenaltyPct} onChange={setForcedSalePenaltyPct} step={0.01} />
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 12 }}>
+              Se usan bins exclusivos por duración para evitar doble conteo.
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
@@ -358,33 +426,32 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <tr style={{ color: T.textMuted, textAlign: 'left' }}>
               <th style={thStyle}>Bucket</th>
               <th style={{ ...thStyle, textAlign: 'right' }}>Capital defensivo</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Capital extra</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Costo oportunidad anual</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>RV embebida evitada</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>ForcedSale estimado</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Extra / liberado</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Costo / beneficio permanente</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado crisis</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado total</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>Dif. vs actual</th>
               <th style={thStyle}>Lectura</th>
             </tr>
           </thead>
           <tbody>
-            {tradeoffRows.map((row) => (
+            {expectedCostAnalysis.rows.map((row) => (
               <tr key={row.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
                 <td style={tdStyle}>{row.bucketMonths}m</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.requiredDefensiveCapitalClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.extraDefensiveCapitalClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.opportunityCostAnnual)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.avoidedEmbeddedEquitySaleClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.expectedForcedSaleCost)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.defensiveCapitalRequiredClp)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  {row.capitalExtraClp > 0 ? formatCompactMoney(row.capitalExtraClp) : `-${formatCompactMoney(row.capitalReleasedClp)}`}
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.opportunityCostAnnualClp)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.expectedForcedSaleCostClp)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedTotalCostClp)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedNetBenefitClp)}</td>
                 <td style={tdStyle}>{row.comment}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </TableCard>
-
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12 }}>
-        <div style={{ color: T.textPrimary, fontWeight: 700, marginBottom: 6 }}>Recomendación preliminar</div>
-        <div style={{ color: T.textSecondary, fontSize: 13 }}>{recommendation}</div>
-      </div>
 
       {profile.warnings.length > 0 && (
         <div style={{ background: T.surface, border: `1px solid ${T.warning}`, borderRadius: 12, padding: 12 }}>

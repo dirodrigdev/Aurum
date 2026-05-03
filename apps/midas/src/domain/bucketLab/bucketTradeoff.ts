@@ -5,7 +5,9 @@ export type BucketTradeoffRow = {
   bucketMonths: number;
   requiredDefensiveCapitalClp: number;
   extraDefensiveCapitalClp: number;
+  capitalReleasedClp: number;
   opportunityCostAnnual: number;
+  expectedGrowthBenefitAnnual: number;
   opportunityCost5Y: number;
   opportunityCost10Y: number;
   opportunityCost20Y: number;
@@ -13,6 +15,7 @@ export type BucketTradeoffRow = {
   avoidedEmbeddedEquitySaleClp: number;
   netTradeoffScore: number;
   comment: string;
+  scenarioRows: OperationalBucketStressRow[];
 };
 
 export type RunBucketTradeoffAnalysisInput = {
@@ -56,21 +59,24 @@ export function runBucketTradeoffAnalysis(input: RunBucketTradeoffAnalysisInput)
     .sort((a, b) => a - b)
     .map((bucketMonths) => {
       const requiredDefensiveCapitalClp = bucketMonths * monthlySpendClp;
-      const extraDefensiveCapitalClp = clampNonNegative(requiredDefensiveCapitalClp - currentBucketCapital);
+      const capitalDeltaClp = requiredDefensiveCapitalClp - currentBucketCapital;
+      const extraDefensiveCapitalClp = clampNonNegative(capitalDeltaClp);
+      const capitalReleasedClp = clampNonNegative(-capitalDeltaClp);
       const syntheticProfile: OperationalBucketProfile = {
         ...input.profile,
-        cleanDefensiveClp: Math.max(input.profile.cleanDefensiveClp, requiredDefensiveCapitalClp),
-        cleanDefensiveRunwayMonths: Math.max(input.profile.cleanDefensiveRunwayMonths, bucketMonths),
+        cleanDefensiveClp: requiredDefensiveCapitalClp,
+        cleanDefensiveRunwayMonths: bucketMonths,
       };
-      const stress = runOperationalBucketStress({
+      const scenarioRows = runOperationalBucketStress({
         profile: syntheticProfile,
         scenarios: input.stressScenarios,
       });
-      const expectedForcedSaleCost = averagePenalty(stress);
-      const embeddedSale = averageEmbeddedEquitySale(stress);
+      const expectedForcedSaleCost = averagePenalty(scenarioRows);
+      const embeddedSale = averageEmbeddedEquitySale(scenarioRows);
       const avoidedEmbeddedEquitySaleClp = clampNonNegative(baselineEmbeddedSale - embeddedSale);
 
-      const opportunityCostAnnual = extraDefensiveCapitalClp * annualDiff;
+      const opportunityCostAnnual = capitalDeltaClp * annualDiff;
+      const expectedGrowthBenefitAnnual = capitalReleasedClp * annualDiff;
       const opportunityCost5Y = futureValueDelta(extraDefensiveCapitalClp, growth, defensive, 5);
       const opportunityCost10Y = futureValueDelta(extraDefensiveCapitalClp, growth, defensive, 10);
       const opportunityCost20Y = futureValueDelta(extraDefensiveCapitalClp, growth, defensive, 20);
@@ -85,7 +91,9 @@ export function runBucketTradeoffAnalysis(input: RunBucketTradeoffAnalysisInput)
         bucketMonths,
         requiredDefensiveCapitalClp,
         extraDefensiveCapitalClp,
+        capitalReleasedClp,
         opportunityCostAnnual,
+        expectedGrowthBenefitAnnual,
         opportunityCost5Y,
         opportunityCost10Y,
         opportunityCost20Y,
@@ -93,6 +101,7 @@ export function runBucketTradeoffAnalysis(input: RunBucketTradeoffAnalysisInput)
         avoidedEmbeddedEquitySaleClp,
         netTradeoffScore,
         comment,
+        scenarioRows,
       };
     });
 }

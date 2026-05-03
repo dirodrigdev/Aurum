@@ -3,6 +3,7 @@ import type { InstrumentUniverseInstrument, InstrumentUniverseSnapshot } from '.
 import { buildOperationalBucketProfile } from './operationalBucketProfile';
 import { runOperationalBucketStress } from './operationalBucketStress';
 import { runBucketTradeoffAnalysis } from './bucketTradeoff';
+import { buildBucketExpectedCostAnalysis } from './bucketExpectedCostAnalysis';
 import { buildBucketDecisionSummary } from './bucketDecisionSummary';
 
 type TestFn = () => void;
@@ -201,25 +202,66 @@ test('decision summary recommends maintain near target', () => {
     expectedGrowthReturnAnnual: 0.08,
     expectedDefensiveReturnAnnual: 0.03,
   });
-  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0.12 },
+      { crisisMonths: 48, probability: 0.08 },
+      { crisisMonths: 60, probability: 0.05 },
+      { crisisMonths: 72, probability: 0.03 },
+      { crisisMonths: 96, probability: 0.02 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48, expectedCostAnalysis: expected });
   assert.equal(summary.recommendation, 'maintain');
   assert.ok(summary.gapMonths < 3);
 });
 
-test('decision summary recommends consider increase below 36 months', () => {
+test('decision summary recommends consider increase when higher bucket wins by expected cost', () => {
   const snapshot = makeSnapshot([
     makeInstrument('cash', 30_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 40_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
   ]);
   const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
-  const stress = runOperationalBucketStress({ profile, scenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }] });
+  const stress = runOperationalBucketStress({
+    profile,
+    scenarios: [
+      { crisisMonths: 48, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+    ],
+  });
   const tradeoff = runBucketTradeoffAnalysis({
     profile,
     candidateMonths: [36, 48, 60],
     currentBucketMonths: 48,
     expectedGrowthReturnAnnual: 0.08,
     expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [
+      { crisisMonths: 48, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+    ],
   });
-  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.9,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0.12 },
+      { crisisMonths: 60, probability: 0.10 },
+      { crisisMonths: 72, probability: 0.08 },
+      { crisisMonths: 96, probability: 0.06 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48, expectedCostAnalysis: expected });
   assert.equal(summary.recommendation, 'consider_increase');
 });
 
@@ -237,7 +279,20 @@ test('decision summary recommends review data with low coverage', () => {
     expectedGrowthReturnAnnual: 0.08,
     expectedDefensiveReturnAnnual: 0.03,
   });
-  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0.12 },
+      { crisisMonths: 48, probability: 0.08 },
+      { crisisMonths: 60, probability: 0.05 },
+      { crisisMonths: 72, probability: 0.03 },
+      { crisisMonths: 96, probability: 0.02 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48, expectedCostAnalysis: expected });
   assert.equal(summary.recommendation, 'review_data');
 });
 
@@ -261,10 +316,253 @@ test('decision summary calculates gap and first stress failure', () => {
     expectedGrowthReturnAnnual: 0.08,
     expectedDefensiveReturnAnnual: 0.03,
   });
-  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48 });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0.12 },
+      { crisisMonths: 48, probability: 0.08 },
+      { crisisMonths: 60, probability: 0.05 },
+      { crisisMonths: 72, probability: 0.03 },
+      { crisisMonths: 96, probability: 0.02 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({ profile, stressRows: stress, tradeoffRows: tradeoff, targetBucketMonths: 48, expectedCostAnalysis: expected });
   assert.equal(summary.gapMonths, 24);
   assert.equal(summary.gapClp, 24_000_000);
   assert.equal(summary.stressFirstFailureMonths, 48);
+});
+
+test('expected cost scenario uses probability * embedded equity sold * penalty pct', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 24_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0.1 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  assert.equal(expected.rows.find((row) => row.bucketMonths === 24)?.expectedForcedSaleCostClp, 432_000);
+});
+
+test('current bucket cost row is preserved in expected analysis', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 24_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24, 48],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0.1 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  assert.equal(expected.currentBucketMonths, 48);
+});
+
+test('larger bucket carries positive opportunity cost annual', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const row60 = tradeoff.find((row) => row.bucketMonths === 60)!;
+  assert.ok(row60.opportunityCostAnnual > 0);
+});
+
+test('smaller bucket carries expected growth benefit annual', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [36, 48],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const row36 = tradeoff.find((row) => row.bucketMonths === 36)!;
+  assert.equal(row36.expectedGrowthBenefitAnnual, 600_000);
+});
+
+test('probabilities zero make permanent cost dominate', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [36, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  assert.equal(expected.bestBucketMonths, 36);
+});
+
+test('high penalty can make higher bucket preferable', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 48_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [
+      { crisisMonths: 36, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+      { crisisMonths: 48, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+    ],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.9,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0.12 },
+      { crisisMonths: 48, probability: 0.10 },
+      { crisisMonths: 60, probability: 0.08 },
+      { crisisMonths: 72, probability: 0.06 },
+      { crisisMonths: 96, probability: 0.05 },
+    ],
+  });
+  assert.ok(expected.bestBucketMonths >= 48);
+});
+
+test('break-even probability is calculated for higher bucket', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 48_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [
+      { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+    ],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0.05 },
+      { crisisMonths: 72, probability: 0.03 },
+      { crisisMonths: 96, probability: 0.02 },
+    ],
+  });
+  const higher = expected.rows.find((row) => row.bucketMonths === 60)!;
+  assert.ok(higher.breakEvenProbability !== null);
+});
+
+test('decision summary uses expected cost analysis to recommend', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({ profile, scenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }] });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [36, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({
+    profile,
+    stressRows: stress,
+    tradeoffRows: tradeoff,
+    targetBucketMonths: 48,
+    expectedCostAnalysis: expected,
+  });
+  assert.equal(summary.bestBucketMonths, 36);
+  assert.equal(summary.recommendation, 'top_up_to_target');
 });
 
 test('helpers do not mutate snapshot inputs', () => {
