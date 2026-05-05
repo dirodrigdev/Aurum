@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ModelParameters } from '../domain/model/types';
 import { loadInstrumentUniverseSnapshot } from '../domain/instrumentUniverse';
 import { buildOperationalBucketProfile } from '../domain/bucketLab/operationalBucketProfile';
@@ -6,6 +6,8 @@ import { runOperationalBucketStress } from '../domain/bucketLab/operationalBucke
 import { runBucketTradeoffAnalysis } from '../domain/bucketLab/bucketTradeoff';
 import { buildBucketExpectedCostAnalysis } from '../domain/bucketLab/bucketExpectedCostAnalysis';
 import { buildBucketDecisionSummary } from '../domain/bucketLab/bucketDecisionSummary';
+import { describeExpectedValue, buildBucketTradeoffCards } from '../domain/bucketLab/bucketPresentation';
+import { buildBucketSensitivitySummary } from '../domain/bucketLab/bucketSensitivitySummary';
 import { T } from './theme';
 
 const baseCandidateBuckets = [24, 36, 48, 60, 72, 96, 120];
@@ -53,6 +55,9 @@ const estimateExpectedGrowth = (params: ModelParameters): number => {
 };
 
 export function BucketLabPage({ params }: { params: ModelParameters }) {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 760 : false,
+  );
   const [monthlySpendClp, setMonthlySpendClp] = useState<number>(() => estimateDefaultSpendClp(params));
   const [bucketCurrentMonths, setBucketCurrentMonths] = useState<number>(params.bucketMonths ?? 48);
   const [expectedGrowthReturnAnnual, setExpectedGrowthReturnAnnual] = useState<number>(() =>
@@ -71,6 +76,13 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const [prob72, setProb72] = useState(0.03);
   const [prob96, setProb96] = useState(0.02);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onResize = () => setIsMobile(window.innerWidth < 760);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const universeSnapshot = useMemo(() => loadInstrumentUniverseSnapshot(), []);
   const optimizableInvestmentsClp = useMemo(() => {
@@ -180,6 +192,31 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       }),
     [profile, stressRows, tradeoffRows, bucketCurrentMonths, expectedCostAnalysis],
   );
+  const sensitivity = useMemo(
+    () =>
+      buildBucketSensitivitySummary({
+        profile,
+        tradeoffRows,
+        currentBucketMonths: bucketCurrentMonths,
+        forcedSalePenaltyPct,
+        crisisScenarioProbabilities: [
+          { crisisMonths: 36, probability: prob36 },
+          { crisisMonths: 48, probability: prob48 },
+          { crisisMonths: 60, probability: prob60 },
+          { crisisMonths: 72, probability: prob72 },
+          { crisisMonths: 96, probability: prob96 },
+        ],
+      }),
+    [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, prob36, prob48, prob60, prob72, prob96],
+  );
+  const bestValuePresentation = useMemo(
+    () => describeExpectedValue(decision.differenceVsCurrentClp),
+    [decision.differenceVsCurrentClp],
+  );
+  const tradeoffCards = useMemo(
+    () => buildBucketTradeoffCards(expectedCostAnalysis.rows, expectedCostAnalysis.currentBucketMonths),
+    [expectedCostAnalysis.rows, expectedCostAnalysis.currentBucketMonths],
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -216,7 +253,12 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
 
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
           <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual" />
-          <MetricCard title={`Mejor ${decision.bestBucketMonths}m`} value={formatCompactMoney(decision.bestBucketExpectedTotalCostClp)} subtitle={`Dif. ${formatSignedMoney(decision.differenceVsCurrentClp)}`} />
+          <MetricCard
+            title={`Mejor alternativa: ${decision.bestBucketMonths}m`}
+            value={bestValuePresentation.label}
+            subtitle={`Costo esperado ${decision.bestBucketMonths}m: ${formatSignedMoney(decision.bestBucketExpectedTotalCostClp)}/año`}
+            tone={bestValuePresentation.tone}
+          />
           <MetricCard
             title={
               decision.breakEvenProbability !== null
@@ -255,6 +297,35 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         </div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           El scroll muestra el detalle del stress, los supuestos y el costo esperado comparado.
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${sensitivity.robustness === 'robust' ? T.border : T.warning}`,
+          borderRadius: 12,
+          padding: 10,
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ color: T.textPrimary, fontWeight: 700 }}>Robustez</div>
+          <div style={{ color: sensitivity.robustness === 'robust' ? T.positive : T.warning, fontSize: 12, fontWeight: 700 }}>
+            {sensitivity.message}
+          </div>
+        </div>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
+          {sensitivity.scenarios.map((scenario) => (
+            <div key={scenario.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>{scenario.label}</div>
+              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 4 }}>{scenario.recommendedBucketMonths}m</div>
+              <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 3 }}>
+                {formatSignedMoney(scenario.expectedTotalCostClp)}/año
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -421,36 +492,68 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       </TableCard>
 
       <TableCard title="Tradeoff de bucket">
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ color: T.textMuted, textAlign: 'left' }}>
-              <th style={thStyle}>Bucket</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Capital defensivo</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Extra / liberado</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Costo / beneficio permanente</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado crisis</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado total</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Dif. vs actual</th>
-              <th style={thStyle}>Lectura</th>
-            </tr>
-          </thead>
-          <tbody>
-            {expectedCostAnalysis.rows.map((row) => (
-              <tr key={row.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
-                <td style={tdStyle}>{row.bucketMonths}m</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.defensiveCapitalRequiredClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>
-                  {row.capitalExtraClp > 0 ? formatCompactMoney(row.capitalExtraClp) : `-${formatCompactMoney(row.capitalReleasedClp)}`}
-                </td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.opportunityCostAnnualClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.expectedForcedSaleCostClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedTotalCostClp)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedNetBenefitClp)}</td>
-                <td style={tdStyle}>{row.comment}</td>
-              </tr>
+        {isMobile ? (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {tradeoffCards.map((card) => (
+              <div
+                key={card.bucketMonths}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${card.isCurrent ? T.primaryStrong : T.border}`,
+                  borderRadius: 12,
+                  padding: 10,
+                  display: 'grid',
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>{card.bucketMonths}m</div>
+                  <div style={{ color: card.isCurrent ? T.primary : T.textMuted, fontSize: 11 }}>
+                    {card.isCurrent ? 'Actual' : 'Alternativa'}
+                  </div>
+                </div>
+                <TradeoffStat label="Capital defensivo" value={formatCompactMoney(card.defensiveCapitalRequiredClp)} />
+                <TradeoffStat label="Extra / liberado" value={formatSignedMoney(card.capitalDeltaClp)} />
+                <TradeoffStat label="Costo / beneficio permanente" value={formatSignedMoney(card.permanentValueClp)} />
+                <TradeoffStat label="Costo esperado crisis" value={formatCompactMoney(card.expectedForcedSaleCostClp)} />
+                <TradeoffStat label="Costo total esperado" value={formatSignedMoney(card.expectedTotalCostClp)} />
+                <TradeoffStat label="Diferencia vs actual" value={formatSignedMoney(card.differenceVsCurrentClp)} />
+                <div style={{ color: T.textSecondary, fontSize: 12 }}>{card.comment}</div>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: T.textMuted, textAlign: 'left' }}>
+                <th style={thStyle}>Bucket</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Capital defensivo</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Extra / liberado</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Costo / beneficio permanente</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado crisis</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado total</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Dif. vs actual</th>
+                <th style={thStyle}>Lectura</th>
+              </tr>
+            </thead>
+            <tbody>
+              {expectedCostAnalysis.rows.map((row) => (
+                <tr key={row.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
+                  <td style={tdStyle}>{row.bucketMonths}m</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.defensiveCapitalRequiredClp)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    {row.capitalExtraClp > 0 ? formatCompactMoney(row.capitalExtraClp) : `-${formatCompactMoney(row.capitalReleasedClp)}`}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.opportunityCostAnnualClp)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.expectedForcedSaleCostClp)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedTotalCostClp)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedNetBenefitClp)}</td>
+                  <td style={tdStyle}>{row.comment}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </TableCard>
 
       {profile.warnings.length > 0 && (
@@ -516,12 +619,32 @@ function Toggle({
   );
 }
 
-function MetricCard({ title, value, subtitle }: { title: string; value: string; subtitle: string }) {
+function MetricCard({
+  title,
+  value,
+  subtitle,
+  tone = 'neutral',
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  tone?: 'neutral' | 'benefit' | 'cost';
+}) {
+  const valueColor = tone === 'benefit' ? T.positive : tone === 'cost' ? T.warning : T.textPrimary;
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
       <div style={{ color: T.textMuted, fontSize: 11 }}>{title}</div>
-      <div style={{ color: T.textPrimary, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{value}</div>
+      <div style={{ color: valueColor, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{value}</div>
       <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 2 }}>{subtitle}</div>
+    </div>
+  );
+}
+
+function TradeoffStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+      <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
+      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, textAlign: 'right' }}>{value}</div>
     </div>
   );
 }

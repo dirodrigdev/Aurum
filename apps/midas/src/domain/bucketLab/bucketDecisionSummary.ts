@@ -5,7 +5,8 @@ import type { OperationalBucketStressRow } from './operationalBucketStress';
 
 export type BucketDecisionRecommendation =
   | 'maintain'
-  | 'top_up_to_target'
+  | 'consider_reduce'
+  | 'reduce'
   | 'consider_increase'
   | 'increase'
   | 'review_data';
@@ -92,10 +93,10 @@ export function buildBucketDecisionSummary(
       `Actual ${currentCostRow.bucketMonths}m: costo esperado ${Math.round(currentCostRow.expectedTotalCostClp).toLocaleString('es-CL')} CLP.`,
     );
   } else if (bestCostRow.bucketMonths < currentCostRow.bucketMonths) {
-    recommendation = 'top_up_to_target';
+    recommendation = 'consider_reduce';
     headline = 'Evaluar bajar bucket';
     oneLineSummary =
-      `Bajar a ${bestCostRow.bucketMonths}m libera capital y mejora el costo esperado bajo los supuestos actuales.`;
+      `Bajo los supuestos actuales, bajar a ${bestCostRow.bucketMonths}m mejora el costo esperado frente a mantener ${currentCostRow.bucketMonths}m. El costo permanente de mantener más bucket supera el costo esperado de vender balanceados en crisis largas.`;
     decisionRationale.push(
       `El mejor alternativo (${bestCostRow.bucketMonths}m) mejora en ${Math.round(
         currentCostRow.expectedTotalCostClp - bestCostRow.expectedTotalCostClp,
@@ -115,6 +116,9 @@ export function buildBucketDecisionSummary(
 
   if (input.profile.mixedFundClp > input.profile.cleanDefensiveClp) {
     decisionRationale.push('Parte importante de la defensa depende de balanceados; al usarlos se vende RV embebida.');
+  }
+  if (recommendation === 'consider_reduce') {
+    decisionRationale.push('Validar sensibilidad antes de cambiar la política base.');
   }
   if (bestCostRow.breakEvenProbability !== null) {
     decisionRationale.push(

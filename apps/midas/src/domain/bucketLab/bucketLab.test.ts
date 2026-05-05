@@ -5,6 +5,8 @@ import { runOperationalBucketStress } from './operationalBucketStress';
 import { runBucketTradeoffAnalysis } from './bucketTradeoff';
 import { buildBucketExpectedCostAnalysis } from './bucketExpectedCostAnalysis';
 import { buildBucketDecisionSummary } from './bucketDecisionSummary';
+import { buildBucketSensitivitySummary } from './bucketSensitivitySummary';
+import { buildBucketTradeoffCards, describeExpectedValue } from './bucketPresentation';
 
 type TestFn = () => void;
 const tests: Array<{ name: string; fn: TestFn }> = [];
@@ -562,7 +564,103 @@ test('decision summary uses expected cost analysis to recommend', () => {
     expectedCostAnalysis: expected,
   });
   assert.equal(summary.bestBucketMonths, 36);
-  assert.equal(summary.recommendation, 'top_up_to_target');
+  assert.equal(summary.recommendation, 'consider_reduce');
+});
+
+test('negative expected cost is presented as expected improvement', () => {
+  const presentation = describeExpectedValue(-2_100_000);
+  assert.equal(presentation.tone, 'benefit');
+  assert.equal(presentation.label, 'Mejora esperada: +2.100.000');
+});
+
+test('sensitivity summary reports robust recommendation when scenarios agree', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [36, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const sensitivity = buildBucketSensitivitySummary({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  assert.equal(sensitivity.robustness, 'robust');
+});
+
+test('sensitivity summary reports sensitive recommendation when penalties move the winner', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 48_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24, 48, 60],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [
+      { crisisMonths: 36, equityDrawdown: -0.35, fixedIncomeShock: -0.05 },
+      { crisisMonths: 48, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 60, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 72, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+      { crisisMonths: 96, equityDrawdown: -0.5, fixedIncomeShock: -0.1 },
+    ],
+  });
+  const sensitivity = buildBucketSensitivitySummary({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0.12 },
+      { crisisMonths: 48, probability: 0.10 },
+      { crisisMonths: 60, probability: 0.08 },
+      { crisisMonths: 72, probability: 0.06 },
+      { crisisMonths: 96, probability: 0.05 },
+    ],
+  });
+  assert.equal(sensitivity.robustness, 'sensitive');
+});
+
+test('mobile tradeoff cards preserve helper data', () => {
+  const rows = [
+    {
+      bucketMonths: 24,
+      defensiveCapitalRequiredClp: 24_000_000,
+      capitalExtraClp: 0,
+      capitalReleasedClp: 24_000_000,
+      opportunityCostAnnualClp: -1_200_000,
+      expectedGrowthBenefitAnnualClp: 1_200_000,
+      expectedForcedSaleCostClp: 432_000,
+      incrementalExpectedForcedSaleCostClp: 100_000,
+      expectedTotalCostClp: -768_000,
+      expectedNetBenefitClp: 768_000,
+      embeddedEquitySoldByScenario: [],
+      breakEvenProbability: null,
+      recommendationRank: 1,
+      comment: 'ok',
+    },
+  ];
+  const cards = buildBucketTradeoffCards(rows, 48);
+  assert.equal(cards[0].bucketMonths, 24);
+  assert.equal(cards[0].expectedTotalCostClp, -768_000);
+  assert.equal(cards[0].isCurrent, false);
 });
 
 test('helpers do not mutate snapshot inputs', () => {
