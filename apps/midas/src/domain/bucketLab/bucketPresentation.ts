@@ -31,6 +31,7 @@ export type BucketTradeoffCard = {
   differenceVsCurrentClp: number;
   comment: string;
   isCurrent: boolean;
+  isRecommended: boolean;
 };
 
 export function describeExpectedValue(value: number): ExpectedValuePresentation {
@@ -99,6 +100,7 @@ export function buildBucketTradeoffCards(
       differenceVsCurrentClp: row.expectedNetBenefitClp,
       comment: row.comment,
       isCurrent,
+      isRecommended: row.recommendationRank === 1,
     };
   });
 }

@@ -661,6 +661,7 @@ test('mobile tradeoff cards preserve helper data', () => {
   assert.equal(cards[0].bucketMonths, 24);
   assert.equal(cards[0].expectedTotalCostClp, -768_000);
   assert.equal(cards[0].isCurrent, false);
+  assert.equal(cards[0].isRecommended, true);
 });
 
 test('bucket candidate required capital is clean bucket only', () => {

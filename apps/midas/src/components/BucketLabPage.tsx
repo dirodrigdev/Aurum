@@ -11,6 +11,11 @@ import { buildBucketSensitivitySummary } from '../domain/bucketLab/bucketSensiti
 import { T } from './theme';
 
 const baseCandidateBuckets = [24, 36, 48, 60, 72, 96, 120];
+const assumptionPresets = [
+  { id: 'base', label: 'Base', forcedSalePenaltyPct: 0.3, prob36: 0.12, prob48: 0.08, prob60: 0.05, prob72: 0.03, prob96: 0.02 },
+  { id: 'conservador', label: 'Conservador', forcedSalePenaltyPct: 0.4, prob36: 0.16, prob48: 0.12, prob60: 0.08, prob72: 0.05, prob96: 0.03 },
+  { id: 'estres', label: 'Stress alto', forcedSalePenaltyPct: 0.5, prob36: 0.24, prob48: 0.16, prob60: 0.10, prob72: 0.06, prob96: 0.04 },
+];
 
 const formatMoney = (value: number) => `$${Math.round(value).toLocaleString('es-CL')}`;
 const formatCompactMoney = (value: number) =>
@@ -80,6 +85,14 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const [prob72, setProb72] = useState(0.03);
   const [prob96, setProb96] = useState(0.02);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const applyAssumptionPreset = (preset: (typeof assumptionPresets)[number]) => {
+    setForcedSalePenaltyPct(preset.forcedSalePenaltyPct);
+    setProb36(preset.prob36);
+    setProb48(preset.prob48);
+    setProb60(preset.prob60);
+    setProb72(preset.prob72);
+    setProb96(preset.prob96);
+  };
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onResize = () => setIsMobile(window.innerWidth < 760);
@@ -256,12 +269,13 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         </div>
 
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-          <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual" />
+          <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual ($/año)" badge="Actual" />
           <MetricCard
             title={`Mejor alternativa: ${decision.bestBucketMonths}m de bucket limpio`}
             value={bestValuePresentation.label}
             subtitle={`Costo esperado ${decision.bestBucketMonths}m: ${formatSignedMoney(decision.bestBucketExpectedTotalCostClp)}/año`}
             tone={bestValuePresentation.tone}
+            badge="Recomendado"
           />
           <MetricCard
             title={
@@ -324,7 +338,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           {sensitivity.scenarios.map((scenario) => (
             <div key={scenario.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11 }}>{scenario.label}</div>
-              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 4 }}>{scenario.recommendedBucketMonths}m</div>
+              <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 800, marginTop: 4 }}>{scenario.recommendedBucketMonths}m limpio</div>
               <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 3 }}>
                 {formatSignedMoney(scenario.expectedTotalCostClp)}/año
               </div>
@@ -401,6 +415,27 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           <>
             <div style={{ color: T.textSecondary, fontSize: 12 }}>
               El bucket grande se paga siempre vía menor crecimiento esperado. El bucket chico se paga solo si una crisis supera la defensa limpia y obliga a vender balanceados con RV embebida.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {assumptionPresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyAssumptionPreset(preset)}
+                  style={{
+                    background: T.surfaceEl,
+                    color: T.textPrimary,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '7px 10px',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
               <InputNumber label="Prob. crisis 36m" value={prob36} onChange={setProb36} step={0.01} />
@@ -511,13 +546,14 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>{card.bucketMonths}m</div>
-                  <div style={{ color: card.isCurrent ? T.primary : T.textMuted, fontSize: 11 }}>
-                    {card.isCurrent ? 'Actual' : 'Alternativa'}
+                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>{card.bucketMonths}m limpio</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {card.isRecommended ? <Badge label="Recomendado" tone="benefit" /> : null}
+                    {card.isCurrent ? <Badge label="Actual" tone="primary" /> : null}
                   </div>
                 </div>
-                <TradeoffStat label="Bucket limpio requerido" value={formatCompactMoney(card.cleanBucketRequiredClp)} />
-                <TradeoffStat label={card.capitalLabel} value={formatCompactMoney(card.capitalValueClp)} tone={card.capitalTone} />
+                <TradeoffStat label="Bucket limpio requerido (capital único)" value={formatCompactMoney(card.cleanBucketRequiredClp)} />
+                <TradeoffStat label={`${card.capitalLabel} (capital único)`} value={formatCompactMoney(card.capitalValueClp)} tone={card.capitalTone} />
                 <TradeoffStat label={card.permanentLabel} value={`${formatBenefitCostMoney(card.permanentValueClp)}/año`} tone={card.permanentTone} />
                 <TradeoffStat label={card.crisisCostLabel} value={`${formatBenefitCostMoney(card.crisisCostValueClp)}/año`} tone={card.crisisCostTone} />
                 <TradeoffStat label={card.netResultLabel} value={`${formatBenefitCostMoney(card.netResultValueClp)}/año`} tone={card.netResultTone} />
@@ -531,9 +567,9 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <thead>
               <tr style={{ color: T.textMuted, textAlign: 'left' }}>
                 <th style={thStyle}>Bucket</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Bucket limpio requerido</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Capital</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Permanente</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Bucket limpio requerido (capital único)</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Capital único</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Permanente ($/año)</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado crisis</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Resultado neto</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Vs actual</th>
@@ -543,7 +579,15 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <tbody>
               {tradeoffCards.map((card) => (
                 <tr key={card.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
-                  <td style={tdStyle}>{card.bucketMonths}m{card.isCurrent ? ' · Actual' : ''}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <span>{card.bucketMonths}m limpio</span>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {card.isRecommended ? <Badge label="Recomendado" tone="benefit" /> : null}
+                        {card.isCurrent ? <Badge label="Actual" tone="primary" /> : null}
+                      </div>
+                    </div>
+                  </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(card.cleanBucketRequiredClp)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.capitalTone) }}>
                     {card.capitalLabel}: {formatCompactMoney(card.capitalValueClp)}
@@ -636,19 +680,44 @@ function MetricCard({
   value,
   subtitle,
   tone = 'neutral',
+  badge,
 }: {
   title: string;
   value: string;
   subtitle: string;
   tone?: 'neutral' | 'benefit' | 'cost';
+  badge?: string;
 }) {
   const valueColor = tone === 'benefit' ? T.positive : tone === 'cost' ? T.warning : T.textPrimary;
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
-      <div style={{ color: T.textMuted, fontSize: 11 }}>{title}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
+        <div style={{ color: T.textMuted, fontSize: 11 }}>{title}</div>
+        {badge ? <Badge label={badge} tone={badge === 'Recomendado' ? 'benefit' : 'primary'} /> : null}
+      </div>
       <div style={{ color: valueColor, fontWeight: 800, fontSize: 16, marginTop: 2 }}>{value}</div>
       <div style={{ color: T.textSecondary, fontSize: 11, marginTop: 2 }}>{subtitle}</div>
     </div>
+  );
+}
+
+function Badge({ label, tone }: { label: string; tone: 'benefit' | 'primary' }) {
+  const color = tone === 'benefit' ? T.positive : T.primary;
+  return (
+    <span
+      style={{
+        border: `1px solid ${color}`,
+        color,
+        borderRadius: 999,
+        padding: '2px 6px',
+        fontSize: 10,
+        fontWeight: 800,
+        lineHeight: 1.2,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
