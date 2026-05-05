@@ -96,7 +96,7 @@ export function buildBucketDecisionSummary(
     recommendation = 'consider_reduce';
     headline = 'Evaluar bajar bucket';
     oneLineSummary =
-      `Bajo los supuestos actuales, bajar a ${bestCostRow.bucketMonths}m mejora el costo esperado frente a mantener ${currentCostRow.bucketMonths}m. El costo permanente de mantener más bucket supera el costo esperado de vender balanceados en crisis largas.`;
+      `Bajo los supuestos actuales, el menor costo esperado lo entrega un bucket limpio de ${bestCostRow.bucketMonths}m. La defensa mixta queda como capa posterior: si la crisis supera la defensa limpia, se venden balanceados con RV embebida.`;
     decisionRationale.push(
       `El mejor alternativo (${bestCostRow.bucketMonths}m) mejora en ${Math.round(
         currentCostRow.expectedTotalCostClp - bestCostRow.expectedTotalCostClp,

@@ -18,6 +18,10 @@ const formatCompactMoney = (value: number) =>
 const formatPct = (value: number) => `${(value * 100).toFixed(1).replace('.', ',')}%`;
 const formatSignedMoney = (value: number) =>
   `${value >= 0 ? '+' : '-'}${formatCompactMoney(Math.abs(value))}`;
+const formatBenefitCostMoney = (value: number) => {
+  if (!Number.isFinite(value) || Math.abs(value) < 1) return '$0';
+  return `${value > 0 ? '+' : '-'}${formatCompactMoney(Math.abs(value))}`;
+};
 const formatMonths = (value: number) => `${value.toFixed(1).replace('.', ',')} meses`;
 const layerLabel = (layer: string) => {
   const map: Record<string, string> = {
@@ -254,7 +258,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
           <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual" />
           <MetricCard
-            title={`Mejor alternativa: ${decision.bestBucketMonths}m`}
+            title={`Mejor alternativa: ${decision.bestBucketMonths}m de bucket limpio`}
             value={bestValuePresentation.label}
             subtitle={`Costo esperado ${decision.bestBucketMonths}m: ${formatSignedMoney(decision.bestBucketExpectedTotalCostClp)}/año`}
             tone={bestValuePresentation.tone}
@@ -290,7 +294,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           Subir bucket tiene costo en todos los escenarios. Vender balanceados tiene costo solo si la crisis supera la defensa limpia.
         </div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Defensa limpia incluye solo cash, near-cash y RF pura vendible. La RF dentro de balanceados se muestra como defensa mixta porque al venderla también se vende RV embebida.
+          El bucket objetivo incluye solo cash, near-cash y RF pura vendible. Los balanceados son defensa mixta: se usan después y al venderlos también se vende RV embebida.
         </div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
           Estas probabilidades son supuestos para valorar escenarios, no predicciones.
@@ -415,7 +419,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
         <MetricCard title="Bucket hard cash" value={formatCompactMoney(profile.hardCashClp)} subtitle={formatMonths(profile.hardCashRunwayMonths)} />
-        <MetricCard title="Defensa limpia" value={formatCompactMoney(profile.cleanDefensiveClp)} subtitle={formatMonths(profile.cleanDefensiveRunwayMonths)} />
+        <MetricCard title="Bucket limpio" value={formatCompactMoney(profile.cleanDefensiveClp)} subtitle={formatMonths(profile.cleanDefensiveRunwayMonths)} />
         <MetricCard title="Defensa mixta" value={formatCompactMoney(profile.mixedFundClp)} subtitle={`+${formatMonths(profile.mixedFundRunwayMonths)} (vende balanceados)`} />
         <MetricCard title="RV embebida si uso balanceados" value={formatCompactMoney(profile.embeddedEquityClp)} subtitle={formatPct(profile.embeddedEquitySoldPct)} />
         <MetricCard
@@ -512,12 +516,12 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
                     {card.isCurrent ? 'Actual' : 'Alternativa'}
                   </div>
                 </div>
-                <TradeoffStat label="Capital defensivo" value={formatCompactMoney(card.defensiveCapitalRequiredClp)} />
-                <TradeoffStat label="Extra / liberado" value={formatSignedMoney(card.capitalDeltaClp)} />
-                <TradeoffStat label="Costo / beneficio permanente" value={formatSignedMoney(card.permanentValueClp)} />
-                <TradeoffStat label="Costo esperado crisis" value={formatCompactMoney(card.expectedForcedSaleCostClp)} />
-                <TradeoffStat label="Costo total esperado" value={formatSignedMoney(card.expectedTotalCostClp)} />
-                <TradeoffStat label="Diferencia vs actual" value={formatSignedMoney(card.differenceVsCurrentClp)} />
+                <TradeoffStat label="Bucket limpio requerido" value={formatCompactMoney(card.cleanBucketRequiredClp)} />
+                <TradeoffStat label={card.capitalLabel} value={formatCompactMoney(card.capitalValueClp)} tone={card.capitalTone} />
+                <TradeoffStat label={card.permanentLabel} value={`${formatBenefitCostMoney(card.permanentValueClp)}/año`} tone={card.permanentTone} />
+                <TradeoffStat label={card.crisisCostLabel} value={`${formatBenefitCostMoney(card.crisisCostValueClp)}/año`} tone={card.crisisCostTone} />
+                <TradeoffStat label={card.netResultLabel} value={`${formatBenefitCostMoney(card.netResultValueClp)}/año`} tone={card.netResultTone} />
+                <TradeoffStat label={card.comparisonLabel} value={`${formatBenefitCostMoney(card.comparisonValueClp)}/año`} tone={card.comparisonTone} />
                 <div style={{ color: T.textSecondary, fontSize: 12 }}>{card.comment}</div>
               </div>
             ))}
@@ -527,28 +531,36 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <thead>
               <tr style={{ color: T.textMuted, textAlign: 'left' }}>
                 <th style={thStyle}>Bucket</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Capital defensivo</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Extra / liberado</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Costo / beneficio permanente</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Bucket limpio requerido</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Capital</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Permanente</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado crisis</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Costo esperado total</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Dif. vs actual</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Resultado neto</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Vs actual</th>
                 <th style={thStyle}>Lectura</th>
               </tr>
             </thead>
             <tbody>
-              {expectedCostAnalysis.rows.map((row) => (
-                <tr key={row.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
-                  <td style={tdStyle}>{row.bucketMonths}m</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.defensiveCapitalRequiredClp)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {row.capitalExtraClp > 0 ? formatCompactMoney(row.capitalExtraClp) : `-${formatCompactMoney(row.capitalReleasedClp)}`}
+              {tradeoffCards.map((card) => (
+                <tr key={card.bucketMonths} style={{ borderTop: `1px solid ${T.border}` }}>
+                  <td style={tdStyle}>{card.bucketMonths}m{card.isCurrent ? ' · Actual' : ''}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(card.cleanBucketRequiredClp)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.capitalTone) }}>
+                    {card.capitalLabel}: {formatCompactMoney(card.capitalValueClp)}
                   </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.opportunityCostAnnualClp)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatCompactMoney(row.expectedForcedSaleCostClp)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedTotalCostClp)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{formatSignedMoney(row.expectedNetBenefitClp)}</td>
-                  <td style={tdStyle}>{row.comment}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.permanentTone) }}>
+                    {card.permanentLabel}: {formatBenefitCostMoney(card.permanentValueClp)}/año
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.crisisCostTone) }}>
+                    {formatBenefitCostMoney(card.crisisCostValueClp)}/año
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.netResultTone) }}>
+                    {formatBenefitCostMoney(card.netResultValueClp)}/año
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: toneColor(card.comparisonTone) }}>
+                    {card.comparisonLabel}: {formatBenefitCostMoney(card.comparisonValueClp)}/año
+                  </td>
+                  <td style={tdStyle}>{card.comment}</td>
                 </tr>
               ))}
             </tbody>
@@ -640,11 +652,23 @@ function MetricCard({
   );
 }
 
-function TradeoffStat({ label, value }: { label: string; value: string }) {
+function toneColor(tone: 'benefit' | 'cost' | 'neutral') {
+  return tone === 'benefit' ? T.positive : tone === 'cost' ? T.warning : T.textPrimary;
+}
+
+function TradeoffStat({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  tone?: 'benefit' | 'cost' | 'neutral';
+}) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
       <div style={{ color: T.textMuted, fontSize: 11 }}>{label}</div>
-      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, textAlign: 'right' }}>{value}</div>
+      <div style={{ color: toneColor(tone), fontSize: 12, fontWeight: 700, textAlign: 'right' }}>{value}</div>
     </div>
   );
 }

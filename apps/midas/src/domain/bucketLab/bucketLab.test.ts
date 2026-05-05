@@ -663,6 +663,134 @@ test('mobile tradeoff cards preserve helper data', () => {
   assert.equal(cards[0].isCurrent, false);
 });
 
+test('bucket candidate required capital is clean bucket only', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 24_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 48_000_000, { name: 'Balanceado 80/20', currentMixUsed: { rv: 0.2, rf: 0.8, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [48],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  const card = buildBucketTradeoffCards(expected.rows, 48)[0];
+  assert.equal(profile.cleanDefensiveClp, 24_000_000);
+  assert.equal(profile.mixedFundClp, 48_000_000);
+  assert.equal(card.cleanBucketRequiredClp, 48_000_000);
+});
+
+test('tradeoff card labels lower bucket as capital released and benefit', () => {
+  const cards = buildBucketTradeoffCards(
+    [
+      {
+        bucketMonths: 24,
+        defensiveCapitalRequiredClp: 24_000_000,
+        capitalExtraClp: 0,
+        capitalReleasedClp: 24_000_000,
+        opportunityCostAnnualClp: -1_200_000,
+        expectedGrowthBenefitAnnualClp: 1_200_000,
+        expectedForcedSaleCostClp: 432_000,
+        incrementalExpectedForcedSaleCostClp: 100_000,
+        expectedTotalCostClp: -768_000,
+        expectedNetBenefitClp: 768_000,
+        embeddedEquitySoldByScenario: [],
+        breakEvenProbability: null,
+        recommendationRank: 1,
+        comment: 'ok',
+      },
+    ],
+    48,
+  );
+  assert.equal(cards[0].capitalLabel, 'Capital liberado');
+  assert.equal(cards[0].capitalValueClp, 24_000_000);
+  assert.equal(cards[0].permanentLabel, 'Beneficio permanente esperado');
+  assert.equal(cards[0].permanentValueClp, 1_200_000);
+  assert.equal(cards[0].permanentTone, 'benefit');
+  assert.equal(cards[0].crisisCostValueClp, -432_000);
+});
+
+test('tradeoff card labels higher bucket as capital required and cost', () => {
+  const cards = buildBucketTradeoffCards(
+    [
+      {
+        bucketMonths: 60,
+        defensiveCapitalRequiredClp: 60_000_000,
+        capitalExtraClp: 12_000_000,
+        capitalReleasedClp: 0,
+        opportunityCostAnnualClp: 600_000,
+        expectedGrowthBenefitAnnualClp: 0,
+        expectedForcedSaleCostClp: 120_000,
+        incrementalExpectedForcedSaleCostClp: -100_000,
+        expectedTotalCostClp: 720_000,
+        expectedNetBenefitClp: -300_000,
+        embeddedEquitySoldByScenario: [],
+        breakEvenProbability: 0.12,
+        recommendationRank: 2,
+        comment: 'ok',
+      },
+    ],
+    48,
+  );
+  assert.equal(cards[0].capitalLabel, 'Capital adicional requerido');
+  assert.equal(cards[0].capitalValueClp, 12_000_000);
+  assert.equal(cards[0].permanentLabel, 'Costo permanente');
+  assert.equal(cards[0].permanentValueClp, -600_000);
+  assert.equal(cards[0].permanentTone, 'cost');
+});
+
+test('executive copy mentions clean bucket', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 48_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const stress = runOperationalBucketStress({ profile, scenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }] });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24, 48],
+    currentBucketMonths: 48,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+    stressScenarios: [{ crisisMonths: 48, equityDrawdown: -0.35, fixedIncomeShock: -0.05 }],
+  });
+  const expected = buildBucketExpectedCostAnalysis({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 48,
+    forcedSalePenaltyPct: 0.3,
+    crisisScenarioProbabilities: [
+      { crisisMonths: 36, probability: 0 },
+      { crisisMonths: 48, probability: 0 },
+      { crisisMonths: 60, probability: 0 },
+      { crisisMonths: 72, probability: 0 },
+      { crisisMonths: 96, probability: 0 },
+    ],
+  });
+  const summary = buildBucketDecisionSummary({
+    profile,
+    stressRows: stress,
+    tradeoffRows: tradeoff,
+    targetBucketMonths: 48,
+    expectedCostAnalysis: expected,
+  });
+  assert.match(summary.oneLineSummary, /bucket limpio/);
+});
+
 test('helpers do not mutate snapshot inputs', () => {
   const snapshot = makeSnapshot([
     makeInstrument('cash', 10_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
