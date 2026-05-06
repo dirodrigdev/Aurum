@@ -51,6 +51,7 @@ import {
   persistActiveSimulationConfigToFirestore,
 } from './integrations/midas/simulationConfigPersistence';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
+import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -3216,6 +3217,27 @@ export default function App() {
     instrumentUniverseMetadata,
     cloudHydrationReady,
   ]);
+  const simulationActionStatus = useMemo(() => buildSimulationActionStatus({
+    cloudHydrationReady,
+    simulationConfigSource,
+    universeSourceOrigin,
+    aurumIntegrationStatus,
+    hasValidSpendingPhases: Array.isArray(simParams.spendingPhases)
+      && simParams.spendingPhases.length >= 4
+      && simParams.spendingPhases.every((phase) => Number.isFinite(Number(phase.amountReal ?? NaN)) && Number(phase.amountReal) > 0),
+    hasValidCapital: Number.isFinite(Number(simParams.capitalInitial ?? NaN)) && Number(simParams.capitalInitial) > 0,
+    hasValidUniverseMix: weightsSourceMode !== 'error',
+    fingerprint: m8InputFingerprint,
+  }), [
+    cloudHydrationReady,
+    simulationConfigSource,
+    universeSourceOrigin,
+    aurumIntegrationStatus,
+    simParams.spendingPhases,
+    simParams.capitalInitial,
+    weightsSourceMode,
+    m8InputFingerprint,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3343,6 +3365,7 @@ export default function App() {
       simulationConfigSource={simulationConfigSource}
       simulationConfigSavedAt={simulationConfigSavedAt}
       m8InputFingerprint={m8InputFingerprint}
+      simulationActionStatus={simulationActionStatus}
       officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}

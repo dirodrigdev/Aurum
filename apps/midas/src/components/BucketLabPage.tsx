@@ -341,7 +341,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const recommendationDiffersBetweenSources =
     m8Decision !== null && m8Decision.bestBucketMonths !== manualDecision.bestBucketMonths;
   const executiveSummary = probabilitySource === 'm8' && hasM8Probabilities
-    ? `Bajo ${m8Crisis.nSim.toLocaleString('es-CL')} escenarios M8, el menor costo esperado lo entrega ${decision.bestBucketMonths}m limpio.`
+    ? `Bajo ${m8Crisis.nSim.toLocaleString('es-CL')} escenarios M8, el menor costo esperado lo entrega ${decision.bestBucketMonths}m de bucket limpio. La defensa mixta queda como capa posterior y solo se usa si la crisis supera la defensa limpia.`
     : `Bajo supuestos manuales actuales, el menor costo esperado lo entrega ${decision.bestBucketMonths}m limpio.`;
   const sensitivity = useMemo(
     () =>
@@ -385,6 +385,12 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const tradeoffCards = useMemo(
     () => buildBucketTradeoffCards(activeExpectedCostAnalysis.rows, activeExpectedCostAnalysis.currentBucketMonths),
     [activeExpectedCostAnalysis.rows, activeExpectedCostAnalysis.currentBucketMonths],
+  );
+  const quickCompareCards = useMemo(
+    () => [24, 36, activeExpectedCostAnalysis.currentBucketMonths]
+      .map((bucket) => tradeoffCards.find((card) => card.bucketMonths === bucket))
+      .filter((card): card is NonNullable<typeof card> => Boolean(card)),
+    [tradeoffCards, activeExpectedCostAnalysis.currentBucketMonths],
   );
 
   return (
@@ -557,7 +563,12 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <div>
               Bucket limpio actual: {formatMonths(profile.cleanDefensiveRunwayMonths)} · Defensa mixta adicional: {formatMonths(profile.mixedFundRunwayMonths)} · Defensa total utilizable: {formatMonths(profile.cleanDefensiveRunwayMonths + profile.mixedFundRunwayMonths)}
             </div>
-            <div>Fuente de crisis: {m8Crisis.source === 'm8_operational_proxy' ? 'M8 operacional proxy' : 'M8 wealth drawdown heuristic'}</div>
+            <div>Fuente: probabilidades estimadas desde señales operacionales M8.</div>
+            {m8Crisis.source !== 'm8_operational_proxy' ? (
+              <div style={{ color: T.warning }}>
+                Esta probabilidad está basada en drawdown patrimonial y puede incluir desacumulación normal.
+              </div>
+            ) : null}
           </div>
         ) : (
           <div style={{ color: T.warning, fontSize: 12 }}>
@@ -672,6 +683,27 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             </div>
           </>
         ) : null}
+      </div>
+
+      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+        {quickCompareCards.map((card) => (
+          <div key={`quick-${card.bucketMonths}`} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 5 }}>
+            <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{card.bucketMonths}m limpio</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              {card.capitalLabel}: {formatCompactMoney(card.capitalValueClp)}
+            </div>
+            <div style={{ color: toneColor(card.permanentTone), fontSize: 11 }}>
+              {card.permanentLabel}: {formatBenefitCostMoney(card.permanentValueClp)}/año
+            </div>
+            <div style={{ color: toneColor(card.crisisCostTone), fontSize: 11 }}>
+              {card.crisisCostLabel}: {formatBenefitCostMoney(card.crisisCostValueClp)}/año
+            </div>
+            <div style={{ color: toneColor(card.comparisonTone), fontSize: 11, fontWeight: 700 }}>
+              {card.comparisonLabel}: {formatBenefitCostMoney(card.comparisonValueClp)}/año
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>{card.comment}</div>
+          </div>
+        ))}
       </div>
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>

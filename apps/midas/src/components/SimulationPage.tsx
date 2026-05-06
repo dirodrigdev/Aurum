@@ -13,6 +13,7 @@ import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../dom
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
+import type { SimulationActionStatus } from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -245,6 +246,7 @@ export function SimulationPage({
   simulationConfigSource,
   simulationConfigSavedAt,
   m8InputFingerprint,
+  simulationActionStatus,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -327,6 +329,7 @@ export function SimulationPage({
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
   m8InputFingerprint: M8InputFingerprint;
+  simulationActionStatus: SimulationActionStatus;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -1786,6 +1789,48 @@ export function SimulationPage({
       <div
         style={{
           background: T.surface,
+          border: `1px solid ${
+            simulationActionStatus.level === 'blocked'
+              ? T.negative
+              : simulationActionStatus.level === 'provisional'
+                ? T.warning
+                : simulationActionStatus.level === 'review'
+                  ? T.warning
+                  : T.border
+          }`,
+          borderRadius: 10,
+          padding: isMobileViewport ? '8px 9px' : '10px 11px',
+          display: 'grid',
+          gap: 6,
+        }}
+      >
+        <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Estado de la simulación
+        </div>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 16 : 18, fontWeight: 800 }}>
+          {simulationActionStatus.headline}
+        </div>
+        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
+          {simulationActionStatus.message}
+        </div>
+        {simulationActionStatus.actionItems.length > 0 && (
+          <div style={{ display: 'grid', gap: 3 }}>
+            {simulationActionStatus.actionItems.map((item) => (
+              <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
+                • {item}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <details>
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+          Ver detalle técnico
+        </summary>
+        <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+      <div
+        style={{
+          background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
           padding: isMobileViewport ? '7px 8px' : '9px 10px',
@@ -1956,6 +2001,8 @@ export function SimulationPage({
           </div>
         )}
       </div>
+      </div>
+      </details>
       <div
         style={{
           background: T.surface,
