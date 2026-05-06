@@ -27,7 +27,7 @@ import { AssistedSimulationPage } from './components/AssistedSimulationPage';
 import { BucketLabPage } from './components/BucketLabPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
-import { loadInstrumentUniverseSnapshot } from './domain/instrumentUniverse';
+import { loadInstrumentUniverseSnapshot, loadInstrumentUniverseSnapshotMetadata } from './domain/instrumentUniverse';
 import {
   applyActiveDistributionToParams,
   areWeightsEquivalent,
@@ -46,6 +46,11 @@ import {
 } from './integrations/aurum/optimizableSnapshot';
 import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
 import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
+import {
+  loadActiveSimulationConfigFromFirestore,
+  persistActiveSimulationConfigToFirestore,
+} from './integrations/midas/simulationConfigPersistence';
+import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -654,6 +659,11 @@ export default function App() {
   const [universeSourceOrigin, setUniverseSourceOrigin] = useState<'firestore' | 'cache-local' | 'none'>(
     () => initialDistributionRef.current.universeSourceOrigin,
   );
+  const [simulationConfigSource, setSimulationConfigSource] = useState<'cloud' | 'local_cache' | 'fallback'>('local_cache');
+  const [simulationConfigSavedAt, setSimulationConfigSavedAt] = useState<string | null>(null);
+  const [simulationConfigHash, setSimulationConfigHash] = useState<string | null>(null);
+  const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
+  const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -758,18 +768,52 @@ export default function App() {
     let cancelled = false;
     void hydrateInstrumentUniverseCacheFromFirestore()
       .then((result) => {
-        if (cancelled || !result.ok) return;
-        instrumentUniverseHydratedFromFirestoreRef.current = true;
-        refreshOfficialDistribution();
-        window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
+        if (cancelled) return;
+        if (result.ok) {
+          instrumentUniverseHydratedFromFirestoreRef.current = true;
+          setCloudUniverseHydrated(true);
+          refreshOfficialDistribution();
+          window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
+          return;
+        }
+        setCloudUniverseHydrated(false);
       })
       .catch(() => {
         // Firestore is an authoritative source when available; local cache/fallback chain remains safe.
+        setCloudUniverseHydrated(false);
       });
     return () => {
       cancelled = true;
     };
   }, [refreshOfficialDistribution]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadActiveSimulationConfigFromFirestore()
+      .then((loaded) => {
+        if (cancelled) return;
+        if (!loaded.ok) {
+          setCloudSimulationHydrated(false);
+          setSimulationConfigSource('local_cache');
+          return;
+        }
+        const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+        setBaseParams(cloudParams);
+        setSimParams(cloudParams);
+        setSimulationConfigSource('cloud');
+        setSimulationConfigSavedAt(loaded.active.savedAt ?? null);
+        setSimulationConfigHash(loaded.active.hash ?? null);
+        setCloudSimulationHydrated(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCloudSimulationHydrated(false);
+        setSimulationConfigSource('local_cache');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     refreshOfficialDistribution();
@@ -855,6 +899,35 @@ export default function App() {
   useEffect(() => {
     persistBaseVigente(baseParams);
   }, [baseParams]);
+
+  useEffect(() => {
+    const nextHash = hashJson({
+      spendingPhases: simParams.spendingPhases,
+      simulation: simParams.simulation,
+      bucketMonths: simParams.bucketMonths,
+      capitalInitial: simParams.capitalInitial,
+      weights: simParams.weights,
+    });
+    setSimulationConfigHash(nextHash);
+    if (simulationConfigSource !== 'cloud') {
+      setSimulationConfigSource('local_cache');
+    }
+    if (typeof window === 'undefined') return;
+    const handle = window.setTimeout(() => {
+      void persistActiveSimulationConfigToFirestore({
+        params: simParams,
+        source: 'simulation_runtime',
+      }).then((persisted) => {
+        if (!persisted.ok) return;
+        setSimulationConfigSource('cloud');
+        setSimulationConfigSavedAt(persisted.active.savedAt ?? new Date().toISOString());
+        setSimulationConfigHash(persisted.active.hash ?? nextHash);
+      }).catch(() => {
+        // Keep local cache as fallback without interrupting user flow.
+      });
+    }, 800);
+    return () => window.clearTimeout(handle);
+  }, [simParams]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3106,6 +3179,43 @@ export default function App() {
       manualOverrideFxClp: null,
     }),
   [aurumFxSpotCLP, aurumFxSpotSource, simParams.fx?.clpUsdInitial]);
+  const instrumentUniverseMetadata = useMemo(() => loadInstrumentUniverseSnapshotMetadata(), [weightsSourceMode, universeSourceOrigin]);
+  const cloudHydrationReady = useMemo(() => {
+    const aurumReady = aurumIntegrationStatus === 'unconfigured'
+      || (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
+    const universeReady = cloudUniverseHydrated || universeSourceOrigin !== 'none';
+    return aurumReady && universeReady && cloudSimulationHydrated;
+  }, [aurumIntegrationStatus, cloudSimulationHydrated, cloudUniverseHydrated, universeSourceOrigin]);
+  const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
+    params: simParams,
+    riskCapitalEnabled,
+    riskCapitalEffective,
+    weightsSourceMode,
+    universeSourceOrigin,
+    aurumSnapshotLabel,
+    aurumSnapshotPublishedAt,
+    aurumSnapshotSignature: lastAppliedAurumSnapshotSignature,
+    simulationConfigSource,
+    simulationConfigSavedAt,
+    simulationConfigHash,
+    instrumentUniverseSavedAt: instrumentUniverseMetadata?.loadedAt ?? instrumentUniverseMetadata?.importedAt ?? null,
+    instrumentUniverseHash: instrumentUniverseMetadata?.checksum ?? null,
+    hydratedCloudSources: cloudHydrationReady,
+  }), [
+    simParams,
+    riskCapitalEnabled,
+    riskCapitalEffective,
+    weightsSourceMode,
+    universeSourceOrigin,
+    aurumSnapshotLabel,
+    aurumSnapshotPublishedAt,
+    lastAppliedAurumSnapshotSignature,
+    simulationConfigSource,
+    simulationConfigSavedAt,
+    simulationConfigHash,
+    instrumentUniverseMetadata,
+    cloudHydrationReady,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3229,6 +3339,10 @@ export default function App() {
       weightsSourceMode={weightsSourceMode}
       weightsSourceLabel={weightsSourceLabel}
       universeSourceOrigin={universeSourceOrigin}
+      cloudHydrationReady={cloudHydrationReady}
+      simulationConfigSource={simulationConfigSource}
+      simulationConfigSavedAt={simulationConfigSavedAt}
+      m8InputFingerprint={m8InputFingerprint}
       officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}

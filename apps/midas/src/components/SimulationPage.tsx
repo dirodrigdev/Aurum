@@ -12,6 +12,7 @@ import { SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../domain/model/spendingPhases';
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
+import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -240,6 +241,10 @@ export function SimulationPage({
   weightsSourceMode,
   weightsSourceLabel,
   universeSourceOrigin,
+  cloudHydrationReady,
+  simulationConfigSource,
+  simulationConfigSavedAt,
+  m8InputFingerprint,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -318,6 +323,10 @@ export function SimulationPage({
   weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
   universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  cloudHydrationReady: boolean;
+  simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
+  simulationConfigSavedAt: string | null;
+  m8InputFingerprint: M8InputFingerprint;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -1725,12 +1734,75 @@ export function SimulationPage({
           gap: 6,
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+            Input M8: {m8InputFingerprint.hash} · {cloudHydrationReady ? 'cloud' : 'mixto cloud/cache'} · seed {Number(params.simulation?.seed ?? 0)} · nSim {Number(params.simulation?.nSim ?? 0)}
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const payload = JSON.stringify({
+                fingerprint: m8InputFingerprint.hash,
+                createdAt: m8InputFingerprint.createdAt,
+                sources: m8InputFingerprint.sources,
+                warnings: m8InputFingerprint.warnings,
+                normalizedInput: m8InputFingerprint.normalizedInput,
+              }, null, 2);
+              if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(payload);
+                return;
+              }
+              window.prompt('Copiar input M8 aplicado', payload);
+            }}
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              color: T.textPrimary,
+              borderRadius: 999,
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '5px 9px',
+              cursor: 'pointer',
+            }}
+          >
+            Copiar input M8 aplicado
+          </button>
+        </div>
+        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+          Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
+          {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
+        </div>
+        {!cloudHydrationReady && (
+          <div style={{ color: T.warning, fontSize: 10 }}>
+            Sincronizando fuentes canónicas... resultado provisional desde cache local.
+          </div>
+        )}
+        {m8InputFingerprint.warnings.length > 0 && (
+          <div style={{ color: T.warning, fontSize: 10 }}>
+            {m8InputFingerprint.warnings.join(' · ')}
+          </div>
+        )}
+      </div>
+      <div
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: isMobileViewport ? '7px 8px' : '9px 10px',
+          display: 'grid',
+          gap: 6,
+        }}
+      >
         <div style={{ display: 'grid', gap: 2 }}>
           <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
             Data Trust Layer
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
             Fuente, frescura y respaldo de los datos que más mueven la corrida.
+          </div>
+          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+            Gastos aplicados: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.spendingPhases ?? []).map((phase, idx) => `F${idx + 1} ${formatMillionsMM(Number(phase.amountReal ?? 0) / 1_000_000)}`).join(' · ')}</span> ·
+            Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'local cache' : 'fallback'}</span>
           </div>
         </div>
         {isMobileViewport ? (
