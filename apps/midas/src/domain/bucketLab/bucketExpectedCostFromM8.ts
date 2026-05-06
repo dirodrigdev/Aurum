@@ -17,6 +17,7 @@ export type BuildBucketExpectedCostFromM8Input = {
   tradeoffRows: BucketTradeoffRow[];
   currentBucketMonths: number;
   forcedSalePenaltyPct: number;
+  analysisHorizonYears: number;
   crisis: BucketM8CrisisProbabilities;
 };
 
@@ -29,6 +30,7 @@ export function buildBucketExpectedCostFromM8(
     tradeoffRows: input.tradeoffRows,
     currentBucketMonths: input.currentBucketMonths,
     forcedSalePenaltyPct: input.forcedSalePenaltyPct,
+    analysisHorizonYears: input.analysisHorizonYears,
     crisisScenarioProbabilities: input.crisis.exclusiveScenarioProbabilities,
   });
   if (input.crisis.nSim <= 0) {
@@ -40,4 +42,3 @@ export function buildBucketExpectedCostFromM8(
     warnings,
   };
 }
-

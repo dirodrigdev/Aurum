@@ -861,44 +861,53 @@ test('keeps direct amount when universe amount reasonably matches optimizable ca
   assert.equal(Math.round(profile.mixedFundClp), 200_000_000);
 });
 
-test('derives crisis probability bins from synthetic m8 paths', () => {
-  const wealthPaths = [
-    [100, 100, 100],
-    [95, 90, 80],
-    [92, 85, 75],
-    [90, 70, 70],
-    [88, 65, 65],
-    [87, 60, 60],
-  ];
+test('derives crisis probability bins from m8 operational proxy', () => {
   const derived = deriveBucketCrisisProbabilitiesFromM8({
-    runtime: { wealthPaths },
+    runtimesByBucket: {
+      24: {
+        wealthPaths: [[100], [95], [90], [86]],
+        RiskEAnyLargeSalePct: 0.3,
+        CutTimeShare: 0.2,
+        StressTimeShare: 0.35,
+      } as any,
+      48: {
+        wealthPaths: [[100], [98], [96], [95]],
+        RiskEAnyLargeSalePct: 0.1,
+        CutTimeShare: 0.05,
+        StressTimeShare: 0.15,
+      } as any,
+    },
     seed: 42,
-    candidateBucketsMonths: [24, 36, 48],
-    drawdownThreshold: -0.1,
-    severeDrawdownThreshold: -0.25,
-    embeddedEquityClpEstimate: 10_000_000,
+    horizonMonths: 480,
+    nSim: 3000,
+    embeddedEquityClpEstimateByBucket: { 24: 12_000_000, 48: 12_000_000 },
   });
-  assert.equal(derived.nSim, 3);
+  assert.equal(derived.nSim, 3000);
   assert.ok(derived.probabilityByBin.gt24m >= 0);
   assert.equal(derived.exclusiveScenarioProbabilities.length, 5);
 });
 
 test('calculates balanced-sale probability by bucket from m8 crisis durations', () => {
-  const wealthPaths = [
-    [100, 100],
-    [80, 95],
-    [70, 92],
-    [68, 89],
-    [66, 88],
-    [65, 87],
-  ];
   const derived = deriveBucketCrisisProbabilitiesFromM8({
-    runtime: { wealthPaths },
-    candidateBucketsMonths: [2, 4],
-    drawdownThreshold: -0.15,
-    embeddedEquityClpEstimate: 20_000_000,
+    runtimesByBucket: {
+      24: {
+        wealthPaths: [[100], [90]],
+        RiskEAnyLargeSalePct: 0.4,
+        CutTimeShare: 0.25,
+        StressTimeShare: 0.4,
+      } as any,
+      48: {
+        wealthPaths: [[100], [98]],
+        RiskEAnyLargeSalePct: 0.15,
+        CutTimeShare: 0.08,
+        StressTimeShare: 0.2,
+      } as any,
+    },
+    horizonMonths: 480,
+    nSim: 3000,
+    embeddedEquityClpEstimateByBucket: { 24: 20_000_000, 48: 20_000_000 },
   });
-  assert.ok((derived.probabilityBalancedSaleByBucket[2] ?? 0) >= (derived.probabilityBalancedSaleByBucket[4] ?? 0));
+  assert.ok((derived.probabilityBalancedSaleByBucket[24] ?? 0) >= (derived.probabilityBalancedSaleByBucket[48] ?? 0));
 });
 
 test('builds expected cost from m8 probabilities', () => {
@@ -915,15 +924,21 @@ test('builds expected cost from m8 probabilities', () => {
     expectedDefensiveReturnAnnual: 0.03,
   });
   const crisis = deriveBucketCrisisProbabilitiesFromM8({
-    runtime: { wealthPaths: [[100, 100], [90, 85], [88, 80], [86, 78]] },
-    candidateBucketsMonths: [24, 36, 48],
-    embeddedEquityClpEstimate: profile.embeddedEquityClp,
+    runtimesByBucket: {
+      24: { wealthPaths: [[100], [90]], RiskEAnyLargeSalePct: 0.3, CutTimeShare: 0.2, StressTimeShare: 0.3 } as any,
+      36: { wealthPaths: [[100], [93]], RiskEAnyLargeSalePct: 0.2, CutTimeShare: 0.12, StressTimeShare: 0.2 } as any,
+      48: { wealthPaths: [[100], [96]], RiskEAnyLargeSalePct: 0.12, CutTimeShare: 0.08, StressTimeShare: 0.15 } as any,
+    },
+    horizonMonths: 480,
+    nSim: 3000,
+    embeddedEquityClpEstimateByBucket: { 24: profile.embeddedEquityClp, 36: profile.embeddedEquityClp, 48: profile.embeddedEquityClp },
   });
   const analysis = buildBucketExpectedCostFromM8({
     profile,
     tradeoffRows: tradeoff,
     currentBucketMonths: 36,
     forcedSalePenaltyPct: 0.3,
+    analysisHorizonYears: 40,
     crisis,
   });
   assert.equal(analysis.source, 'm8_monte_carlo');
@@ -932,11 +947,30 @@ test('builds expected cost from m8 probabilities', () => {
 
 test('falls back to warning when m8 paths are missing', () => {
   const derived = deriveBucketCrisisProbabilitiesFromM8({
-    runtime: { wealthPaths: [] },
-    candidateBucketsMonths: [24, 36],
+    runtimesByBucket: {},
+    horizonMonths: 480,
+    nSim: 0,
   });
   assert.equal(derived.nSim, 0);
   assert.ok(derived.warnings.length > 0);
+});
+
+test('normal retirement drift without operational stress does not trigger crisis probability', () => {
+  const derived = deriveBucketCrisisProbabilitiesFromM8({
+    runtimesByBucket: {
+      48: {
+        wealthPaths: [[100], [98], [96], [94], [92]],
+        RiskEAnyLargeSalePct: 0,
+        CutTimeShare: 0,
+        StressTimeShare: 0,
+      } as any,
+    },
+    horizonMonths: 480,
+    nSim: 3000,
+    embeddedEquityClpEstimateByBucket: { 48: 10_000_000 },
+  });
+  assert.equal(derived.probabilityBalancedSaleByBucket[48], 0);
+  assert.equal(derived.probabilityByBin.gt24m, 0);
 });
 
 const failures: string[] = [];

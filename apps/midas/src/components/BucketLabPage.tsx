@@ -9,6 +9,7 @@ import { buildBucketDecisionSummary } from '../domain/bucketLab/bucketDecisionSu
 import { describeExpectedValue, buildBucketTradeoffCards } from '../domain/bucketLab/bucketPresentation';
 import { buildBucketSensitivitySummary } from '../domain/bucketLab/bucketSensitivitySummary';
 import { deriveBucketCrisisProbabilitiesFromM8 } from '../domain/bucketLab/bucketM8CrisisProbabilities';
+import type { BucketM8CrisisProbabilities } from '../domain/bucketLab/bucketM8CrisisProbabilities';
 import { buildBucketExpectedCostFromM8 } from '../domain/bucketLab/bucketExpectedCostFromM8';
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
@@ -117,6 +118,10 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     () => Array.from(new Set([...baseCandidateBuckets, Math.round(bucketCurrentMonths)])).filter((value) => value > 0).sort((a, b) => a - b),
     [bucketCurrentMonths],
   );
+  const analysisHorizonYears = useMemo(
+    () => Math.max(1, Number(params.simulation?.horizonMonths ?? 480) / 12),
+    [params.simulation?.horizonMonths],
+  );
 
   const profile = useMemo(
     () =>
@@ -193,6 +198,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         tradeoffRows,
         currentBucketMonths: bucketCurrentMonths,
         forcedSalePenaltyPct,
+        analysisHorizonYears,
         crisisScenarioProbabilities: [
           { crisisMonths: 36, probability: prob36 },
           { crisisMonths: 48, probability: prob48 },
@@ -201,24 +207,34 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           { crisisMonths: 96, probability: prob96 },
         ],
       }),
-    [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, prob36, prob48, prob60, prob72, prob96],
+    [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, analysisHorizonYears, prob36, prob48, prob60, prob72, prob96],
   );
 
-  const m8Crisis = useMemo(() => {
+  const m8Crisis = useMemo<BucketM8CrisisProbabilities>(() => {
     try {
       const capitalResolution = resolveCapital({ params });
-      const input = toM8Input(params, capitalResolution);
-      const runtime = runM8(input);
+      const runtimesByBucket: Record<number, ReturnType<typeof runM8>> = {};
+      candidateBuckets.forEach((bucket) => {
+        const bucketParams: ModelParameters = {
+          ...params,
+          bucketMonths: bucket,
+        };
+        const input = toM8Input(bucketParams, capitalResolution);
+        runtimesByBucket[bucket] = runM8(input);
+      });
       return deriveBucketCrisisProbabilitiesFromM8({
-        runtime,
+        runtimesByBucket,
         seed: Number(params.simulation?.seed ?? 0),
-        candidateBucketsMonths: candidateBuckets,
-        embeddedEquityClpEstimate: profile.embeddedEquityClp,
+        horizonMonths: Number(params.simulation?.horizonMonths ?? 480),
+        nSim: Number(params.simulation?.nSim ?? 0),
+        embeddedEquityClpEstimateByBucket: Object.fromEntries(
+          candidateBuckets.map((bucket) => [bucket, profile.embeddedEquityClp]),
+        ) as Record<number, number>,
       });
     } catch (error: unknown) {
       return {
         nSim: 0,
-        source: 'm8_monte_carlo' as const,
+        source: 'm8_wealth_drawdown_heuristic' as const,
         generatedAt: new Date().toISOString(),
         seed: Number(params.simulation?.seed ?? 0),
         crisisDurationBins: { gt24m: 0, gt36m: 0, gt48m: 0, gt60m: 0, gt72m: 0, gt96m: 0 },
@@ -237,7 +253,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         p50EmbeddedEquitySoldByBucket: {},
         p90EmbeddedEquitySoldByBucket: {},
         warnings: [
-          `No se pudieron derivar probabilidades desde Monte Carlo M8: ${error instanceof Error ? error.message : 'error desconocido'}`,
+          `No se pudieron derivar probabilidades operacionales desde Monte Carlo M8: ${error instanceof Error ? error.message : 'error desconocido'}`,
         ],
       };
     }
@@ -257,6 +273,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         tradeoffRows,
         currentBucketMonths: bucketCurrentMonths,
         forcedSalePenaltyPct,
+        analysisHorizonYears,
         crisis: m8Crisis,
       }).analysis;
     }
@@ -268,6 +285,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     tradeoffRows,
     bucketCurrentMonths,
     forcedSalePenaltyPct,
+    analysisHorizonYears,
     m8Crisis,
     expectedCostAnalysis,
   ]);
@@ -306,6 +324,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         tradeoffRows,
         currentBucketMonths: bucketCurrentMonths,
         forcedSalePenaltyPct,
+        analysisHorizonYears,
         crisis: m8Crisis,
       }).analysis,
     });
@@ -316,6 +335,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     tradeoffRows,
     bucketCurrentMonths,
     forcedSalePenaltyPct,
+    analysisHorizonYears,
     m8Crisis,
   ]);
   const recommendationDiffersBetweenSources =
@@ -330,6 +350,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         tradeoffRows,
         currentBucketMonths: bucketCurrentMonths,
         forcedSalePenaltyPct,
+        analysisHorizonYears,
         crisisScenarioProbabilities:
           probabilitySource === 'm8' && hasM8Probabilities
             ? m8Crisis.exclusiveScenarioProbabilities
@@ -346,6 +367,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       tradeoffRows,
       bucketCurrentMonths,
       forcedSalePenaltyPct,
+      analysisHorizonYears,
       probabilitySource,
       hasM8Probabilities,
       m8Crisis.exclusiveScenarioProbabilities,
@@ -532,6 +554,10 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <div>Crisis {'>'}24m: {formatPct(m8Crisis.probabilityByBin.gt24m)} · {'>'}36m: {formatPct(m8Crisis.probabilityByBin.gt36m)} · {'>'}48m: {formatPct(m8Crisis.probabilityByBin.gt48m)}</div>
             <div>Venta de balanceados (bucket actual): {formatPct(m8Crisis.probabilityBalancedSaleByBucket[bucketCurrentMonths] ?? 0)}</div>
             <div>RV embebida promedio vendida (bucket actual): {formatCompactMoney(m8Crisis.avgEmbeddedEquitySoldByBucket[bucketCurrentMonths] ?? 0)}</div>
+            <div>
+              Bucket limpio actual: {formatMonths(profile.cleanDefensiveRunwayMonths)} · Defensa mixta adicional: {formatMonths(profile.mixedFundRunwayMonths)} · Defensa total utilizable: {formatMonths(profile.cleanDefensiveRunwayMonths + profile.mixedFundRunwayMonths)}
+            </div>
+            <div>Fuente de crisis: {m8Crisis.source === 'm8_operational_proxy' ? 'M8 operacional proxy' : 'M8 wealth drawdown heuristic'}</div>
           </div>
         ) : (
           <div style={{ color: T.warning, fontSize: 12 }}>

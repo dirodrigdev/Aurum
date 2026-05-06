@@ -46,6 +46,7 @@ export type BuildBucketExpectedCostAnalysisInput = {
   currentBucketMonths: number;
   forcedSalePenaltyPct: number;
   crisisScenarioProbabilities: CrisisScenarioProbability[];
+  analysisHorizonYears?: number;
 };
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
@@ -56,6 +57,7 @@ export function buildBucketExpectedCostAnalysis(
   input: BuildBucketExpectedCostAnalysisInput,
 ): BucketExpectedCostAnalysis {
   const penaltyPct = clamp01(input.forcedSalePenaltyPct);
+  const analysisHorizonYears = Math.max(1, Number(input.analysisHorizonYears ?? 1));
   const probabilityByMonths = new Map(
     input.crisisScenarioProbabilities.map((item) => [item.crisisMonths, clamp01(item.probability)]),
   );
@@ -73,10 +75,11 @@ export function buildBucketExpectedCostAnalysis(
           expectedScenarioCostClp,
         };
       });
-    const expectedForcedSaleCostClp = embeddedEquitySoldByScenario.reduce(
+    const expectedForcedSaleCostClpRaw = embeddedEquitySoldByScenario.reduce(
       (sum, scenario) => sum + scenario.expectedScenarioCostClp,
       0,
     );
+    const expectedForcedSaleCostClp = expectedForcedSaleCostClpRaw / analysisHorizonYears;
     const expectedTotalCostClp = row.opportunityCostAnnual + expectedForcedSaleCostClp;
     return {
       bucketMonths: row.bucketMonths,
