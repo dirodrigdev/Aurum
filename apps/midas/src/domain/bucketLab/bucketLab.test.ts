@@ -7,6 +7,8 @@ import { buildBucketExpectedCostAnalysis } from './bucketExpectedCostAnalysis';
 import { buildBucketDecisionSummary } from './bucketDecisionSummary';
 import { buildBucketSensitivitySummary } from './bucketSensitivitySummary';
 import { buildBucketTradeoffCards, describeExpectedValue } from './bucketPresentation';
+import { deriveBucketCrisisProbabilitiesFromM8 } from './bucketM8CrisisProbabilities';
+import { buildBucketExpectedCostFromM8 } from './bucketExpectedCostFromM8';
 
 type TestFn = () => void;
 const tests: Array<{ name: string; fn: TestFn }> = [];
@@ -857,6 +859,84 @@ test('keeps direct amount when universe amount reasonably matches optimizable ca
   });
   assert.equal(profile.amountSource, 'instrument_amount_clp');
   assert.equal(Math.round(profile.mixedFundClp), 200_000_000);
+});
+
+test('derives crisis probability bins from synthetic m8 paths', () => {
+  const wealthPaths = [
+    [100, 100, 100],
+    [95, 90, 80],
+    [92, 85, 75],
+    [90, 70, 70],
+    [88, 65, 65],
+    [87, 60, 60],
+  ];
+  const derived = deriveBucketCrisisProbabilitiesFromM8({
+    runtime: { wealthPaths },
+    seed: 42,
+    candidateBucketsMonths: [24, 36, 48],
+    drawdownThreshold: -0.1,
+    severeDrawdownThreshold: -0.25,
+    embeddedEquityClpEstimate: 10_000_000,
+  });
+  assert.equal(derived.nSim, 3);
+  assert.ok(derived.probabilityByBin.gt24m >= 0);
+  assert.equal(derived.exclusiveScenarioProbabilities.length, 5);
+});
+
+test('calculates balanced-sale probability by bucket from m8 crisis durations', () => {
+  const wealthPaths = [
+    [100, 100],
+    [80, 95],
+    [70, 92],
+    [68, 89],
+    [66, 88],
+    [65, 87],
+  ];
+  const derived = deriveBucketCrisisProbabilitiesFromM8({
+    runtime: { wealthPaths },
+    candidateBucketsMonths: [2, 4],
+    drawdownThreshold: -0.15,
+    embeddedEquityClpEstimate: 20_000_000,
+  });
+  assert.ok((derived.probabilityBalancedSaleByBucket[2] ?? 0) >= (derived.probabilityBalancedSaleByBucket[4] ?? 0));
+});
+
+test('builds expected cost from m8 probabilities', () => {
+  const snapshot = makeSnapshot([
+    makeInstrument('cash', 36_000_000, { name: 'Banco CLP', currentMixUsed: { rv: 0, rf: 0, cash: 1, other: 0 } }),
+    makeInstrument('balanced', 24_000_000, { name: 'Balanceado 60/40', currentMixUsed: { rv: 0.6, rf: 0.4, cash: 0, other: 0 } }),
+  ]);
+  const profile = buildOperationalBucketProfile({ snapshot, monthlySpendClp: 1_000_000, includeCaptive: false, includeRiskCapital: false });
+  const tradeoff = runBucketTradeoffAnalysis({
+    profile,
+    candidateMonths: [24, 36, 48],
+    currentBucketMonths: 36,
+    expectedGrowthReturnAnnual: 0.08,
+    expectedDefensiveReturnAnnual: 0.03,
+  });
+  const crisis = deriveBucketCrisisProbabilitiesFromM8({
+    runtime: { wealthPaths: [[100, 100], [90, 85], [88, 80], [86, 78]] },
+    candidateBucketsMonths: [24, 36, 48],
+    embeddedEquityClpEstimate: profile.embeddedEquityClp,
+  });
+  const analysis = buildBucketExpectedCostFromM8({
+    profile,
+    tradeoffRows: tradeoff,
+    currentBucketMonths: 36,
+    forcedSalePenaltyPct: 0.3,
+    crisis,
+  });
+  assert.equal(analysis.source, 'm8_monte_carlo');
+  assert.equal(analysis.analysis.rows.length, tradeoff.length);
+});
+
+test('falls back to warning when m8 paths are missing', () => {
+  const derived = deriveBucketCrisisProbabilitiesFromM8({
+    runtime: { wealthPaths: [] },
+    candidateBucketsMonths: [24, 36],
+  });
+  assert.equal(derived.nSim, 0);
+  assert.ok(derived.warnings.length > 0);
 });
 
 const failures: string[] = [];

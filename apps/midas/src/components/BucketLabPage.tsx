@@ -8,6 +8,11 @@ import { buildBucketExpectedCostAnalysis } from '../domain/bucketLab/bucketExpec
 import { buildBucketDecisionSummary } from '../domain/bucketLab/bucketDecisionSummary';
 import { describeExpectedValue, buildBucketTradeoffCards } from '../domain/bucketLab/bucketPresentation';
 import { buildBucketSensitivitySummary } from '../domain/bucketLab/bucketSensitivitySummary';
+import { deriveBucketCrisisProbabilitiesFromM8 } from '../domain/bucketLab/bucketM8CrisisProbabilities';
+import { buildBucketExpectedCostFromM8 } from '../domain/bucketLab/bucketExpectedCostFromM8';
+import { resolveCapital } from '../domain/simulation/capitalResolver';
+import { toM8Input } from '../domain/simulation/m8Adapter';
+import { runM8 } from '../domain/simulation/engineM8';
 import { T } from './theme';
 
 const baseCandidateBuckets = [24, 36, 48, 60, 72, 96, 120];
@@ -85,6 +90,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
   const [prob72, setProb72] = useState(0.03);
   const [prob96, setProb96] = useState(0.02);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const [probabilitySource, setProbabilitySource] = useState<'m8' | 'manual'>('m8');
   const applyAssumptionPreset = (preset: (typeof assumptionPresets)[number]) => {
     setForcedSalePenaltyPct(preset.forcedSalePenaltyPct);
     setProb36(preset.prob36);
@@ -198,7 +204,86 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, prob36, prob48, prob60, prob72, prob96],
   );
 
+  const m8Crisis = useMemo(() => {
+    try {
+      const capitalResolution = resolveCapital({ params });
+      const input = toM8Input(params, capitalResolution);
+      const runtime = runM8(input);
+      return deriveBucketCrisisProbabilitiesFromM8({
+        runtime,
+        seed: Number(params.simulation?.seed ?? 0),
+        candidateBucketsMonths: candidateBuckets,
+        embeddedEquityClpEstimate: profile.embeddedEquityClp,
+      });
+    } catch (error: unknown) {
+      return {
+        nSim: 0,
+        source: 'm8_monte_carlo' as const,
+        generatedAt: new Date().toISOString(),
+        seed: Number(params.simulation?.seed ?? 0),
+        crisisDurationBins: { gt24m: 0, gt36m: 0, gt48m: 0, gt60m: 0, gt72m: 0, gt96m: 0 },
+        probabilityByBin: { gt24m: 0, gt36m: 0, gt48m: 0, gt60m: 0, gt72m: 0, gt96m: 0 },
+        exclusiveScenarioProbabilities: [
+          { crisisMonths: 36 as const, probability: 0 },
+          { crisisMonths: 48 as const, probability: 0 },
+          { crisisMonths: 60 as const, probability: 0 },
+          { crisisMonths: 72 as const, probability: 0 },
+          { crisisMonths: 96 as const, probability: 0 },
+        ],
+        operationalCrisisProbabilityByBucket: {},
+        probabilityCleanDefenseDepletedByBucket: {},
+        probabilityBalancedSaleByBucket: {},
+        avgEmbeddedEquitySoldByBucket: {},
+        p50EmbeddedEquitySoldByBucket: {},
+        p90EmbeddedEquitySoldByBucket: {},
+        warnings: [
+          `No se pudieron derivar probabilidades desde Monte Carlo M8: ${error instanceof Error ? error.message : 'error desconocido'}`,
+        ],
+      };
+    }
+  }, [params, candidateBuckets, profile.embeddedEquityClp]);
+
+  const hasM8Probabilities = m8Crisis.nSim > 0;
+  useEffect(() => {
+    if (probabilitySource === 'm8' && !hasM8Probabilities) {
+      setProbabilitySource('manual');
+    }
+  }, [probabilitySource, hasM8Probabilities]);
+
+  const activeExpectedCostAnalysis = useMemo(() => {
+    if (probabilitySource === 'm8' && hasM8Probabilities) {
+      return buildBucketExpectedCostFromM8({
+        profile,
+        tradeoffRows,
+        currentBucketMonths: bucketCurrentMonths,
+        forcedSalePenaltyPct,
+        crisis: m8Crisis,
+      }).analysis;
+    }
+    return expectedCostAnalysis;
+  }, [
+    probabilitySource,
+    hasM8Probabilities,
+    profile,
+    tradeoffRows,
+    bucketCurrentMonths,
+    forcedSalePenaltyPct,
+    m8Crisis,
+    expectedCostAnalysis,
+  ]);
+
   const decision = useMemo(
+    () =>
+      buildBucketDecisionSummary({
+        profile,
+        stressRows,
+        tradeoffRows,
+        targetBucketMonths: bucketCurrentMonths,
+        expectedCostAnalysis: activeExpectedCostAnalysis,
+      }),
+    [profile, stressRows, tradeoffRows, bucketCurrentMonths, activeExpectedCostAnalysis],
+  );
+  const manualDecision = useMemo(
     () =>
       buildBucketDecisionSummary({
         profile,
@@ -209,6 +294,35 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       }),
     [profile, stressRows, tradeoffRows, bucketCurrentMonths, expectedCostAnalysis],
   );
+  const m8Decision = useMemo(() => {
+    if (!hasM8Probabilities) return null;
+    return buildBucketDecisionSummary({
+      profile,
+      stressRows,
+      tradeoffRows,
+      targetBucketMonths: bucketCurrentMonths,
+      expectedCostAnalysis: buildBucketExpectedCostFromM8({
+        profile,
+        tradeoffRows,
+        currentBucketMonths: bucketCurrentMonths,
+        forcedSalePenaltyPct,
+        crisis: m8Crisis,
+      }).analysis,
+    });
+  }, [
+    hasM8Probabilities,
+    profile,
+    stressRows,
+    tradeoffRows,
+    bucketCurrentMonths,
+    forcedSalePenaltyPct,
+    m8Crisis,
+  ]);
+  const recommendationDiffersBetweenSources =
+    m8Decision !== null && m8Decision.bestBucketMonths !== manualDecision.bestBucketMonths;
+  const executiveSummary = probabilitySource === 'm8' && hasM8Probabilities
+    ? `Bajo ${m8Crisis.nSim.toLocaleString('es-CL')} escenarios M8, el menor costo esperado lo entrega ${decision.bestBucketMonths}m limpio.`
+    : `Bajo supuestos manuales actuales, el menor costo esperado lo entrega ${decision.bestBucketMonths}m limpio.`;
   const sensitivity = useMemo(
     () =>
       buildBucketSensitivitySummary({
@@ -216,23 +330,39 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         tradeoffRows,
         currentBucketMonths: bucketCurrentMonths,
         forcedSalePenaltyPct,
-        crisisScenarioProbabilities: [
-          { crisisMonths: 36, probability: prob36 },
-          { crisisMonths: 48, probability: prob48 },
-          { crisisMonths: 60, probability: prob60 },
-          { crisisMonths: 72, probability: prob72 },
-          { crisisMonths: 96, probability: prob96 },
-        ],
+        crisisScenarioProbabilities:
+          probabilitySource === 'm8' && hasM8Probabilities
+            ? m8Crisis.exclusiveScenarioProbabilities
+            : [
+                { crisisMonths: 36, probability: prob36 },
+                { crisisMonths: 48, probability: prob48 },
+                { crisisMonths: 60, probability: prob60 },
+                { crisisMonths: 72, probability: prob72 },
+                { crisisMonths: 96, probability: prob96 },
+              ],
       }),
-    [profile, tradeoffRows, bucketCurrentMonths, forcedSalePenaltyPct, prob36, prob48, prob60, prob72, prob96],
+    [
+      profile,
+      tradeoffRows,
+      bucketCurrentMonths,
+      forcedSalePenaltyPct,
+      probabilitySource,
+      hasM8Probabilities,
+      m8Crisis.exclusiveScenarioProbabilities,
+      prob36,
+      prob48,
+      prob60,
+      prob72,
+      prob96,
+    ],
   );
   const bestValuePresentation = useMemo(
     () => describeExpectedValue(decision.differenceVsCurrentClp),
     [decision.differenceVsCurrentClp],
   );
   const tradeoffCards = useMemo(
-    () => buildBucketTradeoffCards(expectedCostAnalysis.rows, expectedCostAnalysis.currentBucketMonths),
-    [expectedCostAnalysis.rows, expectedCostAnalysis.currentBucketMonths],
+    () => buildBucketTradeoffCards(activeExpectedCostAnalysis.rows, activeExpectedCostAnalysis.currentBucketMonths),
+    [activeExpectedCostAnalysis.rows, activeExpectedCostAnalysis.currentBucketMonths],
   );
 
   return (
@@ -260,7 +390,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             </div>
             <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 800 }}>{decision.headline}</div>
             <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.45, maxWidth: 760 }}>
-              {decision.oneLineSummary}
+              {executiveSummary}
             </div>
           </div>
           <div style={{ display: 'inline-flex', width: 'fit-content', border: `1px solid ${T.warning}`, borderRadius: 999, padding: '3px 8px', color: T.warning, fontSize: 11, fontWeight: 700 }}>
@@ -269,7 +399,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         </div>
 
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-          <MetricCard title={`Actual ${expectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual ($/año)" badge="Actual" />
+          <MetricCard title={`Actual ${activeExpectedCostAnalysis.currentBucketMonths}m`} value={formatCompactMoney(decision.currentBucketExpectedTotalCostClp)} subtitle="Costo esperado anual ($/año)" badge="Actual" />
           <MetricCard
             title={`Mejor alternativa: ${decision.bestBucketMonths}m de bucket limpio`}
             value={bestValuePresentation.label}
@@ -314,6 +444,11 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
           Estas probabilidades son supuestos para valorar escenarios, no predicciones.
         </div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
+          {probabilitySource === 'm8' && hasM8Probabilities
+            ? `Fuente: M8 Monte Carlo · ${m8Crisis.nSim.toLocaleString('es-CL')} escenarios · seed ${m8Crisis.seed ?? '—'}`
+            : 'Fuente: Supuestos manuales editables.'}
+        </div>
+        <div style={{ color: T.textMuted, fontSize: 12 }}>
           El scroll muestra el detalle del stress, los supuestos y el costo esperado comparado.
         </div>
       </div>
@@ -352,6 +487,67 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
           Compara el costo de tener más defensa desde el inicio versus el riesgo de vender balanceados en una crisis larga.
         </div>
+      </div>
+
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+        <div style={{ color: T.textMuted, fontSize: 11 }}>Fuente de probabilidades</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => hasM8Probabilities && setProbabilitySource('m8')}
+            disabled={!hasM8Probabilities}
+            style={{
+              background: probabilitySource === 'm8' ? T.primaryStrong : T.surfaceEl,
+              color: probabilitySource === 'm8' ? '#fff' : T.textPrimary,
+              border: `1px solid ${hasM8Probabilities ? T.border : T.textMuted}`,
+              opacity: hasM8Probabilities ? 1 : 0.6,
+              borderRadius: 8,
+              padding: '7px 10px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: hasM8Probabilities ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Monte Carlo M8
+          </button>
+          <button
+            type="button"
+            onClick={() => setProbabilitySource('manual')}
+            style={{
+              background: probabilitySource === 'manual' ? T.primaryStrong : T.surfaceEl,
+              color: probabilitySource === 'manual' ? '#fff' : T.textPrimary,
+              border: `1px solid ${T.border}`,
+              borderRadius: 8,
+              padding: '7px 10px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Supuestos manuales
+          </button>
+        </div>
+        {probabilitySource === 'm8' && hasM8Probabilities ? (
+          <div style={{ display: 'grid', gap: 4, color: T.textSecondary, fontSize: 12 }}>
+            <div>Crisis {'>'}24m: {formatPct(m8Crisis.probabilityByBin.gt24m)} · {'>'}36m: {formatPct(m8Crisis.probabilityByBin.gt36m)} · {'>'}48m: {formatPct(m8Crisis.probabilityByBin.gt48m)}</div>
+            <div>Venta de balanceados (bucket actual): {formatPct(m8Crisis.probabilityBalancedSaleByBucket[bucketCurrentMonths] ?? 0)}</div>
+            <div>RV embebida promedio vendida (bucket actual): {formatCompactMoney(m8Crisis.avgEmbeddedEquitySoldByBucket[bucketCurrentMonths] ?? 0)}</div>
+          </div>
+        ) : (
+          <div style={{ color: T.warning, fontSize: 12 }}>
+            {!hasM8Probabilities
+              ? 'No hay escenarios M8 disponibles. Bucket Lab usa supuestos manuales editables.'
+              : 'Usando supuestos manuales editables.'}
+          </div>
+        )}
+        {probabilitySource === 'm8' && m8Crisis.warnings.length > 0 ? (
+          <div style={{ color: T.warning, fontSize: 12 }}>{m8Crisis.warnings[0]}</div>
+        ) : null}
+        {recommendationDiffersBetweenSources ? (
+          <div style={{ color: T.warning, fontSize: 12 }}>
+            La recomendacion cambia entre Monte Carlo M8 y supuestos manuales.
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
@@ -438,11 +634,11 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
               ))}
             </div>
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-              <InputNumber label="Prob. crisis 36m" value={prob36} onChange={setProb36} step={0.01} />
-              <InputNumber label="Prob. crisis 48m" value={prob48} onChange={setProb48} step={0.01} />
-              <InputNumber label="Prob. crisis 60m" value={prob60} onChange={setProb60} step={0.01} />
-              <InputNumber label="Prob. crisis 72m" value={prob72} onChange={setProb72} step={0.01} />
-              <InputNumber label="Prob. crisis 96m" value={prob96} onChange={setProb96} step={0.01} />
+              <InputNumber label="Prob. crisis 36m" value={prob36} onChange={setProb36} step={0.01} disabled={probabilitySource === 'm8'} />
+              <InputNumber label="Prob. crisis 48m" value={prob48} onChange={setProb48} step={0.01} disabled={probabilitySource === 'm8'} />
+              <InputNumber label="Prob. crisis 60m" value={prob60} onChange={setProb60} step={0.01} disabled={probabilitySource === 'm8'} />
+              <InputNumber label="Prob. crisis 72m" value={prob72} onChange={setProb72} step={0.01} disabled={probabilitySource === 'm8'} />
+              <InputNumber label="Prob. crisis 96m" value={prob96} onChange={setProb96} step={0.01} disabled={probabilitySource === 'm8'} />
               <InputNumber label="Penalización vender RV en baja" value={forcedSalePenaltyPct} onChange={setForcedSalePenaltyPct} step={0.01} />
             </div>
             <div style={{ color: T.textMuted, fontSize: 12 }}>
@@ -631,11 +827,13 @@ function InputNumber({
   value,
   onChange,
   step = 1,
+  disabled = false,
 }: {
   label: string;
   value: number;
   onChange: (next: number) => void;
   step?: number;
+  disabled?: boolean;
 }) {
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
@@ -644,6 +842,7 @@ function InputNumber({
         type="number"
         value={Number.isFinite(value) ? value : 0}
         step={step}
+        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value || 0))}
         style={{
           width: '100%',
@@ -652,6 +851,7 @@ function InputNumber({
           color: T.textPrimary,
           borderRadius: 8,
           padding: '8px 10px',
+          opacity: disabled ? 0.65 : 1,
         }}
       />
     </div>
