@@ -3247,6 +3247,11 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
       const mergedRecords = merged.records;
       const mergedClosures = merged.closures;
+      const closuresProtection = protectRemoteClosuresFromEmptyOverwrite({
+        mergedClosures,
+        remoteClosures,
+      });
+      const closuresForCloud = closuresProtection.closuresForCloud;
       const mergedInstruments = merged.instruments;
       const mergedBankTokens = merged.bankTokens;
       const mergedFx = merged.fx;
@@ -3260,7 +3265,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           fx: mergedFx,
           bankTokens: mergedBankTokens,
           records: mergedRecords,
-          closures: mergedClosures,
+          closures: closuresForCloud,
           instruments: mergedInstruments,
           deletedRecordIds: mergedDeletedRecordIds,
           deletedRecordAssetMonthKeys: mergedDeletedRecordAssetMonthKeys,
@@ -3269,7 +3274,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       );
       // Publish to MIDAS must use the FX currently active in this local session.
       // Cloud merge can choose a stale remote FX while records are being reconciled.
-      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(mergedClosures, {
+      const publishResult = await publishAurumOptimizableInvestmentsSnapshot(closuresForCloud, {
         activeFxRates: localFx,
       }).catch((err: any) => ({
         ok: false as const,
@@ -3289,7 +3294,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
 
       if (
         !sameRecords(localRecords, mergedRecords) ||
-        !sameClosures(localClosures, mergedClosures) ||
+          !sameClosures(localClosures, mergedClosures) ||
         !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
         !sameBankTokens(localBankTokens, mergedBankTokens) ||
         !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
@@ -3325,6 +3330,10 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         });
         setFirestoreOk();
         return true;
+      }
+
+      if (closuresProtection.prevented) {
+        console.warn('[Aurum][cloud-sync] prevented empty closure overwrite; keeping remote closures');
       }
 
       setLastWealthSyncIssue('');
@@ -3614,26 +3623,29 @@ const mergeInvestmentInstruments = (
   return [...merged.values()].sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label)));
 };
 
-const mergeClosures = (
+export const mergeClosuresForSync = (
   localClosures: WealthMonthlyClosure[],
   remoteClosures: WealthMonthlyClosure[],
   preferLocal = false,
 ) => {
   if (preferLocal) {
-    const remoteByMonth = new Map(remoteClosures.map((closure) => [closure.monthKey, closure] as const));
-    const mergedPreferredLocal = localClosures.map((localClosure) => {
-      const remoteClosure = remoteByMonth.get(localClosure.monthKey);
-      if (!remoteClosure) return localClosure;
-      const remoteAsVersion =
-        remoteClosure.closedAt !== localClosure.closedAt ? [toClosureVersion(remoteClosure, localClosure.closedAt)] : [];
-      const mergedVersions = mergeClosureVersions(
-        localClosure.previousVersions,
-        remoteClosure.previousVersions,
-        remoteAsVersion,
+    const mergedByMonth = new Map(remoteClosures.map((closure) => [closure.monthKey, closure] as const));
+    localClosures.forEach((localClosure) => {
+      const remoteClosure = mergedByMonth.get(localClosure.monthKey);
+      if (!remoteClosure) {
+        mergedByMonth.set(localClosure.monthKey, localClosure);
+        return;
+      }
+      const remoteAsVersion = remoteClosure.closedAt !== localClosure.closedAt
+        ? [toClosureVersion(remoteClosure, localClosure.closedAt)]
+        : [];
+      const mergedVersions = mergeClosureVersions(localClosure.previousVersions, remoteClosure.previousVersions, remoteAsVersion);
+      mergedByMonth.set(
+        localClosure.monthKey,
+        mergedVersions.length ? { ...localClosure, previousVersions: mergedVersions } : localClosure,
       );
-      return mergedVersions.length ? { ...localClosure, previousVersions: mergedVersions } : localClosure;
     });
-    return [...mergedPreferredLocal].sort(compareClosuresByMonthDesc);
+    return [...mergedByMonth.values()].sort(compareClosuresByMonthDesc);
   }
 
   const map = new Map<string, WealthMonthlyClosure>();
@@ -3659,6 +3671,28 @@ const mergeClosures = (
     );
   }
   return [...map.values()].sort(compareClosuresByMonthDesc);
+};
+
+const mergeClosures = (
+  localClosures: WealthMonthlyClosure[],
+  remoteClosures: WealthMonthlyClosure[],
+  preferLocal = false,
+) => mergeClosuresForSync(localClosures, remoteClosures, preferLocal);
+
+export const protectRemoteClosuresFromEmptyOverwrite = (input: {
+  mergedClosures: WealthMonthlyClosure[];
+  remoteClosures: WealthMonthlyClosure[];
+}) => {
+  if (input.mergedClosures.length === 0 && input.remoteClosures.length > 0) {
+    return {
+      closuresForCloud: input.remoteClosures,
+      prevented: true,
+    } as const;
+  }
+  return {
+    closuresForCloud: input.mergedClosures,
+    prevented: false,
+  } as const;
 };
 
 const serializeClosure = (c: WealthMonthlyClosure) =>
