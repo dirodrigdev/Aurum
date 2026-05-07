@@ -1443,109 +1443,84 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div aria-hidden="true" style={{ height: isMobileViewport ? 104 : 58, flex: '0 0 auto' }} />
       <div
         style={{
-          position: 'fixed',
+          position: 'sticky',
           top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
-          left: isMobileViewport ? 10 : 16,
-          right: isMobileViewport ? 10 : 16,
-          zIndex: 80,
-          pointerEvents: 'none',
+          zIndex: 70,
+          background: 'rgba(11,16,24,0.94)',
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: isMobileViewport ? '6px 8px' : '7px 10px',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          cursor: 'pointer',
         }}
+        onClick={scrollToSummary}
+        role="button"
+        tabIndex={0}
       >
-        <div
-          onClick={scrollToSummary}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              scrollToSummary();
-            }
-          }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Midas</span>
+          <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+            Success40 {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
+          </span>
+        </div>
+        <span
           style={{
-            background: 'rgba(11, 16, 24, 0.96)',
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: isMobileViewport ? '7px 8px' : '8px 12px',
-            backdropFilter: 'blur(10px)',
-            color: T.textPrimary,
-            fontSize: isMobileViewport ? 11 : 12,
-            fontWeight: 650,
-            lineHeight: 1.25,
-            cursor: 'pointer',
-            boxShadow: '0 8px 22px rgba(0,0,0,0.18)',
-            pointerEvents: 'auto',
+            border: `1px solid ${simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning}`,
+            color: simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning,
+            borderRadius: 999,
+            padding: '2px 8px',
+            fontSize: 10,
+            fontWeight: 800,
+            whiteSpace: 'nowrap',
           }}
         >
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
-              gap: isMobileViewport ? 6 : 12,
-              alignItems: 'center',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-              <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>
-                Success40
-              </span>
-              <span style={{ fontSize: isMobileViewport ? 20 : 24, fontWeight: 850, color: stickySuccess40 !== null ? T.primary : T.textMuted }}>
-                {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
-              </span>
-              <span style={{ color: isRecalculating ? T.primary : T.textMuted, fontSize: 10, fontWeight: 800 }}>
-                {stickyStatusLabel}
-              </span>
+          {simulationActionStatus.level === 'ok' ? 'OK' : simulationActionStatus.level === 'review' ? 'Revisar' : simulationActionStatus.level === 'provisional' ? 'Provisional' : 'Bloqueado'}
+        </span>
+      </div>
+
+      <div
+        ref={heroCardRef}
+        style={{
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          padding: isMobileViewport ? '10px 10px' : '12px 14px',
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          ¿Llegarás al año 40?
+        </div>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 34 : 38, fontWeight: 850, lineHeight: 1 }}>
+          {success40 !== null ? formatPct(success40) : '—'}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6 }}>
+          {[
+            ['Ruina 40a', formatPct(probRuin40)],
+            ['Casa', formatPct(houseSalePct)],
+            ['MaxDD P50', formatPct(drawdownP50)],
+          ].map(([label, value]) => (
+            <div key={label} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 7px' }}>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>{label}</div>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{value}</div>
             </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: isMobileViewport ? 'flex-start' : 'flex-end',
-                gap: isMobileViewport ? 6 : 8,
-                flexWrap: 'wrap',
-                minWidth: 0,
-              }}
-            >
-              {[
-                ['Ruin20', formatPct(stickyRuin20)],
-                ['Casa', formatPct(stickyHouseSalePct)],
-                ['MaxDD P50', formatPct(stickyDrawdownP50)],
-                ['Mix', compactMixSummary],
-                ['Gasto', compactSpendSummary],
-              ].map(([label, value]) => (
-                <span
-                  key={label}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    maxWidth: label === 'Gasto' ? (isMobileViewport ? '100%' : 360) : undefined,
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: 999,
-                    padding: isMobileViewport ? '4px 7px' : '5px 8px',
-                    color: T.textPrimary,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap' }}>{label}</span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 750,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {value}
-                  </span>
-                </span>
-              ))}
-            </div>
-          </div>
+          ))}
+        </div>
+        <div style={{ color: T.textSecondary, fontSize: 12 }}>
+          {simulationActionStatus.level === 'ok'
+            ? 'Resultado usable y consistente para decidir.'
+            : simulationActionStatus.level === 'provisional'
+              ? 'Resultado provisional mientras sincroniza fuentes.'
+              : simulationActionStatus.level === 'review'
+                ? 'Resultado usable, pero conviene revisar un punto.'
+                : 'Faltan datos críticos para usar este resultado.'}
         </div>
       </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
@@ -1807,13 +1782,15 @@ export function SimulationPage({
         <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Estado de la simulación
         </div>
-        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 16 : 18, fontWeight: 800 }}>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? (simulationActionStatus.level === 'ok' ? 13 : 16) : (simulationActionStatus.level === 'ok' ? 14 : 18), fontWeight: 800 }}>
           {simulationActionStatus.headline}
         </div>
-        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
-          {simulationActionStatus.message}
-        </div>
-        {simulationActionStatus.actionItems.length > 0 && (
+        {simulationActionStatus.level !== 'ok' && (
+          <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
+            {simulationActionStatus.message}
+          </div>
+        )}
+        {simulationActionStatus.level !== 'ok' && simulationActionStatus.actionItems.length > 0 && (
           <div style={{ display: 'grid', gap: 3 }}>
             {simulationActionStatus.actionItems.map((item) => (
               <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
@@ -2151,12 +2128,13 @@ export function SimulationPage({
           </div>
         </div>
       )}
+      <details style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}>
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+          Configuración actual · {activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista'} · {currentNSim} sims · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskToggleCopy}
+        </summary>
+        <div style={{ marginTop: 8 }}>
       <div
         style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? 8 : 10,
           display: 'grid',
           gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
           gap: isMobileViewport ? 8 : 12,
@@ -2296,7 +2274,9 @@ export function SimulationPage({
           </div>
         </div>
       </div>
-      <div ref={heroCardRef} style={{ position: 'relative' }}>
+      </div>
+      </details>
+      <div style={{ position: 'relative' }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
