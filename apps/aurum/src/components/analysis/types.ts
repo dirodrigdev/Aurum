@@ -53,6 +53,8 @@ export type MonthlyReturnRow = {
   gastosDisplay: number | null;
   retornoRealDisplay: number | null;
   pct: number | null;
+  inflationMonthlyRate: number | null;
+  pctReal: number | null;
   isEstimated?: boolean;
   estimateMethod?: 'avg_12m_closed' | 'avg_available_closed' | null;
   estimatedSpendClp?: number | null;
@@ -72,6 +74,7 @@ export type AggregatedSummary = {
   gastosAcumDisplay: number | null;
   retornoRealAcumDisplay: number | null;
   pctRetorno: number | null;
+  pctRetornoReal: number | null;
   pctRetornoNote: string | null;
   spendPct: number | null;
   varPatrimonioAvgDisplay: number | null;

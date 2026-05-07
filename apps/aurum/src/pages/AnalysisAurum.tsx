@@ -311,6 +311,11 @@ export const AnalysisAurum: React.FC = () => {
     return row?.pct ?? null;
   }, [returnsSeriesView.officialRows]);
 
+  const heroLastMonthPctMonthlyReal = useMemo(() => {
+    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+    return row?.pctReal ?? null;
+  }, [returnsSeriesView.officialRows]);
+
   const wealthLabModel = useMemo(
     () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
     [closures, includeRiskCapitalInTotals, gastosSourceVersion],
@@ -422,6 +427,7 @@ export const AnalysisAurum: React.FC = () => {
           heroYtd2026={heroYtd2026}
           heroLastMonth={heroLastMonth}
           heroLastMonthPctMonthly={heroLastMonthPctMonthly}
+          heroLastMonthPctMonthlyReal={heroLastMonthPctMonthlyReal}
           currency={currency}
           includeEstimatedMonth={includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth}
           hasEstimatedMonth={returnsSeriesView.hasEstimatedMonth}

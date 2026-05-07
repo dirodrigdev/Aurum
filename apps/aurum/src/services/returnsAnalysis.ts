@@ -300,6 +300,7 @@ export const computeMonthlyRows = (
   const rows: MonthlyReturnRow[] = [];
   let previousValidNet: number | null = null;
   let previousValidNetDisplay: number | null = null;
+  let previousAuditableUfClp: number | null = null;
 
   for (const closure of filtered) {
     const fxResolution = resolveFxForAnalysis(closure);
@@ -331,6 +332,19 @@ export const computeMonthlyRows = (
       retornoRealDisplay === null || prevNetDisplay === null || prevNetDisplay === 0
         ? null
         : (retornoRealDisplay / prevNetDisplay) * 100;
+    const currentUfClp = Number(fx.ufClp);
+    const inflationMonthlyRate =
+      fxAuditable &&
+      previousAuditableUfClp !== null &&
+      Number.isFinite(currentUfClp) &&
+      currentUfClp > 0 &&
+      previousAuditableUfClp > 0
+        ? currentUfClp / previousAuditableUfClp - 1
+        : null;
+    const pctReal =
+      pct === null || inflationMonthlyRate === null || 1 + inflationMonthlyRate <= 0
+        ? null
+        : (((1 + pct / 100) / (1 + inflationMonthlyRate)) - 1) * 100;
 
     if (invalidNet) {
       console.warn('[Analysis][invalid-net]', {
@@ -356,6 +370,9 @@ export const computeMonthlyRows = (
         fxMethod: fxResolution.method,
         fxMissing: fxResolution.missingKeys,
       });
+    }
+    if (fxAuditable && Number.isFinite(currentUfClp) && currentUfClp > 0) {
+      previousAuditableUfClp = currentUfClp;
     }
 
     rows.push({
@@ -402,6 +419,8 @@ export const computeMonthlyRows = (
       gastosDisplay,
       retornoRealDisplay,
       pct,
+      inflationMonthlyRate,
+      pctReal,
     });
   }
 
@@ -445,6 +464,7 @@ export const aggregateRows = (
     : null;
 
   let pctRetorno: number | null = null;
+  let pctRetornoReal: number | null = null;
   let pctRetornoNote: string | null = null;
 
   if (validMonths > 0 && retornoRealAcumDisplay !== null && baseNetDisplay !== null && baseNetDisplay > 0) {
@@ -473,6 +493,21 @@ export const aggregateRows = (
       }
     }
   }
+  if (validMonths > 0 && validRows.length) {
+    const realGrowthFactors = validRows.map((row) => {
+      if (row.prevNetDisplay === null || row.prevNetDisplay <= 0 || row.retornoRealDisplay === null) return null;
+      const nominalGrowth = 1 + row.retornoRealDisplay / row.prevNetDisplay;
+      if (!Number.isFinite(nominalGrowth) || nominalGrowth <= 0) return null;
+      if (row.inflationMonthlyRate === null || !Number.isFinite(row.inflationMonthlyRate) || row.inflationMonthlyRate <= -1) return null;
+      return nominalGrowth / (1 + row.inflationMonthlyRate);
+    });
+    if (realGrowthFactors.every((factor) => factor !== null)) {
+      const compoundedReal = realGrowthFactors.reduce((acc, factor) => acc * (factor as number), 1);
+      if (compoundedReal > 0) {
+        pctRetornoReal = (Math.pow(compoundedReal, 12 / validMonths) - 1) * 100;
+      }
+    }
+  }
 
   const spendPct =
     retornoRealAcumDisplay === null || retornoRealAcumDisplay === 0 || gastosAcumDisplay === null
@@ -497,6 +532,7 @@ export const aggregateRows = (
     gastosAcumDisplay,
     retornoRealAcumDisplay,
     pctRetorno,
+    pctRetornoReal,
     pctRetornoNote,
     spendPct,
     varPatrimonioAvgDisplay,

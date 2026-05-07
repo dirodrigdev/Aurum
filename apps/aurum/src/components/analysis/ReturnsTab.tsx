@@ -48,6 +48,7 @@ type ReturnsTabProps = {
   heroYtd2026: AggregatedSummary | null;
   heroLastMonth: AggregatedSummary | null;
   heroLastMonthPctMonthly: number | null;
+  heroLastMonthPctMonthlyReal: number | null;
   currency: WealthCurrency;
   includeEstimatedMonth: boolean;
   hasEstimatedMonth: boolean;
@@ -107,6 +108,7 @@ const SummaryTable: React.FC<{
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
+            <th className="w-[56px] py-1 pr-2 text-right text-[10px] font-semibold text-slate-400">(R)</th>
             <th className="py-1 pr-2 text-right">% anual equiv.</th>
             <th className="py-1 pr-2 text-right">Ret.Econ.</th>
             <th className="py-1 pr-2 text-right">Var.Pat</th>
@@ -121,6 +123,14 @@ const SummaryTable: React.FC<{
                 <td className="py-1.5 pr-2 font-medium text-slate-700">
                   <div className="truncate">{item.label}</div>
                   <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
+                </td>
+                <td
+                  className={cn(
+                    'py-1.5 pr-2 text-right text-[11px] font-medium',
+                    item.pctRetornoReal === null ? 'text-slate-400' : item.pctRetornoReal >= 0 ? 'text-emerald-600/85' : 'text-rose-500/80',
+                  )}
+                >
+                  <div className="truncate max-w-[56px]">{formatPct(item.pctRetornoReal)}</div>
                 </td>
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                   <div className="truncate max-w-[90px]">{formatPct(item.pctRetorno)}</div>
@@ -158,6 +168,7 @@ const ReturnRealHero: React.FC<{
   ytd2026: AggregatedSummary | null;
   lastMonth: AggregatedSummary | null;
   lastMonthPctMonthly: number | null;
+  lastMonthPctMonthlyReal: number | null;
   currency: WealthCurrency;
   includeEstimatedMonth: boolean;
   includeRiskCapitalInTotals: boolean;
@@ -169,6 +180,7 @@ const ReturnRealHero: React.FC<{
   ytd2026,
   lastMonth,
   lastMonthPctMonthly,
+  lastMonthPctMonthlyReal,
   currency,
   includeEstimatedMonth,
   includeRiskCapitalInTotals,
@@ -179,7 +191,14 @@ const ReturnRealHero: React.FC<{
     { key: 'inicio', label: 'DESDE INICIO', showEstimatedBadge: includeEstimatedMonth, value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', showEstimatedBadge: includeEstimatedMonth, value: last12, pct: last12?.pctRetorno ?? null },
     { key: 'ytd', label: 'YTD 2026', showEstimatedBadge: includeEstimatedMonth, value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
-    { key: 'mes', label: 'ÚLT. MES VÁLIDO', showEstimatedBadge: false, value: lastMonth, pct: lastMonthPctMonthly },
+    {
+      key: 'mes',
+      label: 'ÚLT. MES VÁLIDO',
+      showEstimatedBadge: false,
+      value: lastMonth,
+      pct: lastMonthPctMonthly,
+      pctReal: lastMonthPctMonthlyReal,
+    },
   ] as const;
   const spendClass = (value: AggregatedSummary | null | undefined) => {
     const insight = buildReturnSpendInsight(value);
@@ -189,6 +208,7 @@ const ReturnRealHero: React.FC<{
     return 'text-slate-200';
   };
   const pctClass = (pctValue: number | null) => (pctValue === null || pctValue >= 0 ? 'text-emerald-300' : 'text-rose-300');
+  const pctRealClass = (pctValue: number | null) => (pctValue === null ? 'text-slate-400' : pctValue >= 0 ? 'text-emerald-200/90' : 'text-rose-200/90');
   const retornoClass = (value: AggregatedSummary | null | undefined) =>
     (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
@@ -273,8 +293,20 @@ const ReturnRealHero: React.FC<{
                   </div>
                 </div>
                 <div className="min-w-0 text-right">
-                  <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
-                    {formatPct(row.pct, 1)}
+                  <div className="flex items-end justify-end gap-2">
+                    <div
+                      className={cn(
+                        'text-[11px] font-medium leading-none',
+                        pctRealClass(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)),
+                      )}
+                    >
+                      {(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)) === null
+                        ? '—'
+                        : `(R) ${formatPct(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null), 1)}`}
+                    </div>
+                    <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
+                      {formatPct(row.pct, 1)}
+                    </div>
                   </div>
                   {row.pct === null && row.value?.pctRetornoNote ? (
                     <div className="mt-0.5 text-[10px] font-medium text-amber-300">{row.value.pctRetornoNote}</div>
@@ -797,6 +829,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   heroYtd2026,
   heroLastMonth,
   heroLastMonthPctMonthly,
+  heroLastMonthPctMonthlyReal,
   currency,
   includeEstimatedMonth,
   hasEstimatedMonth,
@@ -1074,6 +1107,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       ytd2026={heroYtd2026}
       lastMonth={heroLastMonth}
       lastMonthPctMonthly={heroLastMonthPctMonthly}
+      lastMonthPctMonthlyReal={heroLastMonthPctMonthlyReal}
       currency={currency}
       includeEstimatedMonth={includeEstimatedMonth}
       includeRiskCapitalInTotals={includeRiskCapitalInTotals}
