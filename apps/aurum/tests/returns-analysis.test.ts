@@ -404,8 +404,41 @@ describe('returns analysis helpers', () => {
       1_050_000_000 / 1050,
     ]);
     expect(model.base100Series.CLP.points.map((point) => point.value)).toEqual([100, 125, 131.25]);
-    expect(model.ufTrendSeries.points).toHaveLength(1);
+    expect(model.ufTrendSeries.points).toHaveLength(3);
     expect(closures).toEqual(snapshot);
+  });
+
+  it('drops suspicious UF outlier months from UF curves/base100 to avoid artificial spikes', () => {
+    const months = [
+      '2023-01',
+      '2023-02',
+      '2023-03',
+      '2023-04',
+      '2023-05',
+      '2023-06',
+      '2023-07',
+      '2023-08',
+      '2023-09',
+      '2023-10',
+      '2023-11',
+      '2023-12',
+    ];
+    const closures = months.map((monthKey, index) => {
+      const ufClp = monthKey === '2023-11' ? 39_784 : 36_200 + index * 30;
+      return makeClosure(monthKey, {
+        netClp: 1_200_000_000 + index * 8_000_000,
+        usdClp: 900 + index,
+        eurClp: 980 + index,
+        ufClp,
+      });
+    });
+
+    const model = buildWealthEvolutionComparisonModel(closures, false);
+
+    expect(model.points.find((point) => point.monthKey === '2023-10')?.netUf).not.toBeNull();
+    expect(model.points.find((point) => point.monthKey === '2023-11')?.netUf).toBeNull();
+    expect(model.points.find((point) => point.monthKey === '2023-12')?.netUf).not.toBeNull();
+    expect(model.missingUfMonths).toContain('2023-11');
   });
 
   it('omits missing UF and FX months instead of inventing conversions', () => {

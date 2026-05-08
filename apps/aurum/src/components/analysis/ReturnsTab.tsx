@@ -568,7 +568,7 @@ const WealthUfChartCard: React.FC<{
     },
     {
       key: 'trend',
-      label: 'Tendencia 3M',
+      label: 'Tendencia lineal',
       stroke: '#94a3b8',
       pointFill: '#94a3b8',
       curve: model.ufTrendSeries,

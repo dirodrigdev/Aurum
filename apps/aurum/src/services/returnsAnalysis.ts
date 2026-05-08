@@ -19,6 +19,13 @@ const DEFAULT_FX_RATES: WealthFxRates = {
   ufClp: 39000,
 };
 
+const UF_CLP_RANGE = {
+  min: 28000,
+  max: 55000,
+} as const;
+
+const MAX_UF_MONTHLY_JUMP_PCT = 0.08;
+
 const previousMonthKey = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return monthKey;
@@ -841,10 +848,9 @@ const buildBase100CurveFromWealthPoints = (
   );
 };
 
-const buildMovingAverageCurve = (
+const buildLinearTrendCurve = (
   points: WealthEvolutionPoint[],
   selector: (point: WealthEvolutionPoint) => number | null,
-  windowSize = 3,
 ): ReturnCurveModel => {
   const validPoints = points
     .map((point) => {
@@ -857,19 +863,30 @@ const buildMovingAverageCurve = (
       };
     })
     .filter((point): point is ReturnCurvePoint => !!point);
-  if (validPoints.length < windowSize) {
+
+  if (validPoints.length < 2) {
     return buildCurveFromNumericPoints([]);
   }
-  const averagedPoints = validPoints.map((point, index) => {
-    if (index < windowSize - 1) return null;
-    const window = validPoints.slice(index - (windowSize - 1), index + 1);
-    return {
-      id: `${point.id}-trend`,
-      monthKey: point.monthKey,
-      value: sumNumbers(window.map((item) => item.value)) / window.length,
-    } satisfies ReturnCurvePoint;
-  }).filter((point): point is ReturnCurvePoint => !!point);
-  return buildCurveFromNumericPoints(averagedPoints);
+
+  const n = validPoints.length;
+  const xValues = validPoints.map((_, index) => index);
+  const yValues = validPoints.map((point) => point.value);
+  const sumX = sumNumbers(xValues);
+  const sumY = sumNumbers(yValues);
+  const sumXY = sumNumbers(xValues.map((x, index) => x * yValues[index]));
+  const sumXX = sumNumbers(xValues.map((x) => x * x));
+  const denominator = n * sumXX - sumX * sumX;
+  if (Math.abs(denominator) < 1e-9) {
+    return buildCurveFromNumericPoints([]);
+  }
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+  const trendPoints: ReturnCurvePoint[] = validPoints.map((point, index) => ({
+    id: `${point.id}-trend`,
+    monthKey: point.monthKey,
+    value: intercept + slope * index,
+  }));
+  return buildCurveFromNumericPoints(trendPoints);
 };
 
 const buildMarkerList = (points: ReturnCurvePoint[]) => {
@@ -1009,7 +1026,7 @@ export const buildWealthEvolutionComparisonModel = (
   const calendarCurrent = currentOperationalMonthKey(closures);
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
 
-  const points: WealthEvolutionPoint[] = filtered.map((closure) => {
+  const rawPoints: WealthEvolutionPoint[] = filtered.map((closure) => {
     const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
     const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
     const fxResolution = resolveFxForAnalysis(closure);
@@ -1037,6 +1054,30 @@ export const buildWealthEvolutionComparisonModel = (
     };
   });
 
+  // Guard against UF outliers (bad imports / malformed UF values) so a single
+  // month does not distort the UF chart and UF base100 comparison.
+  const enableUfJumpGuard = rawPoints.length >= 12;
+  let previousValidUfClp: number | null = null;
+  const points: WealthEvolutionPoint[] = rawPoints.map((point) => {
+    if (point.netClp === null || point.netUf === null || point.ufClp === null) return point;
+    const uf = Number(point.ufClp);
+    const outsideRange = uf < UF_CLP_RANGE.min || uf > UF_CLP_RANGE.max;
+    const suspiciousJump =
+      enableUfJumpGuard &&
+      previousValidUfClp !== null &&
+      previousValidUfClp > 0 &&
+      Math.abs(uf / previousValidUfClp - 1) > MAX_UF_MONTHLY_JUMP_PCT;
+    if (outsideRange || suspiciousJump) {
+      return {
+        ...point,
+        netUf: null,
+        ufClp: null,
+      };
+    }
+    previousValidUfClp = uf;
+    return point;
+  });
+
   const missingFxMonths = points
     .filter((point) => point.netClp !== null && (!point.fxAuditable || point.netUsd === null || point.netEur === null))
     .map((point) => point.monthKey);
@@ -1055,7 +1096,7 @@ export const buildWealthEvolutionComparisonModel = (
     ufSeries: buildCurveFromWealthPoints(points, (point) => point.netUf),
     usdSeries: buildCurveFromWealthPoints(points, (point) => point.netUsd),
     eurSeries: buildCurveFromWealthPoints(points, (point) => point.netEur),
-    ufTrendSeries: buildMovingAverageCurve(points, (point) => point.netUf, 3),
+    ufTrendSeries: buildLinearTrendCurve(points, (point) => point.netUf),
     base100Series: {
       CLP: buildBase100CurveFromWealthPoints(points, (point) => point.netClp),
       UF: buildBase100CurveFromWealthPoints(points, (point) => point.netUf),
