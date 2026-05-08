@@ -19,12 +19,7 @@ const DEFAULT_FX_RATES: WealthFxRates = {
   ufClp: 39000,
 };
 
-const UF_CLP_RANGE = {
-  min: 28000,
-  max: 55000,
-} as const;
-
-const MAX_UF_MONTHLY_JUMP_PCT = 0.08;
+const UF_SUSPICIOUS_MONTHLY_JUMP_PCT = 0.03;
 
 const previousMonthKey = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
@@ -149,6 +144,12 @@ export type WealthEvolutionComparisonModel = {
   baseMonth: string | null;
   missingFxMonths: string[];
   missingUfMonths: string[];
+  suspiciousUfMonths: Array<{
+    monthKey: string;
+    ufClp: number;
+    prevUfClp: number;
+    changePct: number;
+  }>;
   hasIncompleteConversion: boolean;
   points: WealthEvolutionPoint[];
   clpSeries: ReturnCurveModel;
@@ -1026,7 +1027,7 @@ export const buildWealthEvolutionComparisonModel = (
   const calendarCurrent = currentOperationalMonthKey(closures);
   const filtered = sorted.filter((closure) => closure.monthKey !== calendarCurrent);
 
-  const rawPoints: WealthEvolutionPoint[] = filtered.map((closure) => {
+  const points: WealthEvolutionPoint[] = filtered.map((closure) => {
     const netClp = summaryNetClp(closure, includeRiskCapitalInTotals);
     const invalidNet = netClp === null || !Number.isFinite(netClp) || netClp <= 0;
     const fxResolution = resolveFxForAnalysis(closure);
@@ -1054,42 +1055,38 @@ export const buildWealthEvolutionComparisonModel = (
     };
   });
 
-  // Guard against UF outliers (bad imports / malformed UF values) so a single
-  // month does not distort the UF chart and UF base100 comparison.
-  const enableUfJumpGuard = rawPoints.length >= 12;
-  let previousValidUfClp: number | null = null;
-  const points: WealthEvolutionPoint[] = rawPoints.map((point) => {
-    if (point.netClp === null || point.netUf === null || point.ufClp === null) return point;
-    const uf = Number(point.ufClp);
-    const outsideRange = uf < UF_CLP_RANGE.min || uf > UF_CLP_RANGE.max;
-    const suspiciousJump =
-      enableUfJumpGuard &&
-      previousValidUfClp !== null &&
-      previousValidUfClp > 0 &&
-      Math.abs(uf / previousValidUfClp - 1) > MAX_UF_MONTHLY_JUMP_PCT;
-    if (outsideRange || suspiciousJump) {
-      return {
-        ...point,
-        netUf: null,
-        ufClp: null,
-      };
-    }
-    previousValidUfClp = uf;
-    return point;
-  });
-
   const missingFxMonths = points
     .filter((point) => point.netClp !== null && (!point.fxAuditable || point.netUsd === null || point.netEur === null))
     .map((point) => point.monthKey);
   const missingUfMonths = points
     .filter((point) => point.netClp !== null && point.netUf === null)
     .map((point) => point.monthKey);
+  const suspiciousUfMonths = points.reduce<Array<{
+    monthKey: string;
+    ufClp: number;
+    prevUfClp: number;
+    changePct: number;
+  }>>((acc, point, index) => {
+    if (index === 0 || point.ufClp === null || !point.fxAuditable) return acc;
+    const prev = points[index - 1];
+    if (!prev || prev.ufClp === null || !prev.fxAuditable) return acc;
+    const changePct = point.ufClp / prev.ufClp - 1;
+    if (Math.abs(changePct) <= UF_SUSPICIOUS_MONTHLY_JUMP_PCT) return acc;
+    acc.push({
+      monthKey: point.monthKey,
+      ufClp: point.ufClp,
+      prevUfClp: prev.ufClp,
+      changePct,
+    });
+    return acc;
+  }, []);
 
   return {
     source: 'returns_analysis_closures',
     baseMonth: points.find((point) => point.netClp !== null)?.monthKey || null,
     missingFxMonths,
     missingUfMonths,
+    suspiciousUfMonths,
     hasIncompleteConversion: missingFxMonths.length > 0 || missingUfMonths.length > 0,
     points,
     clpSeries: buildCurveFromWealthPoints(points, (point) => point.netClp),

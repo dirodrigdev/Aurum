@@ -690,6 +690,11 @@ const WealthUfChartCard: React.FC<{
             : `Conversión incompleta en: ${model.missingFxMonths.join(', ')}.`}
         </div>
       )}
+      {model.suspiciousUfMonths.length > 0 && (
+        <div className="mt-2 text-[11px] text-amber-700">
+          Hay meses con UF histórica sospechosa; los retornos reales (R) y la curva UF pueden estar afectados.
+        </div>
+      )}
     </Card>
   );
 };

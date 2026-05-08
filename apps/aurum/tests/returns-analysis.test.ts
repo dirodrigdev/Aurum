@@ -408,7 +408,7 @@ describe('returns analysis helpers', () => {
     expect(closures).toEqual(snapshot);
   });
 
-  it('drops suspicious UF outlier months from UF curves/base100 to avoid artificial spikes', () => {
+  it('flags suspicious UF monthly jumps without hiding UF points from the chart model', () => {
     const months = [
       '2023-01',
       '2023-02',
@@ -436,9 +436,9 @@ describe('returns analysis helpers', () => {
     const model = buildWealthEvolutionComparisonModel(closures, false);
 
     expect(model.points.find((point) => point.monthKey === '2023-10')?.netUf).not.toBeNull();
-    expect(model.points.find((point) => point.monthKey === '2023-11')?.netUf).toBeNull();
+    expect(model.points.find((point) => point.monthKey === '2023-11')?.netUf).not.toBeNull();
     expect(model.points.find((point) => point.monthKey === '2023-12')?.netUf).not.toBeNull();
-    expect(model.missingUfMonths).toContain('2023-11');
+    expect(model.suspiciousUfMonths.some((item) => item.monthKey === '2023-11')).toBe(true);
   });
 
   it('omits missing UF and FX months instead of inventing conversions', () => {
