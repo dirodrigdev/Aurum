@@ -10,6 +10,7 @@ const makeSummary = (overrides: Partial<AggregatedSummary>): AggregatedSummary =
     validMonths: 12,
     expectedMonths: 12,
     excludedMonths: [],
+    nonApplicableMonths: [],
     status: 'complete',
   },
   varPatrimonioAcumClp: 10_000_000,

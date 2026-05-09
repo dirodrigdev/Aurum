@@ -239,7 +239,10 @@ describe('returns analysis helpers', () => {
     expect(legacyRow?.gastosStatus).toBe('complete');
     expect(legacyRow?.retornoRealClp).not.toBeNull();
     expect(summary.validMonths).toBe(1);
-    expect(summary.coverage.status).toBe('insufficient');
+    expect(summary.coverage.status).toBe('partial');
+    expect(summary.coverage.nonApplicableMonths).toEqual([
+      expect.objectContaining({ monthKey: '2026-01', reason: 'base_month' }),
+    ]);
     expect(summary.coverage.excludedMonths).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ monthKey: '2026-03', reason: 'legacy_static' }),
@@ -312,8 +315,11 @@ describe('returns analysis helpers', () => {
     expect(fromStart.validMonths).toBe(1);
     expect(trailing12?.validMonths).toBe(1);
     expect(ytd.validMonths).toBe(1);
-    expect(trailing12?.coverage.expectedMonths).toBe(12);
+    expect(trailing12?.coverage.expectedMonths).toBe(11);
     expect(trailing12?.coverage.status).toBe('insufficient');
+    expect(trailing12?.coverage.nonApplicableMonths).toEqual([
+      expect.objectContaining({ monthKey: '2026-01', reason: 'base_month' }),
+    ]);
     expect(fromStart.coverage.excludedMonths).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ monthKey: '2026-03', reason: 'stale_warning_error' }),
@@ -398,13 +404,94 @@ describe('returns analysis helpers', () => {
     });
 
     expect(summary.validMonths).toBe(1);
-    expect(summary.coverage.expectedMonths).toBe(3);
-    expect(summary.coverage.status).toBe('insufficient');
+    expect(summary.coverage.expectedMonths).toBe(2);
+    expect(summary.coverage.status).toBe('partial');
+    expect(summary.coverage.nonApplicableMonths).toEqual([
+      expect.objectContaining({ monthKey: '2026-01', reason: 'base_month' }),
+    ]);
     expect(summary.coverage.excludedMonths).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ monthKey: '2026-02', reason: 'missing_closure' }),
       ]),
     );
+  });
+
+  it('keeps structural base and pending months out of official coverage denominators', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_000_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    );
+
+    const fromStart = aggregateRows('from-start', 'Desde inicio', rows, rows[0].netDisplay, {
+      expectedMonthKeys: rows.map((row) => row.monthKey),
+    });
+    const ytd = aggregateRows(
+      'ytd',
+      'YTD 2026',
+      rows.filter((row) => row.monthKey.startsWith('2026-')),
+      rows[0].netDisplay,
+      { expectedMonthKeys: ['2026-01', '2026-02', '2026-03', '2026-04'] },
+    );
+
+    expect(fromStart.validMonths).toBe(3);
+    expect(fromStart.coverage.expectedMonths).toBe(3);
+    expect(fromStart.coverage.nonApplicableMonths).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ monthKey: '2025-12', reason: 'base_month' }),
+        expect.objectContaining({ monthKey: '2026-04', reason: 'pending_current' }),
+      ]),
+    );
+    expect(fromStart.coverage.excludedMonths).toEqual([]);
+    expect(ytd.validMonths).toBe(3);
+    expect(ytd.coverage.expectedMonths).toBe(3);
+    expect(ytd.coverage.status).toBe('complete');
+    expect(ytd.coverage.nonApplicableMonths).toEqual([
+      expect.objectContaining({ monthKey: '2026-04', reason: 'pending_current' }),
+    ]);
+  });
+
+  it('counts stale closed months as coverage problems inside official ranges', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-06', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2025-07', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2025-08', { netClp: 960_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) =>
+      row.monthKey === '2025-08'
+        ? {
+            ...row,
+            gastosSource: 'gastapp_firestore' as const,
+            gastosContractStatus: 'stale' as const,
+            gastosDataQuality: 'ok' as const,
+            gastosIsStale: true,
+          }
+        : row,
+    );
+
+    const summary = aggregateRows(
+      'stale-range',
+      'Stale range',
+      rows.filter((row) => row.monthKey >= '2025-07'),
+      rows[0].netDisplay,
+      { expectedMonthKeys: ['2025-07', '2025-08'] },
+    );
+
+    expect(summary.validMonths).toBe(1);
+    expect(summary.coverage.expectedMonths).toBe(2);
+    expect(summary.coverage.excludedMonths).toEqual([
+      expect.objectContaining({ monthKey: '2025-08', reason: 'stale_warning_error' }),
+    ]);
+    expect(summary.coverage.nonApplicableMonths).toEqual([]);
   });
 
   it('marks non-auditable FX months and excludes them from closed aggregates', () => {
@@ -562,11 +649,22 @@ describe('returns analysis helpers', () => {
 
     const officialApril = view.officialRows.find((row) => row.monthKey === '2026-04');
     const estimatedApril = view.estimatedRows.find((row) => row.monthKey === '2026-04');
+    const estimatedYtd = aggregateRows(
+      'estimated-ytd',
+      'Estimated YTD',
+      view.estimatedRows.filter((row) => row.monthKey >= '2026-01'),
+      view.estimatedRows.find((row) => row.monthKey === '2025-12')?.netDisplay ?? null,
+      { expectedMonthKeys: ['2026-01', '2026-02', '2026-03', '2026-04'] },
+    );
     expect(officialApril?.gastosStatus).toBe('pending');
     expect(estimatedApril?.gastosStatus).toBe('complete');
     expect(estimatedApril?.isEstimated).toBe(true);
     expect(estimatedApril?.estimateMethod).toBe('avg_available_closed');
     expect(estimatedApril?.retornoRealClp).not.toBeNull();
+    expect(estimatedYtd.validMonths).toBe(4);
+    expect(estimatedYtd.coverage.expectedMonths).toBe(4);
+    expect(estimatedYtd.coverage.status).toBe('complete');
+    expect(estimatedYtd.coverage.nonApplicableMonths).toEqual([]);
     expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('closed_average');
     expect(view.pendingEstimateDetail?.scenarios[1]?.key).toBe('previous_closed');
     expect(estimatedApril?.estimatedSpendClp).toBeCloseTo(view.pendingEstimate?.estimatedSpendClp ?? 0, 6);

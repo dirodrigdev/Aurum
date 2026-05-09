@@ -73,9 +73,17 @@ export type AggregateCoverageExclusionReason =
   | 'fx_not_auditable'
   | 'not_calculable';
 
+export type AggregateCoverageNonApplicableReason = 'base_month' | 'pending_current';
+
 export type AggregateCoverageExcludedMonth = {
   monthKey: string;
   reason: AggregateCoverageExclusionReason;
+  label: string;
+};
+
+export type AggregateCoverageNonApplicableMonth = {
+  monthKey: string;
+  reason: AggregateCoverageNonApplicableReason;
   label: string;
 };
 
@@ -83,6 +91,7 @@ export type AggregateCoverage = {
   validMonths: number;
   expectedMonths: number;
   excludedMonths: AggregateCoverageExcludedMonth[];
+  nonApplicableMonths: AggregateCoverageNonApplicableMonth[];
   status: AggregateCoverageStatus;
 };
 

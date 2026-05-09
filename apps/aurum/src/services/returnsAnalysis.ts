@@ -1,6 +1,7 @@
 import type {
   AggregateCoverage,
   AggregateCoverageExclusionReason,
+  AggregateCoverageNonApplicableReason,
   AggregatedSummary,
   MonthlyReturnRow,
   ReturnCurveMarker,
@@ -316,6 +317,19 @@ const isOfficialAggregateInput = (row: MonthlyReturnRow) =>
   row.varPatrimonioDisplay !== null &&
   row.retornoRealDisplay !== null;
 
+const isEstimatedAggregateInput = (row: MonthlyReturnRow) =>
+  Boolean(row.isEstimated) &&
+  row.fxAuditable &&
+  row.varPatrimonioClp !== null &&
+  row.gastosClp !== null &&
+  row.retornoRealClp !== null &&
+  row.varPatrimonioDisplay !== null &&
+  row.gastosDisplay !== null &&
+  row.retornoRealDisplay !== null;
+
+const isAggregateInput = (row: MonthlyReturnRow) =>
+  isOfficialAggregateInput(row) || isEstimatedAggregateInput(row);
+
 const hasOfficialAggregateInputs = (
   row: MonthlyReturnRow,
 ): row is MonthlyReturnRow & {
@@ -325,7 +339,7 @@ const hasOfficialAggregateInputs = (
   varPatrimonioDisplay: number;
   gastosDisplay: number;
   retornoRealDisplay: number;
-} => isOfficialAggregateInput(row);
+} => isAggregateInput(row);
 
 const coverageReasonLabel = (reason: AggregateCoverageExclusionReason) => {
   if (reason === 'missing_closure') return 'cierre faltante';
@@ -334,6 +348,31 @@ const coverageReasonLabel = (reason: AggregateCoverageExclusionReason) => {
   if (reason === 'legacy_static') return 'legacy_static';
   if (reason === 'fx_not_auditable') return 'FX no auditable';
   return 'variación no calculable';
+};
+
+const coverageNonApplicableLabel = (reason: AggregateCoverageNonApplicableReason) => {
+  if (reason === 'base_month') return 'mes base';
+  return 'pendiente';
+};
+
+const classifyCoverageNonApplicable = (row: MonthlyReturnRow): AggregateCoverageNonApplicableReason | null => {
+  if (row.prevNetClp === null && row.varPatrimonioClp === null && row.netClp !== null && !row.invalidNet) {
+    return 'base_month';
+  }
+  if (
+    !row.isEstimated &&
+    row.gastosStatus === 'pending' &&
+    !row.gastosIsStale &&
+    row.gastosDataQuality !== 'warning' &&
+    row.gastosDataQuality !== 'error' &&
+    row.gastosContractStatus !== 'stale' &&
+    row.gastosSource !== 'legacy_static' &&
+    row.gastosContractSource !== 'legacy_static' &&
+    row.gastosDayToDaySource !== 'legacy'
+  ) {
+    return 'pending_current';
+  }
+  return null;
 };
 
 const classifyAggregateExclusion = (row: MonthlyReturnRow): AggregateCoverageExclusionReason | null => {
@@ -408,13 +447,29 @@ const buildAggregateCoverage = (
   const expectedMonthKeys =
     options?.expectedMonthKeys ??
     rows.map((row) => row.monthKey);
-  const expectedMonths = Math.max(
-    options?.expectedMonths ?? expectedMonthKeys.length,
-    expectedMonthKeys.length,
-  );
   const rowByMonth = new Map(rows.map((row) => [row.monthKey, row]));
-  const validMonthKeys = new Set(validRows.map((row) => row.monthKey));
-  const excludedMonths = expectedMonthKeys
+  const nonApplicableMonths = expectedMonthKeys
+    .map((monthKey) => {
+      const row = rowByMonth.get(monthKey) ?? null;
+      const reason = row ? classifyCoverageNonApplicable(row) : null;
+      return reason
+        ? {
+            monthKey,
+            reason,
+            label: coverageNonApplicableLabel(reason),
+          }
+        : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const nonApplicableMonthKeys = new Set(nonApplicableMonths.map((month) => month.monthKey));
+  const comparableExpectedMonthKeys = expectedMonthKeys.filter((monthKey) => !nonApplicableMonthKeys.has(monthKey));
+  const expectedMonths = Math.max(
+    options?.expectedMonths ?? comparableExpectedMonthKeys.length,
+    comparableExpectedMonthKeys.length,
+  );
+  const comparableValidRows = validRows.filter((row) => !nonApplicableMonthKeys.has(row.monthKey));
+  const validMonthKeys = new Set(comparableValidRows.map((row) => row.monthKey));
+  const excludedMonths = comparableExpectedMonthKeys
     .filter((monthKey) => !validMonthKeys.has(monthKey))
     .map((monthKey) => {
       const row = rowByMonth.get(monthKey) ?? null;
@@ -425,7 +480,7 @@ const buildAggregateCoverage = (
         label: coverageReasonLabel(reason),
       };
     });
-  const validMonths = validRows.length;
+  const validMonths = comparableValidRows.length;
   const status: AggregateCoverage['status'] =
     expectedMonths > 0 && validMonths >= expectedMonths
       ? 'complete'
@@ -437,6 +492,7 @@ const buildAggregateCoverage = (
     validMonths,
     expectedMonths,
     excludedMonths,
+    nonApplicableMonths,
     status,
   };
 };

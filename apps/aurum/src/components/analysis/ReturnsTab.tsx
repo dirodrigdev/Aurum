@@ -60,6 +60,8 @@ const coverageTone = (item: AggregatedSummary, dark = false) => {
 
 const CoverageBadge: React.FC<{ item: AggregatedSummary; dark?: boolean }> = ({ item, dark = false }) => {
   const excluded = item.coverage.excludedMonths;
+  const nonApplicable = item.coverage.nonApplicableMonths;
+  const hasDetail = excluded.length > 0 || nonApplicable.length > 0;
   return (
     <details className="group inline-block max-w-full">
       <summary
@@ -70,25 +72,43 @@ const CoverageBadge: React.FC<{ item: AggregatedSummary; dark?: boolean }> = ({ 
         title={coverageLabel(item)}
       >
         <span className="truncate">{coverageLabel(item)}</span>
-        {excluded.length > 0 ? <ChevronDown size={10} className="shrink-0 transition group-open:rotate-180" /> : null}
+        {hasDetail ? <ChevronDown size={10} className="shrink-0 transition group-open:rotate-180" /> : null}
       </summary>
-      {excluded.length > 0 ? (
+      {hasDetail ? (
         <div
           className={cn(
             'mt-1 max-w-[220px] rounded-xl border px-2 py-1.5 text-[10px] leading-snug shadow-sm',
             dark ? 'border-white/10 bg-slate-950/85 text-slate-200' : 'border-slate-200 bg-white text-slate-600',
           )}
         >
-          <div className="font-semibold">Meses excluidos</div>
-          <div className="mt-1 space-y-0.5">
-            {excluded.slice(0, 6).map((month) => (
-              <div key={`${month.monthKey}-${month.reason}`} className="flex justify-between gap-2">
-                <span>{monthLabelShort(month.monthKey)}</span>
-                <span className="text-right opacity-80">{month.label}</span>
+          {nonApplicable.length > 0 ? (
+            <>
+              <div className="font-semibold">Fuera del oficial</div>
+              <div className="mt-1 space-y-0.5">
+                {nonApplicable.slice(0, 4).map((month) => (
+                  <div key={`${month.monthKey}-${month.reason}`} className="flex justify-between gap-2">
+                    <span>{monthLabelShort(month.monthKey)}</span>
+                    <span className="text-right opacity-80">{month.label}</span>
+                  </div>
+                ))}
+                {nonApplicable.length > 4 ? <div className="opacity-70">+{nonApplicable.length - 4} meses más</div> : null}
               </div>
-            ))}
-            {excluded.length > 6 ? <div className="opacity-70">+{excluded.length - 6} meses más</div> : null}
-          </div>
+            </>
+          ) : null}
+          {excluded.length > 0 ? (
+            <div className={cn(nonApplicable.length > 0 && 'mt-2 border-t border-current/10 pt-2')}>
+              <div className="font-semibold">Requiere revisión</div>
+              <div className="mt-1 space-y-0.5">
+                {excluded.slice(0, 6).map((month) => (
+                  <div key={`${month.monthKey}-${month.reason}`} className="flex justify-between gap-2">
+                    <span>{monthLabelShort(month.monthKey)}</span>
+                    <span className="text-right opacity-80">{month.label}</span>
+                  </div>
+                ))}
+                {excluded.length > 6 ? <div className="opacity-70">+{excluded.length - 6} meses más</div> : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </details>
@@ -1185,6 +1205,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
         status: AggregatedSummary['coverage']['status'];
         validMonths: number;
         expectedMonths: number;
+        bucket: 'excluded' | 'non_applicable';
         motivoExclusion: string;
         motivoExclusionLabel: string;
       }>
@@ -1199,10 +1220,25 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           status: summary.coverage.status,
           validMonths: summary.coverage.validMonths,
           expectedMonths: summary.coverage.expectedMonths,
+          bucket: 'excluded',
           motivoExclusion: excluded.reason,
           motivoExclusionLabel: excluded.label,
         });
         coverageByMonth.set(excluded.monthKey, current);
+      });
+      summary.coverage.nonApplicableMonths.forEach((month) => {
+        const current = coverageByMonth.get(month.monthKey) ?? [];
+        current.push({
+          key: summary.key,
+          label: summary.label,
+          status: summary.coverage.status,
+          validMonths: summary.coverage.validMonths,
+          expectedMonths: summary.coverage.expectedMonths,
+          bucket: 'non_applicable',
+          motivoExclusion: month.reason,
+          motivoExclusionLabel: month.label,
+        });
+        coverageByMonth.set(month.monthKey, current);
       });
     });
 
