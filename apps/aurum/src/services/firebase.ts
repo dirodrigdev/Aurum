@@ -66,9 +66,27 @@ export const getGastappConfiguredProjectId = () =>
 let _authInitPromise: Promise<void> | null = null;
 let _persistenceInitPromise: Promise<void> | null = null;
 
+const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T | undefined> => {
+  let timeoutId: number | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(undefined), ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
+};
+
 export function ensureAuthPersistence(): Promise<void> {
   if (_persistenceInitPromise) return _persistenceInitPromise;
-  _persistenceInitPromise = setPersistence(auth, browserLocalPersistence).catch(() => {});
+  // Safari/iOS can occasionally leave persistence setup slow or unresolved.
+  // Auth bootstrap must remain bounded so the login gate never spins forever.
+  _persistenceInitPromise = withTimeout(setPersistence(auth, browserLocalPersistence), 1500)
+    .then(() => undefined)
+    .catch(() => undefined);
   return _persistenceInitPromise;
 }
 
