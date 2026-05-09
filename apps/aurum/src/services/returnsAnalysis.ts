@@ -129,6 +129,26 @@ export type ReturnsSeriesView = {
   } | null;
 };
 
+export type ReturnsMonthlySourceDiagnostic = {
+  monthKey: string;
+  retornoVisibleClp: number | null;
+  currentClosureAvailable: boolean;
+  previousClosureAvailable: boolean;
+  varPatrimonioClp: number | null;
+  fx: WealthFxRates;
+  fxAuditable: boolean;
+  fxMethod: 'real_closure' | 'default_fallback';
+  gastosClp: number | null;
+  gastosSource: MonthlyReturnRow['gastosSource'];
+  gastosStatus: MonthlyReturnRow['gastosStatus'];
+  contractStatus: MonthlyReturnRow['gastosContractStatus'];
+  dataQuality: MonthlyReturnRow['gastosDataQuality'];
+  isStale: boolean;
+  entraAgregadoOficial: boolean;
+  motivoExclusion: AggregateCoverageExclusionReason | null;
+  motivoExclusionLabel: string | null;
+};
+
 export type WealthEvolutionCurrency = 'CLP' | 'UF' | 'USD' | 'EUR';
 
 export type WealthEvolutionPoint = {
@@ -686,6 +706,32 @@ export const aggregateRows = (
     retornoRealAvgDisplay,
   };
 };
+
+export const buildReturnsMonthlySourceDiagnostics = (
+  rows: MonthlyReturnRow[],
+): ReturnsMonthlySourceDiagnostic[] =>
+  rows.map((row) => {
+    const motivoExclusion = classifyAggregateExclusion(row);
+    return {
+      monthKey: row.monthKey,
+      retornoVisibleClp: row.retornoRealClp,
+      currentClosureAvailable: row.netClp !== null && !row.invalidNet,
+      previousClosureAvailable: row.prevNetClp !== null,
+      varPatrimonioClp: row.varPatrimonioClp,
+      fx: row.fx,
+      fxAuditable: row.fxAuditable,
+      fxMethod: row.fxMethod,
+      gastosClp: row.gastosClp,
+      gastosSource: row.gastosSource,
+      gastosStatus: row.gastosStatus,
+      contractStatus: row.gastosContractStatus,
+      dataQuality: row.gastosDataQuality,
+      isStale: row.gastosIsStale,
+      entraAgregadoOficial: motivoExclusion === null,
+      motivoExclusion,
+      motivoExclusionLabel: motivoExclusion ? coverageReasonLabel(motivoExclusion) : null,
+    };
+  });
 
 const validClosedSpendRow = (
   row: MonthlyReturnRow,

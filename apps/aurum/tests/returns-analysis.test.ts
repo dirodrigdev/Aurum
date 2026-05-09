@@ -41,6 +41,7 @@ import {
   buildPendingOfficialReturnInfo,
   buildPendingReturnEstimate,
   buildReturnsSeriesView,
+  buildReturnsMonthlySourceDiagnostics,
   buildTrailingSummary,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
@@ -321,6 +322,55 @@ describe('returns analysis helpers', () => {
       ]),
     );
     expect(fromStart.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
+  });
+
+  it('builds monthly source diagnostics with official inclusion and exclusion reasons', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 1_050_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_080_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) => {
+      if (row.monthKey === '2026-02') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'ok' as const,
+          gastosIsStale: false,
+        };
+      }
+      if (row.monthKey === '2026-03') {
+        return {
+          ...row,
+          gastosSource: 'legacy_static' as const,
+          gastosContractSource: 'legacy_static',
+          gastosDataQuality: 'warning' as const,
+        };
+      }
+      return row;
+    });
+
+    const diagnostics = buildReturnsMonthlySourceDiagnostics(rows);
+    const official = diagnostics.find((item) => item.monthKey === '2026-02');
+    const legacy = diagnostics.find((item) => item.monthKey === '2026-03');
+
+    expect(official).toMatchObject({
+      entraAgregadoOficial: true,
+      motivoExclusion: null,
+      gastosSource: 'gastapp_firestore',
+      fxAuditable: true,
+      previousClosureAvailable: true,
+    });
+    expect(legacy).toMatchObject({
+      entraAgregadoOficial: false,
+      motivoExclusion: 'legacy_static',
+      motivoExclusionLabel: 'legacy_static',
+      gastosSource: 'legacy_static',
+    });
   });
 
   it('reports missing closure months in aggregate coverage metadata', () => {
