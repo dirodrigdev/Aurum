@@ -100,6 +100,7 @@ export interface WealthMonthlyClosure {
   fxMissing?: Array<'usdClp' | 'eurClp' | 'ufClp'>;
   records?: WealthRecord[];
   previousVersions?: WealthMonthlyClosureVersion[];
+  repairAudit?: WealthClosureRepairAuditEntry[];
 }
 
 export interface WealthMonthlyClosureVersion {
@@ -274,6 +275,17 @@ export type HistoricalUfSuspiciousClosure = {
   reasons: Array<'monthly_jump' | 'official_mismatch'>;
 };
 
+export type WealthClosureRepairAuditEntry = {
+  id: string;
+  monthKey: string;
+  repairedAt: string;
+  reason: 'uf_historical_repair';
+  field: 'ufClp';
+  previousValue: number;
+  nextValue: number;
+  source: string;
+};
+
 type WealthDemoSeedMeta = {
   seededAt: string;
   janKey: string;
@@ -313,6 +325,7 @@ const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
 const FX_TRACE_PREFIX = '[FX TRACE][Aurum]';
 const HISTORICAL_UF_SUSPICIOUS_JUMP_PCT = 0.03;
+const HISTORICAL_OFFICIAL_UF_SOURCE = 'official_closing_month_reference';
 const HISTORICAL_OFFICIAL_UF_REFERENCE_BY_MONTH: Record<string, number> = {
   '2023-11': 36563.87,
   '2023-12': 36789.36,
@@ -1131,6 +1144,29 @@ const mergeFxMissingKeys = (
   inferred: Array<'usdClp' | 'eurClp' | 'ufClp'>,
 ): Array<'usdClp' | 'eurClp' | 'ufClp'> =>
   Array.from(new Set([...explicit, ...inferred]));
+
+const normalizeClosureRepairAudit = (raw: unknown): WealthClosureRepairAuditEntry[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: any): WealthClosureRepairAuditEntry | null => {
+      const monthKey = normalizeMonthKey(item?.monthKey);
+      const previousValue = Number(item?.previousValue);
+      const nextValue = Number(item?.nextValue);
+      if (!monthKey || !Number.isFinite(previousValue) || !Number.isFinite(nextValue)) return null;
+      if (item?.reason !== 'uf_historical_repair' || item?.field !== 'ufClp') return null;
+      return {
+        id: String(item?.id || crypto.randomUUID()),
+        monthKey,
+        repairedAt: String(item?.repairedAt || nowIso()),
+        reason: 'uf_historical_repair',
+        field: 'ufClp',
+        previousValue,
+        nextValue,
+        source: String(item?.source || 'unknown'),
+      };
+    })
+    .filter((item): item is WealthClosureRepairAuditEntry => !!item);
+};
 
 const toClosureVersion = (
   closure: WealthMonthlyClosure,
@@ -2562,6 +2598,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
             .map((v: any) => normalizeClosureVersion(v, monthKey))
             .filter((v: WealthMonthlyClosureVersion | null): v is WealthMonthlyClosureVersion => !!v),
         );
+        const repairAudit = normalizeClosureRepairAudit(item?.repairAudit);
 
         return {
           id: String(item?.id || crypto.randomUUID()),
@@ -2572,6 +2609,7 @@ export const loadClosures = (): WealthMonthlyClosure[] => {
           fxMissing: fxMissing.length ? fxMissing : undefined,
           records,
           previousVersions: previousVersions.length ? previousVersions : undefined,
+          repairAudit: repairAudit.length ? repairAudit : undefined,
         };
       })
       .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
@@ -3591,6 +3629,7 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
           .map((v: any) => normalizeClosureVersion(v, monthKey))
           .filter((v: WealthMonthlyClosureVersion | null): v is WealthMonthlyClosureVersion => !!v),
       );
+      const repairAudit = normalizeClosureRepairAudit(item?.repairAudit);
 
       return {
         id: String(item?.id || crypto.randomUUID()),
@@ -3601,6 +3640,7 @@ export const loadClosuresFromRaw = (parsed: any[]): WealthMonthlyClosure[] => {
         fxMissing: fxMissing.length ? fxMissing : undefined,
         records,
         previousVersions: previousVersions.length ? previousVersions : undefined,
+        repairAudit: repairAudit.length ? repairAudit : undefined,
       };
     })
     .filter((item: WealthMonthlyClosure) => !!item.monthKey && !!item.summary)
@@ -3715,6 +3755,7 @@ const serializeClosure = (c: WealthMonthlyClosure) =>
     closedAt: c.closedAt,
     fxRates: c.fxRates || null,
     fxMissing: c.fxMissing || null,
+    repairAudit: c.repairAudit || null,
     records: (c.records || []).map(serializeRecord),
     summary: c.summary,
     previousVersions: (c.previousVersions || []).map((version) => ({
@@ -5643,6 +5684,16 @@ export const repairHistoricalUfClpMonth = async (input: {
   }
 
   const replacedAt = new Date().toISOString();
+  const auditEntry: WealthClosureRepairAuditEntry = {
+    id: crypto.randomUUID(),
+    monthKey,
+    repairedAt: replacedAt,
+    reason: 'uf_historical_repair',
+    field: 'ufClp',
+    previousValue: beforeUfClp,
+    nextValue: nextUfClp,
+    source: HISTORICAL_OFFICIAL_UF_SOURCE,
+  };
   const previousVersion = {
     id: targetBefore.id,
     monthKey: targetBefore.monthKey,
@@ -5667,6 +5718,7 @@ export const repairHistoricalUfClpMonth = async (input: {
     },
     fxMissing: nextFxMissing?.length ? nextFxMissing : undefined,
     previousVersions: [previousVersion, ...(targetBefore.previousVersions || [])],
+    repairAudit: [auditEntry, ...(targetBefore.repairAudit || [])].slice(0, 24),
   };
   const nextClosures = [
     nextClosure,
@@ -5692,6 +5744,41 @@ export const repairHistoricalUfClpMonth = async (input: {
     monthKey,
     beforeUfClp,
     afterUfClp,
+  };
+};
+
+export const repairKnownHistoricalUfClpClosures = async (): Promise<{
+  repairedCount: number;
+  repairedMonthKeys: string[];
+  skippedMonthKeys: string[];
+}> => {
+  const suspicious = listSuspiciousHistoricalUfClosures(loadClosures());
+  const repairedMonthKeys: string[] = [];
+  const skippedMonthKeys: string[] = [];
+
+  for (const item of suspicious) {
+    if (item.suggestedUfClp === null) {
+      skippedMonthKeys.push(item.monthKey);
+      console.warn('[Aurum][uf-historical-repair][skipped-no-source]', item);
+      continue;
+    }
+    if (Math.abs(item.storedUfClp - item.suggestedUfClp) <= 0.5) continue;
+    const result = await repairHistoricalUfClpMonth({
+      monthKey: item.monthKey,
+      nextUfClp: item.suggestedUfClp,
+    });
+    if (result.ok) {
+      repairedMonthKeys.push(item.monthKey);
+    } else {
+      skippedMonthKeys.push(item.monthKey);
+      console.warn('[Aurum][uf-historical-repair][failed]', result);
+    }
+  }
+
+  return {
+    repairedCount: repairedMonthKeys.length,
+    repairedMonthKeys,
+    skippedMonthKeys,
   };
 };
 

@@ -21,6 +21,7 @@ import {
   defaultFxRates,
   loadClosures,
   loadIncludeRiskCapitalInTotals,
+  repairKnownHistoricalUfClpClosures,
   saveIncludeRiskCapitalInTotals,
 } from '../services/wealthStorage';
 import {
@@ -108,6 +109,17 @@ export const AnalysisAurum: React.FC = () => {
 
   useEffect(() => {
     refreshClosures();
+  }, [closures, refreshClosures]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void repairKnownHistoricalUfClpClosures().then((result) => {
+      if (cancelled || result.repairedCount === 0) return;
+      refreshClosures();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [refreshClosures]);
 
   useEffect(() => {

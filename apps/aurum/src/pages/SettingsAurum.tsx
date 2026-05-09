@@ -42,7 +42,6 @@ import {
   loadFxRates,
   defaultFxRates,
   clearWealthDataForFreshStart,
-  listSuspiciousHistoricalUfClosures,
   isMortgageMetaDebtLabel,
   isNonMortgageDebtRecord,
   isRiskCapitalInvestmentLabel,
@@ -54,7 +53,6 @@ import {
   saveInvestmentInstruments,
   WEALTH_DATA_UPDATED_EVENT,
   saveFxRates,
-  repairHistoricalUfClpMonth,
   repairMarch2025EurClpScale,
   seedDemoWealthTimeline,
   saveWealthRecords,
@@ -327,10 +325,6 @@ export const SettingsAurum: React.FC = () => {
   const [seedDemoMessage, setSeedDemoMessage] = useState('');
   const [seedingDemo, setSeedingDemo] = useState(false);
   const [repairingMarch2025, setRepairingMarch2025] = useState(false);
-  const [repairingHistoricalUfMonthKey, setRepairingHistoricalUfMonthKey] = useState('');
-  const [historicalUfRepairMessage, setHistoricalUfRepairMessage] = useState('');
-  const [historicalUfDrafts, setHistoricalUfDrafts] = useState<Record<string, string>>({});
-  const [historicalUfConfirm, setHistoricalUfConfirm] = useState<null | { monthKey: string; nextUfClp: number }>(null);
   const [runningPreflight, setRunningPreflight] = useState(false);
   const [preflightResults, setPreflightResults] = useState<PreflightCheckResult[]>([]);
   const [preflightSummaryMessage, setPreflightSummaryMessage] = useState('');
@@ -565,10 +559,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
     return { icon: '✅', tone: 'ok' as const, text: 'Cierres históricos completos' };
   }, [availableClosures, historicalPendingMonthKeys]);
-  const suspiciousHistoricalUfClosures = useMemo(
-    () => listSuspiciousHistoricalUfClosures(availableClosures),
-    [availableClosures],
-  );
   const monthChecklist = useMemo(
     () => [
       {
@@ -601,23 +591,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     ],
     [monthRecords, fx],
   );
-
-  useEffect(() => {
-    setHistoricalUfDrafts((prev) => {
-      const next: Record<string, string> = {};
-      let changed = false;
-      suspiciousHistoricalUfClosures.forEach((item) => {
-        const fallbackValue =
-          item.suggestedUfClp !== null
-            ? String(item.suggestedUfClp)
-            : String(Math.round(item.storedUfClp * 100) / 100);
-        next[item.monthKey] = prev[item.monthKey] || fallbackValue;
-        if (next[item.monthKey] !== prev[item.monthKey]) changed = true;
-      });
-      if (Object.keys(prev).length !== Object.keys(next).length) changed = true;
-      return changed ? next : prev;
-    });
-  }, [suspiciousHistoricalUfClosures]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
@@ -1594,28 +1567,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     }
   };
 
-  const repairHistoricalUfNow = async (monthKey: string, nextUfClp: number) => {
-    setRepairingHistoricalUfMonthKey(monthKey);
-    setHistoricalUfRepairMessage('');
-    try {
-      const result = await repairHistoricalUfClpMonth({ monthKey, nextUfClp });
-      refreshLocalState();
-      if (result.ok) {
-        setHistoricalUfRepairMessage(
-          `UF histórica corregida en ${monthKey}: ${formatFxInteger(result.beforeUfClp || 0)} -> ${formatFxInteger(
-            result.afterUfClp || 0,
-          )}.`,
-        );
-      } else {
-        setHistoricalUfRepairMessage(result.message);
-      }
-    } catch (err: any) {
-      setHistoricalUfRepairMessage(`Error al corregir UF histórica: ${String(err?.message || err || 'error')}`);
-    } finally {
-      setRepairingHistoricalUfMonthKey('');
-    }
-  };
-
   return (
     <div className="p-4 pb-32 space-y-2">
       {(!!resetAllMessage || !!closureReviewMessage || !!closingConfigMessage) && (
@@ -2143,76 +2094,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         }
       />
 
-      {(suspiciousHistoricalUfClosures.length > 0 || historicalUfRepairMessage) && (
-        <Card className="border border-amber-200 bg-amber-50/40 p-3">
-          <div>
-            <div className="text-sm font-semibold text-slate-900">Revisión UF histórica</div>
-            <div className="text-[11px] text-slate-500">
-              Corrige manualmente cierres con UF sospechosa. La corrección solo toca `closure.fxRates.ufClp` y guarda versión previa.
-            </div>
-          </div>
-          <div className="mt-3 space-y-2 text-xs">
-            {suspiciousHistoricalUfClosures.map((item) => (
-              <div key={item.monthKey} className="rounded-lg border border-amber-200 bg-white px-2.5 py-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-medium text-slate-800">
-                    {formatMonthLabel(item.monthKey)} <span className="text-slate-500">({item.monthKey})</span>
-                  </div>
-                  <div className="text-[11px] text-amber-700">
-                    {item.reasons.includes('official_mismatch') ? 'UF oficial no coincide' : 'Salto mensual UF sospechoso'}
-                  </div>
-                </div>
-                <div className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-slate-600 sm:grid-cols-2">
-                  <div>UF guardada: <span className="font-semibold text-slate-800">{formatFxInteger(item.storedUfClp)}</span></div>
-                  <div>
-                    UF sugerida/oficial:{' '}
-                    <span className="font-semibold text-slate-800">
-                      {item.suggestedUfClp !== null ? formatFxInteger(item.suggestedUfClp) : 'No disponible'}
-                    </span>
-                  </div>
-                  <div>
-                    Variación mensual detectada:{' '}
-                    <span className="font-semibold text-slate-800">
-                      {item.changePct !== null ? `${item.changePct >= 0 ? '+' : ''}${(item.changePct * 100).toFixed(2).replace('.', ',')}%` : '—'}
-                    </span>
-                  </div>
-                  <div>
-                    UF mes previo:{' '}
-                    <span className="font-semibold text-slate-800">
-                      {item.previousUfClp !== null ? formatFxInteger(item.previousUfClp) : '—'}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[180px_auto]">
-                  <Input
-                    value={historicalUfDrafts[item.monthKey] || ''}
-                    onChange={(event) =>
-                      setHistoricalUfDrafts((prev) => ({ ...prev, [item.monthKey]: event.target.value }))
-                    }
-                    placeholder="UF/CLP corregida"
-                  />
-                  <Button
-                    variant="outline"
-                    disabled={repairingHistoricalUfMonthKey === item.monthKey}
-                    onClick={() => {
-                      const parsed = parseStrictNumber(historicalUfDrafts[item.monthKey] || '');
-                      if (!Number.isFinite(parsed) || parsed <= 0) {
-                        setHistoricalUfRepairMessage(`Ingresa una UF/CLP válida para ${item.monthKey}.`);
-                        return;
-                      }
-                      setHistoricalUfConfirm({ monthKey: item.monthKey, nextUfClp: parsed });
-                    }}
-                  >
-                    {repairingHistoricalUfMonthKey === item.monthKey ? 'Corrigiendo...' : 'Corregir UF manualmente'}
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {!!historicalUfRepairMessage && <div className="text-amber-800">{historicalUfRepairMessage}</div>}
-          </div>
-        </Card>
-      )}
-
       <ClosureReviewModal
         open={closureReviewOpen}
         source={closureReviewSource}
@@ -2222,33 +2103,6 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           setClosureReviewQueue([]);
         }}
         onFinish={onClosureReviewFinish}
-      />
-
-      <ConfirmActionModal
-        open={!!historicalUfConfirm}
-        tone="default"
-        title="Confirmar corrección UF"
-        message={
-          historicalUfConfirm
-            ? `Se actualizará la UF/CLP del cierre ${historicalUfConfirm.monthKey} a ${formatFxInteger(
-                historicalUfConfirm.nextUfClp,
-              )}. Se guardará una versión previa antes de aplicar el cambio.`
-            : ''
-        }
-        confirmText="Sí, corregir UF"
-        cancelText="Cancelar"
-        busy={!!repairingHistoricalUfMonthKey}
-        onCancel={() => setHistoricalUfConfirm(null)}
-        onConfirm={() => {
-          if (!historicalUfConfirm) return;
-          const { monthKey, nextUfClp } = historicalUfConfirm;
-          setHistoricalUfConfirm(null);
-          void runGuardedDestructiveAction({
-            backupReason: `Reparar UF histórica ${monthKey}`,
-            actionLabel: `corregir la UF histórica del cierre ${monthKey}`,
-            onProceed: () => repairHistoricalUfNow(monthKey, nextUfClp),
-          });
-        }}
       />
 
       <ConfirmActionModal
