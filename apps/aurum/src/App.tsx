@@ -191,34 +191,53 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
   const [incompletePrompt, setIncompletePrompt] = useState<IncompletePrompt | null>(null);
   const [fxIndicatorPrompt, setFxIndicatorPrompt] = useState<FxIndicatorPrompt | null>(null);
 
   useEffect(() => {
-    void ensureAuthPersistence();
-    const timeout = window.setTimeout(() => {
-      setLoading(false);
-      setAuthError(
-        'No pude validar la sesión automáticamente. Puedes continuar con "Entrar con Google".',
-      );
-    }, 6000);
+    let alive = true;
+    let unsub: (() => void) | null = null;
+    let timeout: number | null = null;
 
-    const unsub = onAuthStateChanged(
-      auth,
-      (nextUser) => {
-        window.clearTimeout(timeout);
-        setUser(nextUser);
+    const startAuthListener = async () => {
+      await ensureAuthPersistence();
+      if (!alive) return;
+
+      timeout = window.setTimeout(() => {
+        if (!alive) return;
         setLoading(false);
-      },
-      (err) => {
-        window.clearTimeout(timeout);
-        setAuthError(String(err?.message || 'Error inicializando autenticación.'));
-        setLoading(false);
-      },
-    );
+        setAuthError(
+          'No pude validar la sesión automáticamente. Puedes continuar con "Entrar con Google".',
+        );
+      }, 20000);
+
+      unsub = onAuthStateChanged(
+        auth,
+        (nextUser) => {
+          if (timeout) window.clearTimeout(timeout);
+          setAuthError('');
+          setUser(nextUser);
+          setLoading(false);
+        },
+        (err) => {
+          if (timeout) window.clearTimeout(timeout);
+          setAuthError(String(err?.message || 'Error inicializando autenticación.'));
+          setLoading(false);
+        },
+      );
+    };
+
+    void startAuthListener().catch((err) => {
+      if (!alive) return;
+      setAuthError(String(err?.message || 'Error inicializando autenticación.'));
+      setLoading(false);
+    });
+
     return () => {
-      window.clearTimeout(timeout);
-      unsub();
+      alive = false;
+      if (timeout) window.clearTimeout(timeout);
+      if (unsub) unsub();
     };
   }, []);
 
@@ -372,17 +391,20 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             </div>
           )}
           <button
-            className="mt-6 w-full rounded-xl bg-[#2f4f2f] px-4 py-3 text-sm font-semibold text-white hover:bg-[#264226]"
+            className="mt-6 w-full rounded-xl bg-[#2f4f2f] px-4 py-3 text-sm font-semibold text-white hover:bg-[#264226] disabled:cursor-wait disabled:opacity-70"
+            disabled={loginLoading}
             onClick={async () => {
               setAuthError('');
+              setLoginLoading(true);
               try {
                 await signInWithGoogle();
               } catch (err: any) {
                 setAuthError(String(err?.message || 'No pude iniciar sesión con Google.'));
+                setLoginLoading(false);
               }
             }}
           >
-            Entrar con Google
+            {loginLoading ? 'Abriendo Google...' : 'Entrar con Google'}
           </button>
           {!!authError && <div className="mt-3 text-xs text-red-700">{authError}</div>}
         </div>

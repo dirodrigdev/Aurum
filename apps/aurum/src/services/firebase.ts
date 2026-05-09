@@ -135,14 +135,29 @@ export function getCurrentUid(): string | null {
   return auth.currentUser?.uid ?? null;
 }
 
+const shouldUseRedirectSignIn = () => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIos = /iPad|iPhone|iPod/.test(ua);
+  const isIosBrowser = /CriOS|FxiOS|EdgiOS/.test(ua);
+  const isMobileSafari = /Mobile/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
+  return isIos || isIosBrowser || isMobileSafari;
+};
+
 export async function signInWithGoogle(): Promise<void> {
   await ensureAuthPersistence();
+  if (shouldUseRedirectSignIn()) {
+    await signInWithRedirect(auth, googleProvider);
+    return;
+  }
+
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
     const code = String(err?.code || '');
     const needsRedirect =
       code === 'auth/popup-blocked' ||
+      code === 'auth/popup-closed-by-user' ||
       code === 'auth/cancelled-popup-request' ||
       code === 'auth/operation-not-supported-in-this-environment';
 
