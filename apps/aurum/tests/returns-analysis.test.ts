@@ -41,6 +41,7 @@ import {
   buildPendingOfficialReturnInfo,
   buildPendingReturnEstimate,
   buildReturnsSeriesView,
+  buildTrailingSummary,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
   computeMonthlyRows,
@@ -165,6 +166,139 @@ describe('returns analysis helpers', () => {
     expect(summary.validMonths).toBeGreaterThan(0);
     expect(summary.retornoRealAcumClp).not.toBeNull();
     expect(summary.retornoRealAvgDisplay).not.toBeNull();
+  });
+
+  it('includes complete official GastApp spend in closed aggregates', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 1_050_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) =>
+      row.monthKey === '2026-02'
+        ? {
+            ...row,
+            gastosSource: 'gastapp_firestore' as const,
+            gastosContractStatus: 'complete' as const,
+            gastosDataQuality: 'ok' as const,
+            gastosIsStale: false,
+          }
+        : row,
+    );
+
+    const summary = aggregateRows('official', 'Official', rows, rows[0].netDisplay);
+
+    expect(summary.validMonths).toBe(1);
+    expect(summary.retornoRealAcumClp).not.toBeNull();
+  });
+
+  it('keeps legacy spend visible in history but excludes it from official aggregates', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 1_050_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_080_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) => {
+      if (row.monthKey === '2026-02') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'ok' as const,
+          gastosIsStale: false,
+        };
+      }
+      if (row.monthKey === '2026-03') {
+        return {
+          ...row,
+          gastosSource: 'legacy_static' as const,
+          gastosContractSource: 'legacy_static',
+          gastosDataQuality: 'warning' as const,
+          gastosIsStale: false,
+        };
+      }
+      return row;
+    });
+
+    const legacyRow = rows.find((row) => row.monthKey === '2026-03');
+    const summary = aggregateRows('legacy-excluded', 'Legacy excluded', rows, rows[0].netDisplay);
+
+    expect(legacyRow?.gastosStatus).toBe('complete');
+    expect(legacyRow?.retornoRealClp).not.toBeNull();
+    expect(summary.validMonths).toBe(1);
+    expect(summary.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
+  });
+
+  it('excludes stale, warning, and error spend from from-start, 12M, and YTD aggregates', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 1_050_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_080_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_100_000_000, eurClp: 1000 }),
+        makeClosure('2026-05', { netClp: 1_120_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) => {
+      if (row.monthKey === '2026-02') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'ok' as const,
+          gastosIsStale: false,
+        };
+      }
+      if (row.monthKey === '2026-03') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'warning' as const,
+          gastosIsStale: false,
+        };
+      }
+      if (row.monthKey === '2026-04') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'stale' as const,
+          gastosDataQuality: 'ok' as const,
+          gastosIsStale: true,
+        };
+      }
+      if (row.monthKey === '2026-05') {
+        return {
+          ...row,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'error' as const,
+          gastosIsStale: false,
+        };
+      }
+      return row;
+    });
+    const baseNetDisplay = rows[0].netDisplay;
+
+    const fromStart = aggregateRows('from-start', 'Desde inicio', rows, baseNetDisplay);
+    const trailing12 = buildTrailingSummary(rows, 12, '12m', '12M');
+    const ytd = aggregateRows(
+      'ytd',
+      'YTD',
+      rows.filter((row) => row.monthKey.startsWith('2026-')),
+      baseNetDisplay,
+    );
+
+    expect(fromStart.validMonths).toBe(1);
+    expect(trailing12?.validMonths).toBe(1);
+    expect(ytd.validMonths).toBe(1);
+    expect(fromStart.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
   });
 
   it('marks non-auditable FX months and excludes them from closed aggregates', () => {

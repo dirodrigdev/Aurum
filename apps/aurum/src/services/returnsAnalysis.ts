@@ -247,18 +247,46 @@ const parseIsoDate = (value: string | null | undefined): Date | null => {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 };
 
+const hasOfficialClosedSpend = (
+  row: MonthlyReturnRow,
+): row is MonthlyReturnRow & {
+  gastosClp: number;
+  gastosDisplay: number;
+} =>
+  row.fxAuditable &&
+  row.gastosStatus === 'complete' &&
+  row.gastosSource === 'gastapp_firestore' &&
+  row.gastosClp !== null &&
+  row.gastosDisplay !== null &&
+  !row.gastosIsStale &&
+  (row.gastosDataQuality === null || row.gastosDataQuality === 'ok') &&
+  (row.gastosContractStatus === null || row.gastosContractStatus === 'complete') &&
+  row.gastosContractSource !== 'legacy_static' &&
+  row.gastosDayToDaySource !== 'legacy';
+
+const hasOfficialAggregateInputs = (
+  row: MonthlyReturnRow,
+): row is MonthlyReturnRow & {
+  varPatrimonioClp: number;
+  gastosClp: number;
+  retornoRealClp: number;
+  varPatrimonioDisplay: number;
+  gastosDisplay: number;
+  retornoRealDisplay: number;
+} =>
+  hasOfficialClosedSpend(row) &&
+  row.varPatrimonioClp !== null &&
+  row.retornoRealClp !== null &&
+  row.varPatrimonioDisplay !== null &&
+  row.retornoRealDisplay !== null;
+
 const buildOfficialAvailabilityNotice = (officialRows: MonthlyReturnRow[]) => {
   const sortedDesc = [...officialRows].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   const candidate = sortedDesc.find(
     (row) =>
-      row.gastosStatus === 'complete' &&
-      row.gastosDataQuality === 'ok' &&
-      !row.gastosIsStale &&
-      row.fxAuditable &&
+      hasOfficialClosedSpend(row) &&
       row.retornoRealDisplay !== null &&
       row.retornoRealClp !== null &&
-      row.gastosDisplay !== null &&
-      row.gastosClp !== null &&
       row.pct !== null,
   );
   if (!candidate) return null;
@@ -442,23 +470,7 @@ export const aggregateRows = (
   rows: MonthlyReturnRow[],
   baseNetDisplay: number | null,
 ): AggregatedSummary => {
-  const validRows = rows.filter(
-    (row) =>
-      row.fxAuditable &&
-      row.gastosStatus === 'complete' &&
-      row.varPatrimonioDisplay !== null &&
-      row.gastosDisplay !== null &&
-      row.retornoRealDisplay !== null,
-  ) as Array<
-    MonthlyReturnRow & {
-      varPatrimonioClp: number;
-      gastosClp: number;
-      retornoRealClp: number;
-      varPatrimonioDisplay: number;
-      gastosDisplay: number;
-      retornoRealDisplay: number;
-    }
-  >;
+  const validRows = rows.filter(hasOfficialAggregateInputs);
 
   const validMonths = validRows.length;
   const varPatrimonioAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.varPatrimonioClp)) : null;
@@ -555,17 +567,7 @@ const validClosedSpendRow = (
 ): row is MonthlyReturnRow & {
   gastosClp: number;
   gastosDisplay: number;
-} =>
-  row.fxAuditable &&
-  row.gastosStatus === 'complete' &&
-  row.gastosClp !== null &&
-  row.gastosDisplay !== null &&
-  !row.gastosIsStale &&
-  row.gastosDataQuality !== 'warning' &&
-  row.gastosDataQuality !== 'error' &&
-  row.gastosContractStatus !== 'stale' &&
-  row.gastosContractStatus !== 'pending' &&
-  row.gastosContractStatus !== 'missing';
+} => hasOfficialClosedSpend(row);
 
 const buildProvisionalScenario = ({
   key,
