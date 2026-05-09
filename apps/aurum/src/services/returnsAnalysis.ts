@@ -138,12 +138,33 @@ export type ReturnsMonthlySourceDiagnostic = {
   fx: WealthFxRates;
   fxAuditable: boolean;
   fxMethod: 'real_closure' | 'default_fallback';
+  fxMissing: MonthlyReturnRow['fxMissing'];
   gastosClp: number | null;
   gastosSource: MonthlyReturnRow['gastosSource'];
   gastosStatus: MonthlyReturnRow['gastosStatus'];
   contractStatus: MonthlyReturnRow['gastosContractStatus'];
   dataQuality: MonthlyReturnRow['gastosDataQuality'];
   isStale: boolean;
+  staleReason: string | null;
+  day_to_day_source: string | null;
+  contractSource: string | null;
+  schemaVersion: string | null;
+  methodologyVersion: string | null;
+  periodKey: string | null;
+  revision: number | null;
+  updatedAt: string | null;
+  publishedAt: string | null;
+  closedAt: string | null;
+  reportUpdatedAt: string | null;
+  summaryUpdatedAt: string | null;
+  lastExpenseUpdatedAt: string | null;
+  reportTotalEur: number | null;
+  summaryTotalEur: number | null;
+  directExpenseTotalEur: number | null;
+  reportVsDirectDiffEur: number | null;
+  summaryVsDirectDiffEur: number | null;
+  reportVsSummaryDiffEur: number | null;
+  categoryGapEur: number | null;
   entraAgregadoOficial: boolean;
   motivoExclusion: AggregateCoverageExclusionReason | null;
   motivoExclusionLabel: string | null;
@@ -721,12 +742,33 @@ export const buildReturnsMonthlySourceDiagnostics = (
       fx: row.fx,
       fxAuditable: row.fxAuditable,
       fxMethod: row.fxMethod,
+      fxMissing: row.fxMissing,
       gastosClp: row.gastosClp,
       gastosSource: row.gastosSource,
       gastosStatus: row.gastosStatus,
       contractStatus: row.gastosContractStatus,
       dataQuality: row.gastosDataQuality,
       isStale: row.gastosIsStale,
+      staleReason: row.gastosStaleReason,
+      day_to_day_source: row.gastosDayToDaySource,
+      contractSource: row.gastosContractSource,
+      schemaVersion: row.gastosSchemaVersion,
+      methodologyVersion: row.gastosMethodologyVersion,
+      periodKey: row.gastosPeriodKey,
+      revision: row.gastosRevision,
+      updatedAt: row.gastosUpdatedAt,
+      publishedAt: row.gastosPublishedAt,
+      closedAt: row.gastosClosedAt,
+      reportUpdatedAt: row.gastosReportUpdatedAt,
+      summaryUpdatedAt: row.gastosSummaryUpdatedAt,
+      lastExpenseUpdatedAt: row.gastosLastExpenseUpdatedAt,
+      reportTotalEur: row.gastosReportTotalEur,
+      summaryTotalEur: row.gastosSummaryTotalEur,
+      directExpenseTotalEur: row.gastosDirectExpenseTotalEur,
+      reportVsDirectDiffEur: row.gastosReportVsDirectDiffEur,
+      summaryVsDirectDiffEur: row.gastosSummaryVsDirectDiffEur,
+      reportVsSummaryDiffEur: row.gastosReportVsSummaryDiffEur,
+      categoryGapEur: row.gastosCategoryGapEur,
       entraAgregadoOficial: motivoExclusion === null,
       motivoExclusion,
       motivoExclusionLabel: motivoExclusion ? coverageReasonLabel(motivoExclusion) : null,

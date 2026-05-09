@@ -3,7 +3,8 @@ import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
-import { buildPendingOfficialReturnInfo } from '../../services/returnsAnalysis';
+import { getGastappMonthlyRuntimeDiagnostic } from '../../services/gastosMonthly';
+import { buildPendingOfficialReturnInfo, buildReturnsMonthlySourceDiagnostics } from '../../services/returnsAnalysis';
 import type { ProvisionalReturnScenario } from '../../services/returnsAnalysis';
 import type { WealthEvolutionComparisonModel } from '../../services/returnsAnalysis';
 import type {
@@ -1037,6 +1038,22 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     return diffEntries.map((entry) => `Diferencia detectada entre ${entry.label}: ${formatCurrency(Number(entry.value), 'EUR')}`);
   }, [latestGastappSpendRow, legacySpendMonths.length]);
   const [copyStatus, setCopyStatus] = React.useState<'idle' | 'done' | 'error'>('idle');
+  const returnsSourceDiagnostics = React.useMemo(
+    () => buildReturnsMonthlySourceDiagnostics(monthlyRowsDesc),
+    [monthlyRowsDesc],
+  );
+  const coverageSummaries = React.useMemo(
+    () =>
+      [
+        heroSinceStart,
+        heroLast12,
+        heroYtd2026,
+        heroLastMonth,
+        ...periodSummaries,
+        ...yearlySummaries,
+      ].filter((item): item is AggregatedSummary => Boolean(item)),
+    [heroSinceStart, heroLast12, heroYtd2026, heroLastMonth, periodSummaries, yearlySummaries],
+  );
   const pendingOfficialRows = React.useMemo(
     () =>
       [...officialMonthlyRowsAsc]
@@ -1157,6 +1174,62 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     a.click();
     URL.revokeObjectURL(url);
   }, [historyRows]);
+
+  const exportDiagnostics = React.useCallback(() => {
+    const runtime = getGastappMonthlyRuntimeDiagnostic();
+    const coverageByMonth = new Map<
+      string,
+      Array<{
+        key: string;
+        label: string;
+        status: AggregatedSummary['coverage']['status'];
+        validMonths: number;
+        expectedMonths: number;
+        motivoExclusion: string;
+        motivoExclusionLabel: string;
+      }>
+    >();
+
+    coverageSummaries.forEach((summary) => {
+      summary.coverage.excludedMonths.forEach((excluded) => {
+        const current = coverageByMonth.get(excluded.monthKey) ?? [];
+        current.push({
+          key: summary.key,
+          label: summary.label,
+          status: summary.coverage.status,
+          validMonths: summary.coverage.validMonths,
+          expectedMonths: summary.coverage.expectedMonths,
+          motivoExclusion: excluded.reason,
+          motivoExclusionLabel: excluded.label,
+        });
+        coverageByMonth.set(excluded.monthKey, current);
+      });
+    });
+
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      tool: 'aurum_returns_runtime_diagnostic_v1',
+      context: {
+        currency,
+        includeEstimatedMonth,
+        includeRiskCapitalInTotals,
+        visibleRows: returnsSourceDiagnostics.length,
+      },
+      gastappRuntime: runtime,
+      rows: returnsSourceDiagnostics.map((row) => ({
+        ...row,
+        coverageBuckets: coverageByMonth.get(row.monthKey) ?? [],
+      })),
+    };
+
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `retornos-diagnostico-runtime-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [coverageSummaries, currency, includeEstimatedMonth, includeRiskCapitalInTotals, returnsSourceDiagnostics]);
 
   return (
   <>
@@ -1330,6 +1403,13 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           Historial completo
         </div>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={exportDiagnostics}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-400 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+          >
+            Exportar diagnóstico
+          </button>
           <button
             type="button"
             onClick={copyTable}
