@@ -1,4 +1,6 @@
 import type {
+  AggregateCoverage,
+  AggregateCoverageExclusionReason,
   AggregatedSummary,
   MonthlyReturnRow,
   ReturnCurveMarker,
@@ -247,12 +249,7 @@ const parseIsoDate = (value: string | null | undefined): Date | null => {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 };
 
-const hasOfficialClosedSpend = (
-  row: MonthlyReturnRow,
-): row is MonthlyReturnRow & {
-  gastosClp: number;
-  gastosDisplay: number;
-} =>
+const isOfficialClosedSpend = (row: MonthlyReturnRow) =>
   row.fxAuditable &&
   row.gastosStatus === 'complete' &&
   row.gastosSource === 'gastapp_firestore' &&
@@ -264,6 +261,20 @@ const hasOfficialClosedSpend = (
   row.gastosContractSource !== 'legacy_static' &&
   row.gastosDayToDaySource !== 'legacy';
 
+const hasOfficialClosedSpend = (
+  row: MonthlyReturnRow,
+): row is MonthlyReturnRow & {
+  gastosClp: number;
+  gastosDisplay: number;
+} => isOfficialClosedSpend(row);
+
+const isOfficialAggregateInput = (row: MonthlyReturnRow) =>
+  isOfficialClosedSpend(row) &&
+  row.varPatrimonioClp !== null &&
+  row.retornoRealClp !== null &&
+  row.varPatrimonioDisplay !== null &&
+  row.retornoRealDisplay !== null;
+
 const hasOfficialAggregateInputs = (
   row: MonthlyReturnRow,
 ): row is MonthlyReturnRow & {
@@ -273,12 +284,121 @@ const hasOfficialAggregateInputs = (
   varPatrimonioDisplay: number;
   gastosDisplay: number;
   retornoRealDisplay: number;
-} =>
-  hasOfficialClosedSpend(row) &&
-  row.varPatrimonioClp !== null &&
-  row.retornoRealClp !== null &&
-  row.varPatrimonioDisplay !== null &&
-  row.retornoRealDisplay !== null;
+} => isOfficialAggregateInput(row);
+
+const coverageReasonLabel = (reason: AggregateCoverageExclusionReason) => {
+  if (reason === 'missing_closure') return 'cierre faltante';
+  if (reason === 'non_official_spend') return 'gasto no oficial';
+  if (reason === 'stale_warning_error') return 'stale/warning/error';
+  if (reason === 'legacy_static') return 'legacy_static';
+  if (reason === 'fx_not_auditable') return 'FX no auditable';
+  return 'variación no calculable';
+};
+
+const classifyAggregateExclusion = (row: MonthlyReturnRow): AggregateCoverageExclusionReason | null => {
+  if (isOfficialAggregateInput(row)) return null;
+  if (!row.fxAuditable) return 'fx_not_auditable';
+  if (
+    row.gastosSource === 'legacy_static' ||
+    row.gastosContractSource === 'legacy_static' ||
+    row.gastosDayToDaySource === 'legacy'
+  ) {
+    return 'legacy_static';
+  }
+  if (
+    row.gastosIsStale ||
+    row.gastosDataQuality === 'warning' ||
+    row.gastosDataQuality === 'error' ||
+    row.gastosContractStatus === 'stale'
+  ) {
+    return 'stale_warning_error';
+  }
+  if (
+    row.gastosStatus !== 'complete' ||
+    row.gastosSource !== 'gastapp_firestore' ||
+    row.gastosContractStatus === 'pending' ||
+    row.gastosContractStatus === 'missing'
+  ) {
+    return 'non_official_spend';
+  }
+  return 'not_calculable';
+};
+
+const parseMonthKeyParts = (monthKey: string) => {
+  const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw) || monthRaw < 1 || monthRaw > 12) return null;
+  return { year: yearRaw, month: monthRaw };
+};
+
+const addMonthsToKey = (monthKey: string, delta: number) => {
+  const parsed = parseMonthKeyParts(monthKey);
+  if (!parsed) return monthKey;
+  const date = new Date(parsed.year, parsed.month - 1 + delta, 1, 12, 0, 0, 0);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+
+export const enumerateMonthKeys = (startMonthKey: string, endMonthKey: string): string[] => {
+  if (!parseMonthKeyParts(startMonthKey) || !parseMonthKeyParts(endMonthKey) || startMonthKey > endMonthKey) return [];
+  const months: string[] = [];
+  let current = startMonthKey;
+  while (current <= endMonthKey && months.length < 600) {
+    months.push(current);
+    current = addMonthsToKey(current, 1);
+  }
+  return months;
+};
+
+const trailingExpectedMonthKeys = (endMonthKey: string, count: number) => {
+  if (count <= 0) return [];
+  const startMonthKey = addMonthsToKey(endMonthKey, -(count - 1));
+  return enumerateMonthKeys(startMonthKey, endMonthKey);
+};
+
+type AggregateRowsOptions = {
+  expectedMonthKeys?: string[];
+  expectedMonths?: number;
+};
+
+const buildAggregateCoverage = (
+  rows: MonthlyReturnRow[],
+  validRows: MonthlyReturnRow[],
+  options: AggregateRowsOptions | undefined,
+): AggregateCoverage => {
+  const expectedMonthKeys =
+    options?.expectedMonthKeys ??
+    rows.map((row) => row.monthKey);
+  const expectedMonths = Math.max(
+    options?.expectedMonths ?? expectedMonthKeys.length,
+    expectedMonthKeys.length,
+  );
+  const rowByMonth = new Map(rows.map((row) => [row.monthKey, row]));
+  const validMonthKeys = new Set(validRows.map((row) => row.monthKey));
+  const excludedMonths = expectedMonthKeys
+    .filter((monthKey) => !validMonthKeys.has(monthKey))
+    .map((monthKey) => {
+      const row = rowByMonth.get(monthKey) ?? null;
+      const reason = row ? classifyAggregateExclusion(row) ?? 'not_calculable' : 'missing_closure';
+      return {
+        monthKey,
+        reason,
+        label: coverageReasonLabel(reason),
+      };
+    });
+  const validMonths = validRows.length;
+  const status: AggregateCoverage['status'] =
+    expectedMonths > 0 && validMonths >= expectedMonths
+      ? 'complete'
+      : validMonths === 0 || (expectedMonths > 0 && validMonths / expectedMonths < 0.5)
+        ? 'insufficient'
+        : 'partial';
+
+  return {
+    validMonths,
+    expectedMonths,
+    excludedMonths,
+    status,
+  };
+};
 
 const buildOfficialAvailabilityNotice = (officialRows: MonthlyReturnRow[]) => {
   const sortedDesc = [...officialRows].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
@@ -469,8 +589,12 @@ export const aggregateRows = (
   label: string,
   rows: MonthlyReturnRow[],
   baseNetDisplay: number | null,
+  options?: AggregateRowsOptions,
 ): AggregatedSummary => {
-  const validRows = rows.filter(hasOfficialAggregateInputs);
+  const expectedSet = options?.expectedMonthKeys ? new Set(options.expectedMonthKeys) : null;
+  const coverageRows = expectedSet ? rows.filter((row) => expectedSet.has(row.monthKey)) : rows;
+  const validRows = coverageRows.filter(hasOfficialAggregateInputs);
+  const coverage = buildAggregateCoverage(coverageRows, validRows, options);
 
   const validMonths = validRows.length;
   const varPatrimonioAcumClp = validMonths ? sumNumbers(validRows.map((row) => row.varPatrimonioClp)) : null;
@@ -546,6 +670,7 @@ export const aggregateRows = (
     key,
     label,
     validMonths,
+    coverage,
     varPatrimonioAcumClp,
     gastosAcumClp,
     retornoRealAcumClp,
@@ -746,6 +871,8 @@ export const buildTrailingSummary = (
 ): AggregatedSummary | null => {
   const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - count));
   if (!rows.length) return null;
+  const endMonthKey = rows[rows.length - 1]?.monthKey ?? null;
+  const expectedMonthKeys = endMonthKey ? trailingExpectedMonthKeys(endMonthKey, count) : rows.map((row) => row.monthKey);
 
   const firstMonthKey = rows[0]?.monthKey ?? null;
   let baseNetDisplay: number | null = null;
@@ -765,7 +892,7 @@ export const buildTrailingSummary = (
     baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
   }
 
-  return aggregateRows(key, label, rows, baseNetDisplay);
+  return aggregateRows(key, label, rows, baseNetDisplay, { expectedMonthKeys });
 };
 
 const buildCurveDomain = (values: number[]) => {

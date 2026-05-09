@@ -42,6 +42,58 @@ const spendTrustTone = (severity: SpendTrustSeverity) => {
   return 'border-rose-200 bg-rose-50/70 text-rose-800';
 };
 
+const coverageLabel = (item: AggregatedSummary) => {
+  const suffix = item.coverage.status === 'complete' ? '' : ` · ${item.coverage.status === 'partial' ? 'parcial' : 'insuficiente'}`;
+  return `${item.coverage.validMonths}/${item.coverage.expectedMonths} meses válidos${suffix}`;
+};
+
+const coverageTone = (item: AggregatedSummary, dark = false) => {
+  if (item.coverage.status === 'complete') {
+    return dark ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  }
+  if (item.coverage.status === 'partial') {
+    return dark ? 'border-amber-300/20 bg-amber-300/10 text-amber-100' : 'border-amber-200 bg-amber-50 text-amber-800';
+  }
+  return dark ? 'border-rose-300/20 bg-rose-300/10 text-rose-100' : 'border-rose-200 bg-rose-50 text-rose-700';
+};
+
+const CoverageBadge: React.FC<{ item: AggregatedSummary; dark?: boolean }> = ({ item, dark = false }) => {
+  const excluded = item.coverage.excludedMonths;
+  return (
+    <details className="group inline-block max-w-full">
+      <summary
+        className={cn(
+          'inline-flex cursor-pointer list-none items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none [&::-webkit-details-marker]:hidden',
+          coverageTone(item, dark),
+        )}
+        title={coverageLabel(item)}
+      >
+        <span className="truncate">{coverageLabel(item)}</span>
+        {excluded.length > 0 ? <ChevronDown size={10} className="shrink-0 transition group-open:rotate-180" /> : null}
+      </summary>
+      {excluded.length > 0 ? (
+        <div
+          className={cn(
+            'mt-1 max-w-[220px] rounded-xl border px-2 py-1.5 text-[10px] leading-snug shadow-sm',
+            dark ? 'border-white/10 bg-slate-950/85 text-slate-200' : 'border-slate-200 bg-white text-slate-600',
+          )}
+        >
+          <div className="font-semibold">Meses excluidos</div>
+          <div className="mt-1 space-y-0.5">
+            {excluded.slice(0, 6).map((month) => (
+              <div key={`${month.monthKey}-${month.reason}`} className="flex justify-between gap-2">
+                <span>{monthLabelShort(month.monthKey)}</span>
+                <span className="text-right opacity-80">{month.label}</span>
+              </div>
+            ))}
+            {excluded.length > 6 ? <div className="opacity-70">+{excluded.length - 6} meses más</div> : null}
+          </div>
+        </div>
+      ) : null}
+    </details>
+  );
+};
+
 type ReturnsTabProps = {
   heroSinceStart: AggregatedSummary | null;
   heroLast12: AggregatedSummary | null;
@@ -122,7 +174,9 @@ const SummaryTable: React.FC<{
               <tr key={item.key} className="border-t border-slate-100">
                 <td className="py-1.5 pr-2 font-medium text-slate-700">
                   <div className="truncate">{item.label}</div>
-                  <div className="text-[10px] text-slate-500">N={item.validMonths}</div>
+                  <div className="mt-1">
+                    <CoverageBadge item={item} />
+                  </div>
                 </td>
                 <td
                   className={cn(
@@ -291,6 +345,11 @@ const ReturnRealHero: React.FC<{
                         ? 'Desde enero · Tasa anual equivalente'
                         : 'Tasa anual equivalente'}
                   </div>
+                  {row.value ? (
+                    <div className="mt-1">
+                      <CoverageBadge item={row.value} dark />
+                    </div>
+                  ) : null}
                 </div>
                 <div className="min-w-0 text-right">
                   <div className="flex items-end justify-end gap-2">

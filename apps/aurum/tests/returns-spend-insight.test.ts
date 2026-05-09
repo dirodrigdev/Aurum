@@ -6,6 +6,12 @@ const makeSummary = (overrides: Partial<AggregatedSummary>): AggregatedSummary =
   key: 'test',
   label: 'Test',
   validMonths: 12,
+  coverage: {
+    validMonths: 12,
+    expectedMonths: 12,
+    excludedMonths: [],
+    status: 'complete',
+  },
   varPatrimonioAcumClp: 10_000_000,
   gastosAcumClp: 5_000_000,
   retornoRealAcumClp: 20_000_000,

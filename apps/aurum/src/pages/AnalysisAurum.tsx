@@ -35,6 +35,7 @@ import {
   buildReturnsSeriesView,
   buildTrailingSummary,
   computeMonthlyRows,
+  enumerateMonthKeys,
   monthYear,
 } from '../services/returnsAnalysis';
 import {
@@ -272,15 +273,21 @@ export const AnalysisAurum: React.FC = () => {
     }
     if (monthKeysAsc.length) {
       const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-      summaries.push(aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay));
+      summaries.push(
+        aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
+          expectedMonthKeys: enumerateMonthKeys(monthKeysAsc[0], monthKeysAsc[monthKeysAsc.length - 1]),
+        }),
+      );
     }
     return summaries;
   }, [monthlyRowsAsc]);
 
   const yearlySummaries = useMemo(() => {
     const years = Array.from(new Set(monthlyRowsAsc.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
+    const latestYear = years[years.length - 1] ?? null;
     return years.map((year) => {
       const rows = monthlyRowsAsc.filter((row) => monthYear(row.monthKey) === year);
+      const lastYearMonthKey = year < (latestYear ?? year) ? `${year}-12` : rows[rows.length - 1]?.monthKey ?? `${year}-12`;
       const previousYearBase = monthlyRowsAsc
         .filter((row) => row.monthKey < `${year}-01`)
         .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
@@ -288,14 +295,18 @@ export const AnalysisAurum: React.FC = () => {
       const baseNetDisplay = previousYearBaseValid.length
         ? previousYearBaseValid[previousYearBaseValid.length - 1].netDisplay
         : null;
-      return aggregateRows(`year-${year}`, String(year), rows, baseNetDisplay);
+      return aggregateRows(`year-${year}`, String(year), rows, baseNetDisplay, {
+        expectedMonthKeys: enumerateMonthKeys(`${year}-01`, lastYearMonthKey),
+      });
     });
   }, [monthlyRowsAsc]);
 
   const heroSinceStart = useMemo(() => {
     if (!monthlyRowsAsc.length) return null;
     const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay);
+    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
+      expectedMonthKeys: enumerateMonthKeys(monthlyRowsAsc[0].monthKey, monthlyRowsAsc[monthlyRowsAsc.length - 1].monthKey),
+    });
   }, [monthlyRowsAsc]);
 
   const heroLast12 = useMemo(() => {
@@ -309,13 +320,17 @@ export const AnalysisAurum: React.FC = () => {
       .filter((row) => row.monthKey < '2026-01' && row.netDisplay !== null)
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .at(-1);
-    return aggregateRows('hero-ytd-2026', 'YTD 2026', ytdRows, baseRow?.netDisplay ?? null);
+    return aggregateRows('hero-ytd-2026', 'YTD 2026', ytdRows, baseRow?.netDisplay ?? null, {
+      expectedMonthKeys: enumerateMonthKeys('2026-01', ytdRows[ytdRows.length - 1].monthKey),
+    });
   }, [monthlyRowsAsc]);
 
   const heroLastMonth = useMemo(() => {
     const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
     if (!row) return null;
-    return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay);
+    return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay, {
+      expectedMonthKeys: [row.monthKey],
+    });
   }, [returnsSeriesView.officialRows]);
 
   const heroLastMonthPctMonthly = useMemo(() => {

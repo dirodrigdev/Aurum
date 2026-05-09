@@ -188,9 +188,16 @@ describe('returns analysis helpers', () => {
         : row,
     );
 
-    const summary = aggregateRows('official', 'Official', rows, rows[0].netDisplay);
+    const summary = aggregateRows('official', 'Official', rows.slice(1), rows[1].prevNetDisplay, {
+      expectedMonthKeys: ['2026-02'],
+    });
 
     expect(summary.validMonths).toBe(1);
+    expect(summary.coverage).toMatchObject({
+      validMonths: 1,
+      expectedMonths: 1,
+      status: 'complete',
+    });
     expect(summary.retornoRealAcumClp).not.toBeNull();
   });
 
@@ -231,6 +238,12 @@ describe('returns analysis helpers', () => {
     expect(legacyRow?.gastosStatus).toBe('complete');
     expect(legacyRow?.retornoRealClp).not.toBeNull();
     expect(summary.validMonths).toBe(1);
+    expect(summary.coverage.status).toBe('insufficient');
+    expect(summary.coverage.excludedMonths).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ monthKey: '2026-03', reason: 'legacy_static' }),
+      ]),
+    );
     expect(summary.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
   });
 
@@ -298,7 +311,50 @@ describe('returns analysis helpers', () => {
     expect(fromStart.validMonths).toBe(1);
     expect(trailing12?.validMonths).toBe(1);
     expect(ytd.validMonths).toBe(1);
+    expect(trailing12?.coverage.expectedMonths).toBe(12);
+    expect(trailing12?.coverage.status).toBe('insufficient');
+    expect(fromStart.coverage.excludedMonths).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ monthKey: '2026-03', reason: 'stale_warning_error' }),
+        expect.objectContaining({ monthKey: '2026-04', reason: 'stale_warning_error' }),
+        expect.objectContaining({ monthKey: '2026-05', reason: 'stale_warning_error' }),
+      ]),
+    );
     expect(fromStart.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
+  });
+
+  it('reports missing closure months in aggregate coverage metadata', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2026-01', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_080_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) =>
+      row.monthKey === '2026-03'
+        ? {
+            ...row,
+            gastosSource: 'gastapp_firestore' as const,
+            gastosContractStatus: 'complete' as const,
+            gastosDataQuality: 'ok' as const,
+            gastosIsStale: false,
+          }
+        : row,
+    );
+
+    const summary = aggregateRows('gap', 'Gap', rows, rows[0].netDisplay, {
+      expectedMonthKeys: ['2026-01', '2026-02', '2026-03'],
+    });
+
+    expect(summary.validMonths).toBe(1);
+    expect(summary.coverage.expectedMonths).toBe(3);
+    expect(summary.coverage.status).toBe('insufficient');
+    expect(summary.coverage.excludedMonths).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ monthKey: '2026-02', reason: 'missing_closure' }),
+      ]),
+    );
   });
 
   it('marks non-auditable FX months and excludes them from closed aggregates', () => {

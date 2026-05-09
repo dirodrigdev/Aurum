@@ -63,10 +63,34 @@ export type MonthlyReturnRow = {
   referencePreviousMonthSpendClp?: number | null;
 };
 
+export type AggregateCoverageStatus = 'complete' | 'partial' | 'insufficient';
+
+export type AggregateCoverageExclusionReason =
+  | 'missing_closure'
+  | 'non_official_spend'
+  | 'stale_warning_error'
+  | 'legacy_static'
+  | 'fx_not_auditable'
+  | 'not_calculable';
+
+export type AggregateCoverageExcludedMonth = {
+  monthKey: string;
+  reason: AggregateCoverageExclusionReason;
+  label: string;
+};
+
+export type AggregateCoverage = {
+  validMonths: number;
+  expectedMonths: number;
+  excludedMonths: AggregateCoverageExcludedMonth[];
+  status: AggregateCoverageStatus;
+};
+
 export type AggregatedSummary = {
   key: string;
   label: string;
   validMonths: number;
+  coverage: AggregateCoverage;
   varPatrimonioAcumClp: number | null;
   gastosAcumClp: number | null;
   retornoRealAcumClp: number | null;
