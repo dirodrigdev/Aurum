@@ -7,6 +7,9 @@ import type {
   ReturnCurvePoint,
 } from '../components/analysis/types';
 import { resolveGastappMonthlySpend } from './gastosMonthly';
+import {
+  listSuspiciousHistoricalUfClosures,
+} from './wealthStorage';
 import type { WealthCurrency, WealthFxRates, WealthMonthlyClosure } from './wealthStorage';
 
 const sumNumbers = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
@@ -18,8 +21,6 @@ const DEFAULT_FX_RATES: WealthFxRates = {
   eurClp: 1030,
   ufClp: 39000,
 };
-
-const UF_SUSPICIOUS_MONTHLY_JUMP_PCT = 0.03;
 
 const previousMonthKey = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
@@ -1061,25 +1062,12 @@ export const buildWealthEvolutionComparisonModel = (
   const missingUfMonths = points
     .filter((point) => point.netClp !== null && point.netUf === null)
     .map((point) => point.monthKey);
-  const suspiciousUfMonths = points.reduce<Array<{
-    monthKey: string;
-    ufClp: number;
-    prevUfClp: number;
-    changePct: number;
-  }>>((acc, point, index) => {
-    if (index === 0 || point.ufClp === null || !point.fxAuditable) return acc;
-    const prev = points[index - 1];
-    if (!prev || prev.ufClp === null || !prev.fxAuditable) return acc;
-    const changePct = point.ufClp / prev.ufClp - 1;
-    if (Math.abs(changePct) <= UF_SUSPICIOUS_MONTHLY_JUMP_PCT) return acc;
-    acc.push({
-      monthKey: point.monthKey,
-      ufClp: point.ufClp,
-      prevUfClp: prev.ufClp,
-      changePct,
-    });
-    return acc;
-  }, []);
+  const suspiciousUfMonths = listSuspiciousHistoricalUfClosures(filtered).map((item) => ({
+    monthKey: item.monthKey,
+    ufClp: item.storedUfClp,
+    prevUfClp: item.previousUfClp ?? item.storedUfClp,
+    changePct: item.changePct ?? 0,
+  }));
 
   return {
     source: 'returns_analysis_closures',

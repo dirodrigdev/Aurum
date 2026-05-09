@@ -265,6 +265,15 @@ export type WealthCloudClosuresSummary = {
   message: string;
 };
 
+export type HistoricalUfSuspiciousClosure = {
+  monthKey: string;
+  storedUfClp: number;
+  previousUfClp: number | null;
+  changePct: number | null;
+  suggestedUfClp: number | null;
+  reasons: Array<'monthly_jump' | 'official_mismatch'>;
+};
+
 type WealthDemoSeedMeta = {
   seededAt: string;
   janKey: string;
@@ -303,6 +312,11 @@ const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
 const FX_TRACE_PREFIX = '[FX TRACE][Aurum]';
+const HISTORICAL_UF_SUSPICIOUS_JUMP_PCT = 0.03;
+const HISTORICAL_OFFICIAL_UF_REFERENCE_BY_MONTH: Record<string, number> = {
+  '2023-11': 36563.87,
+  '2023-12': 36789.36,
+};
 
 export type WealthSyncUiStatus = 'dirty' | 'syncing' | 'synced' | 'error';
 export type WealthSyncUiState = {
@@ -4582,6 +4596,57 @@ export const clearSimulationHistoryData = async (): Promise<{
   };
 };
 
+export const getHistoricalOfficialUfSuggestion = (monthKey: string): number | null => {
+  const value = HISTORICAL_OFFICIAL_UF_REFERENCE_BY_MONTH[normalizeMonthKey(monthKey) || monthKey];
+  return Number.isFinite(value) && value > 0 ? Number(value) : null;
+};
+
+export const listSuspiciousHistoricalUfClosures = (
+  closures: WealthMonthlyClosure[] = loadClosures(),
+): HistoricalUfSuspiciousClosure[] => {
+  const sorted = [...closures].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+  const result: HistoricalUfSuspiciousClosure[] = [];
+
+  sorted.forEach((closure, index) => {
+    const storedUfClp = Number(closure.fxRates?.ufClp ?? NaN);
+    if (!Number.isFinite(storedUfClp) || storedUfClp <= 0) return;
+
+    const suggestedUfClp = getHistoricalOfficialUfSuggestion(closure.monthKey);
+    const previousClosure = index > 0 ? sorted[index - 1] : null;
+    const previousUfClpRaw = Number(previousClosure?.fxRates?.ufClp ?? NaN);
+    const previousUfClp =
+      Number.isFinite(previousUfClpRaw) && previousUfClpRaw > 0 ? previousUfClpRaw : null;
+    const changePct =
+      previousUfClp !== null ? storedUfClp / previousUfClp - 1 : null;
+    const reasons: Array<'monthly_jump' | 'official_mismatch'> = [];
+
+    if (
+      changePct !== null &&
+      Math.abs(changePct) > HISTORICAL_UF_SUSPICIOUS_JUMP_PCT
+    ) {
+      reasons.push('monthly_jump');
+    }
+    if (
+      suggestedUfClp !== null &&
+      Math.abs(storedUfClp - suggestedUfClp) > 0.5
+    ) {
+      reasons.push('official_mismatch');
+    }
+    if (!reasons.length) return;
+
+    result.push({
+      monthKey: closure.monthKey,
+      storedUfClp,
+      previousUfClp,
+      changePct,
+      suggestedUfClp,
+      reasons,
+    });
+  });
+
+  return result;
+};
+
 export const clearCurrentMonthData = async (options: {
   clearInvestments?: boolean;
   clearRealEstate?: boolean;
@@ -5529,6 +5594,104 @@ export const repairMarch2025EurClpScale = async (): Promise<{
     afterEurClp,
     gastosClpAfter,
     pctAfter,
+  };
+};
+
+export const repairHistoricalUfClpMonth = async (input: {
+  monthKey: string;
+  nextUfClp: number;
+}): Promise<{
+  ok: boolean;
+  message: string;
+  monthKey: string;
+  beforeUfClp: number | null;
+  afterUfClp: number | null;
+}> => {
+  const monthKey = normalizeMonthKey(input.monthKey) || input.monthKey;
+  const nextUfClp = Number(input.nextUfClp);
+  const rangeError = validateFxRange('uf_clp', nextUfClp);
+  if (rangeError) {
+    return {
+      ok: false,
+      message: `UF/CLP fuera de rango esperado (${rangeError.min}-${rangeError.max}).`,
+      monthKey,
+      beforeUfClp: null,
+      afterUfClp: null,
+    };
+  }
+
+  const beforeClosures = loadClosures();
+  const targetBefore = beforeClosures.find((closure) => closure.monthKey === monthKey) || null;
+  const beforeUfClp = Number(targetBefore?.fxRates?.ufClp ?? NaN);
+  if (!targetBefore) {
+    return {
+      ok: false,
+      message: `No encontré el cierre ${monthKey}.`,
+      monthKey,
+      beforeUfClp: null,
+      afterUfClp: null,
+    };
+  }
+  if (!Number.isFinite(beforeUfClp) || beforeUfClp <= 0) {
+    return {
+      ok: false,
+      message: `El cierre ${monthKey} no tiene uf_clp válido.`,
+      monthKey,
+      beforeUfClp: null,
+      afterUfClp: null,
+    };
+  }
+
+  const replacedAt = new Date().toISOString();
+  const previousVersion = {
+    id: targetBefore.id,
+    monthKey: targetBefore.monthKey,
+    closedAt: targetBefore.closedAt,
+    replacedAt,
+    summary: targetBefore.summary,
+    fxRates: targetBefore.fxRates,
+    fxMissing: targetBefore.fxMissing,
+    records: targetBefore.records,
+  };
+  const nextFxMissing = Array.isArray(targetBefore.fxMissing)
+    ? targetBefore.fxMissing.filter((key) => key !== 'ufClp')
+    : undefined;
+  const nextClosure: WealthMonthlyClosure = {
+    ...targetBefore,
+    id: crypto.randomUUID(),
+    closedAt: replacedAt,
+    fxRates: {
+      usdClp: Number(targetBefore.fxRates?.usdClp || defaultFxRates.usdClp),
+      eurClp: Number(targetBefore.fxRates?.eurClp || defaultFxRates.eurClp),
+      ufClp: nextUfClp,
+    },
+    fxMissing: nextFxMissing?.length ? nextFxMissing : undefined,
+    previousVersions: [previousVersion, ...(targetBefore.previousVersions || [])],
+  };
+  const nextClosures = [
+    nextClosure,
+    ...beforeClosures.filter((closure) => closure.monthKey !== monthKey),
+  ].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  saveClosures(nextClosures);
+
+  const afterClosure = loadClosures().find((closure) => closure.monthKey === monthKey) || null;
+  const afterUfClp = Number(afterClosure?.fxRates?.ufClp ?? NaN);
+  if (!Number.isFinite(afterUfClp) || Math.abs(afterUfClp - nextUfClp) > 1e-9) {
+    return {
+      ok: false,
+      message: `No pude confirmar el guardado de uf_clp para ${monthKey}.`,
+      monthKey,
+      beforeUfClp,
+      afterUfClp: Number.isFinite(afterUfClp) ? afterUfClp : null,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `UF/CLP corregida en ${monthKey}.`,
+    monthKey,
+    beforeUfClp,
+    afterUfClp,
   };
 };
 

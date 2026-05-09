@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('../src/services/firebase', () => ({
+  db: {},
+  ensureAuthPersistence: vi.fn(async () => {}),
+  getCurrentUid: vi.fn(() => null),
+}));
+
 import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 const TEST_GASTOS_EUR: Record<string, number> = {
   '2025-12': 4400,

@@ -14,8 +14,11 @@ import {
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
   importHistoricalClosuresFromCsv,
+  listSuspiciousHistoricalUfClosures,
   loadClosures,
   loadClosuresFromRaw,
+  repairHistoricalUfClpMonth,
+  saveClosures,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
 
@@ -210,5 +213,44 @@ describe('canonical closure summary', () => {
     expect(closure.summary.mortgageDebtClp).toBe(80_000);
     expect(closure.summary.realEstateNetClp).toBe(320_000);
     expect(closure.summary.netClp).toBe(1_720_000);
+  });
+
+  it('detects suspicious historical UF months and repairs only uf_clp with versioning', async () => {
+    saveClosures([
+      {
+        id: '2023-12',
+        monthKey: '2023-12',
+        closedAt: '2023-12-31T23:59:59.000Z',
+        summary: { netConsolidatedClp: 1200, byBlock: { bank: { CLP: 1200, USD: 0, EUR: 0, UF: 0 }, investment: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 } } },
+        fxRates: { usdClp: 870, eurClp: 948.3, ufClp: 39903 },
+      },
+      {
+        id: '2023-11',
+        monthKey: '2023-11',
+        closedAt: '2023-11-30T23:59:59.000Z',
+        summary: { netConsolidatedClp: 1100, byBlock: { bank: { CLP: 1100, USD: 0, EUR: 0, UF: 0 }, investment: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 } } },
+        fxRates: { usdClp: 887, eurClp: 957.96, ufClp: 39784 },
+      },
+      {
+        id: '2023-10',
+        monthKey: '2023-10',
+        closedAt: '2023-10-31T23:59:59.000Z',
+        summary: { netConsolidatedClp: 1000, byBlock: { bank: { CLP: 1000, USD: 0, EUR: 0, UF: 0 }, investment: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, real_estate: { CLP: 0, USD: 0, EUR: 0, UF: 0 }, debt: { CLP: 0, USD: 0, EUR: 0, UF: 0 } } },
+        fxRates: { usdClp: 937, eurClp: 983.9, ufClp: 36272 },
+      },
+    ]);
+
+    const suspicious = listSuspiciousHistoricalUfClosures(loadClosures());
+    expect(suspicious.map((item) => item.monthKey)).toContain('2023-11');
+    expect(suspicious.map((item) => item.monthKey)).toContain('2023-12');
+    expect(suspicious.find((item) => item.monthKey === '2023-11')?.suggestedUfClp).toBe(36563.87);
+
+    const result = await repairHistoricalUfClpMonth({ monthKey: '2023-11', nextUfClp: 36563.87 });
+    expect(result.ok).toBe(true);
+
+    const repaired = loadClosures().find((closure) => closure.monthKey === '2023-11');
+    expect(repaired?.fxRates?.ufClp).toBe(36563.87);
+    expect(repaired?.summary.netConsolidatedClp).toBe(1100);
+    expect(repaired?.previousVersions?.[0]?.fxRates?.ufClp).toBe(39784);
   });
 });
