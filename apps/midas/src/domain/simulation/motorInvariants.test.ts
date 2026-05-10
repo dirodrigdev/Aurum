@@ -688,6 +688,32 @@ test('optimizable snapshot maps usd liquidity into nonOptimizable blocks', () =>
   assert.equal(composition.nonOptimizable.usdLiquidityCLP, 50_000_000);
 });
 
+test('same Aurum snapshot maps to the same M8 capital blocks', () => {
+  const snapshot = {
+    version: 2,
+    publishedAt: '2026-05-10T09:52:25.254Z',
+    snapshotMonth: '2026-04',
+    snapshotLabel: 'Cierre Abril de 2026',
+    currency: 'CLP',
+    totalNetWorthCLP: 1_686_225_321,
+    optimizableInvestmentsCLP: 1_499_488_194,
+    riskCapital: { totalCLP: 294_112_400, clp: 139_642_000, usd: 172_400, usdSnapshotCLP: 888 },
+    nonOptimizable: {
+      banksCLP: 31_486_719,
+      usdLiquidityCLP: 0,
+      nonMortgageDebtCLP: 0,
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+  const first = snapshotToSimulationComposition(snapshot);
+  const second = snapshotToSimulationComposition(JSON.parse(JSON.stringify(snapshot)));
+  assert.ok(first);
+  assert.ok(second);
+  assert.deepEqual(second, first);
+  assert.equal(first.nonOptimizable.banksCLP, 31_486_719);
+  assert.equal(first.optimizableInvestmentsCLP, 1_499_488_194);
+});
+
 test('real estate appreciation base 0% with sensitivities 0.5% and 1.0% is monotonic', () => {
   const mk = (realAppreciationAnnual: number) => {
     const params = makeBaseParams();

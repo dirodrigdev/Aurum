@@ -28,6 +28,24 @@ const baseInput = (): M8InputFingerprintInput => {
     simulationConfigSource: 'cloud',
     simulationConfigSavedAt: '2026-05-07T10:01:00.000Z',
     simulationConfigHash: 'cfg-abc',
+    simulationConfigDiagnostics: {
+      path: 'midas_config/simulationActiveV1',
+      projectId: 'test-project',
+      configured: true,
+      authUid: 'anon-test',
+      readStatus: 'loaded',
+      errorMessage: null,
+      exists: true,
+      updatedAt: '2026-05-07T10:01:10.000Z',
+      activeHash: 'cfg-abc',
+      activeSavedAt: '2026-05-07T10:01:00.000Z',
+      activeParamsJsonExists: true,
+      activeSpendingPhasesExists: true,
+      activeSeedExists: true,
+      activeNSimExists: true,
+      activeBucketMonthsExists: true,
+      missingFields: [],
+    },
     instrumentUniverseSavedAt: '2026-05-07T10:02:00.000Z',
     instrumentUniverseHash: 'u-abc',
     hydratedCloudSources: true,
@@ -38,6 +56,26 @@ const baseInput = (): M8InputFingerprintInput => {
   const first = buildM8InputFingerprint(baseInput());
   const second = buildM8InputFingerprint(baseInput());
   assert.equal(first.hash, second.hash, 'same input must produce same hash');
+})();
+
+(() => {
+  const input = baseInput();
+  const original = buildM8InputFingerprint(input);
+  input.params.simulationComposition = {
+    mode: 'full',
+    totalNetWorthCLP: 1_000_000_000,
+    optimizableInvestmentsCLP: 800_000_000,
+    nonOptimizable: {
+      banksCLP: 100_000_000,
+      nonMortgageDebtCLP: 0,
+    },
+  };
+  const withBanks = buildM8InputFingerprint(input);
+  input.params.simulationComposition.nonOptimizable.banksCLP = 120_000_000;
+  input.params.capitalInitial += 20_000_000;
+  const changed = buildM8InputFingerprint(input);
+  assert.notEqual(original.hash, withBanks.hash, 'adding capital composition must change hash');
+  assert.notEqual(withBanks.hash, changed.hash, 'changing banks must change hash');
 })();
 
 (() => {
@@ -127,9 +165,28 @@ const baseInput = (): M8InputFingerprintInput => {
   const input = baseInput();
   input.simulationConfigSource = 'local_cache';
   input.hydratedCloudSources = false;
+  input.simulationConfigDiagnostics = {
+    ...input.simulationConfigDiagnostics!,
+    readStatus: 'error',
+    errorMessage: 'Missing or insufficient permissions',
+    exists: null,
+  };
   const fingerprint = buildM8InputFingerprint(input);
   assert.ok(fingerprint.warnings.some((warning) => warning.includes('Hydratación cloud incompleta')));
   assert.ok(fingerprint.warnings.some((warning) => warning.includes('simulación no vienen desde cloud')));
+  assert.ok(fingerprint.warnings.some((warning) => warning.includes('Config cloud no hidratada')));
+  assert.equal((fingerprint.normalizedInput.cloudConfig as { readStatus: string }).readStatus, 'error');
+})();
+
+(() => {
+  const input = baseInput();
+  input.capitalDerivationDiagnostics = {
+    manualAdjustmentsCount: 1,
+    manualCurrentTotalDeltaClp: 20_000_000,
+    manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+  };
+  const fingerprint = buildM8InputFingerprint(input);
+  assert.ok(fingerprint.warnings.some((warning) => warning.includes('ajustes manuales locales')));
 })();
 
 console.log('m8InputFingerprint tests passed');

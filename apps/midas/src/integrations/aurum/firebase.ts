@@ -22,6 +22,7 @@ const isConfigured = () =>
 const app = isConfigured() ? initializeApp(firebaseConfig) : null;
 
 export const aurumIntegrationConfigured = isConfigured();
+export const aurumFirebaseProjectId = firebaseConfig.projectId ? String(firebaseConfig.projectId) : null;
 export const aurumDb = app ? getFirestore(app) : null;
 export const aurumAuth = app ? getAuth(app) : null;
 

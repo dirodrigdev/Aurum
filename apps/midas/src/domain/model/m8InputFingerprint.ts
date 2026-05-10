@@ -1,4 +1,5 @@
 import type { ModelParameters } from './types';
+import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/simulationConfigPersistence';
 
 export type M8InputFingerprintSource = {
   source: 'cloud' | 'local_cache' | 'fallback' | 'mixed' | 'unknown';
@@ -27,6 +28,9 @@ export type M8InputFingerprintInput = {
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
   simulationConfigHash: string | null;
+  simulationConfigDiagnostics?: SimulationConfigCloudDiagnostics;
+  runtimeDiagnostics?: Record<string, unknown>;
+  capitalDerivationDiagnostics?: Record<string, unknown>;
   instrumentUniverseSavedAt: string | null;
   instrumentUniverseHash: string | null;
   hydratedCloudSources: boolean;
@@ -120,7 +124,9 @@ function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources
       source: input.simulationConfigSource,
       savedAt: input.simulationConfigSavedAt,
       hash: input.simulationConfigHash,
-      detail: input.hydratedCloudSources ? 'cloud_hydrated' : 'pending_hydration',
+      detail: input.simulationConfigDiagnostics
+        ? `${input.simulationConfigDiagnostics.readStatus}:${input.simulationConfigDiagnostics.errorMessage ?? 'ok'}`
+        : input.hydratedCloudSources ? 'cloud_hydrated' : 'pending_hydration',
     },
     spendingPhases: {
       source: input.simulationConfigSource,
@@ -224,6 +230,9 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       includeRiskCapital: input.riskCapitalEnabled,
       cloudHydrated: input.hydratedCloudSources,
     },
+    runtimeDiagnostics: input.runtimeDiagnostics ?? {},
+    cloudConfig: input.simulationConfigDiagnostics ?? null,
+    capitalDerivation: input.capitalDerivationDiagnostics ?? {},
     sources: {
       aurumSnapshotSignature: input.aurumSnapshotSignature,
       instrumentUniverseHash: input.instrumentUniverseHash,
@@ -240,8 +249,18 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   if (sources.simulationParams.source !== 'cloud') {
     warnings.push('Parámetros de simulación no vienen desde cloud canónico.');
   }
+  if (input.simulationConfigDiagnostics?.readStatus === 'error') {
+    warnings.push(`Config cloud no hidratada: ${input.simulationConfigDiagnostics.errorMessage ?? 'error desconocido'}.`);
+  }
+  if (input.simulationConfigDiagnostics?.readStatus === 'missing') {
+    warnings.push('Config cloud no existe: usando fallback local no comparable cross-device.');
+  }
   if (sources.instrumentUniverse.source === 'local_cache') {
     warnings.push('Instrument Universe desde cache local: valida sincronización cross-device.');
+  }
+  const manualAdjustmentsCount = Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0);
+  if (manualAdjustmentsCount > 0) {
+    warnings.push('Capital incluye ajustes manuales locales: valida sincronización antes de comparar dispositivos.');
   }
   if (!input.aurumSnapshotSignature) {
     warnings.push('Snapshot Aurum sin firma cloud aplicada.');
