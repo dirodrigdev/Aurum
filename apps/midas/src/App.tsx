@@ -50,6 +50,11 @@ import {
   loadActiveSimulationConfigFromFirestore,
   persistActiveSimulationConfigToFirestore,
 } from './integrations/midas/simulationConfigPersistence';
+import {
+  buildSimulationConfigHash,
+  shouldPersistActiveSimulationConfig,
+  type SimulationConfigHydrationStatus,
+} from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
@@ -663,6 +668,8 @@ export default function App() {
   const [simulationConfigSource, setSimulationConfigSource] = useState<'cloud' | 'local_cache' | 'fallback'>('local_cache');
   const [simulationConfigSavedAt, setSimulationConfigSavedAt] = useState<string | null>(null);
   const [simulationConfigHash, setSimulationConfigHash] = useState<string | null>(null);
+  const [simulationConfigHydrationStatus, setSimulationConfigHydrationStatus] =
+    useState<SimulationConfigHydrationStatus>('loading');
   const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
   const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
@@ -695,6 +702,8 @@ export default function App() {
   const activeWeightsRef = useRef<PortfolioWeights>(activeWeights);
   const weightsSourceModeRef = useRef<WeightsSourceMode>(weightsSourceMode);
   const instrumentUniverseHydratedFromFirestoreRef = useRef(false);
+  const cloudSimulationConfigHashRef = useRef<string | null>(null);
+  const cloudConfigRecalcHashRef = useRef<string | null>(null);
   const recalcRequestIdRef = useRef(0);
   const activeRecalcOwnerRequestIdRef = useRef<number | null>(null);
   const baseSnapshotRequestIdRef = useRef(0);
@@ -796,20 +805,24 @@ export default function App() {
         if (!loaded.ok) {
           setCloudSimulationHydrated(false);
           setSimulationConfigSource('local_cache');
+          setSimulationConfigHydrationStatus(loaded.reason === 'active_not_found' ? 'missing' : 'error');
           return;
         }
         const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+        cloudSimulationConfigHashRef.current = loaded.active.hash ?? null;
         setBaseParams(cloudParams);
         setSimParams(cloudParams);
         setSimulationConfigSource('cloud');
         setSimulationConfigSavedAt(loaded.active.savedAt ?? null);
         setSimulationConfigHash(loaded.active.hash ?? null);
+        setSimulationConfigHydrationStatus('cloud');
         setCloudSimulationHydrated(true);
       })
       .catch(() => {
         if (cancelled) return;
         setCloudSimulationHydrated(false);
         setSimulationConfigSource('local_cache');
+        setSimulationConfigHydrationStatus('error');
       });
     return () => {
       cancelled = true;
@@ -902,33 +915,37 @@ export default function App() {
   }, [baseParams]);
 
   useEffect(() => {
-    const nextHash = hashJson({
-      spendingPhases: simParams.spendingPhases,
-      simulation: simParams.simulation,
-      bucketMonths: simParams.bucketMonths,
-      capitalInitial: simParams.capitalInitial,
-      weights: simParams.weights,
-    });
+    const nextHash = buildSimulationConfigHash(simParams);
     setSimulationConfigHash(nextHash);
-    if (simulationConfigSource !== 'cloud') {
+    if (simulationConfigHydrationStatus !== 'cloud' && simulationConfigSource !== 'cloud') {
       setSimulationConfigSource('local_cache');
     }
     if (typeof window === 'undefined') return;
+    const shouldPersist = shouldPersistActiveSimulationConfig({
+      hydrationStatus: simulationConfigHydrationStatus,
+      nextHash,
+      cloudHash: cloudSimulationConfigHashRef.current,
+    });
+    if (!shouldPersist) return;
     const handle = window.setTimeout(() => {
       void persistActiveSimulationConfigToFirestore({
         params: simParams,
         source: 'simulation_runtime',
       }).then((persisted) => {
         if (!persisted.ok) return;
+        cloudSimulationConfigHashRef.current = persisted.active.hash ?? nextHash;
+        cloudConfigRecalcHashRef.current = persisted.active.hash ?? nextHash;
         setSimulationConfigSource('cloud');
         setSimulationConfigSavedAt(persisted.active.savedAt ?? new Date().toISOString());
         setSimulationConfigHash(persisted.active.hash ?? nextHash);
+        setSimulationConfigHydrationStatus('cloud');
+        setCloudSimulationHydrated(true);
       }).catch(() => {
         // Keep local cache as fallback without interrupting user flow.
       });
     }, 800);
     return () => window.clearTimeout(handle);
-  }, [simParams]);
+  }, [simParams, simulationConfigHydrationStatus, simulationConfigSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2007,6 +2024,25 @@ export default function App() {
     summarizeParams,
     summarizeResult,
     runBootstrapControl,
+  ]);
+
+  useEffect(() => {
+    if (simulationConfigHydrationStatus !== 'cloud') return;
+    if (simulationConfigSource !== 'cloud') return;
+    if (!simulationConfigHash) return;
+    if (cloudConfigRecalcHashRef.current === simulationConfigHash) return;
+    cloudConfigRecalcHashRef.current = simulationConfigHash;
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
+    const base = applySimulationOverrides(simParams, sanitizedOverrides);
+    startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
+  }, [
+    simParams,
+    simOverrides,
+    simResult,
+    simulationConfigHash,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+    startRecalculation,
   ]);
 
   useEffect(() => {

@@ -68,6 +68,30 @@ function summarizeSpendingPhases(params: ModelParameters) {
   }));
 }
 
+function summarizeCashflowEvents(params: ModelParameters) {
+  return (params.cashflowEvents ?? []).map((event) => ({
+    id: event.id,
+    description: event.description,
+    month: Number(event.month ?? 0),
+    type: event.type,
+    amount: Number(event.amount ?? 0),
+    currency: event.currency,
+    amountType: event.amountType ?? null,
+    sleeve: event.sleeve ?? null,
+  }));
+}
+
+function summarizeFutureCapitalEvents(params: ModelParameters) {
+  return (params.futureCapitalEvents ?? []).map((event) => ({
+    id: event.id,
+    type: event.type,
+    amount: Number(event.amount ?? 0),
+    currency: event.currency,
+    effectiveDate: event.effectiveDate,
+    description: event.description ?? null,
+  }));
+}
+
 function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources {
   const mixSource =
     input.weightsSourceMode === 'instrument-universe'
@@ -139,24 +163,64 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       rfChile: Number(input.params.weights?.rfChile ?? 0),
     },
     spendingPhases: summarizeSpendingPhases(input.params),
+    cashflowEvents: summarizeCashflowEvents(input.params),
+    futureCapitalEvents: summarizeFutureCapitalEvents(input.params),
+    activeScenario: input.params.activeScenario ?? 'base',
+    feeAnnual: Number(input.params.feeAnnual ?? 0),
+    generatorType: input.params.generatorType ?? 'unknown',
+    returns: {
+      rvGlobalAnnual: Number(input.params.returns?.rvGlobalAnnual ?? 0),
+      rfGlobalAnnual: Number(input.params.returns?.rfGlobalAnnual ?? 0),
+      rvChileAnnual: Number(input.params.returns?.rvChileAnnual ?? 0),
+      rfChileUFAnnual: Number(input.params.returns?.rfChileUFAnnual ?? 0),
+      rvGlobalVolAnnual: Number(input.params.returns?.rvGlobalVolAnnual ?? 0),
+      rfGlobalVolAnnual: Number(input.params.returns?.rfGlobalVolAnnual ?? 0),
+      rvChileVolAnnual: Number(input.params.returns?.rvChileVolAnnual ?? 0),
+      rfChileVolAnnual: Number(input.params.returns?.rfChileVolAnnual ?? 0),
+      correlationMatrix: input.params.returns?.correlationMatrix ?? [],
+    },
+    inflation: {
+      ipcChileAnnual: Number(input.params.inflation?.ipcChileAnnual ?? 0),
+      hipcEurAnnual: Number(input.params.inflation?.hipcEurAnnual ?? 0),
+      ipcChileVolAnnual: Number(input.params.inflation?.ipcChileVolAnnual ?? 0),
+      hipcEurVolAnnual: Number(input.params.inflation?.hipcEurVolAnnual ?? 0),
+    },
+    spendingRule: {
+      dd15Threshold: Number(input.params.spendingRule?.dd15Threshold ?? 0),
+      dd25Threshold: Number(input.params.spendingRule?.dd25Threshold ?? 0),
+      consecutiveMonths: Number(input.params.spendingRule?.consecutiveMonths ?? 0),
+      softCut: Number(input.params.spendingRule?.softCut ?? 0),
+      hardCut: Number(input.params.spendingRule?.hardCut ?? 0),
+      adjustmentAlpha: Number(input.params.spendingRule?.adjustmentAlpha ?? 0),
+      recoveryAlpha: Number(input.params.spendingRule?.recoveryAlpha ?? 0),
+    },
     bucketMonths: Number(input.params.bucketMonths ?? 0),
     fx: {
       clpUsdInitial: Number(input.params.fx?.clpUsdInitial ?? 0),
       usdEurFixed: Number(input.params.fx?.usdEurFixed ?? 0),
+      tcrealLT: Number(input.params.fx?.tcrealLT ?? 0),
+      mrHalfLifeYears: Number(input.params.fx?.mrHalfLifeYears ?? 0),
     },
     house: {
       includeHouse: Boolean(input.params.realEstatePolicy?.enabled ?? true),
       saleDelayMonths: Number(input.params.realEstatePolicy?.saleDelayMonths ?? 0),
       triggerRunwayMonths: Number(input.params.realEstatePolicy?.triggerRunwayMonths ?? 0),
+      saleCostPct: Number(input.params.realEstatePolicy?.saleCostPct ?? 0),
+      realAppreciationAnnual: Number(input.params.realEstatePolicy?.realAppreciationAnnual ?? 0),
     },
     simulation: {
       horizonMonths: Number(input.params.simulation?.horizonMonths ?? 0),
       nSim: Number(input.params.simulation?.nSim ?? 0),
       seed: Number(input.params.simulation?.seed ?? 0),
       blockLength: Number(input.params.simulation?.blockLength ?? 0),
+      useHistoricalData: Boolean(input.params.simulation?.useHistoricalData),
     },
+    simulationBaseMonth: input.params.simulationBaseMonth ?? null,
+    ruinThresholdMonths: Number(input.params.ruinThresholdMonths ?? 0),
     flags: {
       weightsSourceMode: input.weightsSourceMode,
+      universeSourceOrigin: input.universeSourceOrigin,
+      simulationConfigSource: input.simulationConfigSource,
       includeRiskCapital: input.riskCapitalEnabled,
       cloudHydrated: input.hydratedCloudSources,
     },

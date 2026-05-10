@@ -1,9 +1,11 @@
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { ModelParameters } from '../../domain/model/types';
 import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuth } from '../aurum/firebase';
+import { buildSimulationConfigHash } from './simulationConfigCanonical';
 
-const COLLECTION = 'midas_config';
-const DOC_ID = 'simulationActiveV1';
+export const SIMULATION_CONFIG_COLLECTION = 'midas_config';
+export const SIMULATION_CONFIG_DOC_ID = 'simulationActiveV1';
+export const SIMULATION_CONFIG_PATH = `${SIMULATION_CONFIG_COLLECTION}/${SIMULATION_CONFIG_DOC_ID}`;
 
 export type PersistedSimulationConfigVersion = {
   schemaVersion: 1;
@@ -36,28 +38,9 @@ export type PersistSimulationConfigResult =
   | { ok: true; active: PersistedSimulationConfigVersion; previous: PersistedSimulationConfigVersion | null }
   | { ok: false; reason: string };
 
-const stableSerialize = (value: unknown): string => {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .filter(([, entryValue]) => typeof entryValue !== 'undefined')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`)
-    .join(',')}}`;
-};
-
-const hashString = (value: string): string => {
-  let hash = 0x811c9dc5;
-  for (let idx = 0; idx < value.length; idx += 1) {
-    hash ^= value.charCodeAt(idx);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`;
-};
-
 const ref = () => {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
-  return doc(aurumDb, COLLECTION, DOC_ID);
+  return doc(aurumDb, SIMULATION_CONFIG_COLLECTION, SIMULATION_CONFIG_DOC_ID);
 };
 
 function toPersistedVersion(params: ModelParameters, source: string): PersistedSimulationConfigVersion {
@@ -66,7 +49,7 @@ function toPersistedVersion(params: ModelParameters, source: string): PersistedS
   return {
     schemaVersion: 1,
     savedAt,
-    hash: hashString(stableSerialize(params)),
+    hash: buildSimulationConfigHash(params),
     source,
     paramsJson,
     spendingPhases: (params.spendingPhases ?? []).map((phase, index) => ({
