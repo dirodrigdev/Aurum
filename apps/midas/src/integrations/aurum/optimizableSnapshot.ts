@@ -1,5 +1,5 @@
 import { doc, getDoc, onSnapshot, type FirestoreError } from 'firebase/firestore';
-import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuth } from './firebase';
+import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from './firebase';
 import type { AurumOptimizableInvestmentsSnapshot } from './types';
 
 const PUBLISHED_COLLECTION = 'aurum_published';
@@ -22,7 +22,7 @@ const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
 export async function loadPublishedOptimizableInvestmentsSnapshot(): Promise<AurumOptimizableInvestmentsSnapshot | null> {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
 
-  await ensureAurumIntegrationAuth();
+  await ensureAurumIntegrationAuthPersistence();
   const ref = doc(aurumDb, PUBLISHED_COLLECTION, OPTIMIZABLE_DOC_ID);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
@@ -53,7 +53,7 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
   let unsubscribe: (() => void) | null = null;
   let cancelled = false;
 
-  void ensureAurumIntegrationAuth()
+  void ensureAurumIntegrationAuthPersistence()
     .then(() => {
       if (cancelled) return;
       unsubscribe = onSnapshot(

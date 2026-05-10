@@ -14,6 +14,9 @@ export type SimulationActionStatus = {
 };
 
 export type BuildSimulationActionStatusInput = {
+  authResolved: boolean;
+  isCanonicalUserSession: boolean;
+  authErrorMessage: string | null;
   cloudHydrationReady: boolean;
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
@@ -29,6 +32,35 @@ const limitItems = (items: string[], max = 3) => items.filter(Boolean).slice(0, 
 export function buildSimulationActionStatus(input: BuildSimulationActionStatusInput): SimulationActionStatus {
   const technicalItems: string[] = [];
   const actionItems: string[] = [];
+
+  if (!input.authResolved) {
+    return {
+      level: 'provisional',
+      headline: 'Validando sesión',
+      message: 'Estamos confirmando la sesión Google antes de usar la configuración canónica.',
+      actionItems: limitItems(['Esperar validación de sesión.']),
+      technicalItems,
+      canTrustResult: false,
+      canUseForDecision: false,
+      primaryActionLabel: 'Sincronizar',
+    };
+  }
+
+  if (!input.isCanonicalUserSession) {
+    return {
+      level: 'blocked',
+      headline: 'Inicia sesión con Google',
+      message: 'MIDAS necesita una sesión Google canónica para comparar desktop y mobile con la misma configuración.',
+      actionItems: limitItems([
+        'Entrar con Google para cargar la configuración M8 compartida.',
+        input.authErrorMessage ? `Revisar error de auth: ${input.authErrorMessage}` : '',
+      ]),
+      technicalItems,
+      canTrustResult: false,
+      canUseForDecision: false,
+      primaryActionLabel: 'Entrar con Google',
+    };
+  }
 
   if (!input.hasValidCapital) {
     actionItems.push('Falta capital simulable válido para correr M8.');

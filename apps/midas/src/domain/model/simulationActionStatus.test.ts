@@ -18,6 +18,9 @@ const baseFingerprint: M8InputFingerprint = {
 
 (() => {
   const status = buildSimulationActionStatus({
+    authResolved: true,
+    isCanonicalUserSession: true,
+    authErrorMessage: null,
     cloudHydrationReady: true,
     simulationConfigSource: 'cloud',
     universeSourceOrigin: 'firestore',
@@ -33,6 +36,9 @@ const baseFingerprint: M8InputFingerprint = {
 
 (() => {
   const status = buildSimulationActionStatus({
+    authResolved: true,
+    isCanonicalUserSession: true,
+    authErrorMessage: null,
     cloudHydrationReady: false,
     simulationConfigSource: 'local_cache',
     universeSourceOrigin: 'cache-local',
@@ -47,6 +53,9 @@ const baseFingerprint: M8InputFingerprint = {
 
 (() => {
   const status = buildSimulationActionStatus({
+    authResolved: true,
+    isCanonicalUserSession: true,
+    authErrorMessage: null,
     cloudHydrationReady: true,
     simulationConfigSource: 'cloud',
     universeSourceOrigin: 'none',
@@ -62,6 +71,9 @@ const baseFingerprint: M8InputFingerprint = {
 
 (() => {
   const status = buildSimulationActionStatus({
+    authResolved: true,
+    isCanonicalUserSession: true,
+    authErrorMessage: null,
     cloudHydrationReady: true,
     simulationConfigSource: 'local_cache',
     universeSourceOrigin: 'cache-local',
@@ -72,6 +84,24 @@ const baseFingerprint: M8InputFingerprint = {
     fingerprint: baseFingerprint,
   });
   assert.equal(status.level, 'review');
+})();
+
+(() => {
+  const status = buildSimulationActionStatus({
+    authResolved: true,
+    isCanonicalUserSession: false,
+    authErrorMessage: null,
+    cloudHydrationReady: false,
+    simulationConfigSource: 'fallback',
+    universeSourceOrigin: 'none',
+    aurumIntegrationStatus: 'loading',
+    hasValidSpendingPhases: true,
+    hasValidCapital: true,
+    hasValidUniverseMix: true,
+    fingerprint: baseFingerprint,
+  });
+  assert.equal(status.level, 'blocked');
+  assert.equal(status.primaryActionLabel, 'Entrar con Google');
 })();
 
 console.log('simulationActionStatus tests passed');

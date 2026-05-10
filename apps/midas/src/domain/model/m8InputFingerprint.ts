@@ -30,6 +30,8 @@ export type M8InputFingerprintInput = {
   simulationConfigHash: string | null;
   simulationConfigDiagnostics?: SimulationConfigCloudDiagnostics;
   runtimeDiagnostics?: Record<string, unknown>;
+  authDiagnostics?: Record<string, unknown>;
+  fieldSources?: Record<string, unknown>;
   capitalDerivationDiagnostics?: Record<string, unknown>;
   instrumentUniverseSavedAt: string | null;
   instrumentUniverseHash: string | null;
@@ -231,6 +233,8 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       cloudHydrated: input.hydratedCloudSources,
     },
     runtimeDiagnostics: input.runtimeDiagnostics ?? {},
+    authDiagnostics: input.authDiagnostics ?? {},
+    fieldSources: input.fieldSources ?? {},
     cloudConfig: input.simulationConfigDiagnostics ?? null,
     capitalDerivation: input.capitalDerivationDiagnostics ?? {},
     sources: {

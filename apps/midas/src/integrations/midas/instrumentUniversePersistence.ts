@@ -7,7 +7,7 @@ import {
   validateInstrumentUniverseJson,
   type InstrumentUniverseSnapshot,
 } from '../../domain/instrumentUniverse';
-import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuth } from '../aurum/firebase';
+import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from '../aurum/firebase';
 
 const COLLECTION = 'midas_config';
 const DOC_ID = 'instrumentUniverseV1';
@@ -99,7 +99,7 @@ export async function loadActiveInstrumentUniverseFromFirestore(): Promise<LoadP
   const docRef = ref();
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
   try {
-    await ensureAurumIntegrationAuth();
+    await ensureAurumIntegrationAuthPersistence();
     const snap = await getDoc(docRef);
     if (!snap.exists()) return { ok: false, reason: 'active_not_found' };
     const data = snap.data() as PersistedInstrumentUniverseDocument;
@@ -124,7 +124,7 @@ export async function persistInstrumentUniverseActiveToFirestore(input: {
   const docRef = ref();
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
   try {
-    await ensureAurumIntegrationAuth();
+    await ensureAurumIntegrationAuthPersistence();
     const existing = await getDoc(docRef);
     const existingData = existing.exists() ? (existing.data() as PersistedInstrumentUniverseDocument) : {};
     const previous = isPersistedVersion(existingData.active) ? existingData.active : null;

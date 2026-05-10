@@ -5,13 +5,18 @@ import {
   aurumDb,
   aurumFirebaseProjectId,
   aurumIntegrationConfigured,
-  ensureAurumIntegrationAuth,
+  ensureAurumIntegrationAuthPersistence,
 } from '../aurum/firebase';
-import { buildSimulationConfigHash } from './simulationConfigCanonical';
+import {
+  buildSimulationConfigHash,
+  getUserScopedSimulationConfigPath,
+  shouldSeedUserScopedSimulationConfig,
+} from './simulationConfigCanonical';
 
+export const LEGACY_SIMULATION_CONFIG_COLLECTION = 'midas_config';
 export const SIMULATION_CONFIG_COLLECTION = 'midas_config';
 export const SIMULATION_CONFIG_DOC_ID = 'simulationActiveV1';
-export const SIMULATION_CONFIG_PATH = `${SIMULATION_CONFIG_COLLECTION}/${SIMULATION_CONFIG_DOC_ID}`;
+export const LEGACY_SIMULATION_CONFIG_PATH = `${LEGACY_SIMULATION_CONFIG_COLLECTION}/${SIMULATION_CONFIG_DOC_ID}`;
 
 export type PersistedSimulationConfigVersion = {
   schemaVersion: 1;
@@ -40,9 +45,15 @@ export type SimulationConfigCloudReadStatus = 'loading' | 'loaded' | 'missing' |
 
 export type SimulationConfigCloudDiagnostics = {
   path: string;
+  previousGlobalConfigPath: string | null;
   projectId: string | null;
   configured: boolean;
   authUid: string | null;
+  authEmail: string | null;
+  authProvider: string | null;
+  isAnonymous: boolean;
+  loginRequired: boolean;
+  isCanonicalUserSession: boolean;
   readStatus: SimulationConfigCloudReadStatus;
   errorMessage: string | null;
   exists: boolean | null;
@@ -54,6 +65,10 @@ export type SimulationConfigCloudDiagnostics = {
   activeSeedExists: boolean;
   activeNSimExists: boolean;
   activeBucketMonthsExists: boolean;
+  legacyGlobalReadStatus: SimulationConfigCloudReadStatus | null;
+  legacyGlobalErrorMessage: string | null;
+  legacyGlobalExists: boolean | null;
+  legacyGlobalHash: string | null;
   missingFields: string[];
 };
 
@@ -65,9 +80,30 @@ export type PersistSimulationConfigResult =
   | { ok: true; active: PersistedSimulationConfigVersion; previous: PersistedSimulationConfigVersion | null }
   | { ok: false; reason: string };
 
-const ref = () => {
+const currentUserDiagnostics = () => {
+  const user = aurumAuth?.currentUser ?? null;
+  const authProvider =
+    user?.providerData.find((item) => item.providerId && item.providerId !== 'firebase')?.providerId
+    ?? user?.providerData[0]?.providerId
+    ?? (user?.isAnonymous ? 'anonymous' : null);
+  return {
+    authUid: user?.uid ?? null,
+    authEmail: user?.email ?? null,
+    authProvider,
+    isAnonymous: Boolean(user?.isAnonymous),
+    loginRequired: !user || user.isAnonymous,
+    isCanonicalUserSession: Boolean(user && !user.isAnonymous),
+  };
+};
+
+const userScopedRef = (uid: string | null | undefined) => {
+  if (!aurumIntegrationConfigured || !aurumDb || !uid) return null;
+  return doc(aurumDb, 'users', uid, SIMULATION_CONFIG_COLLECTION, SIMULATION_CONFIG_DOC_ID);
+};
+
+const legacyGlobalRef = () => {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
-  return doc(aurumDb, SIMULATION_CONFIG_COLLECTION, SIMULATION_CONFIG_DOC_ID);
+  return doc(aurumDb, LEGACY_SIMULATION_CONFIG_COLLECTION, SIMULATION_CONFIG_DOC_ID);
 };
 
 const timestampToIso = (value: unknown): string | null => {
@@ -82,11 +118,18 @@ const timestampToIso = (value: unknown): string | null => {
 export function createSimulationConfigCloudDiagnostics(
   overrides: Partial<SimulationConfigCloudDiagnostics> = {},
 ): SimulationConfigCloudDiagnostics {
+  const auth = currentUserDiagnostics();
   return {
-    path: SIMULATION_CONFIG_PATH,
+    path: auth.authUid ? getUserScopedSimulationConfigPath(auth.authUid) : LEGACY_SIMULATION_CONFIG_PATH,
+    previousGlobalConfigPath: LEGACY_SIMULATION_CONFIG_PATH,
     projectId: aurumFirebaseProjectId,
     configured: aurumIntegrationConfigured,
-    authUid: aurumAuth?.currentUser?.uid ?? null,
+    authUid: auth.authUid,
+    authEmail: auth.authEmail,
+    authProvider: auth.authProvider,
+    isAnonymous: auth.isAnonymous,
+    loginRequired: auth.loginRequired,
+    isCanonicalUserSession: auth.isCanonicalUserSession,
     readStatus: 'loading',
     errorMessage: null,
     exists: null,
@@ -98,6 +141,10 @@ export function createSimulationConfigCloudDiagnostics(
     activeSeedExists: false,
     activeNSimExists: false,
     activeBucketMonthsExists: false,
+    legacyGlobalReadStatus: null,
+    legacyGlobalErrorMessage: null,
+    legacyGlobalExists: null,
+    legacyGlobalHash: null,
     missingFields: [],
     ...overrides,
   };
@@ -148,6 +195,7 @@ function buildDiagnosticsFromDocument(input: {
   exists: boolean;
   readStatus: SimulationConfigCloudReadStatus;
   errorMessage?: string | null;
+  path: string;
 }): SimulationConfigCloudDiagnostics {
   const active = input.data.active;
   const parsedParams = active?.paramsJson ? parseParams(active) : null;
@@ -162,6 +210,7 @@ function buildDiagnosticsFromDocument(input: {
     .filter(([, ok]) => !ok)
     .map(([key]) => key);
   return createSimulationConfigCloudDiagnostics({
+    path: input.path,
     readStatus: input.readStatus,
     errorMessage: input.errorMessage ?? null,
     exists: input.exists,
@@ -173,34 +222,45 @@ function buildDiagnosticsFromDocument(input: {
   });
 }
 
-export async function loadActiveSimulationConfigFromFirestore(): Promise<LoadPersistedSimulationConfigResult> {
-  const docRef = ref();
+async function readPersistedConfigDocument(input: {
+  path: string;
+  refFactory: () => ReturnType<typeof doc> | null;
+}): Promise<LoadPersistedSimulationConfigResult> {
+  const docRef = input.refFactory();
   if (!docRef) {
     return {
       ok: false,
       reason: 'firestore_not_configured',
       diagnostics: createSimulationConfigCloudDiagnostics({
+        path: input.path,
         readStatus: 'error',
         errorMessage: 'firestore_not_configured',
         exists: null,
       }),
     };
   }
+
   try {
-    await ensureAurumIntegrationAuth();
+    await ensureAurumIntegrationAuthPersistence();
     const snap = await getDoc(docRef);
     if (!snap.exists()) {
       return {
         ok: false,
         reason: 'active_not_found',
         diagnostics: createSimulationConfigCloudDiagnostics({
+          path: input.path,
           readStatus: 'missing',
           exists: false,
         }),
       };
     }
     const data = snap.data() as PersistedSimulationConfigDocument & { updatedAt?: unknown };
-    const diagnostics = buildDiagnosticsFromDocument({ data, exists: true, readStatus: 'loaded' });
+    const diagnostics = buildDiagnosticsFromDocument({
+      data,
+      exists: true,
+      readStatus: 'loaded',
+      path: input.path,
+    });
     if (!isPersistedVersion(data.active)) {
       return {
         ok: false,
@@ -231,6 +291,7 @@ export async function loadActiveSimulationConfigFromFirestore(): Promise<LoadPer
       ok: false,
       reason,
       diagnostics: createSimulationConfigCloudDiagnostics({
+        path: input.path,
         readStatus: 'error',
         errorMessage: reason,
         exists: null,
@@ -239,14 +300,61 @@ export async function loadActiveSimulationConfigFromFirestore(): Promise<LoadPer
   }
 }
 
+export async function loadLegacyGlobalSimulationConfigFromFirestore(): Promise<LoadPersistedSimulationConfigResult> {
+  return readPersistedConfigDocument({
+    path: LEGACY_SIMULATION_CONFIG_PATH,
+    refFactory: () => legacyGlobalRef(),
+  });
+}
+
+export async function loadActiveSimulationConfigFromFirestore(): Promise<LoadPersistedSimulationConfigResult> {
+  const auth = currentUserDiagnostics();
+  if (!auth.isCanonicalUserSession || !auth.authUid) {
+    return {
+      ok: false,
+      reason: 'google_auth_required',
+      diagnostics: createSimulationConfigCloudDiagnostics({
+        path: auth.authUid ? getUserScopedSimulationConfigPath(auth.authUid) : LEGACY_SIMULATION_CONFIG_PATH,
+        readStatus: 'error',
+        errorMessage: 'google_auth_required',
+        exists: null,
+      }),
+    };
+  }
+
+  const userScoped = await readPersistedConfigDocument({
+    path: getUserScopedSimulationConfigPath(auth.authUid),
+    refFactory: () => userScopedRef(auth.authUid),
+  });
+
+  if (userScoped.ok || userScoped.reason !== 'active_not_found') {
+    return userScoped;
+  }
+
+  const legacy = await loadLegacyGlobalSimulationConfigFromFirestore();
+  return {
+    ...userScoped,
+    diagnostics: {
+      ...userScoped.diagnostics,
+      previousGlobalConfigPath: LEGACY_SIMULATION_CONFIG_PATH,
+      legacyGlobalReadStatus: legacy.diagnostics.readStatus,
+      legacyGlobalErrorMessage: legacy.diagnostics.errorMessage,
+      legacyGlobalExists: legacy.diagnostics.exists,
+      legacyGlobalHash: legacy.diagnostics.activeHash,
+    },
+  };
+}
+
 export async function persistActiveSimulationConfigToFirestore(input: {
   params: ModelParameters;
   source?: string;
 }): Promise<PersistSimulationConfigResult> {
-  const docRef = ref();
+  const auth = currentUserDiagnostics();
+  const docRef = userScopedRef(auth.authUid);
+  if (!auth.isCanonicalUserSession || !auth.authUid) return { ok: false, reason: 'google_auth_required' };
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
   try {
-    await ensureAurumIntegrationAuth();
+    await ensureAurumIntegrationAuthPersistence();
     const existing = await getDoc(docRef);
     const existingData = existing.exists() ? (existing.data() as PersistedSimulationConfigDocument) : {};
     const previous = isPersistedVersion(existingData.active) ? existingData.active : null;

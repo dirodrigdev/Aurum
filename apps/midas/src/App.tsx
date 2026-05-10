@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { User } from 'firebase/auth';
 import type {
   CashflowEvent,
   FutureCapitalEvent,
@@ -44,17 +45,25 @@ import { optimizableSnapshotToReference, snapshotToSimulationComposition } from 
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
 } from './integrations/aurum/optimizableSnapshot';
-import { aurumIntegrationConfigured } from './integrations/aurum/firebase';
+import {
+  aurumIntegrationConfigured,
+  signInToAurumIntegrationWithGoogle,
+  subscribeAurumIntegrationAuthState,
+} from './integrations/aurum/firebase';
 import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
 import {
   createSimulationConfigCloudDiagnostics,
+  LEGACY_SIMULATION_CONFIG_PATH,
+  loadLegacyGlobalSimulationConfigFromFirestore,
   loadActiveSimulationConfigFromFirestore,
   persistActiveSimulationConfigToFirestore,
   type SimulationConfigCloudDiagnostics,
 } from './integrations/midas/simulationConfigPersistence';
 import {
   buildSimulationConfigHash,
+  getUserScopedSimulationConfigPath,
   hashSimulationConfigString,
+  shouldSeedUserScopedSimulationConfig,
   shouldPersistActiveSimulationConfig,
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
@@ -683,6 +692,10 @@ export default function App() {
     useState<SimulationConfigHydrationStatus>('loading');
   const [simulationConfigDiagnostics, setSimulationConfigDiagnostics] =
     useState<SimulationConfigCloudDiagnostics>(() => createSimulationConfigCloudDiagnostics());
+  const [authResolved, setAuthResolved] = useState(!aurumIntegrationConfigured);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
+  const [authSigningIn, setAuthSigningIn] = useState(false);
   const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
   const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
@@ -727,6 +740,16 @@ export default function App() {
   const workerPayloadByRequestRef = useRef<Map<string, ModelParameters>>(new Map());
   const workerInstanceSeqRef = useRef(0);
   const activeRecalcWorkerRef = useRef<ActiveRecalcWorkerHandle | null>(null);
+  const hasSeededUserScopedConfigRef = useRef(false);
+
+  const authProvider = useMemo(() => {
+    if (!authUser) return null;
+    return authUser.providerData.find((item) => item.providerId && item.providerId !== 'firebase')?.providerId
+      ?? authUser.providerData[0]?.providerId
+      ?? (authUser.isAnonymous ? 'anonymous' : null);
+  }, [authUser]);
+  const isCanonicalUserSession = Boolean(authUser && !authUser.isAnonymous);
+  const loginRequired = aurumIntegrationConfigured && authResolved && !isCanonicalUserSession;
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -788,6 +811,31 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!aurumIntegrationConfigured) {
+      setAuthResolved(true);
+      setAuthUser(null);
+      setAuthErrorMessage(null);
+      return;
+    }
+    setAuthResolved(false);
+    return subscribeAurumIntegrationAuthState(
+      (user) => {
+        setAuthUser(user);
+        setAuthResolved(true);
+        setAuthErrorMessage(null);
+      },
+      (error) => {
+        setAuthResolved(true);
+        setAuthErrorMessage(error.message);
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!isCanonicalUserSession) {
+      setCloudUniverseHydrated(false);
+      return;
+    }
     let cancelled = false;
     void hydrateInstrumentUniverseCacheFromFirestore()
       .then((result) => {
@@ -808,35 +856,149 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [refreshOfficialDistribution]);
+  }, [isCanonicalUserSession, refreshOfficialDistribution]);
 
   useEffect(() => {
+    if (!authResolved) {
+      setCloudSimulationHydrated(false);
+      setSimulationConfigHydrationStatus('loading');
+      setSimulationConfigDiagnostics(createSimulationConfigCloudDiagnostics({
+        readStatus: 'loading',
+        errorMessage: null,
+      }));
+      return;
+    }
+    if (!isCanonicalUserSession) {
+      setCloudSimulationHydrated(false);
+      setSimulationConfigSource('fallback');
+      setSimulationConfigHydrationStatus('error');
+      setSimulationConfigDiagnostics(createSimulationConfigCloudDiagnostics({
+        path: authUser?.uid ? getUserScopedSimulationConfigPath(authUser.uid) : LEGACY_SIMULATION_CONFIG_PATH,
+        readStatus: 'error',
+        errorMessage: authErrorMessage ?? 'google_auth_required',
+      }));
+      return;
+    }
     let cancelled = false;
     void loadActiveSimulationConfigFromFirestore()
-      .then((loaded) => {
+      .then(async (loaded) => {
         if (cancelled) return;
+        if (loaded.ok) {
+          const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+          cloudSimulationConfigHashRef.current = loaded.active.hash ?? null;
+          hasSeededUserScopedConfigRef.current = true;
+          setBaseParams(cloudParams);
+          setSimParams(cloudParams);
+          setSimulationConfigSource('cloud');
+          setSimulationConfigSavedAt(loaded.active.savedAt ?? null);
+          setSimulationConfigHash(loaded.active.hash ?? null);
+          setSimulationConfigHydrationStatus('cloud');
+          setSimulationConfigDiagnostics(loaded.diagnostics);
+          setCloudSimulationHydrated(true);
+          return;
+        }
+
+        const canSeedFromLocal = shouldSeedUserScopedSimulationConfig({
+          readStatus: loaded.diagnostics.readStatus,
+          isCanonicalUserSession,
+          hasLocalCandidate: Boolean(initialPersistedBaseRef.current),
+          cloudExists: loaded.diagnostics.exists,
+        });
+
+        if (
+          loaded.reason === 'active_not_found' &&
+          !hasSeededUserScopedConfigRef.current &&
+          isCanonicalUserSession
+        ) {
+          const legacyLoaded = await loadLegacyGlobalSimulationConfigFromFirestore();
+          if (cancelled) return;
+          if (legacyLoaded.ok) {
+            const seeded = await persistActiveSimulationConfigToFirestore({
+              params: legacyLoaded.params,
+              source: 'seed_legacy_global',
+            });
+            if (cancelled) return;
+            if (seeded.ok) {
+              hasSeededUserScopedConfigRef.current = true;
+              const cloudParams = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
+              cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
+              setBaseParams(cloudParams);
+              setSimParams(cloudParams);
+              setSimulationConfigSource('cloud');
+              setSimulationConfigSavedAt(seeded.active.savedAt ?? null);
+              setSimulationConfigHash(seeded.active.hash ?? null);
+              setSimulationConfigHydrationStatus('cloud');
+              setSimulationConfigDiagnostics({
+                ...loaded.diagnostics,
+                readStatus: 'loaded',
+                errorMessage: null,
+                exists: true,
+                activeHash: seeded.active.hash ?? null,
+                activeSavedAt: seeded.active.savedAt ?? null,
+                activeParamsJsonExists: true,
+                activeSpendingPhasesExists: true,
+                activeSeedExists: true,
+                activeNSimExists: true,
+                activeBucketMonthsExists: true,
+                legacyGlobalReadStatus: legacyLoaded.diagnostics.readStatus,
+                legacyGlobalErrorMessage: legacyLoaded.diagnostics.errorMessage,
+                legacyGlobalExists: legacyLoaded.diagnostics.exists,
+                legacyGlobalHash: legacyLoaded.diagnostics.activeHash,
+                missingFields: [],
+              });
+              setCloudSimulationHydrated(true);
+              return;
+            }
+          }
+
+          if (canSeedFromLocal && initialPersistedBaseRef.current) {
+            const seeded = await persistActiveSimulationConfigToFirestore({
+              params: cloneParams(initialPersistedBaseRef.current),
+              source: 'seed_local_cache_initial',
+            });
+            if (cancelled) return;
+            if (seeded.ok) {
+              hasSeededUserScopedConfigRef.current = true;
+              const cloudParams = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
+              cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
+              setBaseParams(cloudParams);
+              setSimParams(cloudParams);
+              setSimulationConfigSource('cloud');
+              setSimulationConfigSavedAt(seeded.active.savedAt ?? null);
+              setSimulationConfigHash(seeded.active.hash ?? null);
+              setSimulationConfigHydrationStatus('cloud');
+              setSimulationConfigDiagnostics({
+                ...loaded.diagnostics,
+                readStatus: 'loaded',
+                errorMessage: null,
+                exists: true,
+                activeHash: seeded.active.hash ?? null,
+                activeSavedAt: seeded.active.savedAt ?? null,
+                activeParamsJsonExists: true,
+                activeSpendingPhasesExists: true,
+                activeSeedExists: true,
+                activeNSimExists: true,
+                activeBucketMonthsExists: true,
+                missingFields: [],
+              });
+              setCloudSimulationHydrated(true);
+              return;
+            }
+          }
+        }
+
         if (!loaded.ok) {
           setCloudSimulationHydrated(false);
-          setSimulationConfigSource('local_cache');
+          setSimulationConfigSource(loaded.reason === 'active_not_found' ? 'fallback' : 'local_cache');
           setSimulationConfigHydrationStatus(loaded.reason === 'active_not_found' ? 'missing' : 'error');
           setSimulationConfigDiagnostics(loaded.diagnostics);
           return;
         }
-        const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
-        cloudSimulationConfigHashRef.current = loaded.active.hash ?? null;
-        setBaseParams(cloudParams);
-        setSimParams(cloudParams);
-        setSimulationConfigSource('cloud');
-        setSimulationConfigSavedAt(loaded.active.savedAt ?? null);
-        setSimulationConfigHash(loaded.active.hash ?? null);
-        setSimulationConfigHydrationStatus('cloud');
-        setSimulationConfigDiagnostics(loaded.diagnostics);
-        setCloudSimulationHydrated(true);
       })
       .catch(() => {
         if (cancelled) return;
         setCloudSimulationHydrated(false);
-        setSimulationConfigSource('local_cache');
+        setSimulationConfigSource('fallback');
         setSimulationConfigHydrationStatus('error');
         setSimulationConfigDiagnostics(createSimulationConfigCloudDiagnostics({
           readStatus: 'error',
@@ -846,7 +1008,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authErrorMessage, authResolved, authUser?.uid, isCanonicalUserSession]);
 
   useEffect(() => {
     refreshOfficialDistribution();
@@ -934,6 +1096,7 @@ export default function App() {
   }, [baseParams]);
 
   useEffect(() => {
+    if (!isCanonicalUserSession) return;
     const nextHash = buildSimulationConfigHash(simParams);
     setSimulationConfigHash(nextHash);
     if (simulationConfigHydrationStatus !== 'cloud' && simulationConfigSource !== 'cloud') {
@@ -978,7 +1141,7 @@ export default function App() {
       });
     }, 800);
     return () => window.clearTimeout(handle);
-  }, [simParams, simulationConfigHydrationStatus, simulationConfigSource]);
+  }, [isCanonicalUserSession, simParams, simulationConfigHydrationStatus, simulationConfigSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2724,6 +2887,7 @@ export default function App() {
   }, [baseUpdatePending, buildCanonicalSimParams, pendingSnapshotApplying, simOverrides, startRecalculation]);
 
   useEffect(() => {
+    if (!isCanonicalUserSession) return;
     if (!simResult) {
       setSimulationPreset('base');
       setRiskCapitalEnabled(false);
@@ -2756,6 +2920,7 @@ export default function App() {
     baseParams,
     clearSimulationTimer,
     scheduleInactivityReset,
+    isCanonicalUserSession,
     simResult,
     startRecalculation,
   ]);
@@ -2926,6 +3091,18 @@ export default function App() {
     setActiveTab(tab);
   }, []);
 
+  const handleGoogleSignIn = useCallback(async () => {
+    try {
+      setAuthSigningIn(true);
+      setAuthErrorMessage(null);
+      await signInToAurumIntegrationWithGoogle();
+    } catch (error: any) {
+      setAuthErrorMessage(String(error?.message || 'No pude iniciar sesión con Google.'));
+    } finally {
+      setAuthSigningIn(false);
+    }
+  }, []);
+
   const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
   const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
   const stateLabel = selectVariant(activeScenario).label;
@@ -2970,6 +3147,10 @@ export default function App() {
   const [aurumSnapshotLabel, setAurumSnapshotLabel] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isCanonicalUserSession) {
+      setAurumIntegrationStatus(aurumIntegrationConfigured ? 'loading' : 'unconfigured');
+      return;
+    }
     if (!aurumIntegrationConfigured) {
       setAurumIntegrationStatus('unconfigured');
       setAurumSnapshotLabel(null);
@@ -3166,7 +3347,7 @@ export default function App() {
       cancelled = true;
       unsubscribe();
     };
-  }, [buildCanonicalSimParams, computeRiskCapital, getSnapshotSignature, riskCapitalEnabled, startRecalculation]);
+  }, [aurumIntegrationConfigured, buildCanonicalSimParams, computeRiskCapital, getSnapshotSignature, isCanonicalUserSession, riskCapitalEnabled, startRecalculation]);
 
   useEffect(() => {
     if (!simulationActive && !simOverrides?.active) {
@@ -3285,11 +3466,12 @@ export default function App() {
     };
   }, []);
   const cloudHydrationReady = useMemo(() => {
+    if (!isCanonicalUserSession) return false;
     const aurumReady = aurumIntegrationStatus === 'unconfigured'
       || (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
     const universeReady = cloudUniverseHydrated || universeSourceOrigin !== 'none';
     return aurumReady && universeReady && cloudSimulationHydrated;
-  }, [aurumIntegrationStatus, cloudSimulationHydrated, cloudUniverseHydrated, universeSourceOrigin]);
+  }, [aurumIntegrationStatus, cloudSimulationHydrated, cloudUniverseHydrated, isCanonicalUserSession, universeSourceOrigin]);
   const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
     params: simParams,
     riskCapitalEnabled,
@@ -3304,6 +3486,34 @@ export default function App() {
     simulationConfigHash,
     simulationConfigDiagnostics,
     runtimeDiagnostics: runtimeEnvDiagnostics,
+    authDiagnostics: {
+      authUid: authUser?.uid ?? null,
+      authEmail: authUser?.email ?? null,
+      authProvider,
+      isAnonymous: Boolean(authUser?.isAnonymous),
+      loginRequired,
+      isCanonicalUserSession,
+    },
+    fieldSources: {
+      F1: simulationConfigSource,
+      F2: simulationConfigSource,
+      F3: simulationConfigSource,
+      F4: simulationConfigSource,
+      seed: simulationConfigSource,
+      nSim: simulationConfigSource,
+      bucketMonths: simulationConfigSource,
+      feeAnnual: simulationConfigSource,
+      generatorType: simulationConfigSource,
+      returns: simulationConfigSource,
+      correlationMatrix: simulationConfigSource,
+      activeScenario: simulationConfigSource,
+      capitalInitialClp: manualCapitalAdjustments.length > 0
+        ? 'aurum_snapshot_cloud_plus_manual_local_adjustments'
+        : 'aurum_snapshot_cloud',
+      instrumentUniverse: universeSourceOrigin === 'firestore' ? 'cloud' : 'local_cache',
+      aurumSnapshot: lastAppliedAurumSnapshotSignature ? 'cloud' : 'fallback',
+      fx: operativeFxResolution.sourceMode ?? 'fallback',
+    },
     capitalDerivationDiagnostics: {
       capitalInitialClp: Number(simParams.capitalInitial ?? 0),
       compositionOptimizableClp: Number(simParams.simulationComposition?.optimizableInvestmentsCLP ?? 0),
@@ -3323,6 +3533,11 @@ export default function App() {
     simParams,
     riskCapitalEnabled,
     riskCapitalEffective,
+    authProvider,
+    authUser?.email,
+    authUser?.isAnonymous,
+    authUser?.uid,
+    isCanonicalUserSession,
     weightsSourceMode,
     universeSourceOrigin,
     aurumSnapshotLabel,
@@ -3335,11 +3550,16 @@ export default function App() {
     runtimeEnvDiagnostics,
     manualAdjustmentImpact,
     manualCapitalAdjustments.length,
+    loginRequired,
     instrumentUniverseMetadata,
     instrumentUniverseFingerprintHash,
+    operativeFxResolution.sourceMode,
     cloudHydrationReady,
   ]);
   const simulationActionStatus = useMemo(() => buildSimulationActionStatus({
+    authResolved,
+    isCanonicalUserSession,
+    authErrorMessage,
     cloudHydrationReady,
     simulationConfigSource,
     universeSourceOrigin,
@@ -3351,7 +3571,10 @@ export default function App() {
     hasValidUniverseMix: weightsSourceMode !== 'error',
     fingerprint: m8InputFingerprint,
   }), [
+    authErrorMessage,
+    authResolved,
     cloudHydrationReady,
+    isCanonicalUserSession,
     simulationConfigSource,
     universeSourceOrigin,
     aurumIntegrationStatus,
@@ -3545,6 +3768,59 @@ export default function App() {
       simulationLabel={stateLabel}
     />
   );
+
+  if (!authResolved || loginRequired) {
+    return (
+      <MidasErrorBoundary>
+        <div style={{ ...css.app, minHeight: '100vh', padding: 24, display: 'grid', placeItems: 'center' }}>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 440,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 24,
+              padding: 24,
+              display: 'grid',
+              gap: 14,
+              boxShadow: '0 18px 48px rgba(0,0,0,0.24)',
+            }}
+          >
+            <div style={{ color: T.textPrimary, fontSize: 30, fontWeight: 800 }}>Midas</div>
+            <div style={{ color: T.textSecondary, fontSize: 16, lineHeight: 1.5 }}>
+              {authResolved
+                ? 'Inicia sesión con Google para cargar la configuración M8 compartida y comparar desktop y mobile con el mismo input.'
+                : 'Validando tu sesión segura antes de cargar la configuración canónica de MIDAS.'}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void handleGoogleSignIn();
+              }}
+              disabled={!authResolved || authSigningIn}
+              style={{
+                border: `1px solid ${T.primary}`,
+                background: authResolved ? T.primary : T.surfaceEl,
+                color: authResolved ? '#09101f' : T.textMuted,
+                borderRadius: 16,
+                fontWeight: 800,
+                fontSize: 16,
+                padding: '14px 18px',
+                cursor: !authResolved || authSigningIn ? 'default' : 'pointer',
+              }}
+            >
+              {authResolved ? (authSigningIn ? 'Abriendo Google...' : 'Entrar con Google') : 'Validando sesión...'}
+            </button>
+            {(authErrorMessage || simulationConfigDiagnostics.errorMessage) && (
+              <div style={{ color: T.negative, fontSize: 13, lineHeight: 1.4 }}>
+                {authErrorMessage ?? simulationConfigDiagnostics.errorMessage}
+              </div>
+            )}
+          </div>
+        </div>
+      </MidasErrorBoundary>
+    );
+  }
 
   return (
     <MidasErrorBoundary>
