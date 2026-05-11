@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import {
   browserLocalPersistence,
   getAuth,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   setPersistence,
@@ -12,13 +13,15 @@ import {
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
+const viteEnv = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {});
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: viteEnv.VITE_FIREBASE_API_KEY,
+  authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: viteEnv.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: viteEnv.VITE_FIREBASE_APP_ID,
 };
 
 const isConfigured = () =>
@@ -33,30 +36,152 @@ export const aurumAuth = app ? getAuth(app) : null;
 const googleProvider = new GoogleAuthProvider();
 
 let persistencePromise: Promise<void> | null = null;
+let persistenceState: 'idle' | 'pending' | 'ready' | 'error' = 'idle';
+let persistenceErrorMessage: string | null = null;
+
+const REDIRECT_PENDING_KEY = 'midas:auth-redirect-pending';
+const PERSISTENCE_TIMEOUT_MS = 1500;
+const REDIRECT_RESULT_TIMEOUT_MS = 8000;
+const AUTH_STATE_TIMEOUT_MS = 12000;
+
+export type AurumIntegrationAuthStatus =
+  | 'checkingAuth'
+  | 'loginRequired'
+  | 'signingIn'
+  | 'redirectPending'
+  | 'authenticatedGoogle'
+  | 'authenticatedButAnonymous'
+  | 'authError';
+
+export type AurumIntegrationAuthBootstrapDiagnostics = {
+  authStatus: AurumIntegrationAuthStatus;
+  authUid: string | null;
+  authEmail: string | null;
+  isAnonymous: boolean;
+  providerIds: string[];
+  signInMethod: string | null;
+  persistenceMode: 'browserLocalPersistence' | 'unavailable';
+  persistenceReady: boolean;
+  persistenceErrorMessage: string | null;
+  redirectResultProcessed: boolean;
+  redirectResultUserUid: string | null;
+  redirectPending: boolean;
+  lastAuthErrorCode: string | null;
+  lastAuthErrorMessage: string | null;
+  authCheckStartedAt: string;
+  authResolvedAt: string;
+  authElapsedMs: number;
+  timedOut: boolean;
+};
+
+export type AurumIntegrationAuthBootstrapResult = {
+  user: User | null;
+  diagnostics: AurumIntegrationAuthBootstrapDiagnostics;
+};
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  return Promise.race([
+    promise,
+    new Promise<undefined>((resolve) => {
+      timeoutId = setTimeout(() => resolve(undefined), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  }) as Promise<T | undefined>;
+}
+
+function getRedirectPending(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(REDIRECT_PENDING_KEY) === '1';
+}
+
+function markRedirectPending(): void {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.setItem(REDIRECT_PENDING_KEY, '1');
+}
+
+function clearRedirectPending(): void {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.removeItem(REDIRECT_PENDING_KEY);
+}
+
+function userProviderIds(user: User | null): string[] {
+  if (!user) return [];
+  const values = user.providerData
+    .map((item) => item.providerId)
+    .filter((value): value is string => Boolean(value));
+  return [...new Set(values)];
+}
+
+function buildBootstrapDiagnostics(input: {
+  status: AurumIntegrationAuthStatus;
+  startedAtMs: number;
+  startedAtIso: string;
+  user: User | null;
+  redirectResultProcessed: boolean;
+  redirectResultUserUid: string | null;
+  redirectPending: boolean;
+  lastAuthErrorCode: string | null;
+  lastAuthErrorMessage: string | null;
+  timedOut: boolean;
+}): AurumIntegrationAuthBootstrapDiagnostics {
+  const resolvedAtMs = Date.now();
+  const providerIds = userProviderIds(input.user);
+  return {
+    authStatus: input.status,
+    authUid: input.user?.uid ?? null,
+    authEmail: input.user?.email ?? null,
+    isAnonymous: Boolean(input.user?.isAnonymous),
+    providerIds,
+    signInMethod: providerIds[0] ?? null,
+    persistenceMode: aurumAuth ? 'browserLocalPersistence' : 'unavailable',
+    persistenceReady: persistenceState === 'ready',
+    persistenceErrorMessage,
+    redirectResultProcessed: input.redirectResultProcessed,
+    redirectResultUserUid: input.redirectResultUserUid,
+    redirectPending: input.redirectPending,
+    lastAuthErrorCode: input.lastAuthErrorCode,
+    lastAuthErrorMessage: input.lastAuthErrorMessage,
+    authCheckStartedAt: input.startedAtIso,
+    authResolvedAt: new Date(resolvedAtMs).toISOString(),
+    authElapsedMs: Math.max(0, resolvedAtMs - input.startedAtMs),
+    timedOut: input.timedOut,
+  };
+}
 
 export function ensureAurumIntegrationAuthPersistence(): Promise<void> {
   if (!aurumIntegrationConfigured || !aurumAuth) return Promise.resolve();
 
   if (!persistencePromise) {
-    persistencePromise = setPersistence(aurumAuth, browserLocalPersistence).catch(() => {});
+    persistenceState = 'pending';
+    persistencePromise = withTimeout(setPersistence(aurumAuth, browserLocalPersistence), PERSISTENCE_TIMEOUT_MS)
+      .then(() => {
+        persistenceState = 'ready';
+        persistenceErrorMessage = null;
+      })
+      .catch((error: unknown) => {
+        persistenceState = 'error';
+        persistenceErrorMessage = error instanceof Error ? error.message : String(error);
+      });
   }
 
   return persistencePromise;
 }
 
-const shouldUseRedirectSignIn = () => {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
+export function detectAurumIntegrationGoogleRedirectMode(userAgent: string = typeof navigator === 'undefined' ? '' : (navigator.userAgent || '')): boolean {
+  const ua = userAgent;
   const isIos = /iPad|iPhone|iPod/.test(ua);
   const isIosBrowser = /CriOS|FxiOS|EdgiOS/.test(ua);
   const isMobileSafari = /Mobile/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
   return isIos || isIosBrowser || isMobileSafari;
-};
+}
 
 export async function signInToAurumIntegrationWithGoogle(): Promise<void> {
   if (!aurumIntegrationConfigured || !aurumAuth) return;
   await ensureAurumIntegrationAuthPersistence();
-  if (shouldUseRedirectSignIn()) {
+  if (detectAurumIntegrationGoogleRedirectMode()) {
+    markRedirectPending();
     await signInWithRedirect(aurumAuth, googleProvider);
     return;
   }
@@ -71,13 +196,165 @@ export async function signInToAurumIntegrationWithGoogle(): Promise<void> {
       code === 'auth/cancelled-popup-request' ||
       code === 'auth/operation-not-supported-in-this-environment';
     if (!needsRedirect) throw error;
+    markRedirectPending();
     await signInWithRedirect(aurumAuth, googleProvider);
   }
 }
 
 export async function signOutAurumIntegrationUser(): Promise<void> {
   if (!aurumAuth) return;
+  clearRedirectPending();
   await signOut(aurumAuth);
+}
+
+export async function bootstrapAurumIntegrationAuthSession(): Promise<AurumIntegrationAuthBootstrapResult> {
+  const startedAtMs = Date.now();
+  const startedAtIso = new Date(startedAtMs).toISOString();
+  if (!aurumIntegrationConfigured || !aurumAuth) {
+    return {
+      user: null,
+      diagnostics: buildBootstrapDiagnostics({
+        status: 'loginRequired',
+        startedAtMs,
+        startedAtIso,
+        user: null,
+        redirectResultProcessed: false,
+        redirectResultUserUid: null,
+        redirectPending: false,
+        lastAuthErrorCode: null,
+        lastAuthErrorMessage: null,
+        timedOut: false,
+      }),
+    };
+  }
+
+  let lastAuthErrorCode: string | null = null;
+  let lastAuthErrorMessage: string | null = null;
+  let redirectResultProcessed = false;
+  let redirectResultUserUid: string | null = null;
+  const redirectPending = getRedirectPending();
+
+  await ensureAurumIntegrationAuthPersistence();
+
+  try {
+    const redirectResult = await withTimeout(getRedirectResult(aurumAuth), REDIRECT_RESULT_TIMEOUT_MS);
+    if (redirectResult !== undefined) {
+      redirectResultProcessed = true;
+      redirectResultUserUid = redirectResult?.user?.uid ?? null;
+      clearRedirectPending();
+    }
+  } catch (error: any) {
+    redirectResultProcessed = true;
+    clearRedirectPending();
+    lastAuthErrorCode = String(error?.code || 'auth/redirect-result-failed');
+    lastAuthErrorMessage = String(error?.message || 'No pude procesar el retorno de Google.');
+  }
+
+  try {
+    const authUser = await new Promise<User | null | undefined>((resolve, reject) => {
+      const unsubscribe = onAuthStateChanged(
+        aurumAuth,
+        (user) => {
+          unsubscribe();
+          resolve(user);
+        },
+        (error) => {
+          unsubscribe();
+          reject(error);
+        },
+      );
+      setTimeout(() => {
+        unsubscribe();
+        resolve(undefined);
+      }, AUTH_STATE_TIMEOUT_MS);
+    });
+
+    const user = authUser === undefined ? aurumAuth.currentUser ?? null : authUser;
+    if (user && !user.isAnonymous) {
+      return {
+        user,
+        diagnostics: buildBootstrapDiagnostics({
+          status: 'authenticatedGoogle',
+          startedAtMs,
+          startedAtIso,
+          user,
+          redirectResultProcessed,
+          redirectResultUserUid,
+          redirectPending,
+          lastAuthErrorCode,
+          lastAuthErrorMessage,
+          timedOut: false,
+        }),
+      };
+    }
+    if (user?.isAnonymous) {
+      return {
+        user,
+        diagnostics: buildBootstrapDiagnostics({
+          status: 'authenticatedButAnonymous',
+          startedAtMs,
+          startedAtIso,
+          user,
+          redirectResultProcessed,
+          redirectResultUserUid,
+          redirectPending,
+          lastAuthErrorCode,
+          lastAuthErrorMessage,
+          timedOut: false,
+        }),
+      };
+    }
+    if (authUser === undefined) {
+      return {
+        user: null,
+        diagnostics: buildBootstrapDiagnostics({
+          status: 'authError',
+          startedAtMs,
+          startedAtIso,
+          user: null,
+          redirectResultProcessed,
+          redirectResultUserUid,
+          redirectPending,
+          lastAuthErrorCode: lastAuthErrorCode ?? 'auth/timeout',
+          lastAuthErrorMessage:
+            lastAuthErrorMessage ?? 'La validación de sesión tardó demasiado. Reintenta o vuelve a iniciar sesión.',
+          timedOut: true,
+        }),
+      };
+    }
+    return {
+      user: null,
+      diagnostics: buildBootstrapDiagnostics({
+        status: redirectPending ? 'redirectPending' : 'loginRequired',
+        startedAtMs,
+        startedAtIso,
+        user: null,
+        redirectResultProcessed,
+        redirectResultUserUid,
+        redirectPending,
+        lastAuthErrorCode,
+        lastAuthErrorMessage,
+        timedOut: false,
+      }),
+    };
+  } catch (error: any) {
+    const user = aurumAuth.currentUser ?? null;
+    return {
+      user,
+      diagnostics: buildBootstrapDiagnostics({
+        status: 'authError',
+        startedAtMs,
+        startedAtIso,
+        user,
+        redirectResultProcessed,
+        redirectResultUserUid,
+        redirectPending,
+        lastAuthErrorCode: String(error?.code || lastAuthErrorCode || 'auth/bootstrap-failed'),
+        lastAuthErrorMessage: String(error?.message || lastAuthErrorMessage || 'No pude validar la sesión Google.'),
+        timedOut: false,
+      }),
+    };
+  }
 }
 
 export function subscribeAurumIntegrationAuthState(

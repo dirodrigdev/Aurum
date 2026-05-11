@@ -46,9 +46,13 @@ import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
 } from './integrations/aurum/optimizableSnapshot';
 import {
+  bootstrapAurumIntegrationAuthSession,
   aurumIntegrationConfigured,
+  signOutAurumIntegrationUser,
   signInToAurumIntegrationWithGoogle,
   subscribeAurumIntegrationAuthState,
+  type AurumIntegrationAuthBootstrapDiagnostics,
+  type AurumIntegrationAuthStatus,
 } from './integrations/aurum/firebase';
 import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
 import {
@@ -69,6 +73,7 @@ import {
 } from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
+import { buildAuthGateStatus } from './domain/model/authGateStatus';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -695,7 +700,31 @@ export default function App() {
   const [authResolved, setAuthResolved] = useState(!aurumIntegrationConfigured);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AurumIntegrationAuthStatus>(
+    aurumIntegrationConfigured ? 'checkingAuth' : 'authenticatedGoogle',
+  );
   const [authSigningIn, setAuthSigningIn] = useState(false);
+  const [authBootstrapNonce, setAuthBootstrapNonce] = useState(0);
+  const [authDiagnostics, setAuthDiagnostics] = useState<AurumIntegrationAuthBootstrapDiagnostics>({
+    authStatus: aurumIntegrationConfigured ? 'checkingAuth' : 'authenticatedGoogle',
+    authUid: null,
+    authEmail: null,
+    isAnonymous: false,
+    providerIds: [],
+    signInMethod: null,
+    persistenceMode: aurumIntegrationConfigured ? 'browserLocalPersistence' : 'unavailable',
+    persistenceReady: !aurumIntegrationConfigured,
+    persistenceErrorMessage: null,
+    redirectResultProcessed: false,
+    redirectResultUserUid: null,
+    redirectPending: false,
+    lastAuthErrorCode: null,
+    lastAuthErrorMessage: null,
+    authCheckStartedAt: new Date().toISOString(),
+    authResolvedAt: new Date().toISOString(),
+    authElapsedMs: 0,
+    timedOut: false,
+  });
   const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
   const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
@@ -748,7 +777,7 @@ export default function App() {
       ?? authUser.providerData[0]?.providerId
       ?? (authUser.isAnonymous ? 'anonymous' : null);
   }, [authUser]);
-  const isCanonicalUserSession = Boolean(authUser && !authUser.isAnonymous);
+  const isCanonicalUserSession = !aurumIntegrationConfigured || Boolean(authUser && !authUser.isAnonymous);
   const loginRequired = aurumIntegrationConfigured && authResolved && !isCanonicalUserSession;
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
@@ -814,22 +843,90 @@ export default function App() {
     if (!aurumIntegrationConfigured) {
       setAuthResolved(true);
       setAuthUser(null);
+      setAuthStatus('authenticatedGoogle');
       setAuthErrorMessage(null);
       return;
     }
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
     setAuthResolved(false);
-    return subscribeAurumIntegrationAuthState(
-      (user) => {
-        setAuthUser(user);
+    setAuthStatus(authSigningIn ? 'signingIn' : 'checkingAuth');
+    setAuthErrorMessage(null);
+
+    const syncDiagnosticsFromUser = (
+      user: User | null,
+      nextStatus: AurumIntegrationAuthStatus,
+      nextErrorMessage: string | null,
+    ) => {
+      setAuthDiagnostics((prev) => ({
+        ...prev,
+        authStatus: nextStatus,
+        authUid: user?.uid ?? null,
+        authEmail: user?.email ?? null,
+        isAnonymous: Boolean(user?.isAnonymous),
+        providerIds: user
+          ? [...new Set(user.providerData.map((item) => item.providerId).filter((value): value is string => Boolean(value)))]
+          : [],
+        signInMethod:
+          user?.providerData.find((item) => item.providerId && item.providerId !== 'firebase')?.providerId
+          ?? user?.providerData[0]?.providerId
+          ?? prev.signInMethod,
+        lastAuthErrorMessage: nextErrorMessage,
+        authResolvedAt: new Date().toISOString(),
+      }));
+    };
+
+    void bootstrapAurumIntegrationAuthSession()
+      .then((boot) => {
+        if (cancelled) return;
+        setAuthUser(boot.user);
         setAuthResolved(true);
-        setAuthErrorMessage(null);
-      },
-      (error) => {
+        setAuthStatus(boot.diagnostics.authStatus);
+        setAuthErrorMessage(boot.diagnostics.lastAuthErrorMessage);
+        setAuthDiagnostics(boot.diagnostics);
+
+        unsubscribe = subscribeAurumIntegrationAuthState(
+          (user) => {
+            if (cancelled) return;
+            const nextStatus: AurumIntegrationAuthStatus = user
+              ? (user.isAnonymous ? 'authenticatedButAnonymous' : 'authenticatedGoogle')
+              : 'loginRequired';
+            setAuthUser(user);
+            setAuthResolved(true);
+            setAuthStatus(nextStatus);
+            setAuthErrorMessage(null);
+            syncDiagnosticsFromUser(user, nextStatus, null);
+          },
+          (error) => {
+            if (cancelled) return;
+            setAuthResolved(true);
+            setAuthStatus('authError');
+            setAuthErrorMessage(error.message);
+            syncDiagnosticsFromUser(null, 'authError', error.message);
+          },
+        );
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        const message = String(error?.message || 'No pude validar la sesión Google.');
+        setAuthUser(null);
         setAuthResolved(true);
-        setAuthErrorMessage(error.message);
-      },
-    );
-  }, []);
+        setAuthStatus('authError');
+        setAuthErrorMessage(message);
+        setAuthDiagnostics((prev) => ({
+          ...prev,
+          authStatus: 'authError',
+          lastAuthErrorCode: String(error?.code || prev.lastAuthErrorCode || 'auth/bootstrap-failed'),
+          lastAuthErrorMessage: message,
+          authResolvedAt: new Date().toISOString(),
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [authBootstrapNonce]);
 
   useEffect(() => {
     if (!isCanonicalUserSession) {
@@ -3094,12 +3191,34 @@ export default function App() {
   const handleGoogleSignIn = useCallback(async () => {
     try {
       setAuthSigningIn(true);
+      setAuthStatus('signingIn');
       setAuthErrorMessage(null);
       await signInToAurumIntegrationWithGoogle();
     } catch (error: any) {
+      setAuthStatus('authError');
       setAuthErrorMessage(String(error?.message || 'No pude iniciar sesión con Google.'));
     } finally {
       setAuthSigningIn(false);
+    }
+  }, []);
+
+  const handleRetryAuthBootstrap = useCallback(() => {
+    setAuthResolved(false);
+    setAuthStatus('checkingAuth');
+    setAuthErrorMessage(null);
+    setAuthBootstrapNonce((prev) => prev + 1);
+  }, []);
+
+  const handleClearAuthSession = useCallback(async () => {
+    try {
+      await signOutAurumIntegrationUser();
+    } catch (error: any) {
+      setAuthErrorMessage(String(error?.message || 'No pude cerrar la sesión.'));
+    } finally {
+      setAuthUser(null);
+      setAuthResolved(false);
+      setAuthStatus('checkingAuth');
+      setAuthBootstrapNonce((prev) => prev + 1);
     }
   }, []);
 
@@ -3487,10 +3606,25 @@ export default function App() {
     simulationConfigDiagnostics,
     runtimeDiagnostics: runtimeEnvDiagnostics,
     authDiagnostics: {
+      authStatus,
       authUid: authUser?.uid ?? null,
       authEmail: authUser?.email ?? null,
       authProvider,
       isAnonymous: Boolean(authUser?.isAnonymous),
+      providerIds: authDiagnostics.providerIds,
+      signInMethod: authDiagnostics.signInMethod,
+      persistenceMode: authDiagnostics.persistenceMode,
+      persistenceReady: authDiagnostics.persistenceReady,
+      persistenceErrorMessage: authDiagnostics.persistenceErrorMessage,
+      redirectResultProcessed: authDiagnostics.redirectResultProcessed,
+      redirectResultUserUid: authDiagnostics.redirectResultUserUid,
+      redirectPending: authDiagnostics.redirectPending,
+      lastAuthErrorCode: authDiagnostics.lastAuthErrorCode,
+      lastAuthErrorMessage: authDiagnostics.lastAuthErrorMessage,
+      authCheckStartedAt: authDiagnostics.authCheckStartedAt,
+      authResolvedAt: authDiagnostics.authResolvedAt,
+      authElapsedMs: authDiagnostics.authElapsedMs,
+      firebaseProjectId: simulationConfigDiagnostics.projectId,
       loginRequired,
       isCanonicalUserSession,
     },
@@ -3533,6 +3667,8 @@ export default function App() {
     simParams,
     riskCapitalEnabled,
     riskCapitalEffective,
+    authDiagnostics,
+    authStatus,
     authProvider,
     authUser?.email,
     authUser?.isAnonymous,
@@ -3555,6 +3691,7 @@ export default function App() {
     instrumentUniverseFingerprintHash,
     operativeFxResolution.sourceMode,
     cloudHydrationReady,
+    simulationConfigDiagnostics.projectId,
   ]);
   const simulationActionStatus = useMemo(() => buildSimulationActionStatus({
     authResolved,
@@ -3582,6 +3719,21 @@ export default function App() {
     simParams.capitalInitial,
     weightsSourceMode,
     m8InputFingerprint,
+  ]);
+  const authGateStatus = useMemo(() => buildAuthGateStatus({
+    authStatus,
+    authResolved,
+    authSigningIn,
+    authErrorMessage,
+    simulationConfigHydrationStatus,
+    simulationConfigErrorMessage: simulationConfigDiagnostics.errorMessage,
+  }), [
+    authStatus,
+    authResolved,
+    authSigningIn,
+    authErrorMessage,
+    simulationConfigHydrationStatus,
+    simulationConfigDiagnostics.errorMessage,
   ]);
 
   useEffect(() => {
@@ -3769,7 +3921,7 @@ export default function App() {
     />
   );
 
-  if (!authResolved || loginRequired) {
+  if (authGateStatus.isBlocking) {
     return (
       <MidasErrorBoundary>
         <div style={{ ...css.app, minHeight: '100vh', padding: 24, display: 'grid', placeItems: 'center' }}>
@@ -3788,32 +3940,81 @@ export default function App() {
           >
             <div style={{ color: T.textPrimary, fontSize: 30, fontWeight: 800 }}>Midas</div>
             <div style={{ color: T.textSecondary, fontSize: 16, lineHeight: 1.5 }}>
-              {authResolved
-                ? 'Inicia sesión con Google para cargar la configuración M8 compartida y comparar desktop y mobile con el mismo input.'
-                : 'Validando tu sesión segura antes de cargar la configuración canónica de MIDAS.'}
+              <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                {authGateStatus.headline}
+              </div>
+              <div>{authGateStatus.message}</div>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                void handleGoogleSignIn();
-              }}
-              disabled={!authResolved || authSigningIn}
-              style={{
-                border: `1px solid ${T.primary}`,
-                background: authResolved ? T.primary : T.surfaceEl,
-                color: authResolved ? '#09101f' : T.textMuted,
-                borderRadius: 16,
-                fontWeight: 800,
-                fontSize: 16,
-                padding: '14px 18px',
-                cursor: !authResolved || authSigningIn ? 'default' : 'pointer',
-              }}
-            >
-              {authResolved ? (authSigningIn ? 'Abriendo Google...' : 'Entrar con Google') : 'Validando sesión...'}
-            </button>
-            {(authErrorMessage || simulationConfigDiagnostics.errorMessage) && (
+            {(authGateStatus.showPrimaryAction || authGateStatus.showSecondaryAction) && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {authGateStatus.showPrimaryAction && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (authGateStatus.primaryActionLabel === 'Entrar con Google') {
+                        void handleGoogleSignIn();
+                        return;
+                      }
+                      handleRetryAuthBootstrap();
+                    }}
+                    disabled={authSigningIn}
+                    style={{
+                      border: `1px solid ${T.primary}`,
+                      background: T.primary,
+                      color: '#09101f',
+                      borderRadius: 16,
+                      fontWeight: 800,
+                      fontSize: 16,
+                      padding: '14px 18px',
+                      cursor: authSigningIn ? 'default' : 'pointer',
+                    }}
+                  >
+                    {authSigningIn && authGateStatus.primaryActionLabel === 'Entrar con Google'
+                      ? 'Abriendo Google...'
+                      : authGateStatus.primaryActionLabel}
+                  </button>
+                )}
+                {authGateStatus.showSecondaryAction && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleClearAuthSession();
+                    }}
+                    style={{
+                      border: `1px solid ${T.border}`,
+                      background: T.surfaceEl,
+                      color: T.textPrimary,
+                      borderRadius: 16,
+                      fontWeight: 700,
+                      fontSize: 15,
+                      padding: '14px 18px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {authGateStatus.secondaryActionLabel}
+                  </button>
+                )}
+              </div>
+            )}
+            {(authGateStatus.detail || authErrorMessage || simulationConfigDiagnostics.errorMessage) && (
               <div style={{ color: T.negative, fontSize: 13, lineHeight: 1.4 }}>
-                {authErrorMessage ?? simulationConfigDiagnostics.errorMessage}
+                {authGateStatus.detail ?? authErrorMessage ?? simulationConfigDiagnostics.errorMessage}
+              </div>
+            )}
+            <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
+              {[
+                `Estado auth: ${authStatus}`,
+                `UID: ${authDiagnostics.authUid ?? '—'}`,
+                `Provider: ${authProvider ?? authDiagnostics.signInMethod ?? '—'}`,
+                `Cloud config: ${simulationConfigDiagnostics.readStatus}`,
+              ].join(' · ')}
+            </div>
+            {(authDiagnostics.lastAuthErrorCode || authDiagnostics.persistenceErrorMessage) && (
+              <div style={{ color: T.textMuted, fontSize: 12, lineHeight: 1.5 }}>
+                {[
+                  authDiagnostics.lastAuthErrorCode ? `Auth code: ${authDiagnostics.lastAuthErrorCode}` : null,
+                  authDiagnostics.persistenceErrorMessage ? `Persistence: ${authDiagnostics.persistenceErrorMessage}` : null,
+                ].filter(Boolean).join(' · ')}
               </div>
             )}
           </div>
