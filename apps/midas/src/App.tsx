@@ -672,6 +672,17 @@ export default function App() {
   const [simulationRunBlockedReason, setSimulationRunBlockedReason] = useState<string | null>(null);
   const [lastRunInputHash, setLastRunInputHash] = useState<string | null>(null);
   const [lastRenderedResultHash, setLastRenderedResultHash] = useState<string | null>(null);
+  const [runAttemptCount, setRunAttemptCount] = useState(0);
+  const [duplicateRunSkippedCount, setDuplicateRunSkippedCount] = useState(0);
+  const [duplicateSnapshotSkippedCount, setDuplicateSnapshotSkippedCount] = useState(0);
+  const [snapshotSubscribeCount, setSnapshotSubscribeCount] = useState(0);
+  const [snapshotEventCount, setSnapshotEventCount] = useState(0);
+  const [activeSnapshotListenersCount, setActiveSnapshotListenersCount] = useState(0);
+  const [lastSnapshotProcessedAt, setLastSnapshotProcessedAt] = useState<string | null>(null);
+  const [lastSnapshotSkippedAt, setLastSnapshotSkippedAt] = useState<string | null>(null);
+  const [lastProcessedSnapshotSignature, setLastProcessedSnapshotSignature] = useState<string | null>(null);
+  const [lastSeenSnapshotSignature, setLastSeenSnapshotSignature] = useState<string | null>(null);
+  const [simulationRunTimedOut, setSimulationRunTimedOut] = useState(false);
   const [applyAurumHarness, setApplyAurumHarness] = useState<ApplyAurumHarnessState>({
     status: 'idle',
     startedAtMs: null,
@@ -789,6 +800,7 @@ export default function App() {
   const appliedRecalcRequestIdRef = useRef<number | null>(appliedRecalcRequestId);
   const lastStableCentralRef = useRef<SimulationResults | null>(null);
   const lastSnapshotSignatureRef = useRef<string | null>(null);
+  const lastProcessedSnapshotSignatureRef = useRef<string | null>(null);
   const lastAppliedSnapshotSignatureRef = useRef<string | null>(lastAppliedAurumSnapshotSignature);
   const applyingSnapshotRef = useRef(false);
   const pendingRecalcCauseRef = useRef<RecalcCause | null>(null);
@@ -809,6 +821,9 @@ export default function App() {
   const workerInstanceSeqRef = useRef(0);
   const activeRecalcWorkerRef = useRef<ActiveRecalcWorkerHandle | null>(null);
   const hasSeededUserScopedConfigRef = useRef(false);
+  const buildCanonicalSimParamsRef = useRef<null | typeof buildCanonicalSimParams>(null);
+  const computeRiskCapitalRef = useRef<null | typeof computeRiskCapital>(null);
+  const riskCapitalEnabledRef = useRef(riskCapitalEnabled);
 
   const authProvider = useMemo(() => {
     if (!authUser) return null;
@@ -1966,6 +1981,14 @@ export default function App() {
     return exposure;
   }, []);
 
+  useEffect(() => {
+    computeRiskCapitalRef.current = computeRiskCapital;
+  }, [computeRiskCapital]);
+
+  useEffect(() => {
+    riskCapitalEnabledRef.current = riskCapitalEnabled;
+  }, [riskCapitalEnabled]);
+
   const summarizeParams = useCallback((params: ModelParameters) => {
     const composition = params.simulationComposition;
     return {
@@ -2289,6 +2312,10 @@ export default function App() {
     ],
   );
 
+  useEffect(() => {
+    buildCanonicalSimParamsRef.current = buildCanonicalSimParams;
+  }, [buildCanonicalSimParams]);
+
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
     setLastRecalcCause(cause);
     setSimWorking(true);
@@ -2299,6 +2326,7 @@ export default function App() {
     setSimulationRunCompletedAt(null);
     setSimulationRunError(null);
     setSimulationRunBlockedReason(null);
+    setSimulationRunTimedOut(false);
     setBootReadyPending(false);
     const hasStableResult = Boolean(lastStableCentralRef.current);
     const shouldStale = hasStableResult && cause !== 'boot-init';
@@ -2431,6 +2459,7 @@ export default function App() {
     summarizeResult,
     runBootstrapControl,
   ]);
+
   useEffect(() => {
     if (!bootReadyPending) return;
     let raf1 = 0;
@@ -3384,6 +3413,8 @@ export default function App() {
 
     let cancelled = false;
     let hasReceivedFirstSnapshot = false;
+    setSnapshotSubscribeCount((prev) => prev + 1);
+    setActiveSnapshotListenersCount((prev) => prev + 1);
 
     setAurumIntegrationStatus((prev) => (
       prev === 'available' || prev === 'partial' ? 'refreshing' : 'loading'
@@ -3420,7 +3451,10 @@ export default function App() {
       }));
     };
 
-    const applySnapshot = (snapshot: AurumOptimizableInvestmentsSnapshot | null) => {
+    const applySnapshot = (
+      snapshot: AurumOptimizableInvestmentsSnapshot | null,
+      snapshotSignatureOverride?: string | null,
+    ) => {
       if (cancelled) return;
       setOptimizableBaseReference(optimizableSnapshotToReference(snapshot));
 
@@ -3444,12 +3478,24 @@ export default function App() {
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
         lastSnapshotSignatureRef.current = null;
+        lastProcessedSnapshotSignatureRef.current = null;
+        setLastProcessedSnapshotSignature(null);
+        setLastSeenSnapshotSignature(null);
+        setLastSnapshotProcessedAt(new Date().toISOString());
         return;
       }
 
+      const snapshotSignature = snapshotSignatureOverride ?? getSnapshotSignature(snapshot);
       const composition = snapshotToSimulationComposition(snapshot);
-      const riskExposure = computeRiskCapital(snapshot);
-      const compositionWithDetectedRisk = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
+      const computeRiskCapitalCurrent = computeRiskCapitalRef.current;
+      const buildCanonicalSimParamsCurrent = buildCanonicalSimParamsRef.current;
+      if (!computeRiskCapitalCurrent || !buildCanonicalSimParamsCurrent) return;
+      const riskExposure = computeRiskCapitalCurrent(snapshot);
+      const compositionWithDetectedRisk = withRiskCapitalDetectionState(
+        composition,
+        riskExposure,
+        riskCapitalEnabledRef.current,
+      );
       const compositionMode = composition?.mode ?? 'legacy';
       const hasFallbackFlags =
         composition?.mortgageProjectionStatus === 'fallback_incomplete' ||
@@ -3473,8 +3519,6 @@ export default function App() {
       setAurumSyncBaseOpt(Number.isFinite(baseOptimizable) ? baseOptimizable : null);
       setAurumSyncLatestOpt(Number.isFinite(latestOptimizable) ? latestOptimizable : null);
       setAurumSyncDiff(Number.isFinite(diffValue) ? diffValue : null);
-
-      const snapshotSignature = getSnapshotSignature(snapshot);
       const sameAsAppliedSnapshot = snapshotSignature === lastAppliedSnapshotSignatureRef.current;
       setAurumSyncState(sameAsAppliedSnapshot ? 'synced' : 'outdated');
       if (sameAsAppliedSnapshot) {
@@ -3492,19 +3536,19 @@ export default function App() {
               simulationComposition: withRiskCapitalDetectionState(
                 compositionWithDetectedRisk,
                 riskExposure,
-                riskCapitalEnabled,
+                riskCapitalEnabledRef.current,
               ) ?? compositionWithDetectedRisk,
             };
-            const canonicalSnapshotParams = buildCanonicalSimParams(canonicalSnapshotLayer, simParamsRef.current, {
+            const canonicalSnapshotParams = buildCanonicalSimParamsCurrent(canonicalSnapshotLayer, simParamsRef.current, {
               applyCapital: true,
               manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
-              riskCapitalEnabled,
+              riskCapitalEnabled: riskCapitalEnabledRef.current,
             });
             const sameCanonicalSignature = JSON.stringify(simParamsRef.current) === JSON.stringify(canonicalSnapshotParams);
             setBaseParams(canonicalSnapshotParams);
             setSimParams(canonicalSnapshotParams);
             if (!sameCanonicalSignature) {
-              startRecalculation('apply-aurum', () => canonicalSnapshotParams);
+              cloudConfigRecalcHashRef.current = null;
             }
           }
         }
@@ -3513,10 +3557,16 @@ export default function App() {
         setPendingSnapshotLabel(null);
         setPendingSnapshotSignature(null);
         lastSnapshotSignatureRef.current = snapshotSignature;
+        lastProcessedSnapshotSignatureRef.current = snapshotSignature;
+        setLastProcessedSnapshotSignature(snapshotSignature);
+        setLastSnapshotProcessedAt(new Date().toISOString());
         return;
       }
       if (snapshotSignature === lastSnapshotSignatureRef.current) return;
       lastSnapshotSignatureRef.current = snapshotSignature;
+      lastProcessedSnapshotSignatureRef.current = snapshotSignature;
+      setLastProcessedSnapshotSignature(snapshotSignature);
+      setLastSnapshotProcessedAt(new Date().toISOString());
 
       setSnapshotApplied(false);
       setPendingSnapshot(snapshot);
@@ -3528,12 +3578,23 @@ export default function App() {
     const unsubscribe = subscribeToPublishedOptimizableInvestmentsSnapshot({
       onValue: (snapshot) => {
         if (cancelled) return;
+        setSnapshotEventCount((prev) => prev + 1);
+        const snapshotSignature = snapshot ? getSnapshotSignature(snapshot) : null;
+        setLastSeenSnapshotSignature(snapshotSignature);
+        if (
+          snapshotSignature
+          && snapshotSignature === lastProcessedSnapshotSignatureRef.current
+        ) {
+          setDuplicateSnapshotSkippedCount((prev) => prev + 1);
+          setLastSnapshotSkippedAt(new Date().toISOString());
+          return;
+        }
         if (hasReceivedFirstSnapshot) {
           setAurumIntegrationStatus((prev) =>
             prev === 'available' || prev === 'partial' ? 'refreshing' : prev,
           );
         }
-        applySnapshot(snapshot);
+        applySnapshot(snapshot, snapshotSignature);
         hasReceivedFirstSnapshot = true;
       },
       onError: () => {
@@ -3557,9 +3618,10 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      setActiveSnapshotListenersCount((prev) => Math.max(0, prev - 1));
       unsubscribe();
     };
-  }, [aurumIntegrationConfigured, buildCanonicalSimParams, computeRiskCapital, getSnapshotSignature, isCanonicalUserSession, riskCapitalEnabled, startRecalculation]);
+  }, [aurumIntegrationConfigured, getSnapshotSignature, isCanonicalUserSession]);
 
   useEffect(() => {
     if (!simulationActive && !simOverrides?.active) {
@@ -3689,11 +3751,21 @@ export default function App() {
     };
   }, []);
   const simulationRunDiagnostics = useMemo(() => ({
+    currentRunId: activeRecalcRequestId,
+    currentRunInputHash: simulationRunStatus === 'queued' || simulationRunStatus === 'running'
+      ? lastRunInputHash
+      : null,
+    runAttemptCount,
+    duplicateRunSkipped: duplicateRunSkippedCount,
+    snapshotDuplicateSkipped: duplicateSnapshotSkippedCount,
+    lastProcessedSnapshotSignature,
     simulationRunStatus,
     simulationRunStartedAt,
     simulationRunCompletedAt,
     simulationRunError,
     blockedReason: simulationRunBlockedReason,
+    timeoutMs: 60_000,
+    timedOut: simulationRunTimedOut,
     aurumRefreshing: aurumIntegrationStatus === 'refreshing',
     aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
     aurumSnapshotHash: lastAppliedAurumSnapshotSignature,
@@ -3713,21 +3785,43 @@ export default function App() {
       : heroPhase === 'stale'
         ? (lastStableCentral ? 'lastStableCentral' : 'none')
         : 'none',
+    aurumSnapshotDiagnostics: {
+      activeSnapshotListenersCount,
+      snapshotSubscribeCount,
+      snapshotEventCount,
+      lastSnapshotSignature: lastSeenSnapshotSignature,
+      lastProcessedSnapshotSignature,
+      duplicateSnapshotSkippedCount,
+      lastSnapshotProcessedAt,
+      lastSnapshotSkippedAt,
+    },
   }), [
+    activeRecalcRequestId,
+    activeSnapshotListenersCount,
     aurumIntegrationStatus,
+    duplicateRunSkippedCount,
+    duplicateSnapshotSkippedCount,
     heroVisibleResult,
     heroVisibleSource,
     heroPhase,
     lastAppliedAurumSnapshotSignature,
+    lastProcessedSnapshotSignature,
     lastRenderedResultHash,
     lastRunInputHash,
+    lastSeenSnapshotSignature,
+    lastSnapshotProcessedAt,
+    lastSnapshotSkippedAt,
     lastStableCentral,
+    runAttemptCount,
     simResult,
+    simulationRunTimedOut,
     simulationRunBlockedReason,
     simulationRunCompletedAt,
     simulationRunError,
     simulationRunStartedAt,
     simulationRunStatus,
+    snapshotEventCount,
+    snapshotSubscribeCount,
   ]);
   const strippedManualParamsForFingerprint = useMemo(
     () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
@@ -3951,11 +4045,23 @@ export default function App() {
       setSimulationRunBlockedReason(null);
       return;
     }
-    if (cloudConfigRecalcHashRef.current === effectiveHash && simResult) return;
+    if (
+      (simulationRunStatus === 'queued' || simulationRunStatus === 'running')
+      && lastRunInputHash === effectiveHash
+    ) {
+      setDuplicateRunSkippedCount((prev) => prev + 1);
+      return;
+    }
+    if (cloudConfigRecalcHashRef.current === effectiveHash && simResult) {
+      setDuplicateRunSkippedCount((prev) => prev + 1);
+      return;
+    }
     if (!effectiveHash) return;
     setSimulationRunBlockedReason(null);
     cloudConfigRecalcHashRef.current = effectiveHash;
     setLastRunInputHash(effectiveHash);
+    setRunAttemptCount((prev) => prev + 1);
+    setSimulationRunTimedOut(false);
     const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
     const base = applySimulationOverrides(simParams, sanitizedOverrides);
     startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
@@ -3967,6 +4073,7 @@ export default function App() {
     lastRenderedResultHash,
     m8InputFingerprint.effectiveEngineInputHash,
     recalcWorkerStatus,
+    simulationRunStatus,
     simOverrides,
     simResult,
     simWorking,
@@ -3976,6 +4083,32 @@ export default function App() {
     startRecalculation,
     universeSourceOrigin,
   ]);
+  useEffect(() => {
+    if (simulationRunStatus !== 'running' && simulationRunStatus !== 'queued') return;
+    if (!simulationRunStartedAt) return;
+    const startedAtMs = Date.parse(simulationRunStartedAt);
+    if (!Number.isFinite(startedAtMs)) return;
+    const elapsedMs = Date.now() - startedAtMs;
+    const timeoutMs = 60_000;
+    if (elapsedMs >= timeoutMs) {
+      setSimulationRunStatus('error');
+      setSimulationRunError('simulation_run_timeout');
+      setSimulationRunTimedOut(true);
+      setSimulationRunCompletedAt(new Date().toISOString());
+      setSimWorking(false);
+      setRecalcWorkerStatus('error');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSimulationRunStatus('error');
+      setSimulationRunError('simulation_run_timeout');
+      setSimulationRunTimedOut(true);
+      setSimulationRunCompletedAt(new Date().toISOString());
+      setSimWorking(false);
+      setRecalcWorkerStatus('error');
+    }, timeoutMs - elapsedMs);
+    return () => window.clearTimeout(timer);
+  }, [simulationRunStartedAt, simulationRunStatus]);
   const simulationActionStatus = useMemo(() => buildSimulationActionStatus({
     authResolved,
     isCanonicalUserSession,

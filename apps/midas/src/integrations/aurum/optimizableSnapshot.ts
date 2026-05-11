@@ -5,13 +5,36 @@ import type { AurumOptimizableInvestmentsSnapshot } from './types';
 const PUBLISHED_COLLECTION = 'aurum_published';
 const OPTIMIZABLE_DOC_ID = 'optimizableInvestments';
 
+let lastFxTraceSignatureByStage = new Map<string, string>();
+
 const asFiniteOrNull = (value: unknown): number | null => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const buildFxTraceSignature = (stage: string, payload: Record<string, unknown>) => {
+  try {
+    return `${stage}:${JSON.stringify(payload)}`;
+  } catch {
+    return `${stage}:unserializable`;
+  }
+};
+
+export const shouldEmitFxTrace = (stage: string, payload: Record<string, unknown>) => {
+  const signature = buildFxTraceSignature(stage, payload);
+  const previous = lastFxTraceSignatureByStage.get(stage) ?? null;
+  if (previous === signature) return false;
+  lastFxTraceSignatureByStage.set(stage, signature);
+  return true;
+};
+
+export const resetFxTraceDiagnostics = () => {
+  lastFxTraceSignatureByStage = new Map<string, string>();
+};
+
 const logFxTrace = (stage: string, payload: Record<string, unknown>) => {
   if (typeof window === 'undefined') return;
+  if (!shouldEmitFxTrace(stage, payload)) return;
   try {
     console.info(`[FX TRACE][Midas] ${stage} ${JSON.stringify(payload)}`);
   } catch {

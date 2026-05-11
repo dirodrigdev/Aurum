@@ -30,6 +30,15 @@ const base = () => ({
 (() => {
   const result = evaluateSimulationRunGate({
     ...base(),
+    recalcWorkerStatus: 'running',
+    lastRequestedRunHash: 'hash-1',
+  });
+  assert.equal(result.status, 'running');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
     simResultAvailable: true,
     lastRenderedResultHash: 'hash-1',
   });
