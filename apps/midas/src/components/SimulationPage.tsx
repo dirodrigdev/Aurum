@@ -14,6 +14,7 @@ import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
+import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { SimulationActionStatus } from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
@@ -248,6 +249,7 @@ export function SimulationPage({
   simulationConfigSavedAt,
   m8InputFingerprint,
   simulationResultDiagnostics,
+  resultConfidence,
   simulationActionStatus,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
@@ -332,6 +334,7 @@ export function SimulationPage({
   simulationConfigSavedAt: string | null;
   m8InputFingerprint: M8InputFingerprint;
   simulationResultDiagnostics: SimulationResultDiagnostics;
+  resultConfidence: ResultConfidence;
   simulationActionStatus: SimulationActionStatus;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
@@ -1758,6 +1761,7 @@ export function SimulationPage({
                 instrumentUniverseDiagnostics,
                 simulationRunDiagnostics,
                 simulationResultDiagnostics,
+                resultConfidence,
               }, null, 2);
               if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(payload);

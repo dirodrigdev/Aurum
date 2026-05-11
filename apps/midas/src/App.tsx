@@ -84,6 +84,11 @@ import {
   buildSimulationResultDiagnostics,
   type SimulationResultDiagnostics,
 } from './domain/model/simulationResultDigest';
+import {
+  buildResultConfidence,
+  type ResultConfidence,
+  type SourceStatus,
+} from './domain/model/resultConfidence';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -482,6 +487,31 @@ function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot
 function finiteNumberOrNull(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sourceStatusFromSimulationConfig(
+  source: 'cloud' | 'local_cache' | 'fallback',
+  hydrationStatus: SimulationConfigHydrationStatus,
+): SourceStatus {
+  if (hydrationStatus === 'error') return 'error';
+  if (hydrationStatus === 'missing') return 'missing';
+  if (hydrationStatus === 'loading') return 'provisional';
+  if (source === 'cloud') return 'canonical';
+  return source === 'local_cache' ? 'local' : 'fallback';
+}
+
+function sourceStatusFromInstrumentUniverse(origin: 'firestore' | 'bundled' | 'cache-local' | 'none'): SourceStatus {
+  if (origin === 'firestore') return 'canonical';
+  if (origin === 'bundled') return 'fallback';
+  if (origin === 'cache-local') return 'local';
+  return 'missing';
+}
+
+function sourceStatusFromFx(resolution: OperativeFxResolution): SourceStatus {
+  if (resolution.reasonCode === 'aurum_current_applied') return 'canonical';
+  if (resolution.reasonCode === 'manual_override_applied') return 'local';
+  if (resolution.reasonCode === 'no_usable_fx') return 'missing';
+  return 'fallback';
 }
 
 function deriveVisibleCapitalFromComposition(
@@ -4057,17 +4087,85 @@ export default function App() {
       previousResultInputHash: null,
       provisionalResultShownBeforeFinal: heroPhase === 'stale',
     });
-  }, [
-    appliedRecalcSeed,
-    heroPhase,
-    heroVisibleResult,
+	  }, [
+	    appliedRecalcSeed,
+	    heroPhase,
+	    heroVisibleResult,
     lastRenderedResultHash,
     lastRunInputHash,
     m8InputFingerprint.effectiveEngineInputHash,
     m8InputFingerprint.normalizedInput,
     simResult,
     simulationRunCompletedAt,
+	    simulationRunStatus,
+	  ]);
+
+  const resultConfidence = useMemo<ResultConfidence>(() => {
+    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
+    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
+    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
+    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const aurumSnapshotStatus: SourceStatus =
+      lastAppliedAurumSnapshotSignature
+        ? 'canonical'
+        : aurumIntegrationStatus === 'error'
+          ? 'error'
+          : aurumIntegrationStatus === 'missing'
+            ? 'missing'
+            : 'provisional';
+    const runResultStatus: SourceStatus =
+      simulationRunStatus === 'error'
+        ? 'error'
+        : simulationResultDiagnostics.isFinalForCurrentInput
+          ? 'canonical'
+          : simulationResultDiagnostics.resultDigest
+            ? 'provisional'
+            : 'missing';
+
+    return buildResultConfidence({
+      criticalSources: {
+        aurumSnapshot: aurumSnapshotStatus,
+        simulationConfig: sourceStatusFromSimulationConfig(simulationConfigSource, simulationConfigHydrationStatus),
+        instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin),
+        fx: sourceStatusFromFx(operativeFxResolution),
+        capitalAdjustments: manualCapitalAdjustments.length > 0 || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
+          ? 'local'
+          : 'canonical',
+        runResult: runResultStatus,
+        sandbox: 'canonical',
+      },
+      run: {
+        resultDigest: simulationResultDiagnostics.resultDigest,
+        isFinalForCurrentInput: simulationResultDiagnostics.isFinalForCurrentInput,
+        resultInputHash: simulationResultDiagnostics.resultInputHash,
+        effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+        resultSeed: simulationResultDiagnostics.resultSeed,
+        expectedSeed,
+        resultNSim: simulationResultDiagnostics.resultNSim,
+        expectedNSim,
+        simulationRunStatus,
+        resultMetricsAvailable: simulationRunDiagnostics.resultMetricsAvailable,
+        lastRunInputHash,
+        lastRenderedResultHash,
+      },
+      sandboxActive: false,
+    });
+  }, [
+    aurumIntegrationStatus,
+    engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+    lastAppliedAurumSnapshotSignature,
+    lastRenderedResultHash,
+    lastRunInputHash,
+    m8InputFingerprint.effectiveEngineInputHash,
+    m8InputFingerprint.normalizedInput,
+    manualCapitalAdjustments.length,
+    operativeFxResolution,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+    simulationResultDiagnostics,
+    simulationRunDiagnostics.resultMetricsAvailable,
     simulationRunStatus,
+    universeSourceOrigin,
   ]);
 
   useEffect(() => {
@@ -4336,6 +4434,7 @@ export default function App() {
 	      simulationConfigSavedAt={simulationConfigSavedAt}
 	      m8InputFingerprint={m8InputFingerprint}
 	      simulationResultDiagnostics={simulationResultDiagnostics}
+	      resultConfidence={resultConfidence}
 	      simulationActionStatus={simulationActionStatus}
       officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
