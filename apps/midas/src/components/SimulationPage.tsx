@@ -15,7 +15,6 @@ import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
-import type { SimulationActionStatus } from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -250,7 +249,6 @@ export function SimulationPage({
   m8InputFingerprint,
   simulationResultDiagnostics,
   resultConfidence,
-  simulationActionStatus,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -335,7 +333,6 @@ export function SimulationPage({
   m8InputFingerprint: M8InputFingerprint;
   simulationResultDiagnostics: SimulationResultDiagnostics;
   resultConfidence: ResultConfidence;
-  simulationActionStatus: SimulationActionStatus;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -808,6 +805,15 @@ export function SimulationPage({
           }
         : { label: 'Cuts', detail: 'No se activan' }
       : { label: 'Cuts', detail: 'No disponible' };
+  const confidenceTone =
+    resultConfidence.status === 'canonical'
+      ? T.positive
+      : resultConfidence.status === 'not_decisional'
+        ? T.negative
+        : T.warning;
+  const confidenceReasons = resultConfidence.reasons
+    .filter((item) => item.severity !== 'info')
+    .slice(0, 2);
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1477,19 +1483,19 @@ export function SimulationPage({
             Success40 {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
           </span>
         </div>
-        <span
-          style={{
-            border: `1px solid ${simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning}`,
-            color: simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning,
-            borderRadius: 999,
-            padding: '2px 8px',
-            fontSize: 10,
-            fontWeight: 800,
+	        <span
+	          style={{
+	          border: `1px solid ${confidenceTone}`,
+	          color: confidenceTone,
+	            borderRadius: 999,
+	            padding: '2px 8px',
+	            fontSize: 10,
+	            fontWeight: 800,
             whiteSpace: 'nowrap',
-          }}
-        >
-          {simulationActionStatus.level === 'ok' ? 'OK' : simulationActionStatus.level === 'review' ? 'Revisar' : simulationActionStatus.level === 'provisional' ? 'Provisional' : 'Bloqueado'}
-        </span>
+	          }}
+	        >
+	          {resultConfidence.label}
+	        </span>
       </div>
 
       <div
@@ -1520,17 +1526,11 @@ export function SimulationPage({
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{value}</div>
             </div>
           ))}
-        </div>
-        <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          {simulationActionStatus.level === 'ok'
-            ? 'Resultado usable y consistente para decidir.'
-            : simulationActionStatus.level === 'provisional'
-              ? 'Resultado provisional mientras sincroniza fuentes.'
-              : simulationActionStatus.level === 'review'
-                ? 'Resultado usable, pero conviene revisar un punto.'
-                : 'Faltan datos críticos para usar este resultado.'}
-        </div>
-      </div>
+	        </div>
+	        <div style={{ color: T.textSecondary, fontSize: 12 }}>
+	          {resultConfidence.message}
+	        </div>
+	      </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
@@ -1798,44 +1798,36 @@ export function SimulationPage({
           </div>
         )}
       </div>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${
-            simulationActionStatus.level === 'blocked'
-              ? T.negative
-              : simulationActionStatus.level === 'provisional'
-                ? T.warning
-                : simulationActionStatus.level === 'review'
-                  ? T.warning
-                  : T.border
-          }`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '8px 9px' : '10px 11px',
-          display: 'grid',
-          gap: 6,
+	      <div
+	        style={{
+	          background: T.surface,
+	          border: `1px solid ${resultConfidence.status === 'canonical' ? T.border : confidenceTone}`,
+	          borderRadius: 10,
+	          padding: isMobileViewport ? '8px 9px' : '10px 11px',
+	          display: 'grid',
+	          gap: 6,
         }}
       >
-        <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Estado de la simulación
-        </div>
-        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? (simulationActionStatus.level === 'ok' ? 13 : 16) : (simulationActionStatus.level === 'ok' ? 14 : 18), fontWeight: 800 }}>
-          {simulationActionStatus.headline}
-        </div>
-        {simulationActionStatus.level !== 'ok' && (
-          <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
-            {simulationActionStatus.message}
-          </div>
-        )}
-        {simulationActionStatus.level !== 'ok' && simulationActionStatus.actionItems.length > 0 && (
-          <div style={{ display: 'grid', gap: 3 }}>
-            {simulationActionStatus.actionItems.map((item) => (
-              <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item}
-              </div>
-            ))}
-          </div>
-        )}
+	        <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+	          Estado de la simulación
+	        </div>
+	        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? (resultConfidence.status === 'canonical' ? 13 : 16) : (resultConfidence.status === 'canonical' ? 14 : 18), fontWeight: 800 }}>
+	          {resultConfidence.headline}
+	        </div>
+	        {resultConfidence.status !== 'canonical' && (
+	          <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
+	            {resultConfidence.message}
+	          </div>
+	        )}
+	        {resultConfidence.status !== 'canonical' && confidenceReasons.length > 0 && (
+	          <div style={{ display: 'grid', gap: 3 }}>
+	            {confidenceReasons.map((item) => (
+	              <div key={`${item.code}:${item.source}`} style={{ color: T.textSecondary, fontSize: 11 }}>
+	                • {item.message}
+	              </div>
+	            ))}
+	          </div>
+	        )}
       </div>
       <details>
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>

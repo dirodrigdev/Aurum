@@ -4435,8 +4435,7 @@ export default function App() {
 	      m8InputFingerprint={m8InputFingerprint}
 	      simulationResultDiagnostics={simulationResultDiagnostics}
 	      resultConfidence={resultConfidence}
-	      simulationActionStatus={simulationActionStatus}
-      officialReferenceWeights={officialReferenceWeights}
+	      officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
       activeWeights={activeWeightsNormalized}
