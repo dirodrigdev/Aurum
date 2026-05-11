@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { detectAurumIntegrationGoogleRedirectMode } from './firebase';
+import { detectAurumIntegrationGoogleRedirectMode, shouldSignOutAnonymousBeforeGoogle } from './firebase';
 
 (() => {
   assert.equal(
@@ -17,6 +17,12 @@ import { detectAurumIntegrationGoogleRedirectMode } from './firebase';
     ),
     false,
   );
+})();
+
+(() => {
+  assert.equal(shouldSignOutAnonymousBeforeGoogle({ isAnonymous: true }), true);
+  assert.equal(shouldSignOutAnonymousBeforeGoogle({ isAnonymous: false }), false);
+  assert.equal(shouldSignOutAnonymousBeforeGoogle(null), false);
 })();
 
 console.log('firebase auth tests passed');

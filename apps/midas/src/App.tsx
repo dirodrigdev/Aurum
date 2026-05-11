@@ -711,12 +711,25 @@ export default function App() {
     authEmail: null,
     isAnonymous: false,
     providerIds: [],
+    currentUserUid: null,
+    currentUserIsAnonymous: false,
+    currentUserProviderIds: [],
     signInMethod: null,
     persistenceMode: aurumIntegrationConfigured ? 'browserLocalPersistence' : 'unavailable',
     persistenceReady: !aurumIntegrationConfigured,
     persistenceErrorMessage: null,
+    lastSignInAttemptMethod: null,
+    clickedGoogleAt: null,
+    signOutAnonymousBeforeGoogle: false,
+    signOutAnonymousError: null,
+    redirectPendingBeforeStart: false,
+    redirectStartedAt: null,
+    redirectReturnedAt: null,
     redirectResultProcessed: false,
     redirectResultUserUid: null,
+    redirectResultProviderIds: [],
+    redirectResultErrorCode: null,
+    redirectResultErrorMessage: null,
     redirectPending: false,
     lastAuthErrorCode: null,
     lastAuthErrorMessage: null,
@@ -724,6 +737,7 @@ export default function App() {
     authResolvedAt: new Date().toISOString(),
     authElapsedMs: 0,
     timedOut: false,
+    onAuthStateChangedEvents: [],
   });
   const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
   const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
@@ -858,21 +872,31 @@ export default function App() {
       nextStatus: AurumIntegrationAuthStatus,
       nextErrorMessage: string | null,
     ) => {
+      const event = {
+        uid: user?.uid ?? null,
+        isAnonymous: Boolean(user?.isAnonymous),
+        providerIds: user
+          ? [...new Set(user.providerData.map((item) => item.providerId).filter((value): value is string => Boolean(value)))]
+          : [],
+        timestamp: new Date().toISOString(),
+      };
       setAuthDiagnostics((prev) => ({
         ...prev,
         authStatus: nextStatus,
         authUid: user?.uid ?? null,
         authEmail: user?.email ?? null,
         isAnonymous: Boolean(user?.isAnonymous),
-        providerIds: user
-          ? [...new Set(user.providerData.map((item) => item.providerId).filter((value): value is string => Boolean(value)))]
-          : [],
+        providerIds: event.providerIds,
+        currentUserUid: user?.uid ?? null,
+        currentUserIsAnonymous: Boolean(user?.isAnonymous),
+        currentUserProviderIds: event.providerIds,
         signInMethod:
           user?.providerData.find((item) => item.providerId && item.providerId !== 'firebase')?.providerId
           ?? user?.providerData[0]?.providerId
           ?? prev.signInMethod,
         lastAuthErrorMessage: nextErrorMessage,
         authResolvedAt: new Date().toISOString(),
+        onAuthStateChangedEvents: [...prev.onAuthStateChangedEvents, event].slice(-3),
       }));
     };
 
