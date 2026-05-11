@@ -15,6 +15,7 @@ import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
+import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
@@ -249,6 +250,7 @@ export function SimulationPage({
   m8InputFingerprint,
   simulationResultDiagnostics,
   resultConfidence,
+  assumptionModeDiagnostics,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -333,6 +335,7 @@ export function SimulationPage({
   m8InputFingerprint: M8InputFingerprint;
   simulationResultDiagnostics: SimulationResultDiagnostics;
   resultConfidence: ResultConfidence;
+  assumptionModeDiagnostics: AssumptionModeDiagnostics;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -1762,6 +1765,7 @@ export function SimulationPage({
                 simulationRunDiagnostics,
                 simulationResultDiagnostics,
                 resultConfidence,
+                assumptionModeDiagnostics,
               }, null, 2);
               if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(payload);

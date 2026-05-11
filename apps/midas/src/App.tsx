@@ -89,6 +89,7 @@ import {
   type ResultConfidence,
   type SourceStatus,
 } from './domain/model/resultConfidence';
+import { buildAssumptionModeDiagnostics } from './domain/model/assumptionMode';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -4100,6 +4101,13 @@ export default function App() {
 	    simulationRunStatus,
 	  ]);
 
+  const assumptionModeDiagnostics = useMemo(() => buildAssumptionModeDiagnostics({
+    assumptionMode: 'base',
+    sandboxActive: false,
+    localUnsyncedAdjustments: manualCapitalAdjustments.length > 0,
+    structuralAssumptionsSource: 'not_implemented',
+  }), [manualCapitalAdjustments.length]);
+
   const resultConfidence = useMemo<ResultConfidence>(() => {
     const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
     const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
@@ -4128,11 +4136,11 @@ export default function App() {
         simulationConfig: sourceStatusFromSimulationConfig(simulationConfigSource, simulationConfigHydrationStatus),
         instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin),
         fx: sourceStatusFromFx(operativeFxResolution),
-        capitalAdjustments: manualCapitalAdjustments.length > 0 || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
+        capitalAdjustments: assumptionModeDiagnostics.localUnsyncedAdjustments || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
           ? 'local'
           : 'canonical',
         runResult: runResultStatus,
-        sandbox: 'canonical',
+        sandbox: assumptionModeDiagnostics.sandboxActive ? 'sandbox' : 'canonical',
       },
       run: {
         resultDigest: simulationResultDiagnostics.resultDigest,
@@ -4148,9 +4156,10 @@ export default function App() {
         lastRunInputHash,
         lastRenderedResultHash,
       },
-      sandboxActive: false,
+      sandboxActive: assumptionModeDiagnostics.sandboxActive,
     });
   }, [
+    assumptionModeDiagnostics,
     aurumIntegrationStatus,
     engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
     lastAppliedAurumSnapshotSignature,
@@ -4158,7 +4167,6 @@ export default function App() {
     lastRunInputHash,
     m8InputFingerprint.effectiveEngineInputHash,
     m8InputFingerprint.normalizedInput,
-    manualCapitalAdjustments.length,
     operativeFxResolution,
     simulationConfigHydrationStatus,
     simulationConfigSource,
@@ -4435,6 +4443,7 @@ export default function App() {
 	      m8InputFingerprint={m8InputFingerprint}
 	      simulationResultDiagnostics={simulationResultDiagnostics}
 	      resultConfidence={resultConfidence}
+	      assumptionModeDiagnostics={assumptionModeDiagnostics}
 	      officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
