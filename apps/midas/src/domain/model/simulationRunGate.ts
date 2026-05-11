@@ -4,8 +4,8 @@ export type SimulationRunBlockedReason =
   | 'config_loading'
   | 'config_missing'
   | 'config_error'
-  | 'aurum_loading'
-  | 'aurum_refreshing'
+  | 'aurum_snapshot_missing'
+  | 'aurum_snapshot_error'
   | 'instrument_universe_missing'
   | 'cloud_hydration_incomplete';
 
@@ -15,6 +15,7 @@ export type EvaluateSimulationRunGateInput = {
   cloudHydrationReady: boolean;
   simulationConfigHydrationStatus: 'loading' | 'cloud' | 'missing' | 'error';
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
+  aurumSnapshotAvailable: boolean;
   universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
   simWorking: boolean;
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
@@ -38,8 +39,18 @@ export function evaluateSimulationRunGate(input: EvaluateSimulationRunGateInput)
   if (input.simulationConfigHydrationStatus === 'loading') return { status: 'blocked', blockedReason: 'config_loading' };
   if (input.simulationConfigHydrationStatus === 'missing') return { status: 'blocked', blockedReason: 'config_missing' };
   if (input.simulationConfigHydrationStatus === 'error') return { status: 'blocked', blockedReason: 'config_error' };
-  if (input.aurumIntegrationStatus === 'loading') return { status: 'blocked', blockedReason: 'aurum_loading' };
-  if (input.aurumIntegrationStatus === 'refreshing') return { status: 'blocked', blockedReason: 'aurum_refreshing' };
+  if (!input.aurumSnapshotAvailable) {
+    if (
+      input.aurumIntegrationStatus === 'loading'
+      || input.aurumIntegrationStatus === 'refreshing'
+      || input.aurumIntegrationStatus === 'missing'
+    ) {
+      return { status: 'blocked', blockedReason: 'aurum_snapshot_missing' };
+    }
+    if (input.aurumIntegrationStatus === 'error') {
+      return { status: 'blocked', blockedReason: 'aurum_snapshot_error' };
+    }
+  }
   if (!input.cloudHydrationReady && input.universeSourceOrigin === 'none') {
     return { status: 'blocked', blockedReason: 'instrument_universe_missing' };
   }

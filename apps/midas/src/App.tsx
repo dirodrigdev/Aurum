@@ -3619,6 +3619,13 @@ export default function App() {
     simulationRunCompletedAt,
     simulationRunError,
     blockedReason: simulationRunBlockedReason,
+    aurumRefreshing: aurumIntegrationStatus === 'refreshing',
+    aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
+    aurumSnapshotHash: lastAppliedAurumSnapshotSignature,
+    aurumRefreshBlocksRun:
+      aurumIntegrationStatus === 'refreshing' && !lastAppliedAurumSnapshotSignature,
+    aurumRefreshWarningOnly:
+      aurumIntegrationStatus === 'refreshing' && Boolean(lastAppliedAurumSnapshotSignature),
     lastRunInputHash,
     lastRenderedResultHash,
     resultMetricsAvailable: Boolean(heroVisibleResult),
@@ -3632,9 +3639,11 @@ export default function App() {
         ? (lastStableCentral ? 'lastStableCentral' : 'none')
         : 'none',
   }), [
+    aurumIntegrationStatus,
     heroVisibleResult,
     heroVisibleSource,
     heroPhase,
+    lastAppliedAurumSnapshotSignature,
     lastRenderedResultHash,
     lastRunInputHash,
     lastStableCentral,
@@ -3840,6 +3849,7 @@ export default function App() {
       cloudHydrationReady,
       simulationConfigHydrationStatus,
       aurumIntegrationStatus,
+      aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
       universeSourceOrigin,
       simWorking,
       recalcWorkerStatus,
@@ -3880,6 +3890,7 @@ export default function App() {
     simWorking,
     simParams,
     simulationConfigHydrationStatus,
+    lastAppliedAurumSnapshotSignature,
     startRecalculation,
     universeSourceOrigin,
   ]);

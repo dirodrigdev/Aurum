@@ -7,6 +7,7 @@ const base = () => ({
   cloudHydrationReady: true,
   simulationConfigHydrationStatus: 'cloud' as const,
   aurumIntegrationStatus: 'available' as const,
+  aurumSnapshotAvailable: true,
   universeSourceOrigin: 'cache-local' as const,
   simWorking: false,
   recalcWorkerStatus: 'idle' as const,
@@ -73,6 +74,44 @@ const base = () => ({
   });
   assert.equal(result.status, 'blocked');
   if (result.status === 'blocked') assert.equal(result.blockedReason, 'instrument_universe_missing');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumIntegrationStatus: 'refreshing',
+    aurumSnapshotAvailable: true,
+  });
+  assert.equal(result.status, 'should_run');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumIntegrationStatus: 'refreshing',
+    aurumSnapshotAvailable: false,
+  });
+  assert.equal(result.status, 'blocked');
+  if (result.status === 'blocked') assert.equal(result.blockedReason, 'aurum_snapshot_missing');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumIntegrationStatus: 'error',
+    aurumSnapshotAvailable: false,
+  });
+  assert.equal(result.status, 'blocked');
+  if (result.status === 'blocked') assert.equal(result.blockedReason, 'aurum_snapshot_error');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    aurumIntegrationStatus: 'error',
+    aurumSnapshotAvailable: true,
+  });
+  assert.equal(result.status, 'should_run');
 })();
 
 console.log('simulationRunGate tests passed');
