@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { detectAurumIntegrationGoogleRedirectMode, shouldSignOutAnonymousBeforeGoogle } from './firebase';
+import {
+  detectAurumIntegrationGoogleRedirectMode,
+  resolveAurumIntegrationAuthDomain,
+  shouldSignOutAnonymousBeforeGoogle,
+  shouldUseAurumIntegrationAuthProxy,
+} from './firebase';
 
 (() => {
   assert.equal(
@@ -23,6 +28,26 @@ import { detectAurumIntegrationGoogleRedirectMode, shouldSignOutAnonymousBeforeG
   assert.equal(shouldSignOutAnonymousBeforeGoogle({ isAnonymous: true }), true);
   assert.equal(shouldSignOutAnonymousBeforeGoogle({ isAnonymous: false }), false);
   assert.equal(shouldSignOutAnonymousBeforeGoogle(null), false);
+})();
+
+(() => {
+  const effective = resolveAurumIntegrationAuthDomain({
+    configuredAuthDomain: 'aurum-prod-a1918.firebaseapp.com',
+    hostname: 'midas-neon.vercel.app',
+    vercelEnv: 'production',
+  });
+  assert.equal(effective, 'midas-neon.vercel.app');
+})();
+
+(() => {
+  assert.equal(
+    shouldUseAurumIntegrationAuthProxy({
+      configuredAuthDomain: 'aurum-prod-a1918.firebaseapp.com',
+      effectiveAuthDomain: 'midas-neon.vercel.app',
+      hostname: 'midas-neon.vercel.app',
+    }),
+    true,
+  );
 })();
 
 console.log('firebase auth tests passed');

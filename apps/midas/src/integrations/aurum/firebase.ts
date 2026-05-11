@@ -15,9 +15,44 @@ import { getFirestore } from 'firebase/firestore';
 
 const viteEnv = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {});
 
+export function resolveAurumIntegrationAuthDomain(input: {
+  configuredAuthDomain: string | undefined;
+  hostname?: string | null;
+  vercelEnv?: string | null;
+}): string | undefined {
+  const configured = input.configuredAuthDomain?.trim() || undefined;
+  const hostname = input.hostname?.trim() || undefined;
+  const vercelEnv = input.vercelEnv?.trim() || undefined;
+  const isKnownProductionHost = hostname === 'midas-neon.vercel.app';
+  const configuredIsFirebaseHost = Boolean(configured && /\.firebaseapp\.com$/i.test(configured));
+  if (isKnownProductionHost && configuredIsFirebaseHost && vercelEnv === 'production') {
+    return hostname;
+  }
+  return configured;
+}
+
+export function shouldUseAurumIntegrationAuthProxy(input: {
+  configuredAuthDomain: string | undefined;
+  effectiveAuthDomain: string | undefined;
+  hostname?: string | null;
+}): boolean {
+  const configured = input.configuredAuthDomain?.trim() || '';
+  const effective = input.effectiveAuthDomain?.trim() || '';
+  const hostname = input.hostname?.trim() || '';
+  return Boolean(hostname && effective && effective === hostname && configured !== effective);
+}
+
+const runtimeHostname = typeof window !== 'undefined' ? window.location.hostname : undefined;
+const runtimeVercelEnv = viteEnv.VITE_VERCEL_ENV ?? viteEnv.VERCEL_ENV ?? null;
+const effectiveAuthDomain = resolveAurumIntegrationAuthDomain({
+  configuredAuthDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN,
+  hostname: runtimeHostname,
+  vercelEnv: runtimeVercelEnv,
+});
+
 const firebaseConfig = {
   apiKey: viteEnv.VITE_FIREBASE_API_KEY,
-  authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN,
+  authDomain: effectiveAuthDomain,
   projectId: viteEnv.VITE_FIREBASE_PROJECT_ID,
   storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
@@ -31,6 +66,8 @@ const app = isConfigured() ? initializeApp(firebaseConfig) : null;
 
 export const aurumIntegrationConfigured = isConfigured();
 export const aurumFirebaseProjectId = firebaseConfig.projectId ? String(firebaseConfig.projectId) : null;
+export const aurumFirebaseConfiguredAuthDomain = viteEnv.VITE_FIREBASE_AUTH_DOMAIN ? String(viteEnv.VITE_FIREBASE_AUTH_DOMAIN) : null;
+export const aurumFirebaseEffectiveAuthDomain = firebaseConfig.authDomain ? String(firebaseConfig.authDomain) : null;
 export const aurumDb = app ? getFirestore(app) : null;
 export const aurumAuth = app ? getAuth(app) : null;
 const googleProvider = new GoogleAuthProvider();
@@ -68,6 +105,12 @@ export type AurumIntegrationAuthBootstrapDiagnostics = {
   currentUserUid: string | null;
   currentUserIsAnonymous: boolean;
   currentUserProviderIds: string[];
+  firebaseConfigAuthDomain: string | null;
+  effectiveAuthDomain: string | null;
+  expectedAuthHandlerUrl: string | null;
+  currentHostname: string | null;
+  isAuthDomainSameAsAppHost: boolean;
+  usesAuthProxy: boolean;
   signInMethod: string | null;
   persistenceMode: 'browserLocalPersistence' | 'unavailable';
   persistenceReady: boolean;
@@ -187,6 +230,16 @@ function buildBootstrapDiagnostics(input: {
     currentUserUid: input.currentUserAtStart?.uid ?? null,
     currentUserIsAnonymous: Boolean(input.currentUserAtStart?.isAnonymous),
     currentUserProviderIds,
+    firebaseConfigAuthDomain: aurumFirebaseConfiguredAuthDomain,
+    effectiveAuthDomain: aurumFirebaseEffectiveAuthDomain,
+    expectedAuthHandlerUrl: aurumFirebaseEffectiveAuthDomain ? `https://${aurumFirebaseEffectiveAuthDomain}/__/auth/handler` : null,
+    currentHostname: runtimeHostname ?? null,
+    isAuthDomainSameAsAppHost: Boolean(runtimeHostname && aurumFirebaseEffectiveAuthDomain && runtimeHostname === aurumFirebaseEffectiveAuthDomain),
+    usesAuthProxy: shouldUseAurumIntegrationAuthProxy({
+      configuredAuthDomain: aurumFirebaseConfiguredAuthDomain ?? undefined,
+      effectiveAuthDomain: aurumFirebaseEffectiveAuthDomain ?? undefined,
+      hostname: runtimeHostname,
+    }),
     signInMethod: providerIds[0] ?? null,
     persistenceMode: aurumAuth ? 'browserLocalPersistence' : 'unavailable',
     persistenceReady: persistenceState === 'ready',
