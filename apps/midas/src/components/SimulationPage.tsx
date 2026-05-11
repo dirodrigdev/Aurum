@@ -13,6 +13,7 @@ import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../dom
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
+import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { SimulationActionStatus } from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
@@ -246,6 +247,7 @@ export function SimulationPage({
   simulationConfigSource,
   simulationConfigSavedAt,
   m8InputFingerprint,
+  simulationResultDiagnostics,
   simulationActionStatus,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
@@ -329,6 +331,7 @@ export function SimulationPage({
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
   m8InputFingerprint: M8InputFingerprint;
+  simulationResultDiagnostics: SimulationResultDiagnostics;
   simulationActionStatus: SimulationActionStatus;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
@@ -1754,6 +1757,7 @@ export function SimulationPage({
                 diagnosticInput: m8InputFingerprint.diagnosticInput,
                 instrumentUniverseDiagnostics,
                 simulationRunDiagnostics,
+                simulationResultDiagnostics,
               }, null, 2);
               if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(payload);

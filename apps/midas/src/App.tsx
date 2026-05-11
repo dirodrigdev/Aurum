@@ -80,6 +80,10 @@ import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
 import { evaluateSimulationRunGate } from './domain/model/simulationRunGate';
+import {
+  buildSimulationResultDiagnostics,
+  type SimulationResultDiagnostics,
+} from './domain/model/simulationResultDigest';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -473,6 +477,11 @@ function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot
   return typeof fxReference?.source === 'string' && fxReference.source.trim().length > 0
     ? fxReference.source.trim()
     : null;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function deriveVisibleCapitalFromComposition(
@@ -4017,6 +4026,50 @@ export default function App() {
     simulationConfigDiagnostics.projectId,
   ]);
 
+  const simulationResultDiagnostics = useMemo<SimulationResultDiagnostics>(() => {
+    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
+    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
+    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
+    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const resultSeed = finiteNumberOrNull(simResult?.params?.simulation?.seed ?? appliedRecalcSeed);
+    const resultNSim = finiteNumberOrNull(simResult?.params?.simulation?.nSim ?? null);
+    const resultInputHash =
+      simResult && lastRenderedResultHash === m8InputFingerprint.effectiveEngineInputHash
+        ? m8InputFingerprint.effectiveEngineInputHash
+        : lastRenderedResultHash;
+
+    return buildSimulationResultDiagnostics({
+      result: heroVisibleResult,
+      resultInputHash,
+      effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+      resultSeed,
+      expectedSeed,
+      resultNSim,
+      expectedNSim,
+      completedAt: simulationRunCompletedAt,
+      simulationRunStatus,
+      resultMetricsAvailable: Boolean(heroVisibleResult),
+      lastRunInputHash,
+      lastRenderedResultHash,
+      engineVersion: 'm8-central-wrapper',
+      workerVersion: 'primary-recalc-worker',
+      previousResultDigest: null,
+      previousResultInputHash: null,
+      provisionalResultShownBeforeFinal: heroPhase === 'stale',
+    });
+  }, [
+    appliedRecalcSeed,
+    heroPhase,
+    heroVisibleResult,
+    lastRenderedResultHash,
+    lastRunInputHash,
+    m8InputFingerprint.effectiveEngineInputHash,
+    m8InputFingerprint.normalizedInput,
+    simResult,
+    simulationRunCompletedAt,
+    simulationRunStatus,
+  ]);
+
   useEffect(() => {
     const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
     const gate = evaluateSimulationRunGate({
@@ -4280,9 +4333,10 @@ export default function App() {
       universeSourceOrigin={universeSourceOrigin}
       cloudHydrationReady={cloudHydrationReady}
       simulationConfigSource={simulationConfigSource}
-      simulationConfigSavedAt={simulationConfigSavedAt}
-      m8InputFingerprint={m8InputFingerprint}
-      simulationActionStatus={simulationActionStatus}
+	      simulationConfigSavedAt={simulationConfigSavedAt}
+	      m8InputFingerprint={m8InputFingerprint}
+	      simulationResultDiagnostics={simulationResultDiagnostics}
+	      simulationActionStatus={simulationActionStatus}
       officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
