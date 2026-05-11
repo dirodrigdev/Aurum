@@ -216,6 +216,27 @@ const baseInput = (): M8InputFingerprintInput => {
 
 (() => {
   const input = baseInput();
+  input.runtimeDiagnostics = {
+    simulationRunStatus: 'completed',
+    simulationRunStartedAt: '2026-05-11T10:00:00.000Z',
+    simulationRunCompletedAt: '2026-05-11T10:00:02.000Z',
+    blockedReason: null,
+    lastRunInputHash: 'fnv1a-same',
+    lastRenderedResultHash: 'fnv1a-same',
+    resultMetricsAvailable: true,
+    resultSource: 'simResult',
+    staleResult: false,
+    heroMetricsSource: 'simResult',
+  };
+  const fingerprint = buildM8InputFingerprint(input);
+  const runtimeDiagnostics = fingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown>;
+  assert.equal(runtimeDiagnostics.simulationRunStatus, 'completed');
+  assert.equal(runtimeDiagnostics.resultMetricsAvailable, true);
+  assert.equal(runtimeDiagnostics.heroMetricsSource, 'simResult');
+})();
+
+(() => {
+  const input = baseInput();
   input.capitalDerivationDiagnostics = {
     manualLocalAdjustmentsAffectEngine: false,
     manualAdjustmentsCount: 1,

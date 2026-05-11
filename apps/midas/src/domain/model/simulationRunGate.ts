@@ -34,15 +34,14 @@ export function evaluateSimulationRunGate(input: EvaluateSimulationRunGateInput)
   if (!input.hasEffectiveInput || !input.effectiveEngineInputHash) {
     return { status: 'blocked', blockedReason: 'effective_input_missing' };
   }
-  if (!input.cloudHydrationReady) {
-    if (!input.isCanonicalUserSession) return { status: 'blocked', blockedReason: 'auth_not_canonical' };
-    if (input.simulationConfigHydrationStatus === 'loading') return { status: 'blocked', blockedReason: 'config_loading' };
-    if (input.simulationConfigHydrationStatus === 'missing') return { status: 'blocked', blockedReason: 'config_missing' };
-    if (input.simulationConfigHydrationStatus === 'error') return { status: 'blocked', blockedReason: 'config_error' };
-    if (input.aurumIntegrationStatus === 'loading') return { status: 'blocked', blockedReason: 'aurum_loading' };
-    if (input.aurumIntegrationStatus === 'refreshing') return { status: 'blocked', blockedReason: 'aurum_refreshing' };
-    if (input.universeSourceOrigin === 'none') return { status: 'blocked', blockedReason: 'instrument_universe_missing' };
-    return { status: 'blocked', blockedReason: 'cloud_hydration_incomplete' };
+  if (!input.isCanonicalUserSession) return { status: 'blocked', blockedReason: 'auth_not_canonical' };
+  if (input.simulationConfigHydrationStatus === 'loading') return { status: 'blocked', blockedReason: 'config_loading' };
+  if (input.simulationConfigHydrationStatus === 'missing') return { status: 'blocked', blockedReason: 'config_missing' };
+  if (input.simulationConfigHydrationStatus === 'error') return { status: 'blocked', blockedReason: 'config_error' };
+  if (input.aurumIntegrationStatus === 'loading') return { status: 'blocked', blockedReason: 'aurum_loading' };
+  if (input.aurumIntegrationStatus === 'refreshing') return { status: 'blocked', blockedReason: 'aurum_refreshing' };
+  if (!input.cloudHydrationReady && input.universeSourceOrigin === 'none') {
+    return { status: 'blocked', blockedReason: 'instrument_universe_missing' };
   }
   if (input.simWorking || input.recalcWorkerStatus === 'queued' || input.recalcWorkerStatus === 'running') {
     return { status: 'running' };

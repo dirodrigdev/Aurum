@@ -56,4 +56,23 @@ const base = () => ({
   assert.equal(result.status, 'completed');
 })();
 
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    cloudHydrationReady: false,
+    universeSourceOrigin: 'cache-local',
+  });
+  assert.equal(result.status, 'should_run');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
+    cloudHydrationReady: false,
+    universeSourceOrigin: 'none',
+  });
+  assert.equal(result.status, 'blocked');
+  if (result.status === 'blocked') assert.equal(result.blockedReason, 'instrument_universe_missing');
+})();
+
 console.log('simulationRunGate tests passed');

@@ -3621,13 +3621,19 @@ export default function App() {
     blockedReason: simulationRunBlockedReason,
     lastRunInputHash,
     lastRenderedResultHash,
-    resultMetricsAvailable: Boolean(simResult),
+    resultMetricsAvailable: Boolean(heroVisibleResult),
+    resultSource: heroVisibleSource,
+    staleResult:
+      Boolean(lastRenderedResultHash)
+      && lastRenderedResultHash !== lastRunInputHash,
     heroMetricsSource: heroPhase === 'ready'
       ? (simResult ? 'simResult' : 'none')
       : heroPhase === 'stale'
         ? (lastStableCentral ? 'lastStableCentral' : 'none')
         : 'none',
   }), [
+    heroVisibleResult,
+    heroVisibleSource,
     heroPhase,
     lastRenderedResultHash,
     lastRunInputHash,
@@ -3679,18 +3685,15 @@ export default function App() {
       aurumIntegrationStatus === 'unconfigured' ||
       Boolean(lastAppliedAurumSnapshotSignature) ||
       (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
-    const universeReady = Boolean(instrumentUniverseFingerprintHash) || universeSourceOrigin !== 'none';
-    return configReady && aurumReady && universeReady && Boolean(engineFingerprintDiagnostics.effectiveEngineInput);
+    return configReady && aurumReady && Boolean(engineFingerprintDiagnostics.effectiveEngineInput);
   }, [
     aurumIntegrationStatus,
     engineFingerprintDiagnostics.effectiveEngineInput,
-    instrumentUniverseFingerprintHash,
     isCanonicalUserSession,
     lastAppliedAurumSnapshotSignature,
     simulationConfigHash,
     simulationConfigHydrationStatus,
     simulationConfigSource,
-    universeSourceOrigin,
   ]);
   const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
     params: simParams,

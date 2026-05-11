@@ -1719,12 +1719,36 @@ export function SimulationPage({
           <button
             type="button"
             onClick={async () => {
+              const runtimeDiagnostics =
+                (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+              const simulationRunDiagnostics = {
+                simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
+                simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
+                simulationRunCompletedAt: runtimeDiagnostics.simulationRunCompletedAt ?? null,
+                simulationRunError: runtimeDiagnostics.simulationRunError ?? null,
+                blockedReason: runtimeDiagnostics.blockedReason ?? null,
+                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+                lastRunInputHash: runtimeDiagnostics.lastRunInputHash ?? null,
+                lastRenderedResultHash: runtimeDiagnostics.lastRenderedResultHash ?? null,
+                resultMetricsAvailable: runtimeDiagnostics.resultMetricsAvailable ?? false,
+                resultSource: runtimeDiagnostics.resultSource ?? 'none',
+                staleResult:
+                  runtimeDiagnostics.lastRenderedResultHash != null
+                    ? runtimeDiagnostics.lastRenderedResultHash !== m8InputFingerprint.effectiveEngineInputHash
+                    : Boolean(runtimeDiagnostics.staleResult ?? false),
+                heroMetricsSource: runtimeDiagnostics.heroMetricsSource ?? 'none',
+              };
               const payload = JSON.stringify({
                 fingerprint: m8InputFingerprint.hash,
+                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+                diagnosticHash: m8InputFingerprint.diagnosticHash,
+                hashIncludesDiagnostics: m8InputFingerprint.hashIncludesDiagnostics,
                 createdAt: m8InputFingerprint.createdAt,
                 sources: m8InputFingerprint.sources,
                 warnings: m8InputFingerprint.warnings,
                 normalizedInput: m8InputFingerprint.normalizedInput,
+                diagnosticInput: m8InputFingerprint.diagnosticInput,
+                simulationRunDiagnostics,
               }, null, 2);
               if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(payload);
