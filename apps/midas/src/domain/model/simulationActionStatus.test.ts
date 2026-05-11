@@ -4,7 +4,12 @@ import type { M8InputFingerprint } from './m8InputFingerprint';
 
 const baseFingerprint: M8InputFingerprint = {
   hash: 'abc123',
+  effectiveEngineInputHash: 'abc123',
+  diagnosticHash: 'diag123',
+  hashIncludesDiagnostics: false,
+  manualLocalAdjustmentsAffectEngine: false,
   normalizedInput: {},
+  diagnosticInput: {},
   sources: {
     aurumSnapshot: { source: 'cloud' },
     instrumentUniverse: { source: 'cloud' },

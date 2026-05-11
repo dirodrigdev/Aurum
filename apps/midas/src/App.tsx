@@ -3621,8 +3621,39 @@ export default function App() {
     const universeReady = cloudUniverseHydrated || universeSourceOrigin !== 'none';
     return aurumReady && universeReady && cloudSimulationHydrated;
   }, [aurumIntegrationStatus, cloudSimulationHydrated, cloudUniverseHydrated, isCanonicalUserSession, universeSourceOrigin]);
+  const strippedManualParamsForFingerprint = useMemo(
+    () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
+    [manualAdjustmentImpact, simParams],
+  );
+  const engineFingerprintDiagnostics = useMemo(() => {
+    try {
+      const effectiveCapitalResolution = resolveCapital({ params: simParams });
+      const effectiveEngineInput = toM8Input(simParams, effectiveCapitalResolution);
+      const baseCapitalResolution = resolveCapital({ params: strippedManualParamsForFingerprint });
+      const baseEngineInput = toM8Input(strippedManualParamsForFingerprint, baseCapitalResolution);
+      const manualCapitalAdjustmentsClp =
+        Number(effectiveEngineInput.capital_initial_clp ?? 0) - Number(baseEngineInput.capital_initial_clp ?? 0);
+      const manualLocalAdjustmentsAffectEngine = JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput);
+      return {
+        effectiveEngineInput,
+        manualLocalAdjustmentsAffectEngine,
+        capitalFromAurumClp: Number(baseEngineInput.capital_initial_clp ?? 0),
+        manualCapitalAdjustmentsClp,
+        capitalAfterManualAdjustmentsClp: Number(effectiveEngineInput.capital_initial_clp ?? 0),
+      };
+    } catch {
+      return {
+        effectiveEngineInput: null,
+        manualLocalAdjustmentsAffectEngine: false,
+        capitalFromAurumClp: Number(simParams.capitalInitial ?? 0),
+        manualCapitalAdjustmentsClp: 0,
+        capitalAfterManualAdjustmentsClp: Number(simParams.capitalInitial ?? 0),
+      };
+    }
+  }, [manualAdjustmentImpact, simParams, strippedManualParamsForFingerprint]);
   const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
     params: simParams,
+    effectiveEngineInput: engineFingerprintDiagnostics.effectiveEngineInput,
     riskCapitalEnabled,
     riskCapitalEffective,
     weightsSourceMode,
@@ -3691,7 +3722,7 @@ export default function App() {
       returns: simulationConfigSource,
       correlationMatrix: simulationConfigSource,
       activeScenario: simulationConfigSource,
-      capitalInitialClp: manualCapitalAdjustments.length > 0
+      capitalInitialClp: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
         ? 'aurum_snapshot_cloud_plus_manual_local_adjustments'
         : 'aurum_snapshot_cloud',
       instrumentUniverse: universeSourceOrigin === 'firestore' ? 'cloud' : 'local_cache',
@@ -3700,6 +3731,14 @@ export default function App() {
     },
     capitalDerivationDiagnostics: {
       capitalInitialClp: Number(simParams.capitalInitial ?? 0),
+      capitalFromAurumClp: engineFingerprintDiagnostics.capitalFromAurumClp,
+      manualCapitalAdjustmentsClp: engineFingerprintDiagnostics.manualCapitalAdjustmentsClp,
+      capitalAfterManualAdjustmentsClp: engineFingerprintDiagnostics.capitalAfterManualAdjustmentsClp,
+      source: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
+        ? 'aurum_snapshot_cloud_plus_manual_local_adjustments'
+        : 'aurum_snapshot_cloud',
+      enabled: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+      manualLocalAdjustmentsAffectEngine: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
       compositionOptimizableClp: Number(simParams.simulationComposition?.optimizableInvestmentsCLP ?? 0),
       compositionBanksClp: Number(simParams.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
       compositionRiskCapitalClp: Number(simParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0),
@@ -3717,6 +3756,7 @@ export default function App() {
     simParams,
     riskCapitalEnabled,
     riskCapitalEffective,
+    engineFingerprintDiagnostics,
     authDiagnostics,
     authStatus,
     authProvider,

@@ -18,6 +18,7 @@ export type M8InputFingerprintSources = {
 
 export type M8InputFingerprintInput = {
   params: ModelParameters;
+  effectiveEngineInput?: unknown;
   riskCapitalEnabled: boolean;
   riskCapitalEffective: boolean;
   weightsSourceMode: string;
@@ -40,7 +41,12 @@ export type M8InputFingerprintInput = {
 
 export type M8InputFingerprint = {
   hash: string;
+  effectiveEngineInputHash: string;
+  diagnosticHash: string;
+  hashIncludesDiagnostics: false;
+  manualLocalAdjustmentsAffectEngine: boolean;
   normalizedInput: Record<string, unknown>;
+  diagnosticInput: Record<string, unknown>;
   sources: M8InputFingerprintSources;
   warnings: string[];
   createdAt: string;
@@ -148,7 +154,7 @@ function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources
 
 export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8InputFingerprint {
   const composition = input.params.simulationComposition;
-  const normalizedInput = {
+  const normalizedInput: Record<string, unknown> = (input.effectiveEngineInput as Record<string, unknown> | null) ?? {
     capitalInitialClp: Number(input.params.capitalInitial ?? 0),
     capitalSource: input.params.capitalSource ?? 'unknown',
     totalNetWorthClp: Number(composition?.totalNetWorthCLP ?? 0),
@@ -225,6 +231,16 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     },
     simulationBaseMonth: input.params.simulationBaseMonth ?? null,
     ruinThresholdMonths: Number(input.params.ruinThresholdMonths ?? 0),
+    sources: {
+      aurumSnapshotSignature: input.aurumSnapshotSignature,
+      instrumentUniverseHash: input.instrumentUniverseHash,
+      simulationConfigHash: input.simulationConfigHash,
+    },
+  };
+  const manualLocalAdjustmentsAffectEngine = Boolean(
+    input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine,
+  );
+  const diagnosticInput: Record<string, unknown> = {
     flags: {
       weightsSourceMode: input.weightsSourceMode,
       universeSourceOrigin: input.universeSourceOrigin,
@@ -263,17 +279,25 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     warnings.push('Instrument Universe desde cache local: valida sincronización cross-device.');
   }
   const manualAdjustmentsCount = Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0);
-  if (manualAdjustmentsCount > 0) {
+  if (manualLocalAdjustmentsAffectEngine) {
     warnings.push('Capital incluye ajustes manuales locales: valida sincronización antes de comparar dispositivos.');
+  } else if (manualAdjustmentsCount > 0) {
+    warnings.push('Hay ajustes manuales locales residuales, pero no están afectando el input efectivo del motor.');
   }
   if (!input.aurumSnapshotSignature) {
     warnings.push('Snapshot Aurum sin firma cloud aplicada.');
   }
 
-  const hash = hashString(stableSerialize(normalizedInput));
+  const effectiveEngineInputHash = hashString(stableSerialize(normalizedInput));
+  const diagnosticHash = hashString(stableSerialize(diagnosticInput));
   return {
-    hash,
+    hash: effectiveEngineInputHash,
+    effectiveEngineInputHash,
+    diagnosticHash,
+    hashIncludesDiagnostics: false,
+    manualLocalAdjustmentsAffectEngine,
     normalizedInput,
+    diagnosticInput,
     sources,
     warnings,
     createdAt: new Date().toISOString(),
