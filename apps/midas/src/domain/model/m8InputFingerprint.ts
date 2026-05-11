@@ -2,7 +2,7 @@ import type { ModelParameters } from './types';
 import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/simulationConfigPersistence';
 
 export type M8InputFingerprintSource = {
-  source: 'cloud' | 'local_cache' | 'fallback' | 'mixed' | 'unknown';
+  source: 'cloud' | 'bundled' | 'local_cache' | 'fallback' | 'mixed' | 'unknown';
   savedAt?: string | null;
   hash?: string | null;
   detail?: string | null;
@@ -22,7 +22,7 @@ export type M8InputFingerprintInput = {
   riskCapitalEnabled: boolean;
   riskCapitalEffective: boolean;
   weightsSourceMode: string;
-  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
   aurumSnapshotSignature: string | null;
@@ -32,6 +32,7 @@ export type M8InputFingerprintInput = {
   simulationConfigDiagnostics?: SimulationConfigCloudDiagnostics;
   runtimeDiagnostics?: Record<string, unknown>;
   authDiagnostics?: Record<string, unknown>;
+  instrumentUniverseDiagnostics?: Record<string, unknown>;
   fieldSources?: Record<string, unknown>;
   capitalDerivationDiagnostics?: Record<string, unknown>;
   instrumentUniverseSavedAt: string | null;
@@ -107,7 +108,11 @@ function summarizeFutureCapitalEvents(params: ModelParameters) {
 function buildSources(input: M8InputFingerprintInput): M8InputFingerprintSources {
   const mixSource =
     input.weightsSourceMode === 'instrument-universe'
-      ? (input.universeSourceOrigin === 'firestore' ? 'cloud' : 'local_cache')
+      ? input.universeSourceOrigin === 'firestore'
+        ? 'cloud'
+        : input.universeSourceOrigin === 'bundled'
+          ? 'bundled'
+          : 'local_cache'
       : 'fallback';
 
   const fxSource =
@@ -250,6 +255,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     },
     runtimeDiagnostics: input.runtimeDiagnostics ?? {},
     authDiagnostics: input.authDiagnostics ?? {},
+    instrumentUniverseDiagnostics: input.instrumentUniverseDiagnostics ?? {},
     fieldSources: input.fieldSources ?? {},
     cloudConfig: input.simulationConfigDiagnostics ?? null,
     capitalDerivation: input.capitalDerivationDiagnostics ?? {},
@@ -277,6 +283,9 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   }
   if (sources.instrumentUniverse.source === 'local_cache') {
     warnings.push('Instrument Universe desde cache local: valida sincronización cross-device.');
+  }
+  if (sources.instrumentUniverse.source === 'bundled') {
+    warnings.push('Instrument Universe usando versión bundled canónica; válido cross-browser mientras cloud no exista.');
   }
   const manualAdjustmentsCount = Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0);
   if (manualLocalAdjustmentsAffectEngine) {

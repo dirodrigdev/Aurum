@@ -33,13 +33,18 @@ import {
   applyActiveDistributionToParams,
   areWeightsEquivalent,
   deriveOfficialDistributionWeights,
-  deriveInstrumentUniverseDistributionWeights,
   normalizePortfolioWeights,
   resolveEffectiveMixFromUniverseFirst,
   sanitizePortfolioWeights,
   shouldEnterSimulationWeightsMode,
   type WeightsSourceMode,
 } from './domain/model/officialDistribution';
+import {
+  getBundledInstrumentUniverseMetadata,
+  getBundledInstrumentUniverseSnapshot,
+  resolveCanonicalInstrumentUniverseState,
+  type InstrumentUniverseDiagnostics,
+} from './domain/model/canonicalInstrumentUniverse';
 import { resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
@@ -548,23 +553,20 @@ function resolveInitialDistributionState(): {
   weightsSourceMode: WeightsSourceMode;
   activeWeightsSavedAt: string | null;
   fallbackReason: string | null;
-  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
+  instrumentUniverseDiagnostics: InstrumentUniverseDiagnostics;
 } {
-  const universeSnapshot = loadInstrumentUniverseSnapshot();
-  const universeDerived = deriveInstrumentUniverseDistributionWeights({
-    snapshot: universeSnapshot,
-    returns: DEFAULT_PARAMETERS.returns,
-  });
+  const localCacheSnapshot = loadInstrumentUniverseSnapshot();
+  const localCacheMetadata = loadInstrumentUniverseSnapshotMetadata();
   const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
-  const instrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
-  const defaults = normalizePortfolioWeights(DEFAULT_PARAMETERS.weights);
-  const resolved = resolveEffectiveMixFromUniverseFirst({
-    universeWeights: universeDerived?.weights ?? null,
-    instrumentBaseWeights,
-    defaultWeights: defaults,
-    universeSavedAt: universeSnapshot?.savedAt ?? null,
-    instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
-    diagnostics: universeDerived?.diagnostics ?? null,
+  const resolved = resolveCanonicalInstrumentUniverseState({
+    cloudSnapshot: null,
+    cloudMetadata: null,
+    localCacheSnapshot,
+    localCacheMetadata,
+    instrumentBaseSnapshot,
+    returns: DEFAULT_PARAMETERS.returns,
+    defaultWeights: DEFAULT_PARAMETERS.weights,
   });
   return {
     universeWeights: resolved.universeWeights,
@@ -573,7 +575,8 @@ function resolveInitialDistributionState(): {
     weightsSourceMode: resolved.weightsSourceMode,
     activeWeightsSavedAt: resolved.activeWeightsSavedAt,
     fallbackReason: resolved.fallbackReason,
-    universeSourceOrigin: universeSnapshot ? 'cache-local' : 'none',
+    universeSourceOrigin: resolved.universeSourceOrigin,
+    instrumentUniverseDiagnostics: resolved.instrumentUniverseDiagnostics,
   };
 }
 
@@ -696,9 +699,16 @@ export default function App() {
   const [weightsFallbackReason, setWeightsFallbackReason] = useState<string | null>(
     () => initialDistributionRef.current.fallbackReason,
   );
-  const [universeSourceOrigin, setUniverseSourceOrigin] = useState<'firestore' | 'cache-local' | 'none'>(
+  const [universeSourceOrigin, setUniverseSourceOrigin] = useState<'firestore' | 'bundled' | 'cache-local' | 'none'>(
     () => initialDistributionRef.current.universeSourceOrigin,
   );
+  const [instrumentUniverseDiagnostics, setInstrumentUniverseDiagnostics] = useState<InstrumentUniverseDiagnostics>(
+    () => initialDistributionRef.current.instrumentUniverseDiagnostics,
+  );
+  const [cloudUniverseSnapshot, setCloudUniverseSnapshot] = useState<ReturnType<typeof getBundledInstrumentUniverseSnapshot> | null>(null);
+  const [cloudUniverseMetadata, setCloudUniverseMetadata] = useState<ReturnType<typeof getBundledInstrumentUniverseMetadata> | null>(null);
+  const [cloudUniverseReadStatus, setCloudUniverseReadStatus] = useState<'loading' | 'loaded' | 'missing' | 'error'>('loading');
+  const [cloudUniverseErrorMessage, setCloudUniverseErrorMessage] = useState<string | null>(null);
   const [simulationConfigSource, setSimulationConfigSource] = useState<'cloud' | 'local_cache' | 'fallback'>('local_cache');
   const [simulationConfigSavedAt, setSimulationConfigSavedAt] = useState<string | null>(null);
   const [simulationConfigHash, setSimulationConfigHash] = useState<string | null>(null);
@@ -755,7 +765,7 @@ export default function App() {
     onAuthStateChangedEvents: [],
   });
   const [cloudSimulationHydrated, setCloudSimulationHydrated] = useState(false);
-  const [cloudUniverseHydrated, setCloudUniverseHydrated] = useState(false);
+  const [, setCloudUniverseHydrated] = useState(false);
   const hasPendingSnapshot = Boolean(pendingSnapshot && pendingSnapshotSignature);
   const [manualCapitalAdjustments, setManualCapitalAdjustments] = useState<ManualCapitalAdjustment[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -832,29 +842,23 @@ export default function App() {
   }, []);
 
   const refreshOfficialDistribution = useCallback(() => {
-    const universeSnapshot = loadInstrumentUniverseSnapshot();
-    const universeDerived = deriveInstrumentUniverseDistributionWeights({
-      snapshot: universeSnapshot,
-      returns: DEFAULT_PARAMETERS.returns,
-    });
+    const localCacheSnapshot = loadInstrumentUniverseSnapshot();
+    const localCacheMetadata = loadInstrumentUniverseSnapshotMetadata();
     const instrumentBaseSnapshot = loadInstrumentBaseSnapshot();
-    const nextInstrumentBaseWeights = deriveOfficialDistributionWeights(instrumentBaseSnapshot);
-    const resolved = resolveEffectiveMixFromUniverseFirst({
-      universeWeights: universeDerived?.weights ?? null,
-      instrumentBaseWeights: nextInstrumentBaseWeights,
+    const resolved = resolveCanonicalInstrumentUniverseState({
+      cloudSnapshot: cloudUniverseSnapshot,
+      cloudMetadata: cloudUniverseMetadata,
+      localCacheSnapshot,
+      localCacheMetadata,
+      instrumentBaseSnapshot,
+      returns: DEFAULT_PARAMETERS.returns,
       defaultWeights: DEFAULT_PARAMETERS.weights,
-      universeSavedAt: universeSnapshot?.savedAt ?? null,
-      instrumentBaseSavedAt: instrumentBaseSnapshot?.savedAt ?? null,
-      diagnostics: universeDerived?.diagnostics ?? null,
     });
 
     setUniverseWeights(resolved.universeWeights);
     setInstrumentBaseWeights(resolved.instrumentBaseWeights);
-    setUniverseSourceOrigin(
-      resolved.universeWeights
-        ? (instrumentUniverseHydratedFromFirestoreRef.current ? 'firestore' : 'cache-local')
-        : 'none',
-    );
+    setUniverseSourceOrigin(resolved.universeSourceOrigin);
+    setInstrumentUniverseDiagnostics(resolved.instrumentUniverseDiagnostics);
 
     const keepSimulationMode = weightsSourceModeRef.current === 'simulation' && sanitizePortfolioWeights(activeWeightsRef.current);
     if (keepSimulationMode) {
@@ -866,7 +870,7 @@ export default function App() {
     setWeightsSourceMode(resolved.weightsSourceMode);
     setWeightsFallbackReason(resolved.fallbackReason);
     setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
-  }, []);
+  }, [cloudUniverseMetadata, cloudUniverseSnapshot]);
 
   useEffect(() => {
     if (!aurumIntegrationConfigured) {
@@ -969,25 +973,46 @@ export default function App() {
 
   useEffect(() => {
     if (!isCanonicalUserSession) {
+      instrumentUniverseHydratedFromFirestoreRef.current = false;
       setCloudUniverseHydrated(false);
+      setCloudUniverseSnapshot(null);
+      setCloudUniverseMetadata(null);
+      setCloudUniverseReadStatus('error');
+      setCloudUniverseErrorMessage('google_auth_required');
       return;
     }
     let cancelled = false;
+    setCloudUniverseReadStatus('loading');
+    setCloudUniverseErrorMessage(null);
     void hydrateInstrumentUniverseCacheFromFirestore()
       .then((result) => {
         if (cancelled) return;
         if (result.ok) {
           instrumentUniverseHydratedFromFirestoreRef.current = true;
           setCloudUniverseHydrated(true);
+          const metadata = loadInstrumentUniverseSnapshotMetadata();
+          setCloudUniverseSnapshot(result.snapshot);
+          setCloudUniverseMetadata(metadata);
+          setCloudUniverseReadStatus('loaded');
+          setCloudUniverseErrorMessage(null);
           refreshOfficialDistribution();
           window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
           return;
         }
+        instrumentUniverseHydratedFromFirestoreRef.current = false;
         setCloudUniverseHydrated(false);
+        setCloudUniverseSnapshot(null);
+        setCloudUniverseMetadata(null);
+        setCloudUniverseReadStatus(result.reason === 'active_not_found' ? 'missing' : 'error');
+        setCloudUniverseErrorMessage(result.reason);
       })
-      .catch(() => {
-        // Firestore is an authoritative source when available; local cache/fallback chain remains safe.
+      .catch((error: unknown) => {
+        instrumentUniverseHydratedFromFirestoreRef.current = false;
         setCloudUniverseHydrated(false);
+        setCloudUniverseSnapshot(null);
+        setCloudUniverseMetadata(null);
+        setCloudUniverseReadStatus('error');
+        setCloudUniverseErrorMessage(error instanceof Error ? error.message : String(error));
       });
     return () => {
       cancelled = true;
@@ -1155,14 +1180,53 @@ export default function App() {
     window.addEventListener('focus', handleRefresh);
     window.addEventListener('storage', handleRefresh);
     window.addEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
-    window.addEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     return () => {
       window.removeEventListener('focus', handleRefresh);
       window.removeEventListener('storage', handleRefresh);
       window.removeEventListener('midas:instrument-base-updated', handleRefresh as EventListener);
-      window.removeEventListener('midas:instrument-universe-updated', handleRefresh as EventListener);
     };
   }, [refreshOfficialDistribution]);
+
+  useEffect(() => {
+    const handleUniverseUpdated = () => {
+      if (!isCanonicalUserSession) {
+        refreshOfficialDistribution();
+        return;
+      }
+      void hydrateInstrumentUniverseCacheFromFirestore()
+        .then((result) => {
+          if (result.ok) {
+            instrumentUniverseHydratedFromFirestoreRef.current = true;
+            setCloudUniverseHydrated(true);
+            setCloudUniverseSnapshot(result.snapshot);
+            setCloudUniverseMetadata(loadInstrumentUniverseSnapshotMetadata());
+            setCloudUniverseReadStatus('loaded');
+            setCloudUniverseErrorMessage(null);
+          } else {
+            instrumentUniverseHydratedFromFirestoreRef.current = false;
+            setCloudUniverseHydrated(false);
+            setCloudUniverseSnapshot(null);
+            setCloudUniverseMetadata(null);
+            setCloudUniverseReadStatus(result.reason === 'active_not_found' ? 'missing' : 'error');
+            setCloudUniverseErrorMessage(result.reason);
+          }
+          refreshOfficialDistribution();
+        })
+        .catch((error: unknown) => {
+          instrumentUniverseHydratedFromFirestoreRef.current = false;
+          setCloudUniverseHydrated(false);
+          setCloudUniverseSnapshot(null);
+          setCloudUniverseMetadata(null);
+          setCloudUniverseReadStatus('error');
+          setCloudUniverseErrorMessage(error instanceof Error ? error.message : String(error));
+          refreshOfficialDistribution();
+        });
+    };
+    window.addEventListener('midas:instrument-universe-updated', handleUniverseUpdated as EventListener);
+    return () => {
+      window.removeEventListener('midas:instrument-universe-updated', handleUniverseUpdated as EventListener);
+    };
+  }, [isCanonicalUserSession, refreshOfficialDistribution]);
 
   const applyActiveDistribution = useCallback(
     (params: ModelParameters, weightsOverride?: PortfolioWeights): ModelParameters =>
@@ -3589,10 +3653,13 @@ export default function App() {
       manualOverrideFxClp: null,
     }),
   [aurumFxSpotCLP, aurumFxSpotSource, simParams.fx?.clpUsdInitial]);
-  const instrumentUniverseMetadata = useMemo(() => loadInstrumentUniverseSnapshotMetadata(), [weightsSourceMode, universeSourceOrigin]);
+  const instrumentUniverseMetadata = useMemo(
+    () => cloudUniverseMetadata ?? getBundledInstrumentUniverseMetadata(),
+    [cloudUniverseMetadata],
+  );
   const instrumentUniverseSnapshotForFingerprint = useMemo(
-    () => loadInstrumentUniverseSnapshot(),
-    [weightsSourceMode, universeSourceOrigin, cloudUniverseHydrated],
+    () => cloudUniverseSnapshot ?? getBundledInstrumentUniverseSnapshot(),
+    [cloudUniverseSnapshot],
   );
   const instrumentUniverseFingerprintHash = useMemo(() => {
     if (instrumentUniverseMetadata?.checksum) return instrumentUniverseMetadata.checksum;
@@ -3601,6 +3668,14 @@ export default function App() {
     }
     return null;
   }, [instrumentUniverseMetadata?.checksum, instrumentUniverseSnapshotForFingerprint?.rawJson]);
+  const instrumentUniverseDiagnosticsForFingerprint = useMemo(
+    () => ({
+      ...instrumentUniverseDiagnostics,
+      cloudReadStatus: cloudUniverseReadStatus,
+      cloudErrorMessage: cloudUniverseErrorMessage,
+    }),
+    [cloudUniverseErrorMessage, cloudUniverseReadStatus, instrumentUniverseDiagnostics],
+  );
   const runtimeEnvDiagnostics = useMemo(() => {
     const env = import.meta.env as Record<string, string | undefined>;
     return {
@@ -3765,6 +3840,7 @@ export default function App() {
       loginRequired,
       isCanonicalUserSession,
     },
+    instrumentUniverseDiagnostics: instrumentUniverseDiagnosticsForFingerprint,
     fieldSources: {
       F1: simulationConfigSource,
       F2: simulationConfigSource,
@@ -3781,7 +3857,12 @@ export default function App() {
       capitalInitialClp: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
         ? 'aurum_snapshot_cloud_plus_manual_local_adjustments'
         : 'aurum_snapshot_cloud',
-      instrumentUniverse: universeSourceOrigin === 'firestore' ? 'cloud' : 'local_cache',
+      instrumentUniverse:
+        universeSourceOrigin === 'firestore'
+          ? 'cloud'
+          : universeSourceOrigin === 'bundled'
+            ? 'bundled'
+            : 'local_cache',
       aurumSnapshot: lastAppliedAurumSnapshotSignature ? 'cloud' : 'fallback',
       fx: operativeFxResolution.sourceMode ?? 'fallback',
     },
@@ -3820,6 +3901,7 @@ export default function App() {
     authUser?.isAnonymous,
     authUser?.uid,
     isCanonicalUserSession,
+    instrumentUniverseDiagnosticsForFingerprint,
     weightsSourceMode,
     universeSourceOrigin,
     aurumSnapshotLabel,

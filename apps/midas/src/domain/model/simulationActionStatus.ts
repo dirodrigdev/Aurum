@@ -19,7 +19,7 @@ export type BuildSimulationActionStatusInput = {
   authErrorMessage: string | null;
   cloudHydrationReady: boolean;
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
-  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   hasValidSpendingPhases: boolean;
   hasValidCapital: boolean;
@@ -81,13 +81,17 @@ export function buildSimulationActionStatus(input: BuildSimulationActionStatusIn
   if (input.simulationConfigSource !== 'cloud') {
     technicalItems.push('Parámetros de simulación desde cache/fallback.');
   }
-  if (input.universeSourceOrigin !== 'firestore') {
-    technicalItems.push('Mix de instrumentos no viene desde cloud Firestore.');
+  if (input.universeSourceOrigin === 'cache-local') {
+    technicalItems.push('Mix de instrumentos no viene desde una fuente canónica.');
+  }
+  if (input.universeSourceOrigin === 'none') {
+    technicalItems.push('Mix de instrumentos cayó a fallback sin universe canónico.');
   }
   technicalItems.push(...input.fingerprint.warnings);
 
   const reviewItems = technicalItems.filter((item) =>
-    !item.toLowerCase().includes('hydratación cloud incompleta'),
+    !item.toLowerCase().includes('hydratación cloud incompleta')
+    && !item.toLowerCase().includes('instrument universe usando versión bundled canónica'),
   );
 
   if (isBlocked) {
@@ -126,7 +130,9 @@ export function buildSimulationActionStatus(input: BuildSimulationActionStatusIn
       message: 'El resultado sigue usable, pero conviene revisar un punto antes de tomar decisiones importantes.',
       actionItems: limitItems([
         input.universeSourceOrigin !== 'firestore'
-          ? 'Sincronizar mix de instrumentos desde cloud.'
+          ? input.universeSourceOrigin === 'cache-local'
+            ? 'Sincronizar mix de instrumentos desde cloud.'
+            : 'Revisar fallback de mix de instrumentos.'
           : 'Revisar fuente local/fallback activa.',
       ]),
       technicalItems,

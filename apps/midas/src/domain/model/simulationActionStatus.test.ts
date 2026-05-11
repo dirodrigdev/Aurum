@@ -94,6 +94,30 @@ const baseFingerprint: M8InputFingerprint = {
 (() => {
   const status = buildSimulationActionStatus({
     authResolved: true,
+    isCanonicalUserSession: true,
+    authErrorMessage: null,
+    cloudHydrationReady: true,
+    simulationConfigSource: 'cloud',
+    universeSourceOrigin: 'bundled',
+    aurumIntegrationStatus: 'available',
+    hasValidSpendingPhases: true,
+    hasValidCapital: true,
+    hasValidUniverseMix: true,
+    fingerprint: {
+      ...baseFingerprint,
+      sources: {
+        ...baseFingerprint.sources,
+        instrumentUniverse: { source: 'bundled' },
+      },
+      warnings: ['Instrument Universe usando versión bundled canónica; válido cross-browser mientras cloud no exista.'],
+    },
+  });
+  assert.equal(status.level, 'ok');
+})();
+
+(() => {
+  const status = buildSimulationActionStatus({
+    authResolved: true,
     isCanonicalUserSession: false,
     authErrorMessage: null,
     cloudHydrationReady: false,

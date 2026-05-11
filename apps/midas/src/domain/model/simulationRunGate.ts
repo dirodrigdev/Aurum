@@ -16,7 +16,7 @@ export type EvaluateSimulationRunGateInput = {
   simulationConfigHydrationStatus: 'loading' | 'cloud' | 'missing' | 'error';
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotAvailable: boolean;
-  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   simWorking: boolean;
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
   simResultAvailable: boolean;

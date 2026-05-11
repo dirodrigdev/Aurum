@@ -324,7 +324,7 @@ export function SimulationPage({
   operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
   weightsSourceLabel: string;
-  universeSourceOrigin: 'firestore' | 'cache-local' | 'none';
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   cloudHydrationReady: boolean;
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
@@ -1021,7 +1021,9 @@ export function SimulationPage({
     if (weightsSourceMode === 'instrument-universe') {
       return universeSourceOrigin === 'firestore'
         ? 'Instrument Universe · Firestore'
-        : 'Instrument Universe · copia local';
+        : universeSourceOrigin === 'bundled'
+          ? 'Instrument Universe · bundled canónico'
+          : 'Instrument Universe · copia local';
     }
     if (weightsSourceMode === 'instrument-base') return 'Instrument Base · fallback';
     if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
@@ -1288,7 +1290,7 @@ export function SimulationPage({
       : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale'
         ? 'alert'
         : 'warning';
-    const mixLevel = weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore'
+    const mixLevel = weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled')
       ? 'ok'
       : weightsSourceMode === 'instrument-universe'
         ? 'warning'
@@ -1721,6 +1723,8 @@ export function SimulationPage({
             onClick={async () => {
               const runtimeDiagnostics =
                 (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+              const instrumentUniverseDiagnostics =
+                (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
               const simulationRunDiagnostics = {
                 simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
                 simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
@@ -1748,6 +1752,7 @@ export function SimulationPage({
                 warnings: m8InputFingerprint.warnings,
                 normalizedInput: m8InputFingerprint.normalizedInput,
                 diagnosticInput: m8InputFingerprint.diagnosticInput,
+                instrumentUniverseDiagnostics,
                 simulationRunDiagnostics,
               }, null, 2);
               if (navigator.clipboard?.writeText) {
@@ -1915,14 +1920,14 @@ export function SimulationPage({
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
-                  <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                    {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                  <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                    {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                   </span>
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
                 </div>
-                {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
+                {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                   <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                     {weightsSourceMode === 'instrument-universe'
                       ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
@@ -1981,8 +1986,8 @@ export function SimulationPage({
             <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
-                <span style={{ color: weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                  {weightsSourceMode === 'instrument-universe' && universeSourceOrigin === 'firestore' ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                  {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                 </span>
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
@@ -1991,7 +1996,7 @@ export function SimulationPage({
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeWeightSummary}</span>
               </div>
-              {(weightsSourceMode !== 'instrument-universe' || universeSourceOrigin !== 'firestore') && (
+              {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                 <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                   {weightsSourceMode === 'instrument-universe'
                     ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
