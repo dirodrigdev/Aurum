@@ -74,6 +74,7 @@ import {
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
+import { evaluateSimulationRunGate } from './domain/model/simulationRunGate';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -111,6 +112,7 @@ type AurumIntegrationStatus = 'loading' | 'refreshing' | 'available' | 'partial'
 type RecalcWorkerStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 type RecalcOwner = 'apply-aurum' | null;
 type WorkerTraceScope = 'recalc' | 'baseline-optimizer' | 'bootstrap-control';
+type SimulationRunStatus = 'idle' | 'queued' | 'running' | 'completed' | 'error' | 'blocked';
 type RuntimeTimelineEntry = {
   atMs: number;
   event: string;
@@ -660,6 +662,13 @@ export default function App() {
   const [activeRecalcSeed, setActiveRecalcSeed] = useState<number | null>(null);
   const [appliedRecalcSeed, setAppliedRecalcSeed] = useState<number | null>(null);
   const [activeRecalcOwner, setActiveRecalcOwner] = useState<RecalcOwner>(null);
+  const [simulationRunStatus, setSimulationRunStatus] = useState<SimulationRunStatus>('idle');
+  const [simulationRunStartedAt, setSimulationRunStartedAt] = useState<string | null>(null);
+  const [simulationRunCompletedAt, setSimulationRunCompletedAt] = useState<string | null>(null);
+  const [simulationRunError, setSimulationRunError] = useState<string | null>(null);
+  const [simulationRunBlockedReason, setSimulationRunBlockedReason] = useState<string | null>(null);
+  const [lastRunInputHash, setLastRunInputHash] = useState<string | null>(null);
+  const [lastRenderedResultHash, setLastRenderedResultHash] = useState<string | null>(null);
   const [applyAurumHarness, setApplyAurumHarness] = useState<ApplyAurumHarnessState>({
     status: 'idle',
     startedAtMs: null,
@@ -2221,6 +2230,11 @@ export default function App() {
     setSimWorking(true);
     setSimUiError(null);
     setRecalcWorkerStatus('queued');
+    setSimulationRunStatus('queued');
+    setSimulationRunStartedAt(new Date().toISOString());
+    setSimulationRunCompletedAt(null);
+    setSimulationRunError(null);
+    setSimulationRunBlockedReason(null);
     setBootReadyPending(false);
     const hasStableResult = Boolean(lastStableCentralRef.current);
     const shouldStale = hasStableResult && cause !== 'boot-init';
@@ -2268,6 +2282,7 @@ export default function App() {
       };
       try {
         setRecalcWorkerStatus('running');
+        setSimulationRunStatus('running');
         const paramsBase = run();
         const params: ModelParameters = {
           ...paramsBase,
@@ -2290,6 +2305,8 @@ export default function App() {
         setAppliedRecalcRequestId(requestId);
         setAppliedRecalcSeed(simulationSeed);
         setRecalcWorkerStatus('done');
+        setSimulationRunStatus('completed');
+        setSimulationRunCompletedAt(new Date().toISOString());
         appendRuntimeTimeline('sim_result_applied', {
           requestId,
           simulationSeed,
@@ -2325,6 +2342,8 @@ export default function App() {
           setSimUiError(String(error?.message || 'No pude recalcular la simulación.'));
         }
         setRecalcWorkerStatus('error');
+        setSimulationRunStatus('error');
+        setSimulationRunError(String(error?.message || 'No pude recalcular la simulación.'));
         appendRuntimeTimeline('sim_result_error', {
           requestId,
           simulationSeed,
@@ -2348,26 +2367,6 @@ export default function App() {
     summarizeResult,
     runBootstrapControl,
   ]);
-
-  useEffect(() => {
-    if (simulationConfigHydrationStatus !== 'cloud') return;
-    if (simulationConfigSource !== 'cloud') return;
-    if (!simulationConfigHash) return;
-    if (cloudConfigRecalcHashRef.current === simulationConfigHash) return;
-    cloudConfigRecalcHashRef.current = simulationConfigHash;
-    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
-    const base = applySimulationOverrides(simParams, sanitizedOverrides);
-    startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
-  }, [
-    simParams,
-    simOverrides,
-    simResult,
-    simulationConfigHash,
-    simulationConfigHydrationStatus,
-    simulationConfigSource,
-    startRecalculation,
-  ]);
-
   useEffect(() => {
     if (!bootReadyPending) return;
     let raf1 = 0;
@@ -3614,13 +3613,32 @@ export default function App() {
       buildTime: env.VITE_BUILD_TIME ?? null,
     };
   }, []);
-  const cloudHydrationReady = useMemo(() => {
-    if (!isCanonicalUserSession) return false;
-    const aurumReady = aurumIntegrationStatus === 'unconfigured'
-      || (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
-    const universeReady = cloudUniverseHydrated || universeSourceOrigin !== 'none';
-    return aurumReady && universeReady && cloudSimulationHydrated;
-  }, [aurumIntegrationStatus, cloudSimulationHydrated, cloudUniverseHydrated, isCanonicalUserSession, universeSourceOrigin]);
+  const simulationRunDiagnostics = useMemo(() => ({
+    simulationRunStatus,
+    simulationRunStartedAt,
+    simulationRunCompletedAt,
+    simulationRunError,
+    blockedReason: simulationRunBlockedReason,
+    lastRunInputHash,
+    lastRenderedResultHash,
+    resultMetricsAvailable: Boolean(simResult),
+    heroMetricsSource: heroPhase === 'ready'
+      ? (simResult ? 'simResult' : 'none')
+      : heroPhase === 'stale'
+        ? (lastStableCentral ? 'lastStableCentral' : 'none')
+        : 'none',
+  }), [
+    heroPhase,
+    lastRenderedResultHash,
+    lastRunInputHash,
+    lastStableCentral,
+    simResult,
+    simulationRunBlockedReason,
+    simulationRunCompletedAt,
+    simulationRunError,
+    simulationRunStartedAt,
+    simulationRunStatus,
+  ]);
   const strippedManualParamsForFingerprint = useMemo(
     () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
     [manualAdjustmentImpact, simParams],
@@ -3651,6 +3669,29 @@ export default function App() {
       };
     }
   }, [manualAdjustmentImpact, simParams, strippedManualParamsForFingerprint]);
+  const cloudHydrationReady = useMemo(() => {
+    if (!isCanonicalUserSession) return false;
+    const configReady =
+      simulationConfigHydrationStatus === 'cloud' &&
+      simulationConfigSource === 'cloud' &&
+      Boolean(simulationConfigHash);
+    const aurumReady =
+      aurumIntegrationStatus === 'unconfigured' ||
+      Boolean(lastAppliedAurumSnapshotSignature) ||
+      (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
+    const universeReady = Boolean(instrumentUniverseFingerprintHash) || universeSourceOrigin !== 'none';
+    return configReady && aurumReady && universeReady && Boolean(engineFingerprintDiagnostics.effectiveEngineInput);
+  }, [
+    aurumIntegrationStatus,
+    engineFingerprintDiagnostics.effectiveEngineInput,
+    instrumentUniverseFingerprintHash,
+    isCanonicalUserSession,
+    lastAppliedAurumSnapshotSignature,
+    simulationConfigHash,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+    universeSourceOrigin,
+  ]);
   const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
     params: simParams,
     effectiveEngineInput: engineFingerprintDiagnostics.effectiveEngineInput,
@@ -3665,7 +3706,10 @@ export default function App() {
     simulationConfigSavedAt,
     simulationConfigHash,
     simulationConfigDiagnostics,
-    runtimeDiagnostics: runtimeEnvDiagnostics,
+    runtimeDiagnostics: {
+      ...runtimeEnvDiagnostics,
+      ...simulationRunDiagnostics,
+    },
     authDiagnostics: {
       authStatus,
       authUid: authUser?.uid ?? null,
@@ -3774,6 +3818,7 @@ export default function App() {
     simulationConfigHash,
     simulationConfigDiagnostics,
     runtimeEnvDiagnostics,
+    simulationRunDiagnostics,
     manualAdjustmentImpact,
     manualCapitalAdjustments.length,
     loginRequired,
@@ -3782,6 +3827,58 @@ export default function App() {
     operativeFxResolution.sourceMode,
     cloudHydrationReady,
     simulationConfigDiagnostics.projectId,
+  ]);
+
+  useEffect(() => {
+    const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
+    const gate = evaluateSimulationRunGate({
+      isCanonicalUserSession,
+      hasEffectiveInput: Boolean(engineFingerprintDiagnostics.effectiveEngineInput),
+      cloudHydrationReady,
+      simulationConfigHydrationStatus,
+      aurumIntegrationStatus,
+      universeSourceOrigin,
+      simWorking,
+      recalcWorkerStatus,
+      simResultAvailable: Boolean(simResult),
+      effectiveEngineInputHash: effectiveHash,
+      lastRenderedResultHash,
+      lastRequestedRunHash: lastRunInputHash,
+    });
+    if (gate.status === 'blocked') {
+      setSimulationRunStatus('blocked');
+      setSimulationRunBlockedReason(gate.blockedReason);
+      return;
+    }
+    if (gate.status === 'running') return;
+    if (gate.status === 'completed') {
+      setSimulationRunStatus('completed');
+      setSimulationRunBlockedReason(null);
+      return;
+    }
+    if (cloudConfigRecalcHashRef.current === effectiveHash && simResult) return;
+    if (!effectiveHash) return;
+    setSimulationRunBlockedReason(null);
+    cloudConfigRecalcHashRef.current = effectiveHash;
+    setLastRunInputHash(effectiveHash);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
+    const base = applySimulationOverrides(simParams, sanitizedOverrides);
+    startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
+  }, [
+    aurumIntegrationStatus,
+    cloudHydrationReady,
+    engineFingerprintDiagnostics.effectiveEngineInput,
+    isCanonicalUserSession,
+    lastRenderedResultHash,
+    m8InputFingerprint.effectiveEngineInputHash,
+    recalcWorkerStatus,
+    simOverrides,
+    simResult,
+    simWorking,
+    simParams,
+    simulationConfigHydrationStatus,
+    startRecalculation,
+    universeSourceOrigin,
   ]);
   const simulationActionStatus = useMemo(() => buildSimulationActionStatus({
     authResolved,
@@ -3810,6 +3907,10 @@ export default function App() {
     weightsSourceMode,
     m8InputFingerprint,
   ]);
+  useEffect(() => {
+    if (!simResult) return;
+    setLastRenderedResultHash(m8InputFingerprint.effectiveEngineInputHash);
+  }, [m8InputFingerprint.effectiveEngineInputHash, simResult]);
   const authGateStatus = useMemo(() => buildAuthGateStatus({
     authStatus,
     authResolved,
