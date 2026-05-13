@@ -816,6 +816,28 @@ export function SimulationPage({
   const confidenceReasons = resultConfidence.reasons
     .filter((item) => item.severity !== 'info')
     .slice(0, 2);
+  const confidenceActionItems = useMemo(() => {
+    if (resultConfidence.status === 'canonical') return [] as string[];
+    const actions: string[] = [];
+    const pushAction = (text: string) => {
+      if (!actions.includes(text) && actions.length < 3) actions.push(text);
+    };
+    for (const reason of resultConfidence.reasons) {
+      if (reason.code === 'result_digest_missing') pushAction('Esperar corrida final con resultDigest válido.');
+      else if (reason.code === 'run_not_completed') pushAction('Esperar que la corrida termine (estado completed).');
+      else if (reason.code === 'result_input_hash_mismatch') pushAction('Verificar que resultInputHash coincida con effectiveEngineInputHash.');
+      else if (reason.code === 'result_seed_mismatch' || reason.code === 'result_nsim_mismatch') pushAction('Verificar seed y nSim aplicados en el input efectivo.');
+      else if (reason.code.startsWith('simulationConfig_')) pushAction('Revisar configuración cloud de simulación y su carga canónica.');
+      else if (reason.code.startsWith('aurumSnapshot_')) pushAction('Revisar snapshot Aurum aplicado y su estado de sincronización.');
+      else if (reason.code.startsWith('fx_')) pushAction('Revisar la fuente FX aplicada y su disponibilidad canónica.');
+      else if (reason.code.startsWith('instrumentUniverse_')) pushAction('Sincronizar Instrument Universe canónico para llegar a OK.');
+      else if (reason.code.startsWith('capitalAdjustments_')) pushAction('Limpiar o sincronizar ajustes locales de capital.');
+      else if (reason.code === 'sandbox_active' || reason.code.startsWith('sandbox_')) pushAction('Salir del modo temporal/sandbox para volver al modelo base.');
+      if (actions.length >= 3) break;
+    }
+    if (actions.length === 0) pushAction('Revisar fuentes críticas y reintentar corrida final auditada.');
+    return actions;
+  }, [resultConfidence]);
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1489,7 +1511,9 @@ export function SimulationPage({
           </span>
         </div>
         <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 34 : 38, fontWeight: 850, lineHeight: 1 }}>
-          {success40 !== null ? formatPct(success40) : '—'}
+          <span style={{ opacity: resultConfidence.status === 'not_decisional' ? 0.62 : 1 }}>
+            {success40 !== null ? formatPct(success40) : '—'}
+          </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6 }}>
           {[
@@ -1508,9 +1532,24 @@ export function SimulationPage({
 	        </div>
         {confidenceReasons.length > 0 && (
           <div style={{ display: 'grid', gap: 3 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Por qué
+            </div>
             {confidenceReasons.map((item) => (
               <div key={`${item.code}:${item.source}`} style={{ color: T.textSecondary, fontSize: 11 }}>
                 • {item.message}
+              </div>
+            ))}
+          </div>
+        )}
+        {resultConfidence.status !== 'canonical' && confidenceActionItems.length > 0 && (
+          <div style={{ display: 'grid', gap: 3 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Qué falta
+            </div>
+            {confidenceActionItems.map((item) => (
+              <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
+                • {item}
               </div>
             ))}
           </div>
