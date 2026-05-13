@@ -813,9 +813,47 @@ export function SimulationPage({
       : resultConfidence.status === 'not_decisional'
         ? T.negative
         : T.warning;
-  const confidenceReasons = resultConfidence.reasons
-    .filter((item) => item.severity !== 'info')
-    .slice(0, 2);
+  const confidenceReasons = useMemo(() => {
+    const mapReason = (reason: { code: string; message: string }) => {
+      const code = reason.code;
+      if (code === 'result_not_final' || code === 'run_not_completed') {
+        return 'La corrida final todavía no está lista para el input actual.';
+      }
+      if (code === 'result_seed_mismatch' || code === 'result_nsim_mismatch') {
+        return 'El número visible puede pertenecer a una corrida anterior o intermedia.';
+      }
+      if (code === 'result_input_hash_mismatch' || code === 'last_rendered_hash_mismatch') {
+        return 'El resultado no corresponde exactamente al input M8 actual.';
+      }
+      if (code === 'result_digest_missing') {
+        return 'El resultado no tiene comprobante de ejecución auditado.';
+      }
+      if (code.startsWith('instrumentUniverse_')) {
+        return 'El mix de instrumentos está usando la versión interna de respaldo.';
+      }
+      if (code.startsWith('capitalAdjustments_')) {
+        return 'Hay ajustes locales de capital no sincronizados.';
+      }
+      if (code.startsWith('aurumSnapshot_')) {
+        return 'Aurum no está aplicado desde una fuente cloud final.';
+      }
+      if (code.startsWith('fx_')) {
+        return 'La fuente FX aplicada está en modo de respaldo.';
+      }
+      if (code.startsWith('simulationConfig_')) {
+        return 'La configuración cloud de simulación aún no está completamente usable.';
+      }
+      if (code === 'sandbox_active' || code.startsWith('sandbox_')) {
+        return 'Estás viendo una simulación temporal y no el modelo base canónico.';
+      }
+      return reason.message;
+    };
+    return resultConfidence.reasons
+      .filter((item) => item.severity !== 'info')
+      .map((item) => mapReason(item))
+      .filter((item, index, arr) => arr.indexOf(item) === index)
+      .slice(0, 2);
+  }, [resultConfidence.reasons]);
   const confidenceActionItems = useMemo(() => {
     if (resultConfidence.status === 'canonical') return [] as string[];
     const actions: string[] = [];
@@ -823,21 +861,77 @@ export function SimulationPage({
       if (!actions.includes(text) && actions.length < 3) actions.push(text);
     };
     for (const reason of resultConfidence.reasons) {
-      if (reason.code === 'result_digest_missing') pushAction('Esperar corrida final con resultDigest válido.');
-      else if (reason.code === 'run_not_completed') pushAction('Esperar que la corrida termine (estado completed).');
-      else if (reason.code === 'result_input_hash_mismatch') pushAction('Verificar que resultInputHash coincida con effectiveEngineInputHash.');
-      else if (reason.code === 'result_seed_mismatch' || reason.code === 'result_nsim_mismatch') pushAction('Verificar seed y nSim aplicados en el input efectivo.');
-      else if (reason.code.startsWith('simulationConfig_')) pushAction('Revisar configuración cloud de simulación y su carga canónica.');
-      else if (reason.code.startsWith('aurumSnapshot_')) pushAction('Revisar snapshot Aurum aplicado y su estado de sincronización.');
-      else if (reason.code.startsWith('fx_')) pushAction('Revisar la fuente FX aplicada y su disponibilidad canónica.');
-      else if (reason.code.startsWith('instrumentUniverse_')) pushAction('Sincronizar Instrument Universe canónico para llegar a OK.');
-      else if (reason.code.startsWith('capitalAdjustments_')) pushAction('Limpiar o sincronizar ajustes locales de capital.');
-      else if (reason.code === 'sandbox_active' || reason.code.startsWith('sandbox_')) pushAction('Salir del modo temporal/sandbox para volver al modelo base.');
+      if (reason.code === 'result_not_final' || reason.code === 'run_not_completed') {
+        pushAction('No requiere acción manual; la app debería actualizarlo sola al terminar el cálculo.');
+      } else if (
+        reason.code === 'result_input_hash_mismatch' ||
+        reason.code === 'last_rendered_hash_mismatch' ||
+        reason.code === 'result_seed_mismatch' ||
+        reason.code === 'result_nsim_mismatch'
+      ) {
+        pushAction('Recalcular con el input actual.');
+        pushAction('Si persiste, recarga y copia el diagnóstico técnico.');
+      } else if (reason.code === 'result_digest_missing') {
+        pushAction('Recalcular hasta obtener un resultado auditado.');
+        pushAction('Si persiste, copia el diagnóstico técnico.');
+      } else if (reason.code.startsWith('simulationConfig_')) {
+        pushAction('Espera sincronización cloud. Si no carga, vuelve a iniciar sesión.');
+      } else if (reason.code.startsWith('aurumSnapshot_')) {
+        pushAction('Aplicar la nueva base Aurum disponible.');
+      } else if (reason.code.startsWith('fx_')) {
+        pushAction('No requiere acción manual; usa este resultado con salvedades mientras se estabiliza la fuente FX.');
+      } else if (reason.code.startsWith('instrumentUniverse_')) {
+        pushAction('Puedes usarlo con salvedades; para llegar a OK falta publicar/sincronizar Instrument Universe cloud.');
+      } else if (reason.code.startsWith('capitalAdjustments_')) {
+        pushAction('Sincroniza esos ajustes o descártalos para volver al Modelo Base.');
+        pushAction('Pendiente estructural: falta una acción directa en la UI para gestionarlos.');
+      } else if (reason.code === 'sandbox_active' || reason.code.startsWith('sandbox_')) {
+        pushAction('Guarda el escenario o vuelve al Modelo Base.');
+      }
       if (actions.length >= 3) break;
     }
-    if (actions.length === 0) pushAction('Revisar fuentes críticas y reintentar corrida final auditada.');
+    if (actions.length === 0) pushAction('No requiere acción manual; usa “Ver detalle técnico” si el estado no cambia.');
     return actions;
   }, [resultConfidence]);
+  const heroConfidenceBlock = useMemo(() => {
+    if (resultConfidence.status === 'canonical') {
+      return (
+        <span style={{ color: T.textSecondary, fontSize: 12 }}>
+          {resultConfidence.message}
+        </span>
+      );
+    }
+
+    return (
+      <span style={{ display: 'grid', gap: 6 }}>
+        <span style={{ color: T.textSecondary, fontSize: 12 }}>{resultConfidence.message}</span>
+        {confidenceReasons.length > 0 && (
+          <span style={{ display: 'grid', gap: 3 }}>
+            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Por qué
+            </span>
+            {confidenceReasons.map((item) => (
+              <span key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
+                • {item}
+              </span>
+            ))}
+          </span>
+        )}
+        {confidenceActionItems.length > 0 && (
+          <span style={{ display: 'grid', gap: 3 }}>
+            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Qué hacer
+            </span>
+            {confidenceActionItems.map((item) => (
+              <span key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
+                • {item}
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    );
+  }, [T.textMuted, T.textSecondary, confidenceActionItems, confidenceReasons, resultConfidence.message, resultConfidence.status]);
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1479,82 +1573,240 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: isMobileViewport ? '10px 10px' : '12px 14px',
-          display: 'grid',
-          gap: 8,
-        }}
-      >
-        <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          {heroQuestion}
+      <div style={{ position: 'relative' }}>
+        <style>{`
+          @keyframes midasPulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.25); opacity: 1; }
+          }
+        `}</style>
+        <div style={{ opacity: resultConfidence.status === 'not_decisional' ? 0.72 : 1 }}>
+          <HeroCard
+            label={heroQuestion.toUpperCase()}
+            valuePct={showBootPlaceholder ? null : heroProbSuccess}
+            stale={showGhostResult}
+            subtitle={
+              simUiState === 'error'
+                ? `Error de recálculo: ${simUiError || 'reintenta'}`
+                : heroPhase !== 'ready'
+                ? 'Calculando simulación...'
+                : displayResult
+                  ? (
+                    <span style={{ display: 'grid', gap: 8 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span
+                          style={{
+                            border: `1px solid ${confidenceTone}`,
+                            color: confidenceTone,
+                            borderRadius: 999,
+                            padding: '2px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {resultConfidence.label}
+                        </span>
+                        <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                          {resultConfidence.headline}
+                        </span>
+                      </span>
+                      {heroConfidenceBlock}
+                      <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
+                      <span
+                        style={{
+                          display: 'grid',
+                          gap: 3,
+                          gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                        }}
+                      >
+                        {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
+                          <span
+                            key={item.label}
+                            style={{
+                              display: 'grid',
+                              gap: 1,
+                              padding: '4px 6px',
+                              borderRadius: 8,
+                              background: T.surfaceEl,
+                              border: `1px solid ${T.border}`,
+                            }}
+                          >
+                            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+                              {item.label}
+                            </span>
+                            <span>{item.detail}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  )
+                  : 'Corre una simulación para ver resultados'
+            }
+            footerContent={null}
+            mode={simActive ? 'sim' : 'real'}
+            chips={[
+              { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
+              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
+              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
+              {
+                id: 'capital',
+                value: formatCapital(effectiveCapital),
+                note: hasFutureAdjustments ? '+ futuros' : undefined,
+                onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
+                accessory: (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMovementForm();
+                      openCapitalLedger();
+                    }}
+                    style={{
+                      background: T.primary,
+                      border: 'none',
+                      color: '#fff',
+                      borderRadius: 999,
+                      padding: '4px 8px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    +
+                  </button>
+                ),
+              },
+            ]}
+          />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span
+        {showSimToast && (
+          <div
             style={{
-              border: `1px solid ${confidenceTone}`,
-              color: confidenceTone,
-              borderRadius: 999,
-              padding: '2px 8px',
-              fontSize: 10,
-              fontWeight: 800,
-              whiteSpace: 'nowrap',
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 6,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: '8px 12px',
+              color: T.textSecondary,
+              fontSize: 11,
             }}
           >
-            {resultConfidence.label}
-          </span>
-          <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-            {resultConfidence.headline}
-          </span>
-        </div>
-        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 34 : 38, fontWeight: 850, lineHeight: 1 }}>
-          <span style={{ opacity: resultConfidence.status === 'not_decisional' ? 0.62 : 1 }}>
-            {success40 !== null ? formatPct(success40) : '—'}
-          </span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6 }}>
-          {[
-            ['Ruina 40a', formatPct(probRuin40)],
-            ['Casa', formatPct(houseSalePct)],
-            ['MaxDD P50', formatPct(drawdownP50)],
-          ].map(([label, value]) => (
-            <div key={label} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 7px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>{label}</div>
-              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{value}</div>
-            </div>
-          ))}
-	        </div>
-	        <div style={{ color: T.textSecondary, fontSize: 12 }}>
-	          {resultConfidence.message}
-	        </div>
-        {confidenceReasons.length > 0 && (
-          <div style={{ display: 'grid', gap: 3 }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Por qué
-            </div>
-            {confidenceReasons.map((item) => (
-              <div key={`${item.code}:${item.source}`} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item.message}
-              </div>
-            ))}
+            Esta simulación no se guardará.
           </div>
         )}
-        {resultConfidence.status !== 'canonical' && confidenceActionItems.length > 0 && (
-          <div style={{ display: 'grid', gap: 3 }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Qué falta
+        {activeChip && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: showSimToast ? 42 : 6,
+              width: 320,
+              background: 'rgba(21, 25, 34, 0.98)',
+              border: `1px solid rgba(91, 140, 255, 0.26)`,
+              borderRadius: 12,
+              padding: 12,
+              boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
+              backdropFilter: 'blur(10px)',
+              zIndex: 40,
+            }}
+          >
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
+              {activeChip === 'return'
+                ? 'Retorno promedio (%)'
+                : activeChip === 'years'
+                  ? 'Horizonte (años)'
+                  : 'Capital inicial (CLP)'}
             </div>
-            {confidenceActionItems.map((item) => (
-              <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <input
+                type="number"
+                value={draftValue}
+                onChange={(e) => setDraftValue(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  color: T.textPrimary,
+                }}
+              />
+              <button
+                onClick={applyChip}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Aplicar
+              </button>
+              <button
+                onClick={() => setActiveChip(null)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            {(activeChip === 'return' || activeChip === 'years') && (
+              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => restoreFieldFromScenario(activeChip)}
+                  disabled={
+                    !simOverrides?.active ||
+                    (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                    (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                  }
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    color: T.textSecondary,
+                    borderRadius: 10,
+                    padding: '6px 10px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor:
+                      !simOverrides?.active ||
+                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                        ? 'not-allowed'
+                        : 'pointer',
+                    opacity:
+                      !simOverrides?.active ||
+                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
+                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
+                        ? 0.6
+                        : 1,
+                  }}
+                >
+                  Volver al valor del escenario
+                </button>
               </div>
-            ))}
+            )}
           </div>
         )}
-	      </div>
+        {simWorking && simActive && (
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
+            Recalculando simulación...
+          </div>
+        )}
+      </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
@@ -2299,219 +2551,6 @@ export function SimulationPage({
       </div>
       </div>
       </details>
-      <div style={{ position: 'relative' }}>
-        <style>{`
-          @keyframes midasPulse {
-            0%, 100% { transform: scale(1); opacity: 0.5; }
-            50% { transform: scale(1.25); opacity: 1; }
-          }
-        `}</style>
-        <HeroCard
-          label="¿LLEGARÁS AL AÑO 40?"
-          valuePct={showBootPlaceholder ? null : heroProbSuccess}
-          stale={showGhostResult}
-          subtitle={
-            simUiState === 'error'
-              ? `Error de recálculo: ${simUiError || 'reintenta'}`
-              : heroPhase !== 'ready'
-              ? 'Calculando simulación...'
-              : displayResult
-                ? (
-                  <span style={{ display: 'grid', gap: 4 }}>
-                    <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
-                    <span
-                      style={{
-                        display: 'grid',
-                        gap: 3,
-                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-                      }}
-                    >
-                      {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
-                        <span
-                          key={item.label}
-                          style={{
-                            display: 'grid',
-                            gap: 1,
-                            padding: '4px 6px',
-                            borderRadius: 8,
-                            background: T.surfaceEl,
-                            border: `1px solid ${T.border}`,
-                          }}
-                        >
-                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
-                            {item.label}
-                          </span>
-                          <span>{item.detail}</span>
-                        </span>
-                      ))}
-                    </span>
-                  </span>
-                )
-                : 'Corre una simulación para ver resultados'
-          }
-          footerContent={null}
-          mode={simActive ? 'sim' : 'real'}
-          chips={[
-            { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
-            { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
-            { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
-            {
-              id: 'capital',
-              value: formatCapital(effectiveCapital),
-              note: hasFutureAdjustments ? '+ futuros' : undefined,
-              onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
-              accessory: (
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetMovementForm();
-                    openCapitalLedger();
-                  }}
-                  style={{
-                    background: T.primary,
-                    border: 'none',
-                    color: '#fff',
-                    borderRadius: 999,
-                    padding: '4px 8px',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  +
-                </button>
-              ),
-            },
-          ]}
-        />
-        {showSimToast && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: 6,
-              background: T.surfaceEl,
-              border: `1px solid ${T.border}`,
-              borderRadius: 10,
-              padding: '8px 12px',
-              color: T.textSecondary,
-              fontSize: 11,
-            }}
-          >
-            Esta simulación no se guardará.
-          </div>
-        )}
-        {activeChip && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: showSimToast ? 42 : 6,
-              width: 320,
-              background: 'rgba(21, 25, 34, 0.98)',
-              border: `1px solid rgba(91, 140, 255, 0.26)`,
-              borderRadius: 12,
-              padding: 12,
-              boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
-              backdropFilter: 'blur(10px)',
-              zIndex: 40,
-            }}
-          >
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
-              {activeChip === 'return'
-                ? 'Retorno promedio (%)'
-                : activeChip === 'years'
-                  ? 'Horizonte (años)'
-                  : 'Capital inicial (CLP)'}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <input
-                type="number"
-                value={draftValue}
-                onChange={(e) => setDraftValue(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  color: T.textPrimary,
-                }}
-              />
-              <button
-                onClick={applyChip}
-                style={{
-                  background: T.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                Aplicar
-              </button>
-              <button
-                onClick={() => setActiveChip(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-            {(activeChip === 'return' || activeChip === 'years') && (
-              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={() => restoreFieldFromScenario(activeChip)}
-                  disabled={
-                    !simOverrides?.active ||
-                    (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                    (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                  }
-                  style={{
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    borderRadius: 10,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 'not-allowed'
-                        : 'pointer',
-                    opacity:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 0.6
-                        : 1,
-                  }}
-                >
-                  Volver al valor del escenario
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {simWorking && simActive && (
-          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
-            Recalculando simulación...
-          </div>
-        )}
-      </div>
       {!hideResultBlocks && displayResult && (
         <details
           open={keyMetricsOpen}
