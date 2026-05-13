@@ -829,7 +829,7 @@ export function SimulationPage({
         return 'El resultado no tiene comprobante de ejecución auditado.';
       }
       if (code.startsWith('instrumentUniverse_')) {
-        return 'El mix de instrumentos está usando la versión interna de respaldo.';
+        return 'El mix aperturado por instrumento usa una versión interna de respaldo.';
       }
       if (code.startsWith('capitalAdjustments_')) {
         return 'Hay ajustes locales de capital no sincronizados.';
@@ -881,7 +881,7 @@ export function SimulationPage({
       } else if (reason.code.startsWith('fx_')) {
         pushAction('No requiere acción manual; usa este resultado con salvedades mientras se estabiliza la fuente FX.');
       } else if (reason.code.startsWith('instrumentUniverse_')) {
-        pushAction('Puedes usarlo con salvedades; para llegar a OK falta publicar/sincronizar Instrument Universe cloud.');
+        pushAction('Puedes usarlo con salvedades. Para llegar a OK falta sincronizar el mix aperturado por instrumento desde cloud como fuente oficial.');
       } else if (reason.code.startsWith('capitalAdjustments_')) {
         pushAction('Sincroniza esos ajustes o descártalos para volver al Modelo Base.');
         pushAction('Pendiente estructural: falta una acción directa en la UI para gestionarlos.');
@@ -1150,14 +1150,14 @@ export function SimulationPage({
   const mixTrustSourceLabel = useMemo(() => {
     if (weightsSourceMode === 'instrument-universe') {
       return universeSourceOrigin === 'firestore'
-        ? 'Instrument Universe · Firestore'
+        ? 'Mix aperturado por instrumento · cloud'
         : universeSourceOrigin === 'bundled'
-          ? 'Instrument Universe · bundled canónico'
-          : 'Instrument Universe · copia local';
+          ? 'Mix aperturado por instrumento · versión interna de respaldo'
+          : 'Mix aperturado por instrumento · copia local';
     }
-    if (weightsSourceMode === 'instrument-base') return 'Instrument Base · fallback';
-    if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
-    if (weightsSourceMode === 'simulation') return 'Override manual temporal';
+    if (weightsSourceMode === 'instrument-base') return 'Mix por instrumento · respaldo';
+    if (weightsSourceMode === 'system-defaults') return 'Mix por instrumento · defaults del sistema';
+    if (weightsSourceMode === 'simulation') return 'Mix agregado M8 · override temporal';
     return weightsSourceLabel;
   }, [universeSourceOrigin, weightsSourceLabel, weightsSourceMode]);
   const riskFxMismatchPct = useMemo(() => {
@@ -1217,13 +1217,13 @@ export function SimulationPage({
     else mixSeverity = 'Aviso';
     const mixFallbackName =
       weightsSourceMode === 'instrument-base'
-        ? 'Base instrumental real'
+        ? 'Mix por instrumento (respaldo)'
         : weightsSourceMode === 'system-defaults'
-          ? 'Defaults del sistema'
+          ? 'Mix por instrumento (defaults del sistema)'
           : weightsSourceMode === 'simulation'
-            ? 'Override manual temporal'
+            ? 'Mix agregado M8 (override temporal)'
             : weightsSourceMode === 'json-official'
-              ? 'Base instrumental real'
+              ? 'Mix por instrumento (respaldo)'
               : weightsSourceMode === 'last-known-official'
                 ? 'Último oficial válido'
                 : 'Sin respaldo usable';
@@ -1240,11 +1240,11 @@ export function SimulationPage({
                 ? 'lastKnownOfficialWeights'
                 : 'weightsSourceMode=error';
     const mixReason = weightsSourceMode === 'instrument-universe'
-      ? 'Se usa la fuente principal porque Instrument Universe está disponible y se pudo derivar a sleeves de Simulación.'
+      ? 'Se usa la fuente principal porque el mix aperturado por instrumento está disponible y se pudo derivar al mix agregado M8.'
       : weightsSourceMode === 'simulation'
-        ? 'Se usa override manual temporal de Simulación; no reemplaza la fuente estructural.'
+        ? 'Se usa override manual temporal en el mix agregado M8; no reemplaza la fuente estructural.'
         : weightsSourceMode === 'instrument-base'
-          ? 'Se usa respaldo porque Instrument Universe no está disponible o no alcanza para derivar el mix.'
+          ? 'Se usa respaldo porque el mix aperturado por instrumento no está disponible o no alcanza para derivar el mix agregado M8.'
           : mixDiffPp <= 0.5
             ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
             : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
@@ -1317,13 +1317,13 @@ export function SimulationPage({
       },
       {
         id: 'distribution',
-        name: 'Distribución / mix',
+        name: 'Mix aperturado por instrumento',
         severity: mixSeverity,
         usingNow: `${weightsSourceLabel} (${weightsSourceMode})`,
         valueApplied: activeWeightSummary,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
         principal: {
-          human: 'Instrument Universe',
+          human: 'Mix aperturado por instrumento',
           technical: 'midas.instrument-universe.v1',
           value: universeWeightSummary,
         },
@@ -2165,7 +2165,7 @@ export function SimulationPage({
               </div>
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
                   <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
                     {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                   </span>
@@ -2176,8 +2176,8 @@ export function SimulationPage({
                 {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                   <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                     {weightsSourceMode === 'instrument-universe'
-                      ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
-                      : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                      ? 'El mix aperturado por instrumento está usando una copia local.'
+                      : 'El mix aperturado por instrumento está en modo de respaldo.'}
                   </div>
                 )}
               </div>
@@ -2231,7 +2231,7 @@ export function SimulationPage({
             </div>
             <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
                 <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
                   {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                 </span>
@@ -2245,8 +2245,8 @@ export function SimulationPage({
               {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                 <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                   {weightsSourceMode === 'instrument-universe'
-                    ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
-                    : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                    ? 'El mix aperturado por instrumento está usando una copia local.'
+                    : 'El mix aperturado por instrumento está en modo de respaldo.'}
                 </div>
               )}
             </div>
