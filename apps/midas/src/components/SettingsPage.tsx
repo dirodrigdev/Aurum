@@ -457,7 +457,7 @@ export function SettingsPage({
       );
       return;
     }
-    setUniverseStatusMessage('Guardando instrument_universe como active persistente...');
+    setUniverseStatusMessage('Guardando mix aperturado por instrumento como fuente oficial cloud...');
     const persisted = await persistInstrumentUniverseActiveToFirestore({
       snapshot: next.snapshot,
       fileName: universeOriginalFileName,
@@ -475,8 +475,8 @@ export function SettingsPage({
     setLastFailedUniverseImport(null);
     setUniverseStatusMessage(
       persisted.ok
-        ? `Última carga válida actualizada: ${metadata.instrumentsCount} instrumentos · peso total ${formatPct(metadata.totalWeightPortfolio)}.`
-        : `Última carga válida actualizada localmente, pero Firestore no quedó persistido: ${persisted.reason}`,
+        ? `Mix aperturado guardado como fuente oficial cloud. ${metadata.instrumentsCount} instrumentos · peso total ${formatPct(metadata.totalWeightPortfolio)}.`
+        : `Guardado localmente, pero no quedó como fuente oficial cloud: ${persisted.reason}`,
     );
   };
 
@@ -936,7 +936,7 @@ export function SettingsPage({
               cursor: 'pointer',
             }}
           >
-            Guardar universe
+            Guardar mix aperturado cloud
           </button>
           {savedUniverseSnapshot && (
             <button

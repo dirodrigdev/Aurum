@@ -7,10 +7,32 @@ import {
   validateInstrumentUniverseJson,
   type InstrumentUniverseSnapshot,
 } from '../../domain/instrumentUniverse';
-import { aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from '../aurum/firebase';
+import { aurumAuth, aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationAuthPersistence } from '../aurum/firebase';
 
-const COLLECTION = 'midas_config';
-const DOC_ID = 'instrumentUniverseV1';
+export const INSTRUMENT_UNIVERSE_COLLECTION = 'midas_config';
+export const INSTRUMENT_UNIVERSE_DOC_ID = 'instrumentUniverseV1';
+export const LEGACY_INSTRUMENT_UNIVERSE_PATH = `${INSTRUMENT_UNIVERSE_COLLECTION}/${INSTRUMENT_UNIVERSE_DOC_ID}`;
+
+export const getUserScopedInstrumentUniversePath = (uid: string) =>
+  `users/${uid}/${INSTRUMENT_UNIVERSE_COLLECTION}/${INSTRUMENT_UNIVERSE_DOC_ID}`;
+
+type InstrumentUniverseAccessResolution =
+  | { ok: true; uid: string; path: string }
+  | { ok: false; reason: string };
+
+export function resolveInstrumentUniverseAccess(input: {
+  configured: boolean;
+  uid?: string | null;
+  isAnonymous?: boolean | null;
+}): InstrumentUniverseAccessResolution {
+  if (!input.configured) return { ok: false, reason: 'firestore_not_configured' };
+  if (!input.uid || input.isAnonymous) return { ok: false, reason: 'auth_required' };
+  return {
+    ok: true,
+    uid: input.uid,
+    path: getUserScopedInstrumentUniversePath(input.uid),
+  };
+}
 
 export type PersistedInstrumentUniverseVersion = {
   schemaVersion: 1;
@@ -90,13 +112,19 @@ const isPersistedVersion = (value: unknown): value is PersistedInstrumentUnivers
   return record.schemaVersion === 1 && typeof record.payloadJson === 'string' && typeof record.hash === 'string';
 };
 
-const ref = () => {
+const userScopedRef = (uid: string) => {
   if (!aurumIntegrationConfigured || !aurumDb) return null;
-  return doc(aurumDb, COLLECTION, DOC_ID);
+  return doc(aurumDb, 'users', uid, INSTRUMENT_UNIVERSE_COLLECTION, INSTRUMENT_UNIVERSE_DOC_ID);
 };
 
 export async function loadActiveInstrumentUniverseFromFirestore(): Promise<LoadPersistedInstrumentUniverseResult> {
-  const docRef = ref();
+  const access = resolveInstrumentUniverseAccess({
+    configured: aurumIntegrationConfigured,
+    uid: aurumAuth?.currentUser?.uid ?? null,
+    isAnonymous: aurumAuth?.currentUser?.isAnonymous ?? null,
+  });
+  if (!access.ok) return { ok: false, reason: access.reason };
+  const docRef = userScopedRef(access.uid);
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
   try {
     await ensureAurumIntegrationAuthPersistence();
@@ -121,7 +149,13 @@ export async function persistInstrumentUniverseActiveToFirestore(input: {
   fileName?: string | null;
   source?: string;
 }): Promise<PersistInstrumentUniverseResult> {
-  const docRef = ref();
+  const access = resolveInstrumentUniverseAccess({
+    configured: aurumIntegrationConfigured,
+    uid: aurumAuth?.currentUser?.uid ?? null,
+    isAnonymous: aurumAuth?.currentUser?.isAnonymous ?? null,
+  });
+  if (!access.ok) return { ok: false, reason: access.reason };
+  const docRef = userScopedRef(access.uid);
   if (!docRef) return { ok: false, reason: 'firestore_not_configured' };
   try {
     await ensureAurumIntegrationAuthPersistence();
