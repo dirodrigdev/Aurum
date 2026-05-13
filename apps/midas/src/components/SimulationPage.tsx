@@ -807,131 +807,94 @@ export function SimulationPage({
           }
         : { label: 'Cuts', detail: 'No se activan' }
       : { label: 'Cuts', detail: 'No disponible' };
-  const confidenceTone =
-    resultConfidence.status === 'canonical'
-      ? T.positive
-      : resultConfidence.status === 'not_decisional'
-        ? T.negative
-        : T.warning;
-  const confidenceReasons = useMemo(() => {
-    const mapReason = (reason: { code: string; message: string }) => {
-      const code = reason.code;
-      if (code === 'result_not_final' || code === 'run_not_completed') {
-        return 'La corrida final todavía no está lista para el input actual.';
-      }
-      if (code === 'result_seed_mismatch' || code === 'result_nsim_mismatch') {
-        return 'El número visible puede pertenecer a una corrida anterior o intermedia.';
-      }
-      if (code === 'result_input_hash_mismatch' || code === 'last_rendered_hash_mismatch') {
-        return 'El resultado no corresponde exactamente al input M8 actual.';
-      }
-      if (code === 'result_digest_missing') {
-        return 'El resultado no tiene comprobante de ejecución auditado.';
-      }
-      if (code.startsWith('instrumentUniverse_')) {
-        return 'El mix aperturado por instrumento usa una versión interna de respaldo.';
-      }
-      if (code.startsWith('capitalAdjustments_')) {
-        return 'Hay ajustes locales de capital no sincronizados.';
-      }
-      if (code.startsWith('aurumSnapshot_')) {
-        return 'Aurum no está aplicado desde una fuente cloud final.';
-      }
-      if (code.startsWith('fx_')) {
-        return 'La fuente FX aplicada está en modo de respaldo.';
-      }
-      if (code.startsWith('simulationConfig_')) {
-        return 'La configuración cloud de simulación aún no está completamente usable.';
-      }
-      if (code === 'sandbox_active' || code.startsWith('sandbox_')) {
-        return 'Estás viendo una simulación temporal y no el modelo base canónico.';
-      }
-      return reason.message;
-    };
-    return resultConfidence.reasons
-      .filter((item) => item.severity !== 'info')
-      .map((item) => mapReason(item))
-      .filter((item, index, arr) => arr.indexOf(item) === index)
-      .slice(0, 2);
-  }, [resultConfidence.reasons]);
-  const confidenceActionItems = useMemo(() => {
-    if (resultConfidence.status === 'canonical') return [] as string[];
-    const actions: string[] = [];
-    const pushAction = (text: string) => {
-      if (!actions.includes(text) && actions.length < 3) actions.push(text);
-    };
-    for (const reason of resultConfidence.reasons) {
-      if (reason.code === 'result_not_final' || reason.code === 'run_not_completed') {
-        pushAction('No requiere acción manual; la app debería actualizarlo sola al terminar el cálculo.');
-      } else if (
-        reason.code === 'result_input_hash_mismatch' ||
-        reason.code === 'last_rendered_hash_mismatch' ||
-        reason.code === 'result_seed_mismatch' ||
-        reason.code === 'result_nsim_mismatch'
-      ) {
-        pushAction('Recalcular con el input actual.');
-        pushAction('Si persiste, recarga y copia el diagnóstico técnico.');
-      } else if (reason.code === 'result_digest_missing') {
-        pushAction('Recalcular hasta obtener un resultado auditado.');
-        pushAction('Si persiste, copia el diagnóstico técnico.');
-      } else if (reason.code.startsWith('simulationConfig_')) {
-        pushAction('Espera sincronización cloud. Si no carga, vuelve a iniciar sesión.');
-      } else if (reason.code.startsWith('aurumSnapshot_')) {
-        pushAction('Aplicar la nueva base Aurum disponible.');
-      } else if (reason.code.startsWith('fx_')) {
-        pushAction('No requiere acción manual; usa este resultado con salvedades mientras se estabiliza la fuente FX.');
-      } else if (reason.code.startsWith('instrumentUniverse_')) {
-        pushAction('Puedes usarlo con salvedades. Para llegar a OK falta sincronizar el mix aperturado por instrumento desde cloud como fuente oficial.');
-      } else if (reason.code.startsWith('capitalAdjustments_')) {
-        pushAction('Sincroniza esos ajustes o descártalos para volver al Modelo Base.');
-        pushAction('Pendiente estructural: falta una acción directa en la UI para gestionarlos.');
-      } else if (reason.code === 'sandbox_active' || reason.code.startsWith('sandbox_')) {
-        pushAction('Guarda el escenario o vuelve al Modelo Base.');
-      }
-      if (actions.length >= 3) break;
+  const runtimeDiagnostics =
+    (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+  const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
+  const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
+  const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
+  const reviewCause = useMemo(() => {
+    if (!primaryReasonCode) return 'Resultado usable con salvedades.';
+    if (primaryReasonCode.startsWith('instrumentUniverse_')) {
+      return 'Resultado usable con salvedades.';
     }
-    if (actions.length === 0) pushAction('No requiere acción manual; usa “Ver detalle técnico” si el estado no cambia.');
-    return actions;
-  }, [resultConfidence]);
-  const heroConfidenceBlock = useMemo(() => {
-    if (resultConfidence.status === 'canonical') {
-      return (
-        <span style={{ color: T.textSecondary, fontSize: 12 }}>
-          {resultConfidence.message}
-        </span>
-      );
+    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
+      return 'Hay ajustes locales de capital no sincronizados.';
     }
-
-    return (
-      <span style={{ display: 'grid', gap: 6 }}>
-        <span style={{ color: T.textSecondary, fontSize: 12 }}>{resultConfidence.message}</span>
-        {confidenceReasons.length > 0 && (
-          <span style={{ display: 'grid', gap: 3 }}>
-            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Por qué
-            </span>
-            {confidenceReasons.map((item) => (
-              <span key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item}
-              </span>
-            ))}
-          </span>
-        )}
-        {confidenceActionItems.length > 0 && (
-          <span style={{ display: 'grid', gap: 3 }}>
-            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Qué hacer
-            </span>
-            {confidenceActionItems.map((item) => (
-              <span key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item}
-              </span>
-            ))}
+    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
+      return 'Estás viendo una simulación temporal, no el Modelo Base.';
+    }
+    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
+      return 'La base de Aurum aplicada no es la fuente cloud final.';
+    }
+    return 'Resultado usable con salvedades.';
+  }, [primaryReasonCode]);
+  const reviewGap = useMemo(() => {
+    if (!primaryReasonCode || primaryReasonCode.startsWith('instrumentUniverse_')) {
+      return 'Falta: Sincronizar el mix aperturado por instrumento para llegar a OK.';
+    }
+    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
+      return 'Falta: Sincronizar o descartar los ajustes locales de capital.';
+    }
+    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
+      return 'Falta: Volver al Modelo Base o guardar el escenario temporal.';
+    }
+    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
+      return 'Falta: Aplicar la nueva base Aurum disponible.';
+    }
+    if (primaryReasonCode.startsWith('simulationConfig_')) {
+      return 'Falta: Terminar la carga de configuración cloud de simulación.';
+    }
+    return 'Falta: Resolver la salvedad principal para llegar a OK.';
+  }, [primaryReasonCode]);
+  const heroPrimaryState = useMemo(() => {
+    if (isRunActive) {
+      return {
+        label: 'Calculando',
+        tone: T.warning,
+        headline: 'Calculando resultado final.',
+        explanation: 'Falta terminar la corrida final.',
+        gap: 'Falta: Esperar resultado final.',
+      };
+    }
+    if (resultConfidence.status === 'not_decisional') {
+      return {
+        label: 'No usar',
+        tone: T.negative,
+        headline: 'No hay resultado auditado para el input actual.',
+        explanation: 'Falta recalcular un resultado auditado para este input.',
+        gap: 'Falta: Recalcular resultado para el input actual. Si no cambia, recarga.',
+      };
+    }
+    if (resultConfidence.status === 'review') {
+      return {
+        label: 'Revisar',
+        tone: T.warning,
+        headline: 'Resultado usable con salvedades.',
+        explanation: reviewCause,
+        gap: reviewGap,
+      };
+    }
+    return {
+      label: 'OK',
+      tone: T.positive,
+      headline: 'Resultado canónico.',
+      explanation: 'Resultado canónico.',
+      gap: null as string | null,
+    };
+  }, [T.negative, T.positive, T.warning, isRunActive, resultConfidence.status, reviewCause, reviewGap]);
+  const heroConfidenceBlock = useMemo(
+    () => (
+      <span style={{ display: 'grid', gap: 4 }}>
+        <span style={{ color: T.textSecondary, fontSize: 12 }}>{heroPrimaryState.explanation}</span>
+        {heroPrimaryState.gap && (
+          <span style={{ color: T.textSecondary, fontSize: 11 }}>
+            {heroPrimaryState.gap}
           </span>
         )}
       </span>
-    );
-  }, [T.textMuted, T.textSecondary, confidenceActionItems, confidenceReasons, resultConfidence.message, resultConfidence.status]);
+    ),
+    [T.textSecondary, heroPrimaryState.explanation, heroPrimaryState.gap],
+  );
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1580,7 +1543,7 @@ export function SimulationPage({
             50% { transform: scale(1.25); opacity: 1; }
           }
         `}</style>
-        <div style={{ opacity: resultConfidence.status === 'not_decisional' ? 0.72 : 1 }}>
+        <div style={{ opacity: heroPrimaryState.label === 'No usar' ? 0.72 : 1 }}>
           <HeroCard
             label={heroQuestion.toUpperCase()}
             valuePct={showBootPlaceholder ? null : heroProbSuccess}
@@ -1588,16 +1551,16 @@ export function SimulationPage({
             subtitle={
               simUiState === 'error'
                 ? `Error de recálculo: ${simUiError || 'reintenta'}`
-                : heroPhase !== 'ready'
-                ? 'Calculando simulación...'
+                : isRunActive
+                ? 'Calculando resultado final.'
                 : displayResult
                   ? (
                     <span style={{ display: 'grid', gap: 8 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span
                           style={{
-                            border: `1px solid ${confidenceTone}`,
-                            color: confidenceTone,
+                            border: `1px solid ${heroPrimaryState.tone}`,
+                            color: heroPrimaryState.tone,
                             borderRadius: 999,
                             padding: '2px 8px',
                             fontSize: 10,
@@ -1605,11 +1568,9 @@ export function SimulationPage({
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {resultConfidence.label}
+                          {heroPrimaryState.label}
                         </span>
-                        <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                          {resultConfidence.headline}
-                        </span>
+                        <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{heroPrimaryState.headline}</span>
                       </span>
                       {heroConfidenceBlock}
                       <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
