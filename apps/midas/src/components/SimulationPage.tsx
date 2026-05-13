@@ -390,6 +390,8 @@ export function SimulationPage({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [modelBaseOpen, setModelBaseOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
   );
@@ -415,6 +417,7 @@ export function SimulationPage({
     note: '',
   });
   const prevSimActive = useRef(false);
+  const diagnosticsRef = useRef<HTMLDetailsElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -895,6 +898,12 @@ export function SimulationPage({
     ),
     [T.textSecondary, heroPrimaryState.explanation, heroPrimaryState.gap],
   );
+  const openDiagnosticsFromHero = useCallback(() => {
+    setDiagnosticsOpen(true);
+    window.requestAnimationFrame(() => {
+      diagnosticsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -1536,7 +1545,7 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', order: 1 }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -1557,8 +1566,13 @@ export function SimulationPage({
                   ? (
                     <span style={{ display: 'grid', gap: 8 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span
+                        <button
+                          type="button"
+                          onClick={openDiagnosticsFromHero}
+                          title="Ver diagnóstico"
                           style={{
+                            background: 'transparent',
+                            cursor: 'pointer',
                             border: `1px solid ${heroPrimaryState.tone}`,
                             color: heroPrimaryState.tone,
                             borderRadius: 999,
@@ -1569,8 +1583,22 @@ export function SimulationPage({
                           }}
                         >
                           {heroPrimaryState.label}
-                        </span>
-                        <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{heroPrimaryState.headline}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openDiagnosticsFromHero}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            padding: 0,
+                            color: T.textSecondary,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {heroPrimaryState.headline}
+                        </button>
                       </span>
                       {heroConfidenceBlock}
                       <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
@@ -1632,6 +1660,8 @@ export function SimulationPage({
                       fontWeight: 700,
                       cursor: 'pointer',
                     }}
+                    title="Agregar evento"
+                    aria-label="Agregar evento"
                   >
                     +
                   </button>
@@ -1771,6 +1801,7 @@ export function SimulationPage({
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
+            order: 3,
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
             borderRadius: 10,
@@ -1810,6 +1841,7 @@ export function SimulationPage({
       {hasSyncBanner && (
         <div
           style={{
+            order: 3,
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
             borderRadius: 10,
@@ -1832,6 +1864,7 @@ export function SimulationPage({
       )}
       <div
         style={{
+          order: 10,
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
@@ -1949,6 +1982,7 @@ export function SimulationPage({
       </div>
       <div
         style={{
+          order: 10,
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 10,
@@ -2036,9 +2070,14 @@ export function SimulationPage({
           </div>
         )}
       </div>
-      <details>
-        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-          Ver detalle técnico
+      <details
+        ref={diagnosticsRef}
+        open={diagnosticsOpen}
+        onToggle={(e) => setDiagnosticsOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 10 }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+          Diagnóstico
         </summary>
         <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
       <div
@@ -2267,13 +2306,25 @@ export function SimulationPage({
           </div>
         )}
       </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: isMobileViewport ? 6 : 8,
-        }}
+      <details
+        open={modelBaseOpen}
+        onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 9, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
       >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+          Modelo Base
+        </summary>
+        <div style={{ marginTop: 8, color: T.textMuted, fontSize: 10 }}>
+          Los cambios del Modelo Base modifican la fuente oficial. La simulación temporal no.
+        </div>
+        <div
+          style={{
+            marginTop: 8,
+            display: 'grid',
+            gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: isMobileViewport ? 6 : 8,
+          }}
+        >
         <div
           style={{
             background: T.surface,
@@ -2308,7 +2359,7 @@ export function SimulationPage({
             Corrida actual · {formatCapital(effectiveBaseCapital)}
           </div>
         </div>
-      </div>
+        </div>
       {auditModeEnabled && auditProbe && (
         <div
           style={{
@@ -2364,7 +2415,8 @@ export function SimulationPage({
           </div>
         </div>
       )}
-      <details style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}>
+      </details>
+      <details style={{ order: 4, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}>
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
           Configuración actual · {activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista'} · {currentNSim} sims · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskToggleCopy}
         </summary>
@@ -2517,6 +2569,7 @@ export function SimulationPage({
           open={keyMetricsOpen}
           onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
           style={{
+            order: 5,
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 14,
@@ -2677,7 +2730,7 @@ export function SimulationPage({
           </details>
         </details>
       )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ order: 5, display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={onOpenOptimization}
@@ -2701,6 +2754,7 @@ export function SimulationPage({
           open={longevityOpen}
           onToggle={(e) => setLongevityOpen((e.currentTarget as HTMLDetailsElement).open)}
           style={{
+            order: 6,
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 12,
@@ -2784,7 +2838,7 @@ export function SimulationPage({
         </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 2 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{
@@ -2800,7 +2854,7 @@ export function SimulationPage({
             fontWeight: 700,
           }}
         >
-          <span>Otros parámetros</span>
+          <span>Parámetros de simulación</span>
           <span style={{ color: T.textMuted }}>{advancedOpen ? '▴' : '▾'}</span>
         </button>
         {advancedOpen && (
@@ -2974,7 +3028,7 @@ export function SimulationPage({
 
       {!hideResultBlocks && displayResult && (
         <>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ order: 7, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>TRAYECTORIAS SIMULADAS (TODOS LOS ESCENARIOS)</div>
               <div
@@ -3095,7 +3149,7 @@ export function SimulationPage({
               <span>Eje temporal anual</span>
             </div>
           </div>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ order: 7, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
               PERCENTILES TERMINALES (SOBREVIVIENTES VS TODOS)
             </div>
@@ -3217,7 +3271,7 @@ export function SimulationPage({
               </div>
             )}
           </div>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ order: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em', marginBottom: 4 }}>TCREAL</div>
             <div style={{ color: T.warning, fontSize: 12 }}>
               PRELIMINARY: Este parámetro usa supuestos internos, revísalo antes de tomar decisiones.
