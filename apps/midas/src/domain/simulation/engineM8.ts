@@ -379,7 +379,9 @@ const currentUfClp = (input: M8Input, monthIndex: number): number => {
 
 const estimateHouseSaleEquityClp = (input: M8Input, monthIndex: number, mortgageBalanceUf: number): number => {
   if (!input.house?.include_house) return 0;
-  return Math.max((input.house.houseValueUf - mortgageBalanceUf) * currentUfClp(input, monthIndex), 0);
+  const saleCostPct = Math.max(0, Math.min(1, Number(input.house.saleCostPct ?? 0.025)));
+  const netHouseEquityUf = input.house.houseValueUf * (1 - saleCostPct) - mortgageBalanceUf;
+  return Math.max(netHouseEquityUf * currentUfClp(input, monthIndex), 0);
 };
 
 const phaseOfMonth = (input: M8Input, monthIndex: number): 1 | 2 | 3 | 4 => {
@@ -761,6 +763,9 @@ export const validateM8Input = (input: M8Input): string[] => {
     if (!isFiniteNumber(input.house.ufClpStart) || input.house.ufClpStart <= 0) errors.push('house.ufClpStart debe ser > 0');
     if (!isFiniteNumber(input.house.house_sale_trigger_years_of_spend)) errors.push('house.house_sale_trigger_years_of_spend debe ser finito');
     if (!Number.isInteger(input.house.house_sale_lag_months) || input.house.house_sale_lag_months < 0) errors.push('house.house_sale_lag_months debe ser entero >= 0');
+    if (input.house.saleCostPct !== undefined && (!isFiniteNumber(input.house.saleCostPct) || input.house.saleCostPct < 0 || input.house.saleCostPct >= 1)) {
+      errors.push('house.saleCostPct debe estar en [0,1)');
+    }
   }
 
   if (input.future_events?.length) {

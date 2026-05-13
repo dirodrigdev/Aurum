@@ -333,6 +333,7 @@ const resolveHouse = (params: ModelParameters, capitalResolution: CapitalResolut
     include_house: true,
     houseValueUf: resolvedHouse.propertyValueCLP / resolvedHouse.ufSnapshotCLP,
     mortgageBalanceUfNow: resolvedHouse.mortgageDebtOutstandingCLP / resolvedHouse.ufSnapshotCLP,
+    saleCostPct: Math.max(0, Math.min(1, Number(params.realEstatePolicy?.saleCostPct ?? 0.025))),
     monthlyAmortizationUf: resolvedHouse.monthlyMortgagePaymentCLP
       ? resolvedHouse.monthlyMortgagePaymentCLP / resolvedHouse.ufSnapshotCLP
       : 0,
