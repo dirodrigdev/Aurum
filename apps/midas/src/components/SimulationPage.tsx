@@ -415,7 +415,6 @@ export function SimulationPage({
     note: '',
   });
   const prevSimActive = useRef(false);
-  const heroCardRef = useRef<HTMLDivElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -1332,20 +1331,18 @@ export function SimulationPage({
   const toggleTraceRow = useCallback((id: string) => {
     setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
-  const stickyStatusLabel = isRecalculating
-    ? 'Recalculando...'
-    : simUiState === 'error'
-      ? 'Error de simulación'
-      : displayResult
-        ? 'Resultado actual'
-        : 'Sin resultado actual';
-  const stickySuccess40 = isRecalculating ? null : success40;
-  const stickyRuin20 = isRecalculating ? null : probRuin20;
-  const stickyHouseSalePct = isRecalculating ? null : houseSalePct;
-  const stickyDrawdownP50 = isRecalculating ? null : drawdownP50;
-  const scrollToSummary = useCallback(() => {
-    heroCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
+  const heroHorizonYears = useMemo(() => {
+    const normalized = (m8InputFingerprint.normalizedInput ?? {}) as Record<string, unknown>;
+    const years = Number(normalized.years ?? NaN);
+    if (Number.isFinite(years) && years > 0) return Math.round(years);
+    const simulation = normalized.simulation as Record<string, unknown> | undefined;
+    const horizonMonths = Number(simulation?.horizonMonths ?? NaN);
+    if (Number.isFinite(horizonMonths) && horizonMonths > 0) return Math.round(horizonMonths / 12);
+    return null;
+  }, [m8InputFingerprint.normalizedInput]);
+  const heroQuestion = heroHorizonYears !== null
+    ? `¿Llegarás a ${heroHorizonYears} años?`
+    : '¿Llegarás al horizonte objetivo?';
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
@@ -1462,48 +1459,6 @@ export function SimulationPage({
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
       <div
         style={{
-          position: 'sticky',
-          top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
-          zIndex: 70,
-          background: 'rgba(11,16,24,0.94)',
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '6px 8px' : '7px 10px',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          cursor: 'pointer',
-        }}
-        onClick={scrollToSummary}
-        role="button"
-        tabIndex={0}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Midas</span>
-          <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Success40 {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
-          </span>
-        </div>
-	        <span
-	          style={{
-	          border: `1px solid ${confidenceTone}`,
-	          color: confidenceTone,
-	            borderRadius: 999,
-	            padding: '2px 8px',
-	            fontSize: 10,
-	            fontWeight: 800,
-            whiteSpace: 'nowrap',
-	          }}
-	        >
-	          {resultConfidence.label}
-	        </span>
-      </div>
-
-      <div
-        ref={heroCardRef}
-        style={{
           background: T.surface,
           border: `1px solid ${T.border}`,
           borderRadius: 12,
@@ -1513,7 +1468,25 @@ export function SimulationPage({
         }}
       >
         <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          ¿Llegarás al año 40?
+          {heroQuestion}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span
+            style={{
+              border: `1px solid ${confidenceTone}`,
+              color: confidenceTone,
+              borderRadius: 999,
+              padding: '2px 8px',
+              fontSize: 10,
+              fontWeight: 800,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {resultConfidence.label}
+          </span>
+          <span style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+            {resultConfidence.headline}
+          </span>
         </div>
         <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 34 : 38, fontWeight: 850, lineHeight: 1 }}>
           {success40 !== null ? formatPct(success40) : '—'}
@@ -1533,6 +1506,15 @@ export function SimulationPage({
 	        <div style={{ color: T.textSecondary, fontSize: 12 }}>
 	          {resultConfidence.message}
 	        </div>
+        {confidenceReasons.length > 0 && (
+          <div style={{ display: 'grid', gap: 3 }}>
+            {confidenceReasons.map((item) => (
+              <div key={`${item.code}:${item.source}`} style={{ color: T.textSecondary, fontSize: 11 }}>
+                • {item.message}
+              </div>
+            ))}
+          </div>
+        )}
 	      </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
@@ -1801,37 +1783,6 @@ export function SimulationPage({
             {m8InputFingerprint.warnings.join(' · ')}
           </div>
         )}
-      </div>
-	      <div
-	        style={{
-	          background: T.surface,
-	          border: `1px solid ${resultConfidence.status === 'canonical' ? T.border : confidenceTone}`,
-	          borderRadius: 10,
-	          padding: isMobileViewport ? '8px 9px' : '10px 11px',
-	          display: 'grid',
-	          gap: 6,
-        }}
-      >
-	        <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-	          Estado de la simulación
-	        </div>
-	        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? (resultConfidence.status === 'canonical' ? 13 : 16) : (resultConfidence.status === 'canonical' ? 14 : 18), fontWeight: 800 }}>
-	          {resultConfidence.headline}
-	        </div>
-	        {resultConfidence.status !== 'canonical' && (
-	          <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
-	            {resultConfidence.message}
-	          </div>
-	        )}
-	        {resultConfidence.status !== 'canonical' && confidenceReasons.length > 0 && (
-	          <div style={{ display: 'grid', gap: 3 }}>
-	            {confidenceReasons.map((item) => (
-	              <div key={`${item.code}:${item.source}`} style={{ color: T.textSecondary, fontSize: 11 }}>
-	                • {item.message}
-	              </div>
-	            ))}
-	          </div>
-	        )}
       </div>
       <details>
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>

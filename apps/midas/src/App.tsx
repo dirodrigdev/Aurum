@@ -490,6 +490,17 @@ function finiteNumberOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const SUCCESS_PCT_FORMATTER = new Intl.NumberFormat('es-CL', {
+  style: 'percent',
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+function formatSuccessPct(value: number | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  return SUCCESS_PCT_FORMATTER.format(value);
+}
+
 function sourceStatusFromSimulationConfig(
   source: 'cloud' | 'local_cache' | 'fallback',
   hydrationStatus: SimulationConfigHydrationStatus,
@@ -3384,7 +3395,6 @@ export default function App() {
     }
   }, []);
 
-  const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
   const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
   const stateLabel = selectVariant(activeScenario).label;
   const isScenarioAdjusted = useMemo(() => {
@@ -4175,6 +4185,24 @@ export default function App() {
     simulationRunStatus,
     universeSourceOrigin,
   ]);
+  const headerSuccess40 = useMemo(() => {
+    if (!heroVisibleResult) return null;
+    return heroVisibleResult.success40 ?? (1 - (heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin));
+  }, [heroVisibleResult]);
+  const headerShowsDefinitiveNumber = (
+    simulationRunStatus === 'completed'
+    && resultConfidence.status !== 'not_decisional'
+    && typeof headerSuccess40 === 'number'
+    && Number.isFinite(headerSuccess40)
+  );
+  const headerMetricText = headerShowsDefinitiveNumber
+    ? `Éxito ${formatSuccessPct(headerSuccess40)}`
+    : 'Calculando…';
+  const headerStatusColor = resultConfidence.status === 'canonical'
+    ? T.positive
+    : resultConfidence.status === 'review'
+      ? T.warning
+      : T.negative;
 
   useEffect(() => {
     const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
@@ -4630,7 +4658,11 @@ export default function App() {
             />
           </>
         )}
-        <Header statusColor={statusColor} />
+        <Header
+          statusColor={headerStatusColor}
+          metricText={headerMetricText}
+          confidenceLabel={resultConfidence.label}
+        />
         <main
           style={{
             padding: '12px 16px 90px',
@@ -4705,7 +4737,15 @@ export default function App() {
   );
 }
 
-function Header({ statusColor }: { statusColor: string }) {
+function Header({
+  statusColor,
+  metricText,
+  confidenceLabel,
+}: {
+  statusColor: string;
+  metricText: string;
+  confidenceLabel: 'OK' | 'Revisar' | 'No usar';
+}) {
   return (
     <header
       style={{
@@ -4727,10 +4767,15 @@ function Header({ statusColor }: { statusColor: string }) {
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div
-        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
-        style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+          {metricText} · {confidenceLabel}
+        </span>
+        <div
+          title={confidenceLabel}
+          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }}
+        />
+      </div>
     </header>
   );
 }
