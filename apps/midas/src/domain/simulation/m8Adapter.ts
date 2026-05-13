@@ -117,7 +117,7 @@ const resolveRiskCapitalEnabled = (capitalResolution: CapitalResolution): boolea
   if (!risk || typeof risk !== 'object') return false;
   const riskRecord = risk as Record<string, unknown>;
   if (hasOwn(riskRecord, 'enabled')) return riskRecord.enabled === true;
-  return resolveRiskCapitalClp(capitalResolution) > 0;
+  return false;
 };
 
 const resolveCoreCapitalClp = (capitalResolution: CapitalResolution): number => {

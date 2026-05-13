@@ -1872,6 +1872,53 @@ test('capitalResolver can derive aurum capital from simulationComposition when s
   assert.equal(capitalResolution.sourceLabel.startsWith('Aurum ·'), true);
 });
 
+test('m8 capital contract: core capital uses optimizable + banks; usd/debt stay outside core input', () => {
+  const params = makeM8ContractParams();
+  const snapshot = {
+    version: 2,
+    publishedAt: '2026-03-01T00:00:00Z',
+    snapshotMonth: '2026-02',
+    snapshotLabel: 'test',
+    currency: 'CLP',
+    totalNetWorthCLP: 1_000_000_000,
+    optimizableInvestmentsCLP: 600_000_000,
+    riskCapital: { totalCLP: 0 },
+    nonOptimizable: {
+      banksCLP: 100_000_000,
+      usdLiquidityCLP: 50_000_000,
+      nonMortgageDebtCLP: 20_000_000,
+    },
+    source: { app: 'aurum', basis: 'latest_confirmed_closure' },
+  } as any;
+
+  const compositionFromSnapshot = snapshotToSimulationComposition(snapshot);
+  assert.ok(compositionFromSnapshot);
+  assert.equal(compositionFromSnapshot.nonOptimizable.usdLiquidityCLP, 50_000_000);
+  assert.equal(compositionFromSnapshot.nonOptimizable.nonMortgageDebtCLP, 20_000_000);
+
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    ...compositionFromSnapshot,
+    nonOptimizable: {
+      ...compositionFromSnapshot.nonOptimizable,
+      riskCapital: { enabled: false, totalCLP: 0 },
+    },
+  };
+  params.realEstatePolicy = {
+    ...params.realEstatePolicy!,
+    enabled: false,
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+
+  assert.equal(capitalResolution.capitalInitial, 700_000_000);
+  assert.equal(input.capital_initial_clp, 700_000_000);
+  const nonOptimizableResolved = capitalResolution.simulationComposition.nonOptimizable as Record<string, unknown>;
+  assert.equal(Number(nonOptimizableResolved.usdLiquidityCLP ?? 0), 0);
+  assert.equal(Number(nonOptimizableResolved.nonMortgageDebtCLP ?? 0), 0);
+});
+
 test('m8 adapter maps risk capital from simulation composition when disabled/enabled', () => {
   const params = makeM8ContractParams();
   params.simulationComposition = {
@@ -1892,6 +1939,7 @@ test('m8 adapter maps risk capital from simulation composition when disabled/ena
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: true,
         totalCLP: 90_000_000,
         usdTotal: 100_000,
         usdSnapshotCLP: 900,
@@ -1905,13 +1953,35 @@ test('m8 adapter maps risk capital from simulation composition when disabled/ena
   assert.equal(onInput.capital_initial_clp, 730_000_000);
 });
 
-test('m8 adapter derives risk capital from mixed USD + CLP components without double count', () => {
+test('m8 adapter keeps risk capital OFF when enabled flag is missing (hardening)', () => {
   const params = makeM8ContractParams();
   params.simulationComposition = {
     ...params.simulationComposition!,
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        clp: 20_000_000,
+        usdTotal: 50_000,
+        usdSnapshotCLP: 900,
+      },
+    },
+  };
+
+  const capitalResolution = resolveCapital({ params });
+  const input = toM8Input(params, capitalResolution);
+  assert.equal(input.risk_capital_clp, 0);
+  assert.equal(input.risk_capital_policy, undefined);
+  assert.equal(input.risk_capital_btc_driver, undefined);
+});
+
+test('m8 adapter derives risk capital from mixed USD + CLP components when enabled=true', () => {
+  const params = makeM8ContractParams();
+  params.simulationComposition = {
+    ...params.simulationComposition!,
+    nonOptimizable: {
+      ...params.simulationComposition!.nonOptimizable,
+      riskCapital: {
+        enabled: true,
         clp: 20_000_000,
         usdTotal: 50_000,
         usdSnapshotCLP: 900,
@@ -1932,6 +2002,7 @@ test('capitalResolver prioritizes simulation composition risk capital over snaps
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: true,
         totalCLP: 42_000_000,
         usdTotal: 42_000,
         usdSnapshotCLP: 1_000,
@@ -1996,6 +2067,7 @@ test('m8 runtime treats positive risk capital as monotonic additional reserve', 
     nonOptimizable: {
       ...onParams.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: true,
         totalCLP: 90_000_000,
         usdTotal: 100_000,
         usdSnapshotCLP: 900,
@@ -2127,6 +2199,7 @@ test('btc_like_realista_e can run with dedicated btc-like driver separated from 
     nonOptimizable: {
       ...params.simulationComposition!.nonOptimizable,
       riskCapital: {
+        enabled: true,
         totalCLP: 90_000_000,
         usdTotal: 100_000,
         usdSnapshotCLP: 900,
