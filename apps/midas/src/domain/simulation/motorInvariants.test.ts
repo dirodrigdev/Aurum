@@ -1829,7 +1829,6 @@ test('m8 adapter maps aurum capital, house, cuts and scenario overrides', () => 
   assert.equal(input.scenario_overrides?.rv_chile_annual, 0.11);
   assert.equal(input.house?.houseValueUf, 7_500);
   assert.equal(input.house?.mortgageBalanceUfNow, 3_000);
-  assert.equal(input.house?.saleCostPct, 0);
   assert.equal(input.house?.monthlyAmortizationUf, 37.5);
   assert.equal(input.future_events?.length ?? 0, 0);
 });
@@ -2677,7 +2676,6 @@ test('m8 runtime with house includes house equity in the starting wealth', () =>
       include_house: true,
       houseValueUf: 10_000,
       mortgageBalanceUfNow: 1_000,
-      saleCostPct: 0.025,
       monthlyAmortizationUf: 0,
       ufClpStart: 40_000,
       house_sale_trigger_years_of_spend: 2,
@@ -2688,36 +2686,6 @@ test('m8 runtime with house includes house equity in the starting wealth', () =>
 
   assert.ok(result.wealthPaths[0][0] > input.capital_initial_clp);
   assert.ok(Number.isFinite(result.HouseSalePct));
-});
-
-test('house net sale equity applies saleCostPct before mortgage balance (1000 UF, 400 UF, 2.5%)', () => {
-  const params = makeM8ContractParams();
-  params.realEstatePolicy = {
-    ...params.realEstatePolicy!,
-    enabled: true,
-    saleCostPct: 0.025,
-  };
-  params.simulationComposition = {
-    ...params.simulationComposition!,
-    nonOptimizable: {
-      ...params.simulationComposition!.nonOptimizable,
-      realEstate: {
-        propertyValueCLP: 40_000_000,
-        mortgageDebtOutstandingCLP: 16_000_000,
-        monthlyMortgagePaymentCLP: 0,
-        ufSnapshotCLP: 40_000,
-        snapshotMonth: '2026-03',
-      },
-    },
-  };
-
-  const input = toM8Input(params, resolveCapital({ params }));
-  assert.equal(input.house?.houseValueUf, 1000);
-  assert.equal(input.house?.mortgageBalanceUfNow, 400);
-  assert.equal(input.house?.saleCostPct, 0.025);
-
-  const netHouseEquityUf = input.house!.houseValueUf * (1 - input.house!.saleCostPct!) - input.house!.mortgageBalanceUfNow;
-  assert.equal(netHouseEquityUf, 575);
 });
 
 test('m8 runtime exposes student_t df 7 explicitly', () => {

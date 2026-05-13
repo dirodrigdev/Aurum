@@ -112,7 +112,7 @@ export const DEFAULT_PARAMETERS: ModelParameters = {
     enabled: true,
     triggerRunwayMonths: 36,
     saleDelayMonths: 12,
-    saleCostPct: 0.025,
+    saleCostPct: 0,
     realAppreciationAnnual: REAL_ESTATE_REAL_APPRECIATION_BASE,
   },
 

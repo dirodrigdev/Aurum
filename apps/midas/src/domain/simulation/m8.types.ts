@@ -107,7 +107,6 @@ export interface M8HouseInput {
   include_house: boolean;
   houseValueUf: number;
   mortgageBalanceUfNow: number;
-  saleCostPct?: number;
   monthlyAmortizationUf: number;
   ufClpStart: number;
   house_sale_trigger_years_of_spend: number;
