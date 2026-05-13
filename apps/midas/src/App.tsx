@@ -90,6 +90,7 @@ import {
   type SourceStatus,
 } from './domain/model/resultConfidence';
 import { buildAssumptionModeDiagnostics } from './domain/model/assumptionMode';
+import { selectRunSeed } from './domain/model/simulationSeedSelection';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -2403,14 +2404,14 @@ export default function App() {
       activeRecalcOwnerRequestIdRef.current = requestId;
       setActiveRecalcOwner(ownerForRun);
     }
-    const simulationSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
+    const fallbackSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
-    setActiveRecalcSeed(simulationSeed);
+    setActiveRecalcSeed(fallbackSeed);
     appendRuntimeTimeline('start_recalculation', {
       cause,
       requestId,
-      simulationSeed,
+      simulationSeed: fallbackSeed,
       heroPhase: heroPhaseRef.current,
       owner: ownerForRun ?? 'none',
     });
@@ -2423,10 +2424,16 @@ export default function App() {
         activeRecalcOwnerRequestIdRef.current = null;
         setActiveRecalcOwner(null);
       };
+      let simulationSeedForRun = fallbackSeed;
       try {
         setRecalcWorkerStatus('running');
         setSimulationRunStatus('running');
         const paramsBase = run();
+        const simulationSeed = selectRunSeed(
+          paramsBase.simulation?.seed,
+          fallbackSeed,
+        );
+        simulationSeedForRun = simulationSeed;
         const params: ModelParameters = {
           ...paramsBase,
           simulation: {
@@ -2489,7 +2496,7 @@ export default function App() {
         setSimulationRunError(String(error?.message || 'No pude recalcular la simulación.'));
         appendRuntimeTimeline('sim_result_error', {
           requestId,
-          simulationSeed,
+          simulationSeed: simulationSeedForRun,
           message: String(error?.message || 'simulation_error'),
         });
       } finally {
@@ -4191,7 +4198,8 @@ export default function App() {
   }, [heroVisibleResult]);
   const headerShowsDefinitiveNumber = (
     simulationRunStatus === 'completed'
-    && resultConfidence.status !== 'not_decisional'
+    && simulationRunError === null
+    && !simulationRunTimedOut
     && typeof headerSuccess40 === 'number'
     && Number.isFinite(headerSuccess40)
   );
