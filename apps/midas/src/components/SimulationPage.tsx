@@ -103,8 +103,12 @@ const formatNumber = (value: number) =>
 const formatMoneyCompact = (value: number) => {
   if (!Number.isFinite(value)) return '—';
   const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `$${(value / 1_000_000).toFixed(0)}MM`;
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
+  if (abs >= 1_000_000_000) {
+    return `$${(value / 1_000_000).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}MM`;
+  }
+  if (abs >= 1_000_000) {
+    return `$${(value / 1_000_000).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}MM`;
+  }
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
 };
@@ -388,7 +392,7 @@ export function SimulationPage({
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [simulationDataOpen, setSimulationDataOpen] = useState(false);
+  const [simulationDataOpen, setSimulationDataOpen] = useState(true);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -472,8 +476,7 @@ export function SimulationPage({
     scenarioFromParamsRaw !== 'pessimistic' &&
     scenarioFromParamsRaw !== 'optimistic';
   const scenarioUiLabel =
-    activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
-  const stateLabelUi = /base/i.test(stateLabel) ? stateLabel.replace(/base/gi, 'Neutro') : stateLabel;
+    activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
   const scenarioFromResult =
     scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
@@ -1560,7 +1563,7 @@ export function SimulationPage({
           <HeroCard
             label={heroQuestion.toUpperCase()}
             valuePct={showBootPlaceholder ? null : heroProbSuccess}
-            stale={showGhostResult}
+            stale={showGhostResult || isRunActive}
             subtitle={
               simUiState === 'error'
                 ? `Error de recálculo: ${simUiError || 'reintenta'}`
@@ -1639,7 +1642,7 @@ export function SimulationPage({
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
             chips={[
-              { id: 'state', value: stateLabelUi, onClick: simActive ? onResetSim : () => {} },
+              { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
               {
@@ -1674,6 +1677,29 @@ export function SimulationPage({
             ]}
           />
         </div>
+        {simActive && (
+          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={() => {
+                onRestoreScenarioPreset();
+                onResetSim();
+              }}
+              style={{
+                background: T.surfaceEl,
+                border: `1px solid ${T.border}`,
+                color: T.textSecondary,
+                borderRadius: 999,
+                padding: isMobileViewport ? '5px 9px' : '6px 10px',
+                fontSize: isMobileViewport ? 10 : 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Volver al Modelo Base
+            </button>
+          </div>
+        )}
         {showSimToast && (
           <div
             style={{
@@ -2309,7 +2335,7 @@ export function SimulationPage({
             {formatMoneyCompact(effectiveBaseCapital)}
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>
-            Corrida actual · {formatCapital(effectiveBaseCapital)}
+            Simulación actual · {formatCapital(effectiveBaseCapital)}
           </div>
         </div>
         </div>
@@ -2401,12 +2427,12 @@ export function SimulationPage({
           <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
           <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
           <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-            Patrimonio mostrado en Aurum que no entra al motor.
+            Patrimonio mostrado en Aurum que no entra en esta simulación.
           </div>
         </div>
       </div>
       <div style={{ color: T.textMuted, fontSize: 10, marginBottom: 8 }}>
-        Aurum: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Mix aperturado por instrumento: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · FX: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
+        Aurum: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Mix aperturado por instrumento: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · FX: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}{Number.isFinite(params.fx.usdEurFixed) ? ` · EUR/USD ${params.fx.usdEurFixed.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}</span>
       </div>
       <div
         style={{
@@ -2437,7 +2463,7 @@ export function SimulationPage({
                     opacity: isRecalculating ? 0.65 : 1,
                   }}
                 >
-                  {variant.id === 'base' ? 'Neutro' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
+                  {variant.id === 'base' ? 'Base' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
                 </button>
                 {active && isScenarioAdjusted ? (
                   <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
@@ -2464,24 +2490,6 @@ export function SimulationPage({
           }}
         >
           Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
-        </button>
-        <button
-          type="button"
-          onClick={onRestoreScenarioPreset}
-          disabled={isRecalculating}
-          style={{
-            background: T.surfaceEl,
-            border: `1px solid ${T.border}`,
-            color: T.textSecondary,
-            borderRadius: 999,
-            padding: isMobileViewport ? '5px 9px' : '6px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            cursor: isRecalculating ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating ? 0.6 : 1,
-          }}
-        >
-          Volver al Modelo Base
         </button>
         <button
           type="button"
@@ -2848,10 +2856,10 @@ export function SimulationPage({
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
                 {spendingPhases.map((phase, idx) => (
-                  <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <span style={{ color: T.textSecondary, fontSize: 11 }}>
+                  <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
                       {spendingPhaseLabels[idx]?.title ?? `Tramo ${idx + 1}`}
                     </span>
                     <input
@@ -2861,8 +2869,8 @@ export function SimulationPage({
                       style={{
                         background: T.surfaceEl,
                         border: `1px solid ${T.border}`,
-                        borderRadius: 10,
-                        padding: '8px 10px',
+                        borderRadius: 8,
+                        padding: '6px 8px',
                         color: T.textPrimary,
                         fontSize: 12,
                       }}
@@ -2920,7 +2928,7 @@ export function SimulationPage({
               </div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
                   <input
                     type="number"
@@ -2929,14 +2937,14 @@ export function SimulationPage({
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
+                      borderRadius: 8,
+                      padding: '6px 8px',
                       color: T.textPrimary,
                       fontSize: 12,
                     }}
                   />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>RF (%)</span>
                   <input
                     type="number"
@@ -2945,8 +2953,8 @@ export function SimulationPage({
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
+                      borderRadius: 8,
+                      padding: '6px 8px',
                       color: T.textPrimary,
                       fontSize: 12,
                     }}
@@ -2958,7 +2966,7 @@ export function SimulationPage({
             <div>
               <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
                   <input
                     type="number"
@@ -2967,14 +2975,14 @@ export function SimulationPage({
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
+                      borderRadius: 8,
+                      padding: '6px 8px',
                       color: T.textPrimary,
                       fontSize: 12,
                     }}
                   />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
                   <span style={{ color: T.textSecondary, fontSize: 11 }}>Local (%)</span>
                   <input
                     type="number"
@@ -2983,8 +2991,8 @@ export function SimulationPage({
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
+                      borderRadius: 8,
+                      padding: '6px 8px',
                       color: T.textPrimary,
                       fontSize: 12,
                     }}
@@ -2993,8 +3001,8 @@ export function SimulationPage({
               </div>
             </div>
 
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Fee anual</div>
+            <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual</span>
               <input
                 type="number"
                 value={(params.feeAnnual * 100).toFixed(2)}
@@ -3002,13 +3010,13 @@ export function SimulationPage({
                 style={{
                   background: T.surfaceEl,
                   border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '8px 10px',
+                  borderRadius: 8,
+                  padding: '6px 8px',
                   color: T.textPrimary,
                   fontSize: 12,
                 }}
               />
-            </div>
+            </label>
           </div>
         )}
       </div>
@@ -3028,7 +3036,7 @@ export function SimulationPage({
                   padding: '5px 10px',
                 }}
               >
-                Escenario activo: {stateLabelUi}
+                Escenario activo: {stateLabel}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
@@ -3132,7 +3140,7 @@ export function SimulationPage({
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Franja roja: zona de ruina · Línea roja punteada: wealth = 0 · Línea ámbar: ganancia 0</span>
+              <span>Franja roja: zona de ruina · Línea roja punteada: umbral de ruina (wealth = 0) · Línea ámbar: umbral ganancia 0</span>
               <span>Eje temporal anual</span>
             </div>
           </div>
