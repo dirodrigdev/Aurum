@@ -11,6 +11,10 @@ import type {
   M8RiskCapitalBtcDriver,
 } from './m8.types';
 import { M8_CANONICAL_CORRELATION_MATRIX } from './m8Calibration';
+import {
+  buildPathQualityDiagnosticsFromM8Output,
+  type M8PathQualityRuntimeSummary,
+} from './pathQualityDiagnostics';
 
 const ASSET_ORDER = ['eq_global', 'eq_chile', 'fi_global', 'fi_chile', 'usd_liquidity', 'clp_cash'] as const;
 type AssetKey = typeof ASSET_ORDER[number];
@@ -985,6 +989,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
   const riskEMicroFirstSaleYears: number[] = [];
   const riskEMicroLastSaleYears: number[] = [];
   const riskEMicroSaleCountByPath: number[] = [];
+  const pathQualitySummaries: M8PathQualityRuntimeSummary[] = [];
 
   if (input.phase1EndYear >= input.phase2EndYear) {
     throw new Error('phase2EndYear debe ser mayor que phase1EndYear');
@@ -1063,6 +1068,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     let budgetCut2Total = 0;
     let inflowTotalClp = 0;
     let outflowTotalClp = 0;
+    const monthlyConsumptionRatios: number[] = [];
+    const monthlyCutStates: number[] = [];
+    let houseSaleMonth: number | null = null;
+    let liquidWealthAfterHouseSaleClp: number | null = null;
+    let pathRuinMonth: number | null = null;
 
     const houseEquity0 = includeHouse ? estimateHouseSaleEquityClp(input, 0, mortgageBalanceUf) : 0;
     wealthPaths[0][p] = totalCoreWealth(sleeves) + houseEquity0 + riskReserve;
@@ -1084,6 +1094,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
         soldHouse = true;
         pendingSale = false;
         saleMonths.push(m);
+        houseSaleMonth = m;
+        liquidWealthAfterHouseSaleClp = totalCoreWealth(sleeves) + riskReserve;
       }
 
       if (returnGenerator === 'two_regime') {
@@ -1240,6 +1252,8 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       const realizedRegularSpend = Math.max(0, Math.min(regularSpend, totalPaid));
       spentTotal += realizedRegularSpend;
       budgetTotal += budget;
+      monthlyConsumptionRatios.push(budget > 0 ? realizedRegularSpend / budget : 1);
+      monthlyCutStates.push(cutState);
 
       const phase = phaseOfMonth(input, m);
       if (phase === 2) {
@@ -1318,6 +1332,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
 
         if (remaining > 1e-8) {
           ruined = true;
+          pathRuinMonth = m;
           ruinMonths.push(m);
           successFlags.push(0);
           terminalWealth.push(0);
@@ -1398,6 +1413,16 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     }
 
     terminalWealthAllPaths.push(wealthPaths[months][p] ?? 0);
+    pathQualitySummaries.push({
+      pathId: p,
+      ruined,
+      ruinMonth: pathRuinMonth,
+      terminalWealthClp: wealthPaths[months][p] ?? null,
+      monthlyConsumptionRatios,
+      cutStates: monthlyCutStates,
+      houseSaleMonth,
+      liquidWealthAfterHouseSaleClp,
+    });
   }
 
   const successRate = successFlags.length > 0 ? mean(successFlags) : 0;
@@ -1466,6 +1491,11 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
     RiskEAnyLargeSalePct: riskEAnyLargeSellFlags.length ? mean(riskEAnyLargeSellFlags) : Number.NaN,
     RiskELargeSalesStats: buildLargeSaleStats(),
     RiskEMicroSalesStats: buildMicroSaleStats(),
+    pathQualityDiagnostics: buildPathQualityDiagnosticsFromM8Output({
+      pathCount: input.n_paths,
+      horizonMonths: months,
+      pathSummaries: pathQualitySummaries,
+    }),
   };
 
   return {

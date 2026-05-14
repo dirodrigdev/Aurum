@@ -562,6 +562,7 @@ export const fromM8Output = (
     stressTimeShare: output.StressTimeShare,
     cut1TimeShare: output.Cut1TimeShare,
     cut2TimeShare: output.Cut2TimeShare,
+    pathQualityDiagnostics: output.pathQualityDiagnostics,
     computedAt: new Date(),
     durationMs,
     params,

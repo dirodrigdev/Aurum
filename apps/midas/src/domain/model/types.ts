@@ -304,9 +304,48 @@ export interface SimulationResults {
   stressTimeShare?:            number;
   cut1TimeShare?:              number;
   cut2TimeShare?:              number;
+  pathQualityDiagnostics?:      PathQualityDiagnosticsV1;
   computedAt:                  Date;
   durationMs:                  number;
   params:                      ModelParameters;
+}
+
+export interface PathQualityPathDiagnosticsV1 {
+  pathId: number;
+  ruined: boolean;
+  ruinMonth: number | null;
+  ruinYear: number | null;
+  terminalWealthClp: number | null;
+  qasrAlpha: 1.5;
+  meanShortfallPenaltyAlpha15: number | null;
+  qualityScoreAlpha15: number | null;
+  observedConsumptionMonths: number;
+  postRuinMonths: number | null;
+  averageConsumptionRatio: number | null;
+  minMonthlyConsumptionRatio: number | null;
+  minAnnualConsumptionRatio: number | null;
+  p10MonthlyConsumptionRatio: number | null;
+  p25MonthlyConsumptionRatio: number | null;
+  monthsInCut: number | null;
+  monthsInSevereCut: number | null;
+  maxConsecutiveCutMonths: number | null;
+  maxConsecutiveSevereCutMonths: number | null;
+  houseSold: boolean | null;
+  houseSaleMonth: number | null;
+  houseSaleYear: number | null;
+  monthsInCutBeforeHouseSale: number | null;
+  monthsInSevereCutBeforeHouseSale: number | null;
+  liquidWealthAfterHouseSaleClp: number | null;
+  warnings: string[];
+}
+
+export interface PathQualityDiagnosticsV1 {
+  schemaVersion: 1;
+  pathCount: number;
+  horizonMonths: number;
+  source: 'm8_runtime_path_summary';
+  warnings: string[];
+  paths: PathQualityPathDiagnosticsV1[];
 }
 
 export interface SensitivityParameter {
