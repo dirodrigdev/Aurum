@@ -103,7 +103,7 @@ const formatNumber = (value: number) =>
 const formatMoneyCompact = (value: number) => {
   if (!Number.isFinite(value)) return '—';
   const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000).toFixed(0)}MM`;
   if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
@@ -388,6 +388,7 @@ export function SimulationPage({
   const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
   const [draftValue, setDraftValue] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [simulationDataOpen, setSimulationDataOpen] = useState(false);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -470,6 +471,9 @@ export function SimulationPage({
     scenarioFromParamsRaw !== 'base' &&
     scenarioFromParamsRaw !== 'pessimistic' &&
     scenarioFromParamsRaw !== 'optimistic';
+  const scenarioUiLabel =
+    activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
+  const stateLabelUi = /base/i.test(stateLabel) ? stateLabel.replace(/base/gi, 'Neutro') : stateLabel;
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
   const scenarioFromResult =
     scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
@@ -855,7 +859,7 @@ export function SimulationPage({
         label: 'Calculando',
         tone: T.warning,
         headline: 'Calculando resultado final.',
-        explanation: 'Falta terminar la corrida final.',
+        explanation: 'Falta terminar la simulación final.',
         gap: 'Falta: Esperar resultado final.',
       };
     }
@@ -1545,7 +1549,7 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div style={{ position: 'relative', order: 1 }}>
+      <div style={{ position: 'relative', order: 2 }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -1635,7 +1639,7 @@ export function SimulationPage({
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
             chips={[
-              { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
+              { id: 'state', value: stateLabelUi, onClick: simActive ? onResetSim : () => {} },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
               {
@@ -1801,7 +1805,7 @@ export function SimulationPage({
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
-            order: 3,
+            order: 4,
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
             borderRadius: 10,
@@ -1841,7 +1845,7 @@ export function SimulationPage({
       {hasSyncBanner && (
         <div
           style={{
-            order: 3,
+            order: 4,
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
             borderRadius: 10,
@@ -2095,7 +2099,7 @@ export function SimulationPage({
             Data Trust Layer
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            Fuente, frescura y respaldo de los datos que más mueven la corrida.
+            Fuente, frescura y respaldo de los datos que más mueven la simulación.
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
             Gastos aplicados: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.spendingPhases ?? []).map((phase, idx) => `F${idx + 1} ${formatMillionsMM(Number(phase.amountReal ?? 0) / 1_000_000)}`).join(' · ')}</span> ·
@@ -2140,7 +2144,7 @@ export function SimulationPage({
                 </div>
                 {snapshotFreshness !== 'fresh' && (
                   <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
-                    Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                    Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la simulación.
                   </div>
                 )}
               </div>
@@ -2159,7 +2163,7 @@ export function SimulationPage({
                 </div>
                 {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
                   <div style={{ color: T.warning, fontSize: 10 }}>
-                    Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                    Usando respaldo interno de FX. Revisa la fuente antes de confiar en la simulación.
                   </div>
                 )}
               </div>
@@ -2206,7 +2210,7 @@ export function SimulationPage({
               </div>
               {snapshotFreshness !== 'fresh' && (
                 <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
-                  Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                  Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la simulación.
                 </div>
               )}
             </div>
@@ -2225,7 +2229,7 @@ export function SimulationPage({
               </div>
               {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
                 <div style={{ color: T.warning, fontSize: 10 }}>
-                  Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                  Usando respaldo interno de FX. Revisa la fuente antes de confiar en la simulación.
                 </div>
               )}
             </div>
@@ -2255,57 +2259,6 @@ export function SimulationPage({
       </div>
       </div>
       </details>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '9px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
-      >
-        <div style={{ display: 'grid', gap: 2 }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Reconciliación Aurum → MIDAS
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            Patrimonio total y capital simulable no son el mismo número.
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital simulable motor</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
-            <div style={{ color: riskCapitalEffective ? T.positive : T.warning, fontSize: 10, marginTop: 2 }}>
-              {riskCapitalEffective ? 'Incluido por separado en M8' : 'Excluido del motor por toggle'}
-            </div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
-          </div>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Snapshot: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Parte del patrimonio que se muestra en Aurum pero no entra en esta simulación.
-        </div>
-        {riskFxMismatchPct !== null && riskCapitalUsdSnapshotCLP > 0 && riskFxMismatchPct > 0.02 && (
-          <div style={{ color: riskFxMismatchPct > 0.05 ? T.negative : riskFxMismatchPct > 0.02 ? T.warning : T.textMuted, fontSize: 10 }}>
-            El capital de riesgo usa un FX distinto del operativo actual (dif. {(riskFxMismatchPct * 100).toFixed(2)}%).
-          </div>
-        )}
-      </div>
       <details
         open={modelBaseOpen}
         onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}
@@ -2416,11 +2369,45 @@ export function SimulationPage({
         </div>
       )}
       </details>
-      <details style={{ order: 4, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}>
-        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-          Configuración actual · {activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista'} · {currentNSim} sims · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskToggleCopy}
+      <details
+        open={simulationDataOpen}
+        onToggle={(e) => setSimulationDataOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800, listStyle: 'none' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>Datos de simulación</span>
+            <span style={{ color: T.textMuted, fontSize: 11 }}>{simulationDataOpen ? 'Ocultar detalle' : 'Ver detalle'}</span>
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 700, marginTop: 4 }}>
+            Capital usado {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'} · {scenarioUiLabel} · {currentNSim} sim · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskCapitalEnabled ? 'ON' : 'OFF'}
+          </div>
         </summary>
         <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6, marginBottom: 10 }}>
+        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
+          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital usado por el motor</div>
+          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
+          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
+          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+          <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
+            Patrimonio mostrado en Aurum que no entra al motor.
+          </div>
+        </div>
+      </div>
+      <div style={{ color: T.textMuted, fontSize: 10, marginBottom: 8 }}>
+        Aurum: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Mix aperturado por instrumento: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · FX: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}</span>
+      </div>
       <div
         style={{
           display: 'grid',
@@ -2450,7 +2437,7 @@ export function SimulationPage({
                     opacity: isRecalculating ? 0.65 : 1,
                   }}
                 >
-                  {variant.label}
+                  {variant.id === 'base' ? 'Neutro' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
                 </button>
                 {active && isScenarioAdjusted ? (
                   <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
@@ -2494,7 +2481,7 @@ export function SimulationPage({
             opacity: isRecalculating ? 0.6 : 1,
           }}
         >
-          Restaurar ajustes del escenario
+          Volver al Modelo Base
         </button>
         <button
           type="button"
@@ -2838,7 +2825,7 @@ export function SimulationPage({
         </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 2 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 3 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{
@@ -2901,7 +2888,7 @@ export function SimulationPage({
                 }}
               >
                 <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                  Origen weights: {weightsSourceLabel}
+                  Origen del mix: Mix aperturado por instrumento ({weightsSourceLabel})
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
                   Activa: {activeWeightSummary}
@@ -2927,7 +2914,7 @@ export function SimulationPage({
                       opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
                     }}
                   >
-                    Restaurar fuente estructural
+                    Restaurar mix oficial
                   </button>
                 </div>
               </div>
@@ -3041,7 +3028,7 @@ export function SimulationPage({
                   padding: '5px 10px',
                 }}
               >
-                Escenario activo: {stateLabel}
+                Escenario activo: {stateLabelUi}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
