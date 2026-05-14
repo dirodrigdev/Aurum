@@ -60,80 +60,91 @@ const formatMoney = (value: number | null | undefined): string => {
 
 const metricInfo = {
   csr: [
-    'Que mide:',
-    'Mide cuantas simulaciones logran sostener una vida razonable: sin ruina, con consumo promedio de al menos 85% del objetivo y sin mas de 4 anos de recorte severo.',
+    'Éxito con calidad de vida (CSR-85/4)',
     '',
-    'Como leerlo:',
-    'Mientras mas alto, mejor. Es mas exigente que la probabilidad clasica de no ruina.',
+    'Que mide:',
+    'Mide cuántas simulaciones logran sostener una vida razonable: sin ruina, con consumo promedio de al menos 85% del objetivo y sin más de 4 años de recorte severo.',
+    '',
+    'Cómo leerlo:',
+    'Mientras más alto, mejor. Es más exigente que la probabilidad clásica de no ruina.',
     '',
     'Ejemplo aplicado:',
     'Si marca 82%, significa que en 82 de cada 100 escenarios simulados el patrimonio permite mantener una calidad de vida razonable bajo estas reglas.',
   ].join('\n'),
   qasrStrict: [
+    'Calidad ajustada estricta (QASR)',
+    '',
     'Que mide:',
     'Score conservador de calidad de consumo. Los escenarios con ruina cuentan como 0.',
     '',
-    'Como leerlo:',
-    'Un valor alto indica que el consumo se mantiene cerca del objetivo en la mayoria de escenarios, castigando fuerte los casos de ruina.',
+    'Cómo leerlo:',
+    'Un valor alto indica que el consumo se mantiene cerca del objetivo en la mayoría de escenarios, castigando fuerte los casos de ruina.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 78/100, significa que la simulacion sostiene una calidad de consumo razonable, pero con fragilidad suficiente como para no considerarla plenamente robusta.',
+    'Si marca 78/100, significa que la simulación sostiene una calidad de consumo razonable, pero con fragilidad suficiente como para no considerarla plenamente robusta.',
   ].join('\n'),
   qualityMean: [
+    'Calidad media observada',
+    '',
     'Que mide:',
     'Mide la calidad de consumo observada antes del castigo estricto por ruina.',
     '',
-    'Como leerlo:',
-    'Sirve para entender como se comporta el consumo en los meses observados. La referencia conservadora sigue siendo QASR estricto.',
+    'Cómo leerlo:',
+    'Sirve para entender cómo se comporta el consumo en los meses observados. La referencia conservadora sigue siendo la calidad ajustada estricta (QASR).',
     '',
     'Ejemplo aplicado:',
-    'Si esta metrica es alta pero el QASR estricto es bajo, probablemente hay escenarios que consumen bien durante un tiempo, pero terminan en ruina.',
+    'Si esta métrica es alta pero la calidad ajustada estricta es baja, probablemente hay escenarios que consumen bien durante un tiempo, pero terminan en ruina.',
   ].join('\n'),
   severeCutMean: [
     'Que mide:',
-    'Mide cuanto tiempo promedio se vive con recortes severos de consumo.',
+    'Mide cuánto tiempo promedio se vive con recortes severos de consumo.',
     '',
-    'Como leerlo:',
-    'Mientras mas bajo, mejor. Muchos meses de recorte severo implican perdida real de calidad de vida.',
+    'Cómo leerlo:',
+    'Mientras más bajo, mejor. Muchos meses de recorte severo implican pérdida real de calidad de vida.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 30 meses, significa que en promedio los escenarios pasan 2 anos y medio con recortes importantes de consumo.',
+    'Si marca 30 meses, significa que en promedio los escenarios pasan 2 años y medio con recortes importantes de consumo.',
   ].join('\n'),
   severeCutP75: [
     'Que mide:',
     'Mide una racha severa en un escenario exigente, usando el percentil 75.',
     '',
-    'Como leerlo:',
-    'No es lo mismo tener recortes dispersos que varios meses o anos seguidos. Esta metrica mira continuidad del estres.',
+    'Cómo leerlo:',
+    'No es lo mismo tener recortes dispersos que varios meses o años seguidos. Esta métrica mira continuidad del estrés.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 36 meses, significa que en escenarios exigentes podrias enfrentar hasta 3 anos seguidos de recorte severo.',
+    'Si marca 36 meses, significa que en escenarios exigentes podrías enfrentar hasta 3 años seguidos de recorte severo.',
   ].join('\n'),
   houseSale: [
     'Que mide:',
-    'Mide en cuantos escenarios se usa la casa como activo disponible.',
+    'Mide en cuántos escenarios se usa la casa como activo disponible.',
     '',
-    'Como leerlo:',
-    'No es fracaso. La venta se informa como una decision economica posible dentro de la simulacion.',
+    'Cómo leerlo:',
+    'No es fracaso. La venta se informa como una decisión económica posible dentro de la simulación.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 35%, significa que en 35 de cada 100 escenarios la simulacion necesita vender la casa para sostener el plan.',
+    'Si marca 35%, significa que en 35 de cada 100 escenarios la simulación necesita vender la casa para sostener el plan.',
   ].join('\n'),
   cutBeforeSale: [
-    'Que mide:',
-    'Mide cuanto estres de consumo ocurre antes de vender la casa.',
+    'Estrés antes de vender',
     '',
-    'Como leerlo:',
-    'Aqui si importa evitar valores altos: no se penaliza vender, se penaliza sufrir demasiado antes de usar el activo.',
+    'Que mide:',
+    'Mide cuánto estrés de consumo ocurre antes de vender la casa.',
+    'Se calcula sobre los escenarios donde la casa se vende.',
+    '',
+    'Cómo leerlo:',
+    'Aquí sí importa evitar valores altos: no se penaliza vender, se penaliza sufrir demasiado antes de usar el activo.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 18 meses, significa que la simulacion espera en promedio un ano y medio de recortes antes de vender la casa.',
+    'Si marca 18 meses, significa que la simulación espera en promedio un año y medio de recortes antes de vender la casa.',
   ].join('\n'),
   terminal: [
+    'Patrimonio final',
+    '',
     'Que mide:',
     'Mide el margen patrimonial al final del horizonte.',
     '',
-    'Como leerlo:',
+    'Cómo leerlo:',
     'Es referencia y desempate, no el objetivo principal. La prioridad es vivir bien durante el horizonte.',
     '',
     'Ejemplo aplicado:',
@@ -242,8 +253,8 @@ export function QualityOfLifeMetricsBlock({
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
         <Group title="Lectura principal">
-          <MetricRow label="Exito con calidad de vida" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
-          <MetricRow label="QASR estricto" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
+          <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
+          <MetricRow label="Calidad ajustada estricta (QASR)" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
           <MetricRow label="Calidad media observada" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
         </Group>
 
@@ -259,19 +270,20 @@ export function QualityOfLifeMetricsBlock({
 
         <Group title="Casa">
           <MetricRow label="Probabilidad de venta de casa" info={metricInfo.houseSale} value={formatPercent(qualityOfLifeMetrics.houseSaleRate)} traffic={salesNeutral} />
-          <MetricRow label="Ano mediano de venta" value={qualityOfLifeMetrics.houseSaleYearMedian === null ? 'No disponible' : `${qualityOfLifeMetrics.houseSaleYearMedian.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} anos`} traffic={salesNeutral} />
-          <MetricRow label="Recortes antes de venta" info={metricInfo.cutBeforeSale} value={formatMonths(qualityOfLifeMetrics.monthsInCutBeforeHouseSaleMean)} traffic={cutBeforeSaleTraffic} />
+          <MetricRow label="Venta mediana" value={qualityOfLifeMetrics.houseSaleYearMedian === null ? 'No disponible' : `año ${qualityOfLifeMetrics.houseSaleYearMedian.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} traffic={salesNeutral} />
+          <MetricRow label="Estrés antes de vender" info={metricInfo.cutBeforeSale} value={formatMonths(qualityOfLifeMetrics.monthsInCutBeforeHouseSaleMean)} traffic={cutBeforeSaleTraffic} />
         </Group>
 
         <Group title="Margen terminal">
-          <MetricRow label="Terminal wealth P25" info={metricInfo.terminal} value={formatMoney(qualityOfLifeMetrics.terminalWealthP25)} traffic="neutral" />
-          <MetricRow label="Terminal wealth P50" value={formatMoney(qualityOfLifeMetrics.terminalWealthP50)} traffic="neutral" />
+          <MetricRow label="Patrimonio final P25" info={metricInfo.terminal} value={formatMoney(qualityOfLifeMetrics.terminalWealthP25)} traffic="neutral" />
+          <MetricRow label="Patrimonio final P50" value={formatMoney(qualityOfLifeMetrics.terminalWealthP50)} traffic="neutral" />
+          <div style={{ color: T.textMuted, fontSize: 10 }}>Referencia, no objetivo principal.</div>
         </Group>
       </div>
 
       {shownWarnings.length > 0 ? (
         <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Nota: algunas lecturas usan datos parciales de la simulacion ({shownWarnings.join(' · ')}).
+          Nota: algunos escenarios terminan antes del horizonte por ruina; por eso ciertas métricas de consumo usan datos parciales.
         </div>
       ) : null}
     </section>
