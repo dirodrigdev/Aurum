@@ -20,6 +20,8 @@ import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
+import { InfoHint } from './InfoHint';
+import { QualityOfLifeMetricsBlock } from './QualityOfLifeMetricsBlock';
 import {
   AreaChart,
   Area,
@@ -2285,6 +2287,10 @@ export function SimulationPage({
       </div>
       </div>
       </details>
+      <QualityOfLifeMetricsBlock
+        qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
+        isMobile={isMobileViewport}
+      />
       <details
         open={modelBaseOpen}
         onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}
@@ -3611,101 +3617,5 @@ function LabelWithInfo({ label, info }: { label: string; info: string }) {
       <span>{label}</span>
       <InfoHint text={info} />
     </>
-  );
-}
-
-function InfoHint({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [placement, setPlacement] = useState<'left' | 'right' | 'center'>('center');
-  const wrapRef = useRef<HTMLSpanElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointerDown = (event: MouseEvent | TouchEvent) => {
-      const node = wrapRef.current;
-      if (!node) return;
-      if (event.target instanceof Node && !node.contains(event.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('touchstart', onPointerDown, { passive: true });
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('touchstart', onPointerDown);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || typeof window === 'undefined') return undefined;
-    const node = wrapRef.current;
-    if (!node) return undefined;
-    const rect = node.getBoundingClientRect();
-    const minSideSpace = 140;
-    const nextPlacement =
-      window.innerWidth - rect.right < minSideSpace
-        ? 'right'
-        : rect.left < minSideSpace
-          ? 'left'
-          : 'center';
-    setPlacement(nextPlacement);
-    return undefined;
-  }, [open]);
-
-  return (
-    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-      <button
-        type="button"
-        aria-label="Mostrar explicación"
-        onClick={() => setOpen((prev) => !prev)}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') setOpen(false);
-        }}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 20,
-          height: 20,
-          borderRadius: 999,
-          border: `1px solid ${T.border}`,
-          color: T.textMuted,
-          background: T.surface,
-          fontSize: 11,
-          fontWeight: 800,
-          cursor: 'pointer',
-          userSelect: 'none',
-          padding: 0,
-        }}
-      >
-        i
-      </button>
-      {open && (
-        <span
-          role="note"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            ...(placement === 'right'
-              ? { right: 0 }
-              : placement === 'left'
-                ? { left: 0 }
-                : { left: '50%', transform: 'translateX(-50%)' }),
-            maxWidth: 'min(260px, calc(100vw - 24px))',
-            background: 'rgba(11, 16, 24, 0.98)',
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            color: T.textSecondary,
-            padding: '8px 10px',
-            fontSize: 11,
-            lineHeight: 1.35,
-            zIndex: 70,
-            boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
-          }}
-        >
-          {text}
-        </span>
-      )}
-    </span>
   );
 }
