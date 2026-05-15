@@ -10,6 +10,13 @@ import {
 } from '../domain/optimizer/optimizationFrontierDiagnostics';
 import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
 import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
+import {
+  RV_RF_PREMIUM_SENSITIVITY_SCENARIOS,
+  applyRvRfPremiumSensitivity,
+  explainSensitivityShift,
+  pickSensitivityWinner,
+  type RvRfPremiumSensitivityScenario,
+} from '../domain/optimizer/rvRfPremiumSensitivity';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -142,6 +149,13 @@ type RealisticValidationResult = {
   row: Phase2Point;
   deltaVsIdealSuccessPp: number;
   message: string;
+};
+
+type SensitivityScenarioResult = {
+  scenario: RvRfPremiumSensitivityScenario;
+  winner: Phase2Point | null;
+  frontier: ReturnType<typeof buildOptimizationFrontierDiagnostics>;
+  warnings: string[];
 };
 
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
@@ -940,6 +954,9 @@ export function OptimizationLightPage({
   const [phase3Running, setPhase3Running] = useState(false);
   const [phase3Result, setPhase3Result] = useState<Phase3Result | null>(null);
   const [phase3Error, setPhase3Error] = useState<string | null>(null);
+  const [sensitivityRunning, setSensitivityRunning] = useState(false);
+  const [sensitivityResults, setSensitivityResults] = useState<SensitivityScenarioResult[]>([]);
+  const [sensitivityError, setSensitivityError] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -976,6 +993,8 @@ export function OptimizationLightPage({
     setRealisticValidationError(null);
     setPhase3Result(null);
     setPhase3Error(null);
+    setSensitivityResults([]);
+    setSensitivityError(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -1007,12 +1026,14 @@ export function OptimizationLightPage({
     setImplementationError(null);
     setFinalImplementationPlan(null);
     setFinalImplementationError(null);
-    setFinalImplementationNote(null);
-    setRealisticValidation(null);
-    setRealisticValidationError(null);
-    setPhase3Result(null);
-    setPhase3Error(null);
-    try {
+      setFinalImplementationNote(null);
+      setRealisticValidation(null);
+      setRealisticValidationError(null);
+      setPhase3Result(null);
+      setPhase3Error(null);
+      setSensitivityResults([]);
+      setSensitivityError(null);
+      try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       slowTimer = window.setTimeout(() => {
@@ -1135,6 +1156,8 @@ export function OptimizationLightPage({
     setRealisticValidationError(null);
     setPhase3Result(null);
     setPhase3Error(null);
+    setSensitivityResults([]);
+    setSensitivityError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1163,6 +1186,64 @@ export function OptimizationLightPage({
       setPhase2Running(false);
     }
   }, [activeLabel, activeParams, phase1Points, phase2Running]);
+
+  const runSensitivity = useCallback(async () => {
+    if (sensitivityRunning || !phase2Rows.length) return;
+    setSensitivityRunning(true);
+    setSensitivityError(null);
+    setSensitivityResults([]);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const results: SensitivityScenarioResult[] = [];
+      for (const scenario of RV_RF_PREMIUM_SENSITIVITY_SCENARIOS) {
+        const { params: scenarioParams, warnings } = applyRvRfPremiumSensitivity(activeParams, scenario);
+        const rows: Phase2Point[] = [];
+        for (const point of phase2Rows) {
+          const candidateParams = cloneParams(scenarioParams);
+          candidateParams.weights = cloneParams(point.source.weights);
+          const sim = runSimulationCentral(candidateParams);
+          rows.push(toPhase2Point(point.source, sim));
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        }
+        const ranked = [...rows].sort((a, b) => compareQualityOptimizationCandidates(a.qualityCandidate, b.qualityCandidate));
+        const picked = pickSensitivityWinner(ranked.map((row) => row.qualityCandidate));
+        const winner = picked.winner
+          ? ranked.find((row) => row.qualityCandidate.id === picked.winner?.id) ?? null
+          : null;
+        const diagnosticRows: OptimizationDiagnosticRow[] = rows.map((row) => ({
+          id: row.qualityCandidate.id,
+          rvPct: row.source.rvPct,
+          rfPct: row.source.rfPct,
+          weights: row.source.weights,
+          qasrStrict: row.qualityCandidate.qasrStrict,
+          csr85_4: row.qualityCandidate.csr85_4,
+          classicSuccessRate: row.qualityCandidate.classicSuccessRate,
+          monthsInSevereCutMean: row.qualityCandidate.monthsInSevereCutMean,
+          maxConsecutiveSevereCutMonthsP75: row.qualityCandidate.maxConsecutiveSevereCutMonthsP75,
+          terminalWealthP25: row.qualityCandidate.terminalWealthP25,
+          terminalWealthP50: row.qualityCandidate.terminalWealthP50,
+          houseSaleRate: row.qualityCandidate.houseSaleRate,
+        }));
+        results.push({
+          scenario,
+          winner,
+          frontier: buildOptimizationFrontierDiagnostics(
+            scenarioParams,
+            diagnosticRows,
+            winner
+              ? diagnosticRows.find((row) => row.id === winner.qualityCandidate.id) ?? null
+              : null,
+          ),
+          warnings: [...warnings, ...picked.warnings],
+        });
+      }
+      setSensitivityResults(results);
+    } catch (error) {
+      setSensitivityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSensitivityRunning(false);
+    }
+  }, [activeParams, phase2Rows, sensitivityRunning]);
 
   const modeCards = useMemo(
     () => ([
@@ -1276,6 +1357,14 @@ export function OptimizationLightPage({
         : null,
     );
   }, [activeParams, phase2QualityWinner, phase2Rows]);
+  const sensitivityInterpretation = useMemo(() => {
+    const base = sensitivityResults.find((item) => item.scenario.id === 'base') ?? null;
+    const others = sensitivityResults
+      .filter((item) => item.scenario.id !== 'base')
+      .map((item) => item.winner?.source.rvPct)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return explainSensitivityShift(base?.winner?.source.rvPct ?? null, others);
+  }, [sensitivityResults]);
   const phase2Decisions = useMemo(() => {
     if (!phase2BaselineRow) return new Map<number, Phase2CompetitionDecision>();
     return new Map(
@@ -2134,6 +2223,84 @@ export function OptimizationLightPage({
               </div>
             </div>
           </details>
+        ) : null}
+
+        {phase2Rows.length > 0 ? (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Sensibilidad prima RV/RF</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Prueba no oficial: muestra cómo cambiaría el mix recomendado si la rentabilidad esperada de RV fuera mayor. No modifica el escenario base ni la recomendación oficial.
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={runSensitivity}
+                disabled={sensitivityRunning || !phase2Rows.length}
+                style={{
+                  background: sensitivityRunning ? T.surface : T.primary,
+                  border: `1px solid ${sensitivityRunning ? T.border : T.primary}`,
+                  color: sensitivityRunning ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: sensitivityRunning || !phase2Rows.length ? 'not-allowed' : 'pointer',
+                  opacity: !phase2Rows.length ? 0.65 : 1,
+                }}
+              >
+                {sensitivityRunning ? 'Ejecutando sensibilidad…' : 'Ejecutar sensibilidad'}
+              </button>
+            </div>
+            {sensitivityError ? (
+              <div style={{ color: T.warning, fontSize: 10 }}>{sensitivityError}</div>
+            ) : null}
+            {sensitivityResults.length > 0 ? (
+              <>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                  {sensitivityInterpretation}
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {sensitivityResults.map((result) => {
+                    const winner = result.winner;
+                    const winnerDiag = winner
+                      ? result.frontier.candidateDiagnostics.find((item) => item.id === winner.qualityCandidate.id) ?? null
+                      : null;
+                    return (
+                      <div
+                        key={`sensitivity-${result.scenario.id}`}
+                        style={{
+                          display: 'grid',
+                          gap: 3,
+                          border: `1px solid ${T.border}`,
+                          borderRadius: 10,
+                          padding: '8px 10px',
+                          background: T.surface,
+                        }}
+                      >
+                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                          {result.scenario.label} · Prima RV-RF {formatPctPrecise(winnerDiag?.rvRfSpread ?? null)}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Mix recomendado {winner ? `RV ${winner.source.rvPct}% / RF ${winner.source.rfPct}%` : 'No disponible'} · QASR {formatScorePrecise(winner?.qualityCandidate.qasrStrict ?? null)} · CSR {formatPctPrecise(winner?.qualityCandidate.csr85_4 ?? null)}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Éxito clásico {formatPctPrecise(winner?.qualityCandidate.classicSuccessRate ?? null)} · Recorte severo {formatMonthsHuman(winner?.qualityCandidate.monthsInSevereCutMean ?? null)} · P25 final {formatClpShort(winner?.qualityCandidate.terminalWealthP25 ?? null)} · P50 final {formatClpShort(winner?.qualityCandidate.terminalWealthP50 ?? null)}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Venta casa {formatPctPrecise(winner?.qualityCandidate.houseSaleRate ?? null)} · {result.frontier.winningMixReason}
+                        </div>
+                        {result.warnings.length > 0 ? (
+                          <div style={{ color: T.warning, fontSize: 10 }}>
+                            {result.warnings.join(' · ')}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+          </div>
         ) : null}
 
         {phase2QualityMissingRows.length > 0 ? (
