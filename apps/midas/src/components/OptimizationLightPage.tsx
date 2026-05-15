@@ -1810,6 +1810,17 @@ export function OptimizationLightPage({
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
     [officialMainRecommendation, phase2Rows],
   );
+  const officialMainRecommendationSourceRow = useMemo(() => {
+    if (!officialMainRecommendation) return null;
+    if (officialMainRecommendationRow) return officialMainRecommendationRow;
+    const candidateParams = cloneParams(activeParams);
+    candidateParams.weights = buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct);
+    const sim = runSimulationCentral(candidateParams);
+    return toPhase2Point(
+      toPhase1Point(officialMainRecommendation.rvPct, candidateParams.weights, sim),
+      sim,
+    );
+  }, [activeParams, officialMainRecommendation, officialMainRecommendationRow]);
   const officialDefensiveReferenceRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialDefensiveReference),
     [officialDefensiveReference, phase2Rows],
@@ -1913,12 +1924,12 @@ export function OptimizationLightPage({
   );
   const phase2LongevitySelectedRow = useMemo(() => {
     return {
-      row: officialMainRecommendationRow,
-      reason: officialMainRecommendationRow
+      row: officialMainRecommendationSourceRow,
+      reason: officialMainRecommendationSourceRow
         ? 'Fuente oficial V2.7.2/V2.7.4 · Pareto + ratio vs referencia defensiva.'
         : 'Primero genera la recomendación principal V2.7.2/V2.7.4.',
     };
-  }, [officialMainRecommendationRow]);
+  }, [officialMainRecommendationSourceRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
   const activeScenarioAfterPhase2 = useMemo(
     () => phase2ImplementationSelectedRow,
@@ -2622,16 +2633,15 @@ export function OptimizationLightPage({
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Ranking legacy / diagnóstico anterior</div>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Recomendación principal para tu perfil</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-          Evalúa con el modelo completo los mixes refinados en Fase 1 (casa + cuts + protecciones activas) y conserva un ranking legacy solo como contexto histórico.
+          Usa `decisionProfiles.mainRecommendation` como fuente oficial para elegir el mejor equilibrio entre calidad base y holgura futura.
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
-          Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
-          {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
+          Fuente oficial visible: Pareto + ratio vs referencia defensiva. La referencia defensiva y el benchmark extremo se muestran solo como comparadores.
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
-          Este ranking ya no define la recomendación final del usuario. La fuente oficial vive en V2.7.2/V2.7.4 por Pareto + ratio.
+          Si quieres correr diagnósticos complementarios del modelo completo para sensibilidad y holgura, puedes prepararlos sin afectar la recomendación oficial.
         </div>
         <div>
           <button
@@ -2650,43 +2660,10 @@ export function OptimizationLightPage({
               opacity: (!phase1Points.length || mode !== 'light') ? 0.65 : 1,
             }}
           >
-            {phase2Running ? 'Calculando Fase 2…' : 'Evaluar Fase 2'}
+            {phase2Running ? 'Preparando diagnósticos…' : 'Preparar diagnósticos complementarios'}
           </button>
         </div>
         {phase2Meta ? renderRunMeta(phase2Meta, phase2IsStale) : null}
-        {!phase2BaselineRow && phase2Rows.length > 0 ? (
-          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
-            No se pudo determinar baseline de Fase 2 para comparar competencia.
-          </div>
-        ) : null}
-
-        {phase2ChampionChallenger.champion ? (
-          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Top legacy por calidad de vida</div>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-              {scenarioLabel(phase2ChampionChallenger.champion.source)}
-            </div>
-            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-              QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)} · Éxito clásico {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.classicSuccessRate)}
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Recorte severo promedio {formatMonthsHuman(phase2ChampionChallenger.champion.qualityCandidate.monthsInSevereCutMean)} · Patrimonio final P25 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP25)} · P50 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP50)} · Venta de casa {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.houseSaleRate)}
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              {phase2ChampionChallenger.reason} No es la recomendación principal final para tu perfil.
-            </div>
-            {phase2ChampionChallenger.challenger ? (
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Segundo legacy: {scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR {formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.challenger.qualityCandidate.csr85_4)}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {legacyRecommendationConflict ? (
-          <div style={{ color: T.warning, fontSize: 10 }}>
-            {legacyRecommendationConflict}
-          </div>
-        ) : null}
 
         {phase2Rows.length > 0 ? (
           <details style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
@@ -3068,7 +3045,7 @@ export function OptimizationLightPage({
           </div>
         ) : null}
 
-        {phase2Rows.length > 0 && (
+        {false && phase2Rows.length > 0 && (
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
             {phase2QualityRows.map((row) => {
               const decision = phase2Decisions.get(row.source.rvPct) ?? null;
@@ -3172,18 +3149,6 @@ export function OptimizationLightPage({
           </div>
         )}
 
-        {phase2ChampionChallenger.champion ? (
-          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparativa legacy</div>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-              Top legacy: {scenarioLabel(phase2ChampionChallenger.champion.source)} · QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)}
-            </div>
-            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-              Alternativa legacy: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR ${formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)}` : 'No disponible'}
-            </div>
-          </div>
-        ) : null}
-
         {phase2Rows.length > 0 && (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
             <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Implementación · Traspasos sugeridos desde la recomendación principal</div>
@@ -3191,7 +3156,7 @@ export function OptimizationLightPage({
               Traduce la recomendación principal oficial a instrumentos reales, sin usar ranking legacy ni resultados de Fase 3.
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Escenario activo recibido desde recomendación principal V2.7.2/V2.7.4: {activeScenarioAfterPhase2 ? scenarioLabel(activeScenarioAfterPhase2.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+              Desde recomendación principal V2.7.4: {activeScenarioAfterPhase2 ? scenarioLabel(activeScenarioAfterPhase2.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
               Objetivo oficial base (Implementation): {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'}
