@@ -365,10 +365,19 @@ function findPhase2RowByRvPct(rows: Phase2Point[], rvPct: number): Phase2Point |
   return rows.find((row) => Math.abs(row.source.rvPct - rvPct) <= 0.05) ?? null;
 }
 
+function findPhase2RowForDecisionCandidate(
+  rows: Phase2Point[],
+  candidate: RvRfDecisionCandidate | null,
+): Phase2Point | null {
+  if (!candidate) return null;
+  return findPhase2RowByRvPct(rows, candidate.rvPct);
+}
+
 function buildSpendingHeadroomCandidates(
   rows: Phase2Point[],
   currentRow: Phase2Point | null,
   winner: Phase2Point | null,
+  winnerSourceLabel = 'Recomendación principal V2.7.2',
 ): SpendingHeadroomMixCandidate[] {
   const candidates: SpendingHeadroomMixCandidate[] = [];
   const pushRow = (row: Phase2Point | null, sourceLabel: string) => {
@@ -384,7 +393,7 @@ function buildSpendingHeadroomCandidates(
     });
   };
 
-  pushRow(winner, 'Ganador QoL');
+  pushRow(winner, winnerSourceLabel);
   pushRow(currentRow, 'Mix actual');
   [0, 5, 25, 50, 80, 100].forEach((rvPct) => pushRow(findPhase2RowByRvPct(rows, rvPct), `Benchmark ${rvPct}/${100 - rvPct}`));
 
@@ -410,6 +419,105 @@ function buildSpendingHeadroomCandidates(
   }
 
   return [...candidates].sort((a, b) => a.rvPct - b.rvPct);
+}
+
+type RecommendationTradeoffCard = {
+  key: string;
+  title: string;
+  mixLabel: string;
+  gains: string[];
+  sacrifices: string[];
+  reading: string;
+};
+
+function formatScoreDeltaPoints(delta: number): string {
+  return `${delta >= 0 ? '+' : '-'}${Math.abs(delta).toFixed(2)} pts`;
+}
+
+function buildDecisionTradeoffCard(
+  key: string,
+  title: string,
+  baseline: RvRfDecisionCandidate,
+  alternative: RvRfDecisionCandidate,
+): RecommendationTradeoffCard {
+  const gains: string[] = [];
+  const sacrifices: string[] = [];
+  const qasrBaseDelta = ((alternative.qasrBase ?? 0) - (baseline.qasrBase ?? 0)) * 100;
+  const qasr120Delta = ((alternative.qasrAt120 ?? 0) - (baseline.qasrAt120 ?? 0)) * 100;
+  const csrDelta = ((alternative.csrBase ?? 0) - (baseline.csrBase ?? 0)) * 100;
+  const severeCutDelta = (alternative.monthsInSevereCutMean ?? 0) - (baseline.monthsInSevereCutMean ?? 0);
+  const ruinDelta = ((alternative.ruinRate ?? 0) - (baseline.ruinRate ?? 0)) * 100;
+  const terminalP50Delta = (
+    baseline.terminalWealthP50 && baseline.terminalWealthP50 > 0 && alternative.terminalWealthP50 !== null
+      ? ((alternative.terminalWealthP50 - baseline.terminalWealthP50) / baseline.terminalWealthP50) * 100
+      : null
+  );
+
+  if (qasrBaseDelta >= 0.15) gains.push(`${formatScoreDeltaPoints(qasrBaseDelta)} de QASR base`);
+  if (qasrBaseDelta <= -0.15) sacrifices.push(`${formatScoreDeltaPoints(qasrBaseDelta)} de QASR base`);
+  if (qasr120Delta >= 0.15) gains.push(`${formatScoreDeltaPoints(qasr120Delta)} de QASR +20`);
+  if (qasr120Delta <= -0.15) sacrifices.push(`${formatScoreDeltaPoints(qasr120Delta)} de QASR +20`);
+  if (csrDelta >= 0.8) gains.push(`${csrDelta.toFixed(1)} pp más de CSR`);
+  if (csrDelta <= -0.8) sacrifices.push(`${Math.abs(csrDelta).toFixed(1)} pp menos de CSR`);
+  if (severeCutDelta <= -1) gains.push(`${Math.abs(severeCutDelta).toFixed(1)} meses menos de recorte severo`);
+  if (severeCutDelta >= 1) sacrifices.push(`${Math.abs(severeCutDelta).toFixed(1)} meses más de recorte severo`);
+  if (ruinDelta <= -0.5) gains.push(`${Math.abs(ruinDelta).toFixed(1)} pp menos de ruina`);
+  if (ruinDelta >= 0.5) sacrifices.push(`${Math.abs(ruinDelta).toFixed(1)} pp más de ruina`);
+  if (terminalP50Delta !== null && terminalP50Delta >= 10) gains.push(`${terminalP50Delta.toFixed(1)}% más de patrimonio final P50`);
+  if (terminalP50Delta !== null && terminalP50Delta <= -10) sacrifices.push(`${Math.abs(terminalP50Delta).toFixed(1)}% menos de patrimonio final P50`);
+
+  const reading = qasr120Delta > 0.15 && qasrBaseDelta < -0.15
+    ? 'Gana holgura futura, pero acepta menor estabilidad base.'
+    : qasrBaseDelta > 0.15 && qasr120Delta < -0.15
+      ? 'Prioriza estabilidad base por sobre holgura futura.'
+      : terminalP50Delta !== null && Math.abs(qasrBaseDelta) < 0.15 && Math.abs(qasr120Delta) < 0.15
+        ? 'Se parece mucho en calidad, pero cambia el margen patrimonial.'
+        : 'Cambia el equilibrio entre estabilidad base, holgura y recortes.';
+
+  return {
+    key,
+    title,
+    mixLabel: alternative.mixLabel,
+    gains: gains.slice(0, 3),
+    sacrifices: sacrifices.slice(0, 3),
+    reading,
+  };
+}
+
+function buildLegacyTradeoffCard(
+  key: string,
+  title: string,
+  baseline: Phase2Point,
+  alternative: Phase2Point,
+): RecommendationTradeoffCard {
+  const gains: string[] = [];
+  const sacrifices: string[] = [];
+  const qasrBaseDelta = (((alternative.qualityCandidate.qasrStrict ?? 0) - (baseline.qualityCandidate.qasrStrict ?? 0)) * 100);
+  const csrDelta = (((alternative.qualityCandidate.csr85_4 ?? 0) - (baseline.qualityCandidate.csr85_4 ?? 0)) * 100);
+  const severeCutDelta = ((alternative.qualityCandidate.monthsInSevereCutMean ?? 0) - (baseline.qualityCandidate.monthsInSevereCutMean ?? 0));
+  const terminalP50Delta = (
+    baseline.qualityCandidate.terminalWealthP50 && baseline.qualityCandidate.terminalWealthP50 > 0 && alternative.qualityCandidate.terminalWealthP50 !== null
+      ? ((alternative.qualityCandidate.terminalWealthP50 - baseline.qualityCandidate.terminalWealthP50) / baseline.qualityCandidate.terminalWealthP50) * 100
+      : null
+  );
+
+  if (qasrBaseDelta >= 0.15) gains.push(`${formatScoreDeltaPoints(qasrBaseDelta)} de QASR base`);
+  if (qasrBaseDelta <= -0.15) sacrifices.push(`${formatScoreDeltaPoints(qasrBaseDelta)} de QASR base`);
+  if (csrDelta >= 0.8) gains.push(`${csrDelta.toFixed(1)} pp más de CSR`);
+  if (csrDelta <= -0.8) sacrifices.push(`${Math.abs(csrDelta).toFixed(1)} pp menos de CSR`);
+  if (severeCutDelta <= -1) gains.push(`${Math.abs(severeCutDelta).toFixed(1)} meses menos de recorte severo`);
+  if (severeCutDelta >= 1) sacrifices.push(`${Math.abs(severeCutDelta).toFixed(1)} meses más de recorte severo`);
+  if (terminalP50Delta !== null && terminalP50Delta >= 10) gains.push(`${terminalP50Delta.toFixed(1)}% más de patrimonio final P50`);
+  if (terminalP50Delta !== null && terminalP50Delta <= -10) sacrifices.push(`${Math.abs(terminalP50Delta).toFixed(1)}% menos de patrimonio final P50`);
+
+  return {
+    key,
+    title,
+    mixLabel: `RV ${alternative.source.rvPct} / RF ${alternative.source.rfPct}`,
+    gains: gains.slice(0, 3),
+    sacrifices: sacrifices.slice(0, 3),
+    reading: 'Sirve como comparador preliminar técnico; no es la recomendación final del perfil.',
+  };
 }
 
 function explainSpendingHeadroom(
@@ -1690,6 +1798,65 @@ export function OptimizationLightPage({
         : null,
     );
   }, [activeParams, phase2QualityWinner, phase2Rows]);
+  const baseDecisionProfiles = useMemo(
+    () => decisionProfilesTables.find((table) => table.scenarioId === 'base')?.profiles ?? null,
+    [decisionProfilesTables],
+  );
+  const officialMainRecommendation = baseDecisionProfiles?.primaryRecommendation ?? null;
+  const officialDefensiveReference = baseDecisionProfiles?.defensiveReference ?? null;
+  const officialHeadroomAlternative = baseDecisionProfiles?.headroomAlternative ?? null;
+  const officialBenchmarkExtreme = baseDecisionProfiles?.benchmarkExtreme ?? null;
+  const officialMainRecommendationRow = useMemo(
+    () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
+    [officialMainRecommendation, phase2Rows],
+  );
+  const officialDefensiveReferenceRow = useMemo(
+    () => findPhase2RowForDecisionCandidate(phase2Rows, officialDefensiveReference),
+    [officialDefensiveReference, phase2Rows],
+  );
+  const officialHeadroomAlternativeRow = useMemo(
+    () => findPhase2RowForDecisionCandidate(phase2Rows, officialHeadroomAlternative),
+    [officialHeadroomAlternative, phase2Rows],
+  );
+  const officialRecommendationWarning = useMemo(() => {
+    if (!phase2Rows.length) return null;
+    if (!baseDecisionProfiles) return 'La recomendación oficial V2.7.2 aparece aquí después de generar la decisión por perfiles.';
+    if (!officialMainRecommendation) return 'V2.7.2 no devolvió una recomendación principal usable.';
+    if (!officialMainRecommendationRow) return 'La recomendación principal V2.7.2 no coincide con ningún candidato evaluado en Fase 2.';
+    const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === officialMainRecommendation.candidateId) ?? null;
+    if (!officialRow?.passesHardGuardrails) return 'Candidato recomendado no coincide con fuente V2.7.2.';
+    return null;
+  }, [baseDecisionProfiles, officialMainRecommendation, officialMainRecommendationRow, phase2Rows.length]);
+  const legacyRecommendationConflict = useMemo(() => {
+    if (!phase2QualityWinner || !officialMainRecommendationRow) return null;
+    if (isSameMix(phase2QualityWinner.source, officialMainRecommendationRow.source)) return null;
+    return `El top legacy ${scenarioLabel(phase2QualityWinner.source)} difiere de la recomendación principal V2.7.2 ${scenarioLabel(officialMainRecommendationRow.source)}.`;
+  }, [officialMainRecommendationRow, phase2QualityWinner]);
+  const recommendationTradeoffCards = useMemo(() => {
+    if (!officialMainRecommendation || !baseDecisionProfiles) return [] as RecommendationTradeoffCard[];
+    const cards: RecommendationTradeoffCard[] = [];
+    if (officialDefensiveReference && officialDefensiveReference.candidateId !== officialMainRecommendation.candidateId) {
+      cards.push(buildDecisionTradeoffCard('defensive', 'Referencia defensiva', officialMainRecommendation, officialDefensiveReference));
+    }
+    if (officialHeadroomAlternative && officialHeadroomAlternative.candidateId !== officialMainRecommendation.candidateId) {
+      cards.push(buildDecisionTradeoffCard('headroom', 'Alternativa de mayor holgura', officialMainRecommendation, officialHeadroomAlternative));
+    }
+    if (officialBenchmarkExtreme && officialBenchmarkExtreme.candidateId !== officialMainRecommendation.candidateId) {
+      cards.push(buildDecisionTradeoffCard('benchmark', 'Benchmark extremo', officialMainRecommendation, officialBenchmarkExtreme));
+    }
+    if (phase2SuggestedRow && officialMainRecommendationRow && !isSameMix(phase2SuggestedRow.source, officialMainRecommendationRow.source)) {
+      cards.push(buildLegacyTradeoffCard('phase1', 'Óptimo técnico preliminar', officialMainRecommendationRow, phase2SuggestedRow));
+    }
+    return cards;
+  }, [
+    baseDecisionProfiles,
+    officialBenchmarkExtreme,
+    officialDefensiveReference,
+    officialHeadroomAlternative,
+    officialMainRecommendation,
+    officialMainRecommendationRow,
+    phase2SuggestedRow,
+  ]);
   const sensitivityInterpretation = useMemo(() => {
     const base = sensitivityResults.find((item) => item.scenario.id === 'base') ?? null;
     const others = sensitivityResults
@@ -1698,12 +1865,13 @@ export function OptimizationLightPage({
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     return explainSensitivityShift(base?.winner?.source.rvPct ?? null, others);
   }, [sensitivityResults]);
+  const spendingHeadroomWinnerRow = officialMainRecommendationRow ?? phase2QualityWinner;
   const spendingHeadroomCandidates = useMemo(
-    () => buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, phase2QualityWinner),
-    [phase2CurrentRow, phase2QualityWinner, phase2Rows],
+    () => buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, spendingHeadroomWinnerRow),
+    [phase2CurrentRow, phase2Rows, spendingHeadroomWinnerRow],
   );
   const spendingHeadroomInterpretation = useMemo(
-    () => explainSpendingHeadroom(spendingHeadroomResults, spendingHeadroomCandidates.find((item) => item.sourceLabel === 'Ganador QoL') ?? null),
+    () => explainSpendingHeadroom(spendingHeadroomResults, spendingHeadroomCandidates.find((item) => item.sourceLabel === 'Recomendación principal V2.7.2') ?? null),
     [spendingHeadroomCandidates, spendingHeadroomResults],
   );
   const phase2Decisions = useMemo(() => {
@@ -1745,10 +1913,12 @@ export function OptimizationLightPage({
   );
   const phase2LongevitySelectedRow = useMemo(() => {
     return {
-      row: phase2ChampionChallenger.champion,
-      reason: phase2ChampionChallenger.reason,
+      row: officialMainRecommendationRow,
+      reason: officialMainRecommendationRow
+        ? 'Fuente oficial V2.7.2/V2.7.4 · Pareto + ratio vs referencia defensiva.'
+        : 'Primero genera la recomendación principal V2.7.2/V2.7.4.',
     };
-  }, [phase2ChampionChallenger.champion, phase2ChampionChallenger.reason]);
+  }, [officialMainRecommendationRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
   const activeScenarioAfterPhase2 = useMemo(
     () => phase2ImplementationSelectedRow,
@@ -1758,8 +1928,8 @@ export function OptimizationLightPage({
     if (!activeScenarioAfterPhase2) {
       return {
         row: null as Phase2Point | null,
-        sourceLabel: 'Sin escenario activo post-Fase 2',
-        blockedReason: 'Primero ejecuta Fase 2 para definir un escenario activo.',
+        sourceLabel: 'Recomendación principal V2.7.2/V2.7.4 pendiente',
+        blockedReason: 'Primero genera la recomendación principal V2.7.2/V2.7.4 para activar Implementación.',
         roleLabel: 'Escenario activo',
       };
     }
@@ -1770,15 +1940,15 @@ export function OptimizationLightPage({
     if (!implementationPlan) {
       return {
         row: activeScenarioAfterPhase2,
-        sourceLabel: 'Escenario activo recibido desde Fase 2',
+        sourceLabel: `Escenario activo recibido desde recomendación principal V2.7.2/V2.7.4: ${scenarioLabel(activeScenarioAfterPhase2.source)}`,
         blockedReason: null as string | null,
-        roleLabel: 'Activo post-Fase 2',
+        roleLabel: 'Recomendación principal V2.7.2/V2.7.4',
       };
     }
     if (!materialGap) {
       return {
         row: activeScenarioAfterPhase2,
-        sourceLabel: 'Fase 3 usando escenario implementado equivalente',
+        sourceLabel: 'Implementación equivalente a la recomendación principal V2.7.2/V2.7.4',
         blockedReason: null as string | null,
         roleLabel: 'Implementado equivalente',
       };
@@ -1786,7 +1956,7 @@ export function OptimizationLightPage({
     if (realisticValidation?.row) {
       return {
         row: realisticValidation.row,
-        sourceLabel: 'Fase 3 usando escenario validado tras implementación',
+        sourceLabel: 'Implementación validada desde la recomendación principal V2.7.2/V2.7.4',
         blockedReason: null as string | null,
         roleLabel: 'Validado tras implementación',
       };
@@ -1794,7 +1964,7 @@ export function OptimizationLightPage({
     return {
       row: null as Phase2Point | null,
       sourceLabel: 'Escenario implementable pendiente de validación realista',
-      blockedReason: 'Para ejecutar Fase 3 primero debes correr la Validación realista.',
+      blockedReason: 'Primero valida el mix alcanzable para seguir usando la recomendación principal oficial.',
       roleLabel: 'Escenario activo',
     };
   }, [activeScenarioAfterPhase2, implementationPlan, realisticValidation]);
@@ -1964,7 +2134,7 @@ export function OptimizationLightPage({
     if (implementationRunning) return;
     const idealRow = phase2ImplementationSelectedRow;
     if (!idealRow) {
-      setImplementationError('No hay escenario ideal de Fase 2 para construir implementación.');
+      setImplementationError('No hay recomendación principal oficial para construir implementación.');
       return;
     }
     setImplementationRunning(true);
@@ -2176,7 +2346,7 @@ export function OptimizationLightPage({
       <div style={{ display: 'grid', gap: 4 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Optimización</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Fase 1: optimización autónoma del portafolio. Fase 2: validación del shortlist. Fase 3: gasto cómodo dentro de banda de seguridad.
+          Fase 1: óptimo técnico / financiero preliminar. Fase 2: recomendación oficial por Pareto + ratio. Implementación: traspasos sugeridos desde la recomendación principal.
         </div>
       </div>
 
@@ -2257,9 +2427,9 @@ export function OptimizationLightPage({
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 1 · Portafolio autónomo</div>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 1 · Óptimo técnico / financiero preliminar</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-          Sweep RF/RV completo, refinamiento local y mix de la fuente activa preservado para elegir política de inversión por sí sola.
+          Sweep RF/RV completo, refinamiento local y mix de la fuente activa preservado para estimar el óptimo financiero preliminar.
         </div>
         <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.45 }}>
           En esta fase se apaga la venta de casa y se desactiva capital de riesgo. Los cuts se neutralizan vía parámetros (floors=1 y umbrales extremos) usando el mismo motor M8.
@@ -2313,6 +2483,9 @@ export function OptimizationLightPage({
           <div style={{ display: 'grid', gap: 8 }}>
             <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, display: 'grid', gap: 7 }}>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Campeón + retador Fase 1</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Este mix se ve mejor en la optimización preliminar. No es necesariamente la recomendación final para tu perfil.
+              </div>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, lineHeight: 1.35 }}>
                 Campeón Fase 1: {phase1ChampionChallenger.champion ? scenarioLabel(phase1ChampionChallenger.champion) : 'No disponible'}
                 {phase1ChampionChallenger.champion ? ` · ${formatPct(phase1ChampionChallenger.champion.success40)}` : ''}
@@ -2449,16 +2622,16 @@ export function OptimizationLightPage({
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Mix recomendado por calidad de vida</div>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Ranking legacy / diagnóstico anterior</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-          Evalúa con el modelo completo los mixes refinados en Fase 1 (casa + cuts + protecciones activas) y los ordena por calidad de vida ajustada, no solo por no ruina.
+          Evalúa con el modelo completo los mixes refinados en Fase 1 (casa + cuts + protecciones activas) y conserva un ranking legacy solo como contexto histórico.
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
           Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
           {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
-          Ranking principal por calidad de vida ajustada. La venta de casa se informa como uso de activo disponible y no se penaliza por sí misma.
+          Este ranking ya no define la recomendación final del usuario. La fuente oficial vive en V2.7.2/V2.7.4 por Pareto + ratio.
         </div>
         <div>
           <button
@@ -2489,7 +2662,7 @@ export function OptimizationLightPage({
 
         {phase2ChampionChallenger.champion ? (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Mix recomendado por calidad de vida</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Top legacy por calidad de vida</div>
             <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
               {scenarioLabel(phase2ChampionChallenger.champion.source)}
             </div>
@@ -2500,13 +2673,18 @@ export function OptimizationLightPage({
               Recorte severo promedio {formatMonthsHuman(phase2ChampionChallenger.champion.qualityCandidate.monthsInSevereCutMean)} · Patrimonio final P25 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP25)} · P50 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP50)} · Venta de casa {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.houseSaleRate)}
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              {phase2ChampionChallenger.reason}
+              {phase2ChampionChallenger.reason} No es la recomendación principal final para tu perfil.
             </div>
             {phase2ChampionChallenger.challenger ? (
               <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Segundo candidato: {scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR {formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.challenger.qualityCandidate.csr85_4)}
+                Segundo legacy: {scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR {formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.challenger.qualityCandidate.csr85_4)}
               </div>
             ) : null}
+          </div>
+        ) : null}
+        {legacyRecommendationConflict ? (
+          <div style={{ color: T.warning, fontSize: 10 }}>
+            {legacyRecommendationConflict}
           </div>
         ) : null}
 
@@ -2622,7 +2800,7 @@ export function OptimizationLightPage({
                           {result.scenario.label} · Prima RV-RF {formatPctPrecise(winnerDiag?.rvRfSpread ?? null)}
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          Mix recomendado {winner ? `RV ${winner.source.rvPct}% / RF ${winner.source.rfPct}%` : 'No disponible'} · QASR {formatScorePrecise(winner?.qualityCandidate.qasrStrict ?? null)} · CSR {formatPctPrecise(winner?.qualityCandidate.csr85_4 ?? null)}
+                          Mix líder del escenario {winner ? `RV ${winner.source.rvPct}% / RF ${winner.source.rfPct}%` : 'No disponible'} · QASR {formatScorePrecise(winner?.qualityCandidate.qasrStrict ?? null)} · CSR {formatPctPrecise(winner?.qualityCandidate.csr85_4 ?? null)}
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>
                           Éxito clásico {formatPctPrecise(winner?.qualityCandidate.classicSuccessRate ?? null)} · Recorte severo {formatMonthsHuman(winner?.qualityCandidate.monthsInSevereCutMean ?? null)} · P25 final {formatClpShort(winner?.qualityCandidate.terminalWealthP25 ?? null)} · P50 final {formatClpShort(winner?.qualityCandidate.terminalWealthP50 ?? null)}
@@ -2765,6 +2943,48 @@ export function OptimizationLightPage({
               </div>
             </div>
             {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionProfilesError}</div> : null}
+            {officialMainRecommendation ? (
+              <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
+                <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Recomendación principal para tu perfil</div>
+                <div style={{ color: '#fff', fontSize: 22, fontWeight: 900 }}>
+                  {officialMainRecommendation.mixLabel}
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>
+                  Mejor equilibrio entre calidad base y holgura futura.
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Fuente: V2.7.2 / V2.7.4 · Pareto + ratio vs referencia defensiva · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
+                </div>
+                {officialRecommendationWarning ? (
+                  <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div>
+                ) : null}
+              </div>
+            ) : (
+              <div style={{ color: T.warning, fontSize: 10 }}>
+                {officialRecommendationWarning ?? 'Genera la decisión por perfiles para mostrar la recomendación principal oficial.'}
+              </div>
+            )}
+            {recommendationTradeoffCards.length > 0 ? (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, background: T.surface, display: 'grid', gap: 8 }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Si eliges otra opción en vez de la recomendada</div>
+                {recommendationTradeoffCards.map((card) => (
+                  <div key={card.key} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', display: 'grid', gap: 4 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                      {card.title}: {card.mixLabel}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                      Qué ganas: {card.gains.length ? card.gains.join(' · ') : 'No gana nada material frente a la recomendación principal.'}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                      Qué sacrificas: {card.sacrifices.length ? card.sacrifices.join(' · ') : 'No sacrifica nada material frente a la recomendación principal.'}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      {card.reading}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {decisionProfilesTables.map((table) => {
               const profiles = table.profiles;
               const ref = profiles.defensiveReference;
@@ -2855,7 +3075,9 @@ export function OptimizationLightPage({
               const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
               const isWinner = Boolean(phase2ChampionChallenger.champion && isSameMix(row.source, phase2ChampionChallenger.champion.source));
               const isRunnerUp = Boolean(phase2ChampionChallenger.challenger && isSameMix(row.source, phase2ChampionChallenger.challenger.source));
-              const phase3Eligible = phase3InputRows.some((candidate) => isSameMix(candidate.source, row.source));
+              const isOfficialMain = Boolean(officialMainRecommendationRow && isSameMix(row.source, officialMainRecommendationRow.source));
+              const isOfficialDefensive = Boolean(officialDefensiveReferenceRow && isSameMix(row.source, officialDefensiveReferenceRow.source));
+              const isOfficialHeadroom = Boolean(officialHeadroomAlternativeRow && isSameMix(row.source, officialHeadroomAlternativeRow.source));
               const cardBorderColor = isBaseline
                 ? T.primary
                 : isWinner
@@ -2891,27 +3113,29 @@ export function OptimizationLightPage({
                       ) : null}
                       {!isBaseline && isWinner ? (
                         <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: T.positive, borderRadius: 999, padding: '2px 8px' }}>
-                          Recomendado
+                          Top legacy
                         </span>
                       ) : null}
                       {!isBaseline && isRunnerUp ? (
                         <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: '#d8a24a', borderRadius: 999, padding: '2px 8px' }}>
-                          Alternativa
+                          2do legacy
                         </span>
                       ) : null}
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 800,
-                          color: phase3Eligible ? '#fff' : T.textMuted,
-                          background: phase3Eligible ? '#d8a24a' : T.surface,
-                          border: `1px solid ${phase3Eligible ? '#d8a24a' : T.border}`,
-                          borderRadius: 999,
-                          padding: '2px 8px',
-                        }}
-                      >
-                        {phase3Eligible ? 'Elegible F3' : 'No F3'}
-                      </span>
+                      {isOfficialMain ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: T.primary, borderRadius: 999, padding: '2px 8px' }}>
+                          Fuente V2.7.2
+                        </span>
+                      ) : null}
+                      {!isOfficialMain && isOfficialDefensive ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: T.textPrimary, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 8px' }}>
+                          Ref. defensiva
+                        </span>
+                      ) : null}
+                      {!isOfficialMain && isOfficialHeadroom ? (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: T.textPrimary, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 8px' }}>
+                          Holgura
+                        </span>
+                      ) : null}
                     </div>
                     <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
                       RV/RF {row.source.rvPct}/{row.source.rfPct} · QASR {formatScore100(row.qualityCandidate.qasrStrict)} · CSR {row.qualityCandidate.csr85_4 !== null ? formatPct(row.qualityCandidate.csr85_4) : 'No disponible'} · Éxito clásico {row.qualityCandidate.classicSuccessRate !== null ? formatPct(row.qualityCandidate.classicSuccessRate) : 'No disponible'}
@@ -2950,27 +3174,27 @@ export function OptimizationLightPage({
 
         {phase2ChampionChallenger.champion ? (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparativa principal</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparativa legacy</div>
             <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-              Recomendado: {scenarioLabel(phase2ChampionChallenger.champion.source)} · QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)}
+              Top legacy: {scenarioLabel(phase2ChampionChallenger.champion.source)} · QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)}
             </div>
             <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-              Alternativa inmediata: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR ${formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)}` : 'No disponible'}
+              Alternativa legacy: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR ${formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)}` : 'No disponible'}
             </div>
           </div>
         ) : null}
 
         {phase2Rows.length > 0 && (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Implementación · Traspasos sugeridos</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Implementación · Traspasos sugeridos desde la recomendación principal</div>
             <div style={{ color: T.textSecondary, fontSize: 11 }}>
-              Traduce el objetivo ideal a instrumentos reales (sin tocar el JSON abstracto del optimizador).
+              Traduce la recomendación principal oficial a instrumentos reales, sin usar ranking legacy ni resultados de Fase 3.
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Escenario activo recibido desde Fase 2: {activeScenarioAfterPhase2 ? scenarioLabel(activeScenarioAfterPhase2.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
+              Escenario activo recibido desde recomendación principal V2.7.2/V2.7.4: {activeScenarioAfterPhase2 ? scenarioLabel(activeScenarioAfterPhase2.source) : 'No disponible'} · {phase2LongevitySelectedRow.reason}
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Objetivo ideal base (Implementation): {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'}
+              Objetivo oficial base (Implementation): {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
@@ -3045,8 +3269,8 @@ export function OptimizationLightPage({
                 </div>
                 <div style={{ color: implementationPlan.equivalentToIdeal ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
                   {implementationPlan.equivalentToIdeal
-                    ? 'Con estos traspasos se llega al objetivo ideal dentro de tolerancia.'
-                    : 'Gap material detectado: se requiere Validación realista para pasar a Fase 3.'}
+                    ? 'Con estos traspasos se llega al objetivo oficial dentro de tolerancia.'
+                    : 'Gap material detectado: conviene validar el mix alcanzable antes de implementar.'}
                 </div>
                 <details style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 6, background: T.surface }}>
                   <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
@@ -3111,299 +3335,10 @@ export function OptimizationLightPage({
                 </div>
               </div>
             ) : null}
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface, display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Implementación del ganador final</div>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Ganador POLICY final: {finalPolicyWinnerRow ? scenarioLabel(finalPolicyWinnerRow.source) : 'No disponible (ejecuta Fase 3)'}
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={runFinalImplementation}
-                  disabled={finalImplementationRunning || !finalPolicyWinnerRow}
-                  style={{
-                    background: finalImplementationRunning ? T.surface : T.primary,
-                    border: `1px solid ${finalImplementationRunning ? T.border : T.primary}`,
-                    color: finalImplementationRunning ? T.textMuted : '#fff',
-                    borderRadius: 999,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: finalImplementationRunning || !finalPolicyWinnerRow ? 'not-allowed' : 'pointer',
-                    opacity: !finalPolicyWinnerRow ? 0.6 : 1,
-                  }}
-                >
-                  {finalImplementationRunning ? 'Calculando implementación final…' : 'Implementar ganador final'}
-                </button>
-              </div>
-              {finalPolicyMatchesIntermediateTarget ? (
-                <div style={{ color: T.textSecondary, fontSize: 10 }}>
-                  El ganador final coincide con la implementación actual.
-                </div>
-              ) : null}
-              {finalImplementationError ? (
-                <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{finalImplementationError}</div>
-              ) : null}
-              {finalImplementationNote ? (
-                <div style={{ color: T.textSecondary, fontSize: 10 }}>{finalImplementationNote}</div>
-              ) : null}
-              {finalImplementationPlan ? (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual real</div>
-                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.currentMix)}</div>
-                    </div>
-                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo final recomendado</div>
-                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.targetMixIdeal)}</div>
-                    </div>
-                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>Mix final implementable</div>
-                      <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(finalImplementationPlan.reachableMix)}</div>
-                    </div>
-                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>Gap residual (RV)</div>
-                      <div style={{ color: Math.abs(finalImplementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP ? T.positive : T.warning, fontSize: 15, fontWeight: 800 }}>
-                        {formatSignedPp(-finalImplementationPlan.gapVsIdealRvPp)}
-                      </div>
-                    </div>
-                  </div>
-                  {finalImplementationPlan.transfers.length ? (
-                    <div style={{ display: 'grid', gap: 3 }}>
-                      {finalImplementationPlan.transfers.slice(0, 6).map((transfer, index) => (
-                        <div key={`final-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
-                          <div style={{ color: T.textPrimary, fontWeight: 800 }}>
-                            {transfer.fromName} → {transfer.toName}
-                          </div>
-                          <div>
-                            {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      No hay traspasos sugeridos para el ganador final con el universo cargado.
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
           </div>
         )}
 
-        {phase2Rows.length > 0 && (
-          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
-            <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Fase 3 · Calidad de vida / gasto</div>
-            <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.4 }}>
-              Busca variantes de gasto más cómodas sobre el escenario final validado y dentro de la banda aceptable de éxito.
-            </div>
-            <div style={{ color: T.textMuted, fontSize: 9 }}>
-              Fuente Fase 3: {phase3Input.sourceLabel} · Escenarios base: {phase3InputRows.length
-                ? phase3InputRows.map((row) => scenarioLabel(row.source)).join(' · ')
-                : 'No disponibles'} · banda pool {formatPct(phase3Input.poolBand)} · grilla {PHASE3_SPENDING_VARIANTS.length} variantes.
-            </div>
-            <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, padding: 8 }}>
-              <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                Política activa · y {phase3Result ? formatPct(phase3Result.poolBand) : '—'} · x {phase3Result ? formatPct(phase3Result.successBand) : '—'}
-              </summary>
-              <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
-                <div style={{ color: T.textMuted, fontSize: 9 }}>
-                  Materialidad Fase 1: {optimizerPolicyConfig.phase1.materialitySuccessPp.toFixed(1)} pp
-                </div>
-                <div style={{ color: T.textMuted, fontSize: 9, lineHeight: 1.4 }}>
-                  Umbral recomendación: No mover &lt; {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)} pp · Considerar {MIX_COMPARISON_THRESHOLDS.successPpConsiderMin.toFixed(1)}–{MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp · Mover &gt; {MIX_COMPARISON_THRESHOLDS.successPpStrongMin.toFixed(1)} pp o QoL fuerte ({MIX_COMPARISON_THRESHOLDS.strongQolImprovementPct.toFixed(1)}%)
-                </div>
-              </div>
-            </details>
-            {phase3Input.blockedReason ? (
-              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
-                {phase3Input.blockedReason}
-              </div>
-            ) : null}
-            {phase3InputRows.length > 0 ? (
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                  Escenarios base evaluados en Fase 3
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {phase3InputRows.map((row) => {
-                    const decision = phase2Decisions.get(row.source.rvPct) ?? null;
-                    const isActive = Boolean(phase3Input.activeRow && isSameMix(row.source, phase3Input.activeRow.source));
-                    const isChallenger = Boolean(phase3Input.challengerRow && isSameMix(row.source, phase3Input.challengerRow.source));
-                    const roleLabel = isActive
-                      ? phase3Input.activeRoleLabel
-                      : isChallenger
-                        ? 'Retador desde Fase 2'
-                        : decision?.displacesPhase1
-                          ? 'Desplaza'
-                          : decision?.competesWithPhase1
-                            ? 'Compite'
-                            : 'Finalista';
-                    return (
-                      <div
-                        key={`phase3-base-${row.source.rvPct}-${roleLabel}`}
-                        style={{
-                          border: `1px solid ${isActive ? T.primary : decision?.displacesPhase1 ? T.positive : T.border}`,
-                          background: T.surface,
-                          borderRadius: 10,
-                          padding: '6px 8px',
-                          display: 'grid',
-                          gap: 2,
-                          minWidth: 158,
-                        }}
-                      >
-                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                          {scenarioLabel(row.source)}
-                        </div>
-                        <div style={{ color: T.textSecondary, fontSize: 10 }}>
-                          {roleLabel} · {formatPct(row.success40Assisted)}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-            <div>
-              <button
-                type="button"
-                onClick={runPhase3}
-                disabled={phase3Running || !phase3InputRows.length}
-                style={{
-                  background: phase3Running ? T.surface : T.primary,
-                  border: `1px solid ${phase3Running ? T.border : T.primary}`,
-                  color: phase3Running ? T.textMuted : '#fff',
-                  borderRadius: 999,
-                  padding: '6px 10px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: phase3Running || !phase3InputRows.length ? 'not-allowed' : 'pointer',
-                  opacity: !phase3InputRows.length ? 0.6 : 1,
-                }}
-              >
-                {phase3Running ? 'Calculando Fase 3…' : 'Ejecutar Fase 3'}
-              </button>
-            </div>
-            {phase3Error ? (
-              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{phase3Error}</div>
-            ) : null}
-            {phase3Result ? (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {phase3RawPolicyComparison ? (
-                  <div style={{ border: `1px solid ${phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a'}`, borderRadius: 10, padding: 10, display: 'grid', gap: 8, background: T.surface }}>
-                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparación técnica vs política</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 6 }}>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 9, display: 'grid', gap: 3 }}>
-                        <div style={{ color: T.textMuted, fontSize: 9, fontWeight: 700 }}>Ganador técnico (RAW)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900, lineHeight: 1.3 }}>
-                          {phase3RawPolicyComparison.raw ? scenarioLabel(phase3RawPolicyComparison.raw.baseRow.source) : 'No disponible'}
-                        </div>
-                        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                          {phase3RawPolicyComparison.raw
-                            ? `${phase3RawPolicyComparison.raw.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.raw.success40)}`
-                            : 'Sin candidato RAW'}
-                        </div>
-                      </div>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 9, display: 'grid', gap: 3 }}>
-                        <div style={{ color: T.textMuted, fontSize: 9, fontWeight: 700 }}>Ganador recomendado (POLICY)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900, lineHeight: 1.3 }}>
-                          {phase3RawPolicyComparison.policy ? scenarioLabel(phase3RawPolicyComparison.policy.baseRow.source) : 'No disponible'}
-                        </div>
-                        <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                          {phase3RawPolicyComparison.policy
-                            ? `${phase3RawPolicyComparison.policy.variant.label} · éxito ${formatPct(phase3RawPolicyComparison.policy.success40)} · ${switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}`
-                            : 'Sin ganador POLICY'}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ color: phase3RawPolicyComparison.sameWinner ? T.positive : '#d8a24a', fontSize: 11, fontWeight: 800 }}>
-                      {phase3RawPolicyComparison.reason}
-                    </div>
-                  </div>
-                ) : null}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
-                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Techo del pool Fase 3</div>
-                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.bestSuccessRow.success40Assisted)}</div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      {scenarioLabel(phase3Result.bestSuccessRow.source)} · banda entrada {formatPct(phase3Result.poolBand)}
-                    </div>
-                  </div>
-                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Banda usada</div>
-                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{formatPct(phase3Result.successBand)}</div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mínimo aceptado: {formatPct(phase3Result.minimumSuccess)}</div>
-                  </div>
-                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 9 }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Candidatos evaluados</div>
-                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>{phase3Result.candidatesEvaluated}</div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Elegibles: {phase3Result.eligibleCandidates}</div>
-                  </div>
-                </div>
-
-                {phase3Result.preferred ? (
-                  <div style={{ border: `2px solid ${T.positive}`, borderRadius: 12, padding: 12, display: 'grid', gap: 7 }}>
-                    <div style={{ color: T.positive, fontSize: 12, fontWeight: 900 }}>
-                      Escenario recomendado final
-                    </div>
-                    <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>
-                      Ganador: {scenarioLabel(phase3Result.preferred.baseRow.source)}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: 10, lineHeight: 1.4 }}>
-                      Fuente final: {realisticValidation?.row && phase3Result.preferred.baseRow === realisticValidation.row
-                        ? 'Mix implementable revalidado'
-                        : 'Mix ideal equivalente'}
-                      {' '}· Veredicto: {switchVerdict?.level === 'cambiar' ? 'Mover' : switchVerdict?.level === 'considerar' ? 'Considerar' : 'No mover'}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surface }}>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>Éxito final elegido (Fase 3)</div>
-                        <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>{formatPct(phase3Result.preferred.success40)}</div>
-                      </div>
-                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surface }}>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>Mejora ponderada de gasto</div>
-                        <div style={{ color: phase3Result.preferred.weightedSpendingImprovementPct >= 0 ? T.positive : T.warning, fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>
-                          {formatSignedPct(phase3Result.preferred.weightedSpendingImprovementPct)}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                      Variante: {phase3Result.preferred.variant.label} · Δ vs techo de éxito {formatSignedPp(phase3Result.preferred.deltaVsBestSuccessPp)}
-                    </div>
-                    <div style={{ color: T.textSecondary, fontSize: 11 }}>
-                      QoL score {phase3Result.preferred.qualityOfLifeScore.toFixed(3)}
-                    </div>
-                    <div style={{ display: 'grid', gap: 3 }}>
-                      {phase3Result.preferred.spendingVector.map((target, index) => {
-                        const base = phase3BaseSpendingVector[index] ?? target;
-                        const changePct = base > 0 ? ((target / base) - 1) * 100 : 0;
-                        return (
-                          <div key={`phase3-spend-breakdown-${index}`} style={{ color: T.textMuted, fontSize: 10 }}>
-                            Fase {index + 1}: {formatMoney(base)} → {formatMoney(target)} ({formatSignedPct(changePct)})
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      Guardrails: {phase3Result.preferred.guardrailsPassed ? 'OK' : phase3Result.preferred.guardrailViolations.join(' · ')}
-                    </div>
-                    {phase3Result.runnerUp ? (
-                      <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 6, color: T.textSecondary, fontSize: 11 }}>
-                        Retador final: {scenarioLabel(phase3Result.runnerUp.baseRow.source)} · {phase3Result.runnerUp.variant.label} · éxito {formatPct(phase3Result.runnerUp.success40)} · mejora gasto {formatSignedPct(phase3Result.runnerUp.weightedSpendingImprovementPct)}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
-                    No se encontró una variante de gasto que mejore calidad de vida dentro de la banda de seguridad.
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </div>
-        )}
+        {false ? <div /> : null}
 
         {phase2Rows.length > 0 && (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
