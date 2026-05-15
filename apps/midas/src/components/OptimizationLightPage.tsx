@@ -24,6 +24,11 @@ import {
   SPENDING_HEADROOM_SCALES,
   type SpendingHeadroomScale,
 } from '../domain/optimizer/spendingHeadroom';
+import {
+  buildDecisionComparisonTable,
+  type DecisionComparisonTable,
+  type DecisionInputRow,
+} from '../domain/optimizer/indicatorEquivalence';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -201,6 +206,13 @@ type SpendingHeadroomMixResult = {
   mix: SpendingHeadroomMixCandidate;
   evaluations: SpendingHeadroomEvaluationResult[];
   maxSpendScalePassingQoL: number | null;
+};
+
+type DecisionScenarioTable = {
+  scenarioId: 'base' | 'rv_plus_10';
+  label: string;
+  rows: DecisionInputRow[];
+  comparison: DecisionComparisonTable;
 };
 
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
@@ -1086,6 +1098,9 @@ export function OptimizationLightPage({
   const [spendingHeadroomRunning, setSpendingHeadroomRunning] = useState(false);
   const [spendingHeadroomResults, setSpendingHeadroomResults] = useState<SpendingHeadroomMixResult[]>([]);
   const [spendingHeadroomError, setSpendingHeadroomError] = useState<string | null>(null);
+  const [decisionTablesRunning, setDecisionTablesRunning] = useState(false);
+  const [decisionTables, setDecisionTables] = useState<DecisionScenarioTable[]>([]);
+  const [decisionTablesError, setDecisionTablesError] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -1126,6 +1141,8 @@ export function OptimizationLightPage({
     setSensitivityError(null);
     setSpendingHeadroomResults([]);
     setSpendingHeadroomError(null);
+    setDecisionTables([]);
+    setDecisionTablesError(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -1166,6 +1183,8 @@ export function OptimizationLightPage({
       setSensitivityError(null);
       setSpendingHeadroomResults([]);
       setSpendingHeadroomError(null);
+      setDecisionTables([]);
+      setDecisionTablesError(null);
       try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1293,6 +1312,8 @@ export function OptimizationLightPage({
     setSensitivityError(null);
     setSpendingHeadroomResults([]);
     setSpendingHeadroomError(null);
+    setDecisionTables([]);
+    setDecisionTablesError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1443,6 +1464,150 @@ export function OptimizationLightPage({
       setSpendingHeadroomError(error instanceof Error ? error.message : String(error));
     } finally {
       setSpendingHeadroomRunning(false);
+    }
+  }
+
+  async function runDecisionTables() {
+    if (decisionTablesRunning) return;
+    setDecisionTablesRunning(true);
+    setDecisionTablesError(null);
+    setDecisionTables([]);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const benchmarkRv = [0, 5, 25, 50, 80, 100];
+      const scenarioDefs = [
+        { id: 'base' as const, label: 'Sanity Check Base', rvAnnualDelta: 0, rfAnnualDelta: 0 },
+        { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp', rvAnnualDelta: 0.10, rfAnnualDelta: 0 },
+      ];
+      const nextTables: DecisionScenarioTable[] = [];
+
+      for (const scenarioDef of scenarioDefs) {
+        const scenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === scenarioDef.id);
+        if (!scenario) continue;
+        const scenarioAdjusted = applyRvRfPremiumSensitivity(activeParams, scenario);
+        const rows: DecisionInputRow[] = [];
+
+        for (const rvPct of benchmarkRv) {
+          const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
+          const candidateId = `rv_${rvPct}_rf_${100 - rvPct}`;
+          const evaluations: SpendingHeadroomEvaluationResult[] = [];
+
+          for (const spendScale of SPENDING_HEADROOM_SCALES) {
+            const scaled = applyTemporarySpendScale(scenarioAdjusted.params, spendScale);
+            scaled.weights = cloneParams(weights);
+            const sim = runSimulationCentral(scaled);
+            const quality = buildQualityOptimizationCandidate({
+              id: `${candidateId}_x${spendScale}`,
+              rvWeight: rvPct / 100,
+              rfWeight: 1 - rvPct / 100,
+              result: sim,
+            });
+            evaluations.push({
+              spendScale,
+              spendLabel: formatSpendScaleLabel(spendScale),
+              candidateId,
+              resultKey: hashJson({
+                table: scenarioDef.id,
+                candidateId,
+                spendScale,
+                weights,
+                spendingPhases: scaled.spendingPhases,
+              }),
+              rvReal: weights.rvGlobal + weights.rvChile,
+              rfReal: weights.rfGlobal + weights.rfChile,
+              rvGlobal: weights.rvGlobal,
+              rvChile: weights.rvChile,
+              rfGlobal: weights.rfGlobal,
+              rfChile: weights.rfChile,
+              qasrStrict: quality.qasrStrict,
+              csr85_4: quality.csr85_4,
+              classicSuccessRate: quality.classicSuccessRate,
+              probRuin: sim.probRuin40 ?? sim.probRuin,
+              monthsInSevereCutMean: quality.monthsInSevereCutMean,
+              maxConsecutiveSevereCutMonthsP75: quality.maxConsecutiveSevereCutMonthsP75,
+              terminalWealthP25: quality.terminalWealthP25,
+              terminalWealthP50: quality.terminalWealthP50,
+              houseSaleRate: quality.houseSaleRate,
+              severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMean ?? null,
+            });
+            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+          }
+
+          const baseEval = evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
+          const plus20 = evaluations.find((item) => Math.abs(item.spendScale - 1.2) <= 1e-9) ?? null;
+          const plus30 = evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
+          if (!baseEval || !plus20 || !plus30) continue;
+
+          const effectiveReturn = (
+            baseEval.rvGlobal * scenarioAdjusted.params.returns.rvGlobalAnnual
+            + baseEval.rvChile * scenarioAdjusted.params.returns.rvChileAnnual
+            + baseEval.rfGlobal * scenarioAdjusted.params.returns.rfGlobalAnnual
+            + baseEval.rfChile * scenarioAdjusted.params.returns.rfChileUFAnnual
+          );
+
+          rows.push({
+            candidateId,
+            mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
+            rvReal: baseEval.rvReal,
+            rfReal: baseEval.rfReal,
+            effectiveReturn,
+            scale100: {
+              qasrStrict: baseEval.qasrStrict,
+              csr85_4: baseEval.csr85_4,
+              classicSuccessRate: baseEval.classicSuccessRate,
+              probRuin: baseEval.probRuin,
+              monthsInSevereCutMean: baseEval.monthsInSevereCutMean,
+              maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
+              terminalWealthP25: baseEval.terminalWealthP25,
+              terminalWealthP50: baseEval.terminalWealthP50,
+              houseSaleRate: baseEval.houseSaleRate,
+              severeCutMonthsDuringHouseSale: baseEval.severeCutMonthsDuringHouseSaleMedian,
+            },
+            scale120: {
+              qasrStrict: plus20.qasrStrict,
+              csr85_4: plus20.csr85_4,
+              classicSuccessRate: plus20.classicSuccessRate,
+              probRuin: plus20.probRuin,
+              monthsInSevereCutMean: plus20.monthsInSevereCutMean,
+              maxConsecutiveSevereCutMonthsP75: plus20.maxConsecutiveSevereCutMonthsP75,
+              terminalWealthP25: plus20.terminalWealthP25,
+              terminalWealthP50: plus20.terminalWealthP50,
+              houseSaleRate: plus20.houseSaleRate,
+              severeCutMonthsDuringHouseSale: plus20.severeCutMonthsDuringHouseSaleMedian,
+            },
+            scale130: {
+              qasrStrict: plus30.qasrStrict,
+              csr85_4: plus30.csr85_4,
+              classicSuccessRate: plus30.classicSuccessRate,
+              probRuin: plus30.probRuin,
+              monthsInSevereCutMean: plus30.monthsInSevereCutMean,
+              maxConsecutiveSevereCutMonthsP75: plus30.maxConsecutiveSevereCutMonthsP75,
+              terminalWealthP25: plus30.terminalWealthP25,
+              terminalWealthP50: plus30.terminalWealthP50,
+              houseSaleRate: plus30.houseSaleRate,
+              severeCutMonthsDuringHouseSale: plus30.severeCutMonthsDuringHouseSaleMedian,
+            },
+            maxSpendScalePassingQoL: computeMaxSpendScalePassingQoL(evaluations),
+          });
+        }
+
+        const comparison = buildDecisionComparisonTable(rows, {
+          horizonMonths: activeParams.simulation.horizonMonths,
+          nSim: activeParams.simulation.nSim,
+        });
+        nextTables.push({
+          scenarioId: scenarioDef.id,
+          label: scenarioDef.label,
+          rows,
+          comparison,
+        });
+      }
+
+      setDecisionTables(nextTables);
+    } catch (error) {
+      setDecisionTablesError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDecisionTablesRunning(false);
     }
   }
 
@@ -2598,6 +2763,86 @@ export function OptimizationLightPage({
                 </div>
               </>
             ) : null}
+          </div>
+        ) : null}
+
+        {phase2Rows.length > 0 ? (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Tabla de decisión y equivalencias</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Esta tabla compara mixes que pueden estar prácticamente empatados en calidad base. Cuando QASR/CSR son similares, se incorporan éxito clásico, recortes, holgura de gasto y margen terminal.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={runDecisionTables}
+                disabled={decisionTablesRunning}
+                style={{
+                  background: decisionTablesRunning ? T.surface : T.primary,
+                  border: `1px solid ${decisionTablesRunning ? T.border : T.primary}`,
+                  color: decisionTablesRunning ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: decisionTablesRunning ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {decisionTablesRunning ? 'Calculando equivalencias...' : 'Generar tabla de decisión'}
+              </button>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Mixes benchmark: 0/100 · 5/95 · 25/75 · 50/50 · 80/20 · 100/0
+              </div>
+            </div>
+            {decisionTablesError ? (
+              <div style={{ color: T.warning, fontSize: 10 }}>{decisionTablesError}</div>
+            ) : null}
+            {decisionTables.map((table) => (
+              <details
+                key={`decision-${table.scenarioId}`}
+                open={table.scenarioId === 'base'}
+                style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surface }}
+              >
+                <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{table.label}</div>
+                </summary>
+                <div style={{ display: 'grid', gap: 4, marginTop: 6, color: T.textMuted, fontSize: 10 }}>
+                  <div>
+                    Ganador QASR base: {table.comparison.winnerByQasrBaseCandidateId ?? 'No disponible'} · Ganador score: {table.comparison.winnerByDecisionScoreCandidateId ?? 'No disponible'}
+                  </div>
+                  <div>
+                    Ganador baseReliability: {table.comparison.winnerByBaseReliabilityCandidateId ?? 'No disponible'} · headroom: {table.comparison.winnerByHeadroomCandidateId ?? 'No disponible'} · cutComfort: {table.comparison.winnerByCutComfortCandidateId ?? 'No disponible'} · terminal: {table.comparison.winnerByTerminalMarginCandidateId ?? 'No disponible'}
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                  {table.comparison.rows.map((row) => (
+                    <div key={`decision-row-${table.scenarioId}-${row.candidateId}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                      <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>
+                        #{row.scoreRank} {row.mixLabel} · Score {row.decisionScorePreview?.toFixed(2) ?? 'ND'} · candidateId {row.candidateId}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        RV real {formatPctPrecise(row.rvReal)} · RF real {formatPctPrecise(row.rfReal)} · retorno efectivo {formatPctPrecise(row.effectiveReturn)}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Base: QASR {formatScorePrecise(row.scale100.qasrStrict)} ({row.qasrEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · CSR {formatPctPrecise(row.scale100.csr85_4)} ({row.csrEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · Éxito {formatPctPrecise(row.scale100.classicSuccessRate)} ({row.successEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · Ruina {formatPctPrecise(row.scale100.probRuin)}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Recorte severo base {formatMonthsHuman(row.scale100.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPctBase)}) · Racha P75 {formatMonthsHuman(row.scale100.maxConsecutiveSevereCutMonthsP75)} · P25 {formatClpShort(row.scale100.terminalWealthP25)} · P50 {formatClpShort(row.scale100.terminalWealthP50)} · Venta casa {formatPctPrecise(row.scale100.houseSaleRate)}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        +20%: QASR {formatScorePrecise(row.scale120.qasrStrict)} · CSR {formatPctPrecise(row.scale120.csr85_4)} · Éxito {formatPctPrecise(row.scale120.classicSuccessRate)} · Ruina {formatPctPrecise(row.scale120.probRuin)} · Recorte severo {formatMonthsHuman(row.scale120.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPct120)})
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        +30%: QASR {formatScorePrecise(row.scale130.qasrStrict)} · CSR {formatPctPrecise(row.scale130.csr85_4)} · Éxito {formatPctPrecise(row.scale130.classicSuccessRate)} · Ruina {formatPctPrecise(row.scale130.probRuin)} · Recorte severo {formatMonthsHuman(row.scale130.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPct130)}) · Max QoL {row.maxSpendScalePassingQoL ?? 'null'}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Subscores: base {row.baseReliabilityScore?.toFixed(2) ?? 'ND'} · holgura {row.headroomScore?.toFixed(2) ?? 'ND'} · confort recortes {row.cutComfortScore?.toFixed(2) ?? 'ND'} · margen terminal {row.terminalMarginScore?.toFixed(2) ?? 'ND'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
           </div>
         ) : null}
 
