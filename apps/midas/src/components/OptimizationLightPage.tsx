@@ -4,6 +4,10 @@ import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
 import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
+import {
+  buildOptimizationFrontierDiagnostics,
+  type OptimizationDiagnosticRow,
+} from '../domain/optimizer/optimizationFrontierDiagnostics';
 import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
 import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
@@ -241,6 +245,16 @@ function formatMonthsHuman(value: number | null): string {
   if (roundedMonths < 12) return `${roundedMonths.toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses`;
   const years = roundedMonths / 12;
   return `${roundedMonths.toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses / ${years.toLocaleString('es-ES', { maximumFractionDigits: 1 })} años`;
+}
+
+function formatPctPrecise(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return 'No disponible';
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function formatScorePrecise(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'No disponible';
+  return `${(value * 100).toFixed(2)}/100`;
 }
 
 function formatNativeAmount(value: number | null, currency: string | null): string {
@@ -1239,6 +1253,29 @@ export function OptimizationLightPage({
     () => phase2Rows.filter((row) => row.qualityCandidate.qasrStrict === null),
     [phase2Rows],
   );
+  const phase2FrontierDiagnostics = useMemo(() => {
+    const diagnosticRows: OptimizationDiagnosticRow[] = phase2Rows.map((row) => ({
+      id: `rv-${row.source.rvPct.toFixed(1)}`,
+      rvPct: row.source.rvPct,
+      rfPct: row.source.rfPct,
+      weights: row.source.weights,
+      qasrStrict: row.qualityCandidate.qasrStrict,
+      csr85_4: row.qualityCandidate.csr85_4,
+      classicSuccessRate: row.qualityCandidate.classicSuccessRate,
+      monthsInSevereCutMean: row.qualityCandidate.monthsInSevereCutMean,
+      maxConsecutiveSevereCutMonthsP75: row.qualityCandidate.maxConsecutiveSevereCutMonthsP75,
+      terminalWealthP25: row.qualityCandidate.terminalWealthP25,
+      terminalWealthP50: row.qualityCandidate.terminalWealthP50,
+      houseSaleRate: row.qualityCandidate.houseSaleRate,
+    }));
+    return buildOptimizationFrontierDiagnostics(
+      activeParams,
+      diagnosticRows,
+      phase2QualityWinner
+        ? diagnosticRows.find((row) => Math.abs(row.rvPct - phase2QualityWinner.source.rvPct) < 1e-9) ?? null
+        : null,
+    );
+  }, [activeParams, phase2QualityWinner, phase2Rows]);
   const phase2Decisions = useMemo(() => {
     if (!phase2BaselineRow) return new Map<number, Phase2CompetitionDecision>();
     return new Map(
@@ -2041,6 +2078,62 @@ export function OptimizationLightPage({
               </div>
             ) : null}
           </div>
+        ) : null}
+
+        {phase2Rows.length > 0 ? (
+          <details style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
+            <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+              Diagnóstico de frontera RV/RF
+            </summary>
+            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+              <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                Supuestos efectivos del motor para esta corrida: retornos y volatilidades reales anuales, simulados mensualmente.
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Escenario activo: {phase2FrontierDiagnostics.assumptions.activeScenario} · salida interpretada en CLP real del modelo.
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                RV global {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rvGlobalReturn)} · RV local {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rvChileReturn)} · RF global {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rfGlobalReturn)} · RF local {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rfChileReturn)}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Volatilidad anual aprox.: RV global {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rvGlobalVol)} · RV local {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rvChileVol)} · RF global {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rfGlobalVol)} · RF local {formatPctPrecise(phase2FrontierDiagnostics.assumptions.rfChileVol)}
+              </div>
+              <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                {phase2FrontierDiagnostics.winningMixReason}
+              </div>
+              <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                Benchmarks evaluados: 0/100 · 25/75 · 50/50 · 75/25 · 80/20 · 100/0
+              </div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {phase2FrontierDiagnostics.benchmarkRows.map((row) => {
+                  const diag = phase2FrontierDiagnostics.candidateDiagnostics.find((item) => item.id === row.id) ?? null;
+                  return (
+                    <div
+                      key={`benchmark-${row.id}`}
+                      style={{
+                        display: 'grid',
+                        gap: 3,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 10,
+                        padding: '8px 10px',
+                        background: T.surface,
+                      }}
+                    >
+                      <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                        RV/RF {row.rvPct}/{row.rfPct} · QASR {formatScorePrecise(row.qasrStrict)} · CSR {formatPctPrecise(row.csr85_4)}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Éxito clásico {formatPctPrecise(row.classicSuccessRate)} · Recorte severo promedio {formatMonthsHuman(row.monthsInSevereCutMean)} · Racha severa P75 {formatMonthsHuman(row.maxConsecutiveSevereCutMonthsP75)}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Patrimonio final P25 {formatClpShort(row.terminalWealthP25)} · Venta casa {formatPctPrecise(row.houseSaleRate)} · Prima efectiva RV-RF {formatPctPrecise(diag?.rvRfSpread ?? null)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </details>
         ) : null}
 
         {phase2QualityMissingRows.length > 0 ? (
