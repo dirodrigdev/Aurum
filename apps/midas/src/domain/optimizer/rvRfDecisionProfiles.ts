@@ -47,7 +47,9 @@ export type RvRfDecisionCandidateAnnotated = RvRfDecisionCandidate & {
 
 export type RvRfDecisionProfiles = {
   seQasrEstimated: number | null;
+  seQasrMaxCandidateId: string | null;
   paretoToleranceUsed: number;
+  defensiveReferenceSource: 'guardrail_pool';
   warnings: string[];
   guardrails: {
     qasrMin: number;
@@ -147,6 +149,21 @@ export function selectDefensiveReference(candidates: RvRfDecisionCandidate[]): R
   ))[0] ?? null;
 }
 
+export function selectDefensiveReferenceFromGuardrailPool(
+  guardPassed: RvRfDecisionCandidate[],
+  tolerance: number,
+): RvRfDecisionCandidate | null {
+  if (!guardPassed.length) return null;
+  const maxQasr = Math.max(...guardPassed.map((candidate) => toScore100(candidate.qasrBase) ?? Number.NEGATIVE_INFINITY));
+  const pool = guardPassed.filter((candidate) => ((toScore100(candidate.qasrBase) ?? Number.NEGATIVE_INFINITY) >= (maxQasr - tolerance)));
+  return [...pool].sort((a, b) => (
+    ((b.csrBase ?? Number.NEGATIVE_INFINITY) - (a.csrBase ?? Number.NEGATIVE_INFINITY))
+    || ((a.monthsInSevereCutMean ?? Number.POSITIVE_INFINITY) - (b.monthsInSevereCutMean ?? Number.POSITIVE_INFINITY))
+    || ((a.maxConsecutiveSevereCutMonthsP75 ?? Number.POSITIVE_INFINITY) - (b.maxConsecutiveSevereCutMonthsP75 ?? Number.POSITIVE_INFINITY))
+    || (a.rvPct - b.rvPct)
+  ))[0] ?? null;
+}
+
 function scoreTradeoffCandidate(
   candidate: RvRfDecisionCandidate,
   defensiveReference: RvRfDecisionCandidate,
@@ -175,13 +192,13 @@ function scoreTradeoffCandidate(
 }
 
 export function selectPrimaryBalancedRecommendation(
-  frontier: RvRfDecisionCandidate[],
+  candidates: RvRfDecisionCandidate[],
   defensiveReference: RvRfDecisionCandidate | null,
   ratio: number,
 ): { selected: RvRfDecisionCandidate | null; acceptedIds: string[] } {
   if (!defensiveReference) return { selected: null, acceptedIds: [] };
-  const candidates = frontier.filter((candidate) => candidate.rvPct > defensiveReference.rvPct && candidate.rvPct > 0 && candidate.rvPct < 100);
-  const accepted = candidates
+  const feasible = candidates.filter((candidate) => candidate.rvPct > defensiveReference.rvPct && candidate.rvPct > 0 && candidate.rvPct < 100);
+  const accepted = feasible
     .map((candidate) => ({ candidate, check: scoreTradeoffCandidate(candidate, defensiveReference, ratio) }))
     .filter((item) => item.check.accepted)
     .sort((a, b) => (
@@ -199,12 +216,18 @@ export function selectHeadroomAlternative(
   tolerance: number,
 ): RvRfDecisionCandidate | null {
   if (!primaryRecommendation) return null;
+  const primaryHeadroom = toScore100(primaryRecommendation.qasrAt120);
   const eligible = candidates.filter((candidate) => (
     candidate.candidateId !== primaryRecommendation.candidateId
     && (
       toScore100(candidate.qasrBase) !== null
       && toScore100(primaryRecommendation.qasrBase) !== null
       && (toScore100(candidate.qasrBase) as number) >= (toScore100(primaryRecommendation.qasrBase) as number) - MAX_HEADROOM_ALT_BASE_DROP
+    )
+    && (
+      toScore100(candidate.qasrAt120) !== null
+      && primaryHeadroom !== null
+      && ((toScore100(candidate.qasrAt120) as number) - primaryHeadroom) > (tolerance + 1e-12)
     )
   ));
   if (!eligible.length) return null;
@@ -317,7 +340,14 @@ export function buildDecisionProfiles(
     ...applyHardGuardrails(candidate),
   }));
   const guardPassed = annotatedGuards.filter((item) => item.passesHardGuardrails).map((item) => item.candidate);
-  const seQasr = estimateQasrStandardError(toScore100(selectDefensiveReference(guardPassed)?.qasrBase ?? null), nSimulations);
+  const seCandidates = guardPassed
+    .map((candidate) => ({
+      candidateId: candidate.candidateId,
+      se: estimateQasrStandardError(toScore100(candidate.qasrBase), nSimulations),
+    }))
+    .filter((item) => item.se !== null) as Array<{ candidateId: string; se: number }>;
+  const maxSeCandidate = seCandidates.sort((a, b) => b.se - a.se)[0] ?? null;
+  const seQasr = maxSeCandidate?.se ?? null;
   const tolerance = seQasr === null
     ? PARETO_TOLERANCE_DEFAULT
     : (seQasr > SE_QASR_THRESHOLD ? PARETO_TOLERANCE_HIGH : PARETO_TOLERANCE_DEFAULT);
@@ -326,13 +356,24 @@ export function buildDecisionProfiles(
   const frontier = buildParetoFrontierBaseVsHeadroom(guardPassed, tolerance);
   if (frontier.length > 10) warnings.push('La frontera es amplia; la recomendación depende del ratio de intercambio estabilidad/holgura.');
 
-  const defensiveReference = selectDefensiveReference(frontier);
-  const primary20 = selectPrimaryBalancedRecommendation(frontier, defensiveReference, HEADROOM_QUALITY_TRADEOFF_RATIO);
-  const primary15 = selectPrimaryBalancedRecommendation(frontier, defensiveReference, 1.5);
-  const primary30 = selectPrimaryBalancedRecommendation(frontier, defensiveReference, 3.0);
+  const defensiveReference = selectDefensiveReferenceFromGuardrailPool(guardPassed, tolerance);
+  const inFrontierOrNear = guardPassed.filter((candidate) => (
+    frontier.some((front) => front.candidateId === candidate.candidateId)
+    || frontier.some((front) => (
+      toScore100(candidate.qasrBase) !== null
+      && toScore100(front.qasrBase) !== null
+      && toScore100(candidate.qasrAt120) !== null
+      && toScore100(front.qasrAt120) !== null
+      && Math.abs((toScore100(candidate.qasrBase) as number) - (toScore100(front.qasrBase) as number)) <= tolerance + 1e-12
+      && Math.abs((toScore100(candidate.qasrAt120) as number) - (toScore100(front.qasrAt120) as number)) <= tolerance + 1e-12
+    ))
+  ));
+  const primary20 = selectPrimaryBalancedRecommendation(inFrontierOrNear, defensiveReference, HEADROOM_QUALITY_TRADEOFF_RATIO);
+  const primary15 = selectPrimaryBalancedRecommendation(inFrontierOrNear, defensiveReference, 1.5);
+  const primary30 = selectPrimaryBalancedRecommendation(inFrontierOrNear, defensiveReference, 3.0);
 
   const primaryRecommendation = primary20.selected;
-  const headroomAlternative = selectHeadroomAlternative(frontier, primaryRecommendation, tolerance);
+  const headroomAlternative = selectHeadroomAlternative(inFrontierOrNear, primaryRecommendation, tolerance);
   const benchmarkExtreme = selectExtremeBenchmark(allCandidates);
 
   const primaryId = primaryRecommendation?.candidateId ?? null;
@@ -371,7 +412,9 @@ export function buildDecisionProfiles(
 
   return {
     seQasrEstimated: seQasr,
+    seQasrMaxCandidateId: maxSeCandidate?.candidateId ?? null,
     paretoToleranceUsed: tolerance,
+    defensiveReferenceSource: 'guardrail_pool',
     warnings,
     guardrails: {
       qasrMin: GUARDRAIL_QASR_MIN,

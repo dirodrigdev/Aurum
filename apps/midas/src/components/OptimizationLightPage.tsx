@@ -2780,7 +2780,7 @@ export function OptimizationLightPage({
                   </summary>
                   <div style={{ display: 'grid', gap: 4, marginTop: 6, color: T.textMuted, fontSize: 10 }}>
                     <div>
-                      SE_QASR estimado: {profiles.seQasrEstimated?.toFixed(3) ?? 'ND'} · Tolerancia Pareto: {profiles.paretoToleranceUsed.toFixed(1)} · Frontera: {profiles.paretoFrontierSize}/{profiles.fineGridCount}
+                      SE_QASR max: {profiles.seQasrEstimated?.toFixed(3) ?? 'ND'} ({profiles.seQasrMaxCandidateId ?? 'sin candidato'}) · Tolerancia Pareto: {profiles.paretoToleranceUsed.toFixed(1)} · Frontera: {profiles.paretoFrontierSize}/{profiles.fineGridCount}
                     </div>
                     <div>
                       Ratio estabilidad/holgura: {profiles.ratioUsed.toFixed(1)} · Sensibilidad ratio 1.5={profiles.ratioSensitivity.ratio15CandidateId ?? 'ND'} / 2.0={profiles.ratioSensitivity.ratio20CandidateId ?? 'ND'} / 3.0={profiles.ratioSensitivity.ratio30CandidateId ?? 'ND'} {profiles.ratioSensitivity.recommendationSensitive ? '· sensible' : '· estable'}
@@ -2802,7 +2802,7 @@ export function OptimizationLightPage({
                       <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                         <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>Referencia defensiva / maxima calidad base · {ref.mixLabel}</div>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          No es la recomendacion principal; sirve para comparar estabilidad base vs holgura.
+                          Esta opcion no es la recomendacion principal. Sirve como comparador de maxima estabilidad base: muestra que se gana en menor recorte y que se sacrifica en holgura frente a la recomendacion.
                         </div>
                       </div>
                     ) : (
@@ -2817,7 +2817,7 @@ export function OptimizationLightPage({
                       </div>
                     ) : (
                       <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        {sameMainAlt ? 'La recomendacion principal tambien es la mejor alternativa de holgura disponible.' : 'No hay alternativa de mayor holgura sin deterioro material de calidad base.'}
+                        {sameMainAlt ? 'La recomendacion principal tambien es la mejor alternativa de holgura disponible.' : 'No hay alternativa de mayor holgura con mejora material sin deterioro relevante de calidad base.'}
                       </div>
                     )}
                     {bench ? (
