@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
 import type { PortfolioWeights } from '../domain/model/types';
+import type { ModelParameters } from '../domain/model/types';
 import {
   DECISION_EXPRESS_STEP_PP,
   IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP,
+  OptimizationLightPage,
   buildOptimizationConfirmationShortlist,
   buildOptimizationExpressGrid,
   buildOptimizationZoomShortlist,
@@ -17,6 +22,71 @@ function buildWeights(rvGlobal: number, rvChile: number, rfGlobal: number, rfChi
     rvChile,
     rfGlobal,
     rfChile,
+  };
+}
+
+function buildParams(): ModelParameters {
+  return {
+    label: 'Test',
+    capitalInitial: 1_000_000_000,
+    capitalSource: 'manual',
+    manualCapitalInput: { financialCapitalCLP: 1_000_000_000 },
+    weights: buildWeights(0.35, 0.25, 0.2, 0.2),
+    cashflowEvents: [],
+    activeScenario: 'base',
+    feeAnnual: 0.006,
+    spendingPhases: [
+      { durationMonths: 120, amountReal: 4_000_000, currency: 'CLP' },
+      { durationMonths: 120, amountReal: 4_500_000, currency: 'CLP' },
+      { durationMonths: 120, amountReal: 4_000_000, currency: 'CLP' },
+      { durationMonths: 120, amountReal: 3_500_000, currency: 'CLP' },
+    ],
+    spendingRule: {
+      dd15Threshold: 0.15,
+      dd25Threshold: 0.25,
+      consecutiveMonths: 3,
+      softCut: 0.9,
+      hardCut: 0.8,
+      adjustmentAlpha: 0.5,
+      recoveryAlpha: 0.8,
+    },
+    returns: {
+      rvGlobalAnnual: 0.069,
+      rfGlobalAnnual: 0.024,
+      rvChileAnnual: 0.074,
+      rfChileUFAnnual: 0.019,
+      rvGlobalVolAnnual: 0.16,
+      rfGlobalVolAnnual: 0.05,
+      rvChileVolAnnual: 0.2,
+      rfChileVolAnnual: 0.06,
+      correlationMatrix: [
+        [1, 0.2, 0.3, 0.1],
+        [0.2, 1, 0.1, 0.3],
+        [0.3, 0.1, 1, 0.2],
+        [0.1, 0.3, 0.2, 1],
+      ],
+    },
+    inflation: {
+      ipcChileAnnual: 0.03,
+      hipcEurAnnual: 0.02,
+      ipcChileVolAnnual: 0.01,
+      hipcEurVolAnnual: 0.01,
+    },
+    fx: {
+      clpUsdInitial: 900,
+      usdEurFixed: 0.92,
+      tcrealLT: 100,
+      mrHalfLifeYears: 8,
+    },
+    bucketMonths: 12,
+    simulation: {
+      nSim: 3000,
+      horizonMonths: 480,
+      blockLength: 12,
+      seed: 123,
+      useHistoricalData: false,
+    },
+    ruinThresholdMonths: 6,
   };
 }
 
@@ -188,5 +258,35 @@ assert.equal(canUseDecisionFlowForImplementation({
   seed: 123,
   implementationEnabled: true,
 }), true);
+
+const initialMarkup = renderToStaticMarkup(
+  React.createElement(OptimizationLightPage, {
+    baseParams: buildParams(),
+    simulationParams: buildParams(),
+    simulationActive: false,
+    simulationLabel: 'Test',
+  }),
+);
+
+assert(initialMarkup.includes('Óptimo MIDAS recomendado'));
+assert(initialMarkup.includes('Calcular Óptimo MIDAS recomendado'));
+assert(!initialMarkup.includes('Ejecutar Fase 1'));
+assert(!initialMarkup.includes('Preparar diagnósticos complementarios'));
+assert(!initialMarkup.includes('Fase 1'));
+assert(!initialMarkup.includes('Fase 2'));
+assert(!initialMarkup.includes('decisionProfiles.mainRecommendation'));
+assert(!initialMarkup.includes('Decision RV/RF por perfiles'));
+assert(!initialMarkup.includes('Pasa F2'));
+assert(!initialMarkup.includes('No pasa F2'));
+assert(!initialMarkup.includes('Campeón + retador'));
+assert(!initialMarkup.includes('Baseline + ranking técnico'));
+
+const source = readFileSync(new URL('./OptimizationLightPage.tsx', import.meta.url), 'utf8');
+assert(source.includes("onClick={runDecisionProfiles}"));
+assert(source.includes("onClick={runDecisionConfirmation}"));
+assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase1/.test(source));
+assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase2/.test(source));
+assert(source.includes('DECISION_EXPRESS_NSIM = 750'));
+assert(source.includes('DECISION_ZOOM_NSIM = 1000'));
 
 console.log('OptimizationLightPage tests passed');

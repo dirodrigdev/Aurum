@@ -1446,6 +1446,7 @@ export function OptimizationLightPage({
   const [decisionProgress, setDecisionProgress] = useState<DecisionProgress | null>(null);
   const [decisionCancelRequested, setDecisionCancelRequested] = useState(false);
   const [decisionFlowWarning, setDecisionFlowWarning] = useState<string | null>(null);
+  const [technicalDiagnosticsOpen, setTechnicalDiagnosticsOpen] = useState(false);
   const decisionCancelRequestedRef = React.useRef(false);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
@@ -2090,7 +2091,7 @@ export function OptimizationLightPage({
 
   const modeCards = useMemo(
     () => ([
-      { id: 'light', label: 'Light', active: mode === 'light', enabled: true, hint: 'Fase 1 + Fase 2' },
+      { id: 'light', label: 'Light', active: mode === 'light', enabled: true, hint: 'Flujo recomendado' },
       { id: 'normal', label: 'Normal', active: mode === 'normal', enabled: false, hint: 'Próximamente' },
       { id: 'decision', label: 'Decisión', active: mode === 'decision', enabled: false, hint: 'Próximamente' },
     ] as const),
@@ -2771,7 +2772,7 @@ export function OptimizationLightPage({
       <div style={{ display: 'grid', gap: 4 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Optimización</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Fase 1: óptimo técnico / financiero preliminar. Fase 2: recomendación oficial por Pareto + ratio. Implementación: traspasos sugeridos desde la recomendación principal.
+          Calcula el Óptimo MIDAS recomendado y confirma la corrida completa antes de implementar traspasos.
         </div>
       </div>
 
@@ -2851,6 +2852,252 @@ export function OptimizationLightPage({
         </div>
       </div>
 
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 5 }}>
+          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900, lineHeight: 1.2 }}>Óptimo MIDAS recomendado</div>
+          <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.45 }}>
+            Calcula el mix recomendado para tu perfil. MIDAS compara el óptimo financiero con una recomendación ajustada por calidad de vida, holgura, recortes y estabilidad.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={runDecisionProfiles}
+            disabled={decisionProfilesRunning || mode !== 'light'}
+            style={{
+              background: decisionProfilesRunning ? T.surfaceEl : T.primary,
+              border: `1px solid ${decisionProfilesRunning ? T.border : T.primary}`,
+              color: decisionProfilesRunning ? T.textMuted : '#fff',
+              borderRadius: 999,
+              padding: '8px 13px',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: decisionProfilesRunning || mode !== 'light' ? 'not-allowed' : 'pointer',
+              opacity: mode !== 'light' ? 0.65 : 1,
+            }}
+          >
+            {decisionProfilesRunning ? 'Calculando Óptimo MIDAS…' : 'Calcular Óptimo MIDAS recomendado'}
+          </button>
+          <button
+            type="button"
+            onClick={runDecisionConfirmation}
+            disabled={decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed'}
+            style={{
+              background: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              color: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+              borderRadius: 999,
+              padding: '8px 13px',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+              opacity: !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+            }}
+          >
+            {decisionFlowStatus?.stage === 'confirmed' ? 'Confirmación completa lista' : 'Confirmar con simulación completa'}
+          </button>
+          {decisionProfilesRunning ? (
+            <button
+              type="button"
+              onClick={() => {
+                decisionCancelRequestedRef.current = true;
+                setDecisionCancelRequested(true);
+              }}
+              style={{
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                color: T.textPrimary,
+                borderRadius: 999,
+                padding: '8px 13px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Cancelar cálculo
+            </button>
+          ) : null}
+        </div>
+        {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{decisionProfilesError}</div> : null}
+        {decisionFlowStatus ? (
+          <div style={{ display: 'grid', gap: 4, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>{decisionFlowStatus.badge}</span>
+              <span style={{ color: T.textMuted, fontSize: 10 }}>
+                nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ''}
+              </span>
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
+            {decisionProgress ? (
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Progreso: {decisionProgress.stage} · {decisionProgress.evaluated}/{decisionProgress.total} corridas · nSim {decisionProgress.nSim.toLocaleString('es-ES')} · seed {decisionProgress.seed}
+                {decisionCancelRequested ? ' · cancelación solicitada' : ''}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {officialMainRecommendation ? (
+          <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
+            <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
+            <div style={{ color: '#fff', fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Mejor equilibrio entre calidad base, holgura futura, recortes y estabilidad.
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Óptimo financiero: {phase1SuggestedPoint ? `RV ${phase1SuggestedPoint.rvPct} / RF ${phase1SuggestedPoint.rfPct}` : 'No disponible'} · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'}
+            </div>
+            {decisionFlowWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div> : null}
+            {officialRecommendationWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div> : null}
+          </div>
+        ) : (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Ejecuta el cálculo para obtener una recomendación preliminar. La implementación queda bloqueada hasta confirmación oficial.
+          </div>
+        )}
+        {recommendationTradeoffCards.length > 0 ? (
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Si eliges otra opción en vez del Óptimo MIDAS recomendado</div>
+            {recommendationTradeoffCards.map((card) => (
+              <div key={`main-${card.key}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4, background: T.surface }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{card.title}: {card.mixLabel}</div>
+                <div style={{ color: T.textSecondary, fontSize: 10 }}>Qué ganas: {card.gains.length ? card.gains.join(' · ') : 'No gana nada material frente al óptimo recomendado.'}</div>
+                <div style={{ color: T.textSecondary, fontSize: 10 }}>Qué sacrificas: {card.sacrifices.length ? card.sacrifices.join(' · ') : 'No sacrifica nada material frente al óptimo recomendado.'}</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>{card.reading}</div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
+        <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Implementación sugerida</div>
+        <div style={{ color: T.textSecondary, fontSize: 11 }}>
+          Usa exclusivamente el resultado confirmado del Óptimo MIDAS recomendado.
+        </div>
+        {!decisionImplementationReady ? (
+          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            Confirma con simulación completa antes de implementar.
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={runImplementation}
+            disabled={implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
+            style={{
+              background: implementationRunning ? T.surface : T.primary,
+              border: `1px solid ${implementationRunning ? T.border : T.primary}`,
+              color: implementationRunning ? T.textMuted : '#fff',
+              borderRadius: 999,
+              padding: '7px 12px',
+              fontSize: 11,
+              fontWeight: 800,
+              cursor: implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady ? 'not-allowed' : 'pointer',
+              opacity: !phase2ImplementationSelectedRow || !decisionImplementationReady ? 0.6 : 1,
+            }}
+          >
+            {implementationRunning ? 'Calculando implementación…' : 'Calcular implementación'}
+          </button>
+          <button
+            type="button"
+            onClick={runRealisticValidation}
+            disabled={realisticValidationRunning || !implementationPlan || implementationPlan.equivalentToIdeal}
+            style={{
+              background: realisticValidationRunning ? T.surface : T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              color: realisticValidationRunning ? T.textMuted : T.textPrimary,
+              borderRadius: 999,
+              padding: '7px 12px',
+              fontSize: 11,
+              fontWeight: 800,
+              cursor: realisticValidationRunning || !implementationPlan || implementationPlan.equivalentToIdeal ? 'not-allowed' : 'pointer',
+              opacity: !implementationPlan || implementationPlan.equivalentToIdeal ? 0.6 : 1,
+            }}
+          >
+            {implementationPlan?.equivalentToIdeal ? 'Validación no necesaria' : realisticValidationRunning ? 'Validando mix alcanzable…' : 'Validar mix alcanzable'}
+          </button>
+        </div>
+        {implementationError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{implementationError}</div> : null}
+        {implementationPlan ? (
+          <div style={{ display: 'grid', gap: 7 }}>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual</div>
+                <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.currentMix)}</div>
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo MIDAS</div>
+                <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.targetMixIdeal)}</div>
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Gap RV/RF</div>
+                <div style={{ color: implementationMateriality?.status === 'recommended' ? T.warning : T.positive, fontSize: 15, fontWeight: 800 }}>
+                  {implementationMateriality ? formatSignedPp(implementationMateriality.gapRvPp) : formatSignedPp(Math.abs(implementationPlan.gapVsIdealRvPp))}
+                </div>
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Movimiento sugerido total</div>
+                <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'}</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>{implementationMateriality ? `${implementationMateriality.totalTradePortfolioPct.toFixed(2).replace('.', ',')}% cartera` : 'No disponible'}</div>
+              </div>
+            </div>
+            {implementationMateriality ? (
+              <div style={{ display: 'grid', gap: 3 }}>
+                <div style={{ color: implementationMateriality.status === 'recommended' ? T.warning : T.positive, fontSize: 11, fontWeight: 800 }}>
+                  Estado: {implementationMateriality.statusLabel}
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{implementationMateriality.summary}</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>{implementationMateriality.detail}</div>
+                <div style={{ color: implementationMateriality.sleeveValidation.hasCompleteSleeveData ? T.textMuted : T.warning, fontSize: 10 }}>
+                  {implementationMateriality.sleeveValidation.hasCompleteSleeveData
+                    ? 'Validación por sleeves OK: RV global / RV local / RF global / RF local.'
+                    : 'La implementación valida RV/RF total, pero no composición global/local. Revisar antes de ejecutar.'}
+                </div>
+              </div>
+            ) : null}
+            {implementationMateriality?.sleeveValidation ? (
+              <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Validación por sleeves</div>
+                {implementationMateriality.sleeveValidation.rows.map((row) => (
+                  <div key={`main-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.3fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
+                    <div style={{ color: T.textSecondary, fontWeight: 700 }}>{row.label}</div>
+                    <div>Actual {formatPctValue(row.current)}</div>
+                    <div>Objetivo {formatPctValue(row.target)}</div>
+                    <div>Post {formatPctValue(row.postTrade)}</div>
+                    <div>Gap {formatSignedPp(row.gapPp)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
+        <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Diagnósticos opcionales</div>
+        <button
+          type="button"
+          onClick={() => setTechnicalDiagnosticsOpen((prev) => !prev)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: T.textPrimary,
+            fontSize: 13,
+            fontWeight: 900,
+            padding: 0,
+            textAlign: 'left',
+            cursor: 'pointer',
+          }}
+        >
+          {technicalDiagnosticsOpen ? 'Ocultar diagnóstico técnico opcional' : 'Ver diagnóstico técnico'}
+        </button>
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Sirven para auditar o explorar escenarios. No modifican la recomendación oficial salvo que confirmes una nueva corrida completa.
+        </div>
+      </div>
+
+      {technicalDiagnosticsOpen ? (
+      <>
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 1 · Óptimo técnico / financiero preliminar</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
@@ -3896,6 +4143,8 @@ export function OptimizationLightPage({
           </div>
         )}
       </div>
+      </>
+      ) : null}
     </div>
   );
 }
