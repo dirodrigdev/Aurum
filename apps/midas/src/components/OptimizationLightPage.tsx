@@ -272,6 +272,25 @@ type ImplementationMaterialitySummary = {
   sleeveValidation: SleeveValidation;
 };
 
+type MidasComparisonRow = {
+  section: 'composition' | 'quality' | 'wealth';
+  label: string;
+  current: string;
+  recommended: string;
+  change: string;
+};
+
+type CurrentVsMidasTradeoffs = {
+  gains: string[];
+  sacrifices: string[];
+  marginal: boolean;
+};
+
+type DiscardedCompetitor = {
+  candidate: RvRfDecisionCandidate | null;
+  reason: string;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
 const SHORTLIST_MIN_RV_DISTANCE = optimizerPolicyConfig.phase1.shortlistMinRvDistancePp;
 const SHORTLIST_TARGET = optimizerPolicyConfig.phase1.shortlistTarget;
@@ -598,6 +617,214 @@ export function canUseDecisionFlowForImplementation(status: DecisionFlowStatus |
   return Boolean(status && status.stage === 'confirmed' && status.implementationEnabled);
 }
 
+function score100Value(value: number | null): number | null {
+  return value === null || !Number.isFinite(value) ? null : value * 100;
+}
+
+function formatScoreChange(current: number | null, recommended: number | null): string {
+  if (current === null || recommended === null || !Number.isFinite(current) || !Number.isFinite(recommended)) return 'No disponible';
+  return formatScoreDeltaPoints((recommended - current) * 100);
+}
+
+function formatPctChange(current: number | null, recommended: number | null): string {
+  if (current === null || recommended === null || !Number.isFinite(current) || !Number.isFinite(recommended)) return 'No disponible';
+  return formatSignedPp((recommended - current) * 100);
+}
+
+function formatMonthsChange(current: number | null, recommended: number | null): string {
+  if (current === null || recommended === null || !Number.isFinite(current) || !Number.isFinite(recommended)) return 'No disponible';
+  return `${recommended - current >= 0 ? '+' : '-'}${Math.abs(recommended - current).toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses`;
+}
+
+function formatMoneyChange(current: number | null, recommended: number | null): string {
+  if (current === null || recommended === null || !Number.isFinite(current) || !Number.isFinite(recommended)) return 'No disponible';
+  return `${recommended - current >= 0 ? '+' : '-'}${formatClpShort(Math.abs(recommended - current))}`;
+}
+
+function formatWeightPct(value: number): string {
+  return `${(value * 100).toFixed(1).replace('.', ',')}%`;
+}
+
+function formatWeightChange(current: number, recommended: number): string {
+  return formatSignedPp((recommended - current) * 100);
+}
+
+export function selectFinancialOptimumCandidate(
+  profiles: RvRfDecisionProfiles | null,
+): RvRfDecisionCandidate | null {
+  if (!profiles?.rows.length) return null;
+  return [...profiles.rows].sort((a, b) => (
+    ((b.terminalWealthP50 ?? Number.NEGATIVE_INFINITY) - (a.terminalWealthP50 ?? Number.NEGATIVE_INFINITY))
+    || ((b.terminalWealthP25 ?? Number.NEGATIVE_INFINITY) - (a.terminalWealthP25 ?? Number.NEGATIVE_INFINITY))
+    || ((score100Value(b.qasrBase) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrBase) ?? Number.NEGATIVE_INFINITY))
+    || (a.rvPct - b.rvPct)
+  ))[0] ?? null;
+}
+
+export function selectClosestDiscardedCompetitor(input: {
+  profiles: RvRfDecisionProfiles | null;
+  mainRecommendation: RvRfDecisionCandidate | null;
+  defensiveReference: RvRfDecisionCandidate | null;
+  headroomAlternative: RvRfDecisionCandidate | null;
+  benchmarkExtreme: RvRfDecisionCandidate | null;
+}): DiscardedCompetitor {
+  const { profiles, mainRecommendation, defensiveReference, headroomAlternative, benchmarkExtreme } = input;
+  if (!profiles || !mainRecommendation) return { candidate: null, reason: 'No hay suficientes datos para identificar un competidor descartado.' };
+  const excluded = new Set([
+    mainRecommendation.candidateId,
+    defensiveReference?.candidateId,
+    headroomAlternative?.candidateId,
+    benchmarkExtreme?.candidateId,
+  ].filter((value): value is string => Boolean(value)));
+  const candidates = profiles.rows
+    .filter((candidate) => !excluded.has(candidate.candidateId))
+    .sort((a, b) => (
+      ((score100Value(b.qasrAt120) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrAt120) ?? Number.NEGATIVE_INFINITY))
+      || ((score100Value(b.qasrBase) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrBase) ?? Number.NEGATIVE_INFINITY))
+      || (Math.abs(a.rvPct - mainRecommendation.rvPct) - Math.abs(b.rvPct - mainRecommendation.rvPct))
+    ));
+  const candidate = candidates[0] ?? null;
+  if (!candidate) return { candidate: null, reason: 'No quedó otro competidor comparable dentro de la malla evaluada.' };
+  const tolerance = profiles.paretoToleranceUsed;
+  const headroomDelta = ((candidate.qasrAt120 ?? 0) - (mainRecommendation.qasrAt120 ?? 0)) * 100;
+  const baseDelta = ((candidate.qasrBase ?? 0) - (mainRecommendation.qasrBase ?? 0)) * 100;
+  if (headroomDelta <= tolerance + 1e-9) return { candidate, reason: 'Mejora de holgura insuficiente frente al Óptimo MIDAS recomendado.' };
+  if (baseDelta < -2) return { candidate, reason: 'Pérdida de calidad base excesiva para usarlo como alternativa principal.' };
+  if (!candidate.passesHardGuardrails) return { candidate, reason: 'No pasa guardrails duros del modelo MIDAS.' };
+  return { candidate, reason: 'No supera el intercambio calidad base / holgura requerido por el modelo.' };
+}
+
+export function buildCurrentVsMidasComparisonRows(input: {
+  currentWeights: PortfolioWeights;
+  recommendedWeights: PortfolioWeights;
+  currentCandidate: RvRfDecisionCandidate | null;
+  recommendedCandidate: RvRfDecisionCandidate | null;
+}): MidasComparisonRow[] {
+  const current = toSleeveSnapshot(input.currentWeights);
+  const recommended = toSleeveSnapshot(input.recommendedWeights);
+  const currentRv = current.rvGlobal + current.rvChile;
+  const recommendedRv = recommended.rvGlobal + recommended.rvChile;
+  const compositionRows: MidasComparisonRow[] = [
+    {
+      section: 'composition',
+      label: 'RV/RF total',
+      current: `RV ${formatWeightPct(currentRv)} / RF ${formatWeightPct(1 - currentRv)}`,
+      recommended: `RV ${formatWeightPct(recommendedRv)} / RF ${formatWeightPct(1 - recommendedRv)}`,
+      change: formatWeightChange(currentRv, recommendedRv),
+    },
+    {
+      section: 'composition',
+      label: 'RV global',
+      current: formatWeightPct(current.rvGlobal),
+      recommended: formatWeightPct(recommended.rvGlobal),
+      change: formatWeightChange(current.rvGlobal, recommended.rvGlobal),
+    },
+    {
+      section: 'composition',
+      label: 'RV local / Chile',
+      current: formatWeightPct(current.rvChile),
+      recommended: formatWeightPct(recommended.rvChile),
+      change: formatWeightChange(current.rvChile, recommended.rvChile),
+    },
+    {
+      section: 'composition',
+      label: 'RF global',
+      current: formatWeightPct(current.rfGlobal),
+      recommended: formatWeightPct(recommended.rfGlobal),
+      change: formatWeightChange(current.rfGlobal, recommended.rfGlobal),
+    },
+    {
+      section: 'composition',
+      label: 'RF local / Chile',
+      current: formatWeightPct(current.rfChile),
+      recommended: formatWeightPct(recommended.rfChile),
+      change: formatWeightChange(current.rfChile, recommended.rfChile),
+    },
+  ];
+
+  const c = input.currentCandidate;
+  const r = input.recommendedCandidate;
+  const currentSuccess = c?.ruinRate === null || c?.ruinRate === undefined ? null : 1 - (c.ruinRate as number);
+  const recommendedSuccess = r?.ruinRate === null || r?.ruinRate === undefined ? null : 1 - (r.ruinRate as number);
+  const qualityRows: MidasComparisonRow[] = [
+    { section: 'quality', label: 'QASR base', current: formatScore100(c?.qasrBase ?? null), recommended: formatScore100(r?.qasrBase ?? null), change: formatScoreChange(c?.qasrBase ?? null, r?.qasrBase ?? null) },
+    { section: 'quality', label: 'QASR +20% gasto', current: formatScore100(c?.qasrAt120 ?? null), recommended: formatScore100(r?.qasrAt120 ?? null), change: formatScoreChange(c?.qasrAt120 ?? null, r?.qasrAt120 ?? null) },
+    { section: 'quality', label: 'QASR +30% gasto', current: formatScore100(c?.qasrAt130 ?? null), recommended: formatScore100(r?.qasrAt130 ?? null), change: formatScoreChange(c?.qasrAt130 ?? null, r?.qasrAt130 ?? null) },
+    { section: 'quality', label: 'CSR', current: formatPctOrNA(c?.csrBase ?? null), recommended: formatPctOrNA(r?.csrBase ?? null), change: formatPctChange(c?.csrBase ?? null, r?.csrBase ?? null) },
+    { section: 'quality', label: 'Éxito clásico', current: formatPctOrNA(currentSuccess), recommended: formatPctOrNA(recommendedSuccess), change: formatPctChange(currentSuccess, recommendedSuccess) },
+    { section: 'quality', label: 'Ruina', current: formatPctOrNA(c?.ruinRate ?? null), recommended: formatPctOrNA(r?.ruinRate ?? null), change: formatPctChange(c?.ruinRate ?? null, r?.ruinRate ?? null) },
+    { section: 'quality', label: 'Recorte severo promedio', current: formatMonthsHuman(c?.monthsInSevereCutMean ?? null), recommended: formatMonthsHuman(r?.monthsInSevereCutMean ?? null), change: formatMonthsChange(c?.monthsInSevereCutMean ?? null, r?.monthsInSevereCutMean ?? null) },
+    { section: 'quality', label: 'Racha severa P75', current: formatMonthsHuman(c?.maxConsecutiveSevereCutMonthsP75 ?? null), recommended: formatMonthsHuman(r?.maxConsecutiveSevereCutMonthsP75 ?? null), change: formatMonthsChange(c?.maxConsecutiveSevereCutMonthsP75 ?? null, r?.maxConsecutiveSevereCutMonthsP75 ?? null) },
+    { section: 'quality', label: 'Venta de casa %', current: formatPctOrNA(c?.houseSaleRate ?? null), recommended: formatPctOrNA(r?.houseSaleRate ?? null), change: formatPctChange(c?.houseSaleRate ?? null, r?.houseSaleRate ?? null) },
+    { section: 'quality', label: 'Max drawdown P50', current: 'No disponible', recommended: 'No disponible', change: 'No disponible' },
+  ];
+  const wealthRows: MidasComparisonRow[] = [
+    { section: 'wealth', label: 'Patrimonio final P25', current: formatClpShort(c?.terminalWealthP25 ?? null), recommended: formatClpShort(r?.terminalWealthP25 ?? null), change: formatMoneyChange(c?.terminalWealthP25 ?? null, r?.terminalWealthP25 ?? null) },
+    { section: 'wealth', label: 'Patrimonio final P50', current: formatClpShort(c?.terminalWealthP50 ?? null), recommended: formatClpShort(r?.terminalWealthP50 ?? null), change: formatMoneyChange(c?.terminalWealthP50 ?? null, r?.terminalWealthP50 ?? null) },
+  ];
+  return [...compositionRows, ...qualityRows, ...wealthRows];
+}
+
+export function buildCurrentVsMidasTradeoffs(input: {
+  currentWeights: PortfolioWeights;
+  recommendedWeights: PortfolioWeights;
+  currentCandidate: RvRfDecisionCandidate | null;
+  recommendedCandidate: RvRfDecisionCandidate | null;
+}): CurrentVsMidasTradeoffs {
+  const gains: string[] = [];
+  const sacrifices: string[] = [];
+  const currentRv = input.currentWeights.rvGlobal + input.currentWeights.rvChile;
+  const recommendedRv = input.recommendedWeights.rvGlobal + input.recommendedWeights.rvChile;
+  const rvDeltaPp = (recommendedRv - currentRv) * 100;
+  const c = input.currentCandidate;
+  const r = input.recommendedCandidate;
+  const pushDirectional = (delta: number | null, positiveIsGain: boolean, formatter: (value: number) => string) => {
+    if (delta === null || !Number.isFinite(delta) || Math.abs(delta) < 0.15) return;
+    const text = formatter(delta);
+    if ((delta > 0 && positiveIsGain) || (delta < 0 && !positiveIsGain)) gains.push(text);
+    else sacrifices.push(text);
+  };
+  pushDirectional(
+    c?.qasrAt120 !== null && c?.qasrAt120 !== undefined && r?.qasrAt120 !== null && r?.qasrAt120 !== undefined
+      ? (r.qasrAt120 - c.qasrAt120) * 100
+      : null,
+    true,
+    (delta) => `${delta >= 0 ? 'Ganas' : 'Pierdes'} ${formatScoreDeltaPoints(delta)} de QASR +20.`,
+  );
+  pushDirectional(
+    c?.ruinRate !== null && c?.ruinRate !== undefined && r?.ruinRate !== null && r?.ruinRate !== undefined
+      ? (r.ruinRate - c.ruinRate) * 100
+      : null,
+    false,
+    () => `La ruina cambia de ${formatPctOrNA(c?.ruinRate ?? null)} a ${formatPctOrNA(r?.ruinRate ?? null)}.`,
+  );
+  pushDirectional(
+    c?.monthsInSevereCutMean !== null && c?.monthsInSevereCutMean !== undefined && r?.monthsInSevereCutMean !== null && r?.monthsInSevereCutMean !== undefined
+      ? r.monthsInSevereCutMean - c.monthsInSevereCutMean
+      : null,
+    false,
+    (delta) => `El recorte severo promedio ${delta < 0 ? 'baja' : 'sube'} ${Math.abs(delta).toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses.`,
+  );
+  pushDirectional(
+    c?.terminalWealthP50 !== null && c?.terminalWealthP50 !== undefined && r?.terminalWealthP50 !== null && r?.terminalWealthP50 !== undefined
+      ? r.terminalWealthP50 - c.terminalWealthP50
+      : null,
+    true,
+    (delta) => `El P50 final ${delta >= 0 ? 'sube' : 'baja'} ${formatClpShort(Math.abs(delta))}.`,
+  );
+  if (Math.abs(rvDeltaPp) >= 0.5) {
+    const text = `La RV ${rvDeltaPp >= 0 ? 'sube' : 'baja'} ${Math.abs(rvDeltaPp).toFixed(1)} pp.`;
+    if (rvDeltaPp >= 0) sacrifices.push(text);
+    else gains.push(text);
+  }
+  const marginal = Math.abs(rvDeltaPp) < IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP;
+  return {
+    gains: gains.slice(0, 3),
+    sacrifices: sacrifices.slice(0, 3),
+    marginal,
+  };
+}
+
 function findPhase2RowForDecisionCandidate(
   rows: Phase2Point[],
   candidate: RvRfDecisionCandidate | null,
@@ -883,6 +1110,47 @@ function toPhase2Point(source: Phase1Point, sim: SimulationResults): Phase2Point
       rfWeight: source.rfPct / 100,
       result: sim,
     }),
+  };
+}
+
+function toPhase2PointFromDecisionCandidate(candidate: RvRfDecisionCandidate, weights: PortfolioWeights): Phase2Point {
+  const source: Phase1Point = {
+    rvPct: candidate.rvPct,
+    rfPct: candidate.rfPct,
+    success40: candidate.ruinRate === null ? 0 : 1 - candidate.ruinRate,
+    ruin20: candidate.ruinRate ?? 0,
+    ruinP10: null,
+    drawdownP50: 0,
+    terminalP50All: candidate.terminalWealthP50,
+    terminalP50Survivors: candidate.terminalWealthP50,
+    weights,
+  };
+  return {
+    source,
+    success40Assisted: source.success40,
+    ruin20Assisted: source.ruin20,
+    houseSalePct: candidate.houseSaleRate ?? 0,
+    houseSaleYearP50: null,
+    cutScenarioPct: null,
+    cutSeverityMean: candidate.monthsInSevereCutMean,
+    firstCutYearP50: null,
+    terminalP50All: candidate.terminalWealthP50,
+    terminalP50Survivors: candidate.terminalWealthP50,
+    drawdownP50: 0,
+    qualityCandidate: {
+      id: candidate.candidateId,
+      rvWeight: candidate.rvPct / 100,
+      rfWeight: candidate.rfPct / 100,
+      qasrStrict: candidate.qasrBase,
+      csr85_4: candidate.csrBase,
+      classicSuccessRate: candidate.ruinRate === null ? null : 1 - candidate.ruinRate,
+      monthsInSevereCutMean: candidate.monthsInSevereCutMean,
+      maxConsecutiveSevereCutMonthsP75: candidate.maxConsecutiveSevereCutMonthsP75,
+      terminalWealthP25: candidate.terminalWealthP25,
+      terminalWealthP50: candidate.terminalWealthP50,
+      houseSaleRate: candidate.houseSaleRate,
+      warnings: [],
+    },
   };
 }
 
@@ -2001,11 +2269,12 @@ export function OptimizationLightPage({
       const expressBaseProfiles = expressTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
       const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
+      const expressFinancial = selectFinancialOptimumCandidate(expressBaseProfiles);
 
       const zoomCandidates = buildOptimizationZoomShortlist({
         preliminaryRecommendationRv: expressMain?.rvPct ?? null,
         defensiveReferenceRv: expressDefensive?.rvPct ?? null,
-        technicalPreludeRv: phase1SuggestedPoint?.rvPct ?? null,
+        technicalPreludeRv: expressFinancial?.rvPct ?? null,
         currentRv: currentRvPctFromWeights(activeParams.weights),
       });
 
@@ -2059,7 +2328,7 @@ export function OptimizationLightPage({
       const shortlist = buildOptimizationConfirmationShortlist({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
-        technicalPreludeRv: phase1SuggestedPoint?.rvPct ?? null,
+        technicalPreludeRv: selectFinancialOptimumCandidate(baseDecisionProfiles)?.rvPct ?? null,
         currentRv: currentRvPctFromWeights(activeParams.weights),
       });
       const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(5);
@@ -2209,6 +2478,51 @@ export function OptimizationLightPage({
   const officialDefensiveReference = baseDecisionProfiles?.defensiveReference ?? null;
   const officialHeadroomAlternative = baseDecisionProfiles?.headroomAlternative ?? null;
   const officialBenchmarkExtreme = baseDecisionProfiles?.benchmarkExtreme ?? null;
+  const financialOptimum = useMemo(
+    () => selectFinancialOptimumCandidate(baseDecisionProfiles),
+    [baseDecisionProfiles],
+  );
+  const currentDecisionCandidate = useMemo(() => {
+    if (!baseDecisionProfiles) return null;
+    const currentRv = currentRvPctFromWeights(activeParams.weights);
+    return baseDecisionProfiles.rows.find((row) => Math.abs(row.rvPct - currentRv) <= 0.05) ?? null;
+  }, [activeParams.weights, baseDecisionProfiles]);
+  const recommendedDecisionWeights = useMemo(
+    () => (officialMainRecommendation ? buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct) : null),
+    [activeParams.weights, officialMainRecommendation],
+  );
+  const closestDiscardedCompetitor = useMemo(
+    () => selectClosestDiscardedCompetitor({
+      profiles: baseDecisionProfiles,
+      mainRecommendation: officialMainRecommendation,
+      defensiveReference: officialDefensiveReference,
+      headroomAlternative: officialHeadroomAlternative,
+      benchmarkExtreme: officialBenchmarkExtreme,
+    }),
+    [baseDecisionProfiles, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, officialMainRecommendation],
+  );
+  const currentVsMidasRows = useMemo(
+    () => (officialMainRecommendation && recommendedDecisionWeights
+      ? buildCurrentVsMidasComparisonRows({
+        currentWeights: activeParams.weights,
+        recommendedWeights: recommendedDecisionWeights,
+        currentCandidate: currentDecisionCandidate,
+        recommendedCandidate: officialMainRecommendation,
+      })
+      : []),
+    [activeParams.weights, currentDecisionCandidate, officialMainRecommendation, recommendedDecisionWeights],
+  );
+  const currentVsMidasTradeoffs = useMemo(
+    () => (officialMainRecommendation && recommendedDecisionWeights
+      ? buildCurrentVsMidasTradeoffs({
+        currentWeights: activeParams.weights,
+        recommendedWeights: recommendedDecisionWeights,
+        currentCandidate: currentDecisionCandidate,
+        recommendedCandidate: officialMainRecommendation,
+      })
+      : null),
+    [activeParams.weights, currentDecisionCandidate, officialMainRecommendation, recommendedDecisionWeights],
+  );
   const officialMainRecommendationRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
     [officialMainRecommendation, phase2Rows],
@@ -2216,13 +2530,8 @@ export function OptimizationLightPage({
   const officialMainRecommendationSourceRow = useMemo(() => {
     if (!officialMainRecommendation) return null;
     if (officialMainRecommendationRow) return officialMainRecommendationRow;
-    const candidateParams = cloneParams(activeParams);
-    candidateParams.weights = buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct);
-    const sim = runSimulationCentral(candidateParams);
-    return toPhase2Point(
-      toPhase1Point(officialMainRecommendation.rvPct, candidateParams.weights, sim),
-      sim,
-    );
+    const weights = buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct);
+    return toPhase2PointFromDecisionCandidate(officialMainRecommendation, weights);
   }, [activeParams, officialMainRecommendation, officialMainRecommendationRow]);
   const officialDefensiveReferenceRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialDefensiveReference),
@@ -2937,36 +3246,139 @@ export function OptimizationLightPage({
           </div>
         ) : null}
         {officialMainRecommendation ? (
-          <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
-            <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
-            <div style={{ color: '#fff', fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
-            <div style={{ color: T.textMuted, fontSize: 11 }}>
-              Mejor equilibrio entre calidad base, holgura futura, recortes y estabilidad.
+          <>
+            <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
+              <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
+              <div style={{ color: '#fff', fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Alternativa de holgura: {officialHeadroomAlternative?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
+              </div>
+              {decisionFlowWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div> : null}
+              {officialRecommendationWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div> : null}
             </div>
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Óptimo financiero: {phase1SuggestedPoint ? `RV ${phase1SuggestedPoint.rvPct} / RF ${phase1SuggestedPoint.rfPct}` : 'No disponible'} · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'}
+
+            {financialOptimum ? (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Óptimo financiero</div>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 800 }}>Referencia previa · no compite en la recomendación MIDAS</div>
+                </div>
+                <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>{financialOptimum.mixLabel}</div>
+                <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
+                  Referencia puramente financiera. Muestra qué mix maximiza el resultado económico antes de ponderar calidad de vida, recortes, estabilidad y holgura del modelo MIDAS.
+                </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Métrica financiera principal: Patrimonio final P50 {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation.mixLabel}).`}
+                </div>
+              </div>
+            ) : null}
+
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Escenarios evaluados por el modelo</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                El óptimo financiero queda fuera de este bloque: aquí compiten solo perfiles evaluados por calidad, holgura, recortes y estabilidad.
+              </div>
+              <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
+                {[
+                  officialDefensiveReference ? {
+                    key: 'defensive',
+                    title: 'Referencia defensiva',
+                    copy: 'Prioriza estabilidad base y menos recortes.',
+                    candidate: officialDefensiveReference,
+                    extra: null as string | null,
+                  } : null,
+                  {
+                    key: 'main',
+                    title: 'Óptimo MIDAS recomendado',
+                    copy: 'Equilibrio elegido por el modelo.',
+                    candidate: officialMainRecommendation,
+                    extra: null as string | null,
+                  },
+                  officialHeadroomAlternative ? {
+                    key: 'headroom',
+                    title: 'Alternativa de mayor holgura',
+                    copy: 'Prioriza más holgura futura, si existe una mejora material.',
+                    candidate: officialHeadroomAlternative,
+                    extra: 'No fue recomendación principal porque el modelo mantiene el intercambio explícito entre calidad base y holgura.',
+                  } : (
+                    closestDiscardedCompetitor.candidate ? {
+                      key: 'discarded',
+                      title: 'Competidor más cercano descartado',
+                      copy: closestDiscardedCompetitor.reason,
+                      candidate: closestDiscardedCompetitor.candidate,
+                      extra: null as string | null,
+                    } : null
+                  ),
+                ].filter((item): item is { key: string; title: string; copy: string; candidate: RvRfDecisionCandidate; extra: string | null } => Boolean(item)).map((item) => (
+                  <div key={item.key} style={{ border: `1px solid ${item.key === 'main' ? T.primary : T.border}`, borderRadius: 9, padding: 9, background: T.surface, display: 'grid', gap: 5 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>{item.title}</div>
+                    <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900 }}>{item.candidate.mixLabel}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>{item.copy}</div>
+                    <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                      QASR base {formatScore100(item.candidate.qasrBase)} · QASR +20 {formatScore100(item.candidate.qasrAt120)} · CSR {formatPctOrNA(item.candidate.csrBase)}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 10 }}>
+                      Ruina {formatPctOrNA(item.candidate.ruinRate)} · Recorte severo {formatMonthsHuman(item.candidate.monthsInSevereCutMean)} · Racha P75 {formatMonthsHuman(item.candidate.maxConsecutiveSevereCutMonthsP75)}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 10 }}>P50 final {formatClpShort(item.candidate.terminalWealthP50)}</div>
+                    {item.extra ? <div style={{ color: T.textMuted, fontSize: 10 }}>{item.extra}</div> : null}
+                  </div>
+                ))}
+              </div>
             </div>
-            {decisionFlowWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div> : null}
-            {officialRecommendationWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div> : null}
-          </div>
+
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Qué cambia frente a tu mix actual</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Comparación directa entre el mix actual de la fuente activa y el Óptimo MIDAS recomendado. No usa el óptimo financiero.
+              </div>
+              <div style={{ display: 'grid', gap: 5 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10, fontWeight: 800 }}>
+                  <div>Variable</div>
+                  <div>Actual</div>
+                  <div>Óptimo MIDAS</div>
+                  <div>Cambio</div>
+                </div>
+                {currentVsMidasRows.map((row) => (
+                  <div key={`${row.section}-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textSecondary, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                    <div style={{ color: T.textPrimary, fontWeight: 700 }}>{row.label}</div>
+                    <div>{row.current}</div>
+                    <div>{row.recommended}</div>
+                    <div>{row.change}</div>
+                  </div>
+                ))}
+              </div>
+              {currentVsMidasTradeoffs ? (
+                <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Qué ganas</div>
+                    {(currentVsMidasTradeoffs.gains.length ? currentVsMidasTradeoffs.gains : ['No aparece una mejora material clara con los datos disponibles.']).map((item) => (
+                      <div key={`gain-${item}`} style={{ color: T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+                    ))}
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Qué sacrificas</div>
+                    {(currentVsMidasTradeoffs.sacrifices.length ? currentVsMidasTradeoffs.sacrifices : ['No aparece un sacrificio material claro con los datos disponibles.']).map((item) => (
+                      <div key={`sacrifice-${item}`} style={{ color: T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {currentVsMidasTradeoffs?.marginal ? (
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  El cambio frente al mix actual es marginal. No parece justificar traspasos por sí solo.
+                </div>
+              ) : null}
+            </div>
+          </>
         ) : (
           <div style={{ color: T.textMuted, fontSize: 10 }}>
             Ejecuta el cálculo para obtener una recomendación preliminar. La implementación queda bloqueada hasta confirmación oficial.
           </div>
         )}
-        {recommendationTradeoffCards.length > 0 ? (
-          <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Si eliges otra opción en vez del Óptimo MIDAS recomendado</div>
-            {recommendationTradeoffCards.map((card) => (
-              <div key={`main-${card.key}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 4, background: T.surface }}>
-                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{card.title}: {card.mixLabel}</div>
-                <div style={{ color: T.textSecondary, fontSize: 10 }}>Qué ganas: {card.gains.length ? card.gains.join(' · ') : 'No gana nada material frente al óptimo recomendado.'}</div>
-                <div style={{ color: T.textSecondary, fontSize: 10 }}>Qué sacrificas: {card.sacrifices.length ? card.sacrifices.join(' · ') : 'No sacrifica nada material frente al óptimo recomendado.'}</div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>{card.reading}</div>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
@@ -3026,7 +3438,7 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.currentMix)}</div>
               </div>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo MIDAS</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Óptimo MIDAS recomendado</div>
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.targetMixIdeal)}</div>
               </div>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>

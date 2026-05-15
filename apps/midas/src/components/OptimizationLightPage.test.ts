@@ -5,15 +5,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
 import type { PortfolioWeights } from '../domain/model/types';
 import type { ModelParameters } from '../domain/model/types';
+import type { RvRfDecisionCandidate, RvRfDecisionProfiles } from '../domain/optimizer/rvRfDecisionProfiles';
 import {
   DECISION_EXPRESS_STEP_PP,
   IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP,
   OptimizationLightPage,
+  buildCurrentVsMidasComparisonRows,
+  buildCurrentVsMidasTradeoffs,
   buildOptimizationConfirmationShortlist,
   buildOptimizationExpressGrid,
   buildOptimizationZoomShortlist,
   canUseDecisionFlowForImplementation,
   classifyImplementationMateriality,
+  selectClosestDiscardedCompetitor,
+  selectFinancialOptimumCandidate,
 } from './OptimizationLightPage';
 
 function buildWeights(rvGlobal: number, rvChile: number, rfGlobal: number, rfChile: number): PortfolioWeights {
@@ -132,6 +137,71 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
   };
 }
 
+function buildDecisionCandidate(overrides: Partial<RvRfDecisionCandidate> & { rvPct: number }): RvRfDecisionCandidate {
+  const { rvPct, ...rest } = overrides;
+  return {
+    candidateId: `rv_${rvPct}_rf_${100 - rvPct}`,
+    mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
+    rvPct,
+    rfPct: 100 - rvPct,
+    rvReal: rvPct / 100,
+    rfReal: 1 - rvPct / 100,
+    qasrBase: 0.94,
+    qasrAt120: 0.9,
+    qasrAt130: 0.86,
+    csrBase: 0.92,
+    ruinRate: 0.04,
+    monthsInSevereCutMean: 10,
+    maxConsecutiveSevereCutMonthsP75: 14,
+    terminalWealthP25: 1_000_000_000,
+    terminalWealthP50: 2_000_000_000,
+    houseSaleRate: 0.2,
+    severeCutDuringSaleMonths: 0,
+    recSevPctBase: 10 / 480,
+    ...rest,
+  };
+}
+
+function buildProfiles(rows: RvRfDecisionCandidate[]): RvRfDecisionProfiles {
+  return {
+    seQasrEstimated: 0.5,
+    seQasrMaxCandidateId: rows[0]?.candidateId ?? null,
+    paretoToleranceUsed: 0.5,
+    defensiveReferenceSource: 'guardrail_pool',
+    warnings: [],
+    guardrails: {
+      qasrMin: 87,
+      ruinMax: 0.1,
+      severeCutMonthsMax: 48,
+      severeCutStreakP75Max: 30,
+    },
+    fineGridCount: rows.length,
+    paretoFrontierSize: rows.length,
+    ratioUsed: 2,
+    ratioSensitivity: {
+      ratio15CandidateId: null,
+      ratio20CandidateId: null,
+      ratio30CandidateId: null,
+      recommendationSensitive: false,
+    },
+    defensiveReference: rows[0] ?? null,
+    primaryRecommendation: rows[1] ?? rows[0] ?? null,
+    headroomAlternative: null,
+    benchmarkExtreme: rows.find((row) => row.rvPct === 100) ?? null,
+    rows: rows.map((row) => ({
+      ...row,
+      passesHardGuardrails: true,
+      failedGuardrails: [],
+      inParetoFrontier: true,
+      role: row.rvPct === 100 ? 'benchmark_extreme' : 'none',
+      deltaQasrBaseVsDefensive: null,
+      deltaQasr120VsDefensive: null,
+      tradeoffRatioVsDefensive: null,
+      mainDifference: 'test',
+    })),
+  };
+}
+
 const expressGrid = buildOptimizationExpressGrid();
 assert.deepEqual(expressGrid, [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 assert.equal(expressGrid[1] - expressGrid[0], DECISION_EXPRESS_STEP_PP);
@@ -177,6 +247,46 @@ assert(confirmationShortlist.includes(60));
 assert(confirmationShortlist.includes(65));
 assert(confirmationShortlist.includes(70));
 assert(confirmationShortlist.includes(100));
+
+const decisionProfiles = buildProfiles([
+  buildDecisionCandidate({ rvPct: 25, terminalWealthP50: 1_000_000_000, qasrAt120: 0.89 }),
+  buildDecisionCandidate({ rvPct: 60, terminalWealthP50: 2_000_000_000, qasrAt120: 0.91 }),
+  buildDecisionCandidate({ rvPct: 80, terminalWealthP50: 5_000_000_000, qasrAt120: 0.905 }),
+  buildDecisionCandidate({ rvPct: 100, terminalWealthP50: 4_000_000_000, qasrAt120: 0.88 }),
+]);
+assert.equal(selectFinancialOptimumCandidate(decisionProfiles)?.rvPct, 80);
+const discarded = selectClosestDiscardedCompetitor({
+  profiles: decisionProfiles,
+  mainRecommendation: decisionProfiles.rows[1],
+  defensiveReference: decisionProfiles.rows[0],
+  headroomAlternative: null,
+  benchmarkExtreme: decisionProfiles.rows[3],
+});
+assert.equal(discarded.candidate?.rvPct, 80);
+assert(discarded.reason.length > 0);
+
+const currentVsRows = buildCurrentVsMidasComparisonRows({
+  currentWeights: buildWeights(0.345, 0.247, 0.205, 0.203),
+  recommendedWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
+  currentCandidate: buildDecisionCandidate({ rvPct: 59, qasrBase: 0.93, qasrAt120: 0.88, ruinRate: 0.05 }),
+  recommendedCandidate: buildDecisionCandidate({ rvPct: 60, qasrBase: 0.94, qasrAt120: 0.9, ruinRate: 0.04 }),
+});
+assert(currentVsRows.some((row) => row.label === 'QASR base'));
+assert(currentVsRows.some((row) => row.label === 'QASR +20% gasto'));
+assert(currentVsRows.some((row) => row.label === 'CSR'));
+assert(currentVsRows.some((row) => row.label === 'Ruina'));
+assert(currentVsRows.some((row) => row.label === 'Recorte severo promedio'));
+assert(currentVsRows.some((row) => row.label === 'Patrimonio final P50'));
+assert(currentVsRows.some((row) => row.label === 'Max drawdown P50' && row.current === 'No disponible'));
+
+const currentVsTradeoffs = buildCurrentVsMidasTradeoffs({
+  currentWeights: buildWeights(0.345, 0.247, 0.205, 0.203),
+  recommendedWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
+  currentCandidate: buildDecisionCandidate({ rvPct: 59, qasrAt120: 0.88 }),
+  recommendedCandidate: buildDecisionCandidate({ rvPct: 60, qasrAt120: 0.9 }),
+});
+assert.equal(currentVsTradeoffs.marginal, true);
+assert(currentVsTradeoffs.gains.some((item) => item.includes('QASR +20')));
 
 const currentWeights = buildWeights(0.345, 0.247, 0.205, 0.203);
 const noActionSummary = classifyImplementationMateriality({
@@ -288,5 +398,10 @@ assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase1/.test(source
 assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase2/.test(source));
 assert(source.includes('DECISION_EXPRESS_NSIM = 750'));
 assert(source.includes('DECISION_ZOOM_NSIM = 1000'));
+assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));
+assert(source.includes('Escenarios evaluados por el modelo'));
+assert(source.includes('Qué cambia frente a tu mix actual'));
+assert(source.includes('Comparación directa entre el mix actual de la fuente activa y el Óptimo MIDAS recomendado. No usa el óptimo financiero.'));
+assert(source.includes('El óptimo financiero queda fuera de este bloque'));
 
 console.log('OptimizationLightPage tests passed');
