@@ -4,6 +4,8 @@ import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
 import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
+import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
+import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -36,6 +38,7 @@ type Phase2Point = {
   terminalP50All: number | null;
   terminalP50Survivors: number | null;
   drawdownP50: number;
+  qualityCandidate: QualityOptimizationCandidate;
 };
 
 type PhaseRunMeta = {
@@ -221,6 +224,25 @@ function formatClpShort(value: number | null): string {
   return `CLP ${value.toFixed(0)}`;
 }
 
+function formatScore100(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'No disponible';
+  return `${Math.round(value * 100)}/100`;
+}
+
+function formatPctOrNA(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'No disponible';
+  return formatPct(value);
+}
+
+function formatMonthsHuman(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'No disponible';
+  const roundedMonths = Math.round(value * 10) / 10;
+  if (roundedMonths <= 0) return '0 meses';
+  if (roundedMonths < 12) return `${roundedMonths.toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses`;
+  const years = roundedMonths / 12;
+  return `${roundedMonths.toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses / ${years.toLocaleString('es-ES', { maximumFractionDigits: 1 })} años`;
+}
+
 function formatNativeAmount(value: number | null, currency: string | null): string {
   if (value === null || !Number.isFinite(value)) return '—';
   const label = currency || 'Nativo';
@@ -332,6 +354,28 @@ function toPhase1Point(rvPct: number, weights: PortfolioWeights, sim: Simulation
     terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
     weights,
     isCurrentMix: options?.isCurrentMix ?? false,
+  };
+}
+
+function toPhase2Point(source: Phase1Point, sim: SimulationResults): Phase2Point {
+  return {
+    source,
+    success40Assisted: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
+    ruin20Assisted: sim.probRuin20 ?? 0,
+    houseSalePct: sim.houseSalePct ?? 0,
+    houseSaleYearP50: Number.isFinite(sim.saleYearMedian ?? Number.NaN) ? (sim.saleYearMedian as number) : null,
+    cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
+    cutSeverityMean: Number.isFinite(sim.cutSeverityMean ?? Number.NaN) ? (sim.cutSeverityMean as number) : null,
+    firstCutYearP50: Number.isFinite(sim.firstCutYearMedian ?? Number.NaN) ? (sim.firstCutYearMedian as number) : null,
+    terminalP50All: sim.p50TerminalAllPaths ?? null,
+    terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
+    drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
+    qualityCandidate: buildQualityOptimizationCandidate({
+      id: `rv-${source.rvPct.toFixed(1)}`,
+      rvWeight: source.rvPct / 100,
+      rfWeight: source.rfPct / 100,
+      result: sim,
+    }),
   };
 }
 
@@ -1062,7 +1106,7 @@ export function OptimizationLightPage({
   }, [activeLabel, activeParams, phase1Diagnostics?.runId, phase1Running]);
 
   const runPhase2 = useCallback(async () => {
-    if (phase2Running || !shortlist.length) return;
+    if (phase2Running || !phase1Points.length) return;
     setPhase2Running(true);
     setStaleNotice(null);
     setPhase2Rows([]);
@@ -1082,7 +1126,7 @@ export function OptimizationLightPage({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       const baselinePoint = choosePhase1Baseline(phase1Points);
       const currentPoint = phase1Points.find((point) => point.isCurrentMix) ?? null;
-      const evaluationPoints = [...shortlist];
+      const evaluationPoints = [...phase1Points];
       if (baselinePoint) {
         const baselineIncluded = evaluationPoints.some((point) => isSameMix(point, baselinePoint));
         if (!baselineIncluded) evaluationPoints.push(baselinePoint);
@@ -1096,19 +1140,7 @@ export function OptimizationLightPage({
         const assistedParams = cloneParams(activeParams);
         assistedParams.weights = point.weights;
         const sim = runSimulationCentral(assistedParams);
-        rows.push({
-          source: point,
-          success40Assisted: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
-          ruin20Assisted: sim.probRuin20 ?? 0,
-          houseSalePct: sim.houseSalePct ?? 0,
-          houseSaleYearP50: Number.isFinite(sim.saleYearMedian ?? Number.NaN) ? (sim.saleYearMedian as number) : null,
-          cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
-          cutSeverityMean: Number.isFinite(sim.cutSeverityMean ?? Number.NaN) ? (sim.cutSeverityMean as number) : null,
-          firstCutYearP50: Number.isFinite(sim.firstCutYearMedian ?? Number.NaN) ? (sim.firstCutYearMedian as number) : null,
-          terminalP50All: sim.p50TerminalAllPaths ?? null,
-          terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
-          drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
-        });
+        rows.push(toPhase2Point(point, sim));
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       setPhase2Rows(rows);
@@ -1116,7 +1148,7 @@ export function OptimizationLightPage({
     } finally {
       setPhase2Running(false);
     }
-  }, [activeLabel, activeParams, phase1Points, phase2Running, shortlist]);
+  }, [activeLabel, activeParams, phase1Points, phase2Running]);
 
   const modeCards = useMemo(
     () => ([
@@ -1185,6 +1217,28 @@ export function OptimizationLightPage({
     () => (phase2BaselinePoint ? phase2Rows.find((row) => isSameMix(row.source, phase2BaselinePoint)) ?? null : null),
     [phase2BaselinePoint, phase2Rows],
   );
+  const phase2QualityRows = useMemo(
+    () => [...phase2Rows].sort((a, b) => (
+      compareQualityOptimizationCandidates(a.qualityCandidate, b.qualityCandidate)
+      || (a.source.rvPct - b.source.rvPct)
+    )),
+    [phase2Rows],
+  );
+  const phase2QualityWinner = useMemo(
+    () => phase2QualityRows.find((row) => row.qualityCandidate.qasrStrict !== null) ?? null,
+    [phase2QualityRows],
+  );
+  const phase2QualityRunnerUp = useMemo(
+    () => phase2QualityRows.find((row) => (
+      row.qualityCandidate.qasrStrict !== null
+      && (!phase2QualityWinner || !isSameMix(row.source, phase2QualityWinner.source))
+    )) ?? null,
+    [phase2QualityRows, phase2QualityWinner],
+  );
+  const phase2QualityMissingRows = useMemo(
+    () => phase2Rows.filter((row) => row.qualityCandidate.qasrStrict === null),
+    [phase2Rows],
+  );
   const phase2Decisions = useMemo(() => {
     if (!phase2BaselineRow) return new Map<number, Phase2CompetitionDecision>();
     return new Map(
@@ -1205,79 +1259,19 @@ export function OptimizationLightPage({
         reason: 'Sin Fase 2 calculada',
       };
     }
-    const rankRows = (rows: Phase2Point[]) => [...rows].sort((a, b) => {
-      const decisionA = phase2Decisions.get(a.source.rvPct);
-      const decisionB = phase2Decisions.get(b.source.rvPct);
-      return (
-        Number(Boolean(decisionB?.displacesPhase1)) - Number(Boolean(decisionA?.displacesPhase1))
-        || Number(Boolean(decisionB?.competesWithPhase1)) - Number(Boolean(decisionA?.competesWithPhase1))
-        || (b.success40Assisted - a.success40Assisted)
-        || (a.ruin20Assisted - b.ruin20Assisted)
-        || ((b.firstCutYearP50 ?? Number.NEGATIVE_INFINITY) - (a.firstCutYearP50 ?? Number.NEGATIVE_INFINITY))
-        || (a.houseSalePct - b.houseSalePct)
-        || (a.drawdownP50 - b.drawdownP50)
-      );
-    });
-    const ranked = rankRows(phase2Rows);
-    const bestSuccess = ranked[0]?.success40Assisted ?? 0;
-    const leaderRows = ranked.filter((row) => (
-      ((bestSuccess - row.success40Assisted) * 100) <= (PHASE2_SELECTION_POLICY.successTiePp + 1e-9)
-    ));
-    let finalists = [...leaderRows];
-    let reason = 'Campeón por éxito claramente superior';
-    if (leaderRows.length > 1) {
-      const byRuin = selectByMaterialityFloor(
-        finalists,
-        (row) => row.ruin20Assisted * 100,
-        PHASE2_SELECTION_POLICY.ruin20MaterialityPp,
-      );
-      if (byRuin.length === 1) {
-        finalists = byRuin;
-        reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor Ruina20`;
-      } else {
-        const byFirstCut = selectByMaterialityCeiling(
-          byRuin,
-          (row) => row.firstCutYearP50 ?? Number.NEGATIVE_INFINITY,
-          PHASE2_SELECTION_POLICY.firstCutYearMateriality,
-        );
-        if (byFirstCut.length === 1) {
-          finalists = byFirstCut;
-          reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por primer cut más tardío`;
-        } else {
-          const byHouseSale = selectByMaterialityFloor(
-            byFirstCut,
-            (row) => row.houseSalePct * 100,
-            PHASE2_SELECTION_POLICY.houseSaleMaterialityPp,
-          );
-          if (byHouseSale.length === 1) {
-            finalists = byHouseSale;
-            reason = `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor venta de casa`;
-          } else {
-            const byMaxDd = selectByMaterialityFloor(
-              byHouseSale,
-              (row) => row.drawdownP50 * 100,
-              PHASE2_SELECTION_POLICY.maxDdMaterialityPp,
-            );
-            finalists = byMaxDd;
-            reason = byMaxDd.length === 1
-              ? `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); desempate por menor MaxDD`
-              : `Empate técnico de robustez (≤ ${PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp); se mantiene retador`;
-          }
-        }
-      }
+    if (!phase2QualityWinner) {
+      return {
+        champion: null as Phase2Point | null,
+        challenger: null as Phase2Point | null,
+        reason: 'Faltan métricas de calidad de vida para rankear los candidatos.',
+      };
     }
-    const champion = rankRows(finalists)[0] ?? ranked[0] ?? null;
-    const challengerPool = leaderRows.length > 1 ? rankRows(leaderRows) : ranked;
-    const challenger = (
-      phase2CurrentRow
-      && champion
-      && !isSameMix(phase2CurrentRow.source, champion.source)
-      && challengerPool.some((row) => isSameMix(row.source, phase2CurrentRow.source))
-        ? phase2CurrentRow
-        : challengerPool.find((row) => champion && !isSameMix(row.source, champion.source)) ?? null
-    );
-    return { champion, challenger, reason };
-  }, [phase2CurrentRow, phase2Decisions, phase2Rows]);
+    return {
+      champion: phase2QualityWinner,
+      challenger: phase2QualityRunnerUp,
+      reason: 'Ranking principal por calidad de vida: QASR → CSR → éxito clásico → recortes severos → patrimonio final.',
+    };
+  }, [phase2QualityRows, phase2QualityRunnerUp, phase2QualityWinner, phase2Rows.length]);
   const phase3BaseSpendingVector = useMemo(
     () => getSpendingVector(activeParams),
     [activeParams],
@@ -1558,24 +1552,12 @@ export function OptimizationLightPage({
       const sim = runSimulationCentral(params);
       const reachableRv = (implementationPlan.reachableWeights.rvGlobal + implementationPlan.reachableWeights.rvChile) * 100;
       const reachableRf = 100 - reachableRv;
-      const row: Phase2Point = {
-        source: {
-          ...idealRow.source,
-          rvPct: Number(reachableRv.toFixed(1)),
-          rfPct: Number(reachableRf.toFixed(1)),
-          weights: cloneParams(implementationPlan.reachableWeights),
-        },
-        success40Assisted: sim.success40 ?? (1 - (sim.probRuin40 ?? sim.probRuin)),
-        ruin20Assisted: sim.probRuin20 ?? 0,
-        houseSalePct: sim.houseSalePct ?? 0,
-        houseSaleYearP50: Number.isFinite(sim.saleYearMedian ?? Number.NaN) ? (sim.saleYearMedian as number) : null,
-        cutScenarioPct: Number.isFinite(sim.cutScenarioPct ?? Number.NaN) ? (sim.cutScenarioPct as number) : null,
-        cutSeverityMean: Number.isFinite(sim.cutSeverityMean ?? Number.NaN) ? (sim.cutSeverityMean as number) : null,
-        firstCutYearP50: Number.isFinite(sim.firstCutYearMedian ?? Number.NaN) ? (sim.firstCutYearMedian as number) : null,
-        terminalP50All: sim.p50TerminalAllPaths ?? null,
-        terminalP50Survivors: sim.p50TerminalSurvivors ?? null,
-        drawdownP50: sim.maxDrawdownPercentiles[50] ?? 0,
-      };
+      const row = toPhase2Point({
+        ...idealRow.source,
+        rvPct: Number(reachableRv.toFixed(1)),
+        rfPct: Number(reachableRf.toFixed(1)),
+        weights: cloneParams(implementationPlan.reachableWeights),
+      }, sim);
       const deltaVsIdealSuccessPp = (row.success40Assisted - idealRow.success40Assisted) * 100;
       const message = Math.abs(deltaVsIdealSuccessPp) <= optimizerPolicyConfig.implementation.realisticValidationGapRvPp
         ? 'Implementación equivalente al objetivo (resultado prácticamente igual).'
@@ -2000,23 +1982,22 @@ export function OptimizationLightPage({
       </div>
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
-        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Validación modelo completo</div>
+        <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 2 · Mix recomendado por calidad de vida</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-          Evalúa el shortlist de Fase 1 con el modelo completo (casa + cuts + protecciones activas). Esta fase no reoptimiza: solo valida costo de supervivencia.
+          Evalúa con el modelo completo los mixes refinados en Fase 1 (casa + cuts + protecciones activas) y los ordena por calidad de vida ajustada, no solo por no ruina.
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
           Baseline Fase 1: {phase2BaselinePoint ? scenarioLabel(phase2BaselinePoint) : 'No disponible'} ·
           {' '}{phase1BalancedPoint ? 'Mejor balanceado en mundo autónomo' : 'Mejor bruto en mundo autónomo'}
         </div>
         <div style={{ color: T.textMuted, fontSize: 9 }}>
-          Política Fase 2: empate técnico de robustez si éxito queda dentro de {PHASE2_SELECTION_POLICY.successTiePp.toFixed(1)} pp del mejor.
-          {' '}Desempate: Ruina20 ({PHASE2_SELECTION_POLICY.ruin20MaterialityPp.toFixed(1)} pp) → Primer cut ({PHASE2_SELECTION_POLICY.firstCutYearMateriality.toFixed(1)} años) → Venta casa ({PHASE2_SELECTION_POLICY.houseSaleMaterialityPp.toFixed(1)} pp) → MaxDD ({PHASE2_SELECTION_POLICY.maxDdMaterialityPp.toFixed(1)} pp).
+          Ranking principal por calidad de vida ajustada. La venta de casa se informa como uso de activo disponible y no se penaliza por sí misma.
         </div>
         <div>
           <button
             type="button"
             onClick={runPhase2}
-            disabled={phase2Running || !shortlist.length || mode !== 'light'}
+            disabled={phase2Running || !phase1Points.length || mode !== 'light'}
             style={{
               background: phase2Running ? T.surfaceEl : T.primary,
               border: `1px solid ${phase2Running ? T.border : T.primary}`,
@@ -2025,8 +2006,8 @@ export function OptimizationLightPage({
               padding: '7px 12px',
               fontSize: 11,
               fontWeight: 700,
-              cursor: phase2Running || !shortlist.length || mode !== 'light' ? 'not-allowed' : 'pointer',
-              opacity: (!shortlist.length || mode !== 'light') ? 0.65 : 1,
+              cursor: phase2Running || !phase1Points.length || mode !== 'light' ? 'not-allowed' : 'pointer',
+              opacity: (!phase1Points.length || mode !== 'light') ? 0.65 : 1,
             }}
           >
             {phase2Running ? 'Calculando Fase 2…' : 'Evaluar Fase 2'}
@@ -2039,26 +2020,52 @@ export function OptimizationLightPage({
           </div>
         ) : null}
 
+        {phase2ChampionChallenger.champion ? (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Mix recomendado por calidad de vida</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+              {scenarioLabel(phase2ChampionChallenger.champion.source)}
+            </div>
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+              QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)} · Éxito clásico {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.classicSuccessRate)}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Recorte severo promedio {formatMonthsHuman(phase2ChampionChallenger.champion.qualityCandidate.monthsInSevereCutMean)} · Patrimonio final P25 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP25)} · P50 {formatClpShort(phase2ChampionChallenger.champion.qualityCandidate.terminalWealthP50)} · Venta de casa {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.houseSaleRate)}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              {phase2ChampionChallenger.reason}
+            </div>
+            {phase2ChampionChallenger.challenger ? (
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Segundo candidato: {scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR {formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.challenger.qualityCandidate.csr85_4)}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {phase2QualityMissingRows.length > 0 ? (
+          <div style={{ color: T.warning, fontSize: 10 }}>
+            Advertencia técnica: {phase2QualityMissingRows.length} candidato(s) no quedaron rankeables por calidad de vida porque la corrida no expuso `qualityOfLifeMetrics`.
+          </div>
+        ) : null}
+
         {phase2Rows.length > 0 && (
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-            {phase2Rows.map((row) => {
+            {phase2QualityRows.map((row) => {
               const decision = phase2Decisions.get(row.source.rvPct) ?? null;
               const isBaseline = Boolean(phase2BaselinePoint && isSameMix(row.source, phase2BaselinePoint));
-              const isPhase1Finalist = Boolean(
-                !isBaseline && phase1TechnicalTiePoints.some((point) => isSameMix(point, row.source)),
-              );
-              const isCompeting = Boolean(!isBaseline && decision?.competesWithPhase1);
-              const isDisplacing = Boolean(!isBaseline && decision?.displacesPhase1);
+              const isWinner = Boolean(phase2ChampionChallenger.champion && isSameMix(row.source, phase2ChampionChallenger.champion.source));
+              const isRunnerUp = Boolean(phase2ChampionChallenger.challenger && isSameMix(row.source, phase2ChampionChallenger.challenger.source));
               const phase3Eligible = phase3InputRows.some((candidate) => isSameMix(candidate.source, row.source));
               const cardBorderColor = isBaseline
                 ? T.primary
-                : isDisplacing
+                : isWinner
                   ? T.positive
-                  : isCompeting
+                  : isRunnerUp
                     ? '#d8a24a'
                     : T.border;
-              const cardBorderWidth = isDisplacing ? 2.5 : (isBaseline ? 2.5 : (isCompeting ? 1.5 : 1));
-              const cardShadow = isDisplacing
+              const cardBorderWidth = isWinner ? 2.5 : (isBaseline ? 2.5 : (isRunnerUp ? 1.5 : 1));
+              const cardShadow = isWinner
                 ? '0 0 0 1px rgba(72, 199, 116, 0.22), 0 6px 16px rgba(72, 199, 116, 0.10)'
                 : isBaseline
                   ? '0 0 0 1px rgba(92, 128, 255, 0.24), 0 4px 12px rgba(92, 128, 255, 0.10)'
@@ -2083,14 +2090,14 @@ export function OptimizationLightPage({
                           Referencia
                         </span>
                       ) : null}
-                      {!isBaseline && decision?.displacesPhase1 ? (
+                      {!isBaseline && isWinner ? (
                         <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: T.positive, borderRadius: 999, padding: '2px 8px' }}>
-                          Campeón
+                          Recomendado
                         </span>
                       ) : null}
-                      {!isBaseline && decision?.competesWithPhase1 && !decision?.displacesPhase1 ? (
+                      {!isBaseline && isRunnerUp ? (
                         <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: '#d8a24a', borderRadius: 999, padding: '2px 8px' }}>
-                          Retador
+                          Alternativa
                         </span>
                       ) : null}
                       <span
@@ -2108,28 +2115,31 @@ export function OptimizationLightPage({
                       </span>
                     </div>
                     <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                      Éxito {formatPct(row.success40Assisted)} · Ruina20 {formatPct(row.ruin20Assisted)} · Primer cut {formatYears(row.firstCutYearP50)} · Venta casa {formatPct(row.houseSalePct)} · MaxDD {formatPct(row.drawdownP50)}
+                      RV/RF {row.source.rvPct}/{row.source.rfPct} · QASR {formatScore100(row.qualityCandidate.qasrStrict)} · CSR {row.qualityCandidate.csr85_4 !== null ? formatPct(row.qualityCandidate.csr85_4) : 'No disponible'} · Éxito clásico {row.qualityCandidate.classicSuccessRate !== null ? formatPct(row.qualityCandidate.classicSuccessRate) : 'No disponible'}
                     </div>
                   </div>
                 </summary>
                 <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    Éxito40 asistido vs autónomo: {row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp
+                    Recorte severo promedio: {formatMonthsHuman(row.qualityCandidate.monthsInSevereCutMean)} · Racha severa P75: {formatMonthsHuman(row.qualityCandidate.maxConsecutiveSevereCutMonthsP75)}
                   </div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    Escenarios con cuts: {row.cutScenarioPct !== null ? formatPct(row.cutScenarioPct) : 'No disponible'} · Recorte medio: {row.cutSeverityMean !== null ? formatPct(row.cutSeverityMean) : 'No disponible'}
+                    Patrimonio final P25: {formatClpShort(row.qualityCandidate.terminalWealthP25)} · P50: {formatClpShort(row.qualityCandidate.terminalWealthP50)} · Venta casa: {row.qualityCandidate.houseSaleRate !== null ? formatPct(row.qualityCandidate.houseSaleRate) : 'No disponible'}
                   </div>
-                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>{classifyRescueDependency(row)}</div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    Terminal P50 (all): {formatMoney(row.terminalP50All)} · Terminal P50 (survivors): {formatMoney(row.terminalP50Survivors)}
+                    Referencia adicional: Ruina20 {formatPct(row.ruin20Assisted)} · Primer cut {formatYears(row.firstCutYearP50)} · MaxDD {formatPct(row.drawdownP50)}
                   </div>
-                  {!isBaseline && decision ? (
+                  {!isBaseline && decision && (
                     <div style={{ display: 'grid', gap: 2, marginTop: 2 }}>
-                      {decision.reasons.map((reason) => (
-                        <div key={`${row.source.rvPct}-${reason}`} style={{ color: T.textMuted, fontSize: 10 }}>
-                          {reason}
-                        </div>
-                      ))}
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Éxito40 asistido vs autónomo: {row.success40Assisted >= row.source.success40 ? '+' : ''}{((row.success40Assisted - row.source.success40) * 100).toFixed(1)}pp
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>{classifyRescueDependency(row)}</div>
+                    </div>
+                  )}
+                  {row.qualityCandidate.warnings.length > 0 ? (
+                    <div style={{ color: T.warning, fontSize: 10 }}>
+                      Warning QoL: {row.qualityCandidate.warnings.join(' · ')}
                     </div>
                   ) : null}
                 </div>
@@ -2141,12 +2151,12 @@ export function OptimizationLightPage({
 
         {phase2ChampionChallenger.champion ? (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 6 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Champion / challenger persistentes</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Comparativa principal</div>
             <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-              Campeón provisional: {scenarioLabel(phase2ChampionChallenger.champion.source)} · {formatPct(phase2ChampionChallenger.champion.success40Assisted)} · {phase2ChampionChallenger.reason}
+              Recomendado: {scenarioLabel(phase2ChampionChallenger.champion.source)} · QASR {formatScore100(phase2ChampionChallenger.champion.qualityCandidate.qasrStrict)} · CSR {formatPctOrNA(phase2ChampionChallenger.champion.qualityCandidate.csr85_4)}
             </div>
             <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-              Retador final: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · ${formatPct(phase2ChampionChallenger.challenger.success40Assisted)}` : 'No disponible'}
+              Alternativa inmediata: {phase2ChampionChallenger.challenger ? `${scenarioLabel(phase2ChampionChallenger.challenger.source)} · QASR ${formatScore100(phase2ChampionChallenger.challenger.qualityCandidate.qasrStrict)}` : 'No disponible'}
             </div>
           </div>
         ) : null}
