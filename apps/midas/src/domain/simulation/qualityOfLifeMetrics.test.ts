@@ -28,8 +28,13 @@ const makePath = (overrides: Partial<PathQualityPathDiagnosticsV1>): PathQuality
   maxConsecutiveCutMonths: 8,
   maxConsecutiveSevereCutMonths: 6,
   houseSold: false,
+  houseSaleTriggerMonth: null,
+  houseSaleTriggerYear: null,
   houseSaleMonth: null,
   houseSaleYear: null,
+  monthsBetweenHouseSaleTriggerAndSale: null,
+  monthsInCutBetweenHouseSaleTriggerAndSale: null,
+  monthsInSevereCutBetweenHouseSaleTriggerAndSale: null,
   monthsInCutBeforeHouseSale: null,
   monthsInSevereCutBeforeHouseSale: null,
   liquidWealthAfterHouseSaleClp: null,
@@ -92,8 +97,13 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
     makePath({
       qualityScoreAlpha15: 0.77,
       houseSold: true,
+      houseSaleTriggerMonth: 22,
+      houseSaleTriggerYear: 22 / 12,
       houseSaleMonth: 24,
       houseSaleYear: 2,
+      monthsBetweenHouseSaleTriggerAndSale: 2,
+      monthsInCutBetweenHouseSaleTriggerAndSale: 1,
+      monthsInSevereCutBetweenHouseSaleTriggerAndSale: 1,
       monthsInCutBeforeHouseSale: 3,
       monthsInSevereCutBeforeHouseSale: 1,
       liquidWealthAfterHouseSaleClp: 200,
@@ -123,6 +133,42 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
   assertNear(metrics.terminalWealthP75, 325);
   assertNear(metrics.qualityScoreP25, 0.55);
   assertNear(metrics.qualityScoreP50, 0.7);
+}
+
+{
+  const metrics = build([
+    makePath({
+      houseSold: true,
+      houseSaleTriggerMonth: 10,
+      houseSaleTriggerYear: 10 / 12,
+      houseSaleMonth: 12,
+      houseSaleYear: 1,
+      monthsBetweenHouseSaleTriggerAndSale: 2,
+      monthsInCutBetweenHouseSaleTriggerAndSale: 2,
+      monthsInSevereCutBetweenHouseSaleTriggerAndSale: 0,
+      monthsInCutBeforeHouseSale: 100,
+      monthsInSevereCutBeforeHouseSale: 99,
+    }),
+    makePath({
+      pathId: 1,
+      houseSold: true,
+      houseSaleTriggerMonth: 20,
+      houseSaleTriggerYear: 20 / 12,
+      houseSaleMonth: 25,
+      houseSaleYear: 25 / 12,
+      monthsBetweenHouseSaleTriggerAndSale: 5,
+      monthsInCutBetweenHouseSaleTriggerAndSale: 5,
+      monthsInSevereCutBetweenHouseSaleTriggerAndSale: 3,
+      monthsInCutBeforeHouseSale: 70,
+      monthsInSevereCutBeforeHouseSale: 60,
+    }),
+  ]);
+  assertNear(metrics.houseSaleTriggerToSaleMonthsMean, 3.5);
+  assertNear(metrics.houseSaleTriggerToSaleMonthsMedian, 3.5);
+  assertNear(metrics.houseSaleTriggerToSaleMonthsP75, 4.25);
+  assertNear(metrics.severeCutMonthsDuringHouseSaleMean, 1.5);
+  assertNear(metrics.severeCutMonthsDuringHouseSaleMedian, 1.5);
+  assertNear(metrics.severeCutMonthsDuringHouseSaleP75, 2.25);
 }
 
 {

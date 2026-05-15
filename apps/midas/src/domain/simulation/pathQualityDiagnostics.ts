@@ -7,6 +7,7 @@ export type M8PathQualityRuntimeSummary = {
   terminalWealthClp: number | null;
   monthlyConsumptionRatios?: number[];
   cutStates?: number[];
+  houseSaleTriggerMonth: number | null;
   houseSaleMonth: number | null;
   liquidWealthAfterHouseSaleClp: number | null;
 };
@@ -82,8 +83,17 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
     const pathWarnings: string[] = [];
     const ratios = (path.monthlyConsumptionRatios ?? []).filter(Number.isFinite);
     const cutStates = path.cutStates ?? [];
+    const houseSaleTriggerMonth = finiteOrNull(path.houseSaleTriggerMonth);
     const houseSaleMonth = finiteOrNull(path.houseSaleMonth);
     const ruinMonth = finiteOrNull(path.ruinMonth);
+    const hasTriggerAndSale =
+      houseSaleTriggerMonth !== null && houseSaleMonth !== null && houseSaleMonth >= houseSaleTriggerMonth;
+    const saleWindowStates = hasTriggerAndSale
+      ? cutStates.slice(Math.max(0, houseSaleTriggerMonth - 1), Math.max(0, houseSaleMonth - 1))
+      : [];
+    const monthsBetweenHouseSaleTriggerAndSale = hasTriggerAndSale
+      ? Math.max(0, houseSaleMonth - houseSaleTriggerMonth)
+      : null;
     const beforeSaleStates = houseSaleMonth !== null
       ? cutStates.slice(0, Math.max(0, houseSaleMonth - 1))
       : [];
@@ -99,6 +109,12 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
     if (ratios.length === 0) pathWarnings.push('consumption_ratios_missing');
     if (ratios.length > 0 && ratios.length < horizonMonths) pathWarnings.push('observed_consumption_months_incomplete');
     if (cutStates.length === 0) pathWarnings.push('cut_states_missing');
+    if (houseSaleMonth !== null && houseSaleTriggerMonth === null) {
+      pathWarnings.push('house_sale_trigger_missing_for_sale');
+    }
+    if (houseSaleMonth !== null && houseSaleTriggerMonth !== null && houseSaleMonth < houseSaleTriggerMonth) {
+      pathWarnings.push('house_sale_trigger_after_sale');
+    }
     if (ruinMonth !== null && postRuinMonths > 0 && ratios.length <= ruinMonth) {
       pathWarnings.push('post_ruin_months_unobserved');
     }
@@ -127,8 +143,17 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
       maxConsecutiveCutMonths: cutStates.length ? maxConsecutive(cutStates, (state) => state >= 1) : null,
       maxConsecutiveSevereCutMonths: cutStates.length ? maxConsecutive(cutStates, (state) => state >= 2) : null,
       houseSold: houseSaleMonth !== null,
+      houseSaleTriggerMonth,
+      houseSaleTriggerYear: houseSaleTriggerMonth !== null ? houseSaleTriggerMonth / 12 : null,
       houseSaleMonth,
       houseSaleYear: houseSaleMonth !== null ? houseSaleMonth / 12 : null,
+      monthsBetweenHouseSaleTriggerAndSale,
+      monthsInCutBetweenHouseSaleTriggerAndSale: hasTriggerAndSale
+        ? saleWindowStates.filter((state) => state >= 1).length
+        : null,
+      monthsInSevereCutBetweenHouseSaleTriggerAndSale: hasTriggerAndSale
+        ? saleWindowStates.filter((state) => state >= 2).length
+        : null,
       monthsInCutBeforeHouseSale: houseSaleMonth !== null
         ? beforeSaleStates.filter((state) => state >= 1).length
         : null,

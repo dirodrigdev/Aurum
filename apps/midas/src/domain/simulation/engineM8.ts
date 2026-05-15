@@ -1420,6 +1420,7 @@ export const runM8 = (input: M8Input): M8RuntimeResult => {
       terminalWealthClp: wealthPaths[months][p] ?? null,
       monthlyConsumptionRatios,
       cutStates: monthlyCutStates,
+      houseSaleTriggerMonth: triggerMonth,
       houseSaleMonth,
       liquidWealthAfterHouseSaleClp,
     });

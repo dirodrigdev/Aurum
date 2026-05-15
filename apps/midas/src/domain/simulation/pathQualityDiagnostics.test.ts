@@ -20,6 +20,7 @@ const diagnostics = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 0,
       monthlyConsumptionRatios: [1, 0.9, 0.75, 0.7, 0.8, 1],
       cutStates: [0, 1, 2, 2, 1, 0],
+      houseSaleTriggerMonth: 3,
       houseSaleMonth: 5,
       liquidWealthAfterHouseSaleClp: 120_000_000,
     },
@@ -30,6 +31,7 @@ const diagnostics = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 300_000_000,
       monthlyConsumptionRatios: [],
       cutStates: [],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -59,8 +61,13 @@ assert.equal(ruined.monthsInSevereCut, 2);
 assert.equal(ruined.maxConsecutiveCutMonths, 4);
 assert.equal(ruined.maxConsecutiveSevereCutMonths, 2);
 assert.equal(ruined.houseSold, true);
+assert.equal(ruined.houseSaleTriggerMonth, 3);
+assert.equal(ruined.houseSaleTriggerYear, 0.25);
 assert.equal(ruined.houseSaleMonth, 5);
 assert.equal(ruined.houseSaleYear, 5 / 12);
+assert.equal(ruined.monthsBetweenHouseSaleTriggerAndSale, 2);
+assert.equal(ruined.monthsInCutBetweenHouseSaleTriggerAndSale, 2);
+assert.equal(ruined.monthsInSevereCutBetweenHouseSaleTriggerAndSale, 2);
 assert.equal(ruined.monthsInCutBeforeHouseSale, 3);
 assert.equal(ruined.monthsInSevereCutBeforeHouseSale, 2);
 assert.equal(ruined.liquidWealthAfterHouseSaleClp, 120_000_000);
@@ -72,6 +79,9 @@ const incomplete = diagnostics.paths[1];
 assert.equal(incomplete.ruined, false);
 assert.equal(incomplete.ruinMonth, null);
 assert.equal(incomplete.houseSold, false);
+assert.equal(incomplete.houseSaleTriggerMonth, null);
+assert.equal(incomplete.monthsBetweenHouseSaleTriggerAndSale, null);
+assert.equal(incomplete.monthsInSevereCutBetweenHouseSaleTriggerAndSale, null);
 assert.equal(incomplete.meanShortfallPenaltyAlpha15, null);
 assert.equal(incomplete.qualityScoreAlpha15, null);
 assert.equal(incomplete.observedConsumptionMonths, 0);
@@ -97,6 +107,7 @@ const perfectConsumption = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 10,
       monthlyConsumptionRatios: [1, 1, 1],
       cutStates: [0, 0, 0],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -117,6 +128,7 @@ const simpleShortfall = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 10,
       monthlyConsumptionRatios: [1, 0.8],
       cutStates: [0, 1],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -137,6 +149,7 @@ const aboveTarget = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 10,
       monthlyConsumptionRatios: [1.2, 1],
       cutStates: [0, 0],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -156,6 +169,7 @@ const lighterShortfall = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 10,
       monthlyConsumptionRatios: [0.8],
       cutStates: [1],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -172,6 +186,7 @@ const heavierShortfall = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 10,
       monthlyConsumptionRatios: [0.6],
       cutStates: [2],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -190,6 +205,7 @@ const sameRatiosWithSale = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 50,
       monthlyConsumptionRatios: [0.9, 0.8],
       cutStates: [1, 1],
+      houseSaleTriggerMonth: 1,
       houseSaleMonth: 2,
       liquidWealthAfterHouseSaleClp: 20,
     },
@@ -200,6 +216,7 @@ const sameRatiosWithSale = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 999,
       monthlyConsumptionRatios: [0.9, 0.8],
       cutStates: [1, 1],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -219,6 +236,7 @@ const ruinedButScored = buildPathQualityDiagnosticsFromM8Output({
       terminalWealthClp: 0,
       monthlyConsumptionRatios: [1, 0.8, 0.6, 0.5],
       cutStates: [0, 1, 2, 2],
+      houseSaleTriggerMonth: null,
       houseSaleMonth: null,
       liquidWealthAfterHouseSaleClp: null,
     },
@@ -228,6 +246,48 @@ assert.ok((ruinedButScored.qualityScoreAlpha15 ?? 0) > 0);
 assert.equal(ruinedButScored.postRuinMonths, 2);
 assert.ok(ruinedButScored.warnings.includes('observed_consumption_months_incomplete'));
 assert.ok(ruinedButScored.warnings.includes('post_ruin_months_unobserved'));
+
+const saleMissingTrigger = buildPathQualityDiagnosticsFromM8Output({
+  pathCount: 1,
+  horizonMonths: 12,
+  pathSummaries: [
+    {
+      pathId: 0,
+      ruined: false,
+      ruinMonth: null,
+      terminalWealthClp: 10,
+      monthlyConsumptionRatios: [1, 0.9, 0.9, 0.9, 0.9],
+      cutStates: [0, 0, 2, 2, 0],
+      houseSaleTriggerMonth: null,
+      houseSaleMonth: 5,
+      liquidWealthAfterHouseSaleClp: 100,
+    },
+  ],
+}).paths[0];
+assert.equal(saleMissingTrigger.monthsBetweenHouseSaleTriggerAndSale, null);
+assert.equal(saleMissingTrigger.monthsInSevereCutBetweenHouseSaleTriggerAndSale, null);
+assert.ok(saleMissingTrigger.warnings.includes('house_sale_trigger_missing_for_sale'));
+
+const saleWindowExcludesHistoricalCut = buildPathQualityDiagnosticsFromM8Output({
+  pathCount: 1,
+  horizonMonths: 12,
+  pathSummaries: [
+    {
+      pathId: 0,
+      ruined: false,
+      ruinMonth: null,
+      terminalWealthClp: 50,
+      monthlyConsumptionRatios: [1, 1, 0.8, 0.8, 0.8, 1],
+      cutStates: [2, 2, 0, 2, 2, 0],
+      houseSaleTriggerMonth: 4,
+      houseSaleMonth: 6,
+      liquidWealthAfterHouseSaleClp: 20,
+    },
+  ],
+}).paths[0];
+assert.equal(saleWindowExcludesHistoricalCut.monthsBetweenHouseSaleTriggerAndSale, 2);
+assert.equal(saleWindowExcludesHistoricalCut.monthsInCutBetweenHouseSaleTriggerAndSale, 2);
+assert.equal(saleWindowExcludesHistoricalCut.monthsInSevereCutBetweenHouseSaleTriggerAndSale, 2);
 
 const outputFixture: M8Output = {
   Success40: 1,

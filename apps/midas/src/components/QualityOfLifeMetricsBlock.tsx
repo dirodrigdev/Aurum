@@ -42,6 +42,7 @@ const formatQasr = (value: number | null | undefined): string =>
 
 const formatMonths = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'No disponible';
+  if (Math.abs(value) <= 6) return `${Math.round(value)} meses`;
   const years = value / 12;
   return `${Math.round(value)} meses / ${years.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} años`;
 };
@@ -126,17 +127,17 @@ const metricInfo = {
     'Si marca 35%, significa que en 35 de cada 100 escenarios la simulación necesita vender la casa para sostener el plan.',
   ].join('\n'),
   cutBeforeSale: [
-    'Estrés antes de vender',
+    'Recorte severo mientras se vende',
     '',
     'Que mide:',
-    'Mide cuánto estrés de consumo ocurre antes de vender la casa.',
-    'Se calcula sobre los escenarios donde la casa se vende.',
+    'Mide cuántos meses de recorte severo ocurren entre la activación de la venta de casa y la venta efectiva.',
     '',
     'Cómo leerlo:',
-    'Aquí sí importa evitar valores altos: no se penaliza vender, se penaliza sufrir demasiado antes de usar el activo.',
+    'Mientras más bajo, mejor. No mide si vender es bueno o malo; mide si durante el proceso de venta se deteriora la calidad de vida.',
+    'No cuenta todos los recortes históricos previos a la venta.',
     '',
     'Ejemplo aplicado:',
-    'Si marca 18 meses, significa que la simulación espera en promedio un año y medio de recortes antes de vender la casa.',
+    'Si marca 3 meses, significa que en los escenarios donde se vende la casa hay, típicamente, 3 meses de recorte severo mientras se espera la entrada de liquidez.',
   ].join('\n'),
   terminal: [
     'Patrimonio final',
@@ -225,7 +226,9 @@ export function QualityOfLifeMetricsBlock({
   const qualityMeanTraffic = pickTraffic(qualityOfLifeMetrics.qualityScoreMean, { greenMin: 0.85, yellowMin: 0.75 });
   const severeCutMeanTraffic = pickTraffic(qualityOfLifeMetrics.monthsInSevereCutMean, { greenMax: 12, yellowMax: 48 });
   const severeCutP75Traffic = pickTraffic(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75, { greenMax: 12, yellowMax: 48 });
-  const cutBeforeSaleTraffic = pickTraffic(qualityOfLifeMetrics.monthsInCutBeforeHouseSaleMean, { greenMax: 6, yellowMax: 24 });
+  const severeCutDuringSale = qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMedian
+    ?? qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMean;
+  const severeCutDuringSaleTraffic = pickTraffic(severeCutDuringSale, { greenMax: 1, yellowMax: 6 });
 
   const shownWarnings = qualityOfLifeMetrics.warnings.slice(0, 3);
   const salesNeutral = 'neutral' as const;
@@ -271,7 +274,7 @@ export function QualityOfLifeMetricsBlock({
         <Group title="Casa">
           <MetricRow label="Probabilidad de venta de casa" info={metricInfo.houseSale} value={formatPercent(qualityOfLifeMetrics.houseSaleRate)} traffic={salesNeutral} />
           <MetricRow label="Venta mediana" value={qualityOfLifeMetrics.houseSaleYearMedian === null ? 'No disponible' : `año ${qualityOfLifeMetrics.houseSaleYearMedian.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} traffic={salesNeutral} />
-          <MetricRow label="Estrés antes de vender" info={metricInfo.cutBeforeSale} value={formatMonths(qualityOfLifeMetrics.monthsInCutBeforeHouseSaleMean)} traffic={cutBeforeSaleTraffic} />
+          <MetricRow label="Recorte severo mientras se vende" info={metricInfo.cutBeforeSale} value={formatMonths(severeCutDuringSale)} traffic={severeCutDuringSaleTraffic} />
         </Group>
 
         <Group title="Margen terminal">

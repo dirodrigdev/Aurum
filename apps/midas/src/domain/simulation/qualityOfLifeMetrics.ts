@@ -66,6 +66,12 @@ const nullMetric = (): QualityOfLifeMetricsV1 => ({
   houseSaleYearMedian: null,
   houseSaleYearP10: null,
   houseSaleYearP90: null,
+  houseSaleTriggerToSaleMonthsMedian: null,
+  houseSaleTriggerToSaleMonthsMean: null,
+  houseSaleTriggerToSaleMonthsP75: null,
+  severeCutMonthsDuringHouseSaleMean: null,
+  severeCutMonthsDuringHouseSaleMedian: null,
+  severeCutMonthsDuringHouseSaleP75: null,
   monthsInCutBeforeHouseSaleMean: null,
   monthsInSevereCutBeforeHouseSaleMean: null,
   liquidWealthAfterHouseSaleP25: null,
@@ -151,10 +157,18 @@ export function buildQualityOfLifeMetricsFromPathDiagnostics(
   const houseSoldPathCount = houseSoldPaths.length;
   const houseSaleRate = pathCount > 0 ? houseSoldPathCount / pathCount : null;
   const houseSaleYears = toFinite(houseSoldPaths.map((path) => path.houseSaleYear));
+  const triggerToSaleMonths = toFinite(houseSoldPaths.map((path) => path.monthsBetweenHouseSaleTriggerAndSale));
+  const severeCutDuringSale = toFinite(houseSoldPaths.map((path) => path.monthsInSevereCutBetweenHouseSaleTriggerAndSale));
   const cutBeforeSale = toFinite(houseSoldPaths.map((path) => path.monthsInCutBeforeHouseSale));
   const severeCutBeforeSale = toFinite(houseSoldPaths.map((path) => path.monthsInSevereCutBeforeHouseSale));
   const liquidAfterSale = toFinite(houseSoldPaths.map((path) => path.liquidWealthAfterHouseSaleClp));
   if (houseSoldPathCount === 0) warnings.push('house_sale_data_missing');
+  if (houseSoldPathCount > 0 && triggerToSaleMonths.length === 0) {
+    warnings.push('house_sale_trigger_to_sale_metrics_missing');
+  }
+  if (houseSoldPathCount > 0 && severeCutDuringSale.length === 0) {
+    warnings.push('severe_cut_during_house_sale_missing');
+  }
 
   const terminalWealth = toFinite(paths.map((path) => path.terminalWealthClp));
   pushMissingWarning(warnings, 'terminal_wealth_missing', terminalWealth);
@@ -200,6 +214,12 @@ export function buildQualityOfLifeMetricsFromPathDiagnostics(
     houseSaleYearMedian: percentile(houseSaleYears, 50),
     houseSaleYearP10: percentile(houseSaleYears, 10),
     houseSaleYearP90: percentile(houseSaleYears, 90),
+    houseSaleTriggerToSaleMonthsMedian: percentile(triggerToSaleMonths, 50),
+    houseSaleTriggerToSaleMonthsMean: mean(triggerToSaleMonths),
+    houseSaleTriggerToSaleMonthsP75: percentile(triggerToSaleMonths, 75),
+    severeCutMonthsDuringHouseSaleMean: mean(severeCutDuringSale),
+    severeCutMonthsDuringHouseSaleMedian: percentile(severeCutDuringSale, 50),
+    severeCutMonthsDuringHouseSaleP75: percentile(severeCutDuringSale, 75),
     monthsInCutBeforeHouseSaleMean: mean(cutBeforeSale),
     monthsInSevereCutBeforeHouseSaleMean: mean(severeCutBeforeSale),
     liquidWealthAfterHouseSaleP25: percentile(liquidAfterSale, 25),

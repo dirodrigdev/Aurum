@@ -332,8 +332,13 @@ export interface PathQualityPathDiagnosticsV1 {
   maxConsecutiveCutMonths: number | null;
   maxConsecutiveSevereCutMonths: number | null;
   houseSold: boolean | null;
+  houseSaleTriggerMonth: number | null;
+  houseSaleTriggerYear: number | null;
   houseSaleMonth: number | null;
   houseSaleYear: number | null;
+  monthsBetweenHouseSaleTriggerAndSale: number | null;
+  monthsInCutBetweenHouseSaleTriggerAndSale: number | null;
+  monthsInSevereCutBetweenHouseSaleTriggerAndSale: number | null;
   monthsInCutBeforeHouseSale: number | null;
   monthsInSevereCutBeforeHouseSale: number | null;
   liquidWealthAfterHouseSaleClp: number | null;
@@ -390,6 +395,12 @@ export interface QualityOfLifeMetricsV1 {
   houseSaleYearMedian: number | null;
   houseSaleYearP10: number | null;
   houseSaleYearP90: number | null;
+  houseSaleTriggerToSaleMonthsMedian: number | null;
+  houseSaleTriggerToSaleMonthsMean: number | null;
+  houseSaleTriggerToSaleMonthsP75: number | null;
+  severeCutMonthsDuringHouseSaleMean: number | null;
+  severeCutMonthsDuringHouseSaleMedian: number | null;
+  severeCutMonthsDuringHouseSaleP75: number | null;
   monthsInCutBeforeHouseSaleMean: number | null;
   monthsInSevereCutBeforeHouseSaleMean: number | null;
   liquidWealthAfterHouseSaleP25: number | null;
