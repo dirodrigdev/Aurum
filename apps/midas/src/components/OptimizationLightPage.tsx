@@ -25,10 +25,11 @@ import {
   type SpendingHeadroomScale,
 } from '../domain/optimizer/spendingHeadroom';
 import {
-  buildDecisionComparisonTable,
-  type DecisionComparisonTable,
-  type DecisionInputRow,
-} from '../domain/optimizer/indicatorEquivalence';
+  buildDecisionProfiles,
+  buildFineRvRfGrid,
+  type RvRfDecisionCandidate,
+  type RvRfDecisionProfiles,
+} from '../domain/optimizer/rvRfDecisionProfiles';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -208,11 +209,10 @@ type SpendingHeadroomMixResult = {
   maxSpendScalePassingQoL: number | null;
 };
 
-type DecisionScenarioTable = {
+type DecisionProfilesScenarioTable = {
   scenarioId: 'base' | 'rv_plus_10';
   label: string;
-  rows: DecisionInputRow[];
-  comparison: DecisionComparisonTable;
+  profiles: RvRfDecisionProfiles;
 };
 
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
@@ -1098,9 +1098,9 @@ export function OptimizationLightPage({
   const [spendingHeadroomRunning, setSpendingHeadroomRunning] = useState(false);
   const [spendingHeadroomResults, setSpendingHeadroomResults] = useState<SpendingHeadroomMixResult[]>([]);
   const [spendingHeadroomError, setSpendingHeadroomError] = useState<string | null>(null);
-  const [decisionTablesRunning, setDecisionTablesRunning] = useState(false);
-  const [decisionTables, setDecisionTables] = useState<DecisionScenarioTable[]>([]);
-  const [decisionTablesError, setDecisionTablesError] = useState<string | null>(null);
+  const [decisionProfilesRunning, setDecisionProfilesRunning] = useState(false);
+  const [decisionProfilesTables, setDecisionProfilesTables] = useState<DecisionProfilesScenarioTable[]>([]);
+  const [decisionProfilesError, setDecisionProfilesError] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -1141,8 +1141,8 @@ export function OptimizationLightPage({
     setSensitivityError(null);
     setSpendingHeadroomResults([]);
     setSpendingHeadroomError(null);
-    setDecisionTables([]);
-    setDecisionTablesError(null);
+    setDecisionProfilesTables([]);
+    setDecisionProfilesError(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -1183,8 +1183,8 @@ export function OptimizationLightPage({
       setSensitivityError(null);
       setSpendingHeadroomResults([]);
       setSpendingHeadroomError(null);
-      setDecisionTables([]);
-      setDecisionTablesError(null);
+      setDecisionProfilesTables([]);
+      setDecisionProfilesError(null);
       try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1312,8 +1312,8 @@ export function OptimizationLightPage({
     setSensitivityError(null);
     setSpendingHeadroomResults([]);
     setSpendingHeadroomError(null);
-    setDecisionTables([]);
-    setDecisionTablesError(null);
+    setDecisionProfilesTables([]);
+    setDecisionProfilesError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1467,27 +1467,27 @@ export function OptimizationLightPage({
     }
   }
 
-  async function runDecisionTables() {
-    if (decisionTablesRunning) return;
-    setDecisionTablesRunning(true);
-    setDecisionTablesError(null);
-    setDecisionTables([]);
+  async function runDecisionProfiles() {
+    if (decisionProfilesRunning) return;
+    setDecisionProfilesRunning(true);
+    setDecisionProfilesError(null);
+    setDecisionProfilesTables([]);
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      const benchmarkRv = [0, 5, 25, 50, 80, 100];
+      const fineGrid = buildFineRvRfGrid(5);
       const scenarioDefs = [
-        { id: 'base' as const, label: 'Sanity Check Base', rvAnnualDelta: 0, rfAnnualDelta: 0 },
-        { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp', rvAnnualDelta: 0.10, rfAnnualDelta: 0 },
+        { id: 'base' as const, label: 'Sanity Check Base' },
+        { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp' },
       ];
-      const nextTables: DecisionScenarioTable[] = [];
+      const nextTables: DecisionProfilesScenarioTable[] = [];
 
       for (const scenarioDef of scenarioDefs) {
         const scenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === scenarioDef.id);
         if (!scenario) continue;
         const scenarioAdjusted = applyRvRfPremiumSensitivity(activeParams, scenario);
-        const rows: DecisionInputRow[] = [];
+        const rows: RvRfDecisionCandidate[] = [];
 
-        for (const rvPct of benchmarkRv) {
+        for (const rvPct of fineGrid) {
           const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
           const candidateId = `rv_${rvPct}_rf_${100 - rvPct}`;
           const evaluations: SpendingHeadroomEvaluationResult[] = [];
@@ -1538,76 +1538,43 @@ export function OptimizationLightPage({
           const plus30 = evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
           if (!baseEval || !plus20 || !plus30) continue;
 
-          const effectiveReturn = (
-            baseEval.rvGlobal * scenarioAdjusted.params.returns.rvGlobalAnnual
-            + baseEval.rvChile * scenarioAdjusted.params.returns.rvChileAnnual
-            + baseEval.rfGlobal * scenarioAdjusted.params.returns.rfGlobalAnnual
-            + baseEval.rfChile * scenarioAdjusted.params.returns.rfChileUFAnnual
-          );
-
           rows.push({
             candidateId,
             mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
+            rvPct,
+            rfPct: 100 - rvPct,
             rvReal: baseEval.rvReal,
             rfReal: baseEval.rfReal,
-            effectiveReturn,
-            scale100: {
-              qasrStrict: baseEval.qasrStrict,
-              csr85_4: baseEval.csr85_4,
-              classicSuccessRate: baseEval.classicSuccessRate,
-              probRuin: baseEval.probRuin,
-              monthsInSevereCutMean: baseEval.monthsInSevereCutMean,
-              maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
-              terminalWealthP25: baseEval.terminalWealthP25,
-              terminalWealthP50: baseEval.terminalWealthP50,
-              houseSaleRate: baseEval.houseSaleRate,
-              severeCutMonthsDuringHouseSale: baseEval.severeCutMonthsDuringHouseSaleMedian,
-            },
-            scale120: {
-              qasrStrict: plus20.qasrStrict,
-              csr85_4: plus20.csr85_4,
-              classicSuccessRate: plus20.classicSuccessRate,
-              probRuin: plus20.probRuin,
-              monthsInSevereCutMean: plus20.monthsInSevereCutMean,
-              maxConsecutiveSevereCutMonthsP75: plus20.maxConsecutiveSevereCutMonthsP75,
-              terminalWealthP25: plus20.terminalWealthP25,
-              terminalWealthP50: plus20.terminalWealthP50,
-              houseSaleRate: plus20.houseSaleRate,
-              severeCutMonthsDuringHouseSale: plus20.severeCutMonthsDuringHouseSaleMedian,
-            },
-            scale130: {
-              qasrStrict: plus30.qasrStrict,
-              csr85_4: plus30.csr85_4,
-              classicSuccessRate: plus30.classicSuccessRate,
-              probRuin: plus30.probRuin,
-              monthsInSevereCutMean: plus30.monthsInSevereCutMean,
-              maxConsecutiveSevereCutMonthsP75: plus30.maxConsecutiveSevereCutMonthsP75,
-              terminalWealthP25: plus30.terminalWealthP25,
-              terminalWealthP50: plus30.terminalWealthP50,
-              houseSaleRate: plus30.houseSaleRate,
-              severeCutMonthsDuringHouseSale: plus30.severeCutMonthsDuringHouseSaleMedian,
-            },
-            maxSpendScalePassingQoL: computeMaxSpendScalePassingQoL(evaluations),
+            qasrBase: baseEval.qasrStrict,
+            qasrAt120: plus20.qasrStrict,
+            qasrAt130: plus30.qasrStrict,
+            csrBase: baseEval.csr85_4,
+            ruinRate: baseEval.probRuin,
+            monthsInSevereCutMean: baseEval.monthsInSevereCutMean,
+            maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
+            terminalWealthP25: baseEval.terminalWealthP25,
+            terminalWealthP50: baseEval.terminalWealthP50,
+            houseSaleRate: baseEval.houseSaleRate,
+            severeCutDuringSaleMonths: baseEval.severeCutMonthsDuringHouseSaleMedian,
+            recSevPctBase: baseEval.monthsInSevereCutMean === null
+              ? null
+              : baseEval.monthsInSevereCutMean / Math.max(1, activeParams.simulation.horizonMonths),
           });
         }
 
-        const comparison = buildDecisionComparisonTable(rows, {
-          horizonMonths: activeParams.simulation.horizonMonths,
-          nSim: activeParams.simulation.nSim,
-        });
+        const profiles = buildDecisionProfiles(rows, activeParams.simulation.nSim);
         nextTables.push({
           scenarioId: scenarioDef.id,
           label: scenarioDef.label,
-          rows,
-          comparison,
+          profiles,
         });
       }
 
-      setDecisionTables(nextTables);
+      setDecisionProfilesTables(nextTables);
     } catch (error) {
-      setDecisionTablesError(error instanceof Error ? error.message : String(error));
+      setDecisionProfilesError(error instanceof Error ? error.message : String(error));
     } finally {
-      setDecisionTablesRunning(false);
+      setDecisionProfilesRunning(false);
     }
   }
 
@@ -2768,81 +2735,110 @@ export function OptimizationLightPage({
 
         {phase2Rows.length > 0 ? (
           <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Tabla de decisión y equivalencias</div>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Decision RV/RF por perfiles</div>
             <div style={{ color: T.textSecondary, fontSize: 11 }}>
-              Esta tabla compara mixes que pueden estar prácticamente empatados en calidad base. Cuando QASR/CSR son similares, se incorporan éxito clásico, recortes, holgura de gasto y margen terminal.
+              Cada perfil prioriza algo diferente. No hay una opcion superior en todas las dimensiones.
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              La recomendacion no usa un score unico. Primero filtra candidatos inviables, luego identifica la frontera eficiente entre calidad base y holgura, y finalmente avanza hacia mas RV solo cuando la mejora de holgura compensa la perdida de estabilidad base.
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button
                 type="button"
-                onClick={runDecisionTables}
-                disabled={decisionTablesRunning}
+                onClick={runDecisionProfiles}
+                disabled={decisionProfilesRunning}
                 style={{
-                  background: decisionTablesRunning ? T.surface : T.primary,
-                  border: `1px solid ${decisionTablesRunning ? T.border : T.primary}`,
-                  color: decisionTablesRunning ? T.textMuted : '#fff',
+                  background: decisionProfilesRunning ? T.surface : T.primary,
+                  border: `1px solid ${decisionProfilesRunning ? T.border : T.primary}`,
+                  color: decisionProfilesRunning ? T.textMuted : '#fff',
                   borderRadius: 999,
                   padding: '7px 12px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: decisionTablesRunning ? 'not-allowed' : 'pointer',
+                  cursor: decisionProfilesRunning ? 'not-allowed' : 'pointer',
                 }}
               >
-                {decisionTablesRunning ? 'Calculando equivalencias...' : 'Generar tabla de decisión'}
+                {decisionProfilesRunning ? 'Calculando perfiles...' : 'Generar decision por perfiles'}
               </button>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Mixes benchmark: 0/100 · 5/95 · 25/75 · 50/50 · 80/20 · 100/0
+                Malla fina RV/RF: 0-100 en pasos de 5pp
               </div>
             </div>
-            {decisionTablesError ? (
-              <div style={{ color: T.warning, fontSize: 10 }}>{decisionTablesError}</div>
-            ) : null}
-            {decisionTables.map((table) => (
-              <details
-                key={`decision-${table.scenarioId}`}
-                open={table.scenarioId === 'base'}
-                style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surface }}
-              >
-                <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
-                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{table.label}</div>
-                </summary>
-                <div style={{ display: 'grid', gap: 4, marginTop: 6, color: T.textMuted, fontSize: 10 }}>
-                  <div>
-                    Ganador QASR base: {table.comparison.winnerByQasrBaseCandidateId ?? 'No disponible'} · Ganador score: {table.comparison.winnerByDecisionScoreCandidateId ?? 'No disponible'}
-                  </div>
-                  <div>
-                    Ganador baseReliability: {table.comparison.winnerByBaseReliabilityCandidateId ?? 'No disponible'} · headroom: {table.comparison.winnerByHeadroomCandidateId ?? 'No disponible'} · cutComfort: {table.comparison.winnerByCutComfortCandidateId ?? 'No disponible'} · terminal: {table.comparison.winnerByTerminalMarginCandidateId ?? 'No disponible'}
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-                  {table.comparison.rows.map((row) => (
-                    <div key={`decision-row-${table.scenarioId}-${row.candidateId}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
-                      <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>
-                        #{row.scoreRank} {row.mixLabel} · Score {row.decisionScorePreview?.toFixed(2) ?? 'ND'} · candidateId {row.candidateId}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        RV real {formatPctPrecise(row.rvReal)} · RF real {formatPctPrecise(row.rfReal)} · retorno efectivo {formatPctPrecise(row.effectiveReturn)}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        Base: QASR {formatScorePrecise(row.scale100.qasrStrict)} ({row.qasrEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · CSR {formatPctPrecise(row.scale100.csr85_4)} ({row.csrEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · Éxito {formatPctPrecise(row.scale100.classicSuccessRate)} ({row.successEquivalentVsWinner.equivalent ? 'Eq' : 'No Eq'}) · Ruina {formatPctPrecise(row.scale100.probRuin)}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        Recorte severo base {formatMonthsHuman(row.scale100.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPctBase)}) · Racha P75 {formatMonthsHuman(row.scale100.maxConsecutiveSevereCutMonthsP75)} · P25 {formatClpShort(row.scale100.terminalWealthP25)} · P50 {formatClpShort(row.scale100.terminalWealthP50)} · Venta casa {formatPctPrecise(row.scale100.houseSaleRate)}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        +20%: QASR {formatScorePrecise(row.scale120.qasrStrict)} · CSR {formatPctPrecise(row.scale120.csr85_4)} · Éxito {formatPctPrecise(row.scale120.classicSuccessRate)} · Ruina {formatPctPrecise(row.scale120.probRuin)} · Recorte severo {formatMonthsHuman(row.scale120.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPct120)})
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        +30%: QASR {formatScorePrecise(row.scale130.qasrStrict)} · CSR {formatPctPrecise(row.scale130.csr85_4)} · Éxito {formatPctPrecise(row.scale130.classicSuccessRate)} · Ruina {formatPctPrecise(row.scale130.probRuin)} · Recorte severo {formatMonthsHuman(row.scale130.monthsInSevereCutMean)} ({formatPctPrecise(row.severeCutPct130)}) · Max QoL {row.maxSpendScalePassingQoL ?? 'null'}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 10 }}>
-                        Subscores: base {row.baseReliabilityScore?.toFixed(2) ?? 'ND'} · holgura {row.headroomScore?.toFixed(2) ?? 'ND'} · confort recortes {row.cutComfortScore?.toFixed(2) ?? 'ND'} · margen terminal {row.terminalMarginScore?.toFixed(2) ?? 'ND'}
-                      </div>
+            {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionProfilesError}</div> : null}
+            {decisionProfilesTables.map((table) => {
+              const profiles = table.profiles;
+              const ref = profiles.defensiveReference;
+              const main = profiles.primaryRecommendation;
+              const alt = profiles.headroomAlternative;
+              const bench = profiles.benchmarkExtreme;
+              const sameRefMain = ref && main && ref.candidateId === main.candidateId;
+              const sameMainAlt = main && alt && main.candidateId === alt.candidateId;
+              return (
+                <details key={`profiles-${table.scenarioId}`} open={table.scenarioId === 'base'} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surface }}>
+                  <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{table.label}</div>
+                  </summary>
+                  <div style={{ display: 'grid', gap: 4, marginTop: 6, color: T.textMuted, fontSize: 10 }}>
+                    <div>
+                      SE_QASR estimado: {profiles.seQasrEstimated?.toFixed(3) ?? 'ND'} · Tolerancia Pareto: {profiles.paretoToleranceUsed.toFixed(1)} · Frontera: {profiles.paretoFrontierSize}/{profiles.fineGridCount}
                     </div>
-                  ))}
-                </div>
-              </details>
-            ))}
+                    <div>
+                      Ratio estabilidad/holgura: {profiles.ratioUsed.toFixed(1)} · Sensibilidad ratio 1.5={profiles.ratioSensitivity.ratio15CandidateId ?? 'ND'} / 2.0={profiles.ratioSensitivity.ratio20CandidateId ?? 'ND'} / 3.0={profiles.ratioSensitivity.ratio30CandidateId ?? 'ND'} {profiles.ratioSensitivity.recommendationSensitive ? '· sensible' : '· estable'}
+                    </div>
+                    {profiles.warnings.map((warning) => (
+                      <div key={`warn-${table.scenarioId}-${warning}`} style={{ color: T.warning }}>{warning}</div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                    {main ? (
+                      <div style={{ border: `1px solid ${T.primary}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3, background: '#0d1224' }}>
+                        <div style={{ color: '#fff', fontSize: 10, fontWeight: 800 }}>Recomendacion principal: Equilibrio calidad + holgura · {main.mixLabel}</div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          QASR base {formatScorePrecise(main.qasrBase)} · QASR +20 {formatScorePrecise(main.qasrAt120)} · QASR +30 {formatScorePrecise(main.qasrAt130)} · CSR {formatPctPrecise(main.csrBase)} · Ruina {formatPctPrecise(main.ruinRate)}
+                        </div>
+                      </div>
+                    ) : null}
+                    {!sameRefMain && ref ? (
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>Referencia defensiva / maxima calidad base · {ref.mixLabel}</div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          No es la recomendacion principal; sirve para comparar estabilidad base vs holgura.
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>En este escenario, la recomendacion principal coincide con la referencia defensiva.</div>
+                    )}
+                    {alt && !sameMainAlt ? (
+                      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>Alternativa de mayor holgura · {alt.mixLabel}</div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Prioriza crecimiento y capacidad de gasto futuro, aceptando potencialmente menor estabilidad base.
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        {sameMainAlt ? 'La recomendacion principal tambien es la mejor alternativa de holgura disponible.' : 'No hay alternativa de mayor holgura sin deterioro material de calidad base.'}
+                      </div>
+                    )}
+                    {bench ? (
+                      <div style={{ border: `1px dashed ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>Benchmark extremo: RV 100 / RF 0</div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Limite de crecimiento/riesgo para comparar. No se usa como recomendacion principal por defecto.
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
+                    {profiles.rows.filter((row) => row.inParetoFrontier || row.role !== 'none').map((row) => (
+                      <div key={`pareto-row-${table.scenarioId}-${row.candidateId}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 8px', color: T.textMuted, fontSize: 10 }}>
+                        {row.mixLabel} · rol {row.role} · guardrails {row.passesHardGuardrails ? 'si' : `no (${row.failedGuardrails.join(',')})`} · Pareto {row.inParetoFrontier ? 'si' : 'no'} · QASR base {formatScorePrecise(row.qasrBase)} · QASR +20 {formatScorePrecise(row.qasrAt120)} · QASR +30 {formatScorePrecise(row.qasrAt130)} · CSR {formatPctPrecise(row.csrBase)} · Ruina {formatPctPrecise(row.ruinRate)} · Recorte severo {formatMonthsHuman(row.monthsInSevereCutMean)} · P50 {formatClpShort(row.terminalWealthP50)} · diferencia principal: {row.mainDifference}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
           </div>
         ) : null}
 
