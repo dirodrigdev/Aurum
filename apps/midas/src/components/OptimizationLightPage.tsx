@@ -215,6 +215,63 @@ type DecisionProfilesScenarioTable = {
   profiles: RvRfDecisionProfiles;
 };
 
+type DecisionFlowStage = 'idle' | 'express' | 'zoom' | 'confirmed';
+
+type DecisionFlowStatus = {
+  stage: Exclude<DecisionFlowStage, 'idle'>;
+  badge: string;
+  message: string;
+  nSim: number;
+  stepPp: number | null;
+  candidateCount: number;
+  seed: number;
+  implementationEnabled: boolean;
+};
+
+type DecisionProgress = {
+  stage: Exclude<DecisionFlowStage, 'idle'>;
+  evaluated: number;
+  total: number;
+  nSim: number;
+  seed: number;
+};
+
+type SleeveMixSnapshot = {
+  rvGlobal: number;
+  rvChile: number;
+  rfGlobal: number;
+  rfChile: number;
+};
+
+type SleeveValidationRow = {
+  label: string;
+  current: number;
+  target: number;
+  postTrade: number;
+  gapPp: number;
+};
+
+type SleeveValidation = {
+  rows: SleeveValidationRow[];
+  maxGapPp: number;
+  hasCompleteSleeveData: boolean;
+};
+
+type ImplementationActionStatus = 'no_action' | 'optional' | 'recommended';
+
+type ImplementationMaterialitySummary = {
+  gapRvPp: number;
+  totalTradePortfolioPct: number;
+  totalTradeClp: number;
+  status: ImplementationActionStatus;
+  statusLabel: string;
+  summary: string;
+  detail: string;
+  marginalTrade: boolean;
+  relevantTrade: boolean;
+  sleeveValidation: SleeveValidation;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
 const SHORTLIST_MIN_RV_DISTANCE = optimizerPolicyConfig.phase1.shortlistMinRvDistancePp;
 const SHORTLIST_TARGET = optimizerPolicyConfig.phase1.shortlistTarget;
@@ -246,6 +303,20 @@ const PHASE3_GUARDRAILS = optimizerPolicyConfig.phase3.guardrails;
 const PHASE2_COMPETITION_THRESHOLDS = optimizerPolicyConfig.phase2Competition;
 const PHASE2_SELECTION_POLICY = optimizerPolicyConfig.phase2;
 const MIX_COMPARISON_THRESHOLDS = optimizerPolicyConfig.moveRecommendation;
+export const IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP = 1.0;
+export const IMPLEMENTATION_RV_RF_GAP_OPTIONAL_PP = 2.0;
+export const IMPLEMENTATION_TRADE_NO_ACTION_PORTFOLIO_PCT = 1.5;
+export const IMPLEMENTATION_TRADE_RELEVANT_PORTFOLIO_PCT = 3.0;
+export const IMPLEMENTATION_CRITICAL_SLEEVE_GAP_PP = 2.0;
+export const DECISION_EXPRESS_STEP_PP = 10;
+export const DECISION_EXPRESS_NSIM = 750;
+export const DECISION_ZOOM_NSIM = 1000;
+export const DECISION_CONFIRM_NEIGHBOR_STEP_PP = 5;
+export const DECISION_CONFIRM_WIDE_NEIGHBOR_PP = 10;
+
+function clampMixPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
 
 function cloneParams<T>(params: T): T {
   return JSON.parse(JSON.stringify(params)) as T;
@@ -363,6 +434,168 @@ function scenarioLabel(point: Phase1Point): string {
 
 function findPhase2RowByRvPct(rows: Phase2Point[], rvPct: number): Phase2Point | null {
   return rows.find((row) => Math.abs(row.source.rvPct - rvPct) <= 0.05) ?? null;
+}
+
+export function buildOptimizationExpressGrid(): number[] {
+  return buildFineRvRfGrid(DECISION_EXPRESS_STEP_PP);
+}
+
+function pushUniqueMix(target: number[], rvPct: number) {
+  const clamped = clampMixPercent(rvPct);
+  if (!target.includes(clamped)) target.push(clamped);
+}
+
+function currentRvPctFromWeights(weights: PortfolioWeights): number {
+  return Math.round((weights.rvGlobal + weights.rvChile) * 100);
+}
+
+export function buildOptimizationZoomShortlist(input: {
+  preliminaryRecommendationRv: number | null;
+  defensiveReferenceRv: number | null;
+  technicalPreludeRv: number | null;
+  currentRv: number | null;
+}): number[] {
+  const shortlist: number[] = [];
+  const seeds = [
+    input.preliminaryRecommendationRv,
+    input.defensiveReferenceRv,
+    input.technicalPreludeRv,
+    input.currentRv,
+    25,
+    50,
+    80,
+    100,
+  ];
+  seeds.forEach((seed) => {
+    if (seed === null || !Number.isFinite(seed)) return;
+    pushUniqueMix(shortlist, seed);
+    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP);
+    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP);
+    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+  });
+  return shortlist.sort((a, b) => a - b);
+}
+
+export function buildOptimizationConfirmationShortlist(input: {
+  zoomRecommendationRv: number | null;
+  defensiveReferenceRv: number | null;
+  technicalPreludeRv: number | null;
+  currentRv: number | null;
+}): number[] {
+  const shortlist: number[] = [];
+  const seeds = [
+    input.zoomRecommendationRv,
+    input.defensiveReferenceRv,
+    input.technicalPreludeRv,
+    input.currentRv,
+    100,
+  ];
+  seeds.forEach((seed) => {
+    if (seed === null || !Number.isFinite(seed)) return;
+    pushUniqueMix(shortlist, seed);
+    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP);
+    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP);
+    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+  });
+  return shortlist.sort((a, b) => a - b);
+}
+
+function toSleeveSnapshot(weights: PortfolioWeights): SleeveMixSnapshot {
+  return {
+    rvGlobal: weights.rvGlobal,
+    rvChile: weights.rvChile,
+    rfGlobal: weights.rfGlobal,
+    rfChile: weights.rfChile,
+  };
+}
+
+export function buildSleeveValidation(input: {
+  current: PortfolioWeights;
+  target: PortfolioWeights;
+  postTrade: PortfolioWeights;
+}): SleeveValidation {
+  const current = toSleeveSnapshot(input.current);
+  const target = toSleeveSnapshot(input.target);
+  const postTrade = toSleeveSnapshot(input.postTrade);
+  const rows: SleeveValidationRow[] = [
+    { label: 'RV global', current: current.rvGlobal, target: target.rvGlobal, postTrade: postTrade.rvGlobal, gapPp: (target.rvGlobal - current.rvGlobal) * 100 },
+    { label: 'RV local / Chile', current: current.rvChile, target: target.rvChile, postTrade: postTrade.rvChile, gapPp: (target.rvChile - current.rvChile) * 100 },
+    { label: 'RF global', current: current.rfGlobal, target: target.rfGlobal, postTrade: postTrade.rfGlobal, gapPp: (target.rfGlobal - current.rfGlobal) * 100 },
+    { label: 'RF local / Chile', current: current.rfChile, target: target.rfChile, postTrade: postTrade.rfChile, gapPp: (target.rfChile - current.rfChile) * 100 },
+  ];
+  const maxGapPp = Math.max(...rows.map((row) => Math.abs(row.gapPp)));
+  return {
+    rows,
+    maxGapPp,
+    hasCompleteSleeveData: rows.every((row) => Number.isFinite(row.current) && Number.isFinite(row.target) && Number.isFinite(row.postTrade)),
+  };
+}
+
+export function classifyImplementationMateriality(input: {
+  currentWeights: PortfolioWeights;
+  plan: InstrumentImplementationPlan;
+}): ImplementationMaterialitySummary {
+  const gapRvPp = Math.abs((input.plan.targetMixIdeal.rv - input.plan.currentMix.rv) * 100);
+  const totalTradePortfolioPct = input.plan.transfers.reduce((sum, transfer) => sum + (transfer.weightMoved * 100), 0);
+  const totalTradeClp = input.plan.transfers.reduce((sum, transfer) => sum + transfer.amountClpMoved, 0);
+  const sleeveValidation = buildSleeveValidation({
+    current: input.currentWeights,
+    target: input.plan.baseTargetWeights,
+    postTrade: input.plan.reachableWeights,
+  });
+  const hasCriticalSleeveGap = sleeveValidation.maxGapPp > IMPLEMENTATION_CRITICAL_SLEEVE_GAP_PP + 1e-9;
+
+  if (gapRvPp < IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP - 1e-9 || (totalTradePortfolioPct < IMPLEMENTATION_TRADE_NO_ACTION_PORTFOLIO_PCT && !hasCriticalSleeveGap)) {
+    return {
+      gapRvPp,
+      totalTradePortfolioPct,
+      totalTradeClp,
+      status: 'no_action',
+      statusLabel: 'No requiere acción',
+      summary: 'Objetivo alcanzado dentro de tolerancia.',
+      detail: 'El mix actual ya está suficientemente cerca del Óptimo MIDAS recomendado. No vale la pena hacer traspasos por ahora.',
+      marginalTrade: totalTradePortfolioPct < IMPLEMENTATION_TRADE_NO_ACTION_PORTFOLIO_PCT,
+      relevantTrade: false,
+      sleeveValidation,
+    };
+  }
+
+  if (
+    gapRvPp < IMPLEMENTATION_RV_RF_GAP_OPTIONAL_PP - 1e-9
+    || totalTradePortfolioPct < IMPLEMENTATION_TRADE_RELEVANT_PORTFOLIO_PCT - 1e-9
+  ) {
+    return {
+      gapRvPp,
+      totalTradePortfolioPct,
+      totalTradeClp,
+      status: 'optional',
+      statusLabel: 'Ajuste opcional',
+      summary: 'El ajuste es pequeño. Ejecutar solo si quieres alinear exactamente.',
+      detail: 'El movimiento sugerido no cambia materialmente el perfil total. Puede servir para afinar sleeves o cerrar un pequeño desvío.',
+      marginalTrade: totalTradePortfolioPct < IMPLEMENTATION_TRADE_NO_ACTION_PORTFOLIO_PCT,
+      relevantTrade: totalTradePortfolioPct >= IMPLEMENTATION_TRADE_RELEVANT_PORTFOLIO_PCT,
+      sleeveValidation,
+    };
+  }
+
+  return {
+    gapRvPp,
+    totalTradePortfolioPct,
+    totalTradeClp,
+    status: 'recommended',
+    statusLabel: 'Implementación recomendada',
+    summary: 'El desvío sigue siendo material frente al objetivo MIDAS.',
+    detail: 'El gap y el tamaño del movimiento ya justifican ejecutar la implementación sugerida.',
+    marginalTrade: false,
+    relevantTrade: totalTradePortfolioPct >= IMPLEMENTATION_TRADE_RELEVANT_PORTFOLIO_PCT,
+    sleeveValidation,
+  };
+}
+
+export function canUseDecisionFlowForImplementation(status: DecisionFlowStatus | null): boolean {
+  return Boolean(status && status.stage === 'confirmed' && status.implementationEnabled);
 }
 
 function findPhase2RowForDecisionCandidate(
@@ -1209,6 +1442,11 @@ export function OptimizationLightPage({
   const [decisionProfilesRunning, setDecisionProfilesRunning] = useState(false);
   const [decisionProfilesTables, setDecisionProfilesTables] = useState<DecisionProfilesScenarioTable[]>([]);
   const [decisionProfilesError, setDecisionProfilesError] = useState<string | null>(null);
+  const [decisionFlowStatus, setDecisionFlowStatus] = useState<DecisionFlowStatus | null>(null);
+  const [decisionProgress, setDecisionProgress] = useState<DecisionProgress | null>(null);
+  const [decisionCancelRequested, setDecisionCancelRequested] = useState(false);
+  const [decisionFlowWarning, setDecisionFlowWarning] = useState<string | null>(null);
+  const decisionCancelRequestedRef = React.useRef(false);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -1251,6 +1489,11 @@ export function OptimizationLightPage({
     setSpendingHeadroomError(null);
     setDecisionProfilesTables([]);
     setDecisionProfilesError(null);
+    setDecisionFlowStatus(null);
+    setDecisionProgress(null);
+    setDecisionCancelRequested(false);
+    decisionCancelRequestedRef.current = false;
+    setDecisionFlowWarning(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -1575,112 +1818,271 @@ export function OptimizationLightPage({
     }
   }
 
+  async function evaluateDecisionProfilesStage(input: {
+    stage: Exclude<DecisionFlowStage, 'idle'>;
+    badge: string;
+    message: string;
+    nSim: number;
+    stepPp: number | null;
+    rvCandidates: number[];
+    implementationEnabled: boolean;
+  }): Promise<DecisionProfilesScenarioTable[]> {
+    const scenarioDefs = [
+      { id: 'base' as const, label: 'Sanity Check Base' },
+      { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp' },
+    ];
+    const seed = activeParams.simulation.seed ?? 0;
+    const total = scenarioDefs.length * input.rvCandidates.length * SPENDING_HEADROOM_SCALES.length;
+    let evaluated = 0;
+    const nextTables: DecisionProfilesScenarioTable[] = [];
+
+    setDecisionProgress({
+      stage: input.stage,
+      evaluated: 0,
+      total,
+      nSim: input.nSim,
+      seed,
+    });
+
+    for (const scenarioDef of scenarioDefs) {
+      const scenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === scenarioDef.id);
+      if (!scenario) continue;
+      const scenarioAdjusted = applyRvRfPremiumSensitivity(activeParams, scenario);
+      const baseScenarioParams = cloneParams(scenarioAdjusted.params);
+      baseScenarioParams.simulation.nSim = input.nSim;
+      const rows: RvRfDecisionCandidate[] = [];
+
+      for (const rvPct of input.rvCandidates) {
+        if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
+        const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
+        const candidateId = `rv_${rvPct}_rf_${100 - rvPct}`;
+        const evaluations: SpendingHeadroomEvaluationResult[] = [];
+
+        for (const spendScale of SPENDING_HEADROOM_SCALES) {
+          if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
+          const scaled = applyTemporarySpendScale(baseScenarioParams, spendScale);
+          scaled.weights = cloneParams(weights);
+          scaled.simulation.nSim = input.nSim;
+          const sim = runSimulationCentral(scaled);
+          const quality = buildQualityOptimizationCandidate({
+            id: `${candidateId}_x${spendScale}`,
+            rvWeight: rvPct / 100,
+            rfWeight: 1 - rvPct / 100,
+            result: sim,
+          });
+          evaluations.push({
+            spendScale,
+            spendLabel: formatSpendScaleLabel(spendScale),
+            candidateId,
+            resultKey: hashJson({
+              table: scenarioDef.id,
+              candidateId,
+              spendScale,
+              weights,
+              spendingPhases: scaled.spendingPhases,
+              nSim: input.nSim,
+            }),
+            rvReal: weights.rvGlobal + weights.rvChile,
+            rfReal: weights.rfGlobal + weights.rfChile,
+            rvGlobal: weights.rvGlobal,
+            rvChile: weights.rvChile,
+            rfGlobal: weights.rfGlobal,
+            rfChile: weights.rfChile,
+            qasrStrict: quality.qasrStrict,
+            csr85_4: quality.csr85_4,
+            classicSuccessRate: quality.classicSuccessRate,
+            probRuin: sim.probRuin40 ?? sim.probRuin,
+            monthsInSevereCutMean: quality.monthsInSevereCutMean,
+            maxConsecutiveSevereCutMonthsP75: quality.maxConsecutiveSevereCutMonthsP75,
+            terminalWealthP25: quality.terminalWealthP25,
+            terminalWealthP50: quality.terminalWealthP50,
+            houseSaleRate: quality.houseSaleRate,
+            severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMean ?? null,
+          });
+          evaluated += 1;
+          setDecisionProgress({
+            stage: input.stage,
+            evaluated,
+            total,
+            nSim: input.nSim,
+            seed,
+          });
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        }
+
+        const baseEval = evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
+        const plus20 = evaluations.find((item) => Math.abs(item.spendScale - 1.2) <= 1e-9) ?? null;
+        const plus30 = evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
+        if (!baseEval || !plus20 || !plus30) continue;
+
+        rows.push({
+          candidateId,
+          mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
+          rvPct,
+          rfPct: 100 - rvPct,
+          rvReal: baseEval.rvReal,
+          rfReal: baseEval.rfReal,
+          qasrBase: baseEval.qasrStrict,
+          qasrAt120: plus20.qasrStrict,
+          qasrAt130: plus30.qasrStrict,
+          csrBase: baseEval.csr85_4,
+          ruinRate: baseEval.probRuin,
+          monthsInSevereCutMean: baseEval.monthsInSevereCutMean,
+          maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
+          terminalWealthP25: baseEval.terminalWealthP25,
+          terminalWealthP50: baseEval.terminalWealthP50,
+          houseSaleRate: baseEval.houseSaleRate,
+          severeCutDuringSaleMonths: baseEval.severeCutMonthsDuringHouseSaleMedian,
+          recSevPctBase: baseEval.monthsInSevereCutMean === null
+            ? null
+            : baseEval.monthsInSevereCutMean / Math.max(1, activeParams.simulation.horizonMonths),
+        });
+      }
+
+      nextTables.push({
+        scenarioId: scenarioDef.id,
+        label: scenarioDef.label,
+        profiles: buildDecisionProfiles(rows, input.nSim),
+      });
+    }
+
+    setDecisionProfilesTables(nextTables);
+    setDecisionFlowStatus({
+      stage: input.stage,
+      badge: input.badge,
+      message: input.message,
+      nSim: input.nSim,
+      stepPp: input.stepPp,
+      candidateCount: input.rvCandidates.length,
+      seed,
+      implementationEnabled: input.implementationEnabled,
+    });
+    setDecisionProgress({
+      stage: input.stage,
+      evaluated: total,
+      total,
+      nSim: input.nSim,
+      seed,
+    });
+
+    return nextTables;
+  }
+
   async function runDecisionProfiles() {
     if (decisionProfilesRunning) return;
     setDecisionProfilesRunning(true);
     setDecisionProfilesError(null);
-    setDecisionProfilesTables([]);
+    setDecisionFlowWarning(null);
+    setDecisionCancelRequested(false);
+    decisionCancelRequestedRef.current = false;
+    setDecisionFlowStatus({
+      stage: 'express',
+      badge: 'Express · preliminar',
+      message: 'Preparando resultado rápido para explorar.',
+      nSim: DECISION_EXPRESS_NSIM,
+      stepPp: DECISION_EXPRESS_STEP_PP,
+      candidateCount: 0,
+      seed: activeParams.simulation.seed ?? 0,
+      implementationEnabled: false,
+    });
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      const fineGrid = buildFineRvRfGrid(5);
-      const scenarioDefs = [
-        { id: 'base' as const, label: 'Sanity Check Base' },
-        { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp' },
-      ];
-      const nextTables: DecisionProfilesScenarioTable[] = [];
+      const expressCandidates = buildOptimizationExpressGrid();
+      const expressTables = await evaluateDecisionProfilesStage({
+        stage: 'express',
+        badge: 'Express · preliminar',
+        message: 'Resultado rápido para explorar. Confirma con simulación completa antes de implementar.',
+        nSim: DECISION_EXPRESS_NSIM,
+        stepPp: DECISION_EXPRESS_STEP_PP,
+        rvCandidates: expressCandidates,
+        implementationEnabled: false,
+      });
+      const expressBaseProfiles = expressTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
+      const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
+      const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
 
-      for (const scenarioDef of scenarioDefs) {
-        const scenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === scenarioDef.id);
-        if (!scenario) continue;
-        const scenarioAdjusted = applyRvRfPremiumSensitivity(activeParams, scenario);
-        const rows: RvRfDecisionCandidate[] = [];
+      const zoomCandidates = buildOptimizationZoomShortlist({
+        preliminaryRecommendationRv: expressMain?.rvPct ?? null,
+        defensiveReferenceRv: expressDefensive?.rvPct ?? null,
+        technicalPreludeRv: phase1SuggestedPoint?.rvPct ?? null,
+        currentRv: currentRvPctFromWeights(activeParams.weights),
+      });
 
-        for (const rvPct of fineGrid) {
-          const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
-          const candidateId = `rv_${rvPct}_rf_${100 - rvPct}`;
-          const evaluations: SpendingHeadroomEvaluationResult[] = [];
+      const zoomTables = await evaluateDecisionProfilesStage({
+        stage: 'zoom',
+        badge: 'Zoom · preliminar refinado',
+        message: 'Resultado preliminar refinado. Confirma con simulación completa antes de implementar.',
+        nSim: DECISION_ZOOM_NSIM,
+        stepPp: DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+        rvCandidates: zoomCandidates,
+        implementationEnabled: false,
+      });
+      const zoomBaseProfiles = zoomTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
+      const zoomMain = zoomBaseProfiles?.primaryRecommendation ?? null;
 
-          for (const spendScale of SPENDING_HEADROOM_SCALES) {
-            const scaled = applyTemporarySpendScale(scenarioAdjusted.params, spendScale);
-            scaled.weights = cloneParams(weights);
-            const sim = runSimulationCentral(scaled);
-            const quality = buildQualityOptimizationCandidate({
-              id: `${candidateId}_x${spendScale}`,
-              rvWeight: rvPct / 100,
-              rfWeight: 1 - rvPct / 100,
-              result: sim,
-            });
-            evaluations.push({
-              spendScale,
-              spendLabel: formatSpendScaleLabel(spendScale),
-              candidateId,
-              resultKey: hashJson({
-                table: scenarioDef.id,
-                candidateId,
-                spendScale,
-                weights,
-                spendingPhases: scaled.spendingPhases,
-              }),
-              rvReal: weights.rvGlobal + weights.rvChile,
-              rfReal: weights.rfGlobal + weights.rfChile,
-              rvGlobal: weights.rvGlobal,
-              rvChile: weights.rvChile,
-              rfGlobal: weights.rfGlobal,
-              rfChile: weights.rfChile,
-              qasrStrict: quality.qasrStrict,
-              csr85_4: quality.csr85_4,
-              classicSuccessRate: quality.classicSuccessRate,
-              probRuin: sim.probRuin40 ?? sim.probRuin,
-              monthsInSevereCutMean: quality.monthsInSevereCutMean,
-              maxConsecutiveSevereCutMonthsP75: quality.maxConsecutiveSevereCutMonthsP75,
-              terminalWealthP25: quality.terminalWealthP25,
-              terminalWealthP50: quality.terminalWealthP50,
-              houseSaleRate: quality.houseSaleRate,
-              severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMean ?? null,
-            });
-            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-          }
-
-          const baseEval = evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
-          const plus20 = evaluations.find((item) => Math.abs(item.spendScale - 1.2) <= 1e-9) ?? null;
-          const plus30 = evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
-          if (!baseEval || !plus20 || !plus30) continue;
-
-          rows.push({
-            candidateId,
-            mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
-            rvPct,
-            rfPct: 100 - rvPct,
-            rvReal: baseEval.rvReal,
-            rfReal: baseEval.rfReal,
-            qasrBase: baseEval.qasrStrict,
-            qasrAt120: plus20.qasrStrict,
-            qasrAt130: plus30.qasrStrict,
-            csrBase: baseEval.csr85_4,
-            ruinRate: baseEval.probRuin,
-            monthsInSevereCutMean: baseEval.monthsInSevereCutMean,
-            maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
-            terminalWealthP25: baseEval.terminalWealthP25,
-            terminalWealthP50: baseEval.terminalWealthP50,
-            houseSaleRate: baseEval.houseSaleRate,
-            severeCutDuringSaleMonths: baseEval.severeCutMonthsDuringHouseSaleMedian,
-            recSevPctBase: baseEval.monthsInSevereCutMean === null
-              ? null
-              : baseEval.monthsInSevereCutMean / Math.max(1, activeParams.simulation.horizonMonths),
-          });
-        }
-
-        const profiles = buildDecisionProfiles(rows, activeParams.simulation.nSim);
-        nextTables.push({
-          scenarioId: scenarioDef.id,
-          label: scenarioDef.label,
-          profiles,
-        });
+      if (expressMain && zoomMain && expressMain.candidateId !== zoomMain.candidateId) {
+        setDecisionFlowWarning(`El resultado rápido cambió al refinar: Express sugería ${expressMain.mixLabel} y Zoom sugiere ${zoomMain.mixLabel}. Usa solo el confirmado para decidir.`);
       }
-
-      setDecisionProfilesTables(nextTables);
     } catch (error) {
-      setDecisionProfilesError(error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.message === '__MIDAS_DECISION_CANCELLED__') {
+        setDecisionFlowWarning('Cálculo cancelado. Mantuvimos el último resultado completo disponible.');
+      } else {
+        setDecisionProfilesError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      setDecisionProfilesRunning(false);
+    }
+  }
+
+  async function runDecisionConfirmation() {
+    if (decisionProfilesRunning) return;
+    const preliminaryMain = officialMainRecommendation;
+    const preliminaryDefensive = officialDefensiveReference;
+    setDecisionProfilesRunning(true);
+    setDecisionProfilesError(null);
+    setDecisionFlowWarning(null);
+    setDecisionCancelRequested(false);
+    decisionCancelRequestedRef.current = false;
+    setDecisionFlowStatus({
+      stage: 'confirmed',
+      badge: 'Confirmación oficial en curso',
+      message: 'Corriendo shortlist oficial con simulación completa.',
+      nSim: activeParams.simulation.nSim,
+      stepPp: DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+      candidateCount: 0,
+      seed: activeParams.simulation.seed ?? 0,
+      implementationEnabled: false,
+    });
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const shortlist = buildOptimizationConfirmationShortlist({
+        zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
+        defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
+        technicalPreludeRv: phase1SuggestedPoint?.rvPct ?? null,
+        currentRv: currentRvPctFromWeights(activeParams.weights),
+      });
+      const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(5);
+      const confirmedTables = await evaluateDecisionProfilesStage({
+        stage: 'confirmed',
+        badge: 'Confirmado · apto para implementación',
+        message: 'Este resultado ya fue confirmado con simulación completa y puede alimentar implementación.',
+        nSim: activeParams.simulation.nSim,
+        stepPp: DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+        rvCandidates: confirmationCandidates,
+        implementationEnabled: true,
+      });
+      const confirmedBaseProfiles = confirmedTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
+      const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? null;
+
+      if (preliminaryMain && confirmedMain && preliminaryMain.candidateId !== confirmedMain.candidateId) {
+        setDecisionFlowWarning(`El resultado preliminar cambió al confirmar. Usa solo el confirmado para decidir: ${confirmedMain.mixLabel}.`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === '__MIDAS_DECISION_CANCELLED__') {
+        setDecisionFlowWarning('Confirmación cancelada. Mantuvimos el último resultado completo disponible.');
+      } else {
+        setDecisionProfilesError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       setDecisionProfilesRunning(false);
     }
@@ -1833,11 +2235,11 @@ export function OptimizationLightPage({
     if (!phase2Rows.length) return null;
     if (!baseDecisionProfiles) return 'La recomendación oficial V2.7.2 aparece aquí después de generar la decisión por perfiles.';
     if (!officialMainRecommendation) return 'V2.7.2 no devolvió una recomendación principal usable.';
-    if (!officialMainRecommendationRow) return 'La recomendación principal V2.7.2 no coincide con ningún candidato evaluado en Fase 2.';
+    if (!officialMainRecommendationSourceRow) return 'La recomendación principal V2.7.2 no pudo convertirse en escenario ejecutable.';
     const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === officialMainRecommendation.candidateId) ?? null;
     if (!officialRow?.passesHardGuardrails) return 'Candidato recomendado no coincide con fuente V2.7.2.';
     return null;
-  }, [baseDecisionProfiles, officialMainRecommendation, officialMainRecommendationRow, phase2Rows.length]);
+  }, [baseDecisionProfiles, officialMainRecommendation, officialMainRecommendationSourceRow, phase2Rows.length]);
   const legacyRecommendationConflict = useMemo(() => {
     if (!phase2QualityWinner || !officialMainRecommendationRow) return null;
     if (isSameMix(phase2QualityWinner.source, officialMainRecommendationRow.source)) return null;
@@ -1931,9 +2333,17 @@ export function OptimizationLightPage({
     };
   }, [officialMainRecommendationSourceRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
+  const decisionImplementationReady = useMemo(
+    () => canUseDecisionFlowForImplementation(decisionFlowStatus),
+    [decisionFlowStatus],
+  );
   const activeScenarioAfterPhase2 = useMemo(
     () => phase2ImplementationSelectedRow,
     [phase2ImplementationSelectedRow],
+  );
+  const implementationMateriality = useMemo(
+    () => (implementationPlan ? classifyImplementationMateriality({ currentWeights: activeParams.weights, plan: implementationPlan }) : null),
+    [activeParams.weights, implementationPlan],
   );
   const activeScenarioAfterImplementation = useMemo(() => {
     if (!activeScenarioAfterPhase2) {
@@ -2143,6 +2553,10 @@ export function OptimizationLightPage({
 
   const runImplementation = useCallback(async () => {
     if (implementationRunning) return;
+    if (!decisionImplementationReady) {
+      setImplementationError('Confirma con simulación completa antes de implementar.');
+      return;
+    }
     const idealRow = phase2ImplementationSelectedRow;
     if (!idealRow) {
       setImplementationError('No hay recomendación principal oficial para construir implementación.');
@@ -2173,7 +2587,7 @@ export function OptimizationLightPage({
     } finally {
       setImplementationRunning(false);
     }
-  }, [implementationRunning, phase2ImplementationSelectedRow]);
+  }, [decisionImplementationReady, implementationRunning, phase2ImplementationSelectedRow]);
 
   const runRealisticValidation = useCallback(async () => {
     if (realisticValidationRunning) return;
@@ -2913,13 +3327,66 @@ export function OptimizationLightPage({
                   cursor: decisionProfilesRunning ? 'not-allowed' : 'pointer',
                 }}
               >
-                {decisionProfilesRunning ? 'Calculando perfiles...' : 'Generar decision por perfiles'}
+                {decisionProfilesRunning ? 'Calculando óptimo MIDAS…' : 'Calcular Óptimo MIDAS recomendado'}
               </button>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Malla fina RV/RF: 0-100 en pasos de 5pp
-              </div>
+              <button
+                type="button"
+                onClick={runDecisionConfirmation}
+                disabled={decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed'}
+                style={{
+                  background: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  color: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+                  opacity: !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+                }}
+              >
+                {decisionFlowStatus?.stage === 'confirmed' ? 'Confirmación completa lista' : 'Confirmar con simulación completa'}
+              </button>
+              {decisionProfilesRunning ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    decisionCancelRequestedRef.current = true;
+                    setDecisionCancelRequested(true);
+                  }}
+                  style={{
+                    background: T.surface,
+                    border: `1px solid ${T.border}`,
+                    color: T.textPrimary,
+                    borderRadius: 999,
+                    padding: '7px 12px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancelar cálculo
+                </button>
+              ) : null}
             </div>
             {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionProfilesError}</div> : null}
+            {decisionFlowStatus ? (
+              <div style={{ display: 'grid', gap: 4, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surface }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>{decisionFlowStatus.badge}</span>
+                  <span style={{ color: T.textMuted, fontSize: 10 }}>
+                    nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ''}
+                  </span>
+                </div>
+                <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
+                {decisionProgress ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Progreso: {decisionProgress.stage} · {decisionProgress.evaluated}/{decisionProgress.total} corridas · nSim {decisionProgress.nSim.toLocaleString('es-ES')} · seed {decisionProgress.seed}
+                    {decisionCancelRequested ? ' · cancelación solicitada' : ''}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {officialMainRecommendation ? (
               <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
                 <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Recomendación principal para tu perfil</div>
@@ -2932,8 +3399,16 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Fuente: V2.7.2 / V2.7.4 · Pareto + ratio vs referencia defensiva · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
                 </div>
+                {decisionFlowStatus ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Estado: {decisionFlowStatus.badge}
+                  </div>
+                ) : null}
                 {officialRecommendationWarning ? (
                   <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div>
+                ) : null}
+                {decisionFlowWarning ? (
+                  <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div>
                 ) : null}
               </div>
             ) : (
@@ -3161,11 +3636,16 @@ export function OptimizationLightPage({
             <div style={{ color: T.textMuted, fontSize: 10 }}>
               Objetivo oficial base (Implementation): {phase2ImplementationSelectedRow ? scenarioLabel(phase2ImplementationSelectedRow.source) : 'No disponible'}
             </div>
+            {!decisionImplementationReady ? (
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+                Confirma con simulación completa antes de implementar.
+              </div>
+            ) : null}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={runImplementation}
-                disabled={implementationRunning || !phase2ImplementationSelectedRow}
+                disabled={implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
                 style={{
                   background: implementationRunning ? T.surface : T.primary,
                   border: `1px solid ${implementationRunning ? T.border : T.primary}`,
@@ -3174,8 +3654,8 @@ export function OptimizationLightPage({
                   padding: '6px 10px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: implementationRunning || !phase2ImplementationSelectedRow ? 'not-allowed' : 'pointer',
-                  opacity: !phase2ImplementationSelectedRow ? 0.6 : 1,
+                  cursor: implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady ? 'not-allowed' : 'pointer',
+                  opacity: !phase2ImplementationSelectedRow || !decisionImplementationReady ? 0.6 : 1,
                 }}
               >
                 {implementationRunning ? 'Calculando implementación…' : 'Calcular implementación'}
@@ -3220,23 +3700,59 @@ export function OptimizationLightPage({
                     </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix post-traspasos</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Mix post-traspaso</div>
                     <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
                       {formatMixPair(implementationPlan.reachableMix)}
                     </div>
                   </div>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>Gap vs ideal (RV)</div>
-                    <div style={{ color: Math.abs(implementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP ? T.positive : T.warning, fontSize: 15, fontWeight: 800 }}>
-                      {formatSignedPp(-implementationPlan.gapVsIdealRvPp)}
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Gap RV/RF</div>
+                    <div style={{ color: implementationMateriality?.status === 'recommended' ? T.warning : T.positive, fontSize: 15, fontWeight: 800 }}>
+                      {implementationMateriality ? formatSignedPp(implementationMateriality.gapRvPp) : formatSignedPp(Math.abs(implementationPlan.gapVsIdealRvPp))}
+                    </div>
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>Movimiento sugerido total</div>
+                    <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>
+                      {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      {implementationMateriality ? `${implementationMateriality.totalTradePortfolioPct.toFixed(2).replace('.', ',')}% cartera` : 'No disponible'}
                     </div>
                   </div>
                 </div>
-                <div style={{ color: implementationPlan.equivalentToIdeal ? T.positive : T.warning, fontSize: 11, fontWeight: 700 }}>
-                  {implementationPlan.equivalentToIdeal
-                    ? 'Con estos traspasos se llega al objetivo oficial dentro de tolerancia.'
-                    : 'Gap material detectado: conviene validar el mix alcanzable antes de implementar.'}
-                </div>
+                {implementationMateriality ? (
+                  <div style={{ display: 'grid', gap: 3 }}>
+                    <div style={{ color: implementationMateriality.status === 'recommended' ? T.warning : T.positive, fontSize: 11, fontWeight: 800 }}>
+                      Estado: {implementationMateriality.statusLabel}
+                    </div>
+                    <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                      {implementationMateriality.summary}
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      {implementationMateriality.detail}
+                    </div>
+                    <div style={{ color: implementationMateriality.sleeveValidation.hasCompleteSleeveData ? T.textMuted : T.warning, fontSize: 10 }}>
+                      {implementationMateriality.sleeveValidation.hasCompleteSleeveData
+                        ? 'Validación por sleeves OK: RV global / RV local / RF global / RF local.'
+                        : 'La implementación valida RV/RF total, pero no composición global/local. Revisar antes de ejecutar.'}
+                    </div>
+                  </div>
+                ) : null}
+                {implementationMateriality?.sleeveValidation ? (
+                  <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Validación por sleeves</div>
+                    {implementationMateriality.sleeveValidation.rows.map((row) => (
+                      <div key={row.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.3fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
+                        <div style={{ color: T.textSecondary, fontWeight: 700 }}>{row.label}</div>
+                        <div>Actual {formatPctValue(row.current)}</div>
+                        <div>Objetivo {formatPctValue(row.target)}</div>
+                        <div>Post {formatPctValue(row.postTrade)}</div>
+                        <div>Gap {formatSignedPp(row.gapPp)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <details style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 6, background: T.surface }}>
                   <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
                     Ver detalle de traspasos y restricciones
