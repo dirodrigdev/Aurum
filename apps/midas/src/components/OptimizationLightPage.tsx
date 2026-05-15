@@ -18,6 +18,12 @@ import {
   pickSensitivityWinner,
   type RvRfPremiumSensitivityScenario,
 } from '../domain/optimizer/rvRfPremiumSensitivity';
+import {
+  applyTemporarySpendScale,
+  computeMaxSpendScalePassingQoL,
+  SPENDING_HEADROOM_SCALES,
+  type SpendingHeadroomScale,
+} from '../domain/optimizer/spendingHeadroom';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -159,6 +165,44 @@ type SensitivityScenarioResult = {
   warnings: string[];
 };
 
+type SpendingHeadroomMixCandidate = {
+  candidateId: string;
+  label: string;
+  sourceLabel: string;
+  rvPct: number;
+  rfPct: number;
+  weights: PortfolioWeights;
+};
+
+type SpendingHeadroomEvaluationResult = {
+  spendScale: SpendingHeadroomScale;
+  spendLabel: string;
+  candidateId: string;
+  resultKey: string;
+  rvReal: number;
+  rfReal: number;
+  rvGlobal: number;
+  rvChile: number;
+  rfGlobal: number;
+  rfChile: number;
+  qasrStrict: number | null;
+  csr85_4: number | null;
+  classicSuccessRate: number | null;
+  probRuin: number;
+  monthsInSevereCutMean: number | null;
+  maxConsecutiveSevereCutMonthsP75: number | null;
+  terminalWealthP25: number | null;
+  terminalWealthP50: number | null;
+  houseSaleRate: number | null;
+  severeCutMonthsDuringHouseSaleMedian: number | null;
+};
+
+type SpendingHeadroomMixResult = {
+  mix: SpendingHeadroomMixCandidate;
+  evaluations: SpendingHeadroomEvaluationResult[];
+  maxSpendScalePassingQoL: number | null;
+};
+
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
 const SHORTLIST_MIN_RV_DISTANCE = optimizerPolicyConfig.phase1.shortlistMinRvDistancePp;
 const SHORTLIST_TARGET = optimizerPolicyConfig.phase1.shortlistTarget;
@@ -267,6 +311,11 @@ function formatPctPrecise(value: number | null, digits = 2): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
+function formatSpendScaleLabel(scale: SpendingHeadroomScale): string {
+  if (Math.abs(scale - 1) < 1e-9) return 'Base';
+  return `+${Math.round((scale - 1) * 100)}%`;
+}
+
 function formatScorePrecise(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return 'No disponible';
   return `${(value * 100).toFixed(2)}/100`;
@@ -298,6 +347,95 @@ function formatDeltaVsBest(deltaVsBestPp: number): string {
 
 function scenarioLabel(point: Phase1Point): string {
   return `${point.scenarioId ?? '?'} · RV ${point.rvPct}% / RF ${point.rfPct}%`;
+}
+
+function findPhase2RowByRvPct(rows: Phase2Point[], rvPct: number): Phase2Point | null {
+  return rows.find((row) => Math.abs(row.source.rvPct - rvPct) <= 0.05) ?? null;
+}
+
+function buildSpendingHeadroomCandidates(
+  rows: Phase2Point[],
+  currentRow: Phase2Point | null,
+  winner: Phase2Point | null,
+): SpendingHeadroomMixCandidate[] {
+  const candidates: SpendingHeadroomMixCandidate[] = [];
+  const pushRow = (row: Phase2Point | null, sourceLabel: string) => {
+    if (!row) return;
+    if (candidates.some((candidate) => Math.abs(candidate.rvPct - row.source.rvPct) <= 0.05)) return;
+    candidates.push({
+      candidateId: row.qualityCandidate.id,
+      label: `RV ${row.source.rvPct}% / RF ${row.source.rfPct}%`,
+      sourceLabel,
+      rvPct: row.source.rvPct,
+      rfPct: row.source.rfPct,
+      weights: cloneParams(row.source.weights),
+    });
+  };
+
+  pushRow(winner, 'Ganador QoL');
+  pushRow(currentRow, 'Mix actual');
+  [0, 5, 25, 50, 80, 100].forEach((rvPct) => pushRow(findPhase2RowByRvPct(rows, rvPct), `Benchmark ${rvPct}/${100 - rvPct}`));
+
+  const topQasr = [...rows]
+    .filter((row) => row.qualityCandidate.qasrStrict !== null)
+    .sort((a, b) => compareQualityOptimizationCandidates(a.qualityCandidate, b.qualityCandidate))
+    .slice(0, 3);
+  topQasr.forEach((row) => pushRow(row, 'Top QASR'));
+
+  if (winner && winner.qualityCandidate.qasrStrict !== null) {
+    const winnerQasr = winner.qualityCandidate.qasrStrict;
+    const equivalentByQasr = rows
+      .filter((row) => (
+        row.qualityCandidate.qasrStrict !== null
+        && ((winnerQasr ?? 0) - (row.qualityCandidate.qasrStrict ?? 0)) <= 0.005 + 1e-9
+      ))
+      .sort((a, b) => (
+        ((b.qualityCandidate.terminalWealthP50 ?? Number.NEGATIVE_INFINITY) - (a.qualityCandidate.terminalWealthP50 ?? Number.NEGATIVE_INFINITY))
+        || (a.source.rvPct - b.source.rvPct)
+      ))
+      .slice(0, 3);
+    equivalentByQasr.forEach((row) => pushRow(row, 'Top patrimonio con QASR equivalente'));
+  }
+
+  return [...candidates].sort((a, b) => a.rvPct - b.rvPct);
+}
+
+function explainSpendingHeadroom(
+  results: SpendingHeadroomMixResult[],
+  winner: SpendingHeadroomMixCandidate | null,
+): string {
+  if (!results.length || !winner) return 'Primero ejecuta la holgura para comparar mixes bajo gasto mayor.';
+  const winnerResult = results.find((item) => Math.abs(item.mix.rvPct - winner.rvPct) <= 0.05) ?? null;
+  if (!winnerResult) return 'No hay suficientes datos para interpretar la holgura del mix recomendado.';
+  const winnerBase = winnerResult.evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
+  const allCollapse = results.every((item) => (item.maxSpendScalePassingQoL ?? 0) <= 1);
+  if (allCollapse) {
+    return 'El gasto adicional reduce materialmente la calidad de vida en todos los mixes; conviene optimizar gasto formalmente en V3.';
+  }
+  const moreAggressiveWithHeadroom = results.find((item) => {
+    if (item.mix.rvPct <= winner.rvPct + 5) return false;
+    const base = item.evaluations.find((evaluation) => Math.abs(evaluation.spendScale - 1) <= 1e-9) ?? null;
+    if (!base || !winnerBase) return false;
+    const qasrGap = Math.abs((base.qasrStrict ?? -Infinity) - (winnerBase.qasrStrict ?? -Infinity));
+    const csrGap = Math.abs((base.csr85_4 ?? -Infinity) - (winnerBase.csr85_4 ?? -Infinity));
+    const headroomA = item.maxSpendScalePassingQoL ?? 0;
+    const headroomB = winnerResult.maxSpendScalePassingQoL ?? 0;
+    return qasrGap <= 0.005 + 1e-9 && csrGap <= 0.01 + 1e-9 && headroomA > headroomB + 0.09;
+  });
+  if (moreAggressiveWithHeadroom) {
+    return 'Varios mixes son equivalentes en calidad base, pero el mix más agresivo ofrece mayor holgura de gasto y margen patrimonial.';
+  }
+  const winnerHeadroom = winnerResult.maxSpendScalePassingQoL ?? 0;
+  const bestOtherHeadroom = Math.max(
+    ...results
+      .filter((item) => Math.abs(item.mix.rvPct - winner.rvPct) > 0.05)
+      .map((item) => item.maxSpendScalePassingQoL ?? 0),
+    0,
+  );
+  if (winnerHeadroom >= bestOtherHeadroom - 1e-9 && winnerHeadroom >= 1.2 - 1e-9) {
+    return 'El mix conservador no solo maximiza calidad base, también sostiene mejor el aumento de gasto.';
+  }
+  return 'La prima de retorno ayuda, pero la holgura sigue dependiendo de cómo cada mix absorbe recortes y volatilidad bajo gasto mayor.';
 }
 
 function formatMixPair(mix: { rv: number; rf: number }): string {
@@ -945,6 +1083,9 @@ export function OptimizationLightPage({
   const [sensitivityRunning, setSensitivityRunning] = useState(false);
   const [sensitivityResults, setSensitivityResults] = useState<SensitivityScenarioResult[]>([]);
   const [sensitivityError, setSensitivityError] = useState<string | null>(null);
+  const [spendingHeadroomRunning, setSpendingHeadroomRunning] = useState(false);
+  const [spendingHeadroomResults, setSpendingHeadroomResults] = useState<SpendingHeadroomMixResult[]>([]);
+  const [spendingHeadroomError, setSpendingHeadroomError] = useState<string | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -983,6 +1124,8 @@ export function OptimizationLightPage({
     setPhase3Error(null);
     setSensitivityResults([]);
     setSensitivityError(null);
+    setSpendingHeadroomResults([]);
+    setSpendingHeadroomError(null);
     if (stalePhase1) {
       setPhase1Points([]);
       setShortlist([]);
@@ -1021,6 +1164,8 @@ export function OptimizationLightPage({
       setPhase3Error(null);
       setSensitivityResults([]);
       setSensitivityError(null);
+      setSpendingHeadroomResults([]);
+      setSpendingHeadroomError(null);
       try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1146,6 +1291,8 @@ export function OptimizationLightPage({
     setPhase3Error(null);
     setSensitivityResults([]);
     setSensitivityError(null);
+    setSpendingHeadroomResults([]);
+    setSpendingHeadroomError(null);
     try {
       // Permite pintar feedback de loading inmediatamente antes del trabajo pesado.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -1232,6 +1379,72 @@ export function OptimizationLightPage({
       setSensitivityRunning(false);
     }
   }, [activeParams, phase2Rows, sensitivityRunning]);
+
+  async function runSpendingHeadroom() {
+    const mixes = buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, phase2QualityWinner);
+    if (spendingHeadroomRunning || !mixes.length) return;
+    setSpendingHeadroomRunning(true);
+    setSpendingHeadroomError(null);
+    setSpendingHeadroomResults([]);
+    try {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const results: SpendingHeadroomMixResult[] = [];
+      for (const mix of mixes) {
+        const evaluations: SpendingHeadroomEvaluationResult[] = [];
+        for (const spendScale of SPENDING_HEADROOM_SCALES) {
+          const candidateParams = applyTemporarySpendScale(activeParams, spendScale);
+          candidateParams.weights = cloneParams(mix.weights);
+          const sim = runSimulationCentral(candidateParams);
+          const candidate = buildQualityOptimizationCandidate({
+            id: mix.candidateId,
+            rvWeight: mix.rvPct / 100,
+            rfWeight: mix.rfPct / 100,
+            result: sim,
+          });
+          const rvReal = mix.weights.rvGlobal + mix.weights.rvChile;
+          const rfReal = mix.weights.rfGlobal + mix.weights.rfChile;
+          evaluations.push({
+            spendScale,
+            spendLabel: formatSpendScaleLabel(spendScale),
+            candidateId: mix.candidateId,
+            resultKey: hashJson({
+              candidateId: mix.candidateId,
+              spendScale,
+              weights: mix.weights,
+              spendingPhases: candidateParams.spendingPhases,
+            }),
+            rvReal,
+            rfReal,
+            rvGlobal: mix.weights.rvGlobal,
+            rvChile: mix.weights.rvChile,
+            rfGlobal: mix.weights.rfGlobal,
+            rfChile: mix.weights.rfChile,
+            qasrStrict: candidate.qasrStrict,
+            csr85_4: candidate.csr85_4,
+            classicSuccessRate: candidate.classicSuccessRate,
+            probRuin: sim.probRuin40 ?? sim.probRuin,
+            monthsInSevereCutMean: candidate.monthsInSevereCutMean,
+            maxConsecutiveSevereCutMonthsP75: candidate.maxConsecutiveSevereCutMonthsP75,
+            terminalWealthP25: candidate.terminalWealthP25,
+            terminalWealthP50: candidate.terminalWealthP50,
+            houseSaleRate: candidate.houseSaleRate,
+            severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? null,
+          });
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        }
+        results.push({
+          mix,
+          evaluations,
+          maxSpendScalePassingQoL: computeMaxSpendScalePassingQoL(evaluations),
+        });
+      }
+      setSpendingHeadroomResults(results.sort((a, b) => a.mix.rvPct - b.mix.rvPct));
+    } catch (error) {
+      setSpendingHeadroomError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSpendingHeadroomRunning(false);
+    }
+  }
 
   const modeCards = useMemo(
     () => ([
@@ -1353,6 +1566,14 @@ export function OptimizationLightPage({
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     return explainSensitivityShift(base?.winner?.source.rvPct ?? null, others);
   }, [sensitivityResults]);
+  const spendingHeadroomCandidates = useMemo(
+    () => buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, phase2QualityWinner),
+    [phase2CurrentRow, phase2QualityWinner, phase2Rows],
+  );
+  const spendingHeadroomInterpretation = useMemo(
+    () => explainSpendingHeadroom(spendingHeadroomResults, spendingHeadroomCandidates.find((item) => item.sourceLabel === 'Ganador QoL') ?? null),
+    [spendingHeadroomCandidates, spendingHeadroomResults],
+  );
   const phase2Decisions = useMemo(() => {
     if (!phase2BaselineRow) return new Map<number, Phase2CompetitionDecision>();
     return new Map(
@@ -2283,6 +2504,95 @@ export function OptimizationLightPage({
                           </div>
                         ) : null}
                       </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {phase2Rows.length > 0 ? (
+          <div style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Holgura de gasto por mix</div>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Prueba no oficial: muestra qué mixes siguen sosteniendo calidad de vida si el gasto sube 20% o 30%. No modifica el escenario base.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={runSpendingHeadroom}
+                disabled={spendingHeadroomRunning || !spendingHeadroomCandidates.length}
+                style={{
+                  background: spendingHeadroomRunning ? T.surface : T.primary,
+                  border: `1px solid ${spendingHeadroomRunning ? T.border : T.primary}`,
+                  color: spendingHeadroomRunning ? T.textMuted : '#fff',
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: spendingHeadroomRunning || !spendingHeadroomCandidates.length ? 'not-allowed' : 'pointer',
+                  opacity: !spendingHeadroomCandidates.length ? 0.65 : 1,
+                }}
+              >
+                {spendingHeadroomRunning ? 'Calculando holgura…' : 'Evaluar holgura'}
+              </button>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Mixes incluidos: {spendingHeadroomCandidates.map((item) => `${item.rvPct}/${item.rfPct}`).join(' · ')}
+              </div>
+            </div>
+            {spendingHeadroomError ? (
+              <div style={{ color: T.warning, fontSize: 10 }}>{spendingHeadroomError}</div>
+            ) : null}
+            {spendingHeadroomResults.length > 0 ? (
+              <>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                  {spendingHeadroomInterpretation}
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {spendingHeadroomResults.map((result) => {
+                    const baseEval = result.evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
+                    const plus20 = result.evaluations.find((item) => Math.abs(item.spendScale - 1.2) <= 1e-9) ?? null;
+                    const plus30 = result.evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
+                    return (
+                      <details
+                        key={`headroom-${result.mix.candidateId}-${result.mix.rvPct}`}
+                        style={{
+                          display: 'grid',
+                          gap: 3,
+                          border: `1px solid ${T.border}`,
+                          borderRadius: 10,
+                          padding: '8px 10px',
+                          background: T.surface,
+                        }}
+                      >
+                        <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                          <div style={{ display: 'grid', gap: 3 }}>
+                            <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                              {result.mix.label} · Máx. gasto probado con QoL OK {result.maxSpendScalePassingQoL !== null ? formatSpendScaleLabel(result.maxSpendScalePassingQoL as SpendingHeadroomScale) : 'No disponible'}
+                            </div>
+                            <div style={{ color: T.textMuted, fontSize: 10 }}>
+                              Base QASR {formatScorePrecise(baseEval?.qasrStrict ?? null)} · CSR {formatPctPrecise(baseEval?.csr85_4 ?? null)} · +20% QASR {formatScorePrecise(plus20?.qasrStrict ?? null)} · CSR {formatPctPrecise(plus20?.csr85_4 ?? null)} · +30% QASR {formatScorePrecise(plus30?.qasrStrict ?? null)} · CSR {formatPctPrecise(plus30?.csr85_4 ?? null)}
+                            </div>
+                            <div style={{ color: T.textMuted, fontSize: 10 }}>
+                              P25 final base {formatClpShort(baseEval?.terminalWealthP25 ?? null)} · P50 final base {formatClpShort(baseEval?.terminalWealthP50 ?? null)}
+                            </div>
+                          </div>
+                        </summary>
+                        <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                          <div style={{ color: T.textMuted, fontSize: 10 }}>
+                            {result.mix.sourceLabel} · candidateId {result.mix.candidateId} · input real RV/RF {formatPctPrecise(baseEval?.rvReal ?? null)} / {formatPctPrecise(baseEval?.rfReal ?? null)}
+                          </div>
+                          <div style={{ color: T.textMuted, fontSize: 10 }}>
+                            Sleeves: RV Global {formatPctPrecise(baseEval?.rvGlobal ?? null)} · RV Chile {formatPctPrecise(baseEval?.rvChile ?? null)} · RF Global {formatPctPrecise(baseEval?.rfGlobal ?? null)} · RF Chile {formatPctPrecise(baseEval?.rfChile ?? null)}
+                          </div>
+                          {result.evaluations.map((evaluation) => (
+                            <div key={evaluation.resultKey} style={{ color: T.textMuted, fontSize: 10 }}>
+                              {evaluation.spendLabel}: QASR {formatScorePrecise(evaluation.qasrStrict)} · CSR {formatPctPrecise(evaluation.csr85_4)} · Éxito {formatPctPrecise(evaluation.classicSuccessRate)} · Ruina {formatPctPrecise(evaluation.probRuin)} · Recorte severo {formatMonthsHuman(evaluation.monthsInSevereCutMean)} · Racha P75 {formatMonthsHuman(evaluation.maxConsecutiveSevereCutMonthsP75)} · P25 {formatClpShort(evaluation.terminalWealthP25)} · P50 {formatClpShort(evaluation.terminalWealthP50)} · Venta casa {formatPctPrecise(evaluation.houseSaleRate)} · Recorte severo mientras se vende {formatMonthsHuman(evaluation.severeCutMonthsDuringHouseSaleMedian)}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     );
                   })}
                 </div>
