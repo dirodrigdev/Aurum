@@ -51,6 +51,22 @@ function makeCandidate(overrides: Partial<QualityOptimizationCandidate>): Qualit
   const result = applyRvRfPremiumSensitivity(base, scenario);
   assert.equal(result.params.returns.rvGlobalAnnual, base.returns.rvGlobalAnnual + 0.10);
   assert.equal(result.params.returns.rvChileAnnual, base.returns.rvChileAnnual + 0.10);
+  assert.equal(result.params.returns.rfGlobalAnnual, base.returns.rfGlobalAnnual);
+  assert.equal(result.params.returns.rfChileUFAnnual, base.returns.rfChileUFAnnual);
+}
+
+{
+  const base = JSON.parse(JSON.stringify(DEFAULT_PARAMETERS));
+  const baseScenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === 'base')!;
+  const plusScenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === 'rv_plus_6_rf_minus_1')!;
+  const baseResult = applyRvRfPremiumSensitivity(base, baseScenario);
+  const plusResult = applyRvRfPremiumSensitivity(base, plusScenario);
+  assert.deepEqual(baseResult.params.returns, DEFAULT_PARAMETERS.returns);
+  assert.equal(plusResult.params.returns.rvGlobalAnnual, DEFAULT_PARAMETERS.returns.rvGlobalAnnual + 0.06);
+  assert.equal(plusResult.params.returns.rvChileAnnual, DEFAULT_PARAMETERS.returns.rvChileAnnual + 0.06);
+  assert.equal(plusResult.params.returns.rfGlobalAnnual, DEFAULT_PARAMETERS.returns.rfGlobalAnnual - 0.01);
+  assert.equal(plusResult.params.returns.rfChileUFAnnual, DEFAULT_PARAMETERS.returns.rfChileUFAnnual - 0.01);
+  assert.deepEqual(base.returns, DEFAULT_PARAMETERS.returns);
 }
 
 {

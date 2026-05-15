@@ -8,6 +8,7 @@ import {
   buildOptimizationFrontierDiagnostics,
   type OptimizationDiagnosticRow,
 } from '../domain/optimizer/optimizationFrontierDiagnostics';
+import { buildRvRfCandidateWeights } from '../domain/optimizer/rvRfCandidateMapping';
 import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
 import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
 import {
@@ -340,19 +341,6 @@ function buildDeltaSummary(baseParams: ModelParameters, candidateParams: ModelPa
     deltas.push(`capital de riesgo ${candidateRiskCapital ? 'ON' : 'OFF'}`);
   }
   return deltas.length ? `Cambios vs base: ${deltas.join(' · ')}` : 'Sin cambios temporales respecto de la base vigente';
-}
-
-function buildCandidateWeights(currentWeights: PortfolioWeights, rvPct: number): PortfolioWeights {
-  const globalShare = Math.max(0, Math.min(1, (currentWeights.rvGlobal + currentWeights.rfGlobal) || 0.5));
-  const localShare = Math.max(0, Math.min(1, 1 - globalShare));
-  const rv = rvPct / 100;
-  const rf = 1 - rv;
-  return {
-    rvGlobal: rv * globalShare,
-    rvChile: rv * localShare,
-    rfGlobal: rf * globalShare,
-    rfChile: rf * localShare,
-  };
 }
 
 function assignScenarioIds(points: Phase1Point[]): Phase1Point[] {
@@ -1073,7 +1061,7 @@ export function OptimizationLightPage({
         const candidate = cloneParams(autonomousBase);
         const nextWeights = options?.isCurrentMix
           ? cloneParams(autonomousBase.weights)
-          : buildCandidateWeights(autonomousBase.weights, normalizedRv);
+          : buildRvRfCandidateWeights(autonomousBase.weights, normalizedRv);
         candidate.weights = nextWeights;
         const sim = runSimulationCentral(candidate);
         const point = toPhase1Point(normalizedRv, nextWeights, sim, options);
