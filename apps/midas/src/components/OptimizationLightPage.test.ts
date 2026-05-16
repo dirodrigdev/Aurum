@@ -10,6 +10,8 @@ import {
   DECISION_EXPRESS_STEP_PP,
   IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP,
   OptimizationLightPage,
+  buildFinancialReferenceParams,
+  buildSimulationReconciliationMessage,
   buildCurrentVsMidasComparisonRows,
   buildCurrentVsMidasTradeoffs,
   buildOptimizationConfirmationShortlist,
@@ -19,6 +21,7 @@ import {
   classifyImplementationMateriality,
   selectClosestDiscardedCompetitor,
   selectFinancialOptimumCandidate,
+  type FinancialReferenceCandidate,
 } from './OptimizationLightPage';
 
 function buildWeights(rvGlobal: number, rvChile: number, rfGlobal: number, rfChile: number): PortfolioWeights {
@@ -202,15 +205,35 @@ function buildProfiles(rows: RvRfDecisionCandidate[]): RvRfDecisionProfiles {
   };
 }
 
+function buildFinancialCandidate(overrides: Partial<FinancialReferenceCandidate> & { rvPct: number }): FinancialReferenceCandidate {
+  const { rvPct, ...rest } = overrides;
+  return {
+    candidateId: `financial_${rvPct}`,
+    mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
+    rvPct,
+    rfPct: 100 - rvPct,
+    success40: 0.9,
+    ruin20: 0.08,
+    ruinP10: 20,
+    drawdownP50: 0.25,
+    terminalWealthP50: 1_000_000_000,
+    weights: buildWeights(rvPct / 200, rvPct / 200, (100 - rvPct) / 200, (100 - rvPct) / 200),
+    ...rest,
+  };
+}
+
 const expressGrid = buildOptimizationExpressGrid();
 assert.deepEqual(expressGrid, [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 assert.equal(expressGrid[1] - expressGrid[0], DECISION_EXPRESS_STEP_PP);
+const expressWithCurrent = buildOptimizationExpressGrid(59.2);
+assert(expressWithCurrent.includes(59.2));
+assert(expressWithCurrent.includes(60));
 
 const zoomShortlist = buildOptimizationZoomShortlist({
   preliminaryRecommendationRv: 60,
   defensiveReferenceRv: 25,
   technicalPreludeRv: 55,
-  currentRv: 59,
+  currentRv: 59.2,
 });
 assert(zoomShortlist.includes(50));
 assert(zoomShortlist.includes(55));
@@ -220,6 +243,7 @@ assert(zoomShortlist.includes(70));
 assert(zoomShortlist.includes(25));
 assert(zoomShortlist.includes(80));
 assert(zoomShortlist.includes(100));
+assert(zoomShortlist.includes(59.2));
 assert.equal(new Set(zoomShortlist).size, zoomShortlist.length);
 assert.equal(zoomShortlist[0], 15);
 assert.equal(zoomShortlist[zoomShortlist.length - 1], 100);
@@ -238,7 +262,7 @@ const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
   defensiveReferenceRv: 25,
   technicalPreludeRv: 55,
-  currentRv: 59,
+  currentRv: 59.2,
 });
 assert(confirmationShortlist.length < 21);
 assert(confirmationShortlist.includes(50));
@@ -247,6 +271,7 @@ assert(confirmationShortlist.includes(60));
 assert(confirmationShortlist.includes(65));
 assert(confirmationShortlist.includes(70));
 assert(confirmationShortlist.includes(100));
+assert(confirmationShortlist.includes(59.2));
 
 const decisionProfiles = buildProfiles([
   buildDecisionCandidate({ rvPct: 25, terminalWealthP50: 1_000_000_000, qasrAt120: 0.89 }),
@@ -254,21 +279,54 @@ const decisionProfiles = buildProfiles([
   buildDecisionCandidate({ rvPct: 80, terminalWealthP50: 5_000_000_000, qasrAt120: 0.905 }),
   buildDecisionCandidate({ rvPct: 100, terminalWealthP50: 4_000_000_000, qasrAt120: 0.88 }),
 ]);
-assert.equal(selectFinancialOptimumCandidate(decisionProfiles)?.rvPct, 80);
+const financialReferenceParams = buildFinancialReferenceParams(buildParams());
+assert.equal(financialReferenceParams.realEstatePolicy?.enabled, false);
+assert.equal(financialReferenceParams.spendingRule.consecutiveMonths, 999);
+assert.equal(financialReferenceParams.spendingRule.dd15Threshold, 10);
+assert.equal(financialReferenceParams.spendingRule.dd25Threshold, 10);
+const financialWinner = selectFinancialOptimumCandidate([
+  buildFinancialCandidate({ rvPct: 25, success40: 0.92, ruin20: 0.05, terminalWealthP50: 1_000_000_000 }),
+  buildFinancialCandidate({ rvPct: 80, success40: 0.90, ruin20: 0.04, terminalWealthP50: 9_000_000_000 }),
+]);
+assert.equal(financialWinner?.rvPct, 25);
 const discarded = selectClosestDiscardedCompetitor({
   profiles: decisionProfiles,
   mainRecommendation: decisionProfiles.rows[1],
   defensiveReference: decisionProfiles.rows[0],
   headroomAlternative: null,
   benchmarkExtreme: decisionProfiles.rows[3],
+  financialReference: financialWinner,
 });
-assert.equal(discarded.candidate?.rvPct, 80);
 assert(discarded.reason.length > 0);
+const runnerUpProfiles = buildProfiles([
+  buildDecisionCandidate({ rvPct: 25, qasrAt120: 0.88 }),
+  buildDecisionCandidate({ rvPct: 60, qasrAt120: 0.9 }),
+  buildDecisionCandidate({ rvPct: 65, qasrAt120: 0.91 }),
+  buildDecisionCandidate({ rvPct: 95, qasrAt120: 0.99 }),
+  buildDecisionCandidate({ rvPct: 100, qasrAt120: 0.87 }),
+]);
+runnerUpProfiles.rows = runnerUpProfiles.rows.map((row) => (
+  row.rvPct === 65
+    ? { ...row, inParetoFrontier: true, tradeoffRatioVsDefensive: 1.8 }
+    : row.rvPct === 95
+      ? { ...row, inParetoFrontier: true, tradeoffRatioVsDefensive: 1.9 }
+      : row
+));
+const interpretableDiscarded = selectClosestDiscardedCompetitor({
+  profiles: runnerUpProfiles,
+  mainRecommendation: runnerUpProfiles.rows.find((row) => row.rvPct === 60) ?? null,
+  defensiveReference: runnerUpProfiles.rows.find((row) => row.rvPct === 25) ?? null,
+  headroomAlternative: null,
+  benchmarkExtreme: runnerUpProfiles.rows.find((row) => row.rvPct === 100) ?? null,
+  financialReference: null,
+});
+assert.equal(interpretableDiscarded.candidate?.rvPct, 65);
+assert.equal(interpretableDiscarded.reason, 'No supera ratio estabilidad/holgura.');
 
 const currentVsRows = buildCurrentVsMidasComparisonRows({
   currentWeights: buildWeights(0.345, 0.247, 0.205, 0.203),
   recommendedWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
-  currentCandidate: buildDecisionCandidate({ rvPct: 59, qasrBase: 0.93, qasrAt120: 0.88, ruinRate: 0.05 }),
+  currentCandidate: buildDecisionCandidate({ rvPct: 59.2, qasrBase: 0.93, qasrAt120: 0.88, ruinRate: 0.05 }),
   recommendedCandidate: buildDecisionCandidate({ rvPct: 60, qasrBase: 0.94, qasrAt120: 0.9, ruinRate: 0.04 }),
 });
 assert(currentVsRows.some((row) => row.label === 'QASR base'));
@@ -282,7 +340,7 @@ assert(currentVsRows.some((row) => row.label === 'Max drawdown P50' && row.curre
 const currentVsTradeoffs = buildCurrentVsMidasTradeoffs({
   currentWeights: buildWeights(0.345, 0.247, 0.205, 0.203),
   recommendedWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
-  currentCandidate: buildDecisionCandidate({ rvPct: 59, qasrAt120: 0.88 }),
+  currentCandidate: buildDecisionCandidate({ rvPct: 59.2, qasrAt120: 0.88 }),
   recommendedCandidate: buildDecisionCandidate({ rvPct: 60, qasrAt120: 0.9 }),
 });
 assert.equal(currentVsTradeoffs.marginal, true);
@@ -340,7 +398,7 @@ assert.equal(recommendedSummary.sleeveValidation.rows[3].label, 'RF local / Chil
 assert.equal(canUseDecisionFlowForImplementation(null), false);
 assert.equal(canUseDecisionFlowForImplementation({
   stage: 'express',
-  badge: 'Express · preliminar',
+  badge: 'Preliminar · Express',
   message: 'tmp',
   nSim: 750,
   stepPp: 10,
@@ -350,7 +408,7 @@ assert.equal(canUseDecisionFlowForImplementation({
 }), false);
 assert.equal(canUseDecisionFlowForImplementation({
   stage: 'zoom',
-  badge: 'Zoom · preliminar refinado',
+  badge: 'Preliminar · Zoom refinado',
   message: 'tmp',
   nSim: 1000,
   stepPp: 5,
@@ -368,6 +426,18 @@ assert.equal(canUseDecisionFlowForImplementation({
   seed: 123,
   implementationEnabled: true,
 }), true);
+assert.equal(
+  buildSimulationReconciliationMessage({ snapshot: { comparable: true }, nSim: 3000, seed: 123 }),
+  'Actual validado contra Simulación.',
+);
+assert.equal(
+  buildSimulationReconciliationMessage({ snapshot: { comparable: false }, nSim: 3000, seed: 123 }),
+  'Actual recalculado en Optimización. No coincide exactamente con la corrida visible de Simulación.',
+);
+assert.equal(
+  buildSimulationReconciliationMessage({ snapshot: null, nSim: 750, seed: 123 }),
+  'Actual recalculado en Optimización con nSim 750 / seed 123.',
+);
 
 const initialMarkup = renderToStaticMarkup(
   React.createElement(OptimizationLightPage, {
@@ -401,7 +471,12 @@ assert(source.includes('DECISION_ZOOM_NSIM = 1000'));
 assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));
 assert(source.includes('Escenarios evaluados por el modelo'));
 assert(source.includes('Qué cambia frente a tu mix actual'));
-assert(source.includes('Comparación directa entre el mix actual de la fuente activa y el Óptimo MIDAS recomendado. No usa el óptimo financiero.'));
+assert(source.includes('Comparación confirmada'));
+assert(source.includes('Comparación preliminar'));
 assert(source.includes('El óptimo financiero queda fuera de este bloque'));
+assert(source.includes('Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo.'));
+assert(source.includes('shortlist refinada con vecinos ±5pp/±10pp'));
+assert(!source.includes('Métrica financiera principal: Patrimonio final P50'));
+assert(!source.includes('Muestra qué mix maximiza el resultado económico'));
 
 console.log('OptimizationLightPage tests passed');

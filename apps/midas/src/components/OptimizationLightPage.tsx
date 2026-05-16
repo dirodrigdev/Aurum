@@ -213,6 +213,20 @@ type DecisionProfilesScenarioTable = {
   scenarioId: 'base' | 'rv_plus_10';
   label: string;
   profiles: RvRfDecisionProfiles;
+  financialReference: FinancialReferenceCandidate | null;
+};
+
+export type FinancialReferenceCandidate = {
+  candidateId: string;
+  mixLabel: string;
+  rvPct: number;
+  rfPct: number;
+  success40: number;
+  ruin20: number;
+  ruinP10: number | null;
+  drawdownP50: number | null;
+  terminalWealthP50: number | null;
+  weights: PortfolioWeights;
 };
 
 type DecisionFlowStage = 'idle' | 'express' | 'zoom' | 'confirmed';
@@ -291,6 +305,15 @@ type DiscardedCompetitor = {
   reason: string;
 };
 
+export type OptimizationSimulationSnapshot = {
+  comparable?: boolean | null;
+  scenarioHash?: string | null;
+  nSim?: number | null;
+  seed?: number | null;
+  probRuin?: number | null;
+  terminalP50?: number | null;
+} | null;
+
 const SHORTLIST_BEST_SUCCESS_BAND = optimizerPolicyConfig.phase1.shortlistBestSuccessBand;
 const SHORTLIST_MIN_RV_DISTANCE = optimizerPolicyConfig.phase1.shortlistMinRvDistancePp;
 const SHORTLIST_TARGET = optimizerPolicyConfig.phase1.shortlistTarget;
@@ -334,7 +357,7 @@ export const DECISION_CONFIRM_NEIGHBOR_STEP_PP = 5;
 export const DECISION_CONFIRM_WIDE_NEIGHBOR_PP = 10;
 
 function clampMixPercent(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
+  return Math.max(0, Math.min(100, Number(value.toFixed(4))));
 }
 
 function cloneParams<T>(params: T): T {
@@ -434,6 +457,10 @@ function formatPctValue(value: number): string {
   return `${(value * 100).toFixed(1).replace('.', ',')}%`;
 }
 
+function formatRvPctLabel(value: number): string {
+  return Number.isInteger(value) ? `${value}` : value.toLocaleString('es-ES', { maximumFractionDigits: 2 });
+}
+
 function formatSignedPp(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)} pp`;
 }
@@ -455,17 +482,41 @@ function findPhase2RowByRvPct(rows: Phase2Point[], rvPct: number): Phase2Point |
   return rows.find((row) => Math.abs(row.source.rvPct - rvPct) <= 0.05) ?? null;
 }
 
-export function buildOptimizationExpressGrid(): number[] {
-  return buildFineRvRfGrid(DECISION_EXPRESS_STEP_PP);
+function currentRvPctExactFromWeights(weights: PortfolioWeights): number {
+  return clampMixPercent((weights.rvGlobal + weights.rvChile) * 100);
+}
+
+function formatDecisionMixLabel(rvPct: number): string {
+  const rv = clampMixPercent(rvPct);
+  const rf = clampMixPercent(100 - rv);
+  return `RV ${formatRvPctLabel(rv)} / RF ${formatRvPctLabel(rf)}`;
+}
+
+function candidateIdForRvPct(rvPct: number, currentRvPct: number | null): string {
+  const rv = clampMixPercent(rvPct);
+  const rf = clampMixPercent(100 - rv);
+  const slug = (value: number) => formatRvPctLabel(value).replace(',', '_').replace('.', '_');
+  if (currentRvPct !== null && Math.abs(rv - currentRvPct) <= 0.0001) {
+    return `current_active_rv_${slug(rv)}_rf_${slug(rf)}`;
+  }
+  return `rv_${slug(rv)}_rf_${slug(rf)}`;
+}
+
+export function buildOptimizationExpressGrid(currentRv?: number | null): number[] {
+  const grid = buildFineRvRfGrid(DECISION_EXPRESS_STEP_PP);
+  if (currentRv !== null && currentRv !== undefined && Number.isFinite(currentRv)) {
+    pushUniqueMix(grid, currentRv);
+  }
+  return grid.sort((a, b) => a - b);
 }
 
 function pushUniqueMix(target: number[], rvPct: number) {
   const clamped = clampMixPercent(rvPct);
-  if (!target.includes(clamped)) target.push(clamped);
+  if (!target.some((value) => Math.abs(value - clamped) <= 0.0001)) target.push(clamped);
 }
 
 function currentRvPctFromWeights(weights: PortfolioWeights): number {
-  return Math.round((weights.rvGlobal + weights.rvChile) * 100);
+  return currentRvPctExactFromWeights(weights);
 }
 
 export function buildOptimizationZoomShortlist(input: {
@@ -617,6 +668,16 @@ export function canUseDecisionFlowForImplementation(status: DecisionFlowStatus |
   return Boolean(status && status.stage === 'confirmed' && status.implementationEnabled);
 }
 
+export function buildSimulationReconciliationMessage(input: {
+  snapshot: OptimizationSimulationSnapshot;
+  nSim: number;
+  seed: number;
+}): string {
+  if (!input.snapshot) return `Actual recalculado en Optimización con nSim ${input.nSim.toLocaleString('es-ES')} / seed ${input.seed}.`;
+  if (input.snapshot.comparable === true) return 'Actual validado contra Simulación.';
+  return 'Actual recalculado en Optimización. No coincide exactamente con la corrida visible de Simulación.';
+}
+
 function score100Value(value: number | null): number | null {
   return value === null || !Number.isFinite(value) ? null : value * 100;
 }
@@ -650,15 +711,20 @@ function formatWeightChange(current: number, recommended: number): string {
 }
 
 export function selectFinancialOptimumCandidate(
-  profiles: RvRfDecisionProfiles | null,
-): RvRfDecisionCandidate | null {
-  if (!profiles?.rows.length) return null;
-  return [...profiles.rows].sort((a, b) => (
-    ((b.terminalWealthP50 ?? Number.NEGATIVE_INFINITY) - (a.terminalWealthP50 ?? Number.NEGATIVE_INFINITY))
-    || ((b.terminalWealthP25 ?? Number.NEGATIVE_INFINITY) - (a.terminalWealthP25 ?? Number.NEGATIVE_INFINITY))
-    || ((score100Value(b.qasrBase) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrBase) ?? Number.NEGATIVE_INFINITY))
+  candidates: FinancialReferenceCandidate[] | null,
+): FinancialReferenceCandidate | null {
+  if (!candidates?.length) return null;
+  return [...candidates].sort((a, b) => (
+    (b.success40 - a.success40)
+    || (a.ruin20 - b.ruin20)
+    || ((b.ruinP10 ?? Number.NEGATIVE_INFINITY) - (a.ruinP10 ?? Number.NEGATIVE_INFINITY))
+    || ((a.drawdownP50 ?? Number.POSITIVE_INFINITY) - (b.drawdownP50 ?? Number.POSITIVE_INFINITY))
     || (a.rvPct - b.rvPct)
   ))[0] ?? null;
+}
+
+export function buildFinancialReferenceParams(params: ModelParameters): ModelParameters {
+  return buildAutonomousParams(params);
 }
 
 export function selectClosestDiscardedCompetitor(input: {
@@ -667,31 +733,54 @@ export function selectClosestDiscardedCompetitor(input: {
   defensiveReference: RvRfDecisionCandidate | null;
   headroomAlternative: RvRfDecisionCandidate | null;
   benchmarkExtreme: RvRfDecisionCandidate | null;
+  financialReference?: FinancialReferenceCandidate | null;
 }): DiscardedCompetitor {
-  const { profiles, mainRecommendation, defensiveReference, headroomAlternative, benchmarkExtreme } = input;
+  const { profiles, mainRecommendation, defensiveReference, headroomAlternative, benchmarkExtreme, financialReference } = input;
   if (!profiles || !mainRecommendation) return { candidate: null, reason: 'No hay suficientes datos para identificar un competidor descartado.' };
   const excluded = new Set([
     mainRecommendation.candidateId,
     defensiveReference?.candidateId,
     headroomAlternative?.candidateId,
     benchmarkExtreme?.candidateId,
+    financialReference?.candidateId,
   ].filter((value): value is string => Boolean(value)));
-  const candidates = profiles.rows
-    .filter((candidate) => !excluded.has(candidate.candidateId))
+  const eligible = profiles.rows
+    .filter((candidate) => !excluded.has(candidate.candidateId) && candidate.passesHardGuardrails);
+  const lessExtremeEligible = eligible.filter((candidate) => candidate.rvPct < 95);
+  const candidatePool = lessExtremeEligible.length ? lessExtremeEligible : eligible;
+
+  const ratioRunnerUp = [...candidatePool]
+    .filter((candidate) => (
+      candidate.inParetoFrontier
+      && candidate.tradeoffRatioVsDefensive !== null
+      && candidate.tradeoffRatioVsDefensive < profiles.ratioUsed
+    ))
     .sort((a, b) => (
-      ((score100Value(b.qasrAt120) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrAt120) ?? Number.NEGATIVE_INFINITY))
-      || ((score100Value(b.qasrBase) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrBase) ?? Number.NEGATIVE_INFINITY))
+      ((b.tradeoffRatioVsDefensive ?? Number.NEGATIVE_INFINITY) - (a.tradeoffRatioVsDefensive ?? Number.NEGATIVE_INFINITY))
       || (Math.abs(a.rvPct - mainRecommendation.rvPct) - Math.abs(b.rvPct - mainRecommendation.rvPct))
-    ));
-  const candidate = candidates[0] ?? null;
-  if (!candidate) return { candidate: null, reason: 'No quedó otro competidor comparable dentro de la malla evaluada.' };
-  const tolerance = profiles.paretoToleranceUsed;
-  const headroomDelta = ((candidate.qasrAt120 ?? 0) - (mainRecommendation.qasrAt120 ?? 0)) * 100;
-  const baseDelta = ((candidate.qasrBase ?? 0) - (mainRecommendation.qasrBase ?? 0)) * 100;
-  if (headroomDelta <= tolerance + 1e-9) return { candidate, reason: 'Mejora de holgura insuficiente frente al Óptimo MIDAS recomendado.' };
-  if (baseDelta < -2) return { candidate, reason: 'Pérdida de calidad base excesiva para usarlo como alternativa principal.' };
-  if (!candidate.passesHardGuardrails) return { candidate, reason: 'No pasa guardrails duros del modelo MIDAS.' };
-  return { candidate, reason: 'No supera el intercambio calidad base / holgura requerido por el modelo.' };
+    ))[0] ?? null;
+  if (ratioRunnerUp) {
+    return { candidate: ratioRunnerUp, reason: 'No supera ratio estabilidad/holgura.' };
+  }
+
+  const paretoRunnerUp = [...candidatePool]
+    .filter((candidate) => candidate.inParetoFrontier)
+    .sort((a, b) => (
+      (Math.abs(a.rvPct - mainRecommendation.rvPct) - Math.abs(b.rvPct - mainRecommendation.rvPct))
+      || ((score100Value(b.qasrBase) ?? Number.NEGATIVE_INFINITY) - (score100Value(a.qasrBase) ?? Number.NEGATIVE_INFINITY))
+    ))[0] ?? null;
+  if (paretoRunnerUp) {
+    const baseDelta = ((paretoRunnerUp.qasrBase ?? 0) - (mainRecommendation.qasrBase ?? 0)) * 100;
+    if (baseDelta < -2) return { candidate: paretoRunnerUp, reason: 'Mejora holgura, pero pierde demasiada calidad base.' };
+    return { candidate: paretoRunnerUp, reason: 'No mejora materialmente frente al recomendado.' };
+  }
+
+  const nearest = [...candidatePool]
+    .sort((a, b) => Math.abs(a.rvPct - mainRecommendation.rvPct) - Math.abs(b.rvPct - mainRecommendation.rvPct))[0] ?? null;
+  if (!nearest) return { candidate: null, reason: 'No hay competidor descartado interpretable en esta corrida.' };
+  if (!nearest.passesHardGuardrails) return { candidate: nearest, reason: 'No pasa guardrails.' };
+  if (nearest.rvPct >= 95) return { candidate: nearest, reason: 'Es demasiado extremo y no hay alternativa menos concentrada equivalente.' };
+  return { candidate: nearest, reason: 'No mejora materialmente frente al recomendado.' };
 }
 
 export function buildCurrentVsMidasComparisonRows(input: {
@@ -778,24 +867,50 @@ export function buildCurrentVsMidasTradeoffs(input: {
   const rvDeltaPp = (recommendedRv - currentRv) * 100;
   const c = input.currentCandidate;
   const r = input.recommendedCandidate;
-  const pushDirectional = (delta: number | null, positiveIsGain: boolean, formatter: (value: number) => string) => {
-    if (delta === null || !Number.isFinite(delta) || Math.abs(delta) < 0.15) return;
+  const pushDirectional = (delta: number | null, positiveIsGain: boolean, threshold: number, formatter: (value: number) => string) => {
+    if (delta === null || !Number.isFinite(delta) || Math.abs(delta) < threshold) return;
     const text = formatter(delta);
     if ((delta > 0 && positiveIsGain) || (delta < 0 && !positiveIsGain)) gains.push(text);
     else sacrifices.push(text);
   };
   pushDirectional(
+    c?.qasrBase !== null && c?.qasrBase !== undefined && r?.qasrBase !== null && r?.qasrBase !== undefined
+      ? (r.qasrBase - c.qasrBase) * 100
+      : null,
+    true,
+    0.15,
+    (delta) => `${delta >= 0 ? 'Ganas' : 'Pierdes'} ${formatScoreDeltaPoints(delta)} de QASR base.`,
+  );
+  pushDirectional(
     c?.qasrAt120 !== null && c?.qasrAt120 !== undefined && r?.qasrAt120 !== null && r?.qasrAt120 !== undefined
       ? (r.qasrAt120 - c.qasrAt120) * 100
       : null,
     true,
+    0.15,
     (delta) => `${delta >= 0 ? 'Ganas' : 'Pierdes'} ${formatScoreDeltaPoints(delta)} de QASR +20.`,
+  );
+  pushDirectional(
+    c?.qasrAt130 !== null && c?.qasrAt130 !== undefined && r?.qasrAt130 !== null && r?.qasrAt130 !== undefined
+      ? (r.qasrAt130 - c.qasrAt130) * 100
+      : null,
+    true,
+    0.15,
+    (delta) => `${delta >= 0 ? 'Ganas' : 'Pierdes'} ${formatScoreDeltaPoints(delta)} de QASR +30.`,
+  );
+  pushDirectional(
+    c?.csrBase !== null && c?.csrBase !== undefined && r?.csrBase !== null && r?.csrBase !== undefined
+      ? (r.csrBase - c.csrBase) * 100
+      : null,
+    true,
+    0.5,
+    (delta) => `La CSR cambia ${formatSignedPp(delta)}.`,
   );
   pushDirectional(
     c?.ruinRate !== null && c?.ruinRate !== undefined && r?.ruinRate !== null && r?.ruinRate !== undefined
       ? (r.ruinRate - c.ruinRate) * 100
       : null,
     false,
+    0.5,
     () => `La ruina cambia de ${formatPctOrNA(c?.ruinRate ?? null)} a ${formatPctOrNA(r?.ruinRate ?? null)}.`,
   );
   pushDirectional(
@@ -803,14 +918,42 @@ export function buildCurrentVsMidasTradeoffs(input: {
       ? r.monthsInSevereCutMean - c.monthsInSevereCutMean
       : null,
     false,
+    1,
     (delta) => `El recorte severo promedio ${delta < 0 ? 'baja' : 'sube'} ${Math.abs(delta).toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses.`,
   );
   pushDirectional(
-    c?.terminalWealthP50 !== null && c?.terminalWealthP50 !== undefined && r?.terminalWealthP50 !== null && r?.terminalWealthP50 !== undefined
-      ? r.terminalWealthP50 - c.terminalWealthP50
+    c?.maxConsecutiveSevereCutMonthsP75 !== null && c?.maxConsecutiveSevereCutMonthsP75 !== undefined && r?.maxConsecutiveSevereCutMonthsP75 !== null && r?.maxConsecutiveSevereCutMonthsP75 !== undefined
+      ? r.maxConsecutiveSevereCutMonthsP75 - c.maxConsecutiveSevereCutMonthsP75
+      : null,
+    false,
+    1,
+    (delta) => `La racha severa P75 ${delta < 0 ? 'baja' : 'sube'} ${Math.abs(delta).toLocaleString('es-ES', { maximumFractionDigits: 1 })} meses.`,
+  );
+  pushDirectional(
+    c?.houseSaleRate !== null && c?.houseSaleRate !== undefined && r?.houseSaleRate !== null && r?.houseSaleRate !== undefined
+      ? (r.houseSaleRate - c.houseSaleRate) * 100
+      : null,
+    false,
+    1,
+    () => `La venta de casa cambia de ${formatPctOrNA(c?.houseSaleRate ?? null)} a ${formatPctOrNA(r?.houseSaleRate ?? null)}.`,
+  );
+  if (gains.length < 3 && sacrifices.length < 3) {
+    pushDirectional(
+      c?.terminalWealthP50 !== null && c?.terminalWealthP50 !== undefined && r?.terminalWealthP50 !== null && r?.terminalWealthP50 !== undefined
+        ? r.terminalWealthP50 - c.terminalWealthP50
+        : null,
+      true,
+      1,
+      (delta) => `El P50 final ${delta >= 0 ? 'sube' : 'baja'} ${formatClpShort(Math.abs(delta))}.`,
+    );
+  }
+  pushDirectional(
+    c?.terminalWealthP25 !== null && c?.terminalWealthP25 !== undefined && r?.terminalWealthP25 !== null && r?.terminalWealthP25 !== undefined
+      ? r.terminalWealthP25 - c.terminalWealthP25
       : null,
     true,
-    (delta) => `El P50 final ${delta >= 0 ? 'sube' : 'baja'} ${formatClpShort(Math.abs(delta))}.`,
+    Number.POSITIVE_INFINITY,
+    (delta) => `El P25 final ${delta >= 0 ? 'sube' : 'baja'} ${formatClpShort(Math.abs(delta))}.`,
   );
   if (Math.abs(rvDeltaPp) >= 0.5) {
     const text = `La RV ${rvDeltaPp >= 0 ? 'sube' : 'baja'} ${Math.abs(rvDeltaPp).toFixed(1)} pp.`;
@@ -1666,11 +1809,13 @@ export function OptimizationLightPage({
   simulationParams,
   simulationActive,
   simulationLabel,
+  simulationSnapshot = null,
 }: {
   baseParams: ModelParameters;
   simulationParams: ModelParameters;
   simulationActive: boolean;
   simulationLabel?: string;
+  simulationSnapshot?: OptimizationSimulationSnapshot;
 }) {
   const [mode, setMode] = useState<OptimizationMode>('light');
   const [sourceMode, setSourceMode] = useState<SourceMode>(simulationActive ? 'simulation' : 'base');
@@ -2120,12 +2265,33 @@ export function OptimizationLightPage({
       const baseScenarioParams = cloneParams(scenarioAdjusted.params);
       baseScenarioParams.simulation.nSim = input.nSim;
       const rows: RvRfDecisionCandidate[] = [];
+      const financialRows: FinancialReferenceCandidate[] = [];
 
       for (const rvPct of input.rvCandidates) {
         if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
         const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
-        const candidateId = `rv_${rvPct}_rf_${100 - rvPct}`;
+        const currentRv = currentRvPctExactFromWeights(activeParams.weights);
+        const candidateId = candidateIdForRvPct(rvPct, currentRv);
         const evaluations: SpendingHeadroomEvaluationResult[] = [];
+
+        if (scenarioDef.id === 'base') {
+          const autonomous = buildFinancialReferenceParams(activeParams);
+          autonomous.weights = cloneParams(weights);
+          autonomous.simulation.nSim = input.nSim;
+          const financialSim = runSimulationCentral(autonomous);
+          financialRows.push({
+            candidateId,
+            mixLabel: formatDecisionMixLabel(rvPct),
+            rvPct: clampMixPercent(rvPct),
+            rfPct: clampMixPercent(100 - rvPct),
+            success40: financialSim.success40 ?? (1 - (financialSim.probRuin40 ?? financialSim.probRuin)),
+            ruin20: financialSim.probRuin20 ?? 0,
+            ruinP10: Number.isFinite(financialSim.ruinTimingP10 ?? Number.NaN) ? (financialSim.ruinTimingP10 as number) : null,
+            drawdownP50: financialSim.maxDrawdownPercentiles[50] ?? null,
+            terminalWealthP50: financialSim.p50TerminalAllPaths ?? financialSim.terminalWealthPercentiles[50] ?? null,
+            weights: cloneParams(weights),
+          });
+        }
 
         for (const spendScale of SPENDING_HEADROOM_SCALES) {
           if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
@@ -2186,9 +2352,9 @@ export function OptimizationLightPage({
 
         rows.push({
           candidateId,
-          mixLabel: `RV ${rvPct} / RF ${100 - rvPct}`,
-          rvPct,
-          rfPct: 100 - rvPct,
+          mixLabel: formatDecisionMixLabel(rvPct),
+          rvPct: clampMixPercent(rvPct),
+          rfPct: clampMixPercent(100 - rvPct),
           rvReal: baseEval.rvReal,
           rfReal: baseEval.rfReal,
           qasrBase: baseEval.qasrStrict,
@@ -2212,6 +2378,7 @@ export function OptimizationLightPage({
         scenarioId: scenarioDef.id,
         label: scenarioDef.label,
         profiles: buildDecisionProfiles(rows, input.nSim),
+        financialReference: selectFinancialOptimumCandidate(financialRows),
       });
     }
 
@@ -2246,8 +2413,8 @@ export function OptimizationLightPage({
     decisionCancelRequestedRef.current = false;
     setDecisionFlowStatus({
       stage: 'express',
-      badge: 'Express · preliminar',
-      message: 'Preparando resultado rápido para explorar.',
+      badge: 'Preliminar · Express',
+      message: 'Resultado rápido para explorar. No implementar.',
       nSim: DECISION_EXPRESS_NSIM,
       stepPp: DECISION_EXPRESS_STEP_PP,
       candidateCount: 0,
@@ -2256,20 +2423,20 @@ export function OptimizationLightPage({
     });
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      const expressCandidates = buildOptimizationExpressGrid();
+      const expressCandidates = buildOptimizationExpressGrid(currentRvPctExactFromWeights(activeParams.weights));
       const expressTables = await evaluateDecisionProfilesStage({
         stage: 'express',
-        badge: 'Express · preliminar',
-        message: 'Resultado rápido para explorar. Confirma con simulación completa antes de implementar.',
+        badge: 'Preliminar · Express',
+        message: 'Resultado rápido para explorar. No implementar.',
         nSim: DECISION_EXPRESS_NSIM,
         stepPp: DECISION_EXPRESS_STEP_PP,
         rvCandidates: expressCandidates,
         implementationEnabled: false,
       });
       const expressBaseProfiles = expressTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
+      const expressFinancial = expressTables.find((table) => table.scenarioId === 'base')?.financialReference ?? null;
       const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
-      const expressFinancial = selectFinancialOptimumCandidate(expressBaseProfiles);
 
       const zoomCandidates = buildOptimizationZoomShortlist({
         preliminaryRecommendationRv: expressMain?.rvPct ?? null,
@@ -2280,10 +2447,10 @@ export function OptimizationLightPage({
 
       const zoomTables = await evaluateDecisionProfilesStage({
         stage: 'zoom',
-        badge: 'Zoom · preliminar refinado',
-        message: 'Resultado preliminar refinado. Confirma con simulación completa antes de implementar.',
+        badge: 'Preliminar · Zoom refinado',
+        message: 'Resultado refinado, pero aún no confirmado. No implementar. Shortlist refinada con vecinos ±5pp/±10pp.',
         nSim: DECISION_ZOOM_NSIM,
-        stepPp: DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+        stepPp: null,
         rvCandidates: zoomCandidates,
         implementationEnabled: false,
       });
@@ -2328,8 +2495,8 @@ export function OptimizationLightPage({
       const shortlist = buildOptimizationConfirmationShortlist({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
-        technicalPreludeRv: selectFinancialOptimumCandidate(baseDecisionProfiles)?.rvPct ?? null,
-        currentRv: currentRvPctFromWeights(activeParams.weights),
+        technicalPreludeRv: financialOptimum?.rvPct ?? null,
+        currentRv: currentRvPctExactFromWeights(activeParams.weights),
       });
       const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(5);
       const confirmedTables = await evaluateDecisionProfilesStage({
@@ -2474,18 +2641,22 @@ export function OptimizationLightPage({
     () => decisionProfilesTables.find((table) => table.scenarioId === 'base')?.profiles ?? null,
     [decisionProfilesTables],
   );
+  const baseDecisionTable = useMemo(
+    () => decisionProfilesTables.find((table) => table.scenarioId === 'base') ?? null,
+    [decisionProfilesTables],
+  );
   const officialMainRecommendation = baseDecisionProfiles?.primaryRecommendation ?? null;
   const officialDefensiveReference = baseDecisionProfiles?.defensiveReference ?? null;
   const officialHeadroomAlternative = baseDecisionProfiles?.headroomAlternative ?? null;
   const officialBenchmarkExtreme = baseDecisionProfiles?.benchmarkExtreme ?? null;
   const financialOptimum = useMemo(
-    () => selectFinancialOptimumCandidate(baseDecisionProfiles),
-    [baseDecisionProfiles],
+    () => baseDecisionTable?.financialReference ?? null,
+    [baseDecisionTable],
   );
   const currentDecisionCandidate = useMemo(() => {
     if (!baseDecisionProfiles) return null;
-    const currentRv = currentRvPctFromWeights(activeParams.weights);
-    return baseDecisionProfiles.rows.find((row) => Math.abs(row.rvPct - currentRv) <= 0.05) ?? null;
+    const currentId = candidateIdForRvPct(currentRvPctExactFromWeights(activeParams.weights), currentRvPctExactFromWeights(activeParams.weights));
+    return baseDecisionProfiles.rows.find((row) => row.candidateId === currentId) ?? null;
   }, [activeParams.weights, baseDecisionProfiles]);
   const recommendedDecisionWeights = useMemo(
     () => (officialMainRecommendation ? buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct) : null),
@@ -2498,8 +2669,9 @@ export function OptimizationLightPage({
       defensiveReference: officialDefensiveReference,
       headroomAlternative: officialHeadroomAlternative,
       benchmarkExtreme: officialBenchmarkExtreme,
+      financialReference: financialOptimum,
     }),
-    [baseDecisionProfiles, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, officialMainRecommendation],
+    [baseDecisionProfiles, financialOptimum, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, officialMainRecommendation],
   );
   const currentVsMidasRows = useMemo(
     () => (officialMainRecommendation && recommendedDecisionWeights
@@ -2522,6 +2694,14 @@ export function OptimizationLightPage({
       })
       : null),
     [activeParams.weights, currentDecisionCandidate, officialMainRecommendation, recommendedDecisionWeights],
+  );
+  const currentReconciliationMessage = useMemo(
+    () => buildSimulationReconciliationMessage({
+      snapshot: simulationActive ? simulationSnapshot : null,
+      nSim: decisionFlowStatus?.nSim ?? activeParams.simulation.nSim,
+      seed: decisionFlowStatus?.seed ?? activeParams.simulation.seed ?? 0,
+    }),
+    [activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, simulationActive, simulationSnapshot],
   );
   const officialMainRecommendationRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
@@ -2644,8 +2824,8 @@ export function OptimizationLightPage({
   }, [officialMainRecommendationSourceRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
   const decisionImplementationReady = useMemo(
-    () => canUseDecisionFlowForImplementation(decisionFlowStatus),
-    [decisionFlowStatus],
+    () => canUseDecisionFlowForImplementation(decisionFlowStatus) && Boolean(currentDecisionCandidate),
+    [currentDecisionCandidate, decisionFlowStatus],
   );
   const activeScenarioAfterPhase2 = useMemo(
     () => phase2ImplementationSelectedRow,
@@ -3233,10 +3413,15 @@ export function OptimizationLightPage({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>{decisionFlowStatus.badge}</span>
               <span style={{ color: T.textMuted, fontSize: 10 }}>
-                nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ''}
+                nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ' · shortlist refinada con vecinos ±5pp/±10pp'}
               </span>
             </div>
             <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
+            {decisionFlowStatus.stage === 'zoom' ? (
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Puede aparecer un mix fuera de múltiplos de 5 porque el refinamiento local parte desde semillas exactas.
+              </div>
+            ) : null}
             {decisionProgress ? (
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Progreso: {decisionProgress.stage} · {decisionProgress.evaluated}/{decisionProgress.total} corridas · nSim {decisionProgress.nSim.toLocaleString('es-ES')} · seed {decisionProgress.seed}
@@ -3247,9 +3432,22 @@ export function OptimizationLightPage({
         ) : null}
         {officialMainRecommendation ? (
           <>
-            <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
-              <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
-              <div style={{ color: '#fff', fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
+            <div style={{
+              border: `1px solid ${decisionFlowStatus?.stage === 'confirmed' ? T.primary : T.border}`,
+              borderRadius: 12,
+              padding: 12,
+              background: decisionFlowStatus?.stage === 'confirmed' ? '#0d1224' : T.surfaceEl,
+              display: 'grid',
+              gap: 7,
+              opacity: decisionFlowStatus?.stage === 'confirmed' ? 1 : 0.88,
+            }}>
+              {decisionFlowStatus?.stage !== 'confirmed' ? (
+                <div style={{ color: T.warning, fontSize: 11, fontWeight: 900 }}>
+                  {decisionFlowStatus?.stage === 'zoom' ? 'Preliminar · Zoom refinado' : 'Preliminar · Express'} · No implementar
+                </div>
+              ) : null}
+              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
+              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
                 Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
               </div>
@@ -3268,10 +3466,10 @@ export function OptimizationLightPage({
                 </div>
                 <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>{financialOptimum.mixLabel}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-                  Referencia puramente financiera. Muestra qué mix maximiza el resultado económico antes de ponderar calidad de vida, recortes, estabilidad y holgura del modelo MIDAS.
+                  Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo. No es la recomendación final.
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Métrica financiera principal: Patrimonio final P50 {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation.mixLabel}).`}
+                  Métrica financiera usada: éxito {formatPct(financialOptimum.success40)} · ruina20 {formatPct(financialOptimum.ruin20)} · MaxDD P50 {formatPctOrNA(financialOptimum.drawdownP50)} · P50 terminal informativo {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation.mixLabel}).`}
                 </div>
               </div>
             ) : null}
@@ -3333,8 +3531,12 @@ export function OptimizationLightPage({
             <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Qué cambia frente a tu mix actual</div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Comparación directa entre el mix actual de la fuente activa y el Óptimo MIDAS recomendado. No usa el óptimo financiero.
+                {decisionFlowStatus?.stage === 'confirmed' ? 'Comparación confirmada' : 'Comparación preliminar'} entre el mix actual exacto de la fuente activa y el Óptimo MIDAS recomendado. No usa el óptimo financiero.
               </div>
+              <div style={{ color: currentDecisionCandidate ? T.textMuted : T.warning, fontSize: 10 }}>
+                {currentDecisionCandidate ? currentReconciliationMessage : 'Mix actual pendiente de evaluar en esta etapa.'}
+              </div>
+              {currentDecisionCandidate ? (
               <div style={{ display: 'grid', gap: 5 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10, fontWeight: 800 }}>
                   <div>Variable</div>
@@ -3351,6 +3553,7 @@ export function OptimizationLightPage({
                   </div>
                 ))}
               </div>
+              ) : null}
               {currentVsMidasTradeoffs ? (
                 <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                   <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
@@ -3388,7 +3591,9 @@ export function OptimizationLightPage({
         </div>
         {!decisionImplementationReady ? (
           <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
-            Confirma con simulación completa antes de implementar.
+            {decisionFlowStatus?.stage === 'confirmed' && !currentDecisionCandidate
+              ? 'No se pudo evaluar el mix actual exacto. No se puede comparar ni implementar.'
+              : 'Confirma con simulación completa antes de implementar.'}
           </div>
         ) : null}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

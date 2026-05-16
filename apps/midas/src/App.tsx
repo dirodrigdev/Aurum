@@ -4535,6 +4535,7 @@ export default function App() {
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
+      simulationSnapshot={simulationOptimizerSnapshot}
     />
   );
 
