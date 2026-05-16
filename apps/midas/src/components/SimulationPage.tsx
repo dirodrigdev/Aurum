@@ -183,6 +183,8 @@ const buildLongevityPlus5Params = (baseParams: ModelParameters): ModelParameters
 
 type TrafficLight = 'green' | 'yellow' | 'red' | 'neutral';
 
+type SourceBadgeTone = 'ok' | 'warning' | 'alert' | 'neutral';
+
 const TRAFFIC_COLORS: Record<TrafficLight, string> = {
   green: '#32c97b',
   yellow: '#f4b740',
@@ -197,6 +199,39 @@ function classifyThreshold(value: number | null, thresholds: { greenMax?: number
   if (thresholds.greenMin !== undefined && value >= thresholds.greenMin) return 'green';
   if (thresholds.yellowMin !== undefined && value >= thresholds.yellowMin) return 'yellow';
   return 'red';
+}
+
+const sourceBadgeTonePresentation = (tone: SourceBadgeTone) => {
+  if (tone === 'ok') return { color: T.positive, bg: 'rgba(61, 212, 141, 0.14)', border: 'rgba(61, 212, 141, 0.35)' };
+  if (tone === 'warning') return { color: T.warning, bg: 'rgba(255, 176, 32, 0.14)', border: 'rgba(255, 176, 32, 0.35)' };
+  if (tone === 'alert') return { color: T.negative, bg: 'rgba(255, 106, 106, 0.14)', border: 'rgba(255, 106, 106, 0.35)' };
+  return { color: T.textMuted, bg: 'rgba(148, 163, 184, 0.14)', border: 'rgba(148, 163, 184, 0.35)' };
+};
+
+function SourceBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: SourceBadgeTone;
+}) {
+  const ui = sourceBadgeTonePresentation(tone);
+  return (
+    <span
+      style={{
+        color: ui.color,
+        background: ui.bg,
+        border: `1px solid ${ui.border}`,
+        borderRadius: 999,
+        padding: '2px 7px',
+        fontSize: 10,
+        fontWeight: 800,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 export function SimulationPage({
@@ -1115,6 +1150,7 @@ export function SimulationPage({
     : null;
   const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
+  const eurUsdModelValue = Number(params.fx.usdEurFixed ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
@@ -1161,6 +1197,45 @@ export function SimulationPage({
     if (!Number.isFinite(totalNetWorthVisibleClp) || totalNetWorthVisibleClp === null || capitalSentToMotorClp === null) return null;
     return totalNetWorthVisibleClp - capitalSentToMotorClp;
   }, [capitalSentToMotorClp, totalNetWorthVisibleClp]);
+  const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
+  const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
+  const patrimonioSourceWarning = snapshotApplied
+    ? null
+    : hasPendingSnapshot
+      ? 'Hay un snapshot Aurum detectado pendiente de aplicar.'
+      : 'Esta corrida usa base local; puede diferir de Aurum.';
+  const mixSourceTone: SourceBadgeTone = weightsSourceMode === 'instrument-universe'
+    ? (universeSourceOrigin === 'firestore' ? 'ok' : universeSourceOrigin === 'bundled' ? 'warning' : 'warning')
+    : 'alert';
+  const mixSourceWarning = weightsSourceMode === 'instrument-universe'
+    ? universeSourceOrigin === 'cache-local'
+      ? 'El mix aperturado por instrumento está usando copia local.'
+      : universeSourceOrigin === 'bundled'
+        ? 'El mix aperturado por instrumento está usando versión interna de respaldo.'
+        : null
+    : 'El mix aperturado por instrumento no está disponible y se está usando un respaldo.';
+  const usdFxSourceSummary = usingPrimaryFx
+    ? 'Aurum current'
+    : operativeFxResolution.reasonCode === 'manual_override_applied'
+      ? 'Manual local'
+      : operativeFxResolution.aurumSource?.includes('closure')
+        ? 'Aurum cierre'
+        : 'Fallback operativo';
+  const usdFxTone: SourceBadgeTone = usingPrimaryFx
+    ? 'ok'
+    : operativeFxResolution.reasonCode === 'manual_override_applied'
+      ? 'warning'
+      : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+        ? 'alert'
+        : 'warning';
+  const usdFxWarning = usingPrimaryFx
+    ? null
+    : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+      ? 'Aurum publica un FX current usable, pero esta corrida está aplicando fallback operativo.'
+      : 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.';
+  const eurFxSourceSummary = 'Estructural del modelo';
+  const eurFxTone: SourceBadgeTone = 'warning';
+  const eurFxWarning = 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -1440,6 +1515,216 @@ export function SimulationPage({
   const heroQuestion = heroHorizonYears !== null
     ? `¿Llegarás a ${heroHorizonYears} años?`
     : '¿Llegarás al horizonte objetivo?';
+  const appliedDataTechnicalBlock = (
+    <div
+      style={{
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: 10,
+        padding: isMobileViewport ? '7px 8px' : '8px 10px',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'grid', gap: 2 }}>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+          Datos aplicados automáticamente
+        </div>
+        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+          {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 5 }}>
+        {appliedTraceRows.map((row) => {
+          const isOpen = Boolean(openTraceRows[row.id]);
+          const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
+          return (
+            <div
+              key={row.id}
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                borderRadius: 8,
+                padding: isMobileViewport ? '5px 7px' : '6px 9px',
+                display: 'grid',
+                gap: 4,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => toggleTraceRow(row.id)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  margin: 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  color: 'inherit',
+                  display: 'grid',
+                  gap: 2,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+                      {row.name}
+                    </span>
+                    <span
+                      style={{
+                        color: severityColor,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        background: 'rgba(148,163,184,0.12)',
+                        border: '1px solid rgba(148,163,184,0.25)',
+                        borderRadius: 999,
+                        padding: '2px 7px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {row.severity}
+                    </span>
+                  </div>
+                  <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
+                    {isOpen ? '▴' : '▾'}
+                  </span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                  Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                </div>
+              </button>
+              {isOpen && (
+                <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Respaldo: {row.fallback
+                      ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
+                      : 'Sin respaldo definido'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Cuándo: {row.appliedAt}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+  const inputM8TechnicalBlock = (
+    <div
+      style={{
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: 10,
+        padding: isMobileViewport ? '7px 8px' : '9px 10px',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+          Input M8: {m8InputFingerprint.hash} · {cloudHydrationReady ? 'cloud' : 'mixto cloud/cache'} · seed {Number(params.simulation?.seed ?? 0)} · nSim {Number(params.simulation?.nSim ?? 0)}
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            const runtimeDiagnostics =
+              (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+            const instrumentUniverseDiagnostics =
+              (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
+            const simulationRunDiagnostics = {
+              simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
+              simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
+              simulationRunCompletedAt: runtimeDiagnostics.simulationRunCompletedAt ?? null,
+              simulationRunError: runtimeDiagnostics.simulationRunError ?? null,
+              blockedReason: runtimeDiagnostics.blockedReason ?? null,
+              effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+              lastRunInputHash: runtimeDiagnostics.lastRunInputHash ?? null,
+              lastRenderedResultHash: runtimeDiagnostics.lastRenderedResultHash ?? null,
+              resultMetricsAvailable: runtimeDiagnostics.resultMetricsAvailable ?? false,
+              resultSource: runtimeDiagnostics.resultSource ?? 'none',
+              staleResult:
+                runtimeDiagnostics.lastRenderedResultHash != null
+                  ? runtimeDiagnostics.lastRenderedResultHash !== m8InputFingerprint.effectiveEngineInputHash
+                  : Boolean(runtimeDiagnostics.staleResult ?? false),
+              heroMetricsSource: runtimeDiagnostics.heroMetricsSource ?? 'none',
+            };
+            const payload = JSON.stringify({
+              fingerprint: m8InputFingerprint.hash,
+              effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+              diagnosticHash: m8InputFingerprint.diagnosticHash,
+              hashIncludesDiagnostics: m8InputFingerprint.hashIncludesDiagnostics,
+              createdAt: m8InputFingerprint.createdAt,
+              sources: m8InputFingerprint.sources,
+              warnings: m8InputFingerprint.warnings,
+              normalizedInput: m8InputFingerprint.normalizedInput,
+              diagnosticInput: m8InputFingerprint.diagnosticInput,
+              instrumentUniverseDiagnostics,
+              simulationRunDiagnostics,
+              simulationResultDiagnostics,
+              resultConfidence,
+              assumptionModeDiagnostics,
+            }, null, 2);
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(payload);
+              return;
+            }
+            window.prompt('Copiar input M8 aplicado', payload);
+          }}
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.surfaceEl,
+            color: T.textPrimary,
+            borderRadius: 999,
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '5px 9px',
+            cursor: 'pointer',
+          }}
+        >
+          Copiar input M8 aplicado
+        </button>
+      </div>
+      <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+        Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
+        {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
+      </div>
+      {!cloudHydrationReady && (
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          Sincronizando fuentes canónicas... resultado provisional desde cache local.
+        </div>
+      )}
+      {m8InputFingerprint.warnings.length > 0 && (
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          {m8InputFingerprint.warnings.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
@@ -1515,6 +1800,12 @@ export function SimulationPage({
   };
   const nSimOptions = [1000, 3000, 5000] as const;
   const currentNSim = Number(params.simulation?.nSim ?? 1000);
+  const scenarioStatusItems = useMemo(() => ([
+    { label: 'Escenario', value: scenarioUiLabel },
+    { label: 'nSim', value: String(currentNSim) },
+    { label: 'Depto', value: liquidarDeptoEnabled ? 'ON' : 'OFF' },
+    { label: 'Capital de riesgo en motor', value: riskCapitalEnabled ? 'ON' : 'OFF' },
+  ]), [currentNSim, liquidarDeptoEnabled, riskCapitalEnabled, scenarioUiLabel]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -1894,214 +2185,6 @@ export function SimulationPage({
           <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
         </div>
       )}
-      <div
-        style={{
-          order: 10,
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '8px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
-      >
-        <div style={{ display: 'grid', gap: 2 }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Datos aplicados automáticamente
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
-          </div>
-        </div>
-        <div style={{ display: 'grid', gap: 5 }}>
-          {appliedTraceRows.map((row) => {
-            const isOpen = Boolean(openTraceRows[row.id]);
-            const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
-            return (
-              <div
-                key={row.id}
-                style={{
-                  border: `1px solid ${T.border}`,
-                  background: T.surfaceEl,
-                  borderRadius: 8,
-                  padding: isMobileViewport ? '5px 7px' : '6px 9px',
-                  display: 'grid',
-                  gap: 4,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => toggleTraceRow(row.id)}
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    padding: 0,
-                    margin: 0,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    color: 'inherit',
-                    display: 'grid',
-                    gap: 2,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                      flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
-                        {row.name}
-                      </span>
-                      <span
-                        style={{
-                          color: severityColor,
-                          fontSize: 10,
-                          fontWeight: 800,
-                          background: 'rgba(148,163,184,0.12)',
-                          border: '1px solid rgba(148,163,184,0.25)',
-                          borderRadius: 999,
-                          padding: '2px 7px',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {row.severity}
-                      </span>
-                    </div>
-                    <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
-                      {isOpen ? '▴' : '▾'}
-                    </span>
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
-                  </div>
-                </button>
-                {isOpen && (
-                  <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Respaldo: {row.fallback
-                        ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
-                        : 'Sin respaldo definido'}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Cuándo: {row.appliedAt}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div
-        style={{
-          order: 10,
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '9px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
-            Input M8: {m8InputFingerprint.hash} · {cloudHydrationReady ? 'cloud' : 'mixto cloud/cache'} · seed {Number(params.simulation?.seed ?? 0)} · nSim {Number(params.simulation?.nSim ?? 0)}
-          </div>
-          <button
-            type="button"
-            onClick={async () => {
-              const runtimeDiagnostics =
-                (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
-              const instrumentUniverseDiagnostics =
-                (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
-              const simulationRunDiagnostics = {
-                simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
-                simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
-                simulationRunCompletedAt: runtimeDiagnostics.simulationRunCompletedAt ?? null,
-                simulationRunError: runtimeDiagnostics.simulationRunError ?? null,
-                blockedReason: runtimeDiagnostics.blockedReason ?? null,
-                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
-                lastRunInputHash: runtimeDiagnostics.lastRunInputHash ?? null,
-                lastRenderedResultHash: runtimeDiagnostics.lastRenderedResultHash ?? null,
-                resultMetricsAvailable: runtimeDiagnostics.resultMetricsAvailable ?? false,
-                resultSource: runtimeDiagnostics.resultSource ?? 'none',
-                staleResult:
-                  runtimeDiagnostics.lastRenderedResultHash != null
-                    ? runtimeDiagnostics.lastRenderedResultHash !== m8InputFingerprint.effectiveEngineInputHash
-                    : Boolean(runtimeDiagnostics.staleResult ?? false),
-                heroMetricsSource: runtimeDiagnostics.heroMetricsSource ?? 'none',
-              };
-              const payload = JSON.stringify({
-                fingerprint: m8InputFingerprint.hash,
-                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
-                diagnosticHash: m8InputFingerprint.diagnosticHash,
-                hashIncludesDiagnostics: m8InputFingerprint.hashIncludesDiagnostics,
-                createdAt: m8InputFingerprint.createdAt,
-                sources: m8InputFingerprint.sources,
-                warnings: m8InputFingerprint.warnings,
-                normalizedInput: m8InputFingerprint.normalizedInput,
-                diagnosticInput: m8InputFingerprint.diagnosticInput,
-                instrumentUniverseDiagnostics,
-                simulationRunDiagnostics,
-                simulationResultDiagnostics,
-                resultConfidence,
-                assumptionModeDiagnostics,
-              }, null, 2);
-              if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(payload);
-                return;
-              }
-              window.prompt('Copiar input M8 aplicado', payload);
-            }}
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.surfaceEl,
-              color: T.textPrimary,
-              borderRadius: 999,
-              fontSize: 10,
-              fontWeight: 700,
-              padding: '5px 9px',
-              cursor: 'pointer',
-            }}
-          >
-            Copiar input M8 aplicado
-          </button>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-          Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
-          {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
-        </div>
-        {!cloudHydrationReady && (
-          <div style={{ color: T.warning, fontSize: 10 }}>
-            Sincronizando fuentes canónicas... resultado provisional desde cache local.
-          </div>
-        )}
-        {m8InputFingerprint.warnings.length > 0 && (
-          <div style={{ color: T.warning, fontSize: 10 }}>
-            {m8InputFingerprint.warnings.join(' · ')}
-          </div>
-        )}
-      </div>
       <details
         ref={diagnosticsRef}
         open={diagnosticsOpen}
@@ -2109,9 +2192,11 @@ export function SimulationPage({
         style={{ order: 10 }}
       >
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-          Diagnóstico
+          Ver detalle técnico
         </summary>
         <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+      {appliedDataTechnicalBlock}
+      {inputM8TechnicalBlock}
       <div
         style={{
           background: T.surface,
@@ -2412,157 +2497,270 @@ export function SimulationPage({
             <span style={{ color: T.textMuted, fontSize: 11 }}>{simulationDataOpen ? 'Ocultar detalle' : 'Ver detalle'}</span>
           </div>
           <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 700, marginTop: 4 }}>
-            Capital usado {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'} · {scenarioUiLabel} · {currentNSim} sim · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskCapitalEnabled ? 'ON' : 'OFF'}
+            {scenarioStatusItems.map((item) => `${item.label}: ${item.value}`).join(' · ')}
           </div>
         </summary>
         <div style={{ marginTop: 8 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6, marginBottom: 10 }}>
-        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
-          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
-        </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital usado por el motor</div>
-          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
-        </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
-          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
-        </div>
-        <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-          <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
-          <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
-          <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-            Patrimonio mostrado en Aurum que no entra en esta simulación.
-          </div>
-        </div>
-      </div>
-      <div style={{ color: T.textMuted, fontSize: 10, marginBottom: 8 }}>
-        Aurum: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Mix aperturado por instrumento: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{mixTrustSourceLabel}</span> · FX: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}{Number.isFinite(params.fx.usdEurFixed) ? ` · EUR/USD ${params.fx.usdEurFixed.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}</span>
-      </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
-          gap: isMobileViewport ? 8 : 12,
-          alignItems: 'start',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-            const active = activeScenarioForUi === variant.id;
-            return (
-              <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <button
-                  type="button"
-                  onClick={() => onScenarioChange(variant.id)}
-                  disabled={isRecalculating}
-                  style={{
-                    background: active ? T.primary : T.surfaceEl,
-                    border: `1px solid ${active ? T.primary : T.border}`,
-                    color: active ? '#fff' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: isMobileViewport ? '5px 9px' : '6px 11px',
-                    fontSize: isMobileViewport ? 10 : 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.65 : 1,
-                  }}
-                >
-                  {variant.id === 'base' ? 'Base' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
-                </button>
-                {active && isScenarioAdjusted ? (
-                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
-                ) : null}
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {scenarioStatusItems.map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 999,
+                      padding: '5px 8px',
+                      color: T.textSecondary,
+                      fontSize: 10,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.label}: <span style={{ color: T.textPrimary }}>{item.value}</span>
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={toggleLiquidarDepto}
-          disabled={isRecalculating || !hasEffectiveRealEstate}
-          style={{
-            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
-            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
-            color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '8px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            textAlign: 'left',
-            cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
-          }}
-        >
-          Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleRiskCapital}
-          disabled={isRecalculating}
-          style={{
-            background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
-            border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-            color: riskCapitalEnabled
-              ? '#f6d38d'
-              : T.textSecondary,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '8px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            textAlign: 'left',
-            cursor: isRecalculating ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating ? 0.65 : 1,
-          }}
-        >
-          Incluir capital de riesgo · {riskToggleCopy}
-        </button>
-        <div
-          style={{
-            gridColumn: '1 / -1',
-            display: 'grid',
-            gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
-            alignItems: 'center',
-            gap: 8,
-            background: T.surfaceEl,
-            border: `1px solid ${T.border}`,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '7px 10px',
-          }}
-        >
-          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
-            Monte Carlo
-          </div>
-          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-            {nSimOptions.map((nSimOption) => {
-              const active = currentNSim === nSimOption;
-              return (
-                <button
-                  key={nSimOption}
-                  type="button"
-                  onClick={() => setNSim(nSimOption)}
-                  disabled={isRecalculating}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                KPIs principales
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital usado por el motor</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo detectado</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
+                    Disponible en la composición. Incluido en el motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{riskCapitalEnabled ? 'Sí' : 'No'}</span>.
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
+                    {riskCapitalEnabled
+                      ? 'Se incluye según la política activa del motor.'
+                      : 'Existe en la composición, pero esta corrida no lo usa como capital simulable.'}
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital no usado por esta simulación</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
+                    Puede incluir inmueble, deuda no hipotecaria, liquidez no modelada y capital de riesgo no aplicado.
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,1fr)',
+                gap: 10,
+                alignItems: 'start',
+              }}
+            >
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Controles principales
+                </div>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+                    const active = activeScenarioForUi === variant.id;
+                    return (
+                      <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => onScenarioChange(variant.id)}
+                          disabled={isRecalculating}
+                          style={{
+                            background: active ? T.primary : T.surfaceEl,
+                            border: `1px solid ${active ? T.primary : T.border}`,
+                            color: active ? '#fff' : T.textSecondary,
+                            borderRadius: 999,
+                            padding: isMobileViewport ? '5px 9px' : '6px 11px',
+                            fontSize: isMobileViewport ? 10 : 11,
+                            fontWeight: 700,
+                            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                            opacity: isRecalculating ? 0.65 : 1,
+                          }}
+                        >
+                          {variant.id === 'base' ? 'Base' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
+                        </button>
+                        {active && isScenarioAdjusted ? (
+                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={toggleLiquidarDepto}
+                    disabled={isRecalculating || !hasEffectiveRealEstate}
+                    style={{
+                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
+                      border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                      color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                      borderRadius: 9,
+                      padding: isMobileViewport ? '6px 8px' : '8px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      textAlign: 'left',
+                      cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+                    }}
+                  >
+                    Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onToggleRiskCapital}
+                    disabled={isRecalculating}
+                    style={{
+                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
+                      border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                      color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                      borderRadius: 9,
+                      padding: isMobileViewport ? '6px 8px' : '8px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      textAlign: 'left',
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    Incluir capital de riesgo en motor · {riskToggleCopy}
+                  </button>
+                </div>
+                <div
                   style={{
-                    background: active ? T.primary : T.surface,
-                    border: `1px solid ${active ? T.primary : T.border}`,
-                    color: active ? '#fff' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: isMobileViewport ? '5px 8px' : '5px 9px',
-                    fontSize: isMobileViewport ? 10 : 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.65 : 1,
-                    minWidth: isMobileViewport ? 52 : 60,
+                    display: 'grid',
+                    gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 9,
+                    padding: isMobileViewport ? '6px 8px' : '7px 10px',
                   }}
                 >
-                  {nSimOption}
-                </button>
-              );
-            })}
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    Monte Carlo
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                    {nSimOptions.map((nSimOption) => {
+                      const active = currentNSim === nSimOption;
+                      return (
+                        <button
+                          key={nSimOption}
+                          type="button"
+                          onClick={() => setNSim(nSimOption)}
+                          disabled={isRecalculating}
+                          style={{
+                            background: active ? T.primary : T.surface,
+                            border: `1px solid ${active ? T.primary : T.border}`,
+                            color: active ? '#fff' : T.textSecondary,
+                            borderRadius: 999,
+                            padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                            fontSize: isMobileViewport ? 10 : 11,
+                            fontWeight: 700,
+                            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                            opacity: isRecalculating ? 0.65 : 1,
+                            minWidth: isMobileViewport ? 52 : 60,
+                          }}
+                        >
+                          {nSimOption}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Fuente de datos aplicada
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Fuente patrimonial</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <SourceBadge label={patrimonioSourceSummary} tone={patrimonioSourceTone} />
+                        {!snapshotApplied ? <SourceBadge label="Snapshot Aurum no aplicado" tone={patrimonioSourceTone} /> : null}
+                      </div>
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      {patrimonioSourceTechnical}
+                    </div>
+                    {patrimonioSourceWarning ? (
+                      <div style={{ color: patrimonioSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                        {patrimonioSourceWarning}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix aperturado por instrumento</div>
+                      <SourceBadge label={mixTrustSourceLabel} tone={mixSourceTone} />
+                    </div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      {distributionSourceTechnical}
+                    </div>
+                    {mixSourceWarning ? (
+                      <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                        {mixSourceWarning}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 6 }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX usado</div>
+                    <div style={{ display: 'grid', gap: 5 }}>
+                      <div style={{ display: 'grid', gap: 3 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                          <div style={{ color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>USD/CLP aplicado</div>
+                          <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
+                        </div>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                          {Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          {fxSpotSourceTechnical}
+                        </div>
+                        {usdFxWarning ? (
+                          <div style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                            {usdFxWarning}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div style={{ display: 'grid', gap: 3, paddingTop: 5, borderTop: `1px dashed ${T.border}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                          <div style={{ color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>EUR/USD usado por el modelo</div>
+                          <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
+                        </div>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+                          {Number.isFinite(eurUsdModelValue)
+                            ? `EUR/USD ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : 'No disponible'}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Valor tomado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>params.fx.usdEurFixed</span>.
+                        </div>
+                        <div style={{ color: T.warning, fontSize: 10 }}>
+                          {eurFxWarning}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
       </div>
       </details>
       {!hideResultBlocks && displayResult && (
