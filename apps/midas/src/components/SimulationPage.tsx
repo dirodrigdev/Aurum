@@ -192,6 +192,8 @@ const TRAFFIC_COLORS: Record<TrafficLight, string> = {
   neutral: '#71829b',
 };
 
+const FX_REL_TOLERANCE = 0.0005;
+
 function classifyThreshold(value: number | null, thresholds: { greenMax?: number; yellowMax?: number; greenMin?: number; yellowMin?: number }): TrafficLight {
   if (value === null || !Number.isFinite(value)) return 'neutral';
   if (thresholds.greenMax !== undefined && value <= thresholds.greenMax) return 'green';
@@ -200,6 +202,8 @@ function classifyThreshold(value: number | null, thresholds: { greenMax?: number
   if (thresholds.yellowMin !== undefined && value >= thresholds.yellowMin) return 'yellow';
   return 'red';
 }
+
+const isApproximatelyEqual = (a: number, b: number) => Math.abs(a - b) / a <= FX_REL_TOLERANCE;
 
 const sourceBadgeTonePresentation = (tone: SourceBadgeTone) => {
   if (tone === 'ok') return { color: T.positive, bg: 'rgba(61, 212, 141, 0.14)', border: 'rgba(61, 212, 141, 0.35)' };
@@ -280,6 +284,7 @@ export function SimulationPage({
   fxSpotSourceTechnical,
   nonOptimizableBlocksTechnical,
   aurumFxSpotCLP,
+  aurumFxSpotUsdEur,
   aurumFxSpotSource,
   operativeFxResolution,
   weightsSourceMode,
@@ -365,6 +370,7 @@ export function SimulationPage({
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
   aurumFxSpotCLP: number | null;
+  aurumFxSpotUsdEur: number | null;
   aurumFxSpotSource: string | null;
   operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
@@ -1151,10 +1157,15 @@ export function SimulationPage({
   const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
   const eurUsdModelValue = Number(params.fx.usdEurFixed ?? NaN);
+  const aurumEurUsd = Number(aurumFxSpotUsdEur ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
   const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
+  const hasAurumEurUsd = Number.isFinite(aurumEurUsd) && aurumEurUsd > 0;
+  const usingAurumEurUsd = hasAurumEurUsd && Number.isFinite(eurUsdModelValue) && eurUsdModelValue > 0
+    ? isApproximatelyEqual(aurumEurUsd, eurUsdModelValue)
+    : false;
   const snapshotFreshness = useMemo(
     () => getFreshnessStatus(aurumSnapshotPublishedAt),
     [aurumSnapshotPublishedAt],
@@ -1233,9 +1244,13 @@ export function SimulationPage({
     : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
       ? 'Aurum publica un FX current usable, pero esta corrida está aplicando fallback operativo.'
       : 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.';
-  const eurFxSourceSummary = 'Estructural del modelo';
-  const eurFxTone: SourceBadgeTone = 'warning';
-  const eurFxWarning = 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
+  const eurFxSourceSummary = usingAurumEurUsd ? 'Snapshot Aurum' : 'Estructural del modelo';
+  const eurFxTone: SourceBadgeTone = usingAurumEurUsd ? 'ok' : hasAurumEurUsd ? 'alert' : 'warning';
+  const eurFxWarning = usingAurumEurUsd
+    ? null
+    : hasAurumEurUsd
+      ? 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.'
+      : 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -2749,11 +2764,17 @@ export function SimulationPage({
                             : 'No disponible'}
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          Valor tomado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>params.fx.usdEurFixed</span>.
+                          {usingAurumEurUsd ? (
+                            <>Aplicado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>snapshot.fxReference.usdEur</span>.</>
+                          ) : (
+                            <>Valor tomado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>params.fx.usdEurFixed</span>.</>
+                          )}
                         </div>
-                        <div style={{ color: T.warning, fontSize: 10 }}>
-                          {eurFxWarning}
-                        </div>
+                        {eurFxWarning ? (
+                          <div style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                            {eurFxWarning}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>

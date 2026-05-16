@@ -478,6 +478,15 @@ function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getAurumFxReferenceUsdEur(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  const parsed = Number(fxReference?.usdEur ?? NaN);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  if (parsed < 0.8 || parsed > 1.4) return null;
+  return parsed;
+}
+
 function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): string | null {
   if (!snapshot) return null;
   const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
@@ -748,6 +757,7 @@ export default function App() {
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
+  const [aurumFxSpotUsdEur, setAurumFxSpotUsdEur] = useState<number | null>(null);
   const [aurumFxSpotSource, setAurumFxSpotSource] = useState<string | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
@@ -1992,6 +2002,10 @@ export default function App() {
       snapshot.version === 2
         ? snapshot.fxReference?.clpUsd ?? ''
         : '';
+    const fxUsdEur =
+      snapshot.version === 2
+        ? snapshot.fxReference?.usdEur ?? ''
+        : '';
     return [
       snapshot.version,
       snapshot.snapshotMonth,
@@ -2003,6 +2017,7 @@ export default function App() {
       riskClp,
       riskUsd,
       fxClpUsd,
+      fxUsdEur,
     ].join('|');
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
@@ -2626,6 +2641,7 @@ export default function App() {
       const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+      const aurumFxUsdEur = getAurumFxReferenceUsdEur(snapshot);
       const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
 
@@ -2635,6 +2651,7 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(aurumFxClpUsd);
+      setAurumFxSpotUsdEur(aurumFxUsdEur);
       setAurumFxSpotSource(aurumFxSource);
       if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
@@ -2659,10 +2676,11 @@ export default function App() {
         label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
-      if (aurumFxClpUsd !== null) {
+      if (aurumFxClpUsd !== null || aurumFxUsdEur !== null) {
         baseSnapshotLayer.fx = {
           ...baseSnapshotLayer.fx,
-          clpUsdInitial: aurumFxClpUsd,
+          ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
+          ...(aurumFxUsdEur !== null ? { usdEurFixed: aurumFxUsdEur } : {}),
         };
       }
       const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
@@ -3458,6 +3476,7 @@ export default function App() {
       setRiskCapitalUsdTotal(0);
       setRiskCapitalUsdSnapshotCLP(0);
       setAurumFxSpotCLP(null);
+      setAurumFxSpotUsdEur(null);
       setAurumFxSpotSource(null);
       setOptimizableBaseReference({
         amountClp: null,
@@ -3525,6 +3544,7 @@ export default function App() {
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
         setAurumFxSpotCLP(null);
+        setAurumFxSpotUsdEur(null);
         setAurumFxSpotSource(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
@@ -3565,6 +3585,7 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
+      setAurumFxSpotUsdEur(getAurumFxReferenceUsdEur(snapshot));
       setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
@@ -3596,6 +3617,15 @@ export default function App() {
                 riskCapitalEnabledRef.current,
               ) ?? compositionWithDetectedRisk,
             };
+            const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+            const aurumFxUsdEur = getAurumFxReferenceUsdEur(snapshot);
+            if (aurumFxClpUsd !== null || aurumFxUsdEur !== null) {
+              canonicalSnapshotLayer.fx = {
+                ...canonicalSnapshotLayer.fx,
+                ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
+                ...(aurumFxUsdEur !== null ? { usdEurFixed: aurumFxUsdEur } : {}),
+              };
+            }
             const canonicalSnapshotParams = buildCanonicalSimParamsCurrent(canonicalSnapshotLayer, simParamsRef.current, {
               applyCapital: true,
               manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
@@ -4468,6 +4498,7 @@ export default function App() {
       fxSpotSourceTechnical={fxSpotSourceTechnical}
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
       aurumFxSpotCLP={aurumFxSpotCLP}
+      aurumFxSpotUsdEur={aurumFxSpotUsdEur}
       aurumFxSpotSource={aurumFxSpotSource}
       operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}

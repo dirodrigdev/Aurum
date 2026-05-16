@@ -9,6 +9,7 @@ assert(source.includes('Existe en la composición, pero esta corrida no lo usa c
 assert(source.includes('Capital no usado por esta simulación'));
 assert(source.includes('USD/CLP aplicado'));
 assert(source.includes('EUR/USD usado por el modelo'));
+assert(source.includes('Snapshot Aurum'));
 assert(source.includes('EUR/USD no validado contra Aurum; usando valor estructural del modelo.'));
 assert(source.includes('Snapshot Aurum no aplicado'));
 assert(source.includes('Ver detalle técnico'));
