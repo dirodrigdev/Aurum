@@ -270,6 +270,33 @@ export function summarizeManualAdjustmentsT0(
   });
 }
 
+export function deriveSleevesFromRvRfTarget(
+  current: PortfolioWeights,
+  targetRvPct: number,
+): PortfolioWeights {
+  const rvTarget = Math.max(0, Math.min(100, targetRvPct)) / 100;
+  const rfTarget = 1 - rvTarget;
+  const currentRvTotal = Math.max(0, current.rvGlobal + current.rvChile);
+  const currentRfTotal = Math.max(0, current.rfGlobal + current.rfChile);
+  const rvGlobalShare = currentRvTotal > 0 ? current.rvGlobal / currentRvTotal : 0.5;
+  const rfGlobalShare = currentRfTotal > 0 ? current.rfGlobal / currentRfTotal : 0.5;
+
+  const rvGlobal = rvTarget * rvGlobalShare;
+  const rvChile = rvTarget * (1 - rvGlobalShare);
+  const rfGlobal = rfTarget * rfGlobalShare;
+  const rfChile = rfTarget * (1 - rfGlobalShare);
+  const total = rvGlobal + rvChile + rfGlobal + rfChile;
+  if (!Number.isFinite(total) || total <= 0) {
+    return { rvGlobal: 0, rvChile: 0, rfGlobal: 0, rfChile: 1 };
+  }
+  return {
+    rvGlobal: rvGlobal / total,
+    rvChile: rvChile / total,
+    rfGlobal: rfGlobal / total,
+    rfChile: rfChile / total,
+  };
+}
+
 function SourceBadge({
   label,
   tone,
@@ -372,6 +399,7 @@ export function SimulationPage({
   onRestoreOfficialDistribution,
   onSimOverridesChange,
   onUpdateParams,
+  onRunSimulation,
   onResetSim,
   onOpenOptimization,
 }: {
@@ -486,12 +514,12 @@ export function SimulationPage({
   onRestoreOfficialDistribution: () => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
+  onRunSimulation: () => void;
   onResetSim: () => void;
   onOpenOptimization: () => void;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
-  const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
-  const [draftValue, setDraftValue] = useState('');
+  const simulationPanelRef = useRef<HTMLDivElement | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [simulationDataOpen, setSimulationDataOpen] = useState(true);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
@@ -824,13 +852,6 @@ export function SimulationPage({
   }, [simActive]);
 
   useEffect(() => {
-    if (!simActive) {
-      setActiveChip(null);
-      setDraftValue('');
-    }
-  }, [simActive]);
-
-  useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onResize = () => {
       setIsMobileViewport(window.innerWidth <= 760);
@@ -1120,59 +1141,37 @@ export function SimulationPage({
   const successAxisSpan = Math.max(1, successAxisMax - successAxisMin);
   const mapSuccessPct = (value: number) =>
     Math.min(100, Math.max(0, ((value - successAxisMin) / successAxisSpan) * 100));
-  const openChip = (chip: 'return' | 'years' | 'capital') => {
+  const openSimulationPanelShortcut = () => {
     onSimulationTouch('custom');
-    setActiveChip(chip);
-    if (chip === 'return') setDraftValue((effectiveReturn * 100).toFixed(2));
-    if (chip === 'years') setDraftValue(String(effectiveYears));
-    if (chip === 'capital') {
-      // Si el capital es derivado (bloques), no permitimos edición manual engañosa.
-      if (isDerivedCapital) return;
-      setDraftValue(String(Math.round(effectiveCapital)));
-    }
+    setAdvancedOpen(true);
+    window.setTimeout(() => {
+      simulationPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   };
 
-  const restoreFieldFromScenario = useCallback((field: 'return' | 'years') => {
-    if (!simOverrides?.active) return;
-    const next: SimulationOverrides = { ...simOverrides };
-    if (field === 'return') delete next.returnPct;
-    if (field === 'years') delete next.horizonYears;
-    const hasAnyOverride =
-      next.returnPct !== undefined ||
-      next.horizonYears !== undefined ||
-      next.capital !== undefined;
-    if (!hasAnyOverride) {
-      onSimOverridesChange(null);
-      return;
-    }
-    onSimOverridesChange({
+  const updateTemporaryReturnPct = useCallback((nextPct: number) => {
+    const clamped = Math.max(-10, Math.min(30, nextPct));
+    const next: SimulationOverrides = {
       active: true,
-      preset: next.preset,
-      ...(next.returnPct !== undefined ? { returnPct: next.returnPct } : {}),
-      ...(next.horizonYears !== undefined ? { horizonYears: next.horizonYears } : {}),
-      ...(next.capital !== undefined ? { capital: next.capital } : {}),
-    });
+      preset: 'custom',
+      ...(simOverrides?.horizonYears !== undefined ? { horizonYears: simOverrides.horizonYears } : {}),
+      ...(simOverrides?.capital !== undefined ? { capital: simOverrides.capital } : {}),
+      returnPct: clamped / 100,
+    };
+    onSimOverridesChange(next);
   }, [onSimOverridesChange, simOverrides]);
 
-  const applyChip = () => {
-    const parsed = Number(draftValue);
-    if (!Number.isFinite(parsed)) {
-      setActiveChip(null);
-      return;
-    }
+  const updateTemporaryHorizonYears = useCallback((nextYears: number) => {
+    const clampedYears = Math.max(1, Math.round(nextYears));
     const next: SimulationOverrides = {
       active: true,
       preset: 'custom',
       ...(simOverrides?.returnPct !== undefined ? { returnPct: simOverrides.returnPct } : {}),
-      ...(simOverrides?.horizonYears !== undefined ? { horizonYears: simOverrides.horizonYears } : {}),
       ...(simOverrides?.capital !== undefined ? { capital: simOverrides.capital } : {}),
+      horizonYears: clampedYears,
     };
-    if (activeChip === 'return') next.returnPct = parsed / 100;
-    if (activeChip === 'years') next.horizonYears = Math.max(1, Math.round(parsed));
-    if (activeChip === 'capital') next.capital = Math.max(1, parsed);
     onSimOverridesChange(next);
-    setActiveChip(null);
-  };
+  }, [onSimOverridesChange, simOverrides]);
 
   const formatCLP = (value: number) =>
     value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
@@ -1981,6 +1980,12 @@ export function SimulationPage({
       },
     }));
   };
+  const currentRvTotalPct = Math.round((params.weights.rvGlobal + params.weights.rvChile) * 1000) / 10;
+  const currentRfTotalPct = Math.round((params.weights.rfGlobal + params.weights.rfChile) * 1000) / 10;
+  const updateTemporaryRvTotalPct = (rvPct: number) => {
+    const nextWeights = deriveSleevesFromRvRfTarget(params.weights, rvPct);
+    onUpdateParams((prev) => ({ ...prev, weights: nextWeights }));
+  };
   const runLongevityPlus5 = useCallback(async () => {
     if (longevityRunning || !displayResult) return;
     setLongevityRunning(true);
@@ -2102,8 +2107,8 @@ export function SimulationPage({
             mode={simActive ? 'sim' : 'real'}
             chips={[
               { id: 'state', value: heroBaseChipLabel, onClick: simActive ? onResetSim : () => {} },
-              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
-              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
+              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: openSimulationPanelShortcut },
+              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: openSimulationPanelShortcut },
               {
                 id: 'capital',
                 value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
@@ -2112,7 +2117,7 @@ export function SimulationPage({
                   : hasFutureAdjustments
                     ? 'MIDAS hoy'
                     : heroWealthChipNote,
-                onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
+                onClick: openSimulationPanelShortcut,
                 accessory: (
                   <button
                     type="button"
@@ -2179,110 +2184,6 @@ export function SimulationPage({
             }}
           >
             Esta simulación no se guardará.
-          </div>
-        )}
-        {activeChip && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: showSimToast ? 42 : 6,
-              width: 320,
-              background: 'rgba(21, 25, 34, 0.98)',
-              border: `1px solid rgba(91, 140, 255, 0.26)`,
-              borderRadius: 12,
-              padding: 12,
-              boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
-              backdropFilter: 'blur(10px)',
-              zIndex: 40,
-            }}
-          >
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
-              {activeChip === 'return'
-                ? 'Retorno promedio (%)'
-                : activeChip === 'years'
-                  ? 'Horizonte (años)'
-                  : 'Capital inicial (CLP)'}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <input
-                type="number"
-                value={draftValue}
-                onChange={(e) => setDraftValue(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  color: T.textPrimary,
-                }}
-              />
-              <button
-                onClick={applyChip}
-                style={{
-                  background: T.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                Aplicar
-              </button>
-              <button
-                onClick={() => setActiveChip(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cerrar
-              </button>
-            </div>
-            {(activeChip === 'return' || activeChip === 'years') && (
-              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={() => restoreFieldFromScenario(activeChip)}
-                  disabled={
-                    !simOverrides?.active ||
-                    (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                    (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                  }
-                  style={{
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    borderRadius: 10,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 'not-allowed'
-                        : 'pointer',
-                    opacity:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 0.6
-                        : 1,
-                  }}
-                >
-                  Volver al valor del escenario
-                </button>
-              </div>
-            )}
           </div>
         )}
         {simWorking && simActive && (
@@ -3311,36 +3212,285 @@ export function SimulationPage({
           <span style={{ color: T.textMuted }}>{advancedOpen ? '▴' : '▾'}</span>
         </button>
         {advancedOpen && (
-          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div ref={simulationPanelRef} style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.45 }}>
-              Estos cambios sirven para probar una corrida temporal. No reemplazan el Modelo Base guardado en cloud.
+              Estos cambios son temporales. No modifican el Modelo Base.
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-              {[
-                `Escenario temporal: ${scenarioUiLabel}`,
-                `Monte Carlo temporal: ${Number(params.simulation?.nSim ?? 0).toLocaleString('es-CL')}`,
-                `Depto: ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
-                `Capital de riesgo: ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
-                `Generador: ${activeGenerator}`,
-                `Ajustes manuales: ${committedManualSummaryT0.count} ajuste(s) T0`,
-              ].map((item) => (
-                <div
-                  key={item}
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Escenario temporal</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'pessimistic' as const, label: 'Pesimista' },
+                    { id: 'base' as const, label: 'Neutro' },
+                    { id: 'optimistic' as const, label: 'Optimista' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onScenarioChange(item.id)}
+                      style={{
+                        background: activeScenarioForUi === item.id ? T.primary : T.surfaceEl,
+                        border: `1px solid ${activeScenarioForUi === item.id ? T.primary : T.border}`,
+                        color: activeScenarioForUi === item.id ? '#fff' : T.textSecondary,
+                        borderRadius: 999,
+                        padding: '5px 9px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Horizonte (años)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={effectiveYears}
+                  onChange={(e) => updateTemporaryHorizonYears(Number(e.target.value))}
                   style={{
-                    border: `1px solid ${T.border}`,
                     background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
                     borderRadius: 8,
-                    padding: '7px 8px',
-                    color: T.textSecondary,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Retorno (%)</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  value={(effectiveReturn * 100).toFixed(2)}
+                  onChange={(e) => updateTemporaryReturnPct(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))' }}>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 5 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Depto</div>
+                <button
+                  type="button"
+                  onClick={toggleLiquidarDepto}
+                  style={{
+                    background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
+                    border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                    color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '5px 8px',
                     fontSize: 11,
                     fontWeight: 700,
+                    cursor: 'pointer',
                   }}
                 >
-                  {item}
-                </div>
-              ))}
+                  {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 5 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Capital de riesgo</div>
+                <button
+                  type="button"
+                  onClick={onToggleRiskCapital}
+                  style={{
+                    background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
+                    border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                    color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {riskCapitalEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo</span>
+                <select
+                  value={currentNSim}
+                  onChange={(e) => setNSim(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                >
+                  {[1000, 3000, 5000].map((value) => (
+                    <option key={value} value={value}>{value.toLocaleString('es-CL')}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual (%)</span>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={(params.feeAnnual * 100).toFixed(2)}
+                  onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
             </div>
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))' }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>RV total (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={currentRvTotalPct.toFixed(1)}
+                  onChange={(e) => updateTemporaryRvTotalPct(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>RF total (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={currentRfTotalPct.toFixed(1)}
+                  onChange={(e) => updateTemporaryRvTotalPct(100 - Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Distribución interna proporcional al mix aperturado actual.
+            </div>
+
+            <div>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto temporal por tramo</div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                {spendingPhases.map((phase, idx) => (
+                  <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {spendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}
+                    </span>
+                    <input
+                      type="text"
+                      value={formatCLP(phase.amountReal)}
+                      onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                      style={{
+                        background: T.surfaceEl,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 8,
+                        padding: '6px 8px',
+                        color: T.textPrimary,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 5 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Capital usado por motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>Aurum</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Para ajustes de capital o flujos, usa + Evento.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  resetMovementForm();
+                  openCapitalLedger();
+                }}
+                style={{
+                  justifySelf: 'start',
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+                title="Parámetros de simulación"
+                aria-label="Parámetros de simulación"
+              >
+                + Evento
+              </button>
+            </div>
+
+            <details>
+              <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                Avanzado técnico
+              </summary>
+              <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                <div>Generador: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeGenerator}</span></div>
+                <div>IPC Chile anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.ipcChileAnnual * 100).toFixed(2)}%</span></div>
+                <div>HICP Eurozona anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.hipcEurAnnual * 100).toFixed(2)}%</span></div>
+                <div>TCREAL LT: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number(params.fx.tcrealLT ?? 0).toLocaleString('es-CL')}</span></div>
+                <div>Nota: TCREAL LT es supuesto estructural; no reemplaza USD/CLP ni EUR/USD operativo.</div>
+              </div>
+            </details>
+
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                onClick={onRunSimulation}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '6px 11px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Ejecutar simulación
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -3361,24 +3511,6 @@ export function SimulationPage({
                 }}
               >
                 Volver al Modelo Base
-              </button>
-              <button
-                type="button"
-                onClick={onRestoreOfficialDistribution}
-                disabled={isRecalculating || weightsSourceMode !== 'simulation'}
-                style={{
-                  background: T.surface,
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  borderRadius: 999,
-                  padding: '6px 10px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: isRecalculating || weightsSourceMode !== 'simulation' ? 'not-allowed' : 'pointer',
-                  opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
-                }}
-              >
-                Restaurar mix oficial
               </button>
             </div>
           </div>

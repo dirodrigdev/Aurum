@@ -1384,6 +1384,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isCanonicalUserSession) return;
+    if (simulationActive || simOverrides?.active) return;
     const nextHash = buildSimulationConfigHash(simParams);
     setSimulationConfigHash(nextHash);
     if (simulationConfigHydrationStatus !== 'cloud' && simulationConfigSource !== 'cloud') {
@@ -1428,7 +1429,7 @@ export default function App() {
       });
     }, 800);
     return () => window.clearTimeout(handle);
-  }, [isCanonicalUserSession, simParams, simulationConfigHydrationStatus, simulationConfigSource]);
+  }, [isCanonicalUserSession, simOverrides?.active, simParams, simulationActive, simulationConfigHydrationStatus, simulationConfigSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -4585,6 +4586,7 @@ export default function App() {
       onRestoreOfficialDistribution={restoreOfficialDistribution}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
+      onRunSimulation={runSim}
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
     />
