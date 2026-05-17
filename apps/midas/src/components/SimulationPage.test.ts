@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
+import { computeMidasConsideredWealth } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -14,6 +15,38 @@ assert.equal(resolveAurumEurUsdForMidas(0).valid, false);
 assert.equal(resolveAurumEurUsdForMidas(-0.86).valid, false);
 assert.equal(resolveAurumEurUsdForMidas(1.4).eurUsdForMidas, null);
 
+const referenceWealth = 1_980_000_000;
+const riskCapital = 294_000_000;
+const realEstateSupport = 155_000_000;
+assert.equal(computeMidasConsideredWealth({
+  referenceWealthClp: referenceWealth,
+  realEstateSupportClp: realEstateSupport,
+  riskCapitalClp: riskCapital,
+  realEstateEnabled: true,
+  riskCapitalEnabled: true,
+}).consideredWealthClp, 1_980_000_000);
+assert.equal(computeMidasConsideredWealth({
+  referenceWealthClp: referenceWealth,
+  realEstateSupportClp: realEstateSupport,
+  riskCapitalClp: riskCapital,
+  realEstateEnabled: false,
+  riskCapitalEnabled: true,
+}).consideredWealthClp, 1_825_000_000);
+assert.equal(computeMidasConsideredWealth({
+  referenceWealthClp: referenceWealth,
+  realEstateSupportClp: realEstateSupport,
+  riskCapitalClp: riskCapital,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+}).consideredWealthClp, 1_686_000_000);
+assert.equal(computeMidasConsideredWealth({
+  referenceWealthClp: referenceWealth,
+  realEstateSupportClp: realEstateSupport,
+  riskCapitalClp: riskCapital,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+}).consideredWealthClp, 1_531_000_000);
+
 assert(source.includes('Patrimonio de referencia MIDAS'));
 assert(!source.includes('Patrimonio total Aurum'));
 assert(source.includes('Patrimonio considerado por MIDAS'));
@@ -24,13 +57,19 @@ assert(source.includes('Capital de riesgo detectado'));
 assert(source.includes('Capital de riesgo incluido en patrimonio Aurum base'));
 assert(source.includes('Ajuste de referencia por capital de riesgo'));
 assert(source.includes('Capital de riesgo habilitado para esta corrida'));
+assert(source.includes('Capital de riesgo incluido en patrimonio considerado'));
+assert(source.includes('Respaldo/depto detectado'));
+assert(source.includes('Respaldo/depto incluido en patrimonio considerado'));
 assert(source.includes('Capital no usado por esta simulación'));
 assert(source.includes('Diferencia entre referencia MIDAS y considerado MIDAS'));
+assert(source.includes('Explicación de la diferencia'));
 assert(source.includes('Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'));
 assert(source.includes('Configuración OK'));
 assert(source.includes('Resultado anterior'));
 assert(source.includes('Pendiente de recalcular'));
 assert(source.includes('No hay resultado actualizado para esta configuración.'));
+assert(source.includes('Ejecuta simulación para validar los cambios.'));
+assert(source.includes('hasOnlyRunResultBlockingReasons'));
 assert(source.includes('Respaldo habilitado.'));
 assert(source.includes('No se usa como respaldo.'));
 assert(source.includes('Habilitado.'));
@@ -56,6 +95,8 @@ assert(appSource.includes('resolveAurumEurUsdForMidas'));
 assert(appSource.includes('usdEurFixed: targetEurUsdForMidas'));
 assert(appSource.includes('setAurumFxSourceUsdEur'));
 assert(appSource.includes('headerConfidenceLabel'));
+assert(appSource.includes('headerHasOnlyRunResultBlockingReasons'));
+assert(appSource.includes('headerShowsStaleResult'));
 assert(appSource.includes('Resultado anterior:'));
 assert(appSource.includes('Recalcular'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));

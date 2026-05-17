@@ -4242,17 +4242,20 @@ export default function App() {
     && typeof headerSuccess40 === 'number'
     && Number.isFinite(headerSuccess40)
   );
-  const headerMetricText = heroPhase === 'stale'
+  const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
+  const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
+  const headerShowsStaleResult = heroPhase === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
+  const headerMetricText = headerShowsStaleResult
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
       ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
       : 'Pendiente de recalcular'
     : headerShowsDefinitiveNumber
       ? `Éxito ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
-  const headerConfidenceLabel = heroPhase === 'stale'
+  const headerConfidenceLabel = headerShowsStaleResult
     ? 'Recalcular'
     : resultConfidence.label;
-  const headerStatusColor = heroPhase === 'stale'
+  const headerStatusColor = headerShowsStaleResult
     ? T.warning
     : resultConfidence.status === 'canonical'
       ? T.positive

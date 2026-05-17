@@ -218,6 +218,35 @@ const formatRiskCapitalInBaseLabel = (status: 'yes' | 'no' | 'unknown') => {
   return 'No determinado';
 };
 
+export function computeMidasConsideredWealth(input: {
+  referenceWealthClp: number | null;
+  realEstateSupportClp: number | null;
+  riskCapitalClp: number;
+  realEstateEnabled: boolean;
+  riskCapitalEnabled: boolean;
+}) {
+  const reference = Number(input.referenceWealthClp ?? NaN);
+  if (!Number.isFinite(reference) || reference <= 0) {
+    return {
+      consideredWealthClp: null,
+      excludedRealEstateClp: null,
+      excludedRiskCapitalClp: input.riskCapitalEnabled ? 0 : Math.max(0, input.riskCapitalClp),
+      missingRealEstateSupport: !input.realEstateEnabled && input.realEstateSupportClp === null,
+    };
+  }
+  const support = Number(input.realEstateSupportClp ?? NaN);
+  const safeSupport = Number.isFinite(support) && support > 0 ? support : 0;
+  const safeRisk = Number.isFinite(input.riskCapitalClp) && input.riskCapitalClp > 0 ? input.riskCapitalClp : 0;
+  const excludedRealEstateClp = input.realEstateEnabled ? 0 : safeSupport;
+  const excludedRiskCapitalClp = input.riskCapitalEnabled ? 0 : safeRisk;
+  return {
+    consideredWealthClp: Math.max(0, reference - excludedRealEstateClp - excludedRiskCapitalClp),
+    excludedRealEstateClp,
+    excludedRiskCapitalClp,
+    missingRealEstateSupport: !input.realEstateEnabled && input.realEstateSupportClp === null,
+  };
+}
+
 function SourceBadge({
   label,
   tone,
@@ -873,6 +902,8 @@ export function SimulationPage({
   const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
   const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
   const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
+  const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
+  const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
   const reviewCause = useMemo(() => {
     if (!primaryReasonCode) return 'Resultado usable con salvedades.';
     if (primaryReasonCode.startsWith('instrumentUniverse_')) {
@@ -930,6 +961,17 @@ export function SimulationPage({
         gap: 'Ejecuta simulación para validar Depto ON/OFF + Capital de riesgo ON/OFF.',
       };
     }
+    if (resultConfidence.status === 'not_decisional' && hasOnlyRunResultBlockingReasons) {
+      return {
+        label: heroResult ? 'Resultado anterior' : 'Pendiente',
+        tone: T.warning,
+        headline: heroResult
+          ? 'Resultado anterior · recalcular.'
+          : 'Pendiente de recalcular.',
+        explanation: 'No hay resultado actualizado para esta configuración.',
+        gap: 'Ejecuta simulación para validar los cambios.',
+      };
+    }
     if (resultConfidence.status === 'not_decisional') {
       return {
         label: 'No usar',
@@ -955,7 +997,7 @@ export function SimulationPage({
       explanation: 'Resultado canónico.',
       gap: null as string | null,
     };
-  }, [T.negative, T.positive, T.warning, heroPhase, isRunActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
+  }, [T.negative, T.positive, T.warning, hasOnlyRunResultBlockingReasons, heroPhase, heroResult, isRunActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
   const heroConfidenceBlock = useMemo(
     () => (
       <span style={{ display: 'grid', gap: 4 }}>
@@ -1252,9 +1294,14 @@ export function SimulationPage({
     }
     return null;
   }, [compositionSource]);
-  const patrimonioConsideradoMidasClp = Number.isFinite(params.capitalInitial) && params.capitalInitial > 0
-    ? params.capitalInitial
-    : null;
+  const consideredWealthResolution = computeMidasConsideredWealth({
+    referenceWealthClp: patrimonioReferenciaMidasClp,
+    realEstateSupportClp: realEstateConsideredClp,
+    riskCapitalClp: riskDetectedClp,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+  });
+  const patrimonioConsideradoMidasClp = consideredWealthResolution.consideredWealthClp;
   const wealthConfigHasReference = patrimonioReferenciaMidasClp !== null && patrimonioReferenciaMidasClp > 0;
   const wealthConfigHasConsidered = patrimonioConsideradoMidasClp !== null && patrimonioConsideradoMidasClp > 0;
   const wealthConsideredExceedsReference = wealthConfigHasReference && wealthConfigHasConsidered
@@ -1265,6 +1312,8 @@ export function SimulationPage({
     : null;
   const wealthConfigTone: SourceBadgeTone = !wealthConfigHasReference || !wealthConfigHasConsidered || wealthConsideredExceedsReference
     ? 'alert'
+    : consideredWealthResolution.missingRealEstateSupport
+      ? 'warning'
     : riskCapitalIncludedInAurumBase === 'unknown' && riskDetectedClp > 0
       ? 'warning'
       : 'ok';
@@ -1275,6 +1324,8 @@ export function SimulationPage({
       : 'Configuración inválida / revisar';
   const wealthConfigCopy = wealthConsideredExceedsReference
     ? 'Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'
+    : consideredWealthResolution.missingRealEstateSupport
+      ? 'Configuración válida, pero falta valor canónico de respaldo/depto para explicar toda la diferencia.'
     : wealthConfigTone === 'alert'
       ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
       : 'Configuración patrimonial válida para esta corrida.';
@@ -2771,11 +2822,21 @@ export function SimulationPage({
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajuste de referencia por capital de riesgo:</span> {formatMoneyCompact(referenceRiskAdjustmentClp)}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio de referencia MIDAS:</span> {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial configurado del motor:</span> {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto detectado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto incluido en patrimonio considerado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo habilitado para esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio considerado:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio considerado por MIDAS:</span> {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Diferencia entre referencia MIDAS y considerado MIDAS:</span> {wealthReferenceGapClp !== null ? formatMoneyCompact(wealthReferenceGapClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Explicación de la diferencia:</span> {wealthReferenceGapClp !== null && wealthReferenceGapClp > 0
+                    ? [
+                        consideredWealthResolution.excludedRealEstateClp !== null && consideredWealthResolution.excludedRealEstateClp > 0 ? `depto excluido ${formatMoneyCompact(consideredWealthResolution.excludedRealEstateClp)}` : null,
+                        consideredWealthResolution.excludedRiskCapitalClp > 0 ? `capital de riesgo excluido ${formatMoneyCompact(consideredWealthResolution.excludedRiskCapitalClp)}` : null,
+                      ].filter(Boolean).join(' · ') || 'Diferencia pendiente de clasificar en bloques canónicos.'
+                    : 'Sin exclusiones materiales frente a la referencia.'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital no usado por esta simulación:</span> {nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Fuente patrimonial:</span> {patrimonioSourceTechnical}</div>
                   <div style={{ color: wealthConfigTone === 'alert' ? T.negative : wealthConfigTone === 'warning' ? T.warning : T.textSecondary }}>
