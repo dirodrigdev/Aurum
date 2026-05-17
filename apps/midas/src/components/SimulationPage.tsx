@@ -1244,13 +1244,22 @@ export function SimulationPage({
     : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
       ? 'Aurum publica un FX current usable, pero esta corrida está aplicando fallback operativo.'
       : 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.';
-  const eurFxSourceSummary = usingAurumEurUsd ? 'Snapshot Aurum' : 'Estructural del modelo';
+  const eurFxSourceSummary = usingAurumEurUsd ? (snapshotApplied ? 'Snapshot Aurum' : 'Aurum current') : 'Estructural del modelo';
   const eurFxTone: SourceBadgeTone = usingAurumEurUsd ? 'ok' : hasAurumEurUsd ? 'alert' : 'warning';
   const eurFxWarning = usingAurumEurUsd
     ? null
     : hasAurumEurUsd
-      ? 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.'
+      ? 'Aurum publica EUR/USD usable, pero esta corrida está aplicando fallback estructural.'
       : 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
+  const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
+    ? universeSourceOrigin === 'firestore'
+      ? 'Mix cloud'
+      : universeSourceOrigin === 'bundled'
+        ? 'Mix respaldo'
+        : 'Mix local'
+    : weightsSourceMode === 'simulation'
+      ? 'Mix override'
+      : 'Mix fallback';
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -1815,12 +1824,18 @@ export function SimulationPage({
   };
   const nSimOptions = [1000, 3000, 5000] as const;
   const currentNSim = Number(params.simulation?.nSim ?? 1000);
-  const scenarioStatusItems = useMemo(() => ([
-    { label: 'Escenario', value: scenarioUiLabel },
-    { label: 'nSim', value: String(currentNSim) },
-    { label: 'Depto', value: liquidarDeptoEnabled ? 'ON' : 'OFF' },
-    { label: 'Capital de riesgo en motor', value: riskCapitalEnabled ? 'ON' : 'OFF' },
-  ]), [currentNSim, liquidarDeptoEnabled, riskCapitalEnabled, scenarioUiLabel]);
+  const simulationDataSummary = useMemo(() => {
+    const capitalLabel = capitalSentToMotorClp !== null
+      ? `Capital usado ${formatMoneyCompact(capitalSentToMotorClp)}`
+      : 'Capital usado no disponible';
+    return [
+      capitalLabel,
+      scenarioUiLabel,
+      `${currentNSim} sim`,
+      `Depto ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
+      `Capital riesgo motor ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
+    ].join(' · ');
+  }, [capitalSentToMotorClp, currentNSim, liquidarDeptoEnabled, riskCapitalEnabled, scenarioUiLabel]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -2512,31 +2527,11 @@ export function SimulationPage({
             <span style={{ color: T.textMuted, fontSize: 11 }}>{simulationDataOpen ? 'Ocultar detalle' : 'Ver detalle'}</span>
           </div>
           <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 700, marginTop: 4 }}>
-            {scenarioStatusItems.map((item) => `${item.label}: ${item.value}`).join(' · ')}
+            {simulationDataSummary}
           </div>
         </summary>
         <div style={{ marginTop: 8 }}>
           <div style={{ display: 'grid', gap: 10 }}>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {scenarioStatusItems.map((item) => (
-                  <div
-                    key={item.label}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 999,
-                      padding: '5px 8px',
-                      color: T.textSecondary,
-                      fontSize: 10,
-                      fontWeight: 700,
-                    }}
-                  >
-                    {item.label}: <span style={{ color: T.textPrimary }}>{item.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
             <div style={{ display: 'grid', gap: 6 }}>
               <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 KPIs principales
@@ -2551,10 +2546,17 @@ export function SimulationPage({
                   <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital no usado por esta simulación</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
+                    Inmueble, deuda/liquidez no modelada o riesgo no aplicado.
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
                   <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo detectado</div>
                   <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
                   <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-                    Disponible en la composición. Incluido en el motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{riskCapitalEnabled ? 'Sí' : 'No'}</span>.
+                    Detectado en composición. En motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{riskCapitalEnabled ? 'Sí' : 'No'}</span>.
                   </div>
                   <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
                     {riskCapitalEnabled
@@ -2562,42 +2564,30 @@ export function SimulationPage({
                       : 'Existe en la composición, pero esta corrida no lo usa como capital simulable.'}
                   </div>
                 </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital no usado por esta simulación</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
-                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-                    Puede incluir inmueble, deuda no hipotecaria, liquidez no modelada y capital de riesgo no aplicado.
-                  </div>
-                </div>
               </div>
             </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,1fr)',
-                gap: 10,
-                alignItems: 'start',
-              }}
-            >
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Controles principales
-                </div>
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                  {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-                    const active = activeScenarioForUi === variant.id;
-                    return (
-                      <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Controles principales
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Escenario</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+                      const active = activeScenarioForUi === variant.id;
+                      return (
                         <button
+                          key={variant.id}
                           type="button"
                           onClick={() => onScenarioChange(variant.id)}
                           disabled={isRecalculating}
                           style={{
-                            background: active ? T.primary : T.surfaceEl,
+                            background: active ? T.primary : T.surface,
                             border: `1px solid ${active ? T.primary : T.border}`,
                             color: active ? '#fff' : T.textSecondary,
                             borderRadius: 999,
-                            padding: isMobileViewport ? '5px 9px' : '6px 11px',
+                            padding: isMobileViewport ? '5px 8px' : '5px 9px',
                             fontSize: isMobileViewport ? 10 : 11,
                             fontWeight: 700,
                             cursor: isRecalculating ? 'not-allowed' : 'pointer',
@@ -2606,69 +2596,58 @@ export function SimulationPage({
                         >
                           {variant.id === 'base' ? 'Base' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
                         </button>
-                        {active && isScenarioAdjusted ? (
-                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
-                        ) : null}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  {isScenarioAdjusted ? (
+                    <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada sobre preset base.</div>
+                  ) : null}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
                   <button
                     type="button"
                     onClick={toggleLiquidarDepto}
                     disabled={isRecalculating || !hasEffectiveRealEstate}
                     style={{
-                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
+                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
                       border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
                       color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-                      borderRadius: 9,
-                      padding: isMobileViewport ? '6px 8px' : '8px 10px',
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
                       fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
-                      textAlign: 'left',
                       cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
                       opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
                     }}
                   >
-                    Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+                    {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
                   </button>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Capital riesgo motor</div>
                   <button
                     type="button"
                     onClick={onToggleRiskCapital}
                     disabled={isRecalculating}
                     style={{
-                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
+                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
                       border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
                       color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
-                      borderRadius: 9,
-                      padding: isMobileViewport ? '6px 8px' : '8px 10px',
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
                       fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
-                      textAlign: 'left',
                       cursor: isRecalculating ? 'not-allowed' : 'pointer',
                       opacity: isRecalculating ? 0.65 : 1,
                     }}
                   >
-                    Incluir capital de riesgo en motor · {riskToggleCopy}
+                    {riskToggleCopy}
                   </button>
                 </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
-                    alignItems: 'center',
-                    gap: 8,
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    borderRadius: 9,
-                    padding: isMobileViewport ? '6px 8px' : '7px 10px',
-                  }}
-                >
-                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                    Monte Carlo
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Monte Carlo</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {nSimOptions.map((nSimOption) => {
                       const active = currentNSim === nSimOption;
                       return (
@@ -2697,88 +2676,81 @@ export function SimulationPage({
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Fuente de datos aplicada
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Fuente de datos aplicada
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 7 }}>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Fuente patrimonial:</span>
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{patrimonioSourceSummary}</span>
+                    <SourceBadge label={snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'} tone={patrimonioSourceTone} />
+                    <SourceBadge label={patrimonioSourceSummary} tone={patrimonioSourceTone} />
+                  </div>
+                  {patrimonioSourceWarning ? (
+                    <div style={{ color: patrimonioSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {patrimonioSourceWarning}
+                    </div>
+                  ) : null}
                 </div>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                      <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Fuente patrimonial</div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <SourceBadge label={patrimonioSourceSummary} tone={patrimonioSourceTone} />
-                        {!snapshotApplied ? <SourceBadge label="Snapshot Aurum no aplicado" tone={patrimonioSourceTone} /> : null}
-                      </div>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      {patrimonioSourceTechnical}
-                    </div>
-                    {patrimonioSourceWarning ? (
-                      <div style={{ color: patrimonioSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                        {patrimonioSourceWarning}
-                      </div>
-                    ) : null}
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Mix:</span>
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{mixTrustSourceLabel}</span>
+                    <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
                   </div>
-                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                      <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix aperturado por instrumento</div>
-                      <SourceBadge label={mixTrustSourceLabel} tone={mixSourceTone} />
+                  {mixSourceWarning ? (
+                    <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {mixSourceWarning}
                     </div>
-                    <div style={{ color: T.textMuted, fontSize: 10 }}>
-                      {distributionSourceTechnical}
-                    </div>
-                    {mixSourceWarning ? (
-                      <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                        {mixSourceWarning}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 6 }}>
-                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>FX usado</div>
-                    <div style={{ display: 'grid', gap: 5 }}>
-                      <div style={{ display: 'grid', gap: 3 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                          <div style={{ color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>USD/CLP aplicado</div>
-                          <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
-                        </div>
-                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                          {Number.isFinite(backupFxClp) ? `USD/CLP ${formatNumber(backupFxClp)}` : 'No disponible'}
-                        </div>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          {fxSpotSourceTechnical}
-                        </div>
-                        {usdFxWarning ? (
-                          <div style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                            {usdFxWarning}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div style={{ display: 'grid', gap: 3, paddingTop: 5, borderTop: `1px dashed ${T.border}` }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                          <div style={{ color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>EUR/USD usado por el modelo</div>
-                          <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
-                        </div>
-                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-                          {Number.isFinite(eurUsdModelValue)
-                            ? `EUR/USD ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : 'No disponible'}
-                        </div>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          {usingAurumEurUsd ? (
-                            <>Aplicado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>snapshot.fxReference.usdEur</span>.</>
-                          ) : (
-                            <>Valor tomado desde <span style={{ color: T.textPrimary, fontWeight: 700 }}>params.fx.usdEurFixed</span>.</>
-                          )}
-                        </div>
-                        {eurFxWarning ? (
-                          <div style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                            {eurFxWarning}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>FX:</span>
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                      USD/CLP aplicado {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : 'No disponible'}
+                    </span>
+                    <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                      EUR/USD modelo {Number.isFinite(eurUsdModelValue)
+                        ? eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : 'No disponible'}
+                    </span>
+                    <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
+                  </div>
+                  {usdFxWarning ? (
+                    <div style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {usdFxWarning}
+                    </div>
+                  ) : null}
+                  {eurFxWarning ? (
+                    <div style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {eurFxWarning}
+                    </div>
+                  ) : null}
+                </div>
+                <details style={{ marginTop: 2 }}>
+                  <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                    Ver detalle técnico
+                  </summary>
+                  <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
+                    <div>
+                      <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
+                      {usingAurumEurUsd
+                        ? 'Aplicado desde snapshot.fxReference.usdEur.'
+                        : 'Valor tomado desde params.fx.usdEurFixed.'}
+                    </div>
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Bloques fuera del motor:</span> {nonOptimizableBlocksTechnical}</div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>

@@ -4424,6 +4424,33 @@ export default function App() {
     });
   }, [operativeFxResolution]);
 
+  useEffect(() => {
+    const target = aurumFxSpotUsdEur;
+    if (target === null || !Number.isFinite(target) || target <= 0) return;
+    setBaseParams((prev) => {
+      const current = Number(prev.fx?.usdEurFixed ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          usdEurFixed: target,
+        },
+      };
+    });
+    setSimParams((prev) => {
+      const current = Number(prev.fx?.usdEurFixed ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          usdEurFixed: target,
+        },
+      };
+    });
+  }, [aurumFxSpotUsdEur]);
+
   const patrimonioSourceTechnical = snapshotApplied
     ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'}) · Base oficial + capa MIDAS persistente`
     : 'Modelo base local (sin aplicar snapshot Aurum)';
