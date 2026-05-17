@@ -341,6 +341,16 @@ function hashJson(value: unknown): string {
   return hashString(stableSerialize(value));
 }
 
+function computeEffectiveEngineInputHashForParams(params: ModelParameters): string | null {
+  try {
+    const capitalResolution = resolveCapital({ params });
+    const effectiveEngineInput = toM8Input(params, capitalResolution);
+    return `fnv1a-${hashJson(effectiveEngineInput)}`;
+  } catch {
+    return null;
+  }
+}
+
 function computeWeightedReturn(p: ModelParameters) {
   return (
     p.weights.rvGlobal * p.returns.rvGlobalAnnual +
@@ -2457,14 +2467,18 @@ export default function App() {
             seed: simulationSeed,
           },
         };
+        const runInputHash = computeEffectiveEngineInputHashForParams(params);
+        setLastRunInputHash(runInputHash);
         appendRuntimeTimeline('start_recalculation_params', {
           cause,
           requestId,
+          runInputHash,
           ...summarizeParams(params),
         });
         const nextResult = await runPrimaryRecalcWorker(params, requestId, cause);
         if (requestId !== recalcRequestIdRef.current) return;
         setSimResult(nextResult);
+        setLastRenderedResultHash(runInputHash);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
@@ -4305,7 +4319,6 @@ export default function App() {
     if (!effectiveHash) return;
     setSimulationRunBlockedReason(null);
     cloudConfigRecalcHashRef.current = effectiveHash;
-    setLastRunInputHash(effectiveHash);
     setRunAttemptCount((prev) => prev + 1);
     setSimulationRunTimedOut(false);
     const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
@@ -4382,10 +4395,6 @@ export default function App() {
     weightsSourceMode,
     m8InputFingerprint,
   ]);
-  useEffect(() => {
-    if (!simResult) return;
-    setLastRenderedResultHash(m8InputFingerprint.effectiveEngineInputHash);
-  }, [m8InputFingerprint.effectiveEngineInputHash, simResult]);
   const authGateStatus = useMemo(() => buildAuthGateStatus({
     authStatus,
     authResolved,
