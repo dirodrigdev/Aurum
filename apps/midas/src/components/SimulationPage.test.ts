@@ -117,6 +117,8 @@ assert(source.includes('Estos cambios sirven para probar una corrida temporal. N
 assert(source.includes('Escenario temporal:'));
 assert(source.includes('Monte Carlo temporal:'));
 assert(source.includes('Neutro'));
+assert(source.includes("const heroBaseChipLabel = 'Base';"));
+assert(source.includes("{ id: 'state', value: heroBaseChipLabel, onClick: simActive ? onResetSim : () => {} }"));
 assert(!source.includes("variant.id === 'base' ? 'Base'"));
 assert(!source.includes('Capital riesgo motor'));
 assert(!source.includes('Aurum: Modelo base local (sin aplicar snapshot Aurum)'));

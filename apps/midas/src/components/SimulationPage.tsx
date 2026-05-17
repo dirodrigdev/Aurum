@@ -578,6 +578,7 @@ export function SimulationPage({
     scenarioFromParamsRaw !== 'optimistic';
   const scenarioUiLabel =
     activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
+  const heroBaseChipLabel = 'Base';
   const simulationConfigSourceLabel =
     simulationConfigSource === 'cloud' ? 'Cloud canónico' : simulationConfigSource === 'local_cache' ? 'Cache local' : 'Fallback';
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
@@ -2100,7 +2101,7 @@ export function SimulationPage({
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
             chips={[
-              { id: 'state', value: scenarioUiLabel, onClick: simActive ? onResetSim : () => {} },
+              { id: 'state', value: heroBaseChipLabel, onClick: simActive ? onResetSim : () => {} },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
               {
