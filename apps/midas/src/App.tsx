@@ -4242,14 +4242,23 @@ export default function App() {
     && typeof headerSuccess40 === 'number'
     && Number.isFinite(headerSuccess40)
   );
-  const headerMetricText = headerShowsDefinitiveNumber
-    ? `Éxito ${formatSuccessPct(headerSuccess40)}`
-    : 'Calculando…';
-  const headerStatusColor = resultConfidence.status === 'canonical'
-    ? T.positive
-    : resultConfidence.status === 'review'
-      ? T.warning
-      : T.negative;
+  const headerMetricText = heroPhase === 'stale'
+    ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
+      ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
+      : 'Pendiente de recalcular'
+    : headerShowsDefinitiveNumber
+      ? `Éxito ${formatSuccessPct(headerSuccess40)}`
+      : 'Calculando…';
+  const headerConfidenceLabel = heroPhase === 'stale'
+    ? 'Recalcular'
+    : resultConfidence.label;
+  const headerStatusColor = heroPhase === 'stale'
+    ? T.warning
+    : resultConfidence.status === 'canonical'
+      ? T.positive
+      : resultConfidence.status === 'review'
+        ? T.warning
+        : T.negative;
 
   useEffect(() => {
     const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
@@ -4738,7 +4747,7 @@ export default function App() {
         <Header
           statusColor={headerStatusColor}
           metricText={headerMetricText}
-          confidenceLabel={resultConfidence.label}
+          confidenceLabel={headerConfidenceLabel}
         />
         <main
           style={{
@@ -4821,7 +4830,7 @@ function Header({
 }: {
   statusColor: string;
   metricText: string;
-  confidenceLabel: 'OK' | 'Revisar' | 'No usar';
+  confidenceLabel: string;
 }) {
   return (
     <header

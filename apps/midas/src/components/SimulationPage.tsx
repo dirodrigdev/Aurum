@@ -212,6 +212,12 @@ const sourceBadgeTonePresentation = (tone: SourceBadgeTone) => {
   return { color: T.textMuted, bg: 'rgba(148, 163, 184, 0.14)', border: 'rgba(148, 163, 184, 0.35)' };
 };
 
+const formatRiskCapitalInBaseLabel = (status: 'yes' | 'no' | 'unknown') => {
+  if (status === 'yes') return 'Sí';
+  if (status === 'no') return 'No';
+  return 'No determinado';
+};
+
 function SourceBadge({
   label,
   tone,
@@ -911,6 +917,19 @@ export function SimulationPage({
         gap: 'Falta: Esperar resultado final.',
       };
     }
+    if (heroPhase === 'stale') {
+      return {
+        label: showGhostResult ? 'Resultado anterior' : 'Pendiente',
+        tone: T.warning,
+        headline: showGhostResult
+          ? 'Resultado anterior · recalcular.'
+          : 'Pendiente de recalcular.',
+        explanation: showGhostResult
+          ? 'La configuración cambió. El resultado visible pertenece a la configuración anterior.'
+          : 'No hay resultado actualizado para esta configuración.',
+        gap: 'Ejecuta simulación para validar Depto ON/OFF + Capital de riesgo ON/OFF.',
+      };
+    }
     if (resultConfidence.status === 'not_decisional') {
       return {
         label: 'No usar',
@@ -936,7 +955,7 @@ export function SimulationPage({
       explanation: 'Resultado canónico.',
       gap: null as string | null,
     };
-  }, [T.negative, T.positive, T.warning, isRunActive, resultConfidence.status, reviewCause, reviewGap]);
+  }, [T.negative, T.positive, T.warning, heroPhase, isRunActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
   const heroConfidenceBlock = useMemo(
     () => (
       <span style={{ display: 'grid', gap: 4 }}>
@@ -1204,14 +1223,24 @@ export function SimulationPage({
     if (!Number.isFinite(optimizable)) return null;
     return Math.max(0, optimizable) + (Number.isFinite(banks) ? Math.max(0, banks) : 0);
   }, [compositionSource]);
-  const totalNetWorthVisibleClp = useMemo(() => {
+  const patrimonioAurumBaseVisibleClp = useMemo(() => {
     const total = Number(compositionSource?.totalNetWorthCLP ?? NaN);
     return Number.isFinite(total) && total > 0 ? total : null;
   }, [compositionSource]);
+  // Aurum V2 publishes totalNetWorthCLP as the visible base and riskCapital as a separate block.
+  // MIDAS keeps that separation so the reference can include detected risk without changing the toggle.
+  let riskCapitalIncludedInAurumBase: 'yes' | 'no' | 'unknown' = 'unknown';
+  if (riskDetectedClp > 0) riskCapitalIncludedInAurumBase = 'no';
+  const referenceRiskAdjustmentClp = patrimonioAurumBaseVisibleClp !== null && riskCapitalIncludedInAurumBase === 'no'
+    ? riskDetectedClp
+    : 0;
+  const patrimonioReferenciaMidasClp = patrimonioAurumBaseVisibleClp !== null
+    ? patrimonioAurumBaseVisibleClp + referenceRiskAdjustmentClp
+    : null;
   const nonOptimizableVisibleClp = useMemo(() => {
-    if (!Number.isFinite(totalNetWorthVisibleClp) || totalNetWorthVisibleClp === null || capitalSentToMotorClp === null) return null;
-    return totalNetWorthVisibleClp - capitalSentToMotorClp;
-  }, [capitalSentToMotorClp, totalNetWorthVisibleClp]);
+    if (!Number.isFinite(patrimonioAurumBaseVisibleClp) || patrimonioAurumBaseVisibleClp === null || capitalSentToMotorClp === null) return null;
+    return patrimonioAurumBaseVisibleClp - capitalSentToMotorClp;
+  }, [capitalSentToMotorClp, patrimonioAurumBaseVisibleClp]);
   const realEstateConsideredClp = useMemo(() => {
     const equity = Number(compositionSource?.nonOptimizable?.realEstate?.realEstateEquityCLP ?? NaN);
     if (Number.isFinite(equity) && equity > 0) return equity;
@@ -1223,9 +1252,32 @@ export function SimulationPage({
     }
     return null;
   }, [compositionSource]);
-  const patrimonioConsideradoMidasClp = Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0
-    ? effectiveBaseCapital
+  const patrimonioConsideradoMidasClp = Number.isFinite(params.capitalInitial) && params.capitalInitial > 0
+    ? params.capitalInitial
     : null;
+  const wealthConfigHasReference = patrimonioReferenciaMidasClp !== null && patrimonioReferenciaMidasClp > 0;
+  const wealthConfigHasConsidered = patrimonioConsideradoMidasClp !== null && patrimonioConsideradoMidasClp > 0;
+  const wealthConsideredExceedsReference = wealthConfigHasReference && wealthConfigHasConsidered
+    ? patrimonioConsideradoMidasClp > (patrimonioReferenciaMidasClp * 1.005)
+    : false;
+  const wealthReferenceGapClp = wealthConfigHasReference && wealthConfigHasConsidered
+    ? patrimonioReferenciaMidasClp - patrimonioConsideradoMidasClp
+    : null;
+  const wealthConfigTone: SourceBadgeTone = !wealthConfigHasReference || !wealthConfigHasConsidered || wealthConsideredExceedsReference
+    ? 'alert'
+    : riskCapitalIncludedInAurumBase === 'unknown' && riskDetectedClp > 0
+      ? 'warning'
+      : 'ok';
+  const wealthConfigLabel = wealthConfigTone === 'ok'
+    ? 'Configuración OK'
+    : wealthConfigTone === 'warning'
+      ? 'Configuración con advertencias'
+      : 'Configuración inválida / revisar';
+  const wealthConfigCopy = wealthConsideredExceedsReference
+    ? 'Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'
+    : wealthConfigTone === 'alert'
+      ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
+      : 'Configuración patrimonial válida para esta corrida.';
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
   const patrimonioSourceWarning = snapshotApplied
@@ -1867,18 +1919,21 @@ export function SimulationPage({
   const nSimOptions = [1000, 3000, 5000] as const;
   const currentNSim = Number(params.simulation?.nSim ?? 1000);
   const simulationDataSummary = useMemo(() => {
+    const referenceLabel = patrimonioReferenciaMidasClp !== null
+      ? `Referencia ${formatMoneyCompact(patrimonioReferenciaMidasClp)}`
+      : 'Referencia no disponible';
     const capitalLabel = patrimonioConsideradoMidasClp !== null
       ? `MIDAS ${formatMoneyCompact(patrimonioConsideradoMidasClp)}`
       : 'MIDAS no disponible';
     return [
-      totalNetWorthVisibleClp !== null ? `Aurum ${formatMoneyCompact(totalNetWorthVisibleClp)}` : 'Aurum no disponible',
+      referenceLabel,
       capitalLabel,
       scenarioUiLabel,
       `${currentNSim} sim`,
       `Depto ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
-      `Riesgo ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
+      `Capital riesgo ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
     ].join(' · ');
-  }, [currentNSim, liquidarDeptoEnabled, patrimonioConsideradoMidasClp, riskCapitalEnabled, scenarioUiLabel, totalNetWorthVisibleClp]);
+  }, [currentNSim, liquidarDeptoEnabled, patrimonioConsideradoMidasClp, patrimonioReferenciaMidasClp, riskCapitalEnabled, scenarioUiLabel]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -2581,9 +2636,9 @@ export function SimulationPage({
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.3fr 0.9fr 0.9fr 1.3fr 1.2fr 1.1fr', gap: 6 }}>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio total Aurum</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
-                  <div style={{ color: T.textMuted, fontSize: 10 }}>Foto patrimonial completa.</div>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio de referencia MIDAS</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Foto patrimonial ampliada para análisis.</div>
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
@@ -2637,6 +2692,7 @@ export function SimulationPage({
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio considerado por MIDAS</div>
                   <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>Recursos habilitados para esta corrida.</div>
+                  <SourceBadge label={wealthConfigLabel} tone={wealthConfigTone} />
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Escenario</div>
@@ -2709,14 +2765,25 @@ export function SimulationPage({
                   Ver desglose patrimonial
                 </summary>
                 <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio total Aurum:</span> {totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio Aurum base visible:</span> {patrimonioAurumBaseVisibleClp !== null ? formatMoneyCompact(patrimonioAurumBaseVisibleClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo detectado:</span> {formatMoneyCompact(riskDetectedClp)}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio Aurum base:</span> {formatRiskCapitalInBaseLabel(riskCapitalIncludedInAurumBase)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajuste de referencia por capital de riesgo:</span> {formatMoneyCompact(referenceRiskAdjustmentClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio de referencia MIDAS:</span> {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo habilitado para esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio considerado por MIDAS:</span> {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Diferencia entre referencia MIDAS y considerado MIDAS:</span> {wealthReferenceGapClp !== null ? formatMoneyCompact(wealthReferenceGapClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital no usado por esta simulación:</span> {nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Fuente patrimonial:</span> {patrimonioSourceTechnical}</div>
+                  <div style={{ color: wealthConfigTone === 'alert' ? T.negative : wealthConfigTone === 'warning' ? T.warning : T.textSecondary }}>
+                    {wealthConfigCopy}
+                  </div>
+                  <div>
+                    El patrimonio de referencia MIDAS puede diferir del patrimonio visible de Aurum porque incorpora capital de riesgo detectado para análisis. El switch decide si MIDAS puede usarlo en esta corrida.
+                  </div>
                   {realEstateConsideredClp === null || nonOptimizableVisibleClp === null ? (
                     <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Nota:</span> Algunos valores no están disponibles en esta corrida.</div>
                   ) : null}
