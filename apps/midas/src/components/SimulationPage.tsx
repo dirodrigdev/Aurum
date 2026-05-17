@@ -1212,6 +1212,20 @@ export function SimulationPage({
     if (!Number.isFinite(totalNetWorthVisibleClp) || totalNetWorthVisibleClp === null || capitalSentToMotorClp === null) return null;
     return totalNetWorthVisibleClp - capitalSentToMotorClp;
   }, [capitalSentToMotorClp, totalNetWorthVisibleClp]);
+  const realEstateConsideredClp = useMemo(() => {
+    const equity = Number(compositionSource?.nonOptimizable?.realEstate?.realEstateEquityCLP ?? NaN);
+    if (Number.isFinite(equity) && equity > 0) return equity;
+    const property = Number(compositionSource?.nonOptimizable?.realEstate?.propertyValueCLP ?? NaN);
+    const debt = Number(compositionSource?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP ?? NaN);
+    if (Number.isFinite(property) && property > 0) {
+      const fallbackEquity = property - (Number.isFinite(debt) ? debt : 0);
+      return fallbackEquity > 0 ? fallbackEquity : null;
+    }
+    return null;
+  }, [compositionSource]);
+  const patrimonioConsideradoMidasClp = Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0
+    ? effectiveBaseCapital
+    : null;
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
   const patrimonioSourceWarning = snapshotApplied
@@ -1853,17 +1867,18 @@ export function SimulationPage({
   const nSimOptions = [1000, 3000, 5000] as const;
   const currentNSim = Number(params.simulation?.nSim ?? 1000);
   const simulationDataSummary = useMemo(() => {
-    const capitalLabel = capitalSentToMotorClp !== null
-      ? `Capital usado ${formatMoneyCompact(capitalSentToMotorClp)}`
-      : 'Capital usado no disponible';
+    const capitalLabel = patrimonioConsideradoMidasClp !== null
+      ? `MIDAS ${formatMoneyCompact(patrimonioConsideradoMidasClp)}`
+      : 'MIDAS no disponible';
     return [
+      totalNetWorthVisibleClp !== null ? `Aurum ${formatMoneyCompact(totalNetWorthVisibleClp)}` : 'Aurum no disponible',
       capitalLabel,
       scenarioUiLabel,
       `${currentNSim} sim`,
       `Depto ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
-      `Capital riesgo motor ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
+      `Riesgo ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
     ].join(' · ');
-  }, [capitalSentToMotorClp, currentNSim, liquidarDeptoEnabled, riskCapitalEnabled, scenarioUiLabel]);
+  }, [currentNSim, liquidarDeptoEnabled, patrimonioConsideradoMidasClp, riskCapitalEnabled, scenarioUiLabel, totalNetWorthVisibleClp]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -2562,44 +2577,68 @@ export function SimulationPage({
           <div style={{ display: 'grid', gap: 10 }}>
             <div style={{ display: 'grid', gap: 6 }}>
               <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                KPIs principales
+                Barra de decisión
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.3fr 0.9fr 0.9fr 1.3fr 1.2fr 1.1fr', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio total Aurum</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Foto patrimonial completa.</div>
                 </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital usado por el motor</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
-                </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital no usado por esta simulación</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
-                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-                    Inmueble, deuda/liquidez no modelada o riesgo no aplicado.
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
+                  <button
+                    type="button"
+                    onClick={toggleLiquidarDepto}
+                    disabled={isRecalculating || !hasEffectiveRealEstate}
+                    style={{
+                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
+                      border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                      color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+                    }}
+                  >
+                    {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+                  </button>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {liquidarDeptoEnabled ? 'Respaldo habilitado.' : 'No se usa como respaldo.'}
                   </div>
                 </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo detectado</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
-                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-                    Detectado en composición. En motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{riskCapitalEnabled ? 'Sí' : 'No'}</span>.
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 2 }}>
-                    {riskCapitalEnabled
-                      ? 'Se incluye según la política activa del motor.'
-                      : 'Existe en la composición, pero esta corrida no lo usa como capital simulable.'}
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Capital de riesgo</div>
+                  <button
+                    type="button"
+                    onClick={onToggleRiskCapital}
+                    disabled={isRecalculating}
+                    style={{
+                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
+                      border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                      color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    {riskToggleCopy}
+                  </button>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {riskCapitalEnabled ? 'Habilitado.' : 'No entra.'}
                   </div>
                 </div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Controles principales
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio considerado por MIDAS</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Recursos habilitados para esta corrida.</div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Escenario</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
@@ -2627,53 +2666,11 @@ export function SimulationPage({
                       );
                     })}
                   </div>
-                  {isScenarioAdjusted ? (
-                    <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada sobre preset base.</div>
-                  ) : null}
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {isScenarioAdjusted ? 'Ajustada sobre preset base.' : 'Preset activo.'}
+                  </div>
                 </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
-                  <button
-                    type="button"
-                    onClick={toggleLiquidarDepto}
-                    disabled={isRecalculating || !hasEffectiveRealEstate}
-                    style={{
-                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
-                      border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
-                      color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-                      borderRadius: 999,
-                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
-                      fontSize: isMobileViewport ? 10 : 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
-                    }}
-                  >
-                    {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
-                  </button>
-                </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
-                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Capital riesgo motor</div>
-                  <button
-                    type="button"
-                    onClick={onToggleRiskCapital}
-                    disabled={isRecalculating}
-                    style={{
-                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
-                      border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-                      color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
-                      borderRadius: 999,
-                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
-                      fontSize: isMobileViewport ? 10 : 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
-                    }}
-                  >
-                    {riskToggleCopy}
-                  </button>
-                </div>
-                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Monte Carlo</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {nSimOptions.map((nSimOption) => {
@@ -2702,8 +2699,29 @@ export function SimulationPage({
                       );
                     })}
                   </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Trayectorias de esta corrida.</div>
                 </div>
               </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <details>
+                <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                  Ver desglose patrimonial
+                </summary>
+                <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio total Aurum:</span> {totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo detectado:</span> {formatMoneyCompact(riskDetectedClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital no usado por esta simulación:</span> {nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Fuente patrimonial:</span> {patrimonioSourceTechnical}</div>
+                  {realEstateConsideredClp === null || nonOptimizableVisibleClp === null ? (
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Nota:</span> Algunos valores no están disponibles en esta corrida.</div>
+                  ) : null}
+                </div>
+              </details>
             </div>
             <div style={{ display: 'grid', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
