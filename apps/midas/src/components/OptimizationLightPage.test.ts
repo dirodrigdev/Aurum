@@ -226,14 +226,14 @@ const expressGrid = buildOptimizationExpressGrid();
 assert.deepEqual(expressGrid, [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 assert.equal(expressGrid[1] - expressGrid[0], DECISION_EXPRESS_STEP_PP);
 const expressWithCurrent = buildOptimizationExpressGrid(59.2);
-assert(expressWithCurrent.includes(59.2));
 assert(expressWithCurrent.includes(60));
+assert(!expressWithCurrent.includes(59.2));
 
 const zoomShortlist = buildOptimizationZoomShortlist({
   preliminaryRecommendationRv: 60,
   defensiveReferenceRv: 25,
   technicalPreludeRv: 55,
-  currentRv: 59.2,
+  currentRvRounded: 60,
 });
 assert(zoomShortlist.includes(50));
 assert(zoomShortlist.includes(55));
@@ -243,7 +243,8 @@ assert(zoomShortlist.includes(70));
 assert(zoomShortlist.includes(25));
 assert(zoomShortlist.includes(80));
 assert(zoomShortlist.includes(100));
-assert(zoomShortlist.includes(59.2));
+assert(!zoomShortlist.includes(59.2));
+assert(zoomShortlist.every((value) => value % 5 === 0));
 assert.equal(new Set(zoomShortlist).size, zoomShortlist.length);
 assert.equal(zoomShortlist[0], 15);
 assert.equal(zoomShortlist[zoomShortlist.length - 1], 100);
@@ -252,7 +253,7 @@ const boundedZoom = buildOptimizationZoomShortlist({
   preliminaryRecommendationRv: 0,
   defensiveReferenceRv: 100,
   technicalPreludeRv: null,
-  currentRv: null,
+  currentRvRounded: null,
 });
 assert.equal(boundedZoom[0], 0);
 assert.equal(boundedZoom[boundedZoom.length - 1], 100);
@@ -262,7 +263,7 @@ const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
   defensiveReferenceRv: 25,
   technicalPreludeRv: 55,
-  currentRv: 59.2,
+  currentRvRounded: 60,
 });
 assert(confirmationShortlist.length < 21);
 assert(confirmationShortlist.includes(50));
@@ -271,7 +272,8 @@ assert(confirmationShortlist.includes(60));
 assert(confirmationShortlist.includes(65));
 assert(confirmationShortlist.includes(70));
 assert(confirmationShortlist.includes(100));
-assert(confirmationShortlist.includes(59.2));
+assert(!confirmationShortlist.includes(59.2));
+assert(confirmationShortlist.every((value) => value % 5 === 0));
 
 const decisionProfiles = buildProfiles([
   buildDecisionCandidate({ rvPct: 25, terminalWealthP50: 1_000_000_000, qasrAt120: 0.89 }),
@@ -468,6 +470,8 @@ assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase1/.test(source
 assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase2/.test(source));
 assert(source.includes('DECISION_EXPRESS_NSIM = 750'));
 assert(source.includes('DECISION_ZOOM_NSIM = 1000'));
+assert(source.includes('DECISION_OFFICIAL_GRID_STEP_PP = 5'));
+assert(!source.includes('RV 69,25 / RF 30,75'));
 assert(source.includes('Cálculo en segundo plano · puede avanzar más lento.'));
 assert(source.includes('Chrome puede ralentizar cálculos en segundo plano; se verificará el progreso al volver.'));
 assert(source.includes('Reanudar cálculo'));
@@ -481,6 +485,9 @@ assert(source.includes('Escenarios evaluados por el modelo'));
 assert(source.includes('Qué cambia frente a tu mix actual'));
 assert(source.includes('Comparación confirmada'));
 assert(source.includes('Comparación preliminar'));
+assert(source.includes('Traspasos sugeridos por instrumento'));
+assert(source.includes('No implementable automáticamente bajo restricciones actuales.'));
+assert(source.includes('Cross-currency bloqueado/manual'));
 assert(source.includes('El óptimo financiero queda fuera de este bloque'));
 assert(source.includes('Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo.'));
 assert(source.includes('shortlist refinada con vecinos ±5pp/±10pp'));

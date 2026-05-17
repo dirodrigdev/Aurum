@@ -17,8 +17,14 @@ export type InstrumentImplementationConstraintFlags = {
 export type InstrumentImplementationTransfer = {
   fromInstrumentId: string;
   fromName: string;
+  fromManager?: string | null;
+  fromCurrency?: string | null;
+  fromTaxWrapper?: string | null;
   toInstrumentId: string;
   toName: string;
+  toManager?: string | null;
+  toCurrency?: string | null;
+  toTaxWrapper?: string | null;
   weightMoved: number;
   amountNativeMoved: number | null;
   nativeCurrency: string | null;

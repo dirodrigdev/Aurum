@@ -7,6 +7,7 @@ import type {
 import { REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from './optimizerPolicyConfig';
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+const MATERIAL_CROSS_MANAGER_MIN_WEIGHT = 0.03;
 
 const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
   const rvGlobal = clamp01(weights.rvGlobal);
@@ -63,6 +64,12 @@ function scorePair(
   score += (destination.estimatedMixImpactPoints ?? 0) / 100;
   if (destination.replacementConstraint && destination.replacementConstraint !== 'none') score -= 1;
   return score;
+}
+
+function inferManagerName(item: InstrumentImplementationUniverse['instruments'][number]): string | null {
+  if (!item.name) return null;
+  const token = item.name.trim().split(/\s+/)[0];
+  return token ? token.toUpperCase() : null;
 }
 
 export function buildInstrumentImplementationPlan(input: {
@@ -155,6 +162,9 @@ export function buildInstrumentImplementationPlan(input: {
       const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
       const sameManager = source.sameManagerCandidates.includes(destination.instrumentId);
       const sameTaxWrapper = source.sameTaxWrapperCandidates.includes(destination.instrumentId);
+      if (!sameManager && moveWeight < MATERIAL_CROSS_MANAGER_MIN_WEIGHT - 1e-9) {
+        continue;
+      }
       const crossManager = !sameManager;
       const crossCurrency = !sameCurrency;
       if (crossManager) restrictionsApplied.crossManager = true;
@@ -174,8 +184,14 @@ export function buildInstrumentImplementationPlan(input: {
       transfers.push({
         fromInstrumentId: source.instrumentId,
         fromName: source.name ?? source.instrumentId,
+        fromManager: inferManagerName(source),
+        fromCurrency: source.currency ?? null,
+        fromTaxWrapper: source.taxWrapper ?? null,
         toInstrumentId: destination.instrumentId,
         toName: destination.name ?? destination.instrumentId,
+        toManager: inferManagerName(destination),
+        toCurrency: destination.currency ?? null,
+        toTaxWrapper: destination.taxWrapper ?? null,
         weightMoved: moveWeight,
         amountNativeMoved: source.amountNative !== null && source.amountNative !== undefined
           ? source.amountNative * nativeRatio

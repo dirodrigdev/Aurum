@@ -214,6 +214,7 @@ type DecisionProfilesScenarioTable = {
   label: string;
   profiles: RvRfDecisionProfiles;
   financialReference: FinancialReferenceCandidate | null;
+  currentCandidate: RvRfDecisionCandidate | null;
 };
 
 export type FinancialReferenceCandidate = {
@@ -355,11 +356,17 @@ export const IMPLEMENTATION_CRITICAL_SLEEVE_GAP_PP = 2.0;
 export const DECISION_EXPRESS_STEP_PP = 10;
 export const DECISION_EXPRESS_NSIM = 750;
 export const DECISION_ZOOM_NSIM = 1000;
+export const DECISION_OFFICIAL_GRID_STEP_PP = 5;
 export const DECISION_CONFIRM_NEIGHBOR_STEP_PP = 5;
 export const DECISION_CONFIRM_WIDE_NEIGHBOR_PP = 10;
 
 function clampMixPercent(value: number): number {
   return Math.max(0, Math.min(100, Number(value.toFixed(4))));
+}
+
+function snapMixToStep(rvPct: number, stepPp = DECISION_OFFICIAL_GRID_STEP_PP): number {
+  const snapped = Math.round(rvPct / stepPp) * stepPp;
+  return clampMixPercent(snapped);
 }
 
 function cloneParams<T>(params: T): T {
@@ -505,11 +512,15 @@ function candidateIdForRvPct(rvPct: number, currentRvPct: number | null): string
 }
 
 export function buildOptimizationExpressGrid(currentRv?: number | null): number[] {
-  const grid = buildFineRvRfGrid(DECISION_EXPRESS_STEP_PP);
+  const coarseGrid = buildFineRvRfGrid(DECISION_EXPRESS_STEP_PP);
+  const closedGrid: number[] = [];
+  coarseGrid.forEach((rvPct) => {
+    pushUniqueMix(closedGrid, snapMixToStep(rvPct));
+  });
   if (currentRv !== null && currentRv !== undefined && Number.isFinite(currentRv)) {
-    pushUniqueMix(grid, currentRv);
+    pushUniqueMix(closedGrid, snapMixToStep(currentRv));
   }
-  return grid.sort((a, b) => a - b);
+  return closedGrid.sort((a, b) => a - b);
 }
 
 function pushUniqueMix(target: number[], rvPct: number) {
@@ -521,18 +532,23 @@ function currentRvPctFromWeights(weights: PortfolioWeights): number {
   return currentRvPctExactFromWeights(weights);
 }
 
+function isOnOfficialGrid(rvPct: number, stepPp = DECISION_OFFICIAL_GRID_STEP_PP): boolean {
+  const snapped = snapMixToStep(rvPct, stepPp);
+  return Math.abs(snapped - clampMixPercent(rvPct)) <= 0.0001;
+}
+
 export function buildOptimizationZoomShortlist(input: {
   preliminaryRecommendationRv: number | null;
   defensiveReferenceRv: number | null;
   technicalPreludeRv: number | null;
-  currentRv: number | null;
+  currentRvRounded: number | null;
 }): number[] {
   const shortlist: number[] = [];
   const seeds = [
     input.preliminaryRecommendationRv,
     input.defensiveReferenceRv,
     input.technicalPreludeRv,
-    input.currentRv,
+    input.currentRvRounded,
     25,
     50,
     80,
@@ -540,11 +556,11 @@ export function buildOptimizationZoomShortlist(input: {
   ];
   seeds.forEach((seed) => {
     if (seed === null || !Number.isFinite(seed)) return;
-    pushUniqueMix(shortlist, seed);
-    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
-    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP);
-    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP);
-    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+    pushUniqueMix(shortlist, snapMixToStep(seed));
+    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
   });
   return shortlist.sort((a, b) => a - b);
 }
@@ -553,23 +569,23 @@ export function buildOptimizationConfirmationShortlist(input: {
   zoomRecommendationRv: number | null;
   defensiveReferenceRv: number | null;
   technicalPreludeRv: number | null;
-  currentRv: number | null;
+  currentRvRounded: number | null;
 }): number[] {
   const shortlist: number[] = [];
   const seeds = [
     input.zoomRecommendationRv,
     input.defensiveReferenceRv,
     input.technicalPreludeRv,
-    input.currentRv,
+    input.currentRvRounded,
     100,
   ];
   seeds.forEach((seed) => {
     if (seed === null || !Number.isFinite(seed)) return;
-    pushUniqueMix(shortlist, seed);
-    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
-    pushUniqueMix(shortlist, seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP);
-    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP);
-    pushUniqueMix(shortlist, seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
+    pushUniqueMix(shortlist, snapMixToStep(seed));
+    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP));
+    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
   });
   return shortlist.sort((a, b) => a - b);
 }
@@ -2305,7 +2321,13 @@ export function OptimizationLightPage({
       { id: 'rv_plus_10' as const, label: 'Sanity Check RV +10pp' },
     ];
     const seed = activeParams.simulation.seed ?? 0;
-    const total = scenarioDefs.length * input.rvCandidates.length * SPENDING_HEADROOM_SCALES.length;
+    const currentRvExact = currentRvPctExactFromWeights(activeParams.weights);
+    const officialCandidates = [...input.rvCandidates].map((value) => snapMixToStep(value));
+    const evaluationCandidates = [...officialCandidates];
+    if (!evaluationCandidates.some((value) => Math.abs(value - currentRvExact) <= 0.0001)) {
+      pushUniqueMix(evaluationCandidates, currentRvExact);
+    }
+    const total = scenarioDefs.length * evaluationCandidates.length * SPENDING_HEADROOM_SCALES.length;
     let evaluated = 0;
     const nextTables: DecisionProfilesScenarioTable[] = [];
 
@@ -2327,15 +2349,16 @@ export function OptimizationLightPage({
       baseScenarioParams.simulation.nSim = input.nSim;
       const rows: RvRfDecisionCandidate[] = [];
       const financialRows: FinancialReferenceCandidate[] = [];
+      let currentCandidate: RvRfDecisionCandidate | null = null;
 
-      for (const rvPct of input.rvCandidates) {
+      for (const rvPct of evaluationCandidates) {
         if (shouldAbortDecisionRun()) throw new Error('__MIDAS_DECISION_CANCELLED__');
         const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
-        const currentRv = currentRvPctExactFromWeights(activeParams.weights);
-        const candidateId = candidateIdForRvPct(rvPct, currentRv);
+        const candidateId = candidateIdForRvPct(rvPct, currentRvExact);
+        const candidateIsOfficial = isOnOfficialGrid(rvPct);
         const evaluations: SpendingHeadroomEvaluationResult[] = [];
 
-        if (scenarioDef.id === 'base') {
+        if (scenarioDef.id === 'base' && candidateIsOfficial) {
           const autonomous = buildFinancialReferenceParams(activeParams);
           autonomous.weights = cloneParams(weights);
           autonomous.simulation.nSim = input.nSim;
@@ -2413,7 +2436,7 @@ export function OptimizationLightPage({
         const plus30 = evaluations.find((item) => Math.abs(item.spendScale - 1.3) <= 1e-9) ?? null;
         if (!baseEval || !plus20 || !plus30) continue;
 
-        rows.push({
+        const candidate: RvRfDecisionCandidate = {
           candidateId,
           mixLabel: formatDecisionMixLabel(rvPct),
           rvPct: clampMixPercent(rvPct),
@@ -2434,7 +2457,9 @@ export function OptimizationLightPage({
           recSevPctBase: baseEval.monthsInSevereCutMean === null
             ? null
             : baseEval.monthsInSevereCutMean / Math.max(1, activeParams.simulation.horizonMonths),
-        });
+        };
+        if (candidateIsOfficial) rows.push(candidate);
+        if (Math.abs(rvPct - currentRvExact) <= 0.0001) currentCandidate = candidate;
       }
 
       nextTables.push({
@@ -2442,6 +2467,7 @@ export function OptimizationLightPage({
         label: scenarioDef.label,
         profiles: buildDecisionProfiles(rows, input.nSim),
         financialReference: selectFinancialOptimumCandidate(financialRows),
+        currentCandidate,
       });
     }
 
@@ -2452,7 +2478,7 @@ export function OptimizationLightPage({
       message: input.message,
       nSim: input.nSim,
       stepPp: input.stepPp,
-      candidateCount: input.rvCandidates.length,
+      candidateCount: officialCandidates.length,
       seed,
       implementationEnabled: input.implementationEnabled,
     });
@@ -2517,7 +2543,7 @@ export function OptimizationLightPage({
         preliminaryRecommendationRv: expressMain?.rvPct ?? null,
         defensiveReferenceRv: expressDefensive?.rvPct ?? null,
         technicalPreludeRv: expressFinancial?.rvPct ?? null,
-        currentRv: currentRvPctFromWeights(activeParams.weights),
+        currentRvRounded: snapMixToStep(currentRvPctFromWeights(activeParams.weights)),
       });
 
       const zoomTables = await evaluateDecisionProfilesStage({
@@ -2591,9 +2617,9 @@ export function OptimizationLightPage({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
         technicalPreludeRv: financialOptimum?.rvPct ?? null,
-        currentRv: currentRvPctExactFromWeights(activeParams.weights),
+        currentRvRounded: snapMixToStep(currentRvPctExactFromWeights(activeParams.weights)),
       });
-      const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(5);
+      const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(DECISION_OFFICIAL_GRID_STEP_PP);
       const confirmedTables = await evaluateDecisionProfilesStage({
         stage: 'confirmed',
         badge: 'Confirmado · apto para implementación',
@@ -2773,10 +2799,11 @@ export function OptimizationLightPage({
     [baseDecisionTable],
   );
   const currentDecisionCandidate = useMemo(() => {
+    if (baseDecisionTable?.currentCandidate) return baseDecisionTable.currentCandidate;
     if (!baseDecisionProfiles) return null;
     const currentId = candidateIdForRvPct(currentRvPctExactFromWeights(activeParams.weights), currentRvPctExactFromWeights(activeParams.weights));
     return baseDecisionProfiles.rows.find((row) => row.candidateId === currentId) ?? null;
-  }, [activeParams.weights, baseDecisionProfiles]);
+  }, [activeParams.weights, baseDecisionProfiles, baseDecisionTable]);
   const recommendedDecisionWeights = useMemo(
     () => (officialMainRecommendation ? buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct) : null),
     [activeParams.weights, officialMainRecommendation],
@@ -3574,7 +3601,7 @@ export function OptimizationLightPage({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>{decisionFlowStatus.badge}</span>
               <span style={{ color: T.textMuted, fontSize: 10 }}>
-                nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ' · shortlist refinada con vecinos ±5pp/±10pp'}
+                {decisionFlowStatus.badge} · {decisionFlowStatus.candidateCount} mixes · {decisionProgress?.total ?? 0} unidades · nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ' · shortlist refinada con vecinos ±5pp/±10pp'}
               </span>
             </div>
             <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
@@ -4413,7 +4440,7 @@ export function OptimizationLightPage({
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <span style={{ color: T.textPrimary, fontSize: 10, fontWeight: 800 }}>{decisionFlowStatus.badge}</span>
                   <span style={{ color: T.textMuted, fontSize: 10 }}>
-                    nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed} · candidatos {decisionFlowStatus.candidateCount}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ''}
+                    {decisionFlowStatus.badge} · {decisionFlowStatus.candidateCount} mixes · {decisionProgress?.total ?? 0} unidades · nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ''}
                   </span>
                 </div>
                 <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
@@ -4791,49 +4818,58 @@ export function OptimizationLightPage({
                     ))}
                   </div>
                 ) : null}
-                <details style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 6, background: T.surface }}>
-                  <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
-                    Ver detalle de traspasos y restricciones
-                  </summary>
-                  <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
-                    Restricciones aplicadas · misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
-                    {' '}misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'} ·
-                    {' '}mismo wrapper: {implementationPlan.restrictionsApplied.sameTaxWrapper ? 'sí' : 'no'} ·
-                    {' '}cross-manager: {implementationPlan.restrictionsApplied.crossManager ? 'sí' : 'no'} ·
-                    {' '}cross-currency: {implementationPlan.restrictionsApplied.crossCurrency ? 'sí' : 'no'}
+                <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Traspasos sugeridos por instrumento</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Operaciones sugeridas: {implementationPlan.transfers.length} · Total a mover {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'} ·
+                    {' '}Misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
+                    {' '}Misma administradora: {implementationPlan.restrictionsApplied.sameManager ? 'sí' : 'no'}
                   </div>
                   {implementationPlan.transfers.length ? (
-                    <div style={{ display: 'grid', gap: 3, marginTop: 6 }}>
-                      {implementationPlan.transfers.slice(0, 6).map((transfer, index) => (
-                        <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ color: T.textSecondary, fontSize: 10, display: 'grid', gap: 2 }}>
-                          <div style={{ color: T.textPrimary, fontWeight: 800 }}>
-                            {transfer.fromName} → {transfer.toName}
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      {[...implementationPlan.transfers]
+                        .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
+                        .map((transfer, index) => (
+                          <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                            <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                              Vender {transfer.fromName} → Comprar {transfer.toName}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6, color: T.textMuted, fontSize: 10 }}>
+                              <div>Monto CLP: <span style={{ color: T.textSecondary }}>{formatClpShort(transfer.amountClpMoved)}</span></div>
+                              <div>Monto nativo: <span style={{ color: T.textSecondary }}>{formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)}</span></div>
+                              <div>% cartera: <span style={{ color: T.textSecondary }}>{(transfer.weightMoved * 100).toFixed(2)}%</span></div>
+                              <div>Moneda: <span style={{ color: T.textSecondary }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'No disponible'} → {transfer.toCurrency ?? 'No disponible'}</span></div>
+                              <div>Compañía origen: <span style={{ color: T.textSecondary }}>{transfer.fromManager ?? 'No disponible'}</span></div>
+                              <div>Compañía destino: <span style={{ color: T.textSecondary }}>{transfer.toManager ?? 'No disponible'}</span></div>
+                              <div>Wrapper origen: <span style={{ color: T.textSecondary }}>{transfer.fromTaxWrapper ?? 'No disponible'}</span></div>
+                              <div>Wrapper destino: <span style={{ color: T.textSecondary }}>{transfer.toTaxWrapper ?? 'No disponible'}</span></div>
+                            </div>
+                            <div style={{ color: T.textMuted, fontSize: 10 }}>
+                              Razón: {transfer.rationale}
+                            </div>
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted, fontSize: 9, fontWeight: 700 }}>
+                              {transfer.constraints.sameCurrency ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Misma moneda</span> : null}
+                              {transfer.constraints.sameManager ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Misma compañía</span> : <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-company</span>}
+                              {transfer.constraints.sameTaxWrapper ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Mismo wrapper</span> : null}
+                              {transfer.constraints.crossCurrency ? <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-currency bloqueado/manual</span> : null}
+                              {transfer.weightMoved * 100 >= IMPLEMENTATION_TRADE_RELEVANT_PORTFOLIO_PCT ? <span style={{ border: `1px solid ${T.primary}`, borderRadius: 999, padding: '2px 7px', color: T.primary }}>Monto material</span> : <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Monto marginal</span>}
+                            </div>
                           </div>
-                          <div>
-                            {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · {formatClpShort(transfer.amountClpMoved)} · {(transfer.weightMoved * 100).toFixed(2)}% cartera
-                          </div>
-                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted }}>
-                            <span>{transfer.rationale}</span>
-                            {transfer.constraints.crossManager ? <span style={{ color: '#6c4a12' }}>Cross-manager</span> : null}
-                            {transfer.constraints.crossCurrency ? <span style={{ color: T.warning }}>Cross-currency</span> : null}
-                            {!transfer.constraints.sameManager || transfer.constraints.crossCurrency ? <span>Fallback por falta de alternativa</span> : null}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   ) : (
-                    <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
-                      No hay traspasos sugeridos con el universo cargado.
+                    <div style={{ color: T.warning, fontSize: 10 }}>
+                      No implementable automáticamente bajo restricciones actuales. No se encontraron traspasos ejecutables en misma moneda/misma compañía.
                     </div>
                   )}
                   {implementationPlan.warnings.length ? (
-                    <div style={{ display: 'grid', gap: 2, marginTop: 6 }}>
+                    <div style={{ display: 'grid', gap: 2 }}>
                       {implementationPlan.warnings.map((warning) => (
                         <div key={warning} style={{ color: T.warning, fontSize: 10 }}>{warning}</div>
                       ))}
                     </div>
                   ) : null}
-                </details>
+                </div>
               </div>
             ) : null}
             {realisticValidationError ? (
