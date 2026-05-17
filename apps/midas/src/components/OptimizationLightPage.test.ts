@@ -468,6 +468,14 @@ assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase1/.test(source
 assert(!/Calcular Óptimo MIDAS recomendado[\\s\\S]{0,500}runPhase2/.test(source));
 assert(source.includes('DECISION_EXPRESS_NSIM = 750'));
 assert(source.includes('DECISION_ZOOM_NSIM = 1000'));
+assert(source.includes('Cálculo en segundo plano · puede avanzar más lento.'));
+assert(source.includes('Chrome puede ralentizar cálculos en segundo plano; se verificará el progreso al volver.'));
+assert(source.includes('Reanudar cálculo'));
+assert(source.includes('Reiniciar cálculo'));
+assert(source.includes('Estado ejecución:'));
+assert(source.includes("document.addEventListener('visibilitychange'"));
+assert(source.includes('setDecisionExecutionState(\'background\')'));
+assert(source.includes('setDecisionExecutionState(\'interrupted\')'));
 assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));
 assert(source.includes('Escenarios evaluados por el modelo'));
 assert(source.includes('Qué cambia frente a tu mix actual'));

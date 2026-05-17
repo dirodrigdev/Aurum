@@ -250,6 +250,8 @@ type DecisionProgress = {
   seed: number;
 };
 
+type DecisionExecutionState = 'idle' | 'running' | 'background' | 'restarting' | 'interrupted' | 'completed';
+
 type SleeveMixSnapshot = {
   rvGlobal: number;
   rvChile: number;
@@ -1859,8 +1861,25 @@ export function OptimizationLightPage({
   const [decisionProgress, setDecisionProgress] = useState<DecisionProgress | null>(null);
   const [decisionCancelRequested, setDecisionCancelRequested] = useState(false);
   const [decisionFlowWarning, setDecisionFlowWarning] = useState<string | null>(null);
+  const [decisionExecutionState, setDecisionExecutionState] = useState<DecisionExecutionState>('idle');
+  const [decisionBackgroundHint, setDecisionBackgroundHint] = useState<string | null>(null);
   const [technicalDiagnosticsOpen, setTechnicalDiagnosticsOpen] = useState(false);
   const decisionCancelRequestedRef = React.useRef(false);
+  const decisionForceInterruptRef = React.useRef(false);
+  const decisionProgressHeartbeatRef = React.useRef<number>(Date.now());
+  const decisionLastEvaluatedRef = React.useRef<number>(0);
+  const decisionResumeActionRef = React.useRef<'profiles' | 'confirmation' | null>(null);
+
+  const decisionYield = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, hidden ? 16 : 0));
+  }, []);
+
+  const shouldAbortDecisionRun = useCallback(
+    () => decisionCancelRequestedRef.current || decisionForceInterruptRef.current,
+    [],
+  );
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -1907,6 +1926,9 @@ export function OptimizationLightPage({
     setDecisionProgress(null);
     setDecisionCancelRequested(false);
     decisionCancelRequestedRef.current = false;
+    decisionForceInterruptRef.current = false;
+    setDecisionExecutionState('idle');
+    setDecisionBackgroundHint(null);
     setDecisionFlowWarning(null);
     if (stalePhase1) {
       setPhase1Points([]);
@@ -1920,6 +1942,43 @@ export function OptimizationLightPage({
       setPhase2Meta(null);
     }
   }, [expectedPhase1Hash, expectedPhase2Hash, phase1Meta, phase2Meta]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibilityChange = () => {
+      if (!decisionProfilesRunning) return;
+      if (document.hidden) {
+        setDecisionExecutionState('background');
+        setDecisionBackgroundHint('Cálculo en segundo plano · puede avanzar más lento.');
+        return;
+      }
+      setDecisionExecutionState('restarting');
+      setDecisionBackgroundHint('Reanudando y verificando progreso real…');
+      decisionProgressHeartbeatRef.current = Date.now();
+      window.setTimeout(() => {
+        if (!decisionProfilesRunning) return;
+        if (decisionForceInterruptRef.current || decisionCancelRequestedRef.current) return;
+        setDecisionExecutionState('running');
+        setDecisionBackgroundHint(null);
+      }, 220);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [decisionProfilesRunning]);
+
+  useEffect(() => {
+    if (!decisionProfilesRunning) return;
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const stalledMs = Date.now() - decisionProgressHeartbeatRef.current;
+      if (stalledMs < 15_000) return;
+      decisionForceInterruptRef.current = true;
+      setDecisionExecutionState('interrupted');
+      setDecisionBackgroundHint(null);
+      setDecisionFlowWarning('Cálculo pausado/interrumpido. Puedes reanudar desde esta etapa o reiniciar el cálculo.');
+    }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [decisionProfilesRunning]);
 
   const runPhase1 = useCallback(async () => {
     if (phase1Running) return;
@@ -2257,6 +2316,8 @@ export function OptimizationLightPage({
       nSim: input.nSim,
       seed,
     });
+    decisionLastEvaluatedRef.current = 0;
+    decisionProgressHeartbeatRef.current = Date.now();
 
     for (const scenarioDef of scenarioDefs) {
       const scenario = RV_RF_PREMIUM_SENSITIVITY_SCENARIOS.find((item) => item.id === scenarioDef.id);
@@ -2268,7 +2329,7 @@ export function OptimizationLightPage({
       const financialRows: FinancialReferenceCandidate[] = [];
 
       for (const rvPct of input.rvCandidates) {
-        if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
+        if (shouldAbortDecisionRun()) throw new Error('__MIDAS_DECISION_CANCELLED__');
         const weights = buildRvRfCandidateWeights(activeParams.weights, rvPct);
         const currentRv = currentRvPctExactFromWeights(activeParams.weights);
         const candidateId = candidateIdForRvPct(rvPct, currentRv);
@@ -2294,7 +2355,7 @@ export function OptimizationLightPage({
         }
 
         for (const spendScale of SPENDING_HEADROOM_SCALES) {
-          if (decisionCancelRequestedRef.current) throw new Error('__MIDAS_DECISION_CANCELLED__');
+          if (shouldAbortDecisionRun()) throw new Error('__MIDAS_DECISION_CANCELLED__');
           const scaled = applyTemporarySpendScale(baseScenarioParams, spendScale);
           scaled.weights = cloneParams(weights);
           scaled.simulation.nSim = input.nSim;
@@ -2342,7 +2403,9 @@ export function OptimizationLightPage({
             nSim: input.nSim,
             seed,
           });
-          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+          decisionLastEvaluatedRef.current = evaluated;
+          decisionProgressHeartbeatRef.current = Date.now();
+          await decisionYield();
         }
 
         const baseEval = evaluations.find((item) => Math.abs(item.spendScale - 1) <= 1e-9) ?? null;
@@ -2400,17 +2463,29 @@ export function OptimizationLightPage({
       nSim: input.nSim,
       seed,
     });
+    decisionLastEvaluatedRef.current = total;
+    decisionProgressHeartbeatRef.current = Date.now();
 
     return nextTables;
   }
 
   async function runDecisionProfiles() {
     if (decisionProfilesRunning) return;
+    decisionResumeActionRef.current = 'profiles';
     setDecisionProfilesRunning(true);
+    setDecisionExecutionState(typeof document !== 'undefined' && document.hidden ? 'background' : 'running');
+    setDecisionBackgroundHint(
+      typeof document !== 'undefined' && document.hidden
+        ? 'Cálculo en segundo plano · puede avanzar más lento.'
+        : null,
+    );
     setDecisionProfilesError(null);
     setDecisionFlowWarning(null);
     setDecisionCancelRequested(false);
     decisionCancelRequestedRef.current = false;
+    decisionForceInterruptRef.current = false;
+    decisionProgressHeartbeatRef.current = Date.now();
+    decisionLastEvaluatedRef.current = 0;
     setDecisionFlowStatus({
       stage: 'express',
       badge: 'Preliminar · Express',
@@ -2422,7 +2497,7 @@ export function OptimizationLightPage({
       implementationEnabled: false,
     });
     try {
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await decisionYield();
       const expressCandidates = buildOptimizationExpressGrid(currentRvPctExactFromWeights(activeParams.weights));
       const expressTables = await evaluateDecisionProfilesStage({
         stage: 'express',
@@ -2463,23 +2538,43 @@ export function OptimizationLightPage({
     } catch (error) {
       if (error instanceof Error && error.message === '__MIDAS_DECISION_CANCELLED__') {
         setDecisionFlowWarning('Cálculo cancelado. Mantuvimos el último resultado completo disponible.');
+        if (decisionForceInterruptRef.current) {
+          setDecisionExecutionState('interrupted');
+          setDecisionBackgroundHint(null);
+        }
       } else {
         setDecisionProfilesError(error instanceof Error ? error.message : String(error));
+        setDecisionExecutionState('interrupted');
+        setDecisionBackgroundHint(null);
       }
     } finally {
       setDecisionProfilesRunning(false);
+      if (!decisionForceInterruptRef.current) {
+        setDecisionExecutionState('completed');
+        setDecisionBackgroundHint(null);
+      }
     }
   }
 
   async function runDecisionConfirmation() {
     if (decisionProfilesRunning) return;
+    decisionResumeActionRef.current = 'confirmation';
     const preliminaryMain = officialMainRecommendation;
     const preliminaryDefensive = officialDefensiveReference;
     setDecisionProfilesRunning(true);
+    setDecisionExecutionState(typeof document !== 'undefined' && document.hidden ? 'background' : 'running');
+    setDecisionBackgroundHint(
+      typeof document !== 'undefined' && document.hidden
+        ? 'Cálculo en segundo plano · puede avanzar más lento.'
+        : null,
+    );
     setDecisionProfilesError(null);
     setDecisionFlowWarning(null);
     setDecisionCancelRequested(false);
     decisionCancelRequestedRef.current = false;
+    decisionForceInterruptRef.current = false;
+    decisionProgressHeartbeatRef.current = Date.now();
+    decisionLastEvaluatedRef.current = 0;
     setDecisionFlowStatus({
       stage: 'confirmed',
       badge: 'Confirmación oficial en curso',
@@ -2491,7 +2586,7 @@ export function OptimizationLightPage({
       implementationEnabled: false,
     });
     try {
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await decisionYield();
       const shortlist = buildOptimizationConfirmationShortlist({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
@@ -2517,13 +2612,37 @@ export function OptimizationLightPage({
     } catch (error) {
       if (error instanceof Error && error.message === '__MIDAS_DECISION_CANCELLED__') {
         setDecisionFlowWarning('Confirmación cancelada. Mantuvimos el último resultado completo disponible.');
+        if (decisionForceInterruptRef.current) {
+          setDecisionExecutionState('interrupted');
+          setDecisionBackgroundHint(null);
+        }
       } else {
         setDecisionProfilesError(error instanceof Error ? error.message : String(error));
+        setDecisionExecutionState('interrupted');
+        setDecisionBackgroundHint(null);
       }
     } finally {
       setDecisionProfilesRunning(false);
+      if (!decisionForceInterruptRef.current) {
+        setDecisionExecutionState('completed');
+        setDecisionBackgroundHint(null);
+      }
     }
   }
+
+  const resumeDecisionRun = useCallback(() => {
+    if (decisionProfilesRunning) return;
+    setDecisionExecutionState('restarting');
+    setDecisionFlowWarning('Reanudando cálculo desde la etapa actual…');
+    decisionForceInterruptRef.current = false;
+    decisionCancelRequestedRef.current = false;
+    setDecisionCancelRequested(false);
+    if (decisionResumeActionRef.current === 'confirmation') {
+      void runDecisionConfirmation();
+      return;
+    }
+    void runDecisionProfiles();
+  }, [decisionProfilesRunning]);
 
   const modeCards = useMemo(
     () => ([
@@ -3406,8 +3525,50 @@ export function OptimizationLightPage({
               Cancelar cálculo
             </button>
           ) : null}
+          {!decisionProfilesRunning && decisionExecutionState === 'interrupted' ? (
+            <button
+              type="button"
+              onClick={resumeDecisionRun}
+              style={{
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                color: T.textPrimary,
+                borderRadius: 999,
+                padding: '8px 13px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Reanudar cálculo
+            </button>
+          ) : null}
+          {!decisionProfilesRunning && decisionExecutionState === 'interrupted' ? (
+            <button
+              type="button"
+              onClick={runDecisionProfiles}
+              style={{
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                color: T.textSecondary,
+                borderRadius: 999,
+                padding: '8px 13px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Reiniciar cálculo
+            </button>
+          ) : null}
         </div>
         {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{decisionProfilesError}</div> : null}
+        {decisionBackgroundHint ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionBackgroundHint}</div> : null}
+        {decisionExecutionState === 'background' ? (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Chrome puede ralentizar cálculos en segundo plano; se verificará el progreso al volver.
+          </div>
+        ) : null}
         {decisionFlowStatus ? (
           <div style={{ display: 'grid', gap: 4, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -3417,6 +3578,19 @@ export function OptimizationLightPage({
               </span>
             </div>
             <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Estado ejecución: {decisionExecutionState === 'running'
+                ? 'Calculando'
+                : decisionExecutionState === 'background'
+                  ? 'Cálculo en segundo plano'
+                  : decisionExecutionState === 'restarting'
+                    ? 'Reanudando'
+                    : decisionExecutionState === 'interrupted'
+                      ? 'Interrumpido'
+                      : decisionExecutionState === 'completed'
+                        ? 'Finalizado'
+                        : 'Inactivo'}
+            </div>
             {decisionFlowStatus.stage === 'zoom' ? (
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Puede aparecer un mix fuera de múltiplos de 5 porque el refinamiento local parte desde semillas exactas.
