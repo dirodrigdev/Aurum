@@ -8,6 +8,7 @@ import type { ModelParameters } from '../domain/model/types';
 import type { RvRfDecisionCandidate, RvRfDecisionProfiles } from '../domain/optimizer/rvRfDecisionProfiles';
 import {
   DECISION_EXPRESS_STEP_PP,
+  DECISION_REFINEMENT_MAX_WINDOW_PP,
   IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP,
   OptimizationLightPage,
   buildFinancialReferenceParams,
@@ -240,14 +241,16 @@ assert(zoomShortlist.includes(55));
 assert(zoomShortlist.includes(60));
 assert(zoomShortlist.includes(65));
 assert(zoomShortlist.includes(70));
-assert(zoomShortlist.includes(25));
-assert(zoomShortlist.includes(80));
-assert(zoomShortlist.includes(100));
+assert(!zoomShortlist.includes(25));
+assert(!zoomShortlist.includes(90));
+assert(!zoomShortlist.includes(95));
+assert(!zoomShortlist.includes(100));
 assert(!zoomShortlist.includes(59.2));
 assert(zoomShortlist.every((value) => value % 5 === 0));
 assert.equal(new Set(zoomShortlist).size, zoomShortlist.length);
-assert.equal(zoomShortlist[0], 15);
-assert.equal(zoomShortlist[zoomShortlist.length - 1], 100);
+assert.equal(zoomShortlist[0], 45);
+assert.equal(zoomShortlist[zoomShortlist.length - 1], 70);
+assert(zoomShortlist.every((value) => Math.abs(value - 60) <= DECISION_REFINEMENT_MAX_WINDOW_PP));
 
 const boundedZoom = buildOptimizationZoomShortlist({
   preliminaryRecommendationRv: 0,
@@ -256,11 +259,12 @@ const boundedZoom = buildOptimizationZoomShortlist({
   currentRvRounded: null,
 });
 assert.equal(boundedZoom[0], 0);
-assert.equal(boundedZoom[boundedZoom.length - 1], 100);
+assert.equal(boundedZoom[boundedZoom.length - 1], 10);
 assert(!boundedZoom.some((value) => value < 0 || value > 100));
 
 const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
+  expressRecommendationRv: 60,
   defensiveReferenceRv: 25,
   technicalPreludeRv: 55,
   currentRvRounded: 60,
@@ -271,9 +275,11 @@ assert(confirmationShortlist.includes(55));
 assert(confirmationShortlist.includes(60));
 assert(confirmationShortlist.includes(65));
 assert(confirmationShortlist.includes(70));
-assert(confirmationShortlist.includes(100));
+assert(!confirmationShortlist.includes(95));
+assert(!confirmationShortlist.includes(100));
 assert(!confirmationShortlist.includes(59.2));
 assert(confirmationShortlist.every((value) => value % 5 === 0));
+assert(confirmationShortlist.every((value) => Math.abs(value - 60) <= DECISION_REFINEMENT_MAX_WINDOW_PP));
 
 const decisionProfiles = buildProfiles([
   buildDecisionCandidate({ rvPct: 25, terminalWealthP50: 1_000_000_000, qasrAt120: 0.89 }),

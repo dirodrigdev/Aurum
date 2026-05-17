@@ -359,6 +359,7 @@ export const DECISION_ZOOM_NSIM = 1000;
 export const DECISION_OFFICIAL_GRID_STEP_PP = 5;
 export const DECISION_CONFIRM_NEIGHBOR_STEP_PP = 5;
 export const DECISION_CONFIRM_WIDE_NEIGHBOR_PP = 10;
+export const DECISION_REFINEMENT_MAX_WINDOW_PP = 15;
 
 function clampMixPercent(value: number): number {
   return Math.max(0, Math.min(100, Number(value.toFixed(4))));
@@ -537,55 +538,66 @@ function isOnOfficialGrid(rvPct: number, stepPp = DECISION_OFFICIAL_GRID_STEP_PP
   return Math.abs(snapped - clampMixPercent(rvPct)) <= 0.0001;
 }
 
+function pushBoundedRefinementNeighbors(target: number[], anchor: number, maxWindow = DECISION_REFINEMENT_MAX_WINDOW_PP) {
+  const anchor5 = snapMixToStep(anchor);
+  const candidates = [
+    anchor5 - DECISION_CONFIRM_WIDE_NEIGHBOR_PP,
+    anchor5 - DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+    anchor5,
+    anchor5 + DECISION_CONFIRM_NEIGHBOR_STEP_PP,
+    anchor5 + DECISION_CONFIRM_WIDE_NEIGHBOR_PP,
+  ];
+  candidates.forEach((candidate) => {
+    if (Math.abs(candidate - anchor5) <= maxWindow + 1e-9) {
+      pushUniqueMix(target, snapMixToStep(candidate));
+    }
+  });
+}
+
 export function buildOptimizationZoomShortlist(input: {
   preliminaryRecommendationRv: number | null;
   defensiveReferenceRv: number | null;
   technicalPreludeRv: number | null;
   currentRvRounded: number | null;
 }): number[] {
+  if (input.preliminaryRecommendationRv === null || !Number.isFinite(input.preliminaryRecommendationRv)) return [];
   const shortlist: number[] = [];
-  const seeds = [
-    input.preliminaryRecommendationRv,
-    input.defensiveReferenceRv,
-    input.technicalPreludeRv,
-    input.currentRvRounded,
-    25,
-    50,
-    80,
-    100,
-  ];
-  seeds.forEach((seed) => {
+  const anchor = snapMixToStep(input.preliminaryRecommendationRv);
+  pushBoundedRefinementNeighbors(shortlist, anchor);
+  const optionalAnchors = [input.defensiveReferenceRv, input.technicalPreludeRv, input.currentRvRounded];
+  optionalAnchors.forEach((seed) => {
     if (seed === null || !Number.isFinite(seed)) return;
-    pushUniqueMix(shortlist, snapMixToStep(seed));
-    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
+    const snapped = snapMixToStep(seed);
+    if (Math.abs(snapped - anchor) <= DECISION_REFINEMENT_MAX_WINDOW_PP + 1e-9) {
+      pushBoundedRefinementNeighbors(shortlist, snapped);
+    }
   });
   return shortlist.sort((a, b) => a - b);
 }
 
 export function buildOptimizationConfirmationShortlist(input: {
   zoomRecommendationRv: number | null;
+  expressRecommendationRv: number | null;
   defensiveReferenceRv: number | null;
   technicalPreludeRv: number | null;
   currentRvRounded: number | null;
 }): number[] {
+  if (input.zoomRecommendationRv === null || !Number.isFinite(input.zoomRecommendationRv)) return [];
   const shortlist: number[] = [];
-  const seeds = [
-    input.zoomRecommendationRv,
+  const anchor = snapMixToStep(input.zoomRecommendationRv);
+  pushBoundedRefinementNeighbors(shortlist, anchor);
+  const optionalAnchors = [
+    input.expressRecommendationRv,
     input.defensiveReferenceRv,
     input.technicalPreludeRv,
     input.currentRvRounded,
-    100,
   ];
-  seeds.forEach((seed) => {
+  optionalAnchors.forEach((seed) => {
     if (seed === null || !Number.isFinite(seed)) return;
-    pushUniqueMix(shortlist, snapMixToStep(seed));
-    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed - DECISION_CONFIRM_NEIGHBOR_STEP_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_NEIGHBOR_STEP_PP));
-    pushUniqueMix(shortlist, snapMixToStep(seed + DECISION_CONFIRM_WIDE_NEIGHBOR_PP));
+    const snapped = snapMixToStep(seed);
+    if (Math.abs(snapped - anchor) <= DECISION_REFINEMENT_MAX_WINDOW_PP + 1e-9) {
+      pushBoundedRefinementNeighbors(shortlist, snapped);
+    }
   });
   return shortlist.sort((a, b) => a - b);
 }
@@ -2615,6 +2627,7 @@ export function OptimizationLightPage({
       await decisionYield();
       const shortlist = buildOptimizationConfirmationShortlist({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
+        expressRecommendationRv: preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
         technicalPreludeRv: financialOptimum?.rvPct ?? null,
         currentRvRounded: snapMixToStep(currentRvPctExactFromWeights(activeParams.weights)),
