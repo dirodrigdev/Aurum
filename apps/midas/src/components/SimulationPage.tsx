@@ -2890,68 +2890,63 @@ export function SimulationPage({
               </details>
             </div>
             <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Fuente de datos aplicada
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: isMobileViewport ? '7px 8px' : '6px 9px', display: 'grid', gap: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', rowGap: 4 }}>
+                  <span style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Fuente de datos
+                  </span>
+                  <SourceBadge label={dataSourceStatusLabel} tone={dataSourceTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'}</span>
+                  <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                    USD/CLP aplicado {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : 'No disponible'}
+                  </span>
+                  <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                    EUR/USD aplicado {Number.isFinite(eurUsdModelValue)
+                      ? eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : 'No disponible'}
+                  </span>
+                  <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
                 </div>
-                <SourceBadge label={dataSourceStatusLabel} tone={dataSourceTone} />
-              </div>
-              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 7 }}>
-                <div style={{ display: 'grid', gap: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{dataSourceStatusCopy}</span>
-                    <SourceBadge label={snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'} tone={patrimonioSourceTone} />
-                    <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>FX:</span>
-                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                      USD/CLP aplicado {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : 'No disponible'}
-                    </span>
-                    <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                      EUR/USD aplicado {Number.isFinite(eurUsdModelValue)
-                        ? eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                        : 'No disponible'}
-                    </span>
-                    <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
-                  </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 4, minHeight: isMobileViewport ? undefined : 18 }}>
                   {usdFxWarning ? (
-                    <div style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                    <span style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
                       {usdFxWarning}
-                    </div>
+                    </span>
                   ) : null}
                   {eurFxWarning ? (
-                    <div style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                    <span style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
                       {eurFxWarning}
-                    </div>
+                    </span>
                   ) : null}
-                </div>
-                <details open={dataSourceTone !== 'ok'} style={{ marginTop: 2 }}>
-                  <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
-                    Ver detalle técnico
-                  </summary>
-                  <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
-                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
-                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
-                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
-                    <div>
-                      <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
-                      {usingAurumEurUsd
-                        ? `Transformación aplicada: 1 / ${aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} = ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} EUR/USD.`
-                        : 'Valor tomado desde params.fx.usdEurFixed.'}
-                    </div>
-                    {hasAurumSourceUsdEur ? (
+                  {!usdFxWarning && !eurFxWarning ? (
+                    <span style={{ color: T.textMuted, fontSize: 10 }}>{dataSourceStatusCopy}</span>
+                  ) : null}
+                  <details open={dataSourceTone !== 'ok'} style={{ marginTop: 0 }}>
+                    <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                      Ver detalle técnico
+                    </summary>
+                    <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
                       <div>
-                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor fuente Aurum:</span>{' '}
-                        fxReference.usdEur = {aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD/EUR
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
+                        {usingAurumEurUsd
+                          ? `Transformación aplicada: 1 / ${aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} = ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} EUR/USD.`
+                          : 'Valor tomado desde params.fx.usdEurFixed.'}
                       </div>
-                    ) : null}
-                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Bloques fuera del motor:</span> {nonOptimizableBlocksTechnical}</div>
-                  </div>
-                </details>
+                      {hasAurumSourceUsdEur ? (
+                        <div>
+                          <span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor fuente Aurum:</span>{' '}
+                          fxReference.usdEur = {aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD/EUR
+                        </div>
+                      ) : null}
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Bloques fuera del motor:</span> {nonOptimizableBlocksTechnical}</div>
+                    </div>
+                  </details>
+                </div>
               </div>
             </div>
           </div>

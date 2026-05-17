@@ -93,7 +93,7 @@ assert(source.includes('USD/CLP aplicado'));
 assert(source.includes('EUR/USD aplicado'));
 assert(source.includes('Aurum current'));
 assert(source.includes('Snapshot Aurum no aplicado'));
-assert(source.includes('Fuente de datos aplicada'));
+assert(source.includes('Fuente de datos'));
 assert(source.includes('dataSourceStatusLabel'));
 assert(source.includes('dataSourceTone'));
 assert(source.includes('EUR/USD no validado contra Aurum; usando valor estructural del modelo.'));
