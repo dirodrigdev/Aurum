@@ -308,7 +308,6 @@ export function SimulationPage({
   simUiError,
   lastRecalcCause,
   simulationPreset,
-  stateLabel,
   isScenarioAdjusted,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
@@ -387,7 +386,6 @@ export function SimulationPage({
   simUiError: string | null;
   lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
-  stateLabel: string;
   isScenarioAdjusted: boolean;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
@@ -579,7 +577,9 @@ export function SimulationPage({
     scenarioFromParamsRaw !== 'pessimistic' &&
     scenarioFromParamsRaw !== 'optimistic';
   const scenarioUiLabel =
-    activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
+    activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
+  const simulationConfigSourceLabel =
+    simulationConfigSource === 'cloud' ? 'Cloud canónico' : simulationConfigSource === 'local_cache' ? 'Cache local' : 'Fallback';
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
   const scenarioFromResult =
     scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
@@ -1940,54 +1940,6 @@ export function SimulationPage({
     });
   };
 
-  const updateRvRfMix = (rvPct: number) => {
-    const rvTarget = Math.min(100, Math.max(0, rvPct)) / 100;
-    onUpdateParams((prev) => {
-      const rvTotal = prev.weights.rvGlobal + prev.weights.rvChile;
-      const rfTotal = prev.weights.rfGlobal + prev.weights.rfChile;
-      const rvRatio = rvTotal > 0 ? prev.weights.rvGlobal / rvTotal : 0.5;
-      const rfRatio = rfTotal > 0 ? prev.weights.rfGlobal / rfTotal : 0.5;
-      const nextRvGlobal = rvTarget * rvRatio;
-      const nextRvChile = rvTarget * (1 - rvRatio);
-      const rfTarget = 1 - rvTarget;
-      const nextRfGlobal = rfTarget * rfRatio;
-      const nextRfChile = rfTarget * (1 - rfRatio);
-      return {
-        ...prev,
-        weights: {
-          rvGlobal: nextRvGlobal,
-          rvChile: nextRvChile,
-          rfGlobal: nextRfGlobal,
-          rfChile: nextRfChile,
-        },
-      };
-    });
-  };
-
-  const updateGlobalLocalMix = (globalPct: number) => {
-    const globalTarget = Math.min(100, Math.max(0, globalPct)) / 100;
-    onUpdateParams((prev) => {
-      const globalTotal = prev.weights.rvGlobal + prev.weights.rfGlobal;
-      const localTotal = prev.weights.rvChile + prev.weights.rfChile;
-      const globalRvRatio = globalTotal > 0 ? prev.weights.rvGlobal / globalTotal : 0.5;
-      const localRvRatio = localTotal > 0 ? prev.weights.rvChile / localTotal : 0.5;
-      const nextGlobalRv = globalTarget * globalRvRatio;
-      const nextGlobalRf = globalTarget * (1 - globalRvRatio);
-      const localTarget = 1 - globalTarget;
-      const nextLocalRv = localTarget * localRvRatio;
-      const nextLocalRf = localTarget * (1 - localRvRatio);
-      return {
-        ...prev,
-        weights: {
-          rvGlobal: nextGlobalRv,
-          rfGlobal: nextGlobalRf,
-          rvChile: nextLocalRv,
-          rfChile: nextLocalRf,
-        },
-      };
-    });
-  };
-
   const toggleLiquidarDepto = () => {
     if (!hasEffectiveRealEstate) return;
     onUpdateParams((prev) => ({
@@ -2148,7 +2100,7 @@ export function SimulationPage({
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
             chips={[
-              { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
+              { id: 'state', value: scenarioUiLabel, onClick: simActive ? onResetSim : () => {} },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
               {
@@ -2602,50 +2554,162 @@ export function SimulationPage({
           Modelo Base
         </summary>
         <div style={{ marginTop: 8, color: T.textMuted, fontSize: 10 }}>
-          Los cambios del Modelo Base modifican la fuente oficial. La simulación temporal no.
+          Edita los supuestos oficiales guardados. La simulación temporal no modifica este modelo.
         </div>
+        {simActive && (
+          <div
+            style={{
+              marginTop: 8,
+              background: 'rgba(255, 176, 32, 0.10)',
+              border: `1px solid rgba(255, 176, 32, 0.30)`,
+              borderRadius: 10,
+              padding: '7px 9px',
+              color: '#f6d38d',
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            Hay una simulación temporal activa. Cambiar el Modelo Base modifica la fuente oficial, no solo esta prueba.
+          </div>
+        )}
         <div
           style={{
             marginTop: 8,
-            display: 'grid',
-            gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: isMobileViewport ? 6 : 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
           }}
         >
-        <div
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: isMobileViewport ? '8px 9px' : '10px 12px',
-          }}
-        >
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            Base activa
-          </div>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
-            {activeCapitalSourceLabel}
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>{patrimonioSourceTechnical}</div>
+          {[
+            `Persistencia ${simulationConfigSourceLabel}`,
+            simulationConfigSavedAt ? `Actualizado ${formatRelativePublishedAt(simulationConfigSavedAt)}` : 'Sin timestamp cloud',
+            `Escenario oficial ${scenarioUiLabel}`,
+            `Origen del capital ${activeCapitalSourceLabel}`,
+            `Origen del mix ${weightsSourceLabel}`,
+          ].map((item) => (
+            <span
+              key={item}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 8px',
+                borderRadius: 999,
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                color: T.textSecondary,
+                fontSize: 10,
+                fontWeight: 700,
+              }}
+            >
+              {item}
+            </span>
+          ))}
         </div>
-        <div
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: isMobileViewport ? '8px 9px' : '10px 12px',
-          }}
-        >
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            Capital base efectivo
+        <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
+          <div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Horizonte base</div>
+            <div
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                borderRadius: 10,
+                padding: '8px 10px',
+                color: T.textPrimary,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {baseYears} años
+            </div>
           </div>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
-            {formatMoneyCompact(effectiveBaseCapital)}
+          <div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramos</div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+              {spendingPhases.map((phase, idx) => (
+                <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {spendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}
+                  </span>
+                  <input
+                    type="text"
+                    value={formatCLP(phase.amountReal)}
+                    onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 8,
+                      padding: '6px 8px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
           </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>
-            Simulación actual · {formatCapital(effectiveBaseCapital)}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+            <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual</span>
+              <input
+                type="number"
+                value={(params.feeAnnual * 100).toFixed(2)}
+                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  padding: '6px 8px',
+                  color: T.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+            </label>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo oficial</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.simulation?.nSim ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Seed oficial</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.simulation?.seed ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Bucket months</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.bucketMonths ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
           </div>
-        </div>
+          <div
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              borderRadius: 10,
+              padding: '8px 10px',
+              display: 'grid',
+              gap: 4,
+            }}
+          >
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+              Origen del mix: Mix aperturado por instrumento ({weightsSourceLabel})
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Activo: {activeWeightSummary}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Fuente estructural: {officialWeightSummary}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Origen del capital: Aurum
+            </div>
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            La configuración oficial se persiste en cloud existente (`simulationActiveV1`) cuando la sesión canónica está activa. No se creó storage nuevo.
+          </div>
         </div>
       {auditModeEnabled && auditProbe && (
         <div
@@ -2806,7 +2870,7 @@ export function SimulationPage({
                             opacity: isRecalculating ? 0.65 : 1,
                           }}
                         >
-                          {variant.id === 'base' ? 'Base' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
+                          {variant.id === 'base' ? 'Neutro' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
                         </button>
                       );
                     })}
@@ -3247,169 +3311,75 @@ export function SimulationPage({
         </button>
         {advancedOpen && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
-                {spendingPhases.map((phase, idx) => (
-                  <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
-                      {spendingPhaseLabels[idx]?.title ?? `Tramo ${idx + 1}`}
-                    </span>
-                    <input
-                      type="text"
-                      value={formatCLP(phase.amountReal)}
-                      onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
-                      style={{
-                        background: T.surfaceEl,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: 8,
-                        padding: '6px 8px',
-                        color: T.textPrimary,
-                        fontSize: 12,
-                      }}
-                    />
-                  </label>
-                ))}
-              </div>
+            <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.45 }}>
+              Estos cambios sirven para probar una corrida temporal. No reemplazan el Modelo Base guardado en cloud.
             </div>
-            <div style={{ color: T.textMuted, fontSize: 11 }}>
-              Generador: <span style={{ color: T.textSecondary, fontWeight: 700 }}>{activeGenerator}</span>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+              {[
+                `Escenario temporal: ${scenarioUiLabel}`,
+                `Monte Carlo temporal: ${Number(params.simulation?.nSim ?? 0).toLocaleString('es-CL')}`,
+                `Depto: ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
+                `Capital de riesgo: ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
+                `Generador: ${activeGenerator}`,
+                `Ajustes manuales: ${committedManualSummaryT0.count} ajuste(s) T0`,
+              ].map((item) => (
+                <div
+                  key={item}
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    background: T.surfaceEl,
+                    borderRadius: 8,
+                    padding: '7px 8px',
+                    color: T.textSecondary,
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  {item}
+                </div>
+              ))}
             </div>
-
-            <div>
-              <div
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  onRestoreScenarioPreset();
+                  onResetSim();
+                }}
+                disabled={!simActive}
                 style={{
+                  background: T.surface,
                   border: `1px solid ${T.border}`,
-                  background: T.surfaceEl,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  marginBottom: 10,
-                  display: 'grid',
-                  gap: 4,
+                  color: T.textSecondary,
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: simActive ? 'pointer' : 'not-allowed',
+                  opacity: simActive ? 1 : 0.6,
                 }}
               >
-                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                  Origen del mix: Mix aperturado por instrumento ({weightsSourceLabel})
-                </div>
-                <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Activa: {activeWeightSummary}
-                </div>
-                <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Fuente estructural: {officialWeightSummary}
-                </div>
-                <div>
-                  <button
-                    type="button"
-                    onClick={onRestoreOfficialDistribution}
-                    disabled={isRecalculating || weightsSourceMode !== 'simulation'}
-                    style={{
-                      marginTop: 2,
-                      background: T.surface,
-                      border: `1px solid ${T.border}`,
-                      color: T.textSecondary,
-                      borderRadius: 999,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating || weightsSourceMode !== 'simulation' ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
-                    }}
-                  >
-                    Restaurar mix oficial
-                  </button>
-                </div>
-              </div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvGlobal + params.weights.rvChile) * 100)}
-                    onChange={(e) => updateRvRfMix(Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 8,
-                      padding: '6px 8px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RF (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rfGlobal + params.weights.rfChile) * 100)}
-                    onChange={(e) => updateRvRfMix(100 - Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 8,
-                      padding: '6px 8px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvGlobal + params.weights.rfGlobal) * 100)}
-                    onChange={(e) => updateGlobalLocalMix(Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 8,
-                      padding: '6px 8px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Local (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvChile + params.weights.rfChile) * 100)}
-                    onChange={(e) => updateGlobalLocalMix(100 - Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 8,
-                      padding: '6px 8px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual</span>
-              <input
-                type="number"
-                value={(params.feeAnnual * 100).toFixed(2)}
-                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                Volver al Modelo Base
+              </button>
+              <button
+                type="button"
+                onClick={onRestoreOfficialDistribution}
+                disabled={isRecalculating || weightsSourceMode !== 'simulation'}
                 style={{
-                  background: T.surfaceEl,
+                  background: T.surface,
                   border: `1px solid ${T.border}`,
-                  borderRadius: 8,
-                  padding: '6px 8px',
-                  color: T.textPrimary,
-                  fontSize: 12,
+                  color: T.textSecondary,
+                  borderRadius: 999,
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: isRecalculating || weightsSourceMode !== 'simulation' ? 'not-allowed' : 'pointer',
+                  opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
                 }}
-              />
-            </label>
+              >
+                Restaurar mix oficial
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -3429,7 +3399,7 @@ export function SimulationPage({
                   padding: '5px 10px',
                 }}
               >
-                Escenario activo: {stateLabel}
+                Escenario activo: {scenarioUiLabel}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>

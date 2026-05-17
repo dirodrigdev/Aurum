@@ -4521,7 +4521,6 @@ export default function App() {
       simUiError={simUiError}
       lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
-      stateLabel={stateLabel}
       isScenarioAdjusted={isScenarioAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
