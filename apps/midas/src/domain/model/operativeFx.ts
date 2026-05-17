@@ -20,6 +20,18 @@ export type OperativeFxResolution = {
   usingAurumCurrent: boolean;
 };
 
+export type AurumEurUsdForMidasResolution = {
+  sourceUsdEur: number | null;
+  eurUsdForMidas: number | null;
+  valid: boolean;
+  reasonCode:
+    | 'aurum_usd_eur_converted'
+    | 'missing_source'
+    | 'invalid_source_usd_eur'
+    | 'source_usd_eur_out_of_range'
+    | 'converted_eur_usd_out_of_range';
+};
+
 const REL_TOLERANCE = 0.0005;
 
 const asPositiveFinite = (value: number | null | undefined): number | null => {
@@ -37,6 +49,45 @@ export function isAurumCurrentFxSource(source: string | null | undefined): boole
   if (normalized.includes('manual')) return true;
   if (normalized.includes('live')) return true;
   return false;
+}
+
+export function resolveAurumEurUsdForMidas(sourceUsdEurValue: number | null | undefined): AurumEurUsdForMidasResolution {
+  const sourceUsdEur = asPositiveFinite(sourceUsdEurValue);
+  if (sourceUsdEur === null) {
+    return {
+      sourceUsdEur: null,
+      eurUsdForMidas: null,
+      valid: false,
+      reasonCode: sourceUsdEurValue == null ? 'missing_source' : 'invalid_source_usd_eur',
+    };
+  }
+  // Legacy naming trap:
+  // - Aurum publishes fxReference.usdEur as USD/EUR (usdClp / eurClp).
+  // - MIDAS params.fx.usdEurFixed is consumed by the model as EUR/USD.
+  // Convert exactly once at the boundary, before feeding MIDAS params.
+  if (sourceUsdEur < 0.6 || sourceUsdEur > 1.2) {
+    return {
+      sourceUsdEur,
+      eurUsdForMidas: null,
+      valid: false,
+      reasonCode: 'source_usd_eur_out_of_range',
+    };
+  }
+  const eurUsdForMidas = 1 / sourceUsdEur;
+  if (!Number.isFinite(eurUsdForMidas) || eurUsdForMidas < 0.8 || eurUsdForMidas > 1.4) {
+    return {
+      sourceUsdEur,
+      eurUsdForMidas: null,
+      valid: false,
+      reasonCode: 'converted_eur_usd_out_of_range',
+    };
+  }
+  return {
+    sourceUsdEur,
+    eurUsdForMidas,
+    valid: true,
+    reasonCode: 'aurum_usd_eur_converted',
+  };
 }
 
 export function resolveOperativeMasterFx(input: {

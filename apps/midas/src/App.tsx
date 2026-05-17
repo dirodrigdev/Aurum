@@ -45,7 +45,7 @@ import {
   resolveCanonicalInstrumentUniverseState,
   type InstrumentUniverseDiagnostics,
 } from './domain/model/canonicalInstrumentUniverse';
-import { resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
+import { resolveAurumEurUsdForMidas, resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
@@ -482,9 +482,8 @@ function getAurumFxReferenceUsdEur(snapshot: AurumOptimizableInvestmentsSnapshot
   if (!snapshot) return null;
   const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
   const parsed = Number(fxReference?.usdEur ?? NaN);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  if (parsed < 0.8 || parsed > 1.4) return null;
-  return parsed;
+  const resolved = resolveAurumEurUsdForMidas(parsed);
+  return resolved.sourceUsdEur;
 }
 
 function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): string | null {
@@ -758,6 +757,7 @@ export default function App() {
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
   const [aurumFxSpotUsdEur, setAurumFxSpotUsdEur] = useState<number | null>(null);
+  const [aurumFxSourceUsdEur, setAurumFxSourceUsdEur] = useState<number | null>(null);
   const [aurumFxSpotSource, setAurumFxSpotSource] = useState<string | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
@@ -2641,7 +2641,8 @@ export default function App() {
       const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
-      const aurumFxUsdEur = getAurumFxReferenceUsdEur(snapshot);
+      const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+      const aurumFxEurUsdForMidas = resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas;
       const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
 
@@ -2651,7 +2652,8 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(aurumFxClpUsd);
-      setAurumFxSpotUsdEur(aurumFxUsdEur);
+      setAurumFxSourceUsdEur(aurumFxUsdEurSource);
+      setAurumFxSpotUsdEur(aurumFxEurUsdForMidas);
       setAurumFxSpotSource(aurumFxSource);
       if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
@@ -2676,11 +2678,11 @@ export default function App() {
         label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
-      if (aurumFxClpUsd !== null || aurumFxUsdEur !== null) {
+      if (aurumFxClpUsd !== null || aurumFxEurUsdForMidas !== null) {
         baseSnapshotLayer.fx = {
           ...baseSnapshotLayer.fx,
           ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
-          ...(aurumFxUsdEur !== null ? { usdEurFixed: aurumFxUsdEur } : {}),
+          ...(aurumFxEurUsdForMidas !== null ? { usdEurFixed: aurumFxEurUsdForMidas } : {}),
         };
       }
       const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
@@ -3477,6 +3479,7 @@ export default function App() {
       setRiskCapitalUsdSnapshotCLP(0);
       setAurumFxSpotCLP(null);
       setAurumFxSpotUsdEur(null);
+      setAurumFxSourceUsdEur(null);
       setAurumFxSpotSource(null);
       setOptimizableBaseReference({
         amountClp: null,
@@ -3545,6 +3548,7 @@ export default function App() {
         setRiskCapitalUsdSnapshotCLP(0);
         setAurumFxSpotCLP(null);
         setAurumFxSpotUsdEur(null);
+        setAurumFxSourceUsdEur(null);
         setAurumFxSpotSource(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
@@ -3585,7 +3589,11 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
-      setAurumFxSpotUsdEur(getAurumFxReferenceUsdEur(snapshot));
+      {
+        const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+        setAurumFxSourceUsdEur(aurumFxUsdEurSource);
+        setAurumFxSpotUsdEur(resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas);
+      }
       setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
@@ -3618,12 +3626,13 @@ export default function App() {
               ) ?? compositionWithDetectedRisk,
             };
             const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
-            const aurumFxUsdEur = getAurumFxReferenceUsdEur(snapshot);
-            if (aurumFxClpUsd !== null || aurumFxUsdEur !== null) {
+            const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+            const aurumFxEurUsdForMidas = resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas;
+            if (aurumFxClpUsd !== null || aurumFxEurUsdForMidas !== null) {
               canonicalSnapshotLayer.fx = {
                 ...canonicalSnapshotLayer.fx,
                 ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
-                ...(aurumFxUsdEur !== null ? { usdEurFixed: aurumFxUsdEur } : {}),
+                ...(aurumFxEurUsdForMidas !== null ? { usdEurFixed: aurumFxEurUsdForMidas } : {}),
               };
             }
             const canonicalSnapshotParams = buildCanonicalSimParamsCurrent(canonicalSnapshotLayer, simParamsRef.current, {
@@ -4425,27 +4434,27 @@ export default function App() {
   }, [operativeFxResolution]);
 
   useEffect(() => {
-    const target = aurumFxSpotUsdEur;
-    if (target === null || !Number.isFinite(target) || target <= 0) return;
+    const targetEurUsdForMidas = aurumFxSpotUsdEur;
+    if (targetEurUsdForMidas === null || !Number.isFinite(targetEurUsdForMidas) || targetEurUsdForMidas <= 0) return;
     setBaseParams((prev) => {
       const current = Number(prev.fx?.usdEurFixed ?? NaN);
-      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - targetEurUsdForMidas) / targetEurUsdForMidas <= 0.0005) return prev;
       return {
         ...prev,
         fx: {
           ...prev.fx,
-          usdEurFixed: target,
+          usdEurFixed: targetEurUsdForMidas,
         },
       };
     });
     setSimParams((prev) => {
       const current = Number(prev.fx?.usdEurFixed ?? NaN);
-      if (Number.isFinite(current) && current > 0 && Math.abs(current - target) / target <= 0.0005) return prev;
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - targetEurUsdForMidas) / targetEurUsdForMidas <= 0.0005) return prev;
       return {
         ...prev,
         fx: {
           ...prev.fx,
-          usdEurFixed: target,
+          usdEurFixed: targetEurUsdForMidas,
         },
       };
     });
@@ -4526,6 +4535,7 @@ export default function App() {
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
       aurumFxSpotCLP={aurumFxSpotCLP}
       aurumFxSpotUsdEur={aurumFxSpotUsdEur}
+      aurumFxSourceUsdEur={aurumFxSourceUsdEur}
       aurumFxSpotSource={aurumFxSpotSource}
       operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}

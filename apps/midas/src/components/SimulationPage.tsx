@@ -285,6 +285,7 @@ export function SimulationPage({
   nonOptimizableBlocksTechnical,
   aurumFxSpotCLP,
   aurumFxSpotUsdEur,
+  aurumFxSourceUsdEur,
   aurumFxSpotSource,
   operativeFxResolution,
   weightsSourceMode,
@@ -371,6 +372,7 @@ export function SimulationPage({
   nonOptimizableBlocksTechnical: string;
   aurumFxSpotCLP: number | null;
   aurumFxSpotUsdEur: number | null;
+  aurumFxSourceUsdEur: number | null;
   aurumFxSpotSource: string | null;
   operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
@@ -1158,11 +1160,13 @@ export function SimulationPage({
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
   const eurUsdModelValue = Number(params.fx.usdEurFixed ?? NaN);
   const aurumEurUsd = Number(aurumFxSpotUsdEur ?? NaN);
+  const aurumSourceUsdEur = Number(aurumFxSourceUsdEur ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
   const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
   const hasAurumEurUsd = Number.isFinite(aurumEurUsd) && aurumEurUsd > 0;
+  const hasAurumSourceUsdEur = Number.isFinite(aurumSourceUsdEur) && aurumSourceUsdEur > 0;
   const usingAurumEurUsd = hasAurumEurUsd && Number.isFinite(eurUsdModelValue) && eurUsdModelValue > 0
     ? isApproximatelyEqual(aurumEurUsd, eurUsdModelValue)
     : false;
@@ -1249,8 +1253,32 @@ export function SimulationPage({
   const eurFxWarning = usingAurumEurUsd
     ? null
     : hasAurumEurUsd
-      ? 'Aurum publica EUR/USD usable, pero esta corrida está aplicando fallback estructural.'
+      ? 'Aurum publica USD/EUR usable, pero esta corrida está aplicando fallback estructural.'
       : 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
+  const dataSourceTone: SourceBadgeTone = (
+    eurFxTone === 'alert' ||
+    usdFxTone === 'alert' ||
+    mixSourceTone === 'alert'
+  )
+    ? 'alert'
+    : (
+        eurFxTone === 'warning' ||
+        usdFxTone === 'warning' ||
+        mixSourceTone === 'warning' ||
+        patrimonioSourceTone !== 'ok'
+      )
+      ? 'warning'
+      : 'ok';
+  const dataSourceStatusLabel = dataSourceTone === 'ok'
+    ? 'OK'
+    : dataSourceTone === 'warning'
+      ? 'Revisar'
+      : 'Alerta';
+  const dataSourceStatusCopy = dataSourceTone === 'ok'
+    ? 'Fuentes aplicadas y trazables.'
+    : dataSourceTone === 'warning'
+      ? 'Datos usables con advertencias de fuente.'
+      : 'Inconsistencia o fallback crítico en fuentes.';
   const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
     ? universeSourceOrigin === 'firestore'
       ? 'Mix cloud'
@@ -2678,36 +2706,19 @@ export function SimulationPage({
               </div>
             </div>
             <div style={{ display: 'grid', gap: 6 }}>
-              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Fuente de datos aplicada
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Fuente de datos aplicada
+                </div>
+                <SourceBadge label={dataSourceStatusLabel} tone={dataSourceTone} />
               </div>
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 7 }}>
                 <div style={{ display: 'grid', gap: 4 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Fuente patrimonial:</span>
-                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{patrimonioSourceSummary}</span>
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{dataSourceStatusCopy}</span>
                     <SourceBadge label={snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'} tone={patrimonioSourceTone} />
-                    <SourceBadge label={patrimonioSourceSummary} tone={patrimonioSourceTone} />
-                  </div>
-                  {patrimonioSourceWarning ? (
-                    <div style={{ color: patrimonioSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                      {patrimonioSourceWarning}
-                    </div>
-                  ) : null}
-                </div>
-                <div style={{ display: 'grid', gap: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Mix:</span>
-                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{mixTrustSourceLabel}</span>
                     <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
                   </div>
-                  {mixSourceWarning ? (
-                    <div style={{ color: mixSourceTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
-                      {mixSourceWarning}
-                    </div>
-                  ) : null}
-                </div>
-                <div style={{ display: 'grid', gap: 4 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>FX:</span>
                     <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
@@ -2717,7 +2728,7 @@ export function SimulationPage({
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                      EUR/USD modelo {Number.isFinite(eurUsdModelValue)
+                      EUR/USD aplicado {Number.isFinite(eurUsdModelValue)
                         ? eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : 'No disponible'}
                     </span>
@@ -2734,7 +2745,7 @@ export function SimulationPage({
                     </div>
                   ) : null}
                 </div>
-                <details style={{ marginTop: 2 }}>
+                <details open={dataSourceTone !== 'ok'} style={{ marginTop: 2 }}>
                   <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
                     Ver detalle técnico
                   </summary>
@@ -2745,9 +2756,15 @@ export function SimulationPage({
                     <div>
                       <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
                       {usingAurumEurUsd
-                        ? 'Aplicado desde snapshot.fxReference.usdEur.'
+                        ? `Transformación aplicada: 1 / ${aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} = ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} EUR/USD.`
                         : 'Valor tomado desde params.fx.usdEurFixed.'}
                     </div>
+                    {hasAurumSourceUsdEur ? (
+                      <div>
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor fuente Aurum:</span>{' '}
+                        fxReference.usdEur = {aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD/EUR
+                      </div>
+                    ) : null}
                     <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Bloques fuera del motor:</span> {nonOptimizableBlocksTechnical}</div>
                   </div>
                 </details>
