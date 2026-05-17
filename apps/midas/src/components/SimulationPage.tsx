@@ -247,6 +247,29 @@ export function computeMidasConsideredWealth(input: {
   };
 }
 
+export function summarizeManualAdjustmentsT0(
+  adjustments: ManualCapitalAdjustment[],
+  toClp: (amount: number, currency: 'CLP' | 'USD' | 'EUR') => number,
+) {
+  return adjustments.reduce((acc, adj) => {
+    const amountClp = Math.max(0, toClp(adj.amount, adj.currency));
+    if (adj.direction === 'add') {
+      acc.positiveClp += amountClp;
+      acc.netClp += amountClp;
+    } else {
+      acc.negativeClp += amountClp;
+      acc.netClp -= amountClp;
+    }
+    acc.count += 1;
+    return acc;
+  }, {
+    positiveClp: 0,
+    negativeClp: 0,
+    netClp: 0,
+    count: 0,
+  });
+}
+
 function SourceBadge({
   label,
   tone,
@@ -699,12 +722,17 @@ export function SimulationPage({
     const todayKey = new Date().toISOString().slice(0, 7);
     return manualCapitalAdjustments.some((adj) => adj.effectiveDate > todayKey);
   }, [manualCapitalAdjustments]);
-  const manualNetClp = useMemo(
-    () => manualAdjustmentsSorted.reduce((acc, adj) => {
-      const signed = adj.direction === 'add' ? 1 : -1;
-      return acc + signed * toClp(adj.amount, adj.currency);
-    }, 0),
+  const committedManualSummaryT0 = useMemo(
+    () => summarizeManualAdjustmentsT0(manualCapitalAdjustments, toClp),
+    [manualCapitalAdjustments, toClp],
+  );
+  const draftManualSummaryT0 = useMemo(
+    () => summarizeManualAdjustmentsT0(manualAdjustmentsSorted, toClp),
     [manualAdjustmentsSorted, toClp],
+  );
+  const manualNetClp = useMemo(
+    () => draftManualSummaryT0.netClp,
+    [draftManualSummaryT0.netClp],
   );
   const resetMovementForm = useCallback(() => {
     setEditingMovementId(null);
@@ -1329,6 +1357,12 @@ export function SimulationPage({
     : wealthConfigTone === 'alert'
       ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
       : 'Configuración patrimonial válida para esta corrida.';
+  const patrimonioMidasHoyAjustadoT0Clp = patrimonioConsideradoMidasClp !== null
+    ? patrimonioConsideradoMidasClp + committedManualSummaryT0.netClp
+    : null;
+  const heroWealthChipNote = committedManualSummaryT0.count > 0
+    ? `MIDAS hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
+    : 'MIDAS hoy';
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
   const patrimonioSourceWarning = snapshotApplied
@@ -2119,8 +2153,12 @@ export function SimulationPage({
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
               {
                 id: 'capital',
-                value: formatCapital(effectiveCapital),
-                note: hasFutureAdjustments ? '+ futuros' : undefined,
+                value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
+                note: committedManualSummaryT0.count > 0
+                  ? heroWealthChipNote
+                  : hasFutureAdjustments
+                    ? 'MIDAS hoy'
+                    : heroWealthChipNote,
                 onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
                 accessory: (
                   <button
@@ -3686,6 +3724,16 @@ export function SimulationPage({
             <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
               Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
             </div>
+            <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
+              <div>Patrimonio de referencia MIDAS: {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+              <div>Patrimonio considerado por MIDAS antes de ajustes manuales: {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
+              <div>Ajustes manuales T0: +{formatMoneyCompact(draftManualSummaryT0.positiveClp)} / -{formatMoneyCompact(draftManualSummaryT0.negativeClp)} / neto {formatMoneyCompact(draftManualSummaryT0.netClp)}</div>
+              <div>Patrimonio MIDAS hoy ajustado T0: {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp + draftManualSummaryT0.netClp) : 'No disponible'}</div>
+              <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
+              <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+              <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
+              <div>El patrimonio MIDAS hoy muestra equivalentes actuales. El motor aplica cada ajuste en su fecha configurada.</div>
+            </div>
 
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflow: 'auto' }}>
               {manualAdjustmentsSorted.length === 0 ? (
@@ -3700,6 +3748,9 @@ export function SimulationPage({
                     <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
                       <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
                         {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                        Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
                       </div>
                       {adj.note && (
                         <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>

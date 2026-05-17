@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
-import { computeMidasConsideredWealth } from './SimulationPage';
+import { computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -47,9 +47,20 @@ assert.equal(computeMidasConsideredWealth({
   riskCapitalEnabled: false,
 }).consideredWealthClp, 1_531_000_000);
 
+const t0Summary = summarizeManualAdjustmentsT0([
+  { id: 'a', direction: 'add', amount: 100_000_000, currency: 'CLP', effectiveDate: '2035-01', destination: 'liquidity' },
+  { id: 'b', direction: 'remove', amount: 25_000_000, currency: 'CLP', effectiveDate: '2036-01', destination: 'liquidity' },
+], (amount) => amount);
+assert.equal(t0Summary.positiveClp, 100_000_000);
+assert.equal(t0Summary.negativeClp, 25_000_000);
+assert.equal(t0Summary.netClp, 75_000_000);
+assert.equal(t0Summary.count, 2);
+
 assert(source.includes('Patrimonio de referencia MIDAS'));
 assert(!source.includes('Patrimonio total Aurum'));
 assert(source.includes('Patrimonio considerado por MIDAS'));
+assert(source.includes('MIDAS hoy'));
+assert(source.includes('Patrimonio MIDAS hoy ajustado T0'));
 assert(source.includes('Ver desglose patrimonial'));
 assert(source.includes('Patrimonio Aurum base visible'));
 assert(source.includes('Capital inicial del motor'));
@@ -65,6 +76,10 @@ assert(source.includes('Diferencia entre referencia MIDAS y considerado MIDAS'))
 assert(source.includes('Explicación de la diferencia'));
 assert(source.includes('Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'));
 assert(source.includes('Configuración OK'));
+assert(source.includes('T0'));
+assert(source.includes('Ajustes manuales T0: +'));
+assert(source.includes('Los ajustes manuales están expresados en valor T0/plata de hoy.'));
+assert(source.includes('El patrimonio MIDAS hoy muestra equivalentes actuales.'));
 assert(source.includes('Resultado anterior'));
 assert(source.includes('Pendiente de recalcular'));
 assert(source.includes('No hay resultado actualizado para esta configuración.'));
