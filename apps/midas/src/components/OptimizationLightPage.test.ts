@@ -11,18 +11,20 @@ import {
   DECISION_REFINEMENT_MAX_WINDOW_PP,
   IMPLEMENTATION_RV_RF_GAP_NO_ACTION_PP,
   OptimizationLightPage,
-  buildFinancialReferenceParams,
-  buildSimulationReconciliationMessage,
-  buildCurrentVsMidasComparisonRows,
-  buildCurrentVsMidasTradeoffs,
-  buildOptimizationConfirmationShortlist,
-  buildOptimizationExpressGrid,
-  buildOptimizationZoomShortlist,
-  canUseDecisionFlowForImplementation,
-  classifyImplementationMateriality,
-  selectClosestDiscardedCompetitor,
-  selectFinancialOptimumCandidate,
-  type FinancialReferenceCandidate,
+    buildFinancialReferenceParams,
+    buildSimulationReconciliationMessage,
+    buildCurrentVsMidasComparisonRows,
+    buildCurrentVsMidasTradeoffs,
+    buildOptimizationInputFingerprint,
+    buildOptimizationConfirmationShortlist,
+    buildOptimizationExpressGrid,
+    buildOptimizationZoomShortlist,
+    canUseDecisionFlowForImplementation,
+    classifyImplementationMateriality,
+    isOptimizationResultMetaCurrent,
+    selectClosestDiscardedCompetitor,
+    selectFinancialOptimumCandidate,
+    type FinancialReferenceCandidate,
 } from './OptimizationLightPage';
 
 function buildWeights(rvGlobal: number, rvChile: number, rfGlobal: number, rfChile: number): PortfolioWeights {
@@ -403,6 +405,40 @@ assert.equal(recommendedSummary.sleeveValidation.rows[1].label, 'RV local / Chil
 assert.equal(recommendedSummary.sleeveValidation.rows[2].label, 'RF global');
 assert.equal(recommendedSummary.sleeveValidation.rows[3].label, 'RF local / Chile');
 
+const baseFingerprint = buildOptimizationInputFingerprint({
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  params: buildParams(),
+});
+const simulationFingerprint = buildOptimizationInputFingerprint({
+  sourceMode: 'simulation',
+  sourceLabel: 'Simulación activa',
+  params: {
+    ...buildParams(),
+    simulation: {
+      ...buildParams().simulation,
+      nSim: 5000,
+    },
+  },
+});
+assert.notEqual(baseFingerprint, simulationFingerprint);
+assert.equal(isOptimizationResultMetaCurrent({
+  inputFingerprint: baseFingerprint,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  nSim: 3000,
+  seed: 123,
+  ranAtLabel: '2026-05-18 10:00',
+}, baseFingerprint), true);
+assert.equal(isOptimizationResultMetaCurrent({
+  inputFingerprint: baseFingerprint,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  nSim: 3000,
+  seed: 123,
+  ranAtLabel: '2026-05-18 10:00',
+}, simulationFingerprint), false);
+
 assert.equal(canUseDecisionFlowForImplementation(null), false);
 assert.equal(canUseDecisionFlowForImplementation({
   stage: 'express',
@@ -413,6 +449,10 @@ assert.equal(canUseDecisionFlowForImplementation({
   candidateCount: 11,
   seed: 123,
   implementationEnabled: false,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  inputFingerprint: baseFingerprint,
+  ranAtLabel: null,
 }), false);
 assert.equal(canUseDecisionFlowForImplementation({
   stage: 'zoom',
@@ -423,6 +463,10 @@ assert.equal(canUseDecisionFlowForImplementation({
   candidateCount: 9,
   seed: 123,
   implementationEnabled: false,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  inputFingerprint: baseFingerprint,
+  ranAtLabel: null,
 }), false);
 assert.equal(canUseDecisionFlowForImplementation({
   stage: 'confirmed',
@@ -433,6 +477,10 @@ assert.equal(canUseDecisionFlowForImplementation({
   candidateCount: 9,
   seed: 123,
   implementationEnabled: true,
+  sourceMode: 'simulation',
+  sourceLabel: 'Simulación activa',
+  inputFingerprint: simulationFingerprint,
+  ranAtLabel: '2026-05-18 10:05',
 }), true);
 assert.equal(
   buildSimulationReconciliationMessage({ snapshot: { comparable: true }, nSim: 3000, seed: 123 }),
@@ -458,6 +506,7 @@ const initialMarkup = renderToStaticMarkup(
 
 assert(initialMarkup.includes('Óptimo MIDAS recomendado'));
 assert(initialMarkup.includes('Calcular Óptimo MIDAS recomendado'));
+assert(initialMarkup.includes('Simulación activa no disponible: primero valida o recalcula Simulación.'));
 assert(!initialMarkup.includes('Ejecutar Fase 1'));
 assert(!initialMarkup.includes('Preparar diagnósticos complementarios'));
 assert(!initialMarkup.includes('Fase 1'));
@@ -484,6 +533,12 @@ assert(source.includes('Reanudar cálculo'));
 assert(source.includes('Reiniciar cálculo'));
 assert(source.includes('Estado ejecución:'));
 assert(source.includes("document.addEventListener('visibilitychange'"));
+assert(source.includes('buildOptimizationInputFingerprint'));
+assert(source.includes('inputFingerprint'));
+assert(source.includes('sourceMode'));
+assert(source.includes('decisionResultMeta'));
+assert(source.includes('Resultado anterior: calculado con'));
+assert(source.includes('Fuente usada:'));
 assert(source.includes('setDecisionExecutionState(\'background\')'));
 assert(source.includes('setDecisionExecutionState(\'interrupted\')'));
 assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));
