@@ -14,6 +14,17 @@ export type InstrumentImplementationConstraintFlags = {
   crossCurrency: boolean;
 };
 
+export type InstrumentImplementationStage = 'clean' | 'cross_manager' | 'cross_currency';
+
+export type InstrumentImplementationStageSummary = {
+  stage: InstrumentImplementationStage;
+  used: boolean;
+  operationCount: number;
+  movedClp: number;
+  reachedMix: { rv: number; rf: number };
+  remainingGapRvPp: number;
+};
+
 export type InstrumentImplementationTransfer = {
   fromInstrumentId: string;
   fromName: string;
@@ -29,6 +40,7 @@ export type InstrumentImplementationTransfer = {
   amountNativeMoved: number | null;
   nativeCurrency: string | null;
   amountClpMoved: number;
+  stage: InstrumentImplementationStage;
   rationale: string;
   constraints: InstrumentImplementationConstraintFlags;
 };
@@ -41,6 +53,7 @@ export type InstrumentImplementationPlan = {
   equivalentToIdeal: boolean;
   structuralChangeRequired: boolean;
   transfers: InstrumentImplementationTransfer[];
+  stageSummaries: InstrumentImplementationStageSummary[];
   restrictionsApplied: InstrumentImplementationConstraintFlags;
   warnings: string[];
   baseTargetWeights: PortfolioWeights;

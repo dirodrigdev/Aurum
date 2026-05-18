@@ -135,6 +135,163 @@ function buildImplementationUniverse(): InstrumentImplementationUniverse {
   };
 }
 
+function buildUniverseNeedingCrossManager(): InstrumentImplementationUniverse {
+  const base = buildImplementationUniverse();
+  return {
+    ...base,
+    instruments: [
+      {
+        ...base.instruments[0],
+        instrumentId: 'sura-rf',
+        name: 'SURA RF Chile',
+        weightPortfolio: 0.2,
+        amountClp: 20_000_000,
+      },
+      {
+        ...base.instruments[1],
+        instrumentId: 'sura-rv',
+        name: 'SURA RV Global',
+        weightPortfolio: 0.6,
+        amountClp: 60_000_000,
+        usable: true,
+      },
+      {
+        instrumentId: 'btg-rf',
+        name: 'BTG RF Chile',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: 'FM',
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0, rf: 1, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0, local: 1 },
+        amountClp: 20_000_000,
+        amountNative: 20_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.2,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: null,
+        sameCurrencyCandidates: ['sura-rv'],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: ['sura-rv'],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+    ],
+  };
+}
+
+function buildUniverseNeedingCrossCurrency(): InstrumentImplementationUniverse {
+  return {
+    snapshot: {
+      version: 1,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      rawJson: '{}',
+      instruments: [],
+      optimizerMetadata: null,
+      portfolioSummary: null,
+      methodology: null,
+    },
+    instruments: [
+      {
+        instrumentId: 'sura-rf-usd',
+        name: 'SURA RF USD',
+        vehicleType: 'fund',
+        currency: 'USD',
+        taxWrapper: 'FM',
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0, rf: 1, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 1, local: 0 },
+        amountClp: 100_000_000,
+        amountNative: 110_000,
+        amountNativeCurrency: 'USD',
+        fxToClpUsed: 900,
+        weightPortfolio: 1,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: null,
+        sameCurrencyCandidates: [],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'sura-rv-clp',
+        name: 'SURA RV CLP',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: 'FM',
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 1, rf: 0, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 1, local: 0 },
+        amountClp: 0,
+        amountNative: 0,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: null,
+        sameCurrencyCandidates: [],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: false,
+      },
+    ],
+  };
+}
+
 function buildParams(): ModelParameters {
   return {
     label: 'Test',
@@ -218,6 +375,7 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
         amountNativeMoved: 15_100_000,
         nativeCurrency: 'CLP',
         amountClpMoved: 15_100_000,
+        stage: 'clean',
         rationale: 'rebalance',
         constraints: {
           sameCurrency: true,
@@ -226,6 +384,32 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
           crossManager: false,
           crossCurrency: false,
         },
+      },
+    ],
+    stageSummaries: [
+      {
+        stage: 'clean',
+        used: true,
+        operationCount: 1,
+        movedClp: 15_100_000,
+        reachedMix: { rv: 0.6, rf: 0.4 },
+        remainingGapRvPp: 0.8,
+      },
+      {
+        stage: 'cross_manager',
+        used: false,
+        operationCount: 0,
+        movedClp: 0,
+        reachedMix: { rv: 0.6, rf: 0.4 },
+        remainingGapRvPp: 0.8,
+      },
+      {
+        stage: 'cross_currency',
+        used: false,
+        operationCount: 0,
+        movedClp: 0,
+        reachedMix: { rv: 0.6, rf: 0.4 },
+        remainingGapRvPp: 0.8,
       },
     ],
     restrictionsApplied: {
@@ -544,7 +728,24 @@ assert.equal(zeroWeightDestinationPlan.transfers[0].fromInstrumentId, 'sura-rf')
 assert.equal(zeroWeightDestinationPlan.transfers[0].toInstrumentId, 'sura-rv');
 assert.equal(zeroWeightDestinationPlan.transfers[0].constraints.sameCurrency, true);
 assert.equal(zeroWeightDestinationPlan.transfers[0].constraints.sameManager, true);
+assert.equal(zeroWeightDestinationPlan.transfers[0].stage, 'clean');
 assert(zeroWeightDestinationPlan.reachableMix.rv >= 0.6 - 1e-9);
+
+const needsCrossManagerPlan = buildInstrumentImplementationPlan({
+  universe: buildUniverseNeedingCrossManager(),
+  targetWeights: buildWeights(0.9, 0, 0.1, 0),
+});
+assert(needsCrossManagerPlan);
+assert(needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_manager'));
+assert(!needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_currency'));
+
+const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
+  universe: buildUniverseNeedingCrossCurrency(),
+  targetWeights: buildWeights(0.95, 0, 0.05, 0),
+});
+assert(needsCrossCurrencyPlan);
+assert(needsCrossCurrencyPlan.transfers.some((row) => row.stage === 'cross_currency'));
+assert(needsCrossCurrencyPlan.warnings.some((warning) => warning.includes('cambio de moneda')));
 
 const baseFingerprint = buildOptimizationInputFingerprint({
   sourceMode: 'base',

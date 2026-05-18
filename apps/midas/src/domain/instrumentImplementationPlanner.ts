@@ -1,13 +1,14 @@
 import type { PortfolioWeights } from './model/types';
 import type {
   InstrumentImplementationPlan,
+  InstrumentImplementationStage,
+  InstrumentImplementationStageSummary,
   InstrumentImplementationTransfer,
   InstrumentImplementationUniverse,
 } from './instrumentImplementationTypes';
 import { REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from './optimizerPolicyConfig';
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-const MATERIAL_CROSS_MANAGER_MIN_WEIGHT = 0.03;
 
 const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
   const rvGlobal = clamp01(weights.rvGlobal);
@@ -119,6 +120,7 @@ export function buildInstrumentImplementationPlan(input: {
     crossManager: false,
     crossCurrency: false,
   };
+  const stageSummaries: InstrumentImplementationStageSummary[] = [];
 
   if (Math.abs(deltaRv) <= 1e-6) {
     const reachableWeights = buildTargetFromRiskMix(currentRv, currentGlobalShare);
@@ -130,6 +132,7 @@ export function buildInstrumentImplementationPlan(input: {
       equivalentToIdeal: true,
       structuralChangeRequired: false,
       transfers: [],
+      stageSummaries,
       restrictionsApplied,
       warnings: [],
       baseTargetWeights: normalizeWeights(input.targetWeights),
@@ -157,84 +160,137 @@ export function buildInstrumentImplementationPlan(input: {
   const destinationCapacity = new Map(destinations.map((item) => [item.instrumentId, Math.max(0, 1 - clamp01(item.weightPortfolio ?? 0))]));
   const transfers: InstrumentImplementationTransfer[] = [];
   let remainingDelta = Math.abs(deltaRv);
+  const stageConfig: Array<{
+    stage: InstrumentImplementationStage;
+    allow: (input: { sameCurrency: boolean; sameManager: boolean; sameTaxWrapper: boolean; source: ImplementationInstrument; destination: ImplementationInstrument }) => boolean;
+  }> = [
+    {
+      stage: 'clean',
+      allow: ({ sameCurrency, sameManager, sameTaxWrapper, source, destination }) => {
+        const strictWrapperCompatible = source.taxWrapper && destination.taxWrapper ? sameTaxWrapper : true;
+        return sameCurrency && sameManager && strictWrapperCompatible;
+      },
+    },
+    {
+      stage: 'cross_manager',
+      allow: ({ sameCurrency, sameManager, sameTaxWrapper, source, destination }) => {
+        const wrapperCompatible = source.taxWrapper && destination.taxWrapper ? sameTaxWrapper : true;
+        return sameCurrency && !sameManager && wrapperCompatible;
+      },
+    },
+    {
+      stage: 'cross_currency',
+      allow: ({ sameCurrency }) => !sameCurrency,
+    },
+  ];
 
-  for (const source of sources) {
-    const sourceWeight = sourceRemaining.get(source.instrumentId) ?? 0;
-    if (sourceWeight <= 1e-6 || remainingDelta <= 1e-6) continue;
-
-    const orderedDestinations = [...destinations]
-      .filter((destination) => source.currency && destination.currency && source.currency === destination.currency)
-      .sort((a, b) => scorePair(source, b) - scorePair(source, a));
-    for (const destination of orderedDestinations) {
-      if (remainingDelta <= 1e-6) break;
-      if (source.instrumentId === destination.instrumentId) continue;
-
-      const capacity = destinationCapacity.get(destination.instrumentId) ?? 0;
-      if (capacity <= 1e-6) continue;
-
-      const sourceRv = deriveRvOfInstrument(source);
-      const destinationRv = deriveRvOfInstrument(destination);
-      const rvLiftPerWeight = Math.abs(destinationRv - sourceRv);
-      if (rvLiftPerWeight <= 1e-6) continue;
-
-      const maxByNeed = remainingDelta / rvLiftPerWeight;
-      const currentSourceRemaining = sourceRemaining.get(source.instrumentId) ?? 0;
-      const moveWeight = Math.min(currentSourceRemaining, capacity, maxByNeed);
-      if (moveWeight <= 1e-6) continue;
-
-      const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
-      const sameManager = hasSameManager(source, destination);
-      const sameTaxWrapper = hasSameTaxWrapper(source, destination);
-      if (!sameManager && moveWeight < MATERIAL_CROSS_MANAGER_MIN_WEIGHT - 1e-9) {
-        continue;
-      }
-      const crossManager = !sameManager;
-      const crossCurrency = !sameCurrency;
-      if (crossManager) restrictionsApplied.crossManager = true;
-      if (crossCurrency) restrictionsApplied.crossCurrency = true;
-      if (!sameManager) restrictionsApplied.sameManager = false;
-      if (!sameTaxWrapper) restrictionsApplied.sameTaxWrapper = false;
-      if (!sameCurrency) restrictionsApplied.sameCurrency = false;
-
-      const rationale = sameManager
-        ? 'Prioriza mismo administrador'
-        : sameCurrency
-          ? 'Cross-manager por mejora material manteniendo moneda'
-          : 'Fallback por falta de alternativa limpia';
-      const sourceWeight = Math.max(0, source.weightPortfolio ?? 0);
-      const nativeRatio = sourceWeight > 0 ? moveWeight / sourceWeight : 0;
-
-      transfers.push({
-        fromInstrumentId: source.instrumentId,
-        fromName: source.name ?? source.instrumentId,
-        fromManager: inferManagerName(source),
-        fromCurrency: source.currency ?? null,
-        fromTaxWrapper: source.taxWrapper ?? null,
-        toInstrumentId: destination.instrumentId,
-        toName: destination.name ?? destination.instrumentId,
-        toManager: inferManagerName(destination),
-        toCurrency: destination.currency ?? null,
-        toTaxWrapper: destination.taxWrapper ?? null,
-        weightMoved: moveWeight,
-        amountNativeMoved: source.amountNative !== null && source.amountNative !== undefined
-          ? source.amountNative * nativeRatio
-          : null,
-        nativeCurrency: source.amountNativeCurrency ?? source.currency ?? null,
-        amountClpMoved: (source.amountClp ?? 0) * nativeRatio,
-        rationale,
-        constraints: {
-          sameCurrency,
-          sameManager,
-          sameTaxWrapper,
-          crossManager,
-          crossCurrency,
+  for (const stage of stageConfig) {
+    if (remainingDelta <= 1e-6) {
+      stageSummaries.push({
+        stage: stage.stage,
+        used: false,
+        operationCount: 0,
+        movedClp: 0,
+        reachedMix: {
+          rv: movingToHigherRv ? targetRv - remainingDelta : targetRv + remainingDelta,
+          rf: movingToHigherRv ? 1 - (targetRv - remainingDelta) : 1 - (targetRv + remainingDelta),
         },
+        remainingGapRvPp: remainingDelta * 100,
       });
-
-      sourceRemaining.set(source.instrumentId, Math.max(0, currentSourceRemaining - moveWeight));
-      destinationCapacity.set(destination.instrumentId, Math.max(0, capacity - moveWeight));
-      remainingDelta = Math.max(0, remainingDelta - (moveWeight * rvLiftPerWeight));
+      continue;
     }
+
+    const stageTransferStart = transfers.length;
+    const stageClpStart = transfers.reduce((sum, item) => sum + item.amountClpMoved, 0);
+
+    for (const source of sources) {
+      const sourceWeight = sourceRemaining.get(source.instrumentId) ?? 0;
+      if (sourceWeight <= 1e-6 || remainingDelta <= 1e-6) continue;
+
+      const orderedDestinations = [...destinations]
+        .sort((a, b) => scorePair(source, b) - scorePair(source, a));
+      for (const destination of orderedDestinations) {
+        if (remainingDelta <= 1e-6) break;
+        if (source.instrumentId === destination.instrumentId) continue;
+
+        const capacity = destinationCapacity.get(destination.instrumentId) ?? 0;
+        if (capacity <= 1e-6) continue;
+
+        const sourceRv = deriveRvOfInstrument(source);
+        const destinationRv = deriveRvOfInstrument(destination);
+        const rvLiftPerWeight = Math.abs(destinationRv - sourceRv);
+        if (rvLiftPerWeight <= 1e-6) continue;
+
+        const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
+        const sameManager = hasSameManager(source, destination);
+        const sameTaxWrapper = hasSameTaxWrapper(source, destination);
+        if (!stage.allow({ sameCurrency, sameManager, sameTaxWrapper, source, destination })) continue;
+
+        const maxByNeed = remainingDelta / rvLiftPerWeight;
+        const currentSourceRemaining = sourceRemaining.get(source.instrumentId) ?? 0;
+        const moveWeight = Math.min(currentSourceRemaining, capacity, maxByNeed);
+        if (moveWeight <= 1e-6) continue;
+
+        const crossManager = !sameManager;
+        const crossCurrency = !sameCurrency;
+        if (crossManager) restrictionsApplied.crossManager = true;
+        if (crossCurrency) restrictionsApplied.crossCurrency = true;
+        if (!sameManager) restrictionsApplied.sameManager = false;
+        if (!sameTaxWrapper) restrictionsApplied.sameTaxWrapper = false;
+        if (!sameCurrency) restrictionsApplied.sameCurrency = false;
+
+        const rationale = stage.stage === 'clean'
+          ? 'Sube RV/RF con tramo limpio (misma moneda y manager)'
+          : stage.stage === 'cross_manager'
+            ? 'Acerca RV/RF objetivo con cruce entre administradoras en misma moneda'
+            : 'Acerca RV/RF objetivo con cambio de moneda (tramo excepcional)';
+        const sourceWeightTotal = Math.max(0, source.weightPortfolio ?? 0);
+        const nativeRatio = sourceWeightTotal > 0 ? moveWeight / sourceWeightTotal : 0;
+
+        transfers.push({
+          fromInstrumentId: source.instrumentId,
+          fromName: source.name ?? source.instrumentId,
+          fromManager: inferManagerName(source),
+          fromCurrency: source.currency ?? null,
+          fromTaxWrapper: source.taxWrapper ?? null,
+          toInstrumentId: destination.instrumentId,
+          toName: destination.name ?? destination.instrumentId,
+          toManager: inferManagerName(destination),
+          toCurrency: destination.currency ?? null,
+          toTaxWrapper: destination.taxWrapper ?? null,
+          weightMoved: moveWeight,
+          amountNativeMoved: source.amountNative !== null && source.amountNative !== undefined
+            ? source.amountNative * nativeRatio
+            : null,
+          nativeCurrency: source.amountNativeCurrency ?? source.currency ?? null,
+          amountClpMoved: (source.amountClp ?? 0) * nativeRatio,
+          stage: stage.stage,
+          rationale,
+          constraints: {
+            sameCurrency,
+            sameManager,
+            sameTaxWrapper,
+            crossManager,
+            crossCurrency,
+          },
+        });
+
+        sourceRemaining.set(source.instrumentId, Math.max(0, currentSourceRemaining - moveWeight));
+        destinationCapacity.set(destination.instrumentId, Math.max(0, capacity - moveWeight));
+        remainingDelta = Math.max(0, remainingDelta - (moveWeight * rvLiftPerWeight));
+      }
+    }
+
+    const reachedRvAfterStage = movingToHigherRv ? targetRv - remainingDelta : targetRv + remainingDelta;
+    const stageMovedClp = transfers.reduce((sum, item) => sum + item.amountClpMoved, 0) - stageClpStart;
+    stageSummaries.push({
+      stage: stage.stage,
+      used: transfers.length > stageTransferStart,
+      operationCount: transfers.length - stageTransferStart,
+      movedClp: Math.max(0, stageMovedClp),
+      reachedMix: { rv: reachedRvAfterStage, rf: 1 - reachedRvAfterStage },
+      remainingGapRvPp: remainingDelta * 100,
+    });
   }
 
   const reachableRv = movingToHigherRv ? targetRv - remainingDelta : targetRv + remainingDelta;
@@ -247,6 +303,12 @@ export function buildInstrumentImplementationPlan(input: {
   if (!transfers.length) warnings.push('No se encontraron traspasos ejecutables con las restricciones actuales.');
   if (!equivalentToIdeal) warnings.push(`Gap material vs objetivo ideal: ${gapVsIdealRvPp >= 0 ? '' : '+'}${gapVsIdealRvPp.toFixed(2)} pp RV.`);
   if (remainingDelta > 1e-6) warnings.push('No totalmente implementable bajo restricciones actuales.');
+  if (stageSummaries.some((summary) => summary.stage === 'cross_manager' && summary.used)) {
+    warnings.push('Se requiere mover entre administradoras para acercarse al RV/RF objetivo.');
+  }
+  if (stageSummaries.some((summary) => summary.stage === 'cross_currency' && summary.used)) {
+    warnings.push('Se requiere cambio de moneda para acercarse al RV/RF objetivo. Validar costos, spread, impuestos y timing antes de ejecutar.');
+  }
 
   return {
     targetMixIdeal: { rv: targetRv, rf: targetRf },
@@ -256,6 +318,7 @@ export function buildInstrumentImplementationPlan(input: {
     equivalentToIdeal,
     structuralChangeRequired: !equivalentToIdeal,
     transfers,
+    stageSummaries,
     restrictionsApplied,
     warnings,
     baseTargetWeights: normalizeWeights(input.targetWeights),

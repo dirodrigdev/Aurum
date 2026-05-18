@@ -556,6 +556,12 @@ function formatSignedPp(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)} pp`;
 }
 
+function implementationStageLabel(stage: 'clean' | 'cross_manager' | 'cross_currency'): string {
+  if (stage === 'clean') return 'Limpio';
+  if (stage === 'cross_manager') return 'Entre administradoras';
+  return 'Cambio moneda';
+}
+
 function formatSignedPct(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
 }
@@ -4443,30 +4449,64 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Operaciones sugeridas: {implementationPlan.transfers.length} · Total a mover {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'} · Monto CLP como dato principal.
                 </div>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {[...implementationPlan.transfers]
-                    .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
-                    .map((transfer, index) => (
-                      <div key={`main-transfer-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 5, background: T.surface }}>
-                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>
-                          Mover {formatClpShort(transfer.amountClpMoved)} desde {transfer.fromName} hacia {transfer.toName}
+                {implementationPlan.stageSummaries.length ? (
+                  <div style={{ display: 'grid', gap: 4, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Resumen por tramo</div>
+                    {implementationPlan.stageSummaries.map((stage) => (
+                      <div key={`stage-summary-${stage.stage}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1.2fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
+                        <div style={{ color: T.textSecondary, fontWeight: 700 }}>
+                          {implementationStageLabel(stage.stage)}
                         </div>
-                        <div style={{ color: T.textMuted, fontSize: 10 }}>
-                          Monto nativo: {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · Contexto: {(transfer.weightMoved * 100).toFixed(2)}% de cartera
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6, color: T.textMuted, fontSize: 10 }}>
-                          <div>Moneda: <span style={{ color: T.textSecondary }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'No disponible'} → {transfer.toCurrency ?? 'No disponible'}</span></div>
-                          <div>Manager: <span style={{ color: T.textSecondary }}>{transfer.fromManager ?? 'No disponible'} → {transfer.toManager ?? 'No disponible'}</span></div>
-                          <div>Wrapper: <span style={{ color: T.textSecondary }}>{transfer.fromTaxWrapper ?? 'No disponible'} → {transfer.toTaxWrapper ?? 'No disponible'}</span></div>
-                          <div>Razón: <span style={{ color: T.textSecondary }}>{transfer.rationale}</span></div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted, fontSize: 9, fontWeight: 700 }}>
-                          {transfer.constraints.sameCurrency ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Misma moneda</span> : <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-currency manual</span>}
-                          {transfer.constraints.sameManager ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Mismo manager</span> : <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-manager</span>}
-                          {transfer.constraints.sameTaxWrapper ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Mismo wrapper</span> : null}
-                        </div>
+                        <div>{stage.used ? `${stage.operationCount} ops` : 'No requerido'}</div>
+                        <div>{stage.used ? formatClpShort(stage.movedClp) : '—'}</div>
+                        <div>{formatMixPair(stage.reachedMix)}</div>
+                        <div>Gap {formatSignedPp(stage.remainingGapRvPp)}</div>
                       </div>
                     ))}
+                  </div>
+                ) : null}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, color: T.textSecondary }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
+                        <th style={{ padding: '6px 6px' }}>Tramo</th>
+                        <th style={{ padding: '6px 6px' }}>Monto</th>
+                        <th style={{ padding: '6px 6px' }}>Desde</th>
+                        <th style={{ padding: '6px 6px' }}>Hacia</th>
+                        <th style={{ padding: '6px 6px' }}>Moneda</th>
+                        <th style={{ padding: '6px 6px' }}>Manager</th>
+                        <th style={{ padding: '6px 6px' }}>Razón</th>
+                        <th style={{ padding: '6px 6px' }}>Restricción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...implementationPlan.transfers]
+                        .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
+                        .map((transfer, index) => (
+                          <tr key={`main-transfer-row-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ borderBottom: `1px solid ${T.border}` }}>
+                            <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', color: T.textPrimary, fontWeight: 700 }}>
+                              {implementationStageLabel(transfer.stage)}
+                            </td>
+                            <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>
+                              <div style={{ color: T.textPrimary, fontWeight: 800 }}>{formatClpShort(transfer.amountClpMoved)}</div>
+                              <div style={{ color: T.textMuted }}>{formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} ({(transfer.weightMoved * 100).toFixed(2)}%)</div>
+                            </td>
+                            <td style={{ padding: '6px 6px' }}>{transfer.fromName}</td>
+                            <td style={{ padding: '6px 6px' }}>{transfer.toName}</td>
+                            <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'ND'} → {transfer.toCurrency ?? 'ND'}</td>
+                            <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{transfer.fromManager ?? 'ND'} → {transfer.toManager ?? 'ND'}</td>
+                            <td style={{ padding: '6px 6px' }}>{transfer.rationale}</td>
+                            <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>
+                              {transfer.constraints.crossCurrency
+                                ? 'Cross-currency'
+                                : transfer.constraints.crossManager
+                                  ? 'Cross-manager'
+                                  : 'Limpio'}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             ) : (
