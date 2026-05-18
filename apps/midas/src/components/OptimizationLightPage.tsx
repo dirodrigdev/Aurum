@@ -302,7 +302,7 @@ type SleeveValidation = {
   hasCompleteSleeveData: boolean;
 };
 
-type ImplementationActionStatus = 'no_action' | 'optional' | 'recommended';
+type ImplementationActionStatus = 'no_action' | 'optional' | 'recommended' | 'not_implementable';
 
 type ImplementationMaterialitySummary = {
   gapRvPp: number;
@@ -772,6 +772,21 @@ export function classifyImplementationMateriality(input: {
       summary: 'Objetivo alcanzado dentro de tolerancia.',
       detail: 'El mix actual ya está suficientemente cerca del Óptimo MIDAS recomendado. No vale la pena hacer traspasos por ahora.',
       marginalTrade: totalTradePortfolioPct < IMPLEMENTATION_TRADE_NO_ACTION_PORTFOLIO_PCT,
+      relevantTrade: false,
+      sleeveValidation,
+    };
+  }
+
+  if (!input.plan.transfers.length) {
+    return {
+      gapRvPp,
+      totalTradePortfolioPct,
+      totalTradeClp,
+      status: 'not_implementable',
+      statusLabel: 'No implementable automáticamente por instrumento',
+      summary: 'No hay traspasos ejecutables por instrumento bajo las restricciones actuales.',
+      detail: 'La app conserva el diagnóstico por sleeve como referencia técnica, pero no lo presenta como instrucción operativa.',
+      marginalTrade: false,
       relevantTrade: false,
       sleeveValidation,
     };
@@ -4420,33 +4435,137 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textMuted, fontSize: 10 }}>{implementationMateriality ? `${implementationMateriality.totalTradePortfolioPct.toFixed(2).replace('.', ',')}% cartera` : 'No disponible'}</div>
               </div>
             </div>
-            {implementationMateriality ? (
-              <div style={{ display: 'grid', gap: 3 }}>
-                <div style={{ color: implementationMateriality.status === 'recommended' ? T.warning : T.positive, fontSize: 11, fontWeight: 800 }}>
-                  Estado: {implementationMateriality.statusLabel}
+            {implementationPlan.transfers.length ? (
+              <div style={{ display: 'grid', gap: 8, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>
+                  {recommendationIsContingency ? 'Implementación de contingencia por instrumentos' : 'Traspasos sugeridos por instrumento'}
                 </div>
-                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{implementationMateriality.summary}</div>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>{implementationMateriality.detail}</div>
-                <div style={{ color: implementationMateriality.sleeveValidation.hasCompleteSleeveData ? T.textMuted : T.warning, fontSize: 10 }}>
-                  {implementationMateriality.sleeveValidation.hasCompleteSleeveData
-                    ? 'Validación por sleeves OK: RV global / RV local / RF global / RF local.'
-                    : 'La implementación valida RV/RF total, pero no composición global/local. Revisar antes de ejecutar.'}
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Operaciones sugeridas: {implementationPlan.transfers.length} · Total a mover {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'} · Monto CLP como dato principal.
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {[...implementationPlan.transfers]
+                    .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
+                    .map((transfer, index) => (
+                      <div key={`main-transfer-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '8px 9px', display: 'grid', gap: 5, background: T.surface }}>
+                        <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>
+                          Mover {formatClpShort(transfer.amountClpMoved)} desde {transfer.fromName} hacia {transfer.toName}
+                        </div>
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          Monto nativo: {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} · Contexto: {(transfer.weightMoved * 100).toFixed(2)}% de cartera
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6, color: T.textMuted, fontSize: 10 }}>
+                          <div>Moneda: <span style={{ color: T.textSecondary }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'No disponible'} → {transfer.toCurrency ?? 'No disponible'}</span></div>
+                          <div>Manager: <span style={{ color: T.textSecondary }}>{transfer.fromManager ?? 'No disponible'} → {transfer.toManager ?? 'No disponible'}</span></div>
+                          <div>Wrapper: <span style={{ color: T.textSecondary }}>{transfer.fromTaxWrapper ?? 'No disponible'} → {transfer.toTaxWrapper ?? 'No disponible'}</span></div>
+                          <div>Razón: <span style={{ color: T.textSecondary }}>{transfer.rationale}</span></div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', color: T.textMuted, fontSize: 9, fontWeight: 700 }}>
+                          {transfer.constraints.sameCurrency ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Misma moneda</span> : <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-currency manual</span>}
+                          {transfer.constraints.sameManager ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Mismo manager</span> : <span style={{ border: `1px solid ${T.warning}`, borderRadius: 999, padding: '2px 7px', color: T.warning }}>Cross-manager</span>}
+                          {transfer.constraints.sameTaxWrapper ? <span style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '2px 7px' }}>Mismo wrapper</span> : null}
+                        </div>
+                      </div>
+                    ))}
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div style={{ display: 'grid', gap: 7, border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+                <div style={{ color: T.warning, fontSize: 12, fontWeight: 900 }}>No implementable automáticamente por instrumento</div>
+                <div style={{ color: T.textSecondary, fontSize: 11 }}>
+                  No se encontraron traspasos ejecutables con las restricciones actuales.
+                </div>
+                {implementationPlan.warnings.length ? (
+                  <div style={{ display: 'grid', gap: 2 }}>
+                    {implementationPlan.warnings.map((warning) => (
+                      <div key={`main-warning-${warning}`} style={{ color: T.warning, fontSize: 10 }}>{warning}</div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Puede faltar instrumento destino compatible en el universo actual, metadata de moneda/manager/wrapper, o capacidad suficiente bajo restricciones operativas.
+                  </div>
+                )}
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Diagnóstico técnico de composición alcanzada</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Esto es una guía por sleeve, no una instrucción operativa por instrumento.</div>
+                  {implementationSleeveMoneyGuide.length ? implementationSleeveMoneyGuide.map((line) => (
+                    <div key={`main-money-guide-${line}`} style={{ color: T.textSecondary, fontSize: 10 }}>{line}</div>
+                  )) : (
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      No hay suficiente información para convertir el gap por sleeve a montos CLP accionables.
+                    </div>
+                  )}
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Para implementar esto falta un instrumento destino compatible en RV/RF, con moneda compatible e idealmente mismo manager y wrapper.
+                  </div>
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: 7, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Mix objetivo vs mix alcanzado estimado</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Este es el mix estimado después de aplicar los traspasos sugeridos. Puede diferir del objetivo MIDAS por restricciones de instrumentos.
+              </div>
+              <div style={{ display: 'grid', gap: 5 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10, fontWeight: 800 }}>
+                  <div>Variable</div>
+                  <div>Objetivo</div>
+                  <div>Alcanzado estimado</div>
+                  <div>Gap</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textSecondary, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>RV total</div>
+                  <div>{formatPctValue(implementationPlan.targetMixIdeal.rv)}</div>
+                  <div>{formatPctValue(implementationPlan.reachableMix.rv)}</div>
+                  <div>{formatSignedPp(implementationPlan.gapVsIdealRvPp)}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textSecondary, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>RF total</div>
+                  <div>{formatPctValue(implementationPlan.targetMixIdeal.rf)}</div>
+                  <div>{formatPctValue(implementationPlan.reachableMix.rf)}</div>
+                  <div>{formatSignedPp(-implementationPlan.gapVsIdealRvPp)}</div>
+                </div>
+                {implementationMateriality?.sleeveValidation.rows.map((row) => (
+                  <div key={`main-post-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textSecondary, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                    <div style={{ color: T.textPrimary, fontWeight: 700 }}>{row.label}</div>
+                    <div>{formatPctValue(row.target)}</div>
+                    <div>{formatPctValue(row.postTrade)}</div>
+                    <div>{formatSignedPp((row.target - row.postTrade) * 100)}</div>
+                  </div>
+                ))}
+              </div>
+              {Math.abs(implementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9 ? (
+                <div style={{ color: T.positive, fontSize: 10 }}>
+                  RV/RF total queda dentro de tolerancia operativa; no se bloquea por desvíos global/local.
+                </div>
+              ) : (
+                <div style={{ color: T.warning, fontSize: 10 }}>
+                  Validar mix alcanzado antes de ejecutar. Las métricas de éxito deben recalcularse sobre el mix alcanzado, no sobre el objetivo ideal.
+                </div>
+              )}
+              {implementationMateriality?.sleeveValidation && implementationMateriality.sleeveValidation.maxGapPp > 1.5 ? (
+                <div style={{ color: T.warning, fontSize: 10 }}>
+                  La implementación alcanza aproximadamente el RV/RF objetivo, pero cambia la composición global/local. Validar el mix alcanzado antes de ejecutar.
+                </div>
+              ) : null}
+            </div>
             {implementationMateriality?.sleeveValidation ? (
-              <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surfaceEl }}>
-                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Validación por sleeves</div>
+              <details style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surfaceEl }}>
+                <summary style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Diagnóstico técnico por sleeve</summary>
+                <div style={{ color: T.textMuted, fontSize: 10, marginTop: 6 }}>
+                  La composición global/local es secundaria. La validación operativa principal es RV/RF total.
+                </div>
                 {implementationMateriality.sleeveValidation.rows.map((row) => (
-                  <div key={`main-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.3fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
+                  <div key={`main-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.3fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10, marginTop: 6 }}>
                     <div style={{ color: T.textSecondary, fontWeight: 700 }}>{row.label}</div>
                     <div>Actual {formatPctValue(row.current)}</div>
                     <div>Objetivo {formatPctValue(row.target)}</div>
                     <div>Post {formatPctValue(row.postTrade)}</div>
-                    <div>Gap {formatSignedPp(row.gapPp)}</div>
+                    <div>Gap {formatSignedPp((row.target - row.postTrade) * 100)}</div>
                   </div>
                 ))}
-              </div>
+              </details>
             ) : null}
           </div>
         ) : null}
@@ -5362,16 +5481,14 @@ export function OptimizationLightPage({
                     <div style={{ color: T.textMuted, fontSize: 10 }}>
                       {implementationMateriality.detail}
                     </div>
-                    <div style={{ color: implementationMateriality.sleeveValidation.hasCompleteSleeveData ? T.textMuted : T.warning, fontSize: 10 }}>
-                      {implementationMateriality.sleeveValidation.hasCompleteSleeveData
-                        ? 'Validación por sleeves OK: RV global / RV local / RF global / RF local.'
-                        : 'La implementación valida RV/RF total, pero no composición global/local. Revisar antes de ejecutar.'}
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      Diagnóstico por sleeve disponible. La implementación operativa prioriza RV/RF total y los traspasos por instrumento.
                     </div>
                   </div>
                 ) : null}
                 {implementationMateriality?.sleeveValidation ? (
                   <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
-                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Validación por sleeves</div>
+                    <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Diagnóstico técnico por sleeve</div>
                     {implementationMateriality.sleeveValidation.rows.map((row) => (
                       <div key={row.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.3fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
                         <div style={{ color: T.textSecondary, fontWeight: 700 }}>{row.label}</div>
@@ -5384,7 +5501,9 @@ export function OptimizationLightPage({
                   </div>
                 ) : null}
                 <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
-                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>Traspasos sugeridos por instrumento</div>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700 }}>
+                    {implementationPlan.transfers.length ? 'Traspasos sugeridos por instrumento' : 'No implementable automáticamente por instrumento'}
+                  </div>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
                     Operaciones sugeridas: {implementationPlan.transfers.length} · Total a mover {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'} ·
                     {' '}Misma moneda: {implementationPlan.restrictionsApplied.sameCurrency ? 'sí' : 'no'} ·
@@ -5427,8 +5546,11 @@ export function OptimizationLightPage({
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ color: T.warning, fontSize: 10, fontWeight: 800 }}>
+                        No implementable automáticamente por instrumento.
+                      </div>
                       <div style={{ color: T.warning, fontSize: 10 }}>
-                        No se encontraron traspasos ejecutables por instrumento bajo las restricciones actuales.
+                        No se encontraron traspasos ejecutables con las restricciones actuales.
                       </div>
                       <div style={{ color: T.textMuted, fontSize: 10 }}>
                         Esto es una guía por sleeve, no una instrucción operativa por instrumento.
