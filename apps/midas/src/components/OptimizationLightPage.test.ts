@@ -21,6 +21,7 @@ import {
     buildOptimizationZoomShortlist,
     canUseDecisionFlowForImplementation,
     classifyImplementationMateriality,
+    hasStaleOptimizationMeta,
     isOptimizationResultMetaCurrent,
     selectClosestDiscardedCompetitor,
     selectFinancialOptimumCandidate,
@@ -438,6 +439,24 @@ assert.equal(isOptimizationResultMetaCurrent({
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
 }, simulationFingerprint), false);
+assert.equal(isOptimizationResultMetaCurrent(null, baseFingerprint), false);
+assert.equal(hasStaleOptimizationMeta(null, baseFingerprint), false);
+assert.equal(hasStaleOptimizationMeta({
+  inputFingerprint: baseFingerprint,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  nSim: 3000,
+  seed: 123,
+  ranAtLabel: '2026-05-18 10:00',
+}, baseFingerprint), false);
+assert.equal(hasStaleOptimizationMeta({
+  inputFingerprint: baseFingerprint,
+  sourceMode: 'base',
+  sourceLabel: 'Base vigente',
+  nSim: 3000,
+  seed: 123,
+  ranAtLabel: '2026-05-18 10:00',
+}, simulationFingerprint), true);
 
 assert.equal(canUseDecisionFlowForImplementation(null), false);
 assert.equal(canUseDecisionFlowForImplementation({
@@ -537,8 +556,10 @@ assert(source.includes('buildOptimizationInputFingerprint'));
 assert(source.includes('inputFingerprint'));
 assert(source.includes('sourceMode'));
 assert(source.includes('decisionResultMeta'));
+assert(source.includes('hasStaleOptimizationMeta'));
 assert(source.includes('Resultado anterior: calculado con'));
 assert(source.includes('Fuente usada:'));
+assert(source.includes('decisionProfilesRunning'));
 assert(source.includes('setDecisionExecutionState(\'background\')'));
 assert(source.includes('setDecisionExecutionState(\'interrupted\')'));
 assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));

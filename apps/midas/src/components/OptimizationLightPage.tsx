@@ -470,6 +470,10 @@ export function isOptimizationResultMetaCurrent(meta: OptimizationResultMeta | n
   return Boolean(meta && meta.inputFingerprint === activeFingerprint);
 }
 
+export function hasStaleOptimizationMeta(meta: OptimizationResultMeta | null, activeFingerprint: string): boolean {
+  return Boolean(meta && meta.inputFingerprint !== activeFingerprint);
+}
+
 function formatPct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -2021,6 +2025,10 @@ export function OptimizationLightPage({
   const implementationResultIsCurrent = isOptimizationResultMetaCurrent(implementationMeta, activeOptimizationInputFingerprint);
   const finalImplementationIsCurrent = isOptimizationResultMetaCurrent(finalImplementationMeta, activeOptimizationInputFingerprint);
   const realisticValidationIsCurrent = isOptimizationResultMetaCurrent(realisticValidationMeta, activeOptimizationInputFingerprint);
+  const decisionResultIsStale = hasStaleOptimizationMeta(decisionResultMeta, activeOptimizationInputFingerprint);
+  const implementationResultIsStale = hasStaleOptimizationMeta(implementationMeta, activeOptimizationInputFingerprint);
+  const finalImplementationIsStale = hasStaleOptimizationMeta(finalImplementationMeta, activeOptimizationInputFingerprint);
+  const realisticValidationIsStale = hasStaleOptimizationMeta(realisticValidationMeta, activeOptimizationInputFingerprint);
 
   useEffect(() => {
     activeDecisionFingerprintRef.current = activeOptimizationInputFingerprint;
@@ -2112,12 +2120,23 @@ export function OptimizationLightPage({
       return;
     }
     if (
+      decisionProfilesRunning
+      && decisionFlowIsCurrent
+      && decisionProgressIsCurrent
+      && !decisionResultIsStale
+      && !implementationResultIsStale
+      && !finalImplementationIsStale
+      && !realisticValidationIsStale
+    ) {
+      return;
+    }
+    if (
       decisionFlowIsCurrent
       && decisionProgressIsCurrent
-      && decisionResultIsCurrent
-      && implementationResultIsCurrent
-      && finalImplementationIsCurrent
-      && realisticValidationIsCurrent
+      && !decisionResultIsStale
+      && !implementationResultIsStale
+      && !finalImplementationIsStale
+      && !realisticValidationIsStale
     ) {
       return;
     }
@@ -2133,16 +2152,21 @@ export function OptimizationLightPage({
     resetDecisionFlowArtifacts();
   }, [
     decisionFlowIsCurrent,
+    decisionProfilesRunning,
     decisionFlowStatus,
     decisionProgress,
     decisionProgressIsCurrent,
     decisionResultIsCurrent,
+    decisionResultIsStale,
     decisionResultMeta,
     finalImplementationIsCurrent,
+    finalImplementationIsStale,
     finalImplementationMeta,
     implementationMeta,
     implementationResultIsCurrent,
+    implementationResultIsStale,
     realisticValidationIsCurrent,
+    realisticValidationIsStale,
     realisticValidationMeta,
     resetDecisionFlowArtifacts,
   ]);
