@@ -18,6 +18,7 @@ import {
     buildOptimizationInputFingerprint,
     buildOptimizationConfirmationShortlist,
     buildOptimizationExpressGrid,
+    buildOptimizationZoomFallbackShortlist,
     buildOptimizationZoomShortlist,
     canUseDecisionFlowForImplementation,
     classifyImplementationMateriality,
@@ -265,6 +266,10 @@ assert.equal(boundedZoom[0], 0);
 assert.equal(boundedZoom[boundedZoom.length - 1], 10);
 assert(!boundedZoom.some((value) => value < 0 || value > 100));
 
+const zoomFallback = buildOptimizationZoomFallbackShortlist(60);
+assert.deepEqual(zoomFallback, [50, 55, 60, 65, 70]);
+assert.deepEqual(buildOptimizationZoomFallbackShortlist(null), []);
+
 const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
   expressRecommendationRv: 60,
@@ -427,6 +432,7 @@ assert.equal(isOptimizationResultMetaCurrent({
   inputFingerprint: baseFingerprint,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   nSim: 3000,
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
@@ -435,6 +441,7 @@ assert.equal(isOptimizationResultMetaCurrent({
   inputFingerprint: baseFingerprint,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   nSim: 3000,
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
@@ -445,6 +452,7 @@ assert.equal(hasStaleOptimizationMeta({
   inputFingerprint: baseFingerprint,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   nSim: 3000,
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
@@ -453,6 +461,7 @@ assert.equal(hasStaleOptimizationMeta({
   inputFingerprint: baseFingerprint,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   nSim: 3000,
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
@@ -470,6 +479,7 @@ assert.equal(canUseDecisionFlowForImplementation({
   implementationEnabled: false,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   inputFingerprint: baseFingerprint,
   ranAtLabel: null,
 }), false);
@@ -484,6 +494,7 @@ assert.equal(canUseDecisionFlowForImplementation({
   implementationEnabled: false,
   sourceMode: 'base',
   sourceLabel: 'Base vigente',
+  scenarioLabel: null,
   inputFingerprint: baseFingerprint,
   ranAtLabel: null,
 }), false);
@@ -498,6 +509,7 @@ assert.equal(canUseDecisionFlowForImplementation({
   implementationEnabled: true,
   sourceMode: 'simulation',
   sourceLabel: 'Simulación activa',
+  scenarioLabel: 'Base',
   inputFingerprint: simulationFingerprint,
   ranAtLabel: '2026-05-18 10:05',
 }), true);
@@ -537,6 +549,18 @@ assert(!initialMarkup.includes('No pasa F2'));
 assert(!initialMarkup.includes('Campeón + retador'));
 assert(!initialMarkup.includes('Baseline + ranking técnico'));
 
+const simulationSourceMarkup = renderToStaticMarkup(
+  React.createElement(OptimizationLightPage, {
+    baseParams: buildParams(),
+    simulationParams: buildParams(),
+    simulationActive: true,
+    simulationLabel: 'Base',
+  }),
+);
+assert(simulationSourceMarkup.includes('Simulación activa'));
+assert(simulationSourceMarkup.includes('Escenario: Base'));
+assert(!simulationSourceMarkup.includes('Fuente usada: Base'));
+
 const source = readFileSync(new URL('./OptimizationLightPage.tsx', import.meta.url), 'utf8');
 assert(source.includes("onClick={runDecisionProfiles}"));
 assert(source.includes("onClick={runDecisionConfirmation}"));
@@ -559,6 +583,9 @@ assert(source.includes('decisionResultMeta'));
 assert(source.includes('hasStaleOptimizationMeta'));
 assert(source.includes('Resultado anterior: calculado con'));
 assert(source.includes('Fuente usada:'));
+assert(source.includes('Escenario:'));
+assert(source.includes('Simulación activa'));
+assert(source.includes('Base vigente'));
 assert(source.includes('decisionProfilesRunning'));
 assert(source.includes('setDecisionExecutionState(\'background\')'));
 assert(source.includes('setDecisionExecutionState(\'interrupted\')'));
@@ -573,6 +600,9 @@ assert(source.includes('Cross-currency bloqueado/manual'));
 assert(source.includes('El óptimo financiero queda fuera de este bloque'));
 assert(source.includes('Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo.'));
 assert(source.includes('shortlist refinada con vecinos ±5pp/±10pp'));
+assert(source.includes('buildOptimizationZoomFallbackShortlist'));
+assert(source.includes('Express no produjo recomendación oficial; Zoom usó fallback local alrededor del mix actual redondeado.'));
+assert(source.includes('No hay candidatos oficiales de optimización para evaluar.'));
 assert(!source.includes('Métrica financiera principal: Patrimonio final P50'));
 assert(!source.includes('Muestra qué mix maximiza el resultado económico'));
 

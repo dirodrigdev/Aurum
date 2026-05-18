@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
+import type { ModelParameters, PortfolioWeights, ScenarioVariantId, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
 import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
@@ -243,6 +243,7 @@ type DecisionFlowStatus = {
   implementationEnabled: boolean;
   sourceMode: SourceMode;
   sourceLabel: string;
+  scenarioLabel: string | null;
   inputFingerprint: string;
   ranAtLabel: string | null;
 };
@@ -255,6 +256,7 @@ type DecisionProgress = {
   seed: number;
   sourceMode: SourceMode;
   sourceLabel: string;
+  scenarioLabel: string | null;
   inputFingerprint: string;
 };
 
@@ -262,6 +264,7 @@ type OptimizationResultMeta = {
   inputFingerprint: string;
   sourceMode: SourceMode;
   sourceLabel: string;
+  scenarioLabel: string | null;
   nSim: number;
   seed: number;
   ranAtLabel: string;
@@ -272,6 +275,7 @@ type DecisionRunContext = {
   inputFingerprint: string;
   sourceMode: SourceMode;
   sourceLabel: string;
+  scenarioLabel: string | null;
 };
 
 type DecisionExecutionState = 'idle' | 'running' | 'background' | 'restarting' | 'interrupted' | 'completed';
@@ -447,6 +451,7 @@ function buildOptimizationResultMeta(input: {
   inputFingerprint: string;
   sourceMode: SourceMode;
   sourceLabel: string;
+  scenarioLabel: string | null;
   nSim: number;
   seed: number;
 }): OptimizationResultMeta {
@@ -454,6 +459,7 @@ function buildOptimizationResultMeta(input: {
     inputFingerprint: input.inputFingerprint,
     sourceMode: input.sourceMode,
     sourceLabel: input.sourceLabel,
+    scenarioLabel: input.scenarioLabel,
     nSim: input.nSim,
     seed: input.seed,
     ranAtLabel: new Date().toLocaleString('es-CL', {
@@ -598,6 +604,12 @@ export function buildOptimizationExpressGrid(currentRv?: number | null): number[
   return closedGrid.sort((a, b) => a - b);
 }
 
+function scenarioVariantLabel(id: ScenarioVariantId | string | null | undefined): string {
+  if (id === 'pessimistic') return 'Pesimista';
+  if (id === 'optimistic') return 'Optimista';
+  return 'Base';
+}
+
 function pushUniqueMix(target: number[], rvPct: number) {
   const clamped = clampMixPercent(rvPct);
   if (!target.some((value) => Math.abs(value - clamped) <= 0.0001)) target.push(clamped);
@@ -646,6 +658,14 @@ export function buildOptimizationZoomShortlist(input: {
       pushBoundedRefinementNeighbors(shortlist, snapped);
     }
   });
+  return shortlist.sort((a, b) => a - b);
+}
+
+export function buildOptimizationZoomFallbackShortlist(currentRvRounded: number | null): number[] {
+  if (currentRvRounded === null || !Number.isFinite(currentRvRounded)) return [];
+  const shortlist: number[] = [];
+  const anchor = snapMixToStep(currentRvRounded);
+  pushBoundedRefinementNeighbors(shortlist, anchor, DECISION_CONFIRM_WIDE_NEIGHBOR_PP);
   return shortlist.sort((a, b) => a - b);
 }
 
@@ -1991,7 +2011,10 @@ export function OptimizationLightPage({
 
   const effectiveSourceMode: SourceMode = sourceMode === 'simulation' && simulationActive ? 'simulation' : 'base';
   const activeParams = effectiveSourceMode === 'simulation' ? simulationParams : baseParams;
-  const activeLabel = effectiveSourceMode === 'simulation' ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
+  const activeSourceLabel = effectiveSourceMode === 'simulation' ? 'Simulación activa' : 'Base vigente';
+  const activeScenarioLabel = effectiveSourceMode === 'simulation'
+    ? (simulationLabel ?? scenarioVariantLabel(activeParams.activeScenario))
+    : null;
   const sourceDescription = effectiveSourceMode === 'simulation'
     ? 'Simulación activa: usa los cambios temporales que estás probando'
     : 'Base vigente: usa la configuración persistida del caso';
@@ -2004,18 +2027,18 @@ export function OptimizationLightPage({
   const activeOptimizationInputFingerprint = useMemo(
     () => buildOptimizationInputFingerprint({
       sourceMode: effectiveSourceMode,
-      sourceLabel: activeLabel,
+      sourceLabel: activeSourceLabel,
       params: activeParams,
     }),
-    [activeLabel, activeParams, effectiveSourceMode],
+    [activeParams, activeSourceLabel, effectiveSourceMode],
   );
   const expectedPhase1Hash = useMemo(
-    () => buildRunMeta(activeParams, activeLabel, 'phase1').scenarioHash,
-    [activeLabel, activeParams],
+    () => buildRunMeta(activeParams, activeSourceLabel, 'phase1').scenarioHash,
+    [activeParams, activeSourceLabel],
   );
   const expectedPhase2Hash = useMemo(
-    () => buildRunMeta(activeParams, activeLabel, 'phase2').scenarioHash,
-    [activeLabel, activeParams],
+    () => buildRunMeta(activeParams, activeSourceLabel, 'phase2').scenarioHash,
+    [activeParams, activeSourceLabel],
   );
   const phase1IsStale = Boolean(phase1Meta && phase1Meta.scenarioHash !== expectedPhase1Hash);
   const phase2IsStale = Boolean(phase2Meta && phase2Meta.scenarioHash !== expectedPhase2Hash);
@@ -2078,9 +2101,10 @@ export function OptimizationLightPage({
       runToken,
       inputFingerprint: activeOptimizationInputFingerprint,
       sourceMode: effectiveSourceMode,
-      sourceLabel: activeLabel,
+      sourceLabel: activeSourceLabel,
+      scenarioLabel: activeScenarioLabel,
     };
-  }, [activeLabel, activeOptimizationInputFingerprint, effectiveSourceMode]);
+  }, [activeOptimizationInputFingerprint, activeScenarioLabel, activeSourceLabel, effectiveSourceMode]);
 
   const isDecisionRunContextCurrent = useCallback((context: DecisionRunContext): boolean => (
     decisionRunTokenRef.current === context.runToken
@@ -2322,7 +2346,7 @@ export function OptimizationLightPage({
       }
       setPhase1Points(points);
       setShortlist(buildShortlist(points));
-      setPhase1Meta(buildRunMeta(activeParams, activeLabel, 'phase1'));
+      setPhase1Meta(buildRunMeta(activeParams, activeSourceLabel, 'phase1'));
       const diagnostics: Phase1Diagnostics = {
         runId,
         ...counts,
@@ -2342,7 +2366,7 @@ export function OptimizationLightPage({
       if (slowTimer !== null) window.clearTimeout(slowTimer);
       setPhase1Running(false);
     }
-  }, [activeLabel, activeParams, phase1Diagnostics?.runId, phase1Running]);
+  }, [activeParams, activeSourceLabel, phase1Diagnostics?.runId, phase1Running]);
 
   const runPhase2 = useCallback(async () => {
     if (phase2Running || !phase1Points.length) return;
@@ -2389,11 +2413,11 @@ export function OptimizationLightPage({
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
       setPhase2Rows(rows);
-      setPhase2Meta(buildRunMeta(activeParams, activeLabel, 'phase2'));
+      setPhase2Meta(buildRunMeta(activeParams, activeSourceLabel, 'phase2'));
     } finally {
       setPhase2Running(false);
     }
-  }, [activeLabel, activeParams, phase1Points, phase2Running]);
+  }, [activeParams, activeSourceLabel, phase1Points, phase2Running]);
 
   const runSensitivity = useCallback(async () => {
     if (sensitivityRunning || !phase2Rows.length) return;
@@ -2535,7 +2559,13 @@ export function OptimizationLightPage({
     ];
     const seed = activeParams.simulation.seed ?? 0;
     const currentRvExact = currentRvPctExactFromWeights(activeParams.weights);
-    const officialCandidates = [...input.rvCandidates].map((value) => snapMixToStep(value));
+    const officialCandidates = [...input.rvCandidates]
+      .map((value) => snapMixToStep(value))
+      .filter((value, index, all) => all.findIndex((candidate) => Math.abs(candidate - value) <= 0.0001) === index)
+      .sort((a, b) => a - b);
+    if (officialCandidates.length === 0) {
+      throw new Error('No hay candidatos oficiales de optimización para evaluar.');
+    }
     const evaluationCandidates = [...officialCandidates];
     if (!evaluationCandidates.some((value) => Math.abs(value - currentRvExact) <= 0.0001)) {
       pushUniqueMix(evaluationCandidates, currentRvExact);
@@ -2552,6 +2582,7 @@ export function OptimizationLightPage({
       seed,
       sourceMode: input.runContext.sourceMode,
       sourceLabel: input.runContext.sourceLabel,
+      scenarioLabel: input.runContext.scenarioLabel,
       inputFingerprint: input.runContext.inputFingerprint,
     });
     decisionLastEvaluatedRef.current = 0;
@@ -2643,6 +2674,7 @@ export function OptimizationLightPage({
             seed,
             sourceMode: input.runContext.sourceMode,
             sourceLabel: input.runContext.sourceLabel,
+            scenarioLabel: input.runContext.scenarioLabel,
             inputFingerprint: input.runContext.inputFingerprint,
           });
           decisionLastEvaluatedRef.current = evaluated;
@@ -2695,6 +2727,7 @@ export function OptimizationLightPage({
       inputFingerprint: input.runContext.inputFingerprint,
       sourceMode: input.runContext.sourceMode,
       sourceLabel: input.runContext.sourceLabel,
+      scenarioLabel: input.runContext.scenarioLabel,
       nSim: input.nSim,
       seed,
     });
@@ -2710,6 +2743,7 @@ export function OptimizationLightPage({
       implementationEnabled: input.implementationEnabled,
       sourceMode: input.runContext.sourceMode,
       sourceLabel: input.runContext.sourceLabel,
+      scenarioLabel: input.runContext.scenarioLabel,
       inputFingerprint: input.runContext.inputFingerprint,
       ranAtLabel: resultMeta.ranAtLabel,
     });
@@ -2721,6 +2755,7 @@ export function OptimizationLightPage({
       seed,
       sourceMode: input.runContext.sourceMode,
       sourceLabel: input.runContext.sourceLabel,
+      scenarioLabel: input.runContext.scenarioLabel,
       inputFingerprint: input.runContext.inputFingerprint,
     });
     setDecisionResultMeta(resultMeta);
@@ -2760,6 +2795,7 @@ export function OptimizationLightPage({
       implementationEnabled: false,
       sourceMode: runContext.sourceMode,
       sourceLabel: runContext.sourceLabel,
+      scenarioLabel: runContext.scenarioLabel,
       inputFingerprint: runContext.inputFingerprint,
       ranAtLabel: null,
     });
@@ -2781,12 +2817,27 @@ export function OptimizationLightPage({
       const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
 
-      const zoomCandidates = buildOptimizationZoomShortlist({
+      const zoomCandidatesInitial = buildOptimizationZoomShortlist({
         preliminaryRecommendationRv: expressMain?.rvPct ?? null,
         defensiveReferenceRv: expressDefensive?.rvPct ?? null,
         technicalPreludeRv: expressFinancial?.rvPct ?? null,
         currentRvRounded: snapMixToStep(currentRvPctFromWeights(activeParams.weights)),
       });
+      let zoomCandidates = zoomCandidatesInitial;
+      if (zoomCandidates.length === 0) {
+        zoomCandidates = buildOptimizationZoomFallbackShortlist(
+          snapMixToStep(currentRvPctFromWeights(activeParams.weights)),
+        );
+        if (zoomCandidates.length > 0) {
+          setDecisionFlowWarning('Express no produjo recomendación oficial; Zoom usó fallback local alrededor del mix actual redondeado.');
+        }
+      }
+      if (zoomCandidates.length === 0) {
+        setDecisionProfilesError('No hay candidatos oficiales de optimización para evaluar.');
+        setDecisionExecutionState('interrupted');
+        setDecisionBackgroundHint(null);
+        return;
+      }
 
       const zoomTables = await evaluateDecisionProfilesStage({
         stage: 'zoom',
@@ -2860,6 +2911,7 @@ export function OptimizationLightPage({
       implementationEnabled: false,
       sourceMode: runContext.sourceMode,
       sourceLabel: runContext.sourceLabel,
+      scenarioLabel: runContext.scenarioLabel,
       inputFingerprint: runContext.inputFingerprint,
       ranAtLabel: null,
     });
@@ -3432,7 +3484,8 @@ export function OptimizationLightPage({
       setFinalImplementationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
         sourceMode: effectiveSourceMode,
-        sourceLabel: activeLabel,
+        sourceLabel: activeSourceLabel,
+        scenarioLabel: activeScenarioLabel,
         nSim: decisionFlowStatus?.nSim ?? activeParams.simulation.nSim,
         seed: decisionFlowStatus?.seed ?? activeParams.simulation.seed ?? 0,
       }));
@@ -3450,7 +3503,7 @@ export function OptimizationLightPage({
     } finally {
       setFinalImplementationRunning(false);
     }
-  }, [activeLabel, activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, finalImplementationRunning, finalPolicyWinnerRow, finalPolicyMatchesIntermediateTarget, implementationPlan]);
+  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, finalImplementationRunning, finalPolicyWinnerRow, finalPolicyMatchesIntermediateTarget, implementationPlan]);
 
   const runImplementation = useCallback(async () => {
     if (implementationRunning) return;
@@ -3490,7 +3543,8 @@ export function OptimizationLightPage({
       setImplementationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
         sourceMode: effectiveSourceMode,
-        sourceLabel: activeLabel,
+        sourceLabel: activeSourceLabel,
+        scenarioLabel: activeScenarioLabel,
         nSim: decisionFlowStatus?.nSim ?? activeParams.simulation.nSim,
         seed: decisionFlowStatus?.seed ?? activeParams.simulation.seed ?? 0,
       }));
@@ -3499,7 +3553,7 @@ export function OptimizationLightPage({
     } finally {
       setImplementationRunning(false);
     }
-  }, [activeLabel, activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, decisionImplementationReady, effectiveSourceMode, implementationRunning, phase2ImplementationSelectedRow]);
+  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, decisionImplementationReady, effectiveSourceMode, implementationRunning, phase2ImplementationSelectedRow]);
 
   const runRealisticValidation = useCallback(async () => {
     if (realisticValidationRunning) return;
@@ -3517,7 +3571,8 @@ export function OptimizationLightPage({
       setRealisticValidationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
         sourceMode: effectiveSourceMode,
-        sourceLabel: activeLabel,
+        sourceLabel: activeSourceLabel,
+        scenarioLabel: activeScenarioLabel,
         nSim: decisionFlowStatus?.nSim ?? activeParams.simulation.nSim,
         seed: decisionFlowStatus?.seed ?? activeParams.simulation.seed ?? 0,
       }));
@@ -3548,7 +3603,8 @@ export function OptimizationLightPage({
       setRealisticValidationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
         sourceMode: effectiveSourceMode,
-        sourceLabel: activeLabel,
+        sourceLabel: activeSourceLabel,
+        scenarioLabel: activeScenarioLabel,
         nSim: decisionFlowStatus?.nSim ?? activeParams.simulation.nSim,
         seed: decisionFlowStatus?.seed ?? activeParams.simulation.seed ?? 0,
       }));
@@ -3557,7 +3613,7 @@ export function OptimizationLightPage({
     } finally {
       setRealisticValidationRunning(false);
     }
-  }, [activeLabel, activeOptimizationInputFingerprint, activeParams, activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, implementationPlan, implementationResultIsCurrent, phase2ImplementationSelectedRow, realisticValidationRunning]);
+  }, [activeOptimizationInputFingerprint, activeParams, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, implementationPlan, implementationResultIsCurrent, phase2ImplementationSelectedRow, realisticValidationRunning]);
 
   const runLongevityPlus5 = useCallback(async () => {
     const selectedRow = phase2LongevitySelectedRow.row;
@@ -3733,9 +3789,12 @@ export function OptimizationLightPage({
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ color: T.textMuted, fontSize: 11 }}>Fuente del escenario</div>
-          <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{activeLabel}</div>
+          <div style={{ color: T.textMuted, fontSize: 11 }}>Fuente activa</div>
+          <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>{activeSourceLabel}</div>
         </div>
+        {activeScenarioLabel ? (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>Escenario: {activeScenarioLabel}</div>
+        ) : null}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             type="button"
@@ -3903,6 +3962,11 @@ export function OptimizationLightPage({
             <div style={{ color: T.textMuted, fontSize: 10 }}>
               Fuente usada: {decisionFlowStatus.sourceLabel}{decisionFlowStatus.ranAtLabel ? ` · ${decisionFlowStatus.ranAtLabel}` : ''}
             </div>
+            {decisionFlowStatus.scenarioLabel ? (
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Escenario: {decisionFlowStatus.scenarioLabel}
+              </div>
+            ) : null}
             <div style={{ color: T.textMuted, fontSize: 10 }}>
               Estado ejecución: {decisionExecutionState === 'running'
                 ? 'Calculando'
@@ -3918,7 +3982,7 @@ export function OptimizationLightPage({
             </div>
             {decisionFlowStatus.stage === 'zoom' ? (
               <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Puede aparecer un mix fuera de múltiplos de 5 porque el refinamiento local parte desde semillas exactas.
+                El refinamiento local compara mixes oficiales de la grilla 5pp alrededor del ancla seleccionada.
               </div>
             ) : null}
             {decisionProgress ? (
@@ -3951,8 +4015,13 @@ export function OptimizationLightPage({
                 Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
-                Fuente usada: {decisionResultMeta?.sourceLabel ?? activeLabel}
+                Fuente usada: {decisionResultMeta?.sourceLabel ?? activeSourceLabel}
               </div>
+              {decisionResultMeta?.scenarioLabel ? (
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Escenario: {decisionResultMeta.scenarioLabel}
+                </div>
+              ) : null}
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Alternativa de holgura: {officialHeadroomAlternative?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
               </div>
