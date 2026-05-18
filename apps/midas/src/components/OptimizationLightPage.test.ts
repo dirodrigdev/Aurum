@@ -26,6 +26,7 @@ import {
     isOptimizationResultMetaCurrent,
     selectClosestDiscardedCompetitor,
     selectFinancialOptimumCandidate,
+    selectBestAvailableFallbackCandidate,
     type FinancialReferenceCandidate,
 } from './OptimizationLightPage';
 
@@ -269,6 +270,32 @@ assert(!boundedZoom.some((value) => value < 0 || value > 100));
 const zoomFallback = buildOptimizationZoomFallbackShortlist(60);
 assert.deepEqual(zoomFallback, [50, 55, 60, 65, 70]);
 assert.deepEqual(buildOptimizationZoomFallbackShortlist(null), []);
+
+const bestAvailableFallback = selectBestAvailableFallbackCandidate([
+  {
+    ...buildDecisionCandidate({ rvPct: 55, qasrBase: 0.935, qasrAt120: 0.89, ruinRate: 0.04, monthsInSevereCutMean: 12, maxConsecutiveSevereCutMonthsP75: 16, csrBase: 0.91 }),
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'none',
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'test',
+  },
+  {
+    ...buildDecisionCandidate({ rvPct: 60, qasrBase: 0.93, qasrAt120: 0.88, ruinRate: 0.03, monthsInSevereCutMean: 10, maxConsecutiveSevereCutMonthsP75: 14, csrBase: 0.92 }),
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min', 'severe_cut_mean_above_max'],
+    inParetoFrontier: true,
+    role: 'none',
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'test',
+  },
+]);
+assert.equal(bestAvailableFallback?.rvPct, 55);
 
 const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
@@ -603,6 +630,14 @@ assert(source.includes('shortlist refinada con vecinos ±5pp/±10pp'));
 assert(source.includes('buildOptimizationZoomFallbackShortlist'));
 assert(source.includes('Express no produjo recomendación oficial; Zoom usó fallback local alrededor del mix actual redondeado.'));
 assert(source.includes('No hay candidatos oficiales de optimización para evaluar.'));
+assert(source.includes('Mejor opción disponible bajo escenario exigente'));
+assert(source.includes('No cumple todos los guardrails MIDAS'));
+assert(source.includes('Implementación de contingencia: el candidato confirmado no cumple estándar MIDAS.'));
+assert(source.includes('Confirmar mejor opción disponible'));
+assert(source.includes('hasDecisionRunResult'));
+assert(source.includes('hasEvaluatedCandidates'));
+assert(source.includes('needsBestAvailableFallback'));
+assert(source.includes('selectBestAvailableFallbackCandidate'));
 assert(!source.includes('Métrica financiera principal: Patrimonio final P50'));
 assert(!source.includes('Muestra qué mix maximiza el resultado económico'));
 

@@ -28,6 +28,7 @@ import {
   buildDecisionProfiles,
   buildFineRvRfGrid,
   type RvRfDecisionCandidate,
+  type RvRfDecisionCandidateAnnotated,
   type RvRfDecisionProfiles,
 } from '../domain/optimizer/rvRfDecisionProfiles';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
@@ -694,6 +695,26 @@ export function buildOptimizationConfirmationShortlist(input: {
     }
   });
   return shortlist.sort((a, b) => a - b);
+}
+
+function safeMetric(value: number | null, fallback: number): number {
+  return value === null || Number.isNaN(value) ? fallback : value;
+}
+
+export function selectBestAvailableFallbackCandidate(rows: RvRfDecisionCandidateAnnotated[] | null | undefined): RvRfDecisionCandidateAnnotated | null {
+  if (!rows || rows.length === 0) return null;
+  const sorted = [...rows].sort((a, b) => (
+    (a.failedGuardrails.length - b.failedGuardrails.length)
+    || (safeMetric(b.qasrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrBase, Number.NEGATIVE_INFINITY))
+    || (safeMetric(a.ruinRate, Number.POSITIVE_INFINITY) - safeMetric(b.ruinRate, Number.POSITIVE_INFINITY))
+    || (safeMetric(a.monthsInSevereCutMean, Number.POSITIVE_INFINITY) - safeMetric(b.monthsInSevereCutMean, Number.POSITIVE_INFINITY))
+    || (safeMetric(a.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY) - safeMetric(b.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY))
+    || (safeMetric(b.csrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.csrBase, Number.NEGATIVE_INFINITY))
+    || (safeMetric(b.qasrAt120, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrAt120, Number.NEGATIVE_INFINITY))
+    || (a.rvPct - b.rvPct)
+    || (safeMetric(b.terminalWealthP50, Number.NEGATIVE_INFINITY) - safeMetric(a.terminalWealthP50, Number.NEGATIVE_INFINITY))
+  ));
+  return sorted[0] ?? null;
 }
 
 function toSleeveSnapshot(weights: PortfolioWeights): SleeveMixSnapshot {
@@ -2883,7 +2904,7 @@ export function OptimizationLightPage({
     if (decisionProfilesRunning) return;
     const runContext = buildDecisionRunContext();
     decisionResumeActionRef.current = 'confirmation';
-    const preliminaryMain = officialMainRecommendation;
+    const preliminaryMain = recommendationCandidate;
     const preliminaryDefensive = officialDefensiveReference;
     resetDecisionFlowArtifacts();
     setDecisionProfilesRunning(true);
@@ -2927,8 +2948,8 @@ export function OptimizationLightPage({
       const confirmationCandidates = shortlist.length ? shortlist : buildFineRvRfGrid(DECISION_OFFICIAL_GRID_STEP_PP);
       const confirmedTables = await evaluateDecisionProfilesStage({
         stage: 'confirmed',
-        badge: 'Confirmado · apto para implementación',
-        message: 'Este resultado ya fue confirmado con simulación completa y puede alimentar implementación.',
+        badge: 'Confirmación completa finalizada',
+        message: 'Resultado confirmado con simulación completa.',
         nSim: activeParams.simulation.nSim,
         stepPp: DECISION_CONFIRM_NEIGHBOR_STEP_PP,
         rvCandidates: confirmationCandidates,
@@ -2936,10 +2957,13 @@ export function OptimizationLightPage({
         runContext,
       });
       const confirmedBaseProfiles = confirmedTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
-      const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? null;
+      const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? selectBestAvailableFallbackCandidate(confirmedBaseProfiles?.rows);
+      const confirmedOfficial = confirmedBaseProfiles?.primaryRecommendation ?? null;
 
       if (preliminaryMain && confirmedMain && preliminaryMain.candidateId !== confirmedMain.candidateId) {
         setDecisionFlowWarning(`El resultado preliminar cambió al confirmar. Usa solo el confirmado para decidir: ${confirmedMain.mixLabel}.`);
+      } else if (!confirmedOfficial && confirmedMain) {
+        setDecisionFlowWarning(`Confirmación completa sin candidato apto oficial. Se mantiene contingencia con ${confirmedMain.mixLabel}.`);
       }
     } catch (error) {
       if (!isDecisionRunContextCurrent(runContext)) return;
@@ -3099,7 +3123,34 @@ export function OptimizationLightPage({
     () => decisionProfilesTables.find((table) => table.scenarioId === 'base') ?? null,
     [decisionProfilesTables],
   );
+  const hasDecisionRunResult = Boolean(decisionFlowStatus || baseDecisionTable || baseDecisionProfiles);
+  const hasEvaluatedCandidates = Boolean(baseDecisionProfiles && baseDecisionProfiles.rows.length > 0);
   const officialMainRecommendation = baseDecisionProfiles?.primaryRecommendation ?? null;
+  const hasOfficialRecommendation = Boolean(officialMainRecommendation);
+  const bestAvailableRecommendation = useMemo(
+    () => selectBestAvailableFallbackCandidate(baseDecisionProfiles?.rows),
+    [baseDecisionProfiles],
+  );
+  const needsBestAvailableFallback = hasEvaluatedCandidates && !hasOfficialRecommendation;
+  const recommendationCandidate = officialMainRecommendation ?? bestAvailableRecommendation;
+  const fallbackGuardrailSummary = useMemo(() => {
+    if (!baseDecisionProfiles?.rows?.length) return null;
+    const passed = baseDecisionProfiles.rows.filter((row) => row.passesHardGuardrails).length;
+    const failed = baseDecisionProfiles.rows.length - passed;
+    const reasons = new Map<string, number>();
+    baseDecisionProfiles.rows.forEach((row) => {
+      row.failedGuardrails.forEach((reason) => reasons.set(reason, (reasons.get(reason) ?? 0) + 1));
+    });
+    const topReasons = [...reasons.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4);
+    return {
+      total: baseDecisionProfiles.rows.length,
+      passed,
+      failed,
+      topReasons,
+    };
+  }, [baseDecisionProfiles]);
   const officialDefensiveReference = baseDecisionProfiles?.defensiveReference ?? null;
   const officialHeadroomAlternative = baseDecisionProfiles?.headroomAlternative ?? null;
   const officialBenchmarkExtreme = baseDecisionProfiles?.benchmarkExtreme ?? null;
@@ -3114,41 +3165,41 @@ export function OptimizationLightPage({
     return baseDecisionProfiles.rows.find((row) => row.candidateId === currentId) ?? null;
   }, [activeParams.weights, baseDecisionProfiles, baseDecisionTable]);
   const recommendedDecisionWeights = useMemo(
-    () => (officialMainRecommendation ? buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct) : null),
-    [activeParams.weights, officialMainRecommendation],
+    () => (recommendationCandidate ? buildRvRfCandidateWeights(activeParams.weights, recommendationCandidate.rvPct) : null),
+    [activeParams.weights, recommendationCandidate],
   );
   const closestDiscardedCompetitor = useMemo(
     () => selectClosestDiscardedCompetitor({
       profiles: baseDecisionProfiles,
-      mainRecommendation: officialMainRecommendation,
+      mainRecommendation: recommendationCandidate,
       defensiveReference: officialDefensiveReference,
       headroomAlternative: officialHeadroomAlternative,
       benchmarkExtreme: officialBenchmarkExtreme,
       financialReference: financialOptimum,
     }),
-    [baseDecisionProfiles, financialOptimum, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, officialMainRecommendation],
+    [baseDecisionProfiles, financialOptimum, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, recommendationCandidate],
   );
   const currentVsMidasRows = useMemo(
-    () => (officialMainRecommendation && recommendedDecisionWeights
+    () => (recommendationCandidate && recommendedDecisionWeights
       ? buildCurrentVsMidasComparisonRows({
         currentWeights: activeParams.weights,
         recommendedWeights: recommendedDecisionWeights,
         currentCandidate: currentDecisionCandidate,
-        recommendedCandidate: officialMainRecommendation,
+        recommendedCandidate: recommendationCandidate,
       })
       : []),
-    [activeParams.weights, currentDecisionCandidate, officialMainRecommendation, recommendedDecisionWeights],
+    [activeParams.weights, currentDecisionCandidate, recommendationCandidate, recommendedDecisionWeights],
   );
   const currentVsMidasTradeoffs = useMemo(
-    () => (officialMainRecommendation && recommendedDecisionWeights
+    () => (recommendationCandidate && recommendedDecisionWeights
       ? buildCurrentVsMidasTradeoffs({
         currentWeights: activeParams.weights,
         recommendedWeights: recommendedDecisionWeights,
         currentCandidate: currentDecisionCandidate,
-        recommendedCandidate: officialMainRecommendation,
+        recommendedCandidate: recommendationCandidate,
       })
       : null),
-    [activeParams.weights, currentDecisionCandidate, officialMainRecommendation, recommendedDecisionWeights],
+    [activeParams.weights, currentDecisionCandidate, recommendationCandidate, recommendedDecisionWeights],
   );
   const currentReconciliationMessage = useMemo(
     () => buildSimulationReconciliationMessage({
@@ -3158,16 +3209,20 @@ export function OptimizationLightPage({
     }),
     [activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, simulationActive, simulationSnapshot],
   );
+  const recommendationCandidateRow = useMemo(
+    () => findPhase2RowForDecisionCandidate(phase2Rows, recommendationCandidate),
+    [phase2Rows, recommendationCandidate],
+  );
   const officialMainRecommendationRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
     [officialMainRecommendation, phase2Rows],
   );
-  const officialMainRecommendationSourceRow = useMemo(() => {
-    if (!officialMainRecommendation) return null;
-    if (officialMainRecommendationRow) return officialMainRecommendationRow;
-    const weights = buildRvRfCandidateWeights(activeParams.weights, officialMainRecommendation.rvPct);
-    return toPhase2PointFromDecisionCandidate(officialMainRecommendation, weights);
-  }, [activeParams, officialMainRecommendation, officialMainRecommendationRow]);
+  const recommendationCandidateSourceRow = useMemo(() => {
+    if (!recommendationCandidate) return null;
+    if (recommendationCandidateRow) return recommendationCandidateRow;
+    const weights = buildRvRfCandidateWeights(activeParams.weights, recommendationCandidate.rvPct);
+    return toPhase2PointFromDecisionCandidate(recommendationCandidate, weights);
+  }, [activeParams, recommendationCandidate, recommendationCandidateRow]);
   const officialDefensiveReferenceRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialDefensiveReference),
     [officialDefensiveReference, phase2Rows],
@@ -3179,17 +3234,17 @@ export function OptimizationLightPage({
   const officialRecommendationWarning = useMemo(() => {
     if (!phase2Rows.length) return null;
     if (!baseDecisionProfiles) return 'La recomendación oficial V2.7.2 aparece aquí después de generar la decisión por perfiles.';
-    if (!officialMainRecommendation) return 'V2.7.2 no devolvió una recomendación principal usable.';
-    if (!officialMainRecommendationSourceRow) return 'La recomendación principal V2.7.2 no pudo convertirse en escenario ejecutable.';
-    const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === officialMainRecommendation.candidateId) ?? null;
+    if (!recommendationCandidate) return 'No hay candidato seleccionable en los mixes evaluados.';
+    if (!recommendationCandidateSourceRow) return 'El candidato seleccionado no pudo convertirse en escenario ejecutable.';
+    const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === recommendationCandidate.candidateId) ?? null;
     if (!officialRow?.passesHardGuardrails) return 'Candidato recomendado no coincide con fuente V2.7.2.';
     return null;
-  }, [baseDecisionProfiles, officialMainRecommendation, officialMainRecommendationSourceRow, phase2Rows.length]);
+  }, [baseDecisionProfiles, phase2Rows.length, recommendationCandidate, recommendationCandidateSourceRow]);
   const legacyRecommendationConflict = useMemo(() => {
-    if (!phase2QualityWinner || !officialMainRecommendationRow) return null;
-    if (isSameMix(phase2QualityWinner.source, officialMainRecommendationRow.source)) return null;
-    return `El top legacy ${scenarioLabel(phase2QualityWinner.source)} difiere de la recomendación principal V2.7.2 ${scenarioLabel(officialMainRecommendationRow.source)}.`;
-  }, [officialMainRecommendationRow, phase2QualityWinner]);
+    if (!phase2QualityWinner || !recommendationCandidateRow) return null;
+    if (isSameMix(phase2QualityWinner.source, recommendationCandidateRow.source)) return null;
+    return `El top legacy ${scenarioLabel(phase2QualityWinner.source)} difiere de la recomendación principal V2.7.2 ${scenarioLabel(recommendationCandidateRow.source)}.`;
+  }, [phase2QualityWinner, recommendationCandidateRow]);
   const recommendationTradeoffCards = useMemo(() => {
     if (!officialMainRecommendation || !baseDecisionProfiles) return [] as RecommendationTradeoffCard[];
     const cards: RecommendationTradeoffCard[] = [];
@@ -3223,7 +3278,7 @@ export function OptimizationLightPage({
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     return explainSensitivityShift(base?.winner?.source.rvPct ?? null, others);
   }, [sensitivityResults]);
-  const spendingHeadroomWinnerRow = officialMainRecommendationRow ?? phase2QualityWinner;
+  const spendingHeadroomWinnerRow = recommendationCandidateRow ?? phase2QualityWinner;
   const spendingHeadroomCandidates = useMemo(
     () => buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, spendingHeadroomWinnerRow),
     [phase2CurrentRow, phase2Rows, spendingHeadroomWinnerRow],
@@ -3271,12 +3326,12 @@ export function OptimizationLightPage({
   );
   const phase2LongevitySelectedRow = useMemo(() => {
     return {
-      row: officialMainRecommendationSourceRow,
-      reason: officialMainRecommendationSourceRow
+      row: recommendationCandidateSourceRow,
+      reason: recommendationCandidateSourceRow
         ? 'Fuente oficial V2.7.2/V2.7.4 · Pareto + ratio vs referencia defensiva.'
         : 'Primero genera la recomendación principal V2.7.2/V2.7.4.',
     };
-  }, [officialMainRecommendationSourceRow]);
+  }, [recommendationCandidateSourceRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
   const decisionImplementationReady = useMemo(
     () => canUseDecisionFlowForImplementation(decisionFlowStatus) && Boolean(currentDecisionCandidate) && decisionResultIsCurrent,
@@ -3870,20 +3925,24 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runDecisionConfirmation}
-            disabled={decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed'}
+            disabled={decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
             style={{
-              background: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+              background: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
               border: `1px solid ${T.border}`,
-              color: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+              color: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
               borderRadius: 999,
               padding: '8px 13px',
               fontSize: 12,
               fontWeight: 800,
-              cursor: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
-              opacity: !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+              cursor: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+              opacity: !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
             }}
           >
-            {decisionFlowStatus?.stage === 'confirmed' ? 'Confirmación completa lista' : 'Confirmar con simulación completa'}
+            {decisionFlowStatus?.stage === 'confirmed'
+              ? 'Confirmación completa lista'
+              : hasOfficialRecommendation
+                ? 'Confirmar con simulación completa'
+                : 'Confirmar mejor opción disponible'}
           </button>
           {decisionProfilesRunning ? (
             <button
@@ -3993,7 +4052,7 @@ export function OptimizationLightPage({
             ) : null}
           </div>
         ) : null}
-        {officialMainRecommendation ? (
+        {hasOfficialRecommendation ? (
           <>
             <div style={{
               border: `1px solid ${decisionFlowStatus?.stage === 'confirmed' ? T.primary : T.border}`,
@@ -4010,7 +4069,7 @@ export function OptimizationLightPage({
                 </div>
               ) : null}
               <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
-              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation.mixLabel}</div>
+              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation!.mixLabel}</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
                 Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
               </div>
@@ -4040,7 +4099,7 @@ export function OptimizationLightPage({
                   Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo. No es la recomendación final.
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Métrica financiera usada: éxito {formatPct(financialOptimum.success40)} · ruina20 {formatPct(financialOptimum.ruin20)} · MaxDD P50 {formatPctOrNA(financialOptimum.drawdownP50)} · P50 terminal informativo {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation.mixLabel}).`}
+                  Métrica financiera usada: éxito {formatPct(financialOptimum.success40)} · ruina20 {formatPct(financialOptimum.ruin20)} · MaxDD P50 {formatPctOrNA(financialOptimum.drawdownP50)} · P50 terminal informativo {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation!.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation!.mixLabel}).`}
                 </div>
               </div>
             ) : null}
@@ -4148,6 +4207,57 @@ export function OptimizationLightPage({
               ) : null}
             </div>
           </>
+        ) : needsBestAvailableFallback && bestAvailableRecommendation ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ border: `1px solid ${T.warning}`, borderRadius: 12, padding: 12, background: 'rgba(255,176,32,0.08)', display: 'grid', gap: 7 }}>
+              <div style={{ color: T.warning, fontSize: 11, fontWeight: 900 }}>Contingencia · No apta estándar MIDAS</div>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Mejor opción disponible bajo escenario exigente</div>
+              <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900 }}>{bestAvailableRecommendation.mixLabel}</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                No cumple todos los guardrails MIDAS, pero es la alternativa menos mala entre los mixes evaluados.
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                QASR base {formatScore100(bestAvailableRecommendation.qasrBase)} · QASR +20 {formatScore100(bestAvailableRecommendation.qasrAt120)} · CSR {formatPctOrNA(bestAvailableRecommendation.csrBase)}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Ruina {formatPctOrNA(bestAvailableRecommendation.ruinRate)} · Recorte severo {formatMonthsHuman(bestAvailableRecommendation.monthsInSevereCutMean)} · Racha severa P75 {formatMonthsHuman(bestAvailableRecommendation.maxConsecutiveSevereCutMonthsP75)}
+              </div>
+              <div style={{ color: T.warning, fontSize: 10 }}>
+                Fallos de guardrails: {bestAvailableRecommendation.failedGuardrails.length ? bestAvailableRecommendation.failedGuardrails.join(', ') : 'sin detalle'}
+              </div>
+              <div style={{ color: T.warning, fontSize: 10 }}>
+                Este resultado no cumple estándar MIDAS. Sirve como alternativa de contingencia dentro de las opciones evaluadas, no como recomendación oficial apta.
+              </div>
+            </div>
+            {fallbackGuardrailSummary ? (
+              <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
+                <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                  Diagnóstico de guardrails
+                </summary>
+                <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Mixes evaluados {fallbackGuardrailSummary.total} · pasan {fallbackGuardrailSummary.passed} · fallan {fallbackGuardrailSummary.failed}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Causas principales: {fallbackGuardrailSummary.topReasons.length
+                      ? fallbackGuardrailSummary.topReasons.map(([reason, count]) => `${reason} (${count})`).join(' · ')
+                      : 'Sin causas registradas'}
+                  </div>
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    {(baseDecisionProfiles?.rows ?? []).map((row) => (
+                      <div key={`guardrail-${row.candidateId}`} style={{ color: T.textMuted, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 4 }}>
+                        {row.mixLabel} · QASR {formatScore100(row.qasrBase)} · Ruina {formatPctOrNA(row.ruinRate)} · Recorte {formatMonthsHuman(row.monthsInSevereCutMean)} · Racha P75 {formatMonthsHuman(row.maxConsecutiveSevereCutMonthsP75)} · {row.passesHardGuardrails ? 'pasa' : `falla (${row.failedGuardrails.join(', ') || 'sin detalle'})`}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </details>
+            ) : null}
+          </div>
+        ) : hasDecisionRunResult ? (
+          <div style={{ color: T.warning, fontSize: 10, fontWeight: 700 }}>
+            No hay candidatos oficiales para evaluar.
+          </div>
         ) : (
           <div style={{ color: T.textMuted, fontSize: 10 }}>
             Ejecuta el cálculo para obtener una recomendación preliminar. La implementación queda bloqueada hasta confirmación oficial.
@@ -4160,6 +4270,11 @@ export function OptimizationLightPage({
         <div style={{ color: T.textSecondary, fontSize: 11 }}>
           Usa exclusivamente el resultado confirmado del Óptimo MIDAS recomendado.
         </div>
+        {!hasOfficialRecommendation && decisionFlowStatus?.stage === 'confirmed' && recommendationCandidate ? (
+          <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
+            Implementación de contingencia: el candidato confirmado no cumple estándar MIDAS.
+          </div>
+        ) : null}
         {!decisionImplementationReady ? (
           <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
             {!decisionResultIsCurrent && decisionResultMeta
@@ -4769,20 +4884,24 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runDecisionConfirmation}
-                disabled={decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed'}
+                disabled={decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
                 style={{
-                  background: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+                  background: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
                   border: `1px solid ${T.border}`,
-                  color: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+                  color: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
                   borderRadius: 999,
                   padding: '7px 12px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: decisionProfilesRunning || !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
-                  opacity: !officialMainRecommendation || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+                  cursor: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+                  opacity: !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
                 }}
               >
-                {decisionFlowStatus?.stage === 'confirmed' ? 'Confirmación completa lista' : 'Confirmar con simulación completa'}
+                {decisionFlowStatus?.stage === 'confirmed'
+                  ? 'Confirmación completa lista'
+                  : hasOfficialRecommendation
+                    ? 'Confirmar con simulación completa'
+                    : 'Confirmar mejor opción disponible'}
               </button>
               {decisionProfilesRunning ? (
                 <button
