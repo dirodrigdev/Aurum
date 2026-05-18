@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
+import type { InstrumentImplementationUniverse } from '../domain/instrumentImplementationTypes';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
 import type { PortfolioWeights } from '../domain/model/types';
 import type { ModelParameters } from '../domain/model/types';
@@ -36,6 +38,100 @@ function buildWeights(rvGlobal: number, rvChile: number, rfGlobal: number, rfChi
     rvChile,
     rfGlobal,
     rfChile,
+  };
+}
+
+function buildImplementationUniverse(): InstrumentImplementationUniverse {
+  return {
+    snapshot: {
+      version: 1,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      rawJson: '{}',
+      instruments: [],
+      optimizerMetadata: null,
+      portfolioSummary: null,
+      methodology: null,
+    },
+    instruments: [
+      {
+        instrumentId: 'sura-rf',
+        name: 'SURA RF Chile',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: 'FM',
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0, rf: 1, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0, local: 1 },
+        amountClp: 100_000_000,
+        amountNative: 100_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 1,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: null,
+        sameCurrencyCandidates: ['sura-rv'],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: ['sura-rv'],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'sura-rv',
+        name: 'SURA RV Global',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: 'FM',
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 1, rf: 0, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 1, local: 0 },
+        amountClp: 0,
+        amountNative: 0,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: null,
+        sameCurrencyCandidates: ['sura-rf'],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: ['sura-rf'],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: false,
+      },
+    ],
   };
 }
 
@@ -437,6 +533,18 @@ assert.equal(recommendedSummary.sleeveValidation.rows[0].label, 'RV global');
 assert.equal(recommendedSummary.sleeveValidation.rows[1].label, 'RV local / Chile');
 assert.equal(recommendedSummary.sleeveValidation.rows[2].label, 'RF global');
 assert.equal(recommendedSummary.sleeveValidation.rows[3].label, 'RF local / Chile');
+
+const zeroWeightDestinationPlan = buildInstrumentImplementationPlan({
+  universe: buildImplementationUniverse(),
+  targetWeights: buildWeights(0.6, 0, 0.4, 0),
+});
+assert(zeroWeightDestinationPlan);
+assert.equal(zeroWeightDestinationPlan.transfers.length, 1);
+assert.equal(zeroWeightDestinationPlan.transfers[0].fromInstrumentId, 'sura-rf');
+assert.equal(zeroWeightDestinationPlan.transfers[0].toInstrumentId, 'sura-rv');
+assert.equal(zeroWeightDestinationPlan.transfers[0].constraints.sameCurrency, true);
+assert.equal(zeroWeightDestinationPlan.transfers[0].constraints.sameManager, true);
+assert(zeroWeightDestinationPlan.reachableMix.rv >= 0.6 - 1e-9);
 
 const baseFingerprint = buildOptimizationInputFingerprint({
   sourceMode: 'base',

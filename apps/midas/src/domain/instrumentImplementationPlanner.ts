@@ -24,6 +24,8 @@ const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
   };
 };
 
+type ImplementationInstrument = InstrumentImplementationUniverse['instruments'][number];
+
 function buildTargetFromRiskMix(rvTarget: number, currentGlobalShare: number): PortfolioWeights {
   const rv = clamp01(rvTarget);
   const rf = 1 - rv;
@@ -37,22 +39,42 @@ function buildTargetFromRiskMix(rvTarget: number, currentGlobalShare: number): P
   });
 }
 
-function deriveRvOfInstrument(item: InstrumentImplementationUniverse['instruments'][number]): number {
+function deriveRvOfInstrument(item: ImplementationInstrument): number {
   return clamp01(item.currentMixUsed?.rv ?? 0);
 }
 
-function deriveGlobalOfInstrument(item: InstrumentImplementationUniverse['instruments'][number]): number {
+function deriveGlobalOfInstrument(item: ImplementationInstrument): number {
   return clamp01(item.exposureUsed?.global ?? 0.5);
 }
 
+function canSellInstrument(item: ImplementationInstrument): boolean {
+  return item.usable && (item.weightPortfolio ?? 0) > 0 && item.isSellable !== false;
+}
+
+function canUseAsDestination(item: ImplementationInstrument): boolean {
+  return Boolean(item.instrumentId && item.currentMixUsed && item.currency && item.decisionEligible !== false && item.isCaptive !== true);
+}
+
+function hasSameManager(source: ImplementationInstrument, destination: ImplementationInstrument): boolean {
+  const sourceManager = inferManagerName(source);
+  const destinationManager = inferManagerName(destination);
+  return source.sameManagerCandidates.includes(destination.instrumentId)
+    || Boolean(sourceManager && destinationManager && sourceManager === destinationManager);
+}
+
+function hasSameTaxWrapper(source: ImplementationInstrument, destination: ImplementationInstrument): boolean {
+  return source.sameTaxWrapperCandidates.includes(destination.instrumentId)
+    || Boolean(source.taxWrapper && destination.taxWrapper && source.taxWrapper === destination.taxWrapper);
+}
+
 function scorePair(
-  source: InstrumentImplementationUniverse['instruments'][number],
-  destination: InstrumentImplementationUniverse['instruments'][number],
+  source: ImplementationInstrument,
+  destination: ImplementationInstrument,
 ): number {
   let score = 0;
   const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
-  const sameManager = source.sameManagerCandidates.includes(destination.instrumentId);
-  const sameWrapper = source.sameTaxWrapperCandidates.includes(destination.instrumentId);
+  const sameManager = hasSameManager(source, destination);
+  const sameWrapper = hasSameTaxWrapper(source, destination);
 
   if (sameCurrency) score += 6;
   if (sameManager) score += 4;
@@ -66,7 +88,7 @@ function scorePair(
   return score;
 }
 
-function inferManagerName(item: InstrumentImplementationUniverse['instruments'][number]): string | null {
+function inferManagerName(item: ImplementationInstrument): string | null {
   if (!item.name) return null;
   const token = item.name.trim().split(/\s+/)[0];
   return token ? token.toUpperCase() : null;
@@ -76,7 +98,8 @@ export function buildInstrumentImplementationPlan(input: {
   universe: InstrumentImplementationUniverse;
   targetWeights: PortfolioWeights;
 }): InstrumentImplementationPlan | null {
-  const instruments = input.universe.instruments.filter((item) => item.usable && (item.weightPortfolio ?? 0) > 0);
+  const instruments = input.universe.instruments.filter(canSellInstrument);
+  const destinationUniverse = input.universe.instruments.filter(canUseAsDestination);
   if (!instruments.length) return null;
 
   const currentRv = instruments.reduce((sum, item) => sum + (item.weightPortfolio ?? 0) * deriveRvOfInstrument(item), 0);
@@ -122,8 +145,8 @@ export function buildInstrumentImplementationPlan(input: {
         ? deriveRvOfInstrument(a) - deriveRvOfInstrument(b)
         : deriveRvOfInstrument(b) - deriveRvOfInstrument(a)
     ));
-  const destinations = [...instruments]
-    .filter((item) => movingToHigherRv ? deriveRvOfInstrument(item) > targetRv : deriveRvOfInstrument(item) < targetRv)
+  const destinations = [...destinationUniverse]
+    .filter((item) => movingToHigherRv ? deriveRvOfInstrument(item) > currentRv + 1e-6 : deriveRvOfInstrument(item) < currentRv - 1e-6)
     .sort((a, b) => (
       movingToHigherRv
         ? deriveRvOfInstrument(b) - deriveRvOfInstrument(a)
@@ -160,8 +183,8 @@ export function buildInstrumentImplementationPlan(input: {
       if (moveWeight <= 1e-6) continue;
 
       const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
-      const sameManager = source.sameManagerCandidates.includes(destination.instrumentId);
-      const sameTaxWrapper = source.sameTaxWrapperCandidates.includes(destination.instrumentId);
+      const sameManager = hasSameManager(source, destination);
+      const sameTaxWrapper = hasSameTaxWrapper(source, destination);
       if (!sameManager && moveWeight < MATERIAL_CROSS_MANAGER_MIN_WEIGHT - 1e-9) {
         continue;
       }
