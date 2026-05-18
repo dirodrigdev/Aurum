@@ -2008,6 +2008,11 @@ export function OptimizationLightPage({
   const [decisionExecutionState, setDecisionExecutionState] = useState<DecisionExecutionState>('idle');
   const [decisionBackgroundHint, setDecisionBackgroundHint] = useState<string | null>(null);
   const [technicalDiagnosticsOpen, setTechnicalDiagnosticsOpen] = useState(false);
+  const [lastExpressCandidate, setLastExpressCandidate] = useState<RvRfDecisionCandidate | null>(null);
+  const [lastZoomCandidate, setLastZoomCandidate] = useState<RvRfDecisionCandidate | null>(null);
+  const [lastConfirmedCandidate, setLastConfirmedCandidate] = useState<RvRfDecisionCandidate | null>(null);
+  const [lastRenderableCandidate, setLastRenderableCandidate] = useState<RvRfDecisionCandidate | null>(null);
+  const [lastRenderableKind, setLastRenderableKind] = useState<'official' | 'contingency' | null>(null);
   const [implementationMeta, setImplementationMeta] = useState<OptimizationResultMeta | null>(null);
   const [finalImplementationMeta, setFinalImplementationMeta] = useState<OptimizationResultMeta | null>(null);
   const [realisticValidationMeta, setRealisticValidationMeta] = useState<OptimizationResultMeta | null>(null);
@@ -2836,7 +2841,14 @@ export function OptimizationLightPage({
       const expressBaseProfiles = expressTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
       const expressFinancial = expressTables.find((table) => table.scenarioId === 'base')?.financialReference ?? null;
       const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
+      const expressFallback = selectBestAvailableFallbackCandidate(expressBaseProfiles?.rows);
+      const expressRenderable = expressMain ?? expressFallback;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
+      setLastExpressCandidate(expressRenderable);
+      if (expressRenderable) {
+        setLastRenderableCandidate(expressRenderable);
+        setLastRenderableKind(expressMain ? 'official' : 'contingency');
+      }
 
       const zoomCandidatesInitial = buildOptimizationZoomShortlist({
         preliminaryRecommendationRv: expressMain?.rvPct ?? null,
@@ -2872,6 +2884,13 @@ export function OptimizationLightPage({
       });
       const zoomBaseProfiles = zoomTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
       const zoomMain = zoomBaseProfiles?.primaryRecommendation ?? null;
+      const zoomFallback = selectBestAvailableFallbackCandidate(zoomBaseProfiles?.rows);
+      const zoomRenderable = zoomMain ?? zoomFallback;
+      setLastZoomCandidate(zoomRenderable);
+      if (zoomRenderable) {
+        setLastRenderableCandidate(zoomRenderable);
+        setLastRenderableKind(zoomMain ? 'official' : 'contingency');
+      }
 
       if (expressMain && zoomMain && expressMain.candidateId !== zoomMain.candidateId) {
         setDecisionFlowWarning(`El resultado rápido cambió al refinar: Express sugería ${expressMain.mixLabel} y Zoom sugiere ${zoomMain.mixLabel}. Usa solo el confirmado para decidir.`);
@@ -2904,7 +2923,7 @@ export function OptimizationLightPage({
     if (decisionProfilesRunning) return;
     const runContext = buildDecisionRunContext();
     decisionResumeActionRef.current = 'confirmation';
-    const preliminaryMain = recommendationCandidate;
+    const preliminaryMain = actionableRecommendationCandidate;
     const preliminaryDefensive = officialDefensiveReference;
     resetDecisionFlowArtifacts();
     setDecisionProfilesRunning(true);
@@ -2959,6 +2978,11 @@ export function OptimizationLightPage({
       const confirmedBaseProfiles = confirmedTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
       const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? selectBestAvailableFallbackCandidate(confirmedBaseProfiles?.rows);
       const confirmedOfficial = confirmedBaseProfiles?.primaryRecommendation ?? null;
+      setLastConfirmedCandidate(confirmedMain);
+      if (confirmedMain) {
+        setLastRenderableCandidate(confirmedMain);
+        setLastRenderableKind(confirmedOfficial ? 'official' : 'contingency');
+      }
 
       if (preliminaryMain && confirmedMain && preliminaryMain.candidateId !== confirmedMain.candidateId) {
         setDecisionFlowWarning(`El resultado preliminar cambió al confirmar. Usa solo el confirmado para decidir: ${confirmedMain.mixLabel}.`);
@@ -3133,6 +3157,14 @@ export function OptimizationLightPage({
   );
   const needsBestAvailableFallback = hasEvaluatedCandidates && !hasOfficialRecommendation;
   const recommendationCandidate = officialMainRecommendation ?? bestAvailableRecommendation;
+  const actionableRecommendationCandidate = recommendationCandidate ?? (decisionProfilesRunning ? lastRenderableCandidate : null);
+  const recommendationKind: 'official' | 'contingency' | 'none' = hasOfficialRecommendation
+    ? 'official'
+    : actionableRecommendationCandidate
+      ? (lastRenderableKind ?? 'contingency')
+      : 'none';
+  const recommendationIsOfficial = recommendationKind === 'official';
+  const recommendationIsContingency = recommendationKind === 'contingency';
   const fallbackGuardrailSummary = useMemo(() => {
     if (!baseDecisionProfiles?.rows?.length) return null;
     const passed = baseDecisionProfiles.rows.filter((row) => row.passesHardGuardrails).length;
@@ -3165,41 +3197,41 @@ export function OptimizationLightPage({
     return baseDecisionProfiles.rows.find((row) => row.candidateId === currentId) ?? null;
   }, [activeParams.weights, baseDecisionProfiles, baseDecisionTable]);
   const recommendedDecisionWeights = useMemo(
-    () => (recommendationCandidate ? buildRvRfCandidateWeights(activeParams.weights, recommendationCandidate.rvPct) : null),
-    [activeParams.weights, recommendationCandidate],
+    () => (actionableRecommendationCandidate ? buildRvRfCandidateWeights(activeParams.weights, actionableRecommendationCandidate.rvPct) : null),
+    [actionableRecommendationCandidate, activeParams.weights],
   );
   const closestDiscardedCompetitor = useMemo(
     () => selectClosestDiscardedCompetitor({
       profiles: baseDecisionProfiles,
-      mainRecommendation: recommendationCandidate,
+      mainRecommendation: actionableRecommendationCandidate,
       defensiveReference: officialDefensiveReference,
       headroomAlternative: officialHeadroomAlternative,
       benchmarkExtreme: officialBenchmarkExtreme,
       financialReference: financialOptimum,
     }),
-    [baseDecisionProfiles, financialOptimum, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative, recommendationCandidate],
+    [actionableRecommendationCandidate, baseDecisionProfiles, financialOptimum, officialBenchmarkExtreme, officialDefensiveReference, officialHeadroomAlternative],
   );
   const currentVsMidasRows = useMemo(
-    () => (recommendationCandidate && recommendedDecisionWeights
+    () => (actionableRecommendationCandidate && recommendedDecisionWeights
       ? buildCurrentVsMidasComparisonRows({
         currentWeights: activeParams.weights,
         recommendedWeights: recommendedDecisionWeights,
         currentCandidate: currentDecisionCandidate,
-        recommendedCandidate: recommendationCandidate,
+        recommendedCandidate: actionableRecommendationCandidate,
       })
       : []),
-    [activeParams.weights, currentDecisionCandidate, recommendationCandidate, recommendedDecisionWeights],
+    [actionableRecommendationCandidate, activeParams.weights, currentDecisionCandidate, recommendedDecisionWeights],
   );
   const currentVsMidasTradeoffs = useMemo(
-    () => (recommendationCandidate && recommendedDecisionWeights
+    () => (actionableRecommendationCandidate && recommendedDecisionWeights
       ? buildCurrentVsMidasTradeoffs({
         currentWeights: activeParams.weights,
         recommendedWeights: recommendedDecisionWeights,
         currentCandidate: currentDecisionCandidate,
-        recommendedCandidate: recommendationCandidate,
+        recommendedCandidate: actionableRecommendationCandidate,
       })
       : null),
-    [activeParams.weights, currentDecisionCandidate, recommendationCandidate, recommendedDecisionWeights],
+    [actionableRecommendationCandidate, activeParams.weights, currentDecisionCandidate, recommendedDecisionWeights],
   );
   const currentReconciliationMessage = useMemo(
     () => buildSimulationReconciliationMessage({
@@ -3210,19 +3242,19 @@ export function OptimizationLightPage({
     [activeParams.simulation.nSim, activeParams.simulation.seed, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, simulationActive, simulationSnapshot],
   );
   const recommendationCandidateRow = useMemo(
-    () => findPhase2RowForDecisionCandidate(phase2Rows, recommendationCandidate),
-    [phase2Rows, recommendationCandidate],
+    () => findPhase2RowForDecisionCandidate(phase2Rows, actionableRecommendationCandidate),
+    [actionableRecommendationCandidate, phase2Rows],
   );
   const officialMainRecommendationRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialMainRecommendation),
     [officialMainRecommendation, phase2Rows],
   );
   const recommendationCandidateSourceRow = useMemo(() => {
-    if (!recommendationCandidate) return null;
+    if (!actionableRecommendationCandidate) return null;
     if (recommendationCandidateRow) return recommendationCandidateRow;
-    const weights = buildRvRfCandidateWeights(activeParams.weights, recommendationCandidate.rvPct);
-    return toPhase2PointFromDecisionCandidate(recommendationCandidate, weights);
-  }, [activeParams, recommendationCandidate, recommendationCandidateRow]);
+    const weights = buildRvRfCandidateWeights(activeParams.weights, actionableRecommendationCandidate.rvPct);
+    return toPhase2PointFromDecisionCandidate(actionableRecommendationCandidate, weights);
+  }, [actionableRecommendationCandidate, activeParams, recommendationCandidateRow]);
   const officialDefensiveReferenceRow = useMemo(
     () => findPhase2RowForDecisionCandidate(phase2Rows, officialDefensiveReference),
     [officialDefensiveReference, phase2Rows],
@@ -3234,12 +3266,12 @@ export function OptimizationLightPage({
   const officialRecommendationWarning = useMemo(() => {
     if (!phase2Rows.length) return null;
     if (!baseDecisionProfiles) return 'La recomendación oficial V2.7.2 aparece aquí después de generar la decisión por perfiles.';
-    if (!recommendationCandidate) return 'No hay candidato seleccionable en los mixes evaluados.';
+    if (!actionableRecommendationCandidate) return 'No hay candidato seleccionable en los mixes evaluados.';
     if (!recommendationCandidateSourceRow) return 'El candidato seleccionado no pudo convertirse en escenario ejecutable.';
-    const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === recommendationCandidate.candidateId) ?? null;
+    const officialRow = baseDecisionProfiles.rows.find((row) => row.candidateId === actionableRecommendationCandidate.candidateId) ?? null;
     if (!officialRow?.passesHardGuardrails) return 'Candidato recomendado no coincide con fuente V2.7.2.';
     return null;
-  }, [baseDecisionProfiles, phase2Rows.length, recommendationCandidate, recommendationCandidateSourceRow]);
+  }, [actionableRecommendationCandidate, baseDecisionProfiles, phase2Rows.length, recommendationCandidateSourceRow]);
   const legacyRecommendationConflict = useMemo(() => {
     if (!phase2QualityWinner || !recommendationCandidateRow) return null;
     if (isSameMix(phase2QualityWinner.source, recommendationCandidateRow.source)) return null;
@@ -3345,6 +3377,18 @@ export function OptimizationLightPage({
     () => (implementationPlan ? classifyImplementationMateriality({ currentWeights: activeParams.weights, plan: implementationPlan }) : null),
     [activeParams.weights, implementationPlan],
   );
+  const implementationSleeveMoneyGuide = useMemo(() => {
+    if (!implementationMateriality?.sleeveValidation?.rows?.length) return [] as string[];
+    const baseCapital = Number.isFinite(activeParams.capitalInitial) ? activeParams.capitalInitial : 0;
+    if (baseCapital <= 0) return [] as string[];
+    return implementationMateriality.sleeveValidation.rows
+      .filter((row) => Math.abs(row.gapPp) > 0.05)
+      .map((row) => {
+        const amountClp = Math.abs(row.gapPp) / 100 * baseCapital;
+        const direction = row.gapPp > 0 ? 'Aumentar' : 'Reducir';
+        return `${direction} ${row.label} en ${formatClpShort(amountClp)} (${formatSignedPp(row.gapPp)}).`;
+      });
+  }, [activeParams.capitalInitial, implementationMateriality]);
   const activeScenarioAfterImplementation = useMemo(() => {
     if (!activeScenarioAfterPhase2) {
       return {
@@ -3925,22 +3969,22 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runDecisionConfirmation}
-            disabled={decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
+            disabled={decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
             style={{
-              background: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+              background: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
               border: `1px solid ${T.border}`,
-              color: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+              color: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
               borderRadius: 999,
               padding: '8px 13px',
               fontSize: 12,
               fontWeight: 800,
-              cursor: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
-              opacity: !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+              cursor: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+              opacity: !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
             }}
           >
             {decisionFlowStatus?.stage === 'confirmed'
               ? 'Confirmación completa lista'
-              : hasOfficialRecommendation
+              : recommendationIsOfficial
                 ? 'Confirmar con simulación completa'
                 : 'Confirmar mejor opción disponible'}
           </button>
@@ -4050,9 +4094,12 @@ export function OptimizationLightPage({
                 {decisionCancelRequested ? ' · cancelación solicitada' : ''}
               </div>
             ) : null}
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Ruta: Express {lastExpressCandidate?.mixLabel ?? 'No disponible'} → Zoom {lastZoomCandidate?.mixLabel ?? 'No disponible'} → Confirmación {lastConfirmedCandidate?.mixLabel ?? 'No disponible'}
+            </div>
           </div>
         ) : null}
-        {hasOfficialRecommendation ? (
+        {recommendationIsOfficial ? (
           <>
             <div style={{
               border: `1px solid ${decisionFlowStatus?.stage === 'confirmed' ? T.primary : T.border}`,
@@ -4253,6 +4300,33 @@ export function OptimizationLightPage({
                 </div>
               </details>
             ) : null}
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 8 }}>
+              <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Qué cambia frente a tu mix actual — alternativa de contingencia</div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                {decisionFlowStatus?.stage === 'confirmed' ? 'Comparación confirmada' : 'Comparación preliminar'} entre el mix actual exacto de la fuente activa y la mejor opción disponible.
+              </div>
+              <div style={{ color: currentDecisionCandidate ? T.textMuted : T.warning, fontSize: 10 }}>
+                {currentDecisionCandidate ? currentReconciliationMessage : 'Mix actual pendiente de evaluar en esta etapa.'}
+              </div>
+              {currentDecisionCandidate ? (
+                <div style={{ display: 'grid', gap: 5 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10, fontWeight: 800 }}>
+                    <div>Variable</div>
+                    <div>Actual</div>
+                    <div>Contingencia</div>
+                    <div>Cambio</div>
+                  </div>
+                  {currentVsMidasRows.map((row) => (
+                    <div key={`fallback-${row.section}-${row.label}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.2fr) repeat(3, minmax(0, 1fr))', gap: 8, color: T.textSecondary, fontSize: 10, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                      <div style={{ color: T.textPrimary, fontWeight: 700 }}>{row.label}</div>
+                      <div>{row.current}</div>
+                      <div>{row.recommended}</div>
+                      <div>{row.change}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : hasDecisionRunResult ? (
           <div style={{ color: T.warning, fontSize: 10, fontWeight: 700 }}>
@@ -4268,9 +4342,9 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
         <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Implementación sugerida</div>
         <div style={{ color: T.textSecondary, fontSize: 11 }}>
-          Usa exclusivamente el resultado confirmado del Óptimo MIDAS recomendado.
+          Usa el resultado confirmado del candidato accionable actual (oficial o contingencia).
         </div>
-        {!hasOfficialRecommendation && decisionFlowStatus?.stage === 'confirmed' && recommendationCandidate ? (
+        {recommendationIsContingency && decisionFlowStatus?.stage === 'confirmed' && actionableRecommendationCandidate ? (
           <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
             Implementación de contingencia: el candidato confirmado no cumple estándar MIDAS.
           </div>
@@ -4884,22 +4958,22 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runDecisionConfirmation}
-                disabled={decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
+                disabled={decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
                 style={{
-                  background: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+                  background: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
                   border: `1px solid ${T.border}`,
-                  color: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+                  color: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
                   borderRadius: 999,
                   padding: '7px 12px',
                   fontSize: 11,
                   fontWeight: 700,
-                  cursor: decisionProfilesRunning || !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
-                  opacity: !recommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+                  cursor: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
+                  opacity: !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
                 }}
               >
                 {decisionFlowStatus?.stage === 'confirmed'
                   ? 'Confirmación completa lista'
-                  : hasOfficialRecommendation
+                  : recommendationIsOfficial
                     ? 'Confirmar con simulación completa'
                     : 'Confirmar mejor opción disponible'}
               </button>
@@ -4943,14 +5017,14 @@ export function OptimizationLightPage({
                 ) : null}
               </div>
             ) : null}
-            {officialMainRecommendation ? (
+            {actionableRecommendationCandidate ? (
               <div style={{ border: `1px solid ${T.primary}`, borderRadius: 12, padding: 12, background: '#0d1224', display: 'grid', gap: 7 }}>
-                <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>Recomendación principal para tu perfil</div>
+                <div style={{ color: '#fff', fontSize: 13, fontWeight: 900 }}>{recommendationIsOfficial ? 'Recomendación principal para tu perfil' : 'Mejor opción disponible (contingencia)'}</div>
                 <div style={{ color: '#fff', fontSize: 22, fontWeight: 900 }}>
-                  {officialMainRecommendation.mixLabel}
+                  {actionableRecommendationCandidate.mixLabel}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Mejor equilibrio entre calidad base y holgura futura.
+                  {recommendationIsOfficial ? 'Mejor equilibrio entre calidad base y holgura futura.' : 'No cumple todos los guardrails MIDAS, pero es la alternativa accionable menos mala evaluada.'}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Fuente: V2.7.2 / V2.7.4 · Pareto + ratio vs referencia defensiva · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
@@ -5323,12 +5397,15 @@ export function OptimizationLightPage({
                         .map((transfer, index) => (
                           <div key={`${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                             <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
-                              Vender {transfer.fromName} → Comprar {transfer.toName}
+                              Mover {formatClpShort(transfer.amountClpMoved)} desde {transfer.fromName} hacia {transfer.toName}
+                            </div>
+                            <div style={{ color: T.textMuted, fontSize: 10 }}>
+                              {formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} ({(transfer.weightMoved * 100).toFixed(2)}% cartera)
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6, color: T.textMuted, fontSize: 10 }}>
-                              <div>Monto CLP: <span style={{ color: T.textSecondary }}>{formatClpShort(transfer.amountClpMoved)}</span></div>
-                              <div>Monto nativo: <span style={{ color: T.textSecondary }}>{formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)}</span></div>
-                              <div>% cartera: <span style={{ color: T.textSecondary }}>{(transfer.weightMoved * 100).toFixed(2)}%</span></div>
+                              <div>Monto CLP principal: <span style={{ color: T.textSecondary }}>{formatClpShort(transfer.amountClpMoved)}</span></div>
+                              <div>Monto nativo (ref): <span style={{ color: T.textSecondary }}>{formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)}</span></div>
+                              <div>% cartera (ref): <span style={{ color: T.textSecondary }}>{(transfer.weightMoved * 100).toFixed(2)}%</span></div>
                               <div>Moneda: <span style={{ color: T.textSecondary }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'No disponible'} → {transfer.toCurrency ?? 'No disponible'}</span></div>
                               <div>Compañía origen: <span style={{ color: T.textSecondary }}>{transfer.fromManager ?? 'No disponible'}</span></div>
                               <div>Compañía destino: <span style={{ color: T.textSecondary }}>{transfer.toManager ?? 'No disponible'}</span></div>
@@ -5349,8 +5426,24 @@ export function OptimizationLightPage({
                         ))}
                     </div>
                   ) : (
-                    <div style={{ color: T.warning, fontSize: 10 }}>
-                      No implementable automáticamente bajo restricciones actuales. No se encontraron traspasos ejecutables en misma moneda/misma compañía.
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ color: T.warning, fontSize: 10 }}>
+                        No se encontraron traspasos ejecutables por instrumento bajo las restricciones actuales.
+                      </div>
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Esto es una guía por sleeve, no una instrucción operativa por instrumento.
+                      </div>
+                      {implementationSleeveMoneyGuide.length ? (
+                        <div style={{ display: 'grid', gap: 3 }}>
+                          {implementationSleeveMoneyGuide.map((line) => (
+                            <div key={line} style={{ color: T.textSecondary, fontSize: 10 }}>{line}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ color: T.textMuted, fontSize: 10 }}>
+                          No hay suficiente información para convertir el gap por sleeve a montos CLP accionables.
+                        </div>
+                      )}
                     </div>
                   )}
                   {implementationPlan.warnings.length ? (
