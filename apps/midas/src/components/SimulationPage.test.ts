@@ -135,6 +135,12 @@ assert(appSource.includes('headerHasOnlyRunResultBlockingReasons'));
 assert(appSource.includes('headerShowsStaleResult'));
 assert(appSource.includes('Resultado anterior:'));
 assert(appSource.includes('Recalcular'));
+assert(!appSource.includes('ParamSheet'));
+assert(!appSource.includes('paramSheetOpen'));
+assert(!appSource.includes('setParamSheetOpen(true)'));
+assert(!appSource.includes('aria-label="Abrir parámetros"'));
+assert(source.includes('title="Agregar evento patrimonial"'));
+assert(source.includes('aria-label="Agregar evento patrimonial"'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));
 
 const decisionStart = source.indexOf('Barra de decisión');

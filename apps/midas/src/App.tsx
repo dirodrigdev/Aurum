@@ -17,7 +17,6 @@ import { normalizeModelSpendingPhases } from './domain/model/spendingPhases';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
-import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
 import { PalancasPage } from './components/PalancasPage';
 import { StressPage } from './components/StressPage';
@@ -698,7 +697,6 @@ export default function App() {
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
   const [activeTab, setActiveTab] = useState<TabId>('sim');
-  const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
@@ -2784,7 +2782,6 @@ export default function App() {
     );
     setSimParams(next);
     startRecalculation('session-reset', () => next);
-    setParamSheetOpen(false);
   }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
@@ -4792,45 +4789,7 @@ export default function App() {
           {content}
         </main>
 
-        <button
-          onClick={() => setParamSheetOpen(true)}
-          style={{
-            position: 'fixed',
-            bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
-            right: 16,
-            width: 52,
-            height: 52,
-            borderRadius: '50%',
-            border: `1px solid ${T.metalBase}`,
-            background: T.surfaceEl,
-            color: T.textPrimary,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            zIndex: 25,
-            boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
-          }}
-          aria-label="Abrir parámetros"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 4.5 13.2 6h2.3l.3 2 1.7 1-.9 1.9.9 1.9-1.7 1-.3 2h-2.3L12 19.5 10.8 18H8.5l-.3-2-1.7-1 .9-1.9-.9-1.9 1.7-1 .3-2h2.3L12 4.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            <circle cx="12" cy="12" r="2.2" fill="currentColor" />
-          </svg>
-        </button>
-
         <BottomNav active={activeTab} onChange={handleTabChange} />
-
-        <ParamSheet
-          open={paramSheetOpen}
-          onClose={() => setParamSheetOpen(false)}
-          params={simParams}
-          onUpdate={updateSimParam}
-          cashflowEvents={simParams.cashflowEvents}
-          onCashflowEventsChange={handleCashflowEventsChange}
-          onReset={resetSimulationSession}
-          onRun={runSim}
-        />
       </div>
     </MidasErrorBoundary>
   );

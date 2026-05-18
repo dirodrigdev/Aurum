@@ -3454,8 +3454,8 @@ export function SimulationPage({
                   fontWeight: 700,
                   cursor: 'pointer',
                 }}
-                title="Parámetros de simulación"
-                aria-label="Parámetros de simulación"
+                title="Agregar evento patrimonial"
+                aria-label="Agregar evento patrimonial"
               >
                 + Evento
               </button>
