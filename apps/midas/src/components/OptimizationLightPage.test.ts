@@ -194,6 +194,45 @@ function buildUniverseNeedingCrossManager(): InstrumentImplementationUniverse {
         warnings: [],
         usable: true,
       },
+      {
+        instrumentId: 'planvital-fondo-a',
+        name: 'PlanVital Fondo A',
+        vehicleType: 'AFP',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: false,
+        currentMixUsed: { rv: 1, rf: 0, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 1, local: 0 },
+        amountClp: 0,
+        amountNative: 0,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0,
+        role: 'mandatory',
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 1,
+        replacementConstraint: 'afp_obligatoria',
+        sameCurrencyCandidates: [],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: false,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: false,
+      },
     ],
   };
 }
@@ -412,6 +451,7 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
         remainingGapRvPp: 0.8,
       },
     ],
+    destinationDiagnostics: [],
     restrictionsApplied: {
       sameCurrency: true,
       sameManager: true,
@@ -738,6 +778,14 @@ const needsCrossManagerPlan = buildInstrumentImplementationPlan({
 assert(needsCrossManagerPlan);
 assert(needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_manager'));
 assert(!needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_currency'));
+assert(needsCrossManagerPlan.destinationDiagnostics.some((row) => row.instrumentId === 'planvital-fondo-a' && row.eligible === false));
+assert(needsCrossManagerPlan.destinationDiagnostics.some((row) =>
+  row.instrumentId === 'planvital-fondo-a'
+  && (
+    row.reason.toLowerCase().includes('afp')
+    || row.reason.toLowerCase().includes('no elegible')
+    || row.reason.toLowerCase().includes('no operable')
+  )));
 
 const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
   universe: buildUniverseNeedingCrossCurrency(),
@@ -931,6 +979,7 @@ assert(source.includes('Qué cambia frente a tu mix actual'));
 assert(source.includes('Comparación confirmada'));
 assert(source.includes('Comparación preliminar'));
 assert(source.includes('Traspasos sugeridos por instrumento'));
+assert(source.includes('Candidatos RV no usados / parcialmente usados'));
 assert(source.includes('No implementable automáticamente por instrumento'));
 assert(source.includes('No se encontraron traspasos ejecutables con las restricciones actuales.'));
 assert(source.includes('Mix objetivo vs mix alcanzado estimado'));

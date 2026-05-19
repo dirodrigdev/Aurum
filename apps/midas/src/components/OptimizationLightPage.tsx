@@ -4420,6 +4420,26 @@ export function OptimizationLightPage({
         {implementationError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{implementationError}</div> : null}
         {implementationPlan ? (
           <div style={{ display: 'grid', gap: 7 }}>
+            {(() => {
+              const gapAbsPp = Math.abs(implementationPlan.gapVsIdealRvPp);
+              const statusLabel = gapAbsPp <= 1.5
+                ? 'Implementable'
+                : gapAbsPp <= 3
+                  ? 'Parcial cercana'
+                  : implementationPlan.restrictionsApplied.crossCurrency
+                    ? 'Requiere cambio moneda'
+                    : 'Implementación parcial';
+              return (
+                <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl, display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                    Operaciones: {implementationPlan.transfers.length} · Total a mover: {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    Objetivo {formatMixPair(implementationPlan.targetMixIdeal)} · Alcanzado {formatMixPair(implementationPlan.reachableMix)} · Gap restante {formatSignedPp(implementationPlan.gapVsIdealRvPp)} · Estado: {statusLabel}
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual</div>
@@ -4542,6 +4562,23 @@ export function OptimizationLightPage({
                 </div>
               </div>
             )}
+            {implementationPlan.destinationDiagnostics.some((row) => !row.used) ? (
+              <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                  Candidatos RV no usados / parcialmente usados
+                </div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  {implementationPlan.destinationDiagnostics
+                    .filter((row) => !row.used && row.rv >= 0.5)
+                    .slice(0, 8)
+                    .map((row) => (
+                      <div key={`diag-${row.instrumentId}`} style={{ color: T.textMuted, fontSize: 10 }}>
+                        {row.name}: {row.eligible ? 'elegible' : 'no elegible'} · {row.reason}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ) : null}
             <div style={{ display: 'grid', gap: 7, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Mix objetivo vs mix alcanzado estimado</div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>

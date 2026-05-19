@@ -1,5 +1,6 @@
 import type { PortfolioWeights } from './model/types';
 import type {
+  InstrumentImplementationDestinationDiagnostic,
   InstrumentImplementationPlan,
   InstrumentImplementationStage,
   InstrumentImplementationStageSummary,
@@ -9,6 +10,8 @@ import type {
 import { REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from './optimizerPolicyConfig';
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+const MIN_MOVE_CLP = 10_000_000;
+const MIN_MOVE_WEIGHT_FLOOR = 0.0075; // 0.75%
 
 const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
   const rvGlobal = clamp01(weights.rvGlobal);
@@ -53,7 +56,33 @@ function canSellInstrument(item: ImplementationInstrument): boolean {
 }
 
 function canUseAsDestination(item: ImplementationInstrument): boolean {
-  return Boolean(item.instrumentId && item.currentMixUsed && item.currency && item.decisionEligible !== false && item.isCaptive !== true);
+  return Boolean(item.instrumentId && item.currentMixUsed && item.currency && item.decisionEligible !== false);
+}
+
+function inferOperationalCandidateClass(item: ImplementationInstrument): {
+  eligible: boolean;
+  reason: string;
+} {
+  if (!item.instrumentId) return { eligible: false, reason: 'Sin identificador de instrumento.' };
+  if (!item.currentMixUsed) return { eligible: false, reason: 'Sin mix RV/RF usable.' };
+  if (!item.currency) return { eligible: false, reason: 'Sin moneda informada.' };
+  if (item.decisionEligible === false) return { eligible: false, reason: 'Marcado como no elegible para decisión.' };
+  if (item.isSellable === false) return { eligible: false, reason: 'Marcado como no operable para traspaso.' };
+  const name = `${item.name ?? ''} ${item.vehicleType ?? ''} ${item.taxWrapper ?? ''} ${item.role ?? ''}`.toLowerCase();
+  const replacementConstraint = `${item.replacementConstraint ?? ''}`.toLowerCase();
+  const planVitalLike = name.includes('planvital');
+  const voluntaryLike = name.includes('cuenta 2') || name.includes('cuenta2') || name.includes('apv') || name.includes('voluntar');
+  const blockedByAfpConstraint = replacementConstraint.includes('afp') || replacementConstraint.includes('oblig');
+  if (planVitalLike && blockedByAfpConstraint && !voluntaryLike) {
+    return { eligible: false, reason: 'PlanVital marcado como AFP obligatoria/no transferible.' };
+  }
+  if (planVitalLike && !voluntaryLike && !item.taxWrapper) {
+    return { eligible: false, reason: 'PlanVital no usado por falta de metadata de transferibilidad/wrapper.' };
+  }
+  if (item.isCaptive === true) {
+    return { eligible: false, reason: 'Instrumento cautivo/no receptor de aportes.' };
+  }
+  return { eligible: true, reason: 'Elegible como destino operativo.' };
 }
 
 function hasSameManager(source: ImplementationInstrument, destination: ImplementationInstrument): boolean {
@@ -100,7 +129,25 @@ export function buildInstrumentImplementationPlan(input: {
   targetWeights: PortfolioWeights;
 }): InstrumentImplementationPlan | null {
   const instruments = input.universe.instruments.filter(canSellInstrument);
-  const destinationUniverse = input.universe.instruments.filter(canUseAsDestination);
+  const destinationDiagnosticsSeed = input.universe.instruments.map((item) => {
+    const eligibility = inferOperationalCandidateClass(item);
+    return {
+      item,
+      diagnostic: {
+        instrumentId: item.instrumentId || 'sin-id',
+        name: item.name ?? item.instrumentId ?? 'Sin nombre',
+        rv: deriveRvOfInstrument(item),
+        eligible: eligibility.eligible,
+        used: false,
+        reason: eligibility.reason,
+      } as InstrumentImplementationDestinationDiagnostic,
+    };
+  });
+  const destinationUniverse = destinationDiagnosticsSeed
+    .filter((row) => row.diagnostic.eligible)
+    .map((row) => row.item)
+    .filter(canUseAsDestination);
+  const destinationDiagnosticsMap = new Map(destinationDiagnosticsSeed.map((row) => [row.item.instrumentId, row.diagnostic]));
   if (!instruments.length) return null;
 
   const currentRv = instruments.reduce((sum, item) => sum + (item.weightPortfolio ?? 0) * deriveRvOfInstrument(item), 0);
@@ -124,6 +171,7 @@ export function buildInstrumentImplementationPlan(input: {
 
   if (Math.abs(deltaRv) <= 1e-6) {
     const reachableWeights = buildTargetFromRiskMix(currentRv, currentGlobalShare);
+    const destinationDiagnostics = Array.from(destinationDiagnosticsMap.values());
     return {
       targetMixIdeal: { rv: targetRv, rf: targetRf },
       currentMix: { rv: currentRv, rf: currentRf },
@@ -133,6 +181,7 @@ export function buildInstrumentImplementationPlan(input: {
       structuralChangeRequired: false,
       transfers: [],
       stageSummaries,
+      destinationDiagnostics,
       restrictionsApplied,
       warnings: [],
       baseTargetWeights: normalizeWeights(input.targetWeights),
@@ -160,6 +209,10 @@ export function buildInstrumentImplementationPlan(input: {
   const destinationCapacity = new Map(destinations.map((item) => [item.instrumentId, Math.max(0, 1 - clamp01(item.weightPortfolio ?? 0))]));
   const transfers: InstrumentImplementationTransfer[] = [];
   let remainingDelta = Math.abs(deltaRv);
+  const portfolioTotalClp = Math.max(0, instruments.reduce((sum, item) => sum + Math.max(0, item.amountClp ?? 0), 0));
+  const minMoveWeight = portfolioTotalClp > 0
+    ? Math.min(MIN_MOVE_WEIGHT_FLOOR, MIN_MOVE_CLP / portfolioTotalClp)
+    : MIN_MOVE_WEIGHT_FLOOR;
   const stageConfig: Array<{
     stage: InstrumentImplementationStage;
     allow: (input: { sameCurrency: boolean; sameManager: boolean; sameTaxWrapper: boolean; source: ImplementationInstrument; destination: ImplementationInstrument }) => boolean;
@@ -230,6 +283,11 @@ export function buildInstrumentImplementationPlan(input: {
         const currentSourceRemaining = sourceRemaining.get(source.instrumentId) ?? 0;
         const moveWeight = Math.min(currentSourceRemaining, capacity, maxByNeed);
         if (moveWeight <= 1e-6) continue;
+        const sourceClp = Math.max(0, source.amountClp ?? 0);
+        const moveClpEstimate = sourceClp * (Math.max(0, source.weightPortfolio ?? 0) > 0 ? moveWeight / Math.max(1e-9, source.weightPortfolio ?? 0) : 0);
+        const isMicroMove = moveWeight < minMoveWeight || moveClpEstimate < MIN_MOVE_CLP;
+        const closesMaterialGap = (remainingDelta * 100) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 0.5;
+        if (isMicroMove && !closesMaterialGap) continue;
 
         const crossManager = !sameManager;
         const crossCurrency = !sameCurrency;
@@ -278,6 +336,15 @@ export function buildInstrumentImplementationPlan(input: {
         sourceRemaining.set(source.instrumentId, Math.max(0, currentSourceRemaining - moveWeight));
         destinationCapacity.set(destination.instrumentId, Math.max(0, capacity - moveWeight));
         remainingDelta = Math.max(0, remainingDelta - (moveWeight * rvLiftPerWeight));
+        const destinationDiagnostic = destinationDiagnosticsMap.get(destination.instrumentId);
+        if (destinationDiagnostic) {
+          destinationDiagnostic.used = true;
+          destinationDiagnostic.reason = stage.stage === 'clean'
+            ? 'Usado en tramo limpio.'
+            : stage.stage === 'cross_manager'
+              ? 'Usado en tramo cross-manager.'
+              : 'Usado en tramo cross-currency.';
+        }
       }
     }
 
@@ -309,6 +376,30 @@ export function buildInstrumentImplementationPlan(input: {
   if (stageSummaries.some((summary) => summary.stage === 'cross_currency' && summary.used)) {
     warnings.push('Se requiere cambio de moneda para acercarse al RV/RF objetivo. Validar costos, spread, impuestos y timing antes de ejecutar.');
   }
+  if (remainingDelta * 100 > 3 + 1e-9) {
+    const missingClpEstimate = portfolioTotalClp > 0 ? (remainingDelta * portfolioTotalClp) : 0;
+    warnings.push(`Implementación parcial: falta aproximarse en +${(remainingDelta * 100).toFixed(1)} pp RV (~${Math.round(missingClpEstimate).toLocaleString('es-CL')} CLP hacia destinos de alta RV).`);
+  }
+
+  const destinationDiagnostics = Array.from(destinationDiagnosticsMap.values())
+    .map((row) => {
+      if (row.used) return row;
+      if (!row.eligible) return row;
+      const isHighRv = row.rv >= targetRv - 1e-6;
+      if (isHighRv) {
+        return {
+          ...row,
+          reason: row.reason === 'Elegible como destino operativo.'
+            ? 'Elegible, pero no priorizado por fricción/capacidad frente a otros destinos.'
+            : row.reason,
+        };
+      }
+      return {
+        ...row,
+        reason: 'No mejora RV/RF objetivo respecto a destinos priorizados.',
+      };
+    })
+    .sort((a, b) => (Number(b.used) - Number(a.used)) || (b.rv - a.rv) || a.name.localeCompare(b.name));
 
   return {
     targetMixIdeal: { rv: targetRv, rf: targetRf },
@@ -319,6 +410,7 @@ export function buildInstrumentImplementationPlan(input: {
     structuralChangeRequired: !equivalentToIdeal,
     transfers,
     stageSummaries,
+    destinationDiagnostics,
     restrictionsApplied,
     warnings,
     baseTargetWeights: normalizeWeights(input.targetWeights),

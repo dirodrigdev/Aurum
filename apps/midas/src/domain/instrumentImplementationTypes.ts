@@ -25,6 +25,15 @@ export type InstrumentImplementationStageSummary = {
   remainingGapRvPp: number;
 };
 
+export type InstrumentImplementationDestinationDiagnostic = {
+  instrumentId: string;
+  name: string;
+  rv: number;
+  eligible: boolean;
+  used: boolean;
+  reason: string;
+};
+
 export type InstrumentImplementationTransfer = {
   fromInstrumentId: string;
   fromName: string;
@@ -54,6 +63,7 @@ export type InstrumentImplementationPlan = {
   structuralChangeRequired: boolean;
   transfers: InstrumentImplementationTransfer[];
   stageSummaries: InstrumentImplementationStageSummary[];
+  destinationDiagnostics: InstrumentImplementationDestinationDiagnostic[];
   restrictionsApplied: InstrumentImplementationConstraintFlags;
   warnings: string[];
   baseTargetWeights: PortfolioWeights;
