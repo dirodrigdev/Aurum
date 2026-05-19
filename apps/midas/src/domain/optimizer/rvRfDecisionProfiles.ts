@@ -144,8 +144,8 @@ function fallbackRankingScore(a: RvRfDecisionCandidateAnnotated, b: RvRfDecision
     || (safeMetric(a.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY) - safeMetric(b.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY))
     || (safeMetric(b.csrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.csrBase, Number.NEGATIVE_INFINITY))
     || (safeMetric(b.qasrAt120, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrAt120, Number.NEGATIVE_INFINITY))
-    || (a.rvPct - b.rvPct)
     || (safeMetric(b.terminalWealthP50, Number.NEGATIVE_INFINITY) - safeMetric(a.terminalWealthP50, Number.NEGATIVE_INFINITY))
+    || a.candidateId.localeCompare(b.candidateId)
   );
 }
 

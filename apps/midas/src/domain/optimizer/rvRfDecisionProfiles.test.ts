@@ -118,6 +118,53 @@ const base = {
 }
 
 {
+  const baseline = { ...base, candidateId: 'current', mixLabel: 'RV 59.2 / RF 40.8', rvPct: 59.2, rfPct: 40.8, qasrBase: 0.90, qasrAt120: 0.88, csrBase: 0.85, ruinRate: 0.06 };
+  const mix70 = {
+    ...base,
+    candidateId: 'rv_70_rf_30',
+    mixLabel: 'RV 70 / RF 30',
+    rvPct: 70,
+    rfPct: 30,
+    qasrBase: 0.93,
+    qasrAt120: 0.90,
+    csrBase: 0.90,
+    ruinRate: 0.05,
+    passesHardGuardrails: false,
+    failedGuardrails: [],
+    inParetoFrontier: true,
+    role: 'none' as const,
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'candidate',
+  };
+  const mix100 = {
+    ...base,
+    candidateId: 'rv_100_rf_0',
+    mixLabel: 'RV 100 / RF 0',
+    rvPct: 100,
+    rfPct: 0,
+    qasrBase: 0.95,
+    qasrAt120: 0.92,
+    csrBase: 0.93,
+    ruinRate: 0.03,
+    passesHardGuardrails: false,
+    failedGuardrails: [],
+    inParetoFrontier: true,
+    role: 'benchmark_extreme' as const,
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'benchmark',
+  };
+  const selected = selectBestAvailableFallbackCandidate([mix70, mix100], baseline);
+  assert.equal(selected?.candidateId, 'rv_100_rf_0');
+
+  const selectedAgain = selectBestAvailableFallbackCandidate([mix70, mix100], baseline);
+  assert.equal(selectedAgain?.candidateId, selected?.candidateId);
+}
+
+{
   const candidates = [
     { ...base, candidateId: 'rv_25_rf_75', mixLabel: 'RV 25 / RF 75', rvPct: 25, rfPct: 75, qasrBase: 0.915, qasrAt120: 0.80, qasrAt130: 0.75, ruinRate: 0.08, monthsInSevereCutMean: 26, maxConsecutiveSevereCutMonthsP75: 20 },
     { ...base, candidateId: 'rv_50_rf_50', mixLabel: 'RV 50 / RF 50', rvPct: 50, rfPct: 50, qasrBase: 0.910, qasrAt120: 0.84, qasrAt130: 0.80, ruinRate: 0.08, monthsInSevereCutMean: 28, maxConsecutiveSevereCutMonthsP75: 20 },
