@@ -617,6 +617,57 @@ const bestAvailableFallback = selectBestAvailableFallbackCandidate([
 ]);
 assert.equal(bestAvailableFallback?.rvPct, 55);
 
+const currentBaseline = buildDecisionCandidate({
+  rvPct: 59.2,
+  qasrBase: 0.93,
+  qasrAt120: 0.89,
+  csrBase: 0.91,
+  ruinRate: 0.04,
+  monthsInSevereCutMean: 13,
+  maxConsecutiveSevereCutMonthsP75: 16,
+});
+
+const dominatedExtremeFallback = selectBestAvailableFallbackCandidate([
+  {
+    ...buildDecisionCandidate({ rvPct: 0, qasrBase: 0.89, qasrAt120: 0.82, csrBase: 0.86, ruinRate: 0.07, monthsInSevereCutMean: 8, maxConsecutiveSevereCutMonthsP75: 10 }),
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'benchmark_extreme',
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'benchmark',
+  },
+  {
+    ...buildDecisionCandidate({ rvPct: 70, qasrBase: 0.935, qasrAt120: 0.9, csrBase: 0.92, ruinRate: 0.035, monthsInSevereCutMean: 12, maxConsecutiveSevereCutMonthsP75: 14 }),
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'none',
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'candidate',
+  },
+], currentBaseline);
+assert.equal(dominatedExtremeFallback?.rvPct, 70);
+
+const noImprovementFallback = selectBestAvailableFallbackCandidate([
+  {
+    ...buildDecisionCandidate({ rvPct: 0, qasrBase: 0.89, qasrAt120: 0.82, csrBase: 0.86, ruinRate: 0.07, monthsInSevereCutMean: 8, maxConsecutiveSevereCutMonthsP75: 10 }),
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'benchmark_extreme',
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'benchmark',
+  },
+], currentBaseline);
+assert.equal(noImprovementFallback, null);
+
 const confirmationShortlist = buildOptimizationConfirmationShortlist({
   zoomRecommendationRv: 60,
   expressRecommendationRv: 60,

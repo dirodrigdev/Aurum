@@ -27,6 +27,7 @@ import {
 import {
   buildDecisionProfiles,
   buildFineRvRfGrid,
+  selectBestAvailableFallbackCandidate as selectBestAvailableFallbackCandidateFromDomain,
   type RvRfDecisionCandidate,
   type RvRfDecisionCandidateAnnotated,
   type RvRfDecisionProfiles,
@@ -703,24 +704,11 @@ export function buildOptimizationConfirmationShortlist(input: {
   return shortlist.sort((a, b) => a - b);
 }
 
-function safeMetric(value: number | null, fallback: number): number {
-  return value === null || Number.isNaN(value) ? fallback : value;
-}
-
-export function selectBestAvailableFallbackCandidate(rows: RvRfDecisionCandidateAnnotated[] | null | undefined): RvRfDecisionCandidateAnnotated | null {
-  if (!rows || rows.length === 0) return null;
-  const sorted = [...rows].sort((a, b) => (
-    (a.failedGuardrails.length - b.failedGuardrails.length)
-    || (safeMetric(b.qasrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrBase, Number.NEGATIVE_INFINITY))
-    || (safeMetric(a.ruinRate, Number.POSITIVE_INFINITY) - safeMetric(b.ruinRate, Number.POSITIVE_INFINITY))
-    || (safeMetric(a.monthsInSevereCutMean, Number.POSITIVE_INFINITY) - safeMetric(b.monthsInSevereCutMean, Number.POSITIVE_INFINITY))
-    || (safeMetric(a.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY) - safeMetric(b.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY))
-    || (safeMetric(b.csrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.csrBase, Number.NEGATIVE_INFINITY))
-    || (safeMetric(b.qasrAt120, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrAt120, Number.NEGATIVE_INFINITY))
-    || (a.rvPct - b.rvPct)
-    || (safeMetric(b.terminalWealthP50, Number.NEGATIVE_INFINITY) - safeMetric(a.terminalWealthP50, Number.NEGATIVE_INFINITY))
-  ));
-  return sorted[0] ?? null;
+export function selectBestAvailableFallbackCandidate(
+  rows: RvRfDecisionCandidateAnnotated[] | null | undefined,
+  baselineCandidate: RvRfDecisionCandidate | null = null,
+): RvRfDecisionCandidateAnnotated | null {
+  return selectBestAvailableFallbackCandidateFromDomain(rows, baselineCandidate);
 }
 
 function toSleeveSnapshot(weights: PortfolioWeights): SleeveMixSnapshot {
@@ -2859,10 +2847,14 @@ export function OptimizationLightPage({
         implementationEnabled: false,
         runContext,
       });
-      const expressBaseProfiles = expressTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
-      const expressFinancial = expressTables.find((table) => table.scenarioId === 'base')?.financialReference ?? null;
+      const expressBaseTable = expressTables.find((table) => table.scenarioId === 'base') ?? null;
+      const expressBaseProfiles = expressBaseTable?.profiles ?? null;
+      const expressFinancial = expressBaseTable?.financialReference ?? null;
       const expressMain = expressBaseProfiles?.primaryRecommendation ?? null;
-      const expressFallback = selectBestAvailableFallbackCandidate(expressBaseProfiles?.rows);
+      const expressFallback = selectBestAvailableFallbackCandidate(
+        expressBaseProfiles?.rows,
+        expressBaseTable?.currentCandidate ?? expressBaseProfiles?.defensiveReference ?? null,
+      );
       const expressRenderable = expressMain ?? expressFallback;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
       setLastExpressCandidate(expressRenderable);
@@ -2903,9 +2895,13 @@ export function OptimizationLightPage({
         implementationEnabled: false,
         runContext,
       });
-      const zoomBaseProfiles = zoomTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
+      const zoomBaseTable = zoomTables.find((table) => table.scenarioId === 'base') ?? null;
+      const zoomBaseProfiles = zoomBaseTable?.profiles ?? null;
       const zoomMain = zoomBaseProfiles?.primaryRecommendation ?? null;
-      const zoomFallback = selectBestAvailableFallbackCandidate(zoomBaseProfiles?.rows);
+      const zoomFallback = selectBestAvailableFallbackCandidate(
+        zoomBaseProfiles?.rows,
+        zoomBaseTable?.currentCandidate ?? zoomBaseProfiles?.defensiveReference ?? null,
+      );
       const zoomRenderable = zoomMain ?? zoomFallback;
       setLastZoomCandidate(zoomRenderable);
       if (zoomRenderable) {
@@ -2996,8 +2992,12 @@ export function OptimizationLightPage({
         implementationEnabled: true,
         runContext,
       });
-      const confirmedBaseProfiles = confirmedTables.find((table) => table.scenarioId === 'base')?.profiles ?? null;
-      const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? selectBestAvailableFallbackCandidate(confirmedBaseProfiles?.rows);
+      const confirmedBaseTable = confirmedTables.find((table) => table.scenarioId === 'base') ?? null;
+      const confirmedBaseProfiles = confirmedBaseTable?.profiles ?? null;
+      const confirmedMain = confirmedBaseProfiles?.primaryRecommendation ?? selectBestAvailableFallbackCandidate(
+        confirmedBaseProfiles?.rows,
+        confirmedBaseTable?.currentCandidate ?? confirmedBaseProfiles?.defensiveReference ?? null,
+      );
       const confirmedOfficial = confirmedBaseProfiles?.primaryRecommendation ?? null;
       setLastConfirmedCandidate(confirmedMain);
       if (confirmedMain) {
@@ -3173,8 +3173,11 @@ export function OptimizationLightPage({
   const officialMainRecommendation = baseDecisionProfiles?.primaryRecommendation ?? null;
   const hasOfficialRecommendation = Boolean(officialMainRecommendation);
   const bestAvailableRecommendation = useMemo(
-    () => selectBestAvailableFallbackCandidate(baseDecisionProfiles?.rows),
-    [baseDecisionProfiles],
+    () => selectBestAvailableFallbackCandidate(
+      baseDecisionProfiles?.rows,
+      baseDecisionTable?.currentCandidate ?? baseDecisionProfiles?.defensiveReference ?? null,
+    ),
+    [baseDecisionProfiles, baseDecisionTable],
   );
   const needsBestAvailableFallback = hasEvaluatedCandidates && !hasOfficialRecommendation;
   const recommendationCandidate = officialMainRecommendation ?? bestAvailableRecommendation;

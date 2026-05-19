@@ -73,6 +73,113 @@ export type RvRfDecisionProfiles = {
   rows: RvRfDecisionCandidateAnnotated[];
 };
 
+const FALLBACK_QASR_WORSE_POINTS = 1;
+const FALLBACK_RATE_WORSE_PCT = 0.01;
+
+function fallbackMetricDiff(current: number | null, candidate: number | null): number | null {
+  if (current === null || candidate === null || !Number.isFinite(current) || !Number.isFinite(candidate)) return null;
+  return candidate - current;
+}
+
+function isMateriallyWorseVsBaseline(
+  baseline: RvRfDecisionCandidate,
+  candidate: RvRfDecisionCandidate,
+): boolean {
+  const qasrBaseDiff = fallbackMetricDiff(toScore100(baseline.qasrBase), toScore100(candidate.qasrBase));
+  const qasr120Diff = fallbackMetricDiff(toScore100(baseline.qasrAt120), toScore100(candidate.qasrAt120));
+  const csrDiff = fallbackMetricDiff(baseline.csrBase, candidate.csrBase);
+  const ruinDiff = fallbackMetricDiff(baseline.ruinRate, candidate.ruinRate);
+
+  const materiallyWorseFlags = [
+    qasrBaseDiff !== null && qasrBaseDiff < -FALLBACK_QASR_WORSE_POINTS,
+    qasr120Diff !== null && qasr120Diff < -FALLBACK_QASR_WORSE_POINTS,
+    csrDiff !== null && csrDiff < -FALLBACK_RATE_WORSE_PCT,
+    ruinDiff !== null && ruinDiff > FALLBACK_RATE_WORSE_PCT,
+  ];
+  return materiallyWorseFlags.filter(Boolean).length >= 3;
+}
+
+function fallbackCandidateDominates(
+  challenger: RvRfDecisionCandidateAnnotated,
+  candidate: RvRfDecisionCandidateAnnotated,
+): boolean {
+  const qasrBaseCh = toScore100(challenger.qasrBase);
+  const qasrBaseCa = toScore100(candidate.qasrBase);
+  const qasr120Ch = toScore100(challenger.qasrAt120);
+  const qasr120Ca = toScore100(candidate.qasrAt120);
+  const csrCh = challenger.csrBase;
+  const csrCa = candidate.csrBase;
+  const ruinCh = challenger.ruinRate;
+  const ruinCa = candidate.ruinRate;
+
+  if (
+    qasrBaseCh === null || qasrBaseCa === null
+    || qasr120Ch === null || qasr120Ca === null
+    || csrCh === null || csrCa === null
+    || ruinCh === null || ruinCa === null
+  ) return false;
+
+  const noWorse = (
+    qasrBaseCh >= qasrBaseCa - FALLBACK_QASR_WORSE_POINTS
+    && qasr120Ch >= qasr120Ca - FALLBACK_QASR_WORSE_POINTS
+    && csrCh >= csrCa - FALLBACK_RATE_WORSE_PCT
+    && ruinCh <= ruinCa + FALLBACK_RATE_WORSE_PCT
+  );
+  const strictlyBetter = (
+    qasrBaseCh > qasrBaseCa + FALLBACK_QASR_WORSE_POINTS
+    || qasr120Ch > qasr120Ca + FALLBACK_QASR_WORSE_POINTS
+    || csrCh > csrCa + FALLBACK_RATE_WORSE_PCT
+    || ruinCh < ruinCa - FALLBACK_RATE_WORSE_PCT
+  );
+  return noWorse && strictlyBetter;
+}
+
+function fallbackRankingScore(a: RvRfDecisionCandidateAnnotated, b: RvRfDecisionCandidateAnnotated): number {
+  const safeMetric = (value: number | null, fallback: number) => (value === null || Number.isNaN(value) ? fallback : value);
+  return (
+    (a.failedGuardrails.length - b.failedGuardrails.length)
+    || (safeMetric(b.qasrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrBase, Number.NEGATIVE_INFINITY))
+    || (safeMetric(a.ruinRate, Number.POSITIVE_INFINITY) - safeMetric(b.ruinRate, Number.POSITIVE_INFINITY))
+    || (safeMetric(a.monthsInSevereCutMean, Number.POSITIVE_INFINITY) - safeMetric(b.monthsInSevereCutMean, Number.POSITIVE_INFINITY))
+    || (safeMetric(a.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY) - safeMetric(b.maxConsecutiveSevereCutMonthsP75, Number.POSITIVE_INFINITY))
+    || (safeMetric(b.csrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.csrBase, Number.NEGATIVE_INFINITY))
+    || (safeMetric(b.qasrAt120, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrAt120, Number.NEGATIVE_INFINITY))
+    || (a.rvPct - b.rvPct)
+    || (safeMetric(b.terminalWealthP50, Number.NEGATIVE_INFINITY) - safeMetric(a.terminalWealthP50, Number.NEGATIVE_INFINITY))
+  );
+}
+
+export function selectBestAvailableFallbackCandidate(
+  rows: RvRfDecisionCandidateAnnotated[] | null | undefined,
+  baselineCandidate: RvRfDecisionCandidate | null = null,
+): RvRfDecisionCandidateAnnotated | null {
+  if (!rows || rows.length === 0) return null;
+
+  const filteredByBaseline = baselineCandidate
+    ? rows.filter((candidate) => !isMateriallyWorseVsBaseline(baselineCandidate, candidate))
+    : rows;
+  const baselineProtectedPool = filteredByBaseline.length > 0 ? filteredByBaseline : rows;
+
+  const nonDominated = baselineProtectedPool.filter((candidate) => (
+    !baselineProtectedPool.some((challenger) => (
+      challenger.candidateId !== candidate.candidateId
+      && fallbackCandidateDominates(challenger, candidate)
+    ))
+  ));
+
+  const actionablePool = nonDominated.length > 0 ? nonDominated : baselineProtectedPool;
+  const selected = [...actionablePool].sort(fallbackRankingScore)[0] ?? null;
+
+  if (!selected) return null;
+  if (!baselineCandidate) return selected;
+
+  const baselineInRows = rows.find((row) => row.candidateId === baselineCandidate.candidateId) ?? null;
+  const baselineClearlyBetter = isMateriallyWorseVsBaseline(baselineCandidate, selected);
+  if (baselineClearlyBetter && baselineInRows) return baselineInRows;
+  if (baselineClearlyBetter) return null;
+  return selected;
+}
+
 function toScore100(value: number | null): number | null {
   return value === null ? null : value * 100;
 }

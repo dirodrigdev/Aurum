@@ -5,6 +5,7 @@ import {
   buildFineRvRfGrid,
   buildParetoFrontierBaseVsHeadroom,
   estimateQasrStandardError,
+  selectBestAvailableFallbackCandidate,
   selectDefensiveReferenceFromGuardrailPool,
 } from './rvRfDecisionProfiles';
 
@@ -68,6 +69,52 @@ const base = {
   ];
   const ref = selectDefensiveReferenceFromGuardrailPool(guard, 0.5);
   assert.equal(ref?.candidateId, 'ref_b');
+}
+
+{
+  const baseline = { ...base, candidateId: 'current', mixLabel: 'RV 59.2 / RF 40.8', rvPct: 59.2, rfPct: 40.8, qasrBase: 0.93, qasrAt120: 0.90, csrBase: 0.92, ruinRate: 0.04 };
+  const dominated = {
+    ...base,
+    candidateId: 'rv_0_rf_100',
+    mixLabel: 'RV 0 / RF 100',
+    rvPct: 0,
+    rfPct: 100,
+    qasrBase: 0.89,
+    qasrAt120: 0.82,
+    csrBase: 0.86,
+    ruinRate: 0.07,
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'benchmark_extreme' as const,
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'benchmark',
+  };
+  const balanced = {
+    ...base,
+    candidateId: 'rv_70_rf_30',
+    mixLabel: 'RV 70 / RF 30',
+    rvPct: 70,
+    rfPct: 30,
+    qasrBase: 0.935,
+    qasrAt120: 0.905,
+    csrBase: 0.925,
+    ruinRate: 0.035,
+    passesHardGuardrails: false,
+    failedGuardrails: ['qasr_base_below_min'],
+    inParetoFrontier: true,
+    role: 'none' as const,
+    deltaQasrBaseVsDefensive: null,
+    deltaQasr120VsDefensive: null,
+    tradeoffRatioVsDefensive: null,
+    mainDifference: 'candidate',
+  };
+  const selected = selectBestAvailableFallbackCandidate([dominated, balanced], baseline);
+  assert.equal(selected?.candidateId, 'rv_70_rf_30');
+  const none = selectBestAvailableFallbackCandidate([dominated], baseline);
+  assert.equal(none, null);
 }
 
 {
