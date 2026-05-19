@@ -331,6 +331,39 @@ function buildUniverseNeedingCrossCurrency(): InstrumentImplementationUniverse {
   };
 }
 
+function buildUniverseWithPlanVitalCuenta2Destination(): InstrumentImplementationUniverse {
+  const base = buildImplementationUniverse();
+  return {
+    ...base,
+    instruments: [
+      {
+        ...base.instruments[0],
+        instrumentId: 'sura-rf',
+        name: 'SURA RF Chile',
+        weightPortfolio: 1,
+        amountClp: 100_000_000,
+      },
+      {
+        ...base.instruments[1],
+        instrumentId: 'planvital-cuenta2-a',
+        name: 'PlanVital Cuenta 2 Fondo A',
+        vehicleType: 'Cuenta 2',
+        currency: 'CLP',
+        taxWrapper: 'Cuenta2',
+        isCaptive: false,
+        isSellable: false,
+        currentMixUsed: { rv: 1, rf: 0, cash: 0, other: 0 },
+        weightPortfolio: 0,
+        amountClp: 0,
+        amountNative: 0,
+        decisionEligible: true,
+        replacementConstraint: null,
+        usable: false,
+      },
+    ],
+  };
+}
+
 function buildParams(): ModelParameters {
   return {
     label: 'Test',
@@ -429,6 +462,7 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
       {
         stage: 'clean',
         used: true,
+        statusReason: 'used',
         operationCount: 1,
         movedClp: 15_100_000,
         reachedMix: { rv: 0.6, rf: 0.4 },
@@ -437,6 +471,7 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
       {
         stage: 'cross_manager',
         used: false,
+        statusReason: 'not_required',
         operationCount: 0,
         movedClp: 0,
         reachedMix: { rv: 0.6, rf: 0.4 },
@@ -445,6 +480,7 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
       {
         stage: 'cross_currency',
         used: false,
+        statusReason: 'not_required',
         operationCount: 0,
         movedClp: 0,
         reachedMix: { rv: 0.6, rf: 0.4 },
@@ -829,14 +865,27 @@ const needsCrossManagerPlan = buildInstrumentImplementationPlan({
 assert(needsCrossManagerPlan);
 assert(needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_manager'));
 assert(!needsCrossManagerPlan.transfers.some((row) => row.stage === 'cross_currency'));
+const crossManagerSummary = needsCrossManagerPlan.stageSummaries.find((row) => row.stage === 'cross_manager');
+assert(crossManagerSummary);
+if (Math.abs(needsCrossManagerPlan.gapVsIdealRvPp) > 3 + 1e-9) {
+  assert.notEqual(crossManagerSummary.statusReason, 'not_required');
+}
 assert(needsCrossManagerPlan.destinationDiagnostics.some((row) => row.instrumentId === 'planvital-fondo-a' && row.eligible === false));
 assert(needsCrossManagerPlan.destinationDiagnostics.some((row) =>
   row.instrumentId === 'planvital-fondo-a'
   && (
-    row.reason.toLowerCase().includes('afp')
-    || row.reason.toLowerCase().includes('no elegible')
+    row.reason.toLowerCase().includes('cuenta 2')
     || row.reason.toLowerCase().includes('no operable')
+    || row.reason.toLowerCase().includes('cautivo')
   )));
+
+const planVitalCuenta2Plan = buildInstrumentImplementationPlan({
+  universe: buildUniverseWithPlanVitalCuenta2Destination(),
+  targetWeights: buildWeights(0.8, 0, 0.2, 0),
+});
+assert(planVitalCuenta2Plan);
+assert(planVitalCuenta2Plan.transfers.some((row) => row.toInstrumentId === 'planvital-cuenta2-a'));
+assert(!planVitalCuenta2Plan.transfers.some((row) => row.stage === 'cross_currency'));
 
 const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
   universe: buildUniverseNeedingCrossCurrency(),

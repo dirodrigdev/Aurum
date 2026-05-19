@@ -19,6 +19,7 @@ export type InstrumentImplementationStage = 'clean' | 'cross_manager' | 'cross_c
 export type InstrumentImplementationStageSummary = {
   stage: InstrumentImplementationStage;
   used: boolean;
+  statusReason: 'used' | 'not_required' | 'agotado' | 'sin_destinos_elegibles' | 'bloqueado_por_metadata' | 'no_mejora_rv_rf';
   operationCount: number;
   movedClp: number;
   reachedMix: { rv: number; rf: number };

@@ -563,6 +563,15 @@ function implementationStageLabel(stage: 'clean' | 'cross_manager' | 'cross_curr
   return 'Cambio moneda';
 }
 
+function implementationStageReasonLabel(statusReason: 'used' | 'not_required' | 'agotado' | 'sin_destinos_elegibles' | 'bloqueado_por_metadata' | 'no_mejora_rv_rf'): string {
+  if (statusReason === 'used') return 'Usado';
+  if (statusReason === 'not_required') return 'No requerido';
+  if (statusReason === 'agotado') return 'Agotado';
+  if (statusReason === 'sin_destinos_elegibles') return 'Sin destinos elegibles';
+  if (statusReason === 'bloqueado_por_metadata') return 'Bloqueado por metadata';
+  return 'No mejora RV/RF';
+}
+
 function formatSignedPct(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
 }
@@ -4480,7 +4489,7 @@ export function OptimizationLightPage({
                         <div style={{ color: T.textSecondary, fontWeight: 700 }}>
                           {implementationStageLabel(stage.stage)}
                         </div>
-                        <div>{stage.used ? `${stage.operationCount} ops` : 'No requerido'}</div>
+                        <div>{stage.used ? `${stage.operationCount} ops` : implementationStageReasonLabel(stage.statusReason)}</div>
                         <div>{stage.used ? formatClpShort(stage.movedClp) : '—'}</div>
                         <div>{formatMixPair(stage.reachedMix)}</div>
                         <div>Gap {formatSignedPp(stage.remainingGapRvPp)}</div>

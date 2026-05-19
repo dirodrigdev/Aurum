@@ -13,6 +13,8 @@ const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value
 const MIN_MOVE_CLP = 10_000_000;
 const MIN_MOVE_WEIGHT_FLOOR = 0.0075; // 0.75%
 
+type ImplementationInstrument = InstrumentImplementationUniverse['instruments'][number];
+
 const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
   const rvGlobal = clamp01(weights.rvGlobal);
   const rvChile = clamp01(weights.rvChile);
@@ -27,8 +29,6 @@ const normalizeWeights = (weights: PortfolioWeights): PortfolioWeights => {
     rfChile: rfChile / total,
   };
 };
-
-type ImplementationInstrument = InstrumentImplementationUniverse['instruments'][number];
 
 function buildTargetFromRiskMix(rvTarget: number, currentGlobalShare: number): PortfolioWeights {
   const rv = clamp01(rvTarget);
@@ -59,30 +59,10 @@ function canUseAsDestination(item: ImplementationInstrument): boolean {
   return Boolean(item.instrumentId && item.currentMixUsed && item.currency && item.decisionEligible !== false);
 }
 
-function inferOperationalCandidateClass(item: ImplementationInstrument): {
-  eligible: boolean;
-  reason: string;
-} {
-  if (!item.instrumentId) return { eligible: false, reason: 'Sin identificador de instrumento.' };
-  if (!item.currentMixUsed) return { eligible: false, reason: 'Sin mix RV/RF usable.' };
-  if (!item.currency) return { eligible: false, reason: 'Sin moneda informada.' };
-  if (item.decisionEligible === false) return { eligible: false, reason: 'Marcado como no elegible para decisión.' };
-  if (item.isSellable === false) return { eligible: false, reason: 'Marcado como no operable para traspaso.' };
-  const name = `${item.name ?? ''} ${item.vehicleType ?? ''} ${item.taxWrapper ?? ''} ${item.role ?? ''}`.toLowerCase();
-  const replacementConstraint = `${item.replacementConstraint ?? ''}`.toLowerCase();
-  const planVitalLike = name.includes('planvital');
-  const voluntaryLike = name.includes('cuenta 2') || name.includes('cuenta2') || name.includes('apv') || name.includes('voluntar');
-  const blockedByAfpConstraint = replacementConstraint.includes('afp') || replacementConstraint.includes('oblig');
-  if (planVitalLike && blockedByAfpConstraint && !voluntaryLike) {
-    return { eligible: false, reason: 'PlanVital marcado como AFP obligatoria/no transferible.' };
-  }
-  if (planVitalLike && !voluntaryLike && !item.taxWrapper) {
-    return { eligible: false, reason: 'PlanVital no usado por falta de metadata de transferibilidad/wrapper.' };
-  }
-  if (item.isCaptive === true) {
-    return { eligible: false, reason: 'Instrumento cautivo/no receptor de aportes.' };
-  }
-  return { eligible: true, reason: 'Elegible como destino operativo.' };
+function inferManagerName(item: ImplementationInstrument): string | null {
+  if (!item.name) return null;
+  const token = item.name.trim().split(/\s+/)[0];
+  return token ? token.toUpperCase() : null;
 }
 
 function hasSameManager(source: ImplementationInstrument, destination: ImplementationInstrument): boolean {
@@ -97,10 +77,50 @@ function hasSameTaxWrapper(source: ImplementationInstrument, destination: Implem
     || Boolean(source.taxWrapper && destination.taxWrapper && source.taxWrapper === destination.taxWrapper);
 }
 
-function scorePair(
-  source: ImplementationInstrument,
-  destination: ImplementationInstrument,
-): number {
+function inferOperationalCandidateClass(item: ImplementationInstrument): {
+  eligible: boolean;
+  reason: string;
+} {
+  if (!item.instrumentId) return { eligible: false, reason: 'Sin identificador de instrumento.' };
+  if (!item.currentMixUsed) return { eligible: false, reason: 'Sin mix RV/RF usable.' };
+  if (!item.currency) return { eligible: false, reason: 'Sin moneda informada.' };
+
+  const name = `${item.name ?? ''} ${item.vehicleType ?? ''} ${item.taxWrapper ?? ''} ${item.role ?? ''}`.toLowerCase();
+  const replacementConstraint = `${item.replacementConstraint ?? ''}`.toLowerCase();
+  const planVitalLike = name.includes('planvital');
+  const voluntaryLike = name.includes('cuenta 2') || name.includes('cuenta2') || name.includes('apv') || name.includes('voluntar');
+  const blockedByAfpConstraint = replacementConstraint.includes('afp') || replacementConstraint.includes('oblig');
+
+  if (planVitalLike && blockedByAfpConstraint && !voluntaryLike) {
+    return {
+      eligible: false,
+      reason: 'PlanVital Fondo A no usado porque está marcado como no operable/cautivo. Si corresponde a Cuenta 2, falta representarlo como posición voluntaria operable.',
+    };
+  }
+  if (planVitalLike && !voluntaryLike && !item.taxWrapper) {
+    return { eligible: false, reason: 'PlanVital no usado por falta de metadata de transferibilidad/wrapper.' };
+  }
+  if (item.isCaptive === true) {
+    return { eligible: false, reason: 'Instrumento cautivo/no receptor de aportes.' };
+  }
+  if (item.decisionEligible === false) return { eligible: false, reason: 'Marcado como no elegible para decisión.' };
+
+  if (item.isSellable === false) {
+    if (voluntaryLike) {
+      return { eligible: true, reason: 'Elegible como destino voluntario (aporte/traspaso), aunque no sea origen vendible.' };
+    }
+    return { eligible: false, reason: 'Marcado como no operable para traspaso.' };
+  }
+
+  return { eligible: true, reason: 'Elegible como destino operativo.' };
+}
+
+function isVoluntaryDestination(item: ImplementationInstrument): boolean {
+  const name = `${item.name ?? ''} ${item.vehicleType ?? ''} ${item.taxWrapper ?? ''} ${item.role ?? ''}`.toLowerCase();
+  return name.includes('cuenta 2') || name.includes('cuenta2') || name.includes('apv') || name.includes('voluntar');
+}
+
+function scorePair(source: ImplementationInstrument, destination: ImplementationInstrument): number {
   let score = 0;
   const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
   const sameManager = hasSameManager(source, destination);
@@ -110,18 +130,24 @@ function scorePair(
   if (sameManager) score += 4;
   if (sameWrapper) score += 2;
   if (source.sameCurrencyCandidates.includes(destination.instrumentId)) score += 2;
-  if (source.decisionEligible !== false && destination.decisionEligible !== false) score += 1;
 
   score += (destination.replaceabilityScore ?? 0) * 2;
   score += (destination.estimatedMixImpactPoints ?? 0) / 100;
+  score += deriveRvOfInstrument(destination) * 8;
   if (destination.replacementConstraint && destination.replacementConstraint !== 'none') score -= 1;
   return score;
 }
 
-function inferManagerName(item: ImplementationInstrument): string | null {
-  if (!item.name) return null;
-  const token = item.name.trim().split(/\s+/)[0];
-  return token ? token.toUpperCase() : null;
+function stageStatusReasonForGap(
+  stage: InstrumentImplementationStage,
+  used: boolean,
+  remainingGapRvPp: number,
+  hasAllowedCandidates: boolean,
+): InstrumentImplementationStageSummary['statusReason'] {
+  if (used) return 'used';
+  if (Math.abs(remainingGapRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9) return 'not_required';
+  if (!hasAllowedCandidates) return stage === 'cross_manager' ? 'sin_destinos_elegibles' : 'bloqueado_por_metadata';
+  return 'agotado';
 }
 
 export function buildInstrumentImplementationPlan(input: {
@@ -155,10 +181,7 @@ export function buildInstrumentImplementationPlan(input: {
   const targetRv = clamp01(input.targetWeights.rvGlobal + input.targetWeights.rvChile);
   const targetRf = 1 - targetRv;
   const deltaRv = targetRv - currentRv;
-  const currentGlobalShare = instruments.reduce(
-    (sum, item) => sum + (item.weightPortfolio ?? 0) * deriveGlobalOfInstrument(item),
-    0,
-  );
+  const currentGlobalShare = instruments.reduce((sum, item) => sum + (item.weightPortfolio ?? 0) * deriveGlobalOfInstrument(item), 0);
 
   const restrictionsApplied = {
     sameCurrency: true,
@@ -171,7 +194,6 @@ export function buildInstrumentImplementationPlan(input: {
 
   if (Math.abs(deltaRv) <= 1e-6) {
     const reachableWeights = buildTargetFromRiskMix(currentRv, currentGlobalShare);
-    const destinationDiagnostics = Array.from(destinationDiagnosticsMap.values());
     return {
       targetMixIdeal: { rv: targetRv, rf: targetRf },
       currentMix: { rv: currentRv, rf: currentRf },
@@ -181,7 +203,7 @@ export function buildInstrumentImplementationPlan(input: {
       structuralChangeRequired: false,
       transfers: [],
       stageSummaries,
-      destinationDiagnostics,
+      destinationDiagnostics: Array.from(destinationDiagnosticsMap.values()),
       restrictionsApplied,
       warnings: [],
       baseTargetWeights: normalizeWeights(input.targetWeights),
@@ -192,27 +214,31 @@ export function buildInstrumentImplementationPlan(input: {
   const movingToHigherRv = deltaRv > 0;
   const sources = [...instruments]
     .filter((item) => movingToHigherRv ? deriveRvOfInstrument(item) < targetRv : deriveRvOfInstrument(item) > targetRv)
-    .sort((a, b) => (
-      movingToHigherRv
+    .sort((a, b) => {
+      const byWeight = Math.max(0, b.weightPortfolio ?? 0) - Math.max(0, a.weightPortfolio ?? 0);
+      if (Math.abs(byWeight) > 1e-9) return byWeight;
+      return movingToHigherRv
         ? deriveRvOfInstrument(a) - deriveRvOfInstrument(b)
-        : deriveRvOfInstrument(b) - deriveRvOfInstrument(a)
-    ));
+        : deriveRvOfInstrument(b) - deriveRvOfInstrument(a);
+    });
+
   const destinations = [...destinationUniverse]
     .filter((item) => movingToHigherRv ? deriveRvOfInstrument(item) > currentRv + 1e-6 : deriveRvOfInstrument(item) < currentRv - 1e-6)
-    .sort((a, b) => (
-      movingToHigherRv
-        ? deriveRvOfInstrument(b) - deriveRvOfInstrument(a)
-        : deriveRvOfInstrument(a) - deriveRvOfInstrument(b)
-    ));
+    .sort((a, b) => {
+      const rvA = deriveRvOfInstrument(a);
+      const rvB = deriveRvOfInstrument(b);
+      if (movingToHigherRv && Math.abs(rvB - rvA) > 1e-9) return rvB - rvA;
+      if (!movingToHigherRv && Math.abs(rvA - rvB) > 1e-9) return rvA - rvB;
+      return (b.replaceabilityScore ?? 0) - (a.replaceabilityScore ?? 0);
+    });
 
   const sourceRemaining = new Map(sources.map((item) => [item.instrumentId, clamp01(item.weightPortfolio ?? 0)]));
   const destinationCapacity = new Map(destinations.map((item) => [item.instrumentId, Math.max(0, 1 - clamp01(item.weightPortfolio ?? 0))]));
   const transfers: InstrumentImplementationTransfer[] = [];
   let remainingDelta = Math.abs(deltaRv);
   const portfolioTotalClp = Math.max(0, instruments.reduce((sum, item) => sum + Math.max(0, item.amountClp ?? 0), 0));
-  const minMoveWeight = portfolioTotalClp > 0
-    ? Math.min(MIN_MOVE_WEIGHT_FLOOR, MIN_MOVE_CLP / portfolioTotalClp)
-    : MIN_MOVE_WEIGHT_FLOOR;
+  const minMoveWeight = portfolioTotalClp > 0 ? Math.min(MIN_MOVE_WEIGHT_FLOOR, MIN_MOVE_CLP / portfolioTotalClp) : MIN_MOVE_WEIGHT_FLOOR;
+
   const stageConfig: Array<{
     stage: InstrumentImplementationStage;
     allow: (input: { sameCurrency: boolean; sameManager: boolean; sameTaxWrapper: boolean; source: ImplementationInstrument; destination: ImplementationInstrument }) => boolean;
@@ -227,7 +253,9 @@ export function buildInstrumentImplementationPlan(input: {
     {
       stage: 'cross_manager',
       allow: ({ sameCurrency, sameManager, sameTaxWrapper, source, destination }) => {
-        const wrapperCompatible = source.taxWrapper && destination.taxWrapper ? sameTaxWrapper : true;
+        const wrapperCompatible = source.taxWrapper && destination.taxWrapper
+          ? (sameTaxWrapper || isVoluntaryDestination(destination))
+          : true;
         return sameCurrency && !sameManager && wrapperCompatible;
       },
     },
@@ -242,6 +270,7 @@ export function buildInstrumentImplementationPlan(input: {
       stageSummaries.push({
         stage: stage.stage,
         used: false,
+        statusReason: 'not_required',
         operationCount: 0,
         movedClp: 0,
         reachedMix: {
@@ -256,12 +285,19 @@ export function buildInstrumentImplementationPlan(input: {
     const stageTransferStart = transfers.length;
     const stageClpStart = transfers.reduce((sum, item) => sum + item.amountClpMoved, 0);
 
+    const hasAllowedCandidates = destinations.some((destination) => sources.some((source) => {
+      if (source.instrumentId === destination.instrumentId) return false;
+      const sameCurrency = Boolean(source.currency && destination.currency && source.currency === destination.currency);
+      const sameManager = hasSameManager(source, destination);
+      const sameTaxWrapper = hasSameTaxWrapper(source, destination);
+      return stage.allow({ sameCurrency, sameManager, sameTaxWrapper, source, destination });
+    }));
+
     for (const source of sources) {
       const sourceWeight = sourceRemaining.get(source.instrumentId) ?? 0;
       if (sourceWeight <= 1e-6 || remainingDelta <= 1e-6) continue;
 
-      const orderedDestinations = [...destinations]
-        .sort((a, b) => scorePair(source, b) - scorePair(source, a));
+      const orderedDestinations = [...destinations].sort((a, b) => scorePair(source, b) - scorePair(source, a));
       for (const destination of orderedDestinations) {
         if (remainingDelta <= 1e-6) break;
         if (source.instrumentId === destination.instrumentId) continue;
@@ -283,6 +319,7 @@ export function buildInstrumentImplementationPlan(input: {
         const currentSourceRemaining = sourceRemaining.get(source.instrumentId) ?? 0;
         const moveWeight = Math.min(currentSourceRemaining, capacity, maxByNeed);
         if (moveWeight <= 1e-6) continue;
+
         const sourceClp = Math.max(0, source.amountClp ?? 0);
         const moveClpEstimate = sourceClp * (Math.max(0, source.weightPortfolio ?? 0) > 0 ? moveWeight / Math.max(1e-9, source.weightPortfolio ?? 0) : 0);
         const isMicroMove = moveWeight < minMoveWeight || moveClpEstimate < MIN_MOVE_CLP;
@@ -336,6 +373,7 @@ export function buildInstrumentImplementationPlan(input: {
         sourceRemaining.set(source.instrumentId, Math.max(0, currentSourceRemaining - moveWeight));
         destinationCapacity.set(destination.instrumentId, Math.max(0, capacity - moveWeight));
         remainingDelta = Math.max(0, remainingDelta - (moveWeight * rvLiftPerWeight));
+
         const destinationDiagnostic = destinationDiagnosticsMap.get(destination.instrumentId);
         if (destinationDiagnostic) {
           destinationDiagnostic.used = true;
@@ -350,13 +388,20 @@ export function buildInstrumentImplementationPlan(input: {
 
     const reachedRvAfterStage = movingToHigherRv ? targetRv - remainingDelta : targetRv + remainingDelta;
     const stageMovedClp = transfers.reduce((sum, item) => sum + item.amountClpMoved, 0) - stageClpStart;
+    const remainingGapRvPp = remainingDelta * 100;
     stageSummaries.push({
       stage: stage.stage,
       used: transfers.length > stageTransferStart,
+      statusReason: stageStatusReasonForGap(
+        stage.stage,
+        transfers.length > stageTransferStart,
+        remainingGapRvPp,
+        hasAllowedCandidates,
+      ),
       operationCount: transfers.length - stageTransferStart,
       movedClp: Math.max(0, stageMovedClp),
       reachedMix: { rv: reachedRvAfterStage, rf: 1 - reachedRvAfterStage },
-      remainingGapRvPp: remainingDelta * 100,
+      remainingGapRvPp,
     });
   }
 
@@ -365,6 +410,13 @@ export function buildInstrumentImplementationPlan(input: {
   const gapVsIdealRvPp = (targetRv - reachableRv) * 100;
   const equivalentToIdeal = Math.abs(gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9;
   const reachableWeights = buildTargetFromRiskMix(reachableRv, currentGlobalShare);
+
+  if (Math.abs(gapVsIdealRvPp) > 3 + 1e-9) {
+    const crossManagerSummary = stageSummaries.find((summary) => summary.stage === 'cross_manager');
+    if (crossManagerSummary && !crossManagerSummary.used && crossManagerSummary.statusReason === 'not_required') {
+      crossManagerSummary.statusReason = 'agotado';
+    }
+  }
 
   const warnings: string[] = [];
   if (!transfers.length) warnings.push('No se encontraron traspasos ejecutables con las restricciones actuales.');
@@ -389,7 +441,7 @@ export function buildInstrumentImplementationPlan(input: {
       if (isHighRv) {
         return {
           ...row,
-          reason: row.reason === 'Elegible como destino operativo.'
+          reason: row.reason === 'Elegible como destino operativo.' || row.reason.includes('voluntario')
             ? 'Elegible, pero no priorizado por fricción/capacidad frente a otros destinos.'
             : row.reason,
         };
