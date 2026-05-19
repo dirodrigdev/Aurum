@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { buildImplementationUniverseInstruments } from '../domain/instrumentImplementationLoader';
 import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
 import type { InstrumentImplementationUniverse } from '../domain/instrumentImplementationTypes';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
@@ -879,6 +880,22 @@ assert(needsCrossManagerPlan.destinationDiagnostics.some((row) =>
     || row.reason.toLowerCase().includes('cautivo')
   )));
 
+const enrichedPlanVitalUniverse = buildImplementationUniverseInstruments(buildUniverseNeedingCrossManager().instruments);
+const syntheticPlanVitalCuenta2 = enrichedPlanVitalUniverse.instruments.find((row) => row.instrumentId === 'planvital_fondo_a_cuenta2');
+assert(syntheticPlanVitalCuenta2);
+assert.equal(syntheticPlanVitalCuenta2.name, 'PlanVital Fondo A Cuenta 2');
+assert.equal(syntheticPlanVitalCuenta2.taxWrapper, 'cuenta_2');
+assert.equal(syntheticPlanVitalCuenta2.weightPortfolio, 0);
+assert.equal(syntheticPlanVitalCuenta2.amountClp, 0);
+assert.equal(syntheticPlanVitalCuenta2.decisionEligible, true);
+assert.equal(syntheticPlanVitalCuenta2.isCaptive, false);
+assert.equal(syntheticPlanVitalCuenta2.isSellable, false);
+assert.equal(syntheticPlanVitalCuenta2.currentMixUsed?.rv, 1);
+assert.equal(
+  enrichedPlanVitalUniverse.instruments.find((row) => row.instrumentId === 'planvital-fondo-a')?.decisionEligible,
+  false,
+);
+
 const planVitalCuenta2Plan = buildInstrumentImplementationPlan({
   universe: buildUniverseWithPlanVitalCuenta2Destination(),
   targetWeights: buildWeights(0.8, 0, 0.2, 0),
@@ -886,6 +903,44 @@ const planVitalCuenta2Plan = buildInstrumentImplementationPlan({
 assert(planVitalCuenta2Plan);
 assert(planVitalCuenta2Plan.transfers.some((row) => row.toInstrumentId === 'planvital-cuenta2-a'));
 assert(!planVitalCuenta2Plan.transfers.some((row) => row.stage === 'cross_currency'));
+
+const planVitalCuenta2FromLoaderPlan = buildInstrumentImplementationPlan({
+  universe: {
+    ...buildUniverseNeedingCrossManager(),
+    instruments: enrichedPlanVitalUniverse.instruments,
+  },
+  targetWeights: buildWeights(0.8, 0, 0.2, 0),
+});
+assert(planVitalCuenta2FromLoaderPlan);
+
+const planVitalNeededUniverse: InstrumentImplementationUniverse = {
+  ...buildUniverseNeedingCrossManager(),
+  instruments: enrichedPlanVitalUniverse.instruments.map((row) => {
+    if (row.instrumentId === 'sura-rv') {
+      return {
+        ...row,
+        currentMixUsed: { rv: 0.75, rf: 0.25, cash: 0, other: 0 },
+      };
+    }
+    return row;
+  }),
+};
+const planVitalNeededUniverseWithoutSynthetic: InstrumentImplementationUniverse = {
+  ...planVitalNeededUniverse,
+  instruments: planVitalNeededUniverse.instruments.filter((row) => row.instrumentId !== 'planvital_fondo_a_cuenta2'),
+};
+const planVitalNeededPlanWithoutSynthetic = buildInstrumentImplementationPlan({
+  universe: planVitalNeededUniverseWithoutSynthetic,
+  targetWeights: buildWeights(0.8, 0, 0.2, 0),
+});
+assert(planVitalNeededPlanWithoutSynthetic);
+const planVitalNeededPlan = buildInstrumentImplementationPlan({
+  universe: planVitalNeededUniverse,
+  targetWeights: buildWeights(0.8, 0, 0.2, 0),
+});
+assert(planVitalNeededPlan);
+assert(planVitalNeededPlan.transfers.some((row) => row.toInstrumentId === 'planvital_fondo_a_cuenta2'));
+assert(planVitalNeededPlanWithoutSynthetic.transfers.every((row) => row.toInstrumentId !== 'planvital_fondo_a_cuenta2'));
 
 const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
   universe: buildUniverseNeedingCrossCurrency(),
@@ -1085,9 +1140,11 @@ assert(source.includes('No se encontraron traspasos ejecutables con las restricc
 assert(source.includes('Mix objetivo vs mix alcanzado estimado'));
 assert(source.includes('Este es el mix estimado después de aplicar los traspasos sugeridos. Puede diferir del objetivo MIDAS por restricciones de instrumentos.'));
 assert(source.includes('Validar mix alcanzado antes de ejecutar. Las métricas de éxito deben recalcularse sobre el mix alcanzado, no sobre el objetivo ideal.'));
+assert(source.includes('Implementación parcial: falta'));
+assert(source.includes('Revisar instrumentos bloqueados o agregar destinos operables.'));
 assert(source.includes('Diagnóstico técnico por sleeve'));
 assert(source.includes('La composición global/local es secundaria. La validación operativa principal es RV/RF total.'));
-assert(source.includes('RV/RF total queda dentro de tolerancia operativa; no se bloquea por desvíos global/local.'));
+assert(source.includes('La implementación se aproxima al objetivo RV/RF.'));
 assert(source.includes('Para implementar esto falta un instrumento destino compatible en RV/RF'));
 assert(source.includes('Cross-currency bloqueado/manual'));
 assert(source.includes('El óptimo financiero queda fuera de este bloque'));

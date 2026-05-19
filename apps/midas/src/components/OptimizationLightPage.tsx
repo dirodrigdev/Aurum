@@ -4626,14 +4626,18 @@ export function OptimizationLightPage({
               </div>
               {Math.abs(implementationPlan.gapVsIdealRvPp) <= REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP + 1e-9 ? (
                 <div style={{ color: T.positive, fontSize: 10 }}>
-                  RV/RF total queda dentro de tolerancia operativa; no se bloquea por desvíos global/local.
+                  La implementación se aproxima al objetivo RV/RF.
                 </div>
               ) : (
                 <div style={{ color: T.warning, fontSize: 10 }}>
-                  Validar mix alcanzado antes de ejecutar. Las métricas de éxito deben recalcularse sobre el mix alcanzado, no sobre el objetivo ideal.
+                  {Math.abs(implementationPlan.gapVsIdealRvPp) > 3 + 1e-9
+                    ? `Implementación parcial: falta ${formatSignedPp(Math.abs(implementationPlan.gapVsIdealRvPp))} RV para llegar al objetivo. Revisar instrumentos bloqueados o agregar destinos operables.`
+                    : 'Validar mix alcanzado antes de ejecutar. Las métricas de éxito deben recalcularse sobre el mix alcanzado, no sobre el objetivo ideal.'}
                 </div>
               )}
-              {implementationMateriality?.sleeveValidation && implementationMateriality.sleeveValidation.maxGapPp > 1.5 ? (
+              {implementationMateriality?.sleeveValidation
+              && implementationMateriality.sleeveValidation.maxGapPp > 1.5
+              && Math.abs(implementationPlan.gapVsIdealRvPp) <= 3 + 1e-9 ? (
                 <div style={{ color: T.warning, fontSize: 10 }}>
                   La implementación alcanza aproximadamente el RV/RF objetivo, pero cambia la composición global/local. Validar el mix alcanzado antes de ejecutar.
                 </div>
