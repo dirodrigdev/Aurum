@@ -365,6 +365,178 @@ function buildUniverseWithPlanVitalCuenta2Destination(): InstrumentImplementatio
   };
 }
 
+function buildDirectionalRvUniverse(): InstrumentImplementationUniverse {
+  return {
+    snapshot: {
+      version: 1,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      rawJson: '{}',
+      instruments: [],
+      optimizerMetadata: null,
+      portfolioSummary: null,
+      methodology: null,
+    },
+    instruments: [
+      {
+        instrumentId: 'sura_multiactivo_agresivo',
+        name: 'SURA Multiactivo Agresivo',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0.8617, rf: 0.1383, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.8, local: 0.2 },
+        amountClp: 600_000_000,
+        amountNative: 600_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.6,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['sura_multiactivo_moderado', 'planvital_fondo_a_cuenta2'],
+        sameManagerCandidates: ['sura_multiactivo_moderado'],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'sura_multiactivo_moderado',
+        name: 'SURA Multiactivo Moderado',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0.5177, rf: 0.4823, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.6, local: 0.4 },
+        amountClp: 100_000_000,
+        amountNative: 100_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.1,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['sura_multiactivo_agresivo', 'planvital_fondo_a_cuenta2'],
+        sameManagerCandidates: ['sura_multiactivo_agresivo'],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'sura_renta_bonos_chile',
+        name: 'SURA Renta Bonos Chile',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0, rf: 1, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0, local: 1 },
+        amountClp: 300_000_000,
+        amountNative: 300_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.3,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['sura_multiactivo_agresivo', 'sura_multiactivo_moderado', 'planvital_fondo_a_cuenta2'],
+        sameManagerCandidates: ['sura_multiactivo_agresivo', 'sura_multiactivo_moderado'],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'planvital_fondo_a_cuenta2',
+        name: 'PlanVital Fondo A Cuenta 2',
+        vehicleType: 'Cuenta 2',
+        currency: 'CLP',
+        taxWrapper: 'cuenta_2',
+        isCaptive: false,
+        isSellable: false,
+        currentMixUsed: { rv: 0.8, rf: 0.2, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.75, local: 0.25 },
+        amountClp: 0,
+        amountNative: 0,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0,
+        role: 'voluntary',
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.6,
+        replacementConstraint: 'requires_account_opening',
+        sameCurrencyCandidates: [],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: false,
+      },
+    ],
+  };
+}
+
 function buildParams(): ModelParameters {
   return {
     label: 'Test',
@@ -1002,6 +1174,51 @@ const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
 assert(needsCrossCurrencyPlan);
 assert(needsCrossCurrencyPlan.transfers.some((row) => row.stage === 'cross_currency'));
 assert(needsCrossCurrencyPlan.warnings.some((warning) => warning.includes('cambio de moneda')));
+
+const directionalUpPlan = buildInstrumentImplementationPlan({
+  universe: buildDirectionalRvUniverse(),
+  targetWeights: buildWeights(1, 0, 0, 0),
+});
+assert(directionalUpPlan);
+assert(!directionalUpPlan.transfers.some((row) =>
+  row.fromInstrumentId === 'sura_multiactivo_agresivo' && row.toInstrumentId === 'sura_multiactivo_moderado'));
+assert(directionalUpPlan.transfers.every((row) => {
+  const source = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.fromInstrumentId);
+  const destination = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.toInstrumentId);
+  return (destination?.currentMixUsed?.rv ?? 0) > (source?.currentMixUsed?.rv ?? 0);
+}));
+
+const directionalUpWithPlanVitalOnlyDestination = buildInstrumentImplementationPlan({
+  universe: {
+    ...buildDirectionalRvUniverse(),
+    instruments: buildDirectionalRvUniverse().instruments.map((row) => (
+      row.instrumentId === 'sura_multiactivo_agresivo' || row.instrumentId === 'sura_multiactivo_moderado'
+        ? { ...row, decisionEligible: false }
+        : row
+    )),
+  },
+  targetWeights: buildWeights(1, 0, 0, 0),
+});
+assert(directionalUpWithPlanVitalOnlyDestination);
+assert(directionalUpWithPlanVitalOnlyDestination.transfers.some((row) =>
+  row.toInstrumentId === 'planvital_fondo_a_cuenta2'
+  && ['sura_renta_bonos_chile', 'sura_multiactivo_moderado'].includes(row.fromInstrumentId)));
+assert(directionalUpWithPlanVitalOnlyDestination.transfers.every((row) => {
+  const source = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.fromInstrumentId);
+  const destination = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.toInstrumentId);
+  return (destination?.currentMixUsed?.rv ?? 0) > (source?.currentMixUsed?.rv ?? 0);
+}));
+
+const directionalDownPlan = buildInstrumentImplementationPlan({
+  universe: buildDirectionalRvUniverse(),
+  targetWeights: buildWeights(0, 0, 1, 0),
+});
+assert(directionalDownPlan);
+assert(directionalDownPlan.transfers.every((row) => {
+  const source = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.fromInstrumentId);
+  const destination = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.toInstrumentId);
+  return (destination?.currentMixUsed?.rv ?? 0) < (source?.currentMixUsed?.rv ?? 0);
+}));
 
 const baseFingerprint = buildOptimizationInputFingerprint({
   sourceMode: 'base',

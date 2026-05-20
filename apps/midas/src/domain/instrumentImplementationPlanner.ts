@@ -12,6 +12,7 @@ import { REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from './optimizerPolicyConfi
 const clamp01 = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const MIN_MOVE_CLP = 10_000_000;
 const MIN_MOVE_WEIGHT_FLOOR = 0.0075; // 0.75%
+const RV_DIRECTION_EPS = 1e-6;
 
 type ImplementationInstrument = InstrumentImplementationUniverse['instruments'][number];
 
@@ -307,6 +308,10 @@ export function buildInstrumentImplementationPlan(input: {
 
         const sourceRv = deriveRvOfInstrument(source);
         const destinationRv = deriveRvOfInstrument(destination);
+        const improvesRvDirection = movingToHigherRv
+          ? destinationRv > sourceRv + RV_DIRECTION_EPS
+          : destinationRv < sourceRv - RV_DIRECTION_EPS;
+        if (!improvesRvDirection) continue;
         const rvLiftPerWeight = Math.abs(destinationRv - sourceRv);
         if (rvLiftPerWeight <= 1e-6) continue;
 
