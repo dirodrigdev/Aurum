@@ -902,6 +902,9 @@ assert(needsCrossManagerPlan.destinationDiagnostics.some((row) =>
 const enrichedPlanVitalUniverse = buildImplementationUniverseInstruments(buildUniverseNeedingCrossManager().instruments);
 const syntheticPlanVitalCuenta2 = enrichedPlanVitalUniverse.instruments.find((row) => row.instrumentId === 'planvital_fondo_a_cuenta2');
 assert(syntheticPlanVitalCuenta2);
+assert.equal(enrichedPlanVitalUniverse.diagnostics.planvitalMandatoryDetected, true);
+assert.equal(enrichedPlanVitalUniverse.diagnostics.planvitalCuenta2SyntheticCreated, true);
+assert.equal(enrichedPlanVitalUniverse.diagnostics.matchedSourceInstrumentId, 'planvital-fondo-a');
 assert.equal(syntheticPlanVitalCuenta2.name, 'PlanVital Fondo A Cuenta 2');
 assert.equal(syntheticPlanVitalCuenta2.taxWrapper, 'cuenta_2');
 assert.equal(syntheticPlanVitalCuenta2.weightPortfolio, 0);
@@ -914,6 +917,37 @@ assert.equal(
   enrichedPlanVitalUniverse.instruments.find((row) => row.instrumentId === 'planvital-fondo-a')?.decisionEligible,
   false,
 );
+
+const relaxedPlanVitalUniverse = buildImplementationUniverseInstruments(
+  buildUniverseNeedingCrossManager().instruments.map((row) => (
+    row.instrumentId === 'planvital-fondo-a'
+      ? {
+          ...row,
+          name: 'PlanVital Fondo A',
+          isCaptive: null,
+          decisionEligible: null,
+          role: null,
+          taxWrapper: null,
+          replacementConstraint: null,
+        }
+      : row
+  )),
+);
+const relaxedSyntheticPlanVitalCuenta2 = relaxedPlanVitalUniverse.instruments.find((row) => row.instrumentId === 'planvital_fondo_a_cuenta2');
+assert(relaxedSyntheticPlanVitalCuenta2);
+assert.equal(relaxedPlanVitalUniverse.diagnostics.planvitalCuenta2SyntheticCreated, true);
+assert.equal(relaxedPlanVitalUniverse.diagnostics.matchedSourceInstrumentName, 'PlanVital Fondo A');
+
+const alreadyModeledPlanVitalUniverse = buildImplementationUniverseInstruments(buildUniverseWithPlanVitalCuenta2Destination().instruments);
+assert.equal(alreadyModeledPlanVitalUniverse.instruments.filter((row) => row.instrumentId === 'planvital_fondo_a_cuenta2').length, 0);
+assert.equal(alreadyModeledPlanVitalUniverse.diagnostics.planvitalCuenta2SyntheticCreated, false);
+assert(alreadyModeledPlanVitalUniverse.diagnostics.reasonIfNotCreated?.includes('Ya existe'));
+
+const nonPlanVitalUniverse = buildImplementationUniverseInstruments(
+  buildImplementationUniverse().instruments.map((row) => ({ ...row, name: row.name?.replace('PlanVital', 'Scotia') ?? row.name })),
+);
+assert.equal(nonPlanVitalUniverse.instruments.some((row) => row.instrumentId === 'planvital_fondo_a_cuenta2'), false);
+assert.equal(nonPlanVitalUniverse.diagnostics.planvitalMandatoryDetected, false);
 
 const planVitalCuenta2Plan = buildInstrumentImplementationPlan({
   universe: buildUniverseWithPlanVitalCuenta2Destination(),
@@ -1140,6 +1174,9 @@ assert(source.includes('sourceMode'));
 assert(source.includes('Traza diagnóstica de Optimización'));
 assert(source.includes('JSON read-only del flujo Express'));
 assert(source.includes('decisionDiagnosticTrace'));
+assert(source.includes('implementationLoaderDiagnostics'));
+assert(source.includes('planvitalCuenta2'));
+assert(source.includes('loaded.diagnostics.planvitalCuenta2'));
 assert(source.includes('decisionResultMeta'));
 assert(source.includes('hasStaleOptimizationMeta'));
 assert(source.includes('Resultado anterior: calculado con'));

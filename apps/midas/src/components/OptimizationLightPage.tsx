@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, ScenarioVariantId, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
+import type { PlanVitalCuenta2LoaderDiagnostic } from '../domain/instrumentImplementationLoader';
 import { buildInstrumentImplementationPlan } from '../domain/instrumentImplementationPlanner';
 import type { InstrumentImplementationPlan } from '../domain/instrumentImplementationTypes';
 import {
@@ -311,6 +312,9 @@ type OptimizationDecisionTrace = {
   implementationTargetMix: string | null;
   implementationReachedMix: string | null;
   implementationGap: number | null;
+  implementationLoaderDiagnostics: {
+    planvitalCuenta2: PlanVitalCuenta2LoaderDiagnostic | null;
+  };
   notes: string[];
 };
 
@@ -2919,6 +2923,9 @@ export function OptimizationLightPage({
       implementationTargetMix: null,
       implementationReachedMix: null,
       implementationGap: null,
+      implementationLoaderDiagnostics: {
+        planvitalCuenta2: null,
+      },
       notes: [
         'Indicar si Express/Zoom/Confirmation usan candidatos distintos',
         'Indicar si 100/0 quedó fuera del shortlist de Zoom o Confirmation',
@@ -3768,6 +3775,13 @@ export function OptimizationLightPage({
       });
       if (!plan) throw new Error('No se pudo construir el plan de implementación del ganador final.');
       if (activeDecisionFingerprintRef.current !== activeOptimizationInputFingerprint) return;
+      setDecisionDiagnosticTrace((previous) => previous ? ({
+        ...previous,
+        implementationLoaderDiagnostics: {
+          ...previous.implementationLoaderDiagnostics,
+          planvitalCuenta2: loaded.diagnostics.planvitalCuenta2,
+        },
+      }) : previous);
       setFinalImplementationPlan(plan);
       setFinalImplementationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
@@ -3827,6 +3841,13 @@ export function OptimizationLightPage({
       });
       if (!plan) throw new Error('No se pudo construir un plan de implementación utilizable.');
       if (activeDecisionFingerprintRef.current !== activeOptimizationInputFingerprint) return;
+      setDecisionDiagnosticTrace((previous) => previous ? ({
+        ...previous,
+        implementationLoaderDiagnostics: {
+          ...previous.implementationLoaderDiagnostics,
+          planvitalCuenta2: loaded.diagnostics.planvitalCuenta2,
+        },
+      }) : previous);
       setImplementationPlan(plan);
       setImplementationMeta(buildOptimizationResultMeta({
         inputFingerprint: activeOptimizationInputFingerprint,
