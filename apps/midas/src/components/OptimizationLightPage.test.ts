@@ -737,6 +737,18 @@ function buildParams(): ModelParameters {
 
 function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): InstrumentImplementationPlan {
   return {
+    planLevel: 'clean',
+    alternativePlans: [
+      {
+        planLevel: 'clean',
+        reachableMix: { rv: 0.6, rf: 0.4 },
+        gapVsIdealRvPp: 0.8,
+        operationCount: 1,
+        movedClp: 15_100_000,
+        maxFrictionUsed: 'clean',
+        warnings: [],
+      },
+    ],
     targetMixIdeal: { rv: 0.6, rf: 0.4 },
     currentMix: { rv: 0.592, rf: 0.408 },
     reachableMix: { rv: 0.6, rf: 0.4 },
@@ -804,6 +816,8 @@ function buildPlan(overrides?: Partial<InstrumentImplementationPlan>): Instrumen
     warnings: [],
     baseTargetWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
     reachableWeights: buildWeights(0.35, 0.25, 0.2, 0.2),
+    residualRows: [],
+    universeAudit: [],
     ...overrides,
   };
 }
@@ -1305,16 +1319,24 @@ const needsCrossCurrencyPlan = buildInstrumentImplementationPlan({
   targetWeights: buildWeights(0.95, 0, 0.05, 0),
 });
 assert(needsCrossCurrencyPlan);
+assert.equal(needsCrossCurrencyPlan.planLevel, 'cross_currency');
 assert(needsCrossCurrencyPlan.transfers.some((row) => row.stage === 'cross_currency'));
 assert(needsCrossCurrencyPlan.warnings.some((warning) => warning.includes('cambio de moneda')));
+assert(needsCrossCurrencyPlan.alternativePlans.some((row) => row.planLevel === 'clean'));
+assert(needsCrossCurrencyPlan.alternativePlans.some((row) => row.planLevel === 'cross_manager'));
 
 const directionalUpPlan = buildInstrumentImplementationPlan({
   universe: buildDirectionalRvUniverse(),
   targetWeights: buildWeights(1, 0, 0, 0),
 });
 assert(directionalUpPlan);
+assert.equal(directionalUpPlan.planLevel, 'clean');
 assert(!directionalUpPlan.transfers.some((row) =>
   row.fromInstrumentId === 'sura_multiactivo_agresivo' && row.toInstrumentId === 'sura_multiactivo_moderado'));
+assert(directionalUpPlan.transfers.every((row) => row.toInstrumentId === 'sura_multiactivo_agresivo'));
+assert(directionalUpPlan.destinationDiagnostics.some((row) =>
+  row.instrumentId === 'planvital_fondo_a_cuenta2'
+  && row.reason.includes('mayor RV efectivo')));
 assert(directionalUpPlan.transfers.every((row) => {
   const source = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.fromInstrumentId);
   const destination = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.toInstrumentId);
@@ -1358,14 +1380,23 @@ const stageCarryoverPlan = buildInstrumentImplementationPlan({
   targetWeights: buildWeights(1, 0, 0, 0),
 });
 assert(stageCarryoverPlan);
-assert(stageCarryoverPlan.transfers.some((row) =>
-  row.stage === 'clean'
-  && row.fromInstrumentId === 'manager-a-rf'
-  && row.toInstrumentId === 'manager-a-mid'));
+assert.equal(stageCarryoverPlan.planLevel, 'cross_manager');
 assert(stageCarryoverPlan.transfers.some((row) =>
   row.stage === 'cross_manager'
-  && row.fromInstrumentId === 'manager-a-mid'
+  && row.fromInstrumentId === 'manager-a-rf'
   && row.toInstrumentId === 'manager-b-high'));
+assert(!stageCarryoverPlan.transfers.some((row) => row.toInstrumentId === 'manager-a-mid'));
+assert(stageCarryoverPlan.alternativePlans.some((row) => row.planLevel === 'clean'));
+assert(stageCarryoverPlan.alternativePlans.some((row) => row.planLevel === 'cross_manager'));
+const cleanAlternative = stageCarryoverPlan.alternativePlans.find((row) => row.planLevel === 'clean');
+const crossManagerAlternative = stageCarryoverPlan.alternativePlans.find((row) => row.planLevel === 'cross_manager');
+assert(cleanAlternative);
+assert(crossManagerAlternative);
+assert(Math.abs(crossManagerAlternative.gapVsIdealRvPp) <= Math.abs(cleanAlternative.gapVsIdealRvPp));
+assert(stageCarryoverPlan.residualRows.length > 0);
+assert(stageCarryoverPlan.residualRows.some((row) => row.reason.length > 0));
+assert(stageCarryoverPlan.universeAudit.some((row) => row.name.includes('Global66')));
+assert(stageCarryoverPlan.universeAudit.some((row) => row.name.includes('Wise')));
 
 const baseFingerprint = buildOptimizationInputFingerprint({
   sourceMode: 'base',
@@ -1557,7 +1588,10 @@ assert(source.includes('Qué cambia frente a tu mix actual'));
 assert(source.includes('Comparación confirmada'));
 assert(source.includes('Comparación preliminar'));
 assert(source.includes('Traspasos sugeridos por instrumento'));
+assert(source.includes('Comparación de planes globales'));
 assert(source.includes('Candidatos RV no usados / parcialmente usados'));
+assert(source.includes('RF residual explicada por instrumento / bloque'));
+assert(source.includes('Auditoría de universo de implementación'));
 assert(source.includes('No implementable automáticamente por instrumento'));
 assert(source.includes('No se encontraron traspasos ejecutables con las restricciones actuales.'));
 assert(source.includes('Mix objetivo vs mix alcanzado estimado'));

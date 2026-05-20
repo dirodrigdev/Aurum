@@ -4623,12 +4623,31 @@ export function OptimizationLightPage({
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
                     Operaciones: {implementationPlan.transfers.length} · Total a mover: {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'}
                   </div>
-                  <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    Objetivo {formatMixPair(implementationPlan.targetMixIdeal)} · Alcanzado {formatMixPair(implementationPlan.reachableMix)} · Gap restante {formatSignedPp(implementationPlan.gapVsIdealRvPp)} · Estado: {statusLabel}
-                  </div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Objetivo {formatMixPair(implementationPlan.targetMixIdeal)} · Alcanzado {formatMixPair(implementationPlan.reachableMix)} · Gap restante {formatSignedPp(implementationPlan.gapVsIdealRvPp)} · Estado: {statusLabel}
                 </div>
-              );
-            })()}
+                <div style={{ color: T.textMuted, fontSize: 10 }}>
+                  Plan ganador: {implementationStageLabel(implementationPlan.planLevel)}.
+                </div>
+              </div>
+            );
+          })()}
+            {implementationPlan.alternativePlans.length ? (
+              <div style={{ display: 'grid', gap: 4, border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Comparación de planes globales</div>
+                {implementationPlan.alternativePlans.map((plan) => (
+                  <div key={`alt-plan-${plan.planLevel}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1.2fr) repeat(4, minmax(0, 1fr))', gap: 8, color: T.textMuted, fontSize: 10 }}>
+                    <div style={{ color: plan.planLevel === implementationPlan.planLevel ? T.textPrimary : T.textSecondary, fontWeight: 700 }}>
+                      {implementationStageLabel(plan.planLevel)}{plan.planLevel === implementationPlan.planLevel ? ' · ganador' : ''}
+                    </div>
+                    <div>{formatMixPair(plan.reachableMix)}</div>
+                    <div>Gap {formatSignedPp(plan.gapVsIdealRvPp)}</div>
+                    <div>{plan.operationCount} ops</div>
+                    <div>{formatClpShort(plan.movedClp)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>Mix actual</div>
@@ -4768,6 +4787,41 @@ export function OptimizationLightPage({
                 </div>
               </div>
             ) : null}
+            {implementationPlan.residualRows.length ? (
+              <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>RF residual explicada por instrumento / bloque</div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, color: T.textSecondary }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
+                        <th style={{ padding: '6px 6px' }}>Instrumento / bloque</th>
+                        <th style={{ padding: '6px 6px' }}>Monto post-plan</th>
+                        <th style={{ padding: '6px 6px' }}>RV</th>
+                        <th style={{ padding: '6px 6px' }}>RF</th>
+                        <th style={{ padding: '6px 6px' }}>RF CLP</th>
+                        <th style={{ padding: '6px 6px' }}>Movible</th>
+                        <th style={{ padding: '6px 6px' }}>Categoría</th>
+                        <th style={{ padding: '6px 6px' }}>Razón</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {implementationPlan.residualRows.map((row) => (
+                        <tr key={`residual-${row.instrumentId}`} style={{ borderBottom: `1px solid ${T.border}` }}>
+                          <td style={{ padding: '6px 6px' }}>{row.name}</td>
+                          <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{formatClpShort(row.postAmountClp)}</td>
+                          <td style={{ padding: '6px 6px' }}>{formatPctValue(row.rvPost)}</td>
+                          <td style={{ padding: '6px 6px' }}>{formatPctValue(row.rfPost)}</td>
+                          <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{formatClpShort(row.rfClpEquivalent)}</td>
+                          <td style={{ padding: '6px 6px' }}>{row.movable ? 'Sí' : 'No'}</td>
+                          <td style={{ padding: '6px 6px' }}>{row.category}</td>
+                          <td style={{ padding: '6px 6px' }}>{row.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
             <div style={{ display: 'grid', gap: 7, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
               <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>Mix objetivo vs mix alcanzado estimado</div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
@@ -4835,6 +4889,18 @@ export function OptimizationLightPage({
                     <div>Gap {formatSignedPp((row.target - row.postTrade) * 100)}</div>
                   </div>
                 ))}
+              </details>
+            ) : null}
+            {implementationPlan.universeAudit.length ? (
+              <details style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surfaceEl }}>
+                <summary style={{ color: T.textPrimary, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Auditoría de universo de implementación</summary>
+                <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                  {implementationPlan.universeAudit.map((row) => (
+                    <div key={`audit-${row.instrumentId}`} style={{ color: T.textMuted, fontSize: 10 }}>
+                      {row.name}: {row.includedAsSource ? 'fuente' : 'no fuente'} / {row.includedAsDestination ? 'destino' : 'no destino'} · {formatClpShort(row.amountClp)} · {row.currency ?? 'ND'} · RV {formatPctValue(row.rv)} / RF {formatPctValue(row.rf)} · {row.reason}
+                    </div>
+                  ))}
+                </div>
               </details>
             ) : null}
           </div>

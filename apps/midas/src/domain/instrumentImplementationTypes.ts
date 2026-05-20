@@ -35,6 +35,47 @@ export type InstrumentImplementationDestinationDiagnostic = {
   reason: string;
 };
 
+export type InstrumentImplementationResidualCategory =
+  | 'embedded_rf'
+  | 'direct_rf'
+  | 'cash'
+  | 'captive'
+  | 'outside_universe'
+  | 'bucket_protected'
+  | 'currency_restricted'
+  | 'manager_restricted'
+  | 'not_selected'
+  | 'no_residual';
+
+export type InstrumentImplementationResidualRow = {
+  instrumentId: string;
+  name: string;
+  postAmountClp: number;
+  rvPost: number;
+  rfPost: number;
+  rfClpEquivalent: number;
+  movable: boolean;
+  protected: boolean;
+  category: InstrumentImplementationResidualCategory;
+  reason: string;
+};
+
+export type InstrumentImplementationUniverseAuditRow = {
+  instrumentId: string;
+  name: string;
+  blockLabel: string;
+  amountClp: number;
+  currency: string | null;
+  rv: number;
+  rf: number;
+  movable: boolean;
+  protected: boolean;
+  includedAsSource: boolean;
+  includedAsDestination: boolean;
+  reason: string;
+  fileFilter: string;
+};
+
 export type InstrumentImplementationTransfer = {
   fromInstrumentId: string;
   fromName: string;
@@ -55,7 +96,19 @@ export type InstrumentImplementationTransfer = {
   constraints: InstrumentImplementationConstraintFlags;
 };
 
+export type InstrumentImplementationAlternativePlanSummary = {
+  planLevel: InstrumentImplementationStage;
+  reachableMix: { rv: number; rf: number };
+  gapVsIdealRvPp: number;
+  operationCount: number;
+  movedClp: number;
+  maxFrictionUsed: InstrumentImplementationStage;
+  warnings: string[];
+};
+
 export type InstrumentImplementationPlan = {
+  planLevel: InstrumentImplementationStage;
+  alternativePlans: InstrumentImplementationAlternativePlanSummary[];
   targetMixIdeal: { rv: number; rf: number };
   currentMix: { rv: number; rf: number };
   reachableMix: { rv: number; rf: number };
@@ -69,4 +122,6 @@ export type InstrumentImplementationPlan = {
   warnings: string[];
   baseTargetWeights: PortfolioWeights;
   reachableWeights: PortfolioWeights;
+  residualRows: InstrumentImplementationResidualRow[];
+  universeAudit: InstrumentImplementationUniverseAuditRow[];
 };
