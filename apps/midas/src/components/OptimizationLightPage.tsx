@@ -3662,6 +3662,25 @@ export function OptimizationLightPage({
       ].filter(Boolean) as string[],
     };
   }, [implementationMateriality, implementationPlan]);
+  const topHeroCurrentMix = useMemo(
+    () => formatMixPair({
+      rv: Math.max(0, Math.min(1, activeParams.weights.rvGlobal + activeParams.weights.rvChile)),
+      rf: Math.max(0, Math.min(1, activeParams.weights.rfGlobal + activeParams.weights.rfChile)),
+    }),
+    [activeParams.weights],
+  );
+  const topHeroRecommendedMix = actionableRecommendationCandidate?.mixLabel ?? '—';
+  const topHeroImplementableMix = implementationPlan ? formatMixPair(implementationPlan.reachableMix) : '—';
+  const topHeroSummaryLine = useMemo(() => {
+    if (!implementationPlan || !implementationMateriality) return null;
+    const parts = [
+      `${implementationPlan.transfers.length} operaciones`,
+      `${formatClpShort(implementationMateriality.totalTradeClp)} a mover`,
+      `gap restante ${formatSignedPp(implementationPlan.gapVsIdealRvPp)} RV`,
+    ];
+    if (implementationPlan.restrictionsApplied.crossCurrency) parts.push('requiere cambio de moneda');
+    return parts.join(' · ');
+  }, [implementationMateriality, implementationPlan]);
   const activeScenarioAfterImplementation = useMemo(() => {
     if (!activeScenarioAfterPhase2) {
       return {
@@ -4459,6 +4478,25 @@ export function OptimizationLightPage({
             </details>
           </div>
         ) : null}
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {[
+              { label: 'Mix actual', value: topHeroCurrentMix },
+              { label: 'Mix recomendado', value: topHeroRecommendedMix },
+              { label: 'Mix implementable', value: topHeroImplementableMix },
+            ].map((card) => (
+              <div key={`top-mix-card-${card.label}`} style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, background: T.surfaceEl, display: 'grid', gap: 4 }}>
+                <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 800 }}>{card.label}</div>
+                <div style={{ color: T.textPrimary, fontSize: 26, fontWeight: 900, lineHeight: 1.1 }}>{card.value}</div>
+              </div>
+            ))}
+          </div>
+          {topHeroSummaryLine ? (
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+              {topHeroSummaryLine}
+            </div>
+          ) : null}
+        </div>
         {recommendationIsOfficial ? (
           <>
             <div style={{
