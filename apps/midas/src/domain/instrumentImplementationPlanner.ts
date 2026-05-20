@@ -222,6 +222,7 @@ export function buildInstrumentImplementationPlan(input: {
         ? deriveRvOfInstrument(a) - deriveRvOfInstrument(b)
         : deriveRvOfInstrument(b) - deriveRvOfInstrument(a);
     });
+  const sourceUniverseById = new Map(sources.map((item) => [item.instrumentId, item]));
 
   const destinations = [...destinationUniverse]
     .filter((item) => movingToHigherRv ? deriveRvOfInstrument(item) > currentRv + 1e-6 : deriveRvOfInstrument(item) < currentRv - 1e-6)
@@ -299,6 +300,13 @@ export function buildInstrumentImplementationPlan(input: {
       if (sourceWeight <= 1e-6 || remainingDelta <= 1e-6) continue;
 
       const orderedDestinations = [...destinations].sort((a, b) => scorePair(source, b) - scorePair(source, a));
+      orderedDestinations.sort((a, b) => {
+        const rvA = deriveRvOfInstrument(a);
+        const rvB = deriveRvOfInstrument(b);
+        if (movingToHigherRv && Math.abs(rvB - rvA) > 1e-9) return rvB - rvA;
+        if (!movingToHigherRv && Math.abs(rvA - rvB) > 1e-9) return rvA - rvB;
+        return scorePair(source, b) - scorePair(source, a);
+      });
       for (const destination of orderedDestinations) {
         if (remainingDelta <= 1e-6) break;
         if (source.instrumentId === destination.instrumentId) continue;
@@ -377,6 +385,11 @@ export function buildInstrumentImplementationPlan(input: {
 
         sourceRemaining.set(source.instrumentId, Math.max(0, currentSourceRemaining - moveWeight));
         destinationCapacity.set(destination.instrumentId, Math.max(0, capacity - moveWeight));
+        const destinationAsSource = sourceUniverseById.get(destination.instrumentId);
+        if (destinationAsSource) {
+          const destinationRemaining = sourceRemaining.get(destination.instrumentId) ?? 0;
+          sourceRemaining.set(destination.instrumentId, clamp01(destinationRemaining + moveWeight));
+        }
         remainingDelta = Math.max(0, remainingDelta - (moveWeight * rvLiftPerWeight));
 
         const destinationDiagnostic = destinationDiagnosticsMap.get(destination.instrumentId);

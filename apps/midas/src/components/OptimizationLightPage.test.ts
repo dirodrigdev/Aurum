@@ -537,6 +537,139 @@ function buildDirectionalRvUniverse(): InstrumentImplementationUniverse {
   };
 }
 
+function buildStageCarryoverUniverse(): InstrumentImplementationUniverse {
+  return {
+    snapshot: {
+      version: 1,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      rawJson: '{}',
+      instruments: [],
+      optimizerMetadata: null,
+      portfolioSummary: null,
+      methodology: null,
+    },
+    instruments: [
+      {
+        instrumentId: 'manager-a-rf',
+        name: 'ManagerA RF',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0.1, rf: 0.9, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.4, local: 0.6 },
+        amountClp: 800_000_000,
+        amountNative: 800_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.8,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['manager-a-mid'],
+        sameManagerCandidates: ['manager-a-mid'],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'manager-a-mid',
+        name: 'ManagerA Mid RV',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0.7, rf: 0.3, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.7, local: 0.3 },
+        amountClp: 10_000_000,
+        amountNative: 10_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.01,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['manager-a-rf', 'manager-b-high'],
+        sameManagerCandidates: ['manager-a-rf'],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+      {
+        instrumentId: 'manager-b-high',
+        name: 'ManagerB High RV',
+        vehicleType: 'fund',
+        currency: 'CLP',
+        taxWrapper: null,
+        isCaptive: false,
+        isSellable: true,
+        currentMixUsed: { rv: 0.95, rf: 0.05, cash: 0, other: 0 },
+        legalRange: null,
+        legalRangeMix: null,
+        historicalUsedRange: null,
+        optimizerSafeRange: null,
+        operationalRange: null,
+        observedWindowMonths: null,
+        observedFrom: null,
+        observedTo: null,
+        estimationMethod: null,
+        confidenceScore: null,
+        sourcePreference: null,
+        exposureUsed: { global: 0.9, local: 0.1 },
+        amountClp: 190_000_000,
+        amountNative: 190_000_000,
+        amountNativeCurrency: 'CLP',
+        fxToClpUsed: 1,
+        weightPortfolio: 0.19,
+        role: null,
+        structuralMixDriver: null,
+        estimatedMixImpactPoints: 0,
+        replaceabilityScore: 0.8,
+        replacementConstraint: 'low',
+        sameCurrencyCandidates: ['manager-a-mid', 'manager-a-rf'],
+        sameManagerCandidates: [],
+        sameTaxWrapperCandidates: [],
+        decisionEligible: true,
+        missingCriticalFields: [],
+        warnings: [],
+        usable: true,
+      },
+    ],
+  };
+}
+
 function buildParams(): ModelParameters {
   return {
     label: 'Test',
@@ -1219,6 +1352,20 @@ assert(directionalDownPlan.transfers.every((row) => {
   const destination = buildDirectionalRvUniverse().instruments.find((item) => item.instrumentId === row.toInstrumentId);
   return (destination?.currentMixUsed?.rv ?? 0) < (source?.currentMixUsed?.rv ?? 0);
 }));
+
+const stageCarryoverPlan = buildInstrumentImplementationPlan({
+  universe: buildStageCarryoverUniverse(),
+  targetWeights: buildWeights(1, 0, 0, 0),
+});
+assert(stageCarryoverPlan);
+assert(stageCarryoverPlan.transfers.some((row) =>
+  row.stage === 'clean'
+  && row.fromInstrumentId === 'manager-a-rf'
+  && row.toInstrumentId === 'manager-a-mid'));
+assert(stageCarryoverPlan.transfers.some((row) =>
+  row.stage === 'cross_manager'
+  && row.fromInstrumentId === 'manager-a-mid'
+  && row.toInstrumentId === 'manager-b-high'));
 
 const baseFingerprint = buildOptimizationInputFingerprint({
   sourceMode: 'base',
