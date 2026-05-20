@@ -2112,6 +2112,7 @@ export function OptimizationLightPage({
   const [decisionDiagnosticTrace, setDecisionDiagnosticTrace] = useState<OptimizationDecisionTrace | null>(null);
   const [decisionExecutionState, setDecisionExecutionState] = useState<DecisionExecutionState>('idle');
   const [decisionBackgroundHint, setDecisionBackgroundHint] = useState<string | null>(null);
+  const [pipelineIntent, setPipelineIntent] = useState<'idle' | 'express' | 'confirm_implementation' | 'full'>('idle');
   const [technicalDiagnosticsOpen, setTechnicalDiagnosticsOpen] = useState(false);
   const [lastExpressCandidate, setLastExpressCandidate] = useState<RvRfDecisionCandidate | null>(null);
   const [lastZoomCandidate, setLastZoomCandidate] = useState<RvRfDecisionCandidate | null>(null);
@@ -3211,6 +3212,19 @@ export function OptimizationLightPage({
     void runDecisionProfiles();
   }, [decisionProfilesRunning]);
 
+  const runExpressSimulation = useCallback(() => {
+    if (decisionProfilesRunning) return;
+    setPipelineIntent('express');
+    void runDecisionProfiles();
+  }, [decisionProfilesRunning]);
+
+  const runCompleteRecommendation = useCallback(() => {
+    if (decisionProfilesRunning || implementationRunning) return;
+    setPipelineIntent('full');
+    void runDecisionProfiles();
+  }, [decisionProfilesRunning, implementationRunning]);
+
+
   const modeCards = useMemo(
     () => ([
       { id: 'light', label: 'Light', active: mode === 'light', enabled: true, hint: 'Flujo recomendado' },
@@ -3585,6 +3599,69 @@ export function OptimizationLightPage({
         return `${direction} ${row.label} en ${formatClpShort(amountClp)} (${formatSignedPp(row.gapPp)}).`;
       });
   }, [activeParams.capitalInitial, implementationMateriality]);
+  const fullFlowStatusLabel = useMemo(() => {
+    if (implementationRunning) return 'Calculando implementación…';
+    if (decisionProfilesRunning) {
+      if (decisionFlowStatus?.stage === 'express') return 'Buscando candidatos…';
+      if (decisionFlowStatus?.stage === 'zoom') return 'Refinando recomendación…';
+      if (decisionFlowStatus?.stage === 'confirmed') return 'Confirmando candidato…';
+    }
+    if ((pipelineIntent === 'full' || pipelineIntent === 'confirm_implementation') && implementationPlan && implementationResultIsCurrent) {
+      return 'Plan implementable listo';
+    }
+    return 'Calcular recomendación completa';
+  }, [decisionFlowStatus?.stage, decisionProfilesRunning, implementationPlan, implementationResultIsCurrent, implementationRunning, pipelineIntent]);
+  const expressStatusLabel = useMemo(() => (
+    decisionProfilesRunning && pipelineIntent === 'express' ? 'Simulación express…' : 'Simulación express'
+  ), [decisionProfilesRunning, pipelineIntent]);
+  const showExpressConfirmCta = Boolean(
+    !decisionProfilesRunning
+    && !implementationRunning
+    && decisionFlowStatus?.stage === 'zoom'
+    && actionableRecommendationCandidate
+    && decisionResultIsCurrent,
+  );
+  const decisionStatusSummary = useMemo(() => {
+    if (!decisionFlowStatus) return null;
+    const label = decisionFlowStatus.stage === 'confirmed'
+      ? 'Confirmación'
+      : decisionFlowStatus.stage === 'zoom'
+        ? 'Zoom'
+        : 'Express';
+    return `${label}: ${decisionFlowStatus.candidateCount} candidatos evaluados · ${decisionFlowStatus.nSim.toLocaleString('es-ES')} simulaciones por candidato`;
+  }, [decisionFlowStatus]);
+  const implementationHero = useMemo(() => {
+    if (!implementationPlan || !implementationMateriality) return null;
+    const destinationTotals = new Map<string, { name: string; amount: number; rv: number }>();
+    implementationPlan.transfers.forEach((transfer) => {
+      const previous = destinationTotals.get(transfer.toInstrumentId);
+      const diagnostic = implementationPlan.destinationDiagnostics.find((row) => row.instrumentId === transfer.toInstrumentId);
+      destinationTotals.set(transfer.toInstrumentId, {
+        name: transfer.toName,
+        amount: (previous?.amount ?? 0) + transfer.amountClpMoved,
+        rv: diagnostic?.rv ?? 0,
+      });
+    });
+    const bestDestination = [...destinationTotals.values()].sort((a, b) => b.amount - a.amount)[0] ?? null;
+    const embeddedRf = implementationPlan.residualRows.find((row) => row.category === 'embedded_rf');
+    const captiveRf = implementationPlan.residualRows.find((row) => row.category === 'captive');
+    const whyNotAtTarget = [
+      embeddedRf ? `${embeddedRf.name} mantiene RF interna` : null,
+      captiveRf ? `${captiveRf.name} queda cautivo` : null,
+    ].filter(Boolean).join(' y ');
+    return {
+      title: 'Plan implementable recomendado',
+      headline: `${implementationStageLabel(implementationPlan.planLevel)} · ${formatMixPair(implementationPlan.reachableMix)}`,
+      subheadline: `${implementationPlan.transfers.length} operaciones · ${formatClpShort(implementationMateriality.totalTradeClp)} · gap restante ${formatSignedPp(implementationPlan.gapVsIdealRvPp)} RV`,
+      body: `Es el plan que más se acerca al objetivo teórico ${formatMixPair(implementationPlan.targetMixIdeal)}.${whyNotAtTarget ? ` No llega a ${Math.round(implementationPlan.targetMixIdeal.rv * 100)}% RV porque ${whyNotAtTarget}.` : ''}`,
+      chips: [
+        `Objetivo teórico: ${formatMixPair(implementationPlan.targetMixIdeal)}`,
+        bestDestination ? `Mejor destino: ${bestDestination.name} · RV ${(bestDestination.rv * 100).toFixed(1)}%` : null,
+        implementationPlan.residualRows.length ? 'RF residual explicada' : null,
+        implementationPlan.restrictionsApplied.crossCurrency ? 'Requiere cambio de moneda' : null,
+      ].filter(Boolean) as string[],
+    };
+  }, [implementationMateriality, implementationPlan]);
   const activeScenarioAfterImplementation = useMemo(() => {
     if (!activeScenarioAfterPhase2) {
       return {
@@ -3629,6 +3706,9 @@ export function OptimizationLightPage({
       roleLabel: 'Escenario activo',
     };
   }, [activeScenarioAfterPhase2, implementationPlan, realisticValidation]);
+  React.useEffect(() => {
+    setPipelineIntent('idle');
+  }, [activeOptimizationInputFingerprint]);
   const phase3Input = useMemo(() => {
     if (!activeScenarioAfterImplementation.row) {
       return {
@@ -3863,6 +3943,59 @@ export function OptimizationLightPage({
       setImplementationRunning(false);
     }
   }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, decisionImplementationReady, effectiveSourceMode, implementationRunning, phase2ImplementationSelectedRow]);
+
+  const runConfirmAndImplementation = useCallback(() => {
+    if (decisionProfilesRunning || implementationRunning) return;
+    setPipelineIntent('confirm_implementation');
+    if (decisionFlowStatus?.stage === 'confirmed') {
+      void runImplementation();
+      return;
+    }
+    void runDecisionConfirmation();
+  }, [decisionFlowStatus?.stage, decisionProfilesRunning, implementationRunning, runDecisionConfirmation, runImplementation]);
+  React.useEffect(() => {
+    if (pipelineIntent === 'idle') return;
+    if (decisionProfilesRunning || implementationRunning) return;
+    if (decisionExecutionState === 'interrupted' || decisionProfilesError || implementationError) {
+      setPipelineIntent('idle');
+      return;
+    }
+    if (pipelineIntent === 'express') {
+      if (decisionFlowStatus?.stage === 'zoom' && decisionResultIsCurrent) setPipelineIntent('idle');
+      return;
+    }
+    if (pipelineIntent === 'full' || pipelineIntent === 'confirm_implementation') {
+      if (decisionFlowStatus?.stage !== 'confirmed') {
+        if (actionableRecommendationCandidate) {
+          void runDecisionConfirmation();
+        }
+        return;
+      }
+      if (decisionImplementationReady && phase2ImplementationSelectedRow && (!implementationPlan || !implementationResultIsCurrent)) {
+        void runImplementation();
+        return;
+      }
+      if (implementationPlan && implementationResultIsCurrent) {
+        setPipelineIntent('idle');
+      }
+    }
+  }, [
+    actionableRecommendationCandidate,
+    decisionExecutionState,
+    decisionFlowStatus?.stage,
+    decisionImplementationReady,
+    decisionProfilesError,
+    decisionProfilesRunning,
+    decisionResultIsCurrent,
+    implementationError,
+    implementationPlan,
+    implementationResultIsCurrent,
+    implementationRunning,
+    phase2ImplementationSelectedRow,
+    pipelineIntent,
+    runDecisionConfirmation,
+    runImplementation,
+  ]);
 
   const runRealisticValidation = useCallback(async () => {
     if (realisticValidationRunning) return;
@@ -4152,15 +4285,15 @@ export function OptimizationLightPage({
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
         <div style={{ display: 'grid', gap: 5 }}>
-          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900, lineHeight: 1.2 }}>Óptimo MIDAS recomendado</div>
+          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900, lineHeight: 1.2 }}>Recomendación MIDAS</div>
           <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.45 }}>
-            Calcula el mix recomendado para tu perfil. MIDAS compara el óptimo financiero con una recomendación ajustada por calidad de vida, holgura, recortes y estabilidad.
+            Ejecuta una simulación express para explorar o corre el flujo completo para obtener candidato confirmado y movimientos concretos.
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             type="button"
-            onClick={runDecisionProfiles}
+            onClick={runCompleteRecommendation}
             disabled={decisionProfilesRunning || mode !== 'light'}
             style={{
               background: decisionProfilesRunning ? T.surfaceEl : T.primary,
@@ -4174,30 +4307,44 @@ export function OptimizationLightPage({
               opacity: mode !== 'light' ? 0.65 : 1,
             }}
           >
-            {decisionProfilesRunning ? 'Calculando Óptimo MIDAS…' : 'Calcular Óptimo MIDAS recomendado'}
+            {fullFlowStatusLabel}
           </button>
           <button
             type="button"
-            onClick={runDecisionConfirmation}
-            disabled={decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
+            onClick={runExpressSimulation}
+            disabled={decisionProfilesRunning || implementationRunning}
             style={{
-              background: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
+              background: decisionProfilesRunning || implementationRunning ? T.surface : T.surfaceEl,
               border: `1px solid ${T.border}`,
-              color: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.textMuted : T.textPrimary,
+              color: decisionProfilesRunning || implementationRunning ? T.textMuted : T.textPrimary,
               borderRadius: 999,
               padding: '8px 13px',
               fontSize: 12,
               fontWeight: 800,
-              cursor: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 'not-allowed' : 'pointer',
-              opacity: !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? 0.7 : 1,
+              cursor: decisionProfilesRunning || implementationRunning ? 'not-allowed' : 'pointer',
+              opacity: decisionProfilesRunning || implementationRunning ? 0.7 : 1,
             }}
           >
-            {decisionFlowStatus?.stage === 'confirmed'
-              ? 'Confirmación completa lista'
-              : recommendationIsOfficial
-                ? 'Confirmar con simulación completa'
-                : 'Confirmar mejor opción disponible'}
+            {expressStatusLabel}
           </button>
+          {showExpressConfirmCta ? (
+            <button
+              type="button"
+              onClick={runConfirmAndImplementation}
+              style={{
+                background: T.surfaceEl,
+                border: `1px solid ${T.border}`,
+                color: T.textPrimary,
+                borderRadius: 999,
+                padding: '8px 13px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Confirmar y calcular implementación
+            </button>
+          ) : null}
           {decisionProfilesRunning ? (
             <button
               type="button"
@@ -4258,6 +4405,11 @@ export function OptimizationLightPage({
         </div>
         {decisionProfilesError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{decisionProfilesError}</div> : null}
         {decisionBackgroundHint ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionBackgroundHint}</div> : null}
+        {!decisionProfilesRunning && decisionFlowStatus?.stage === 'zoom' ? (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Resultado preliminar. Sirve para explorar escenarios rápido; para obtener movimientos concretos usa Calcular recomendación completa.
+          </div>
+        ) : null}
         {decisionExecutionState === 'background' ? (
           <div style={{ color: T.textMuted, fontSize: 10 }}>
             Chrome puede ralentizar cálculos en segundo plano; se verificará el progreso al volver.
@@ -4268,7 +4420,7 @@ export function OptimizationLightPage({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>{decisionFlowStatus.badge}</span>
               <span style={{ color: T.textMuted, fontSize: 10 }}>
-                {decisionFlowStatus.badge} · {decisionFlowStatus.candidateCount} mixes · {decisionProgress?.total ?? 0} unidades · nSim {decisionFlowStatus.nSim.toLocaleString('es-ES')} · seed {decisionFlowStatus.seed}{decisionFlowStatus.stepPp !== null ? ` · malla ${decisionFlowStatus.stepPp}pp` : ' · shortlist refinada con vecinos ±5pp/±10pp'}
+                {decisionStatusSummary ?? `${decisionFlowStatus.candidateCount} candidatos evaluados · ${decisionFlowStatus.nSim.toLocaleString('es-ES')} simulaciones por candidato`}
               </span>
             </div>
             <div style={{ color: T.textSecondary, fontSize: 10 }}>{decisionFlowStatus.message}</div>
@@ -4293,20 +4445,18 @@ export function OptimizationLightPage({
                         ? 'Finalizado'
                         : 'Inactivo'}
             </div>
-            {decisionFlowStatus.stage === 'zoom' ? (
-              <div style={{ color: T.textMuted, fontSize: 10 }}>
-                El refinamiento local compara mixes oficiales de la grilla 5pp alrededor del ancla seleccionada.
-              </div>
-            ) : null}
             {decisionProgress ? (
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Progreso: {decisionProgress.stage} · {decisionProgress.evaluated}/{decisionProgress.total} corridas · nSim {decisionProgress.nSim.toLocaleString('es-ES')} · seed {decisionProgress.seed}
                 {decisionCancelRequested ? ' · cancelación solicitada' : ''}
               </div>
             ) : null}
-            <div style={{ color: T.textMuted, fontSize: 10 }}>
-              Ruta: Express {lastExpressCandidate?.mixLabel ?? 'No disponible'} → Zoom {lastZoomCandidate?.mixLabel ?? 'No disponible'} → Confirmación {lastConfirmedCandidate?.mixLabel ?? 'No disponible'}
-            </div>
+            <details style={{ color: T.textMuted, fontSize: 10 }}>
+              <summary style={{ cursor: 'pointer' }}>Ver detalle del pipeline</summary>
+              <div style={{ marginTop: 6 }}>
+                Ruta: Express {lastExpressCandidate?.mixLabel ?? 'No disponible'} → Zoom {lastZoomCandidate?.mixLabel ?? 'No disponible'} → Confirmación {lastConfirmedCandidate?.mixLabel ?? 'No disponible'}
+              </div>
+            </details>
           </div>
         ) : null}
         {recommendationIsOfficial ? (
@@ -4325,7 +4475,7 @@ export function OptimizationLightPage({
                   {decisionFlowStatus?.stage === 'zoom' ? 'Preliminar · Zoom refinado' : 'Preliminar · Express'} · No implementar
                 </div>
               ) : null}
-              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Óptimo MIDAS recomendado</div>
+              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Recomendación confirmada</div>
               <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation!.mixLabel}</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
                 Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
@@ -4471,7 +4621,7 @@ export function OptimizationLightPage({
               <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Mejor opción disponible bajo escenario exigente</div>
               <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900 }}>{bestAvailableRecommendation.mixLabel}</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
-                No cumple todos los guardrails MIDAS, pero es la alternativa menos mala entre los mixes evaluados.
+                Es la mejor alternativa disponible bajo contingencia. Para movimientos concretos, confirma y calcula implementación.
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 QASR base {formatScore100(bestAvailableRecommendation.qasrBase)} · QASR +20 {formatScore100(bestAvailableRecommendation.qasrAt120)} · CSR {formatPctOrNA(bestAvailableRecommendation.csrBase)}
@@ -4479,17 +4629,11 @@ export function OptimizationLightPage({
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Ruina {formatPctOrNA(bestAvailableRecommendation.ruinRate)} · Recorte severo {formatMonthsHuman(bestAvailableRecommendation.monthsInSevereCutMean)} · Racha severa P75 {formatMonthsHuman(bestAvailableRecommendation.maxConsecutiveSevereCutMonthsP75)}
               </div>
-              <div style={{ color: T.warning, fontSize: 10 }}>
-                Fallos de guardrails: {bestAvailableRecommendation.failedGuardrails.length ? bestAvailableRecommendation.failedGuardrails.join(', ') : 'sin detalle'}
-              </div>
-              <div style={{ color: T.warning, fontSize: 10 }}>
-                Este resultado no cumple estándar MIDAS. Sirve como alternativa de contingencia dentro de las opciones evaluadas, no como recomendación oficial apta.
-              </div>
             </div>
             {fallbackGuardrailSummary ? (
               <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
                 <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
-                  Diagnóstico de guardrails
+                  Ver diagnóstico de guardrails
                 </summary>
                 <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
@@ -4552,11 +4696,11 @@ export function OptimizationLightPage({
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}>
         <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 900 }}>Implementación sugerida</div>
         <div style={{ color: T.textSecondary, fontSize: 11 }}>
-          Usa el resultado confirmado del candidato accionable actual (oficial o contingencia).
+          Usa el candidato confirmado vigente para construir el plan implementable recomendado.
         </div>
         {recommendationIsContingency && decisionFlowStatus?.stage === 'confirmed' && actionableRecommendationCandidate ? (
           <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>
-            Implementación de contingencia: el candidato confirmado no cumple estándar MIDAS.
+            Este plan implementa la mejor alternativa disponible bajo escenario de contingencia.
           </div>
         ) : null}
         {!decisionImplementationReady ? (
@@ -4585,7 +4729,7 @@ export function OptimizationLightPage({
               opacity: !phase2ImplementationSelectedRow || !decisionImplementationReady ? 0.6 : 1,
             }}
           >
-            {implementationRunning ? 'Calculando implementación…' : 'Calcular implementación'}
+            {implementationRunning ? 'Calculando implementación…' : implementationPlan && implementationResultIsCurrent ? 'Recalcular implementación' : 'Calcular implementación'}
           </button>
           <button
             type="button"
@@ -4609,6 +4753,21 @@ export function OptimizationLightPage({
         {implementationError ? <div style={{ color: T.warning, fontSize: 11, fontWeight: 700 }}>{implementationError}</div> : null}
         {implementationPlan ? (
           <div style={{ display: 'grid', gap: 7 }}>
+            {implementationHero ? (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, background: T.surfaceEl, display: 'grid', gap: 7 }}>
+                <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>{implementationHero.title}</div>
+                <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900 }}>{implementationHero.headline}</div>
+                <div style={{ color: T.textSecondary, fontSize: 12, fontWeight: 700 }}>{implementationHero.subheadline}</div>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>{implementationHero.body}</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {implementationHero.chips.map((chip) => (
+                    <span key={`hero-chip-${chip}`} style={{ border: `1px solid ${T.border}`, borderRadius: 999, padding: '4px 8px', color: T.textSecondary, fontSize: 10, fontWeight: 700, background: T.surface }}>
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {(() => {
               const gapAbsPp = Math.abs(implementationPlan.gapVsIdealRvPp);
               const statusLabel = gapAbsPp <= 1.5
@@ -4619,12 +4778,12 @@ export function OptimizationLightPage({
                     ? 'Requiere cambio moneda'
                     : 'Implementación parcial';
               return (
-                <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl, display: 'grid', gap: 4 }}>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl, display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
                     Operaciones: {implementationPlan.transfers.length} · Total a mover: {implementationMateriality ? formatClpShort(implementationMateriality.totalTradeClp) : '—'}
                   </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
-                  Objetivo {formatMixPair(implementationPlan.targetMixIdeal)} · Alcanzado {formatMixPair(implementationPlan.reachableMix)} · Gap restante {formatSignedPp(implementationPlan.gapVsIdealRvPp)} · Estado: {statusLabel}
+                  Objetivo teórico {formatMixPair(implementationPlan.targetMixIdeal)} · Mix alcanzable {formatMixPair(implementationPlan.reachableMix)} · Gap restante {formatSignedPp(implementationPlan.gapVsIdealRvPp)} · Estado: {statusLabel}
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Plan ganador: {implementationStageLabel(implementationPlan.planLevel)}.
@@ -4654,11 +4813,11 @@ export function OptimizationLightPage({
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.currentMix)}</div>
               </div>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>Óptimo MIDAS recomendado</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Objetivo teórico</div>
                 <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 800 }}>{formatMixPair(implementationPlan.targetMixIdeal)}</div>
               </div>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                <div style={{ color: T.textMuted, fontSize: 10 }}>Gap RV/RF</div>
+                <div style={{ color: T.textMuted, fontSize: 10 }}>Gap restante</div>
                 <div style={{ color: implementationMateriality?.status === 'recommended' ? T.warning : T.positive, fontSize: 15, fontWeight: 800 }}>
                   {implementationMateriality ? formatSignedPp(implementationMateriality.gapRvPp) : formatSignedPp(Math.abs(implementationPlan.gapVsIdealRvPp))}
                 </div>
@@ -4710,6 +4869,7 @@ export function OptimizationLightPage({
                     <tbody>
                       {[...implementationPlan.transfers]
                         .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
+                        .slice(0, 5)
                         .map((transfer, index) => (
                           <tr key={`main-transfer-row-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ borderBottom: `1px solid ${T.border}` }}>
                             <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', color: T.textPrimary, fontWeight: 700 }}>
@@ -4736,6 +4896,50 @@ export function OptimizationLightPage({
                     </tbody>
                   </table>
                 </div>
+                {implementationPlan.transfers.length > 5 ? (
+                  <details style={{ display: 'grid', gap: 6 }}>
+                    <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                      Ver las {implementationPlan.transfers.length} operaciones
+                    </summary>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, color: T.textSecondary }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
+                            <th style={{ padding: '6px 6px' }}>Tramo</th>
+                            <th style={{ padding: '6px 6px' }}>Monto</th>
+                            <th style={{ padding: '6px 6px' }}>Desde</th>
+                            <th style={{ padding: '6px 6px' }}>Hacia</th>
+                            <th style={{ padding: '6px 6px' }}>Moneda</th>
+                            <th style={{ padding: '6px 6px' }}>Manager</th>
+                            <th style={{ padding: '6px 6px' }}>Razón</th>
+                            <th style={{ padding: '6px 6px' }}>Restricción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...implementationPlan.transfers]
+                            .sort((a, b) => b.amountClpMoved - a.amountClpMoved)
+                            .map((transfer, index) => (
+                              <tr key={`full-transfer-row-${transfer.fromInstrumentId}-${transfer.toInstrumentId}-${index}`} style={{ borderBottom: `1px solid ${T.border}` }}>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap', color: T.textPrimary, fontWeight: 700 }}>{implementationStageLabel(transfer.stage)}</td>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>
+                                  <div style={{ color: T.textPrimary, fontWeight: 800 }}>{formatClpShort(transfer.amountClpMoved)}</div>
+                                  <div style={{ color: T.textMuted }}>{formatNativeAmount(transfer.amountNativeMoved, transfer.nativeCurrency)} ({(transfer.weightMoved * 100).toFixed(2)}%)</div>
+                                </td>
+                                <td style={{ padding: '6px 6px' }}>{transfer.fromName}</td>
+                                <td style={{ padding: '6px 6px' }}>{transfer.toName}</td>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{transfer.fromCurrency ?? transfer.nativeCurrency ?? 'ND'} → {transfer.toCurrency ?? 'ND'}</td>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{transfer.fromManager ?? 'ND'} → {transfer.toManager ?? 'ND'}</td>
+                                <td style={{ padding: '6px 6px' }}>{transfer.rationale}</td>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>
+                                  {transfer.constraints.crossCurrency ? 'Cross-currency' : transfer.constraints.crossManager ? 'Cross-manager' : 'Limpio'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ) : null}
               </div>
             ) : (
               <div style={{ display: 'grid', gap: 7, border: `1px solid ${T.warning}`, borderRadius: 10, padding: 10, background: T.surfaceEl }}>
@@ -4789,7 +4993,7 @@ export function OptimizationLightPage({
             ) : null}
             {implementationPlan.residualRows.length ? (
               <div style={{ display: 'grid', gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: 8, background: T.surfaceEl }}>
-                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>RF residual explicada por instrumento / bloque</div>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Por qué no llega a 100% RV</div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, color: T.textSecondary }}>
                     <thead>
