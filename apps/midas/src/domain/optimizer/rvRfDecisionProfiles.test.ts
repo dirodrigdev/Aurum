@@ -4,6 +4,7 @@ import {
   buildDecisionProfiles,
   buildFineRvRfGrid,
   buildParetoFrontierBaseVsHeadroom,
+  diagnoseFallbackSelection,
   estimateQasrStandardError,
   selectBestAvailableFallbackCandidate,
   selectDefensiveReferenceFromGuardrailPool,
@@ -115,6 +116,9 @@ const base = {
   assert.equal(selected?.candidateId, 'rv_70_rf_30');
   const none = selectBestAvailableFallbackCandidate([dominated], baseline);
   assert.equal(none, null);
+  const diagnostic = diagnoseFallbackSelection([dominated, balanced], baseline);
+  assert.equal(diagnostic.selectedCandidateId, 'rv_70_rf_30');
+  assert.equal(diagnostic.diagnostics.find((row) => row.candidateId === 'rv_0_rf_100')?.rejectedByBaselineDominance, true);
 }
 
 {

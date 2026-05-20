@@ -28,6 +28,7 @@ import {
   buildDecisionProfiles,
   buildFineRvRfGrid,
   selectBestAvailableFallbackCandidate as selectBestAvailableFallbackCandidateFromDomain,
+  diagnoseFallbackSelection,
   type RvRfDecisionCandidate,
   type RvRfDecisionCandidateAnnotated,
   type RvRfDecisionProfiles,
@@ -270,6 +271,47 @@ type OptimizationResultMeta = {
   nSim: number;
   seed: number;
   ranAtLabel: string;
+};
+
+type OptimizationDecisionTraceCandidate = {
+  mix: string;
+  qasrBase: number | null;
+  qasrPlus20: number | null;
+  qasrPlus30: number | null;
+  csr: number | null;
+  successClassic: number | null;
+  ruin: number | null;
+  severeCutMeanMonths: number | null;
+  severeCutStreakP75: number | null;
+  guardrailFailures: string[];
+  scoreOrRank: number | null;
+  rejectedByBaselineDominance: boolean;
+  rejectedByCandidateDominance: boolean;
+  selectedReason: string | null;
+};
+
+type OptimizationDecisionTraceStage = {
+  nSim: number;
+  candidateCount: number;
+  shortlistSource: string;
+  candidates: OptimizationDecisionTraceCandidate[];
+  selectedMix: string | null;
+};
+
+type OptimizationDecisionTrace = {
+  inputFingerprint: string;
+  sourceMode: SourceMode;
+  seed: number;
+  stages: {
+    express: OptimizationDecisionTraceStage | null;
+    zoom: OptimizationDecisionTraceStage | null;
+    confirmation: OptimizationDecisionTraceStage | null;
+  };
+  finalRecommendationMix: string | null;
+  implementationTargetMix: string | null;
+  implementationReachedMix: string | null;
+  implementationGap: number | null;
+  notes: string[];
 };
 
 type DecisionRunContext = {
@@ -718,6 +760,46 @@ export function selectBestAvailableFallbackCandidate(
   baselineCandidate: RvRfDecisionCandidate | null = null,
 ): RvRfDecisionCandidateAnnotated | null {
   return selectBestAvailableFallbackCandidateFromDomain(rows, baselineCandidate);
+}
+
+function buildDecisionTraceStage(input: {
+  nSim: number;
+  candidateCount: number;
+  shortlistSource: string;
+  profiles: RvRfDecisionProfiles | null;
+  baselineCandidate: RvRfDecisionCandidate | null;
+  selectedCandidate: RvRfDecisionCandidate | null;
+}): OptimizationDecisionTraceStage | null {
+  if (!input.profiles) return null;
+  const fallbackTrace = diagnoseFallbackSelection(input.profiles.rows, input.baselineCandidate);
+  const fallbackById = new Map(fallbackTrace.diagnostics.map((row) => [row.candidateId, row]));
+  return {
+    nSim: input.nSim,
+    candidateCount: input.candidateCount,
+    shortlistSource: input.shortlistSource,
+    candidates: input.profiles.rows.map((candidate) => {
+      const fallback = fallbackById.get(candidate.candidateId) ?? null;
+      return {
+        mix: candidate.mixLabel,
+        qasrBase: candidate.qasrBase,
+        qasrPlus20: candidate.qasrAt120,
+        qasrPlus30: candidate.qasrAt130,
+        csr: candidate.csrBase,
+        successClassic: candidate.ruinRate === null ? null : 1 - candidate.ruinRate,
+        ruin: candidate.ruinRate,
+        severeCutMeanMonths: candidate.monthsInSevereCutMean,
+        severeCutStreakP75: candidate.maxConsecutiveSevereCutMonthsP75,
+        guardrailFailures: candidate.failedGuardrails,
+        scoreOrRank: fallback?.rank ?? null,
+        rejectedByBaselineDominance: fallback?.rejectedByBaselineDominance ?? false,
+        rejectedByCandidateDominance: fallback?.rejectedByCandidateDominance ?? false,
+        selectedReason: candidate.candidateId === input.selectedCandidate?.candidateId
+          ? 'selected_visible'
+          : (fallback?.selectedReason ?? null),
+      };
+    }),
+    selectedMix: input.selectedCandidate?.mixLabel ?? null,
+  };
 }
 
 function toSleeveSnapshot(weights: PortfolioWeights): SleeveMixSnapshot {
@@ -2023,6 +2105,7 @@ export function OptimizationLightPage({
   const [decisionResultMeta, setDecisionResultMeta] = useState<OptimizationResultMeta | null>(null);
   const [decisionCancelRequested, setDecisionCancelRequested] = useState(false);
   const [decisionFlowWarning, setDecisionFlowWarning] = useState<string | null>(null);
+  const [decisionDiagnosticTrace, setDecisionDiagnosticTrace] = useState<OptimizationDecisionTrace | null>(null);
   const [decisionExecutionState, setDecisionExecutionState] = useState<DecisionExecutionState>('idle');
   const [decisionBackgroundHint, setDecisionBackgroundHint] = useState<string | null>(null);
   const [technicalDiagnosticsOpen, setTechnicalDiagnosticsOpen] = useState(false);
@@ -2823,6 +2906,25 @@ export function OptimizationLightPage({
     );
     setDecisionProfilesError(null);
     setDecisionFlowWarning(null);
+    setDecisionDiagnosticTrace({
+      inputFingerprint: runContext.inputFingerprint,
+      sourceMode: runContext.sourceMode,
+      seed: activeParams.simulation.seed ?? 0,
+      stages: {
+        express: null,
+        zoom: null,
+        confirmation: null,
+      },
+      finalRecommendationMix: null,
+      implementationTargetMix: null,
+      implementationReachedMix: null,
+      implementationGap: null,
+      notes: [
+        'Indicar si Express/Zoom/Confirmation usan candidatos distintos',
+        'Indicar si 100/0 quedó fuera del shortlist de Zoom o Confirmation',
+        'Indicar si 80/20 fue elegido por ranking, guardrail, shortlist o implementación',
+      ],
+    });
     setDecisionCancelRequested(false);
     decisionCancelRequestedRef.current = false;
     decisionForceInterruptRef.current = false;
@@ -2865,15 +2967,30 @@ export function OptimizationLightPage({
         expressBaseTable?.currentCandidate ?? expressBaseProfiles?.defensiveReference ?? null,
       );
       const expressRenderable = expressMain ?? expressFallback;
+      const expressVisibleRv = expressRenderable?.rvPct ?? null;
       const expressDefensive = expressBaseProfiles?.defensiveReference ?? null;
       setLastExpressCandidate(expressRenderable);
       if (expressRenderable) {
         setLastRenderableCandidate(expressRenderable);
         setLastRenderableKind(expressMain ? 'official' : 'contingency');
       }
+      setDecisionDiagnosticTrace((previous) => previous ? ({
+        ...previous,
+        stages: {
+          ...previous.stages,
+          express: buildDecisionTraceStage({
+            nSim: DECISION_EXPRESS_NSIM,
+            candidateCount: expressBaseProfiles?.rows.length ?? 0,
+            shortlistSource: 'express_grid_10pp',
+            profiles: expressBaseProfiles,
+            baselineCandidate: expressBaseTable?.currentCandidate ?? expressBaseProfiles?.defensiveReference ?? null,
+            selectedCandidate: expressRenderable,
+          }),
+        },
+      }) : previous);
 
       const zoomCandidatesInitial = buildOptimizationZoomShortlist({
-        preliminaryRecommendationRv: expressMain?.rvPct ?? null,
+        preliminaryRecommendationRv: expressVisibleRv,
         defensiveReferenceRv: expressDefensive?.rvPct ?? null,
         technicalPreludeRv: expressFinancial?.rvPct ?? null,
         currentRvRounded: snapMixToStep(currentRvPctFromWeights(activeParams.weights)),
@@ -2917,6 +3034,20 @@ export function OptimizationLightPage({
         setLastRenderableCandidate(zoomRenderable);
         setLastRenderableKind(zoomMain ? 'official' : 'contingency');
       }
+      setDecisionDiagnosticTrace((previous) => previous ? ({
+        ...previous,
+        stages: {
+          ...previous.stages,
+          zoom: buildDecisionTraceStage({
+            nSim: DECISION_ZOOM_NSIM,
+            candidateCount: zoomBaseProfiles?.rows.length ?? 0,
+            shortlistSource: zoomCandidatesInitial.length > 0 ? 'zoom_around_express_visible' : 'zoom_fallback_current_rounded',
+            profiles: zoomBaseProfiles,
+            baselineCandidate: zoomBaseTable?.currentCandidate ?? zoomBaseProfiles?.defensiveReference ?? null,
+            selectedCandidate: zoomRenderable,
+          }),
+        },
+      }) : previous);
 
       if (expressMain && zoomMain && expressMain.candidateId !== zoomMain.candidateId) {
         setDecisionFlowWarning(`El resultado rápido cambió al refinar: Express sugería ${expressMain.mixLabel} y Zoom sugiere ${zoomMain.mixLabel}. Usa solo el confirmado para decidir.`);
@@ -2983,9 +3114,10 @@ export function OptimizationLightPage({
     });
     try {
       await decisionYield();
+      const expressVisibleRv = lastExpressCandidate?.rvPct ?? null;
       const shortlist = buildOptimizationConfirmationShortlist({
         zoomRecommendationRv: preliminaryMain?.rvPct ?? null,
-        expressRecommendationRv: preliminaryMain?.rvPct ?? null,
+        expressRecommendationRv: expressVisibleRv ?? preliminaryMain?.rvPct ?? null,
         defensiveReferenceRv: preliminaryDefensive?.rvPct ?? null,
         technicalPreludeRv: financialOptimum?.rvPct ?? null,
         currentRvRounded: snapMixToStep(currentRvPctExactFromWeights(activeParams.weights)),
@@ -3013,6 +3145,21 @@ export function OptimizationLightPage({
         setLastRenderableCandidate(confirmedMain);
         setLastRenderableKind(confirmedOfficial ? 'official' : 'contingency');
       }
+      setDecisionDiagnosticTrace((previous) => previous ? ({
+        ...previous,
+        stages: {
+          ...previous.stages,
+          confirmation: buildDecisionTraceStage({
+            nSim: activeParams.simulation.nSim,
+            candidateCount: confirmedBaseProfiles?.rows.length ?? 0,
+            shortlistSource: 'confirmation_around_zoom_with_optional_anchors',
+            profiles: confirmedBaseProfiles,
+            baselineCandidate: confirmedBaseTable?.currentCandidate ?? confirmedBaseProfiles?.defensiveReference ?? null,
+            selectedCandidate: confirmedMain,
+          }),
+        },
+        finalRecommendationMix: confirmedMain?.mixLabel ?? previous.finalRecommendationMix,
+      }) : previous);
 
       if (preliminaryMain && confirmedMain && preliminaryMain.candidateId !== confirmedMain.candidateId) {
         setDecisionFlowWarning(`El resultado preliminar cambió al confirmar. Usa solo el confirmado para decidir: ${confirmedMain.mixLabel}.`);
@@ -3398,6 +3545,15 @@ export function OptimizationLightPage({
     };
   }, [recommendationCandidateSourceRow]);
   const phase2ImplementationSelectedRow = useMemo(() => phase2LongevitySelectedRow.row, [phase2LongevitySelectedRow.row]);
+  React.useEffect(() => {
+    setDecisionDiagnosticTrace((previous) => previous ? ({
+      ...previous,
+      finalRecommendationMix: actionableRecommendationCandidate?.mixLabel ?? previous.finalRecommendationMix,
+      implementationTargetMix: phase2ImplementationSelectedRow ? formatDecisionMixLabel(phase2ImplementationSelectedRow.source.rvPct) : null,
+      implementationReachedMix: implementationPlan ? formatMixPair(implementationPlan.reachableMix) : null,
+      implementationGap: implementationPlan?.gapVsIdealRvPp ?? null,
+    }) : previous);
+  }, [actionableRecommendationCandidate, implementationPlan, phase2ImplementationSelectedRow]);
   const decisionImplementationReady = useMemo(
     () => canUseDecisionFlowForImplementation(decisionFlowStatus) && Boolean(currentDecisionCandidate) && decisionResultIsCurrent,
     [currentDecisionCandidate, decisionFlowStatus, decisionResultIsCurrent],
@@ -4689,6 +4845,17 @@ export function OptimizationLightPage({
 
       {technicalDiagnosticsOpen ? (
       <>
+      {decisionDiagnosticTrace ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 10 }}>
+          <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Traza diagnóstica de Optimización</div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            JSON read-only del flujo Express → Zoom → Confirmación → Implementación para auditar shortlist, fallback y target final.
+          </div>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: T.textSecondary, fontSize: 10, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: 10 }}>
+            {JSON.stringify(decisionDiagnosticTrace, null, 2)}
+          </pre>
+        </div>
+      ) : null}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900, lineHeight: 1.25 }}>Fase 1 · Óptimo técnico / financiero preliminar</div>
         <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>

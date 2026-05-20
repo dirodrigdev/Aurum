@@ -73,6 +73,21 @@ export type RvRfDecisionProfiles = {
   rows: RvRfDecisionCandidateAnnotated[];
 };
 
+export type FallbackSelectionDiagnostic = {
+  candidateId: string;
+  mixLabel: string;
+  rejectedByBaselineDominance: boolean;
+  rejectedByCandidateDominance: boolean;
+  selectedReason: 'selected' | 'filtered_by_baseline' | 'filtered_by_candidate_dominance' | 'ranked_below_selected';
+  rank: number | null;
+};
+
+export type FallbackSelectionTrace = {
+  selectedCandidateId: string | null;
+  selectedMixLabel: string | null;
+  diagnostics: FallbackSelectionDiagnostic[];
+};
+
 const FALLBACK_QASR_WORSE_POINTS = 1;
 const FALLBACK_RATE_WORSE_PCT = 0.01;
 
@@ -178,6 +193,63 @@ export function selectBestAvailableFallbackCandidate(
   if (baselineClearlyBetter && baselineInRows) return baselineInRows;
   if (baselineClearlyBetter) return null;
   return selected;
+}
+
+export function diagnoseFallbackSelection(
+  rows: RvRfDecisionCandidateAnnotated[] | null | undefined,
+  baselineCandidate: RvRfDecisionCandidate | null = null,
+): FallbackSelectionTrace {
+  if (!rows || rows.length === 0) {
+    return {
+      selectedCandidateId: null,
+      selectedMixLabel: null,
+      diagnostics: [],
+    };
+  }
+
+  const filteredByBaseline = baselineCandidate
+    ? rows.filter((candidate) => !isMateriallyWorseVsBaseline(baselineCandidate, candidate))
+    : rows;
+  const baselineProtectedPool = filteredByBaseline.length > 0 ? filteredByBaseline : rows;
+  const nonDominated = baselineProtectedPool.filter((candidate) => (
+    !baselineProtectedPool.some((challenger) => (
+      challenger.candidateId !== candidate.candidateId
+      && fallbackCandidateDominates(challenger, candidate)
+    ))
+  ));
+  const actionablePool = nonDominated.length > 0 ? nonDominated : baselineProtectedPool;
+  const ranked = [...actionablePool].sort(fallbackRankingScore);
+  const selected = ranked[0] ?? null;
+  const rankById = new Map(ranked.map((candidate, index) => [candidate.candidateId, index + 1]));
+
+  return {
+    selectedCandidateId: selected?.candidateId ?? null,
+    selectedMixLabel: selected?.mixLabel ?? null,
+    diagnostics: rows.map((candidate) => {
+      const rejectedByBaselineDominance = baselineCandidate
+        ? !baselineProtectedPool.some((item) => item.candidateId === candidate.candidateId)
+        : false;
+      const rejectedByCandidateDominance = !rejectedByBaselineDominance
+        && !actionablePool.some((item) => item.candidateId === candidate.candidateId);
+      const rank = rankById.get(candidate.candidateId) ?? null;
+      const selectedReason: FallbackSelectionDiagnostic['selectedReason'] =
+        selected?.candidateId === candidate.candidateId
+          ? 'selected'
+          : rejectedByBaselineDominance
+            ? 'filtered_by_baseline'
+            : rejectedByCandidateDominance
+              ? 'filtered_by_candidate_dominance'
+              : 'ranked_below_selected';
+      return {
+        candidateId: candidate.candidateId,
+        mixLabel: candidate.mixLabel,
+        rejectedByBaselineDominance,
+        rejectedByCandidateDominance,
+        selectedReason,
+        rank,
+      };
+    }),
+  };
 }
 
 function toScore100(value: number | null): number | null {

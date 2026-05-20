@@ -628,6 +628,15 @@ const zoomFallback = buildOptimizationZoomFallbackShortlist(60);
 assert.deepEqual(zoomFallback, [50, 55, 60, 65, 70]);
 assert.deepEqual(buildOptimizationZoomFallbackShortlist(null), []);
 
+const zoomFromVisibleExpressFallback = buildOptimizationZoomShortlist({
+  preliminaryRecommendationRv: 100,
+  defensiveReferenceRv: 25,
+  technicalPreludeRv: 55,
+  currentRvRounded: 60,
+});
+assert(zoomFromVisibleExpressFallback.includes(100));
+assert(zoomFromVisibleExpressFallback.every((value) => value % 5 === 0));
+
 const bestAvailableFallback = selectBestAvailableFallbackCandidate([
   {
     ...buildDecisionCandidate({ rvPct: 55, qasrBase: 0.935, qasrAt120: 0.89, ruinRate: 0.04, monthsInSevereCutMean: 12, maxConsecutiveSevereCutMonthsP75: 16, csrBase: 0.91 }),
@@ -723,6 +732,16 @@ assert(!confirmationShortlist.includes(100));
 assert(!confirmationShortlist.includes(59.2));
 assert(confirmationShortlist.every((value) => value % 5 === 0));
 assert(confirmationShortlist.every((value) => Math.abs(value - 60) <= DECISION_REFINEMENT_MAX_WINDOW_PP));
+
+const confirmationWithVisibleExpressFallback = buildOptimizationConfirmationShortlist({
+  zoomRecommendationRv: 70,
+  expressRecommendationRv: 100,
+  defensiveReferenceRv: 25,
+  technicalPreludeRv: 55,
+  currentRvRounded: 60,
+});
+assert(confirmationWithVisibleExpressFallback.includes(80));
+assert(!confirmationWithVisibleExpressFallback.includes(100));
 
 const decisionProfiles = buildProfiles([
   buildDecisionCandidate({ rvPct: 25, terminalWealthP50: 1_000_000_000, qasrAt120: 0.89 }),
@@ -1118,6 +1137,9 @@ assert(source.includes("document.addEventListener('visibilitychange'"));
 assert(source.includes('buildOptimizationInputFingerprint'));
 assert(source.includes('inputFingerprint'));
 assert(source.includes('sourceMode'));
+assert(source.includes('Traza diagnóstica de Optimización'));
+assert(source.includes('JSON read-only del flujo Express'));
+assert(source.includes('decisionDiagnosticTrace'));
 assert(source.includes('decisionResultMeta'));
 assert(source.includes('hasStaleOptimizationMeta'));
 assert(source.includes('Resultado anterior: calculado con'));
@@ -1152,6 +1174,9 @@ assert(source.includes('Referencia autónoma: estima qué mix reduce mejor el ri
 assert(source.includes('shortlist refinada con vecinos ±5pp/±10pp'));
 assert(source.includes('buildOptimizationZoomFallbackShortlist'));
 assert(source.includes('Express no produjo recomendación oficial; Zoom usó fallback local alrededor del mix actual redondeado.'));
+assert(source.includes('const expressVisibleRv = expressRenderable?.rvPct ?? null;'));
+assert(source.includes('preliminaryRecommendationRv: expressVisibleRv'));
+assert(source.includes('expressRecommendationRv: expressVisibleRv ?? preliminaryMain?.rvPct ?? null'));
 assert(source.includes('No hay candidatos oficiales de optimización para evaluar.'));
 assert(source.includes('Mejor opción disponible bajo escenario exigente'));
 assert(source.includes('No cumple todos los guardrails MIDAS'));
