@@ -2763,26 +2763,19 @@ export default function App() {
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     clearCalculationTimer();
+    const canonicalBase = applyActiveDistribution(
+      applyScenarioEconomics(cloneParams(baseParams), 'base'),
+    );
+    const riskFromCanonicalBase = Number(
+      canonicalBase.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0,
+    ) > 0;
     setSimulationActive(false);
     setSimulationPreset('base');
-    setRiskCapitalEnabled(false);
+    setRiskCapitalEnabled(riskFromCanonicalBase);
     setSimOverrides(null);
-    const next = applyScenarioEconomics(
-      {
-        ...cloneParams(baseParams),
-        realEstatePolicy: {
-          enabled: true,
-          triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
-          saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
-          saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
-          realAppreciationAnnual: baseParams.realEstatePolicy?.realAppreciationAnnual ?? 0,
-        },
-      },
-      'base',
-    );
-    setSimParams(next);
-    startRecalculation('session-reset', () => next);
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
+    setSimParams(canonicalBase);
+    startRecalculation('session-reset', () => canonicalBase);
+  }, [applyActiveDistribution, applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();

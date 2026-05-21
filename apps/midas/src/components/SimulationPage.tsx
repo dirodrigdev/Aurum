@@ -2106,7 +2106,16 @@ export function SimulationPage({
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
             chips={[
-              { id: 'state', value: heroBaseChipLabel, onClick: simActive ? onResetSim : () => {} },
+              {
+                id: 'state',
+                value: heroBaseChipLabel,
+                onClick: simActive
+                  ? () => {
+                      onRestoreScenarioPreset();
+                      onResetSim();
+                    }
+                  : () => {},
+              },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: openSimulationPanelShortcut },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: openSimulationPanelShortcut },
               {
@@ -2166,6 +2175,11 @@ export function SimulationPage({
             >
               Volver al Modelo Base
             </button>
+          </div>
+        )}
+        {!simActive && (
+          <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
+            Modelo base canónico · sin escenario aplicado.
           </div>
         )}
         {showSimToast && (
