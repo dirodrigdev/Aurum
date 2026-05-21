@@ -1304,7 +1304,7 @@ export function SimulationPage({
   const referenceRiskAdjustmentClp = patrimonioAurumBaseVisibleClp !== null && riskCapitalIncludedInAurumBase === 'no'
     ? riskDetectedClp
     : 0;
-  const patrimonioReferenciaMidasClp = patrimonioAurumBaseVisibleClp !== null
+  const patrimonioReferenciaBaseMidasClp = patrimonioAurumBaseVisibleClp !== null
     ? patrimonioAurumBaseVisibleClp + referenceRiskAdjustmentClp
     : null;
   const nonOptimizableVisibleClp = useMemo(() => {
@@ -1323,20 +1323,31 @@ export function SimulationPage({
     return null;
   }, [compositionSource]);
   const consideredWealthResolution = computeMidasConsideredWealth({
-    referenceWealthClp: patrimonioReferenciaMidasClp,
+    referenceWealthClp: patrimonioReferenciaBaseMidasClp,
     realEstateSupportClp: realEstateConsideredClp,
     riskCapitalClp: riskDetectedClp,
     realEstateEnabled: liquidarDeptoEnabled,
     riskCapitalEnabled,
   });
-  const patrimonioConsideradoMidasClp = consideredWealthResolution.consideredWealthClp;
+  const patrimonioConsideradoBaseMidasClp = consideredWealthResolution.consideredWealthClp;
+  const patrimonioConsideradoEfectivoCorridaClp = Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0
+    ? effectiveBaseCapital
+    : null;
+  const ajusteManualAplicadoCorridaClp = (
+    patrimonioConsideradoEfectivoCorridaClp !== null && patrimonioConsideradoBaseMidasClp !== null
+  )
+    ? patrimonioConsideradoEfectivoCorridaClp - patrimonioConsideradoBaseMidasClp
+    : committedManualSummaryT0.netClp;
+  const patrimonioReferenciaMidasClp = patrimonioReferenciaBaseMidasClp !== null
+    ? patrimonioReferenciaBaseMidasClp + ajusteManualAplicadoCorridaClp
+    : null;
   const wealthConfigHasReference = patrimonioReferenciaMidasClp !== null && patrimonioReferenciaMidasClp > 0;
-  const wealthConfigHasConsidered = patrimonioConsideradoMidasClp !== null && patrimonioConsideradoMidasClp > 0;
+  const wealthConfigHasConsidered = patrimonioConsideradoEfectivoCorridaClp !== null && patrimonioConsideradoEfectivoCorridaClp > 0;
   const wealthConsideredExceedsReference = wealthConfigHasReference && wealthConfigHasConsidered
-    ? patrimonioConsideradoMidasClp > (patrimonioReferenciaMidasClp * 1.005)
+    ? patrimonioConsideradoEfectivoCorridaClp > (patrimonioReferenciaMidasClp * 1.005)
     : false;
   const wealthReferenceGapClp = wealthConfigHasReference && wealthConfigHasConsidered
-    ? patrimonioReferenciaMidasClp - patrimonioConsideradoMidasClp
+    ? patrimonioReferenciaMidasClp - patrimonioConsideradoEfectivoCorridaClp
     : null;
   const wealthConfigTone: SourceBadgeTone = !wealthConfigHasReference || !wealthConfigHasConsidered || wealthConsideredExceedsReference
     ? 'alert'
@@ -1357,9 +1368,7 @@ export function SimulationPage({
     : wealthConfigTone === 'alert'
       ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
       : 'Configuración patrimonial válida para esta corrida.';
-  const patrimonioMidasHoyAjustadoT0Clp = patrimonioConsideradoMidasClp !== null
-    ? patrimonioConsideradoMidasClp + committedManualSummaryT0.netClp
-    : null;
+  const patrimonioMidasHoyAjustadoT0Clp = patrimonioConsideradoEfectivoCorridaClp;
   const heroWealthChipNote = committedManualSummaryT0.count > 0
     ? `MIDAS hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
     : 'MIDAS hoy';
@@ -1959,8 +1968,8 @@ export function SimulationPage({
     const referenceLabel = patrimonioReferenciaMidasClp !== null
       ? `Referencia ${formatMoneyCompact(patrimonioReferenciaMidasClp)}`
       : 'Referencia no disponible';
-    const capitalLabel = patrimonioConsideradoMidasClp !== null
-      ? `MIDAS ${formatMoneyCompact(patrimonioConsideradoMidasClp)}`
+    const capitalLabel = patrimonioConsideradoEfectivoCorridaClp !== null
+      ? `MIDAS ${formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp)}`
       : 'MIDAS no disponible';
     return [
       referenceLabel,
@@ -1970,7 +1979,7 @@ export function SimulationPage({
       `Depto ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
       `Capital riesgo ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
     ].join(' · ');
-  }, [currentNSim, liquidarDeptoEnabled, patrimonioConsideradoMidasClp, patrimonioReferenciaMidasClp, riskCapitalEnabled, scenarioUiLabel]);
+  }, [currentNSim, liquidarDeptoEnabled, patrimonioConsideradoEfectivoCorridaClp, patrimonioReferenciaMidasClp, riskCapitalEnabled, scenarioUiLabel]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -2759,8 +2768,14 @@ export function SimulationPage({
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio considerado por MIDAS</div>
-                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
-                  <div style={{ color: T.textMuted, fontSize: 10 }}>Recursos habilitados para esta corrida.</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>
+                    {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {Math.abs(ajusteManualAplicadoCorridaClp) > 0.5
+                      ? `Incluye ajuste manual T0 ${ajusteManualAplicadoCorridaClp >= 0 ? '+' : ''}${formatMoneyCompact(ajusteManualAplicadoCorridaClp)}.`
+                      : 'Recursos habilitados para esta corrida.'}
+                  </div>
                   <SourceBadge label={wealthConfigLabel} tone={wealthConfigTone} />
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
@@ -2838,7 +2853,8 @@ export function SimulationPage({
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo detectado:</span> {formatMoneyCompact(riskDetectedClp)}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio Aurum base:</span> {formatRiskCapitalInBaseLabel(riskCapitalIncludedInAurumBase)}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajuste de referencia por capital de riesgo:</span> {formatMoneyCompact(referenceRiskAdjustmentClp)}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio de referencia MIDAS:</span> {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio de referencia MIDAS (corrida efectiva):</span> {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio de referencia MIDAS (base sin ajustes T0):</span> {patrimonioReferenciaBaseMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaBaseMidasClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial configurado del motor:</span> {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto detectado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
@@ -2847,7 +2863,8 @@ export function SimulationPage({
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo habilitado para esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio considerado:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
-                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio considerado por MIDAS:</span> {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio considerado por MIDAS (corrida efectiva):</span> {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio considerado por MIDAS (base sin ajustes T0):</span> {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Diferencia entre referencia MIDAS y considerado MIDAS:</span> {wealthReferenceGapClp !== null ? formatMoneyCompact(wealthReferenceGapClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Explicación de la diferencia:</span> {wealthReferenceGapClp !== null && wealthReferenceGapClp > 0
                     ? [
@@ -3837,10 +3854,11 @@ export function SimulationPage({
               Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
             </div>
             <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
-              <div>Patrimonio de referencia MIDAS: {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
-              <div>Patrimonio considerado por MIDAS antes de ajustes manuales: {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp) : 'No disponible'}</div>
+              <div>Patrimonio de referencia MIDAS (corrida efectiva): {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+              <div>Patrimonio de referencia MIDAS (base sin ajustes): {patrimonioReferenciaBaseMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaBaseMidasClp) : 'No disponible'}</div>
+              <div>Patrimonio considerado por MIDAS antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
               <div>Ajustes manuales T0: +{formatMoneyCompact(draftManualSummaryT0.positiveClp)} / -{formatMoneyCompact(draftManualSummaryT0.negativeClp)} / neto {formatMoneyCompact(draftManualSummaryT0.netClp)}</div>
-              <div>Patrimonio MIDAS hoy ajustado T0: {patrimonioConsideradoMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoMidasClp + draftManualSummaryT0.netClp) : 'No disponible'}</div>
+              <div>Patrimonio MIDAS hoy ajustado T0 (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
               <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
               <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
               <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>

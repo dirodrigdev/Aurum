@@ -2828,20 +2828,21 @@ export default function App() {
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     clearCalculationTimer();
-    const canonicalBase = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
+    const canonicalBaseEconomics = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
       activeWeights: activeWeightsRef.current,
       diagnosticsLabel: 'reset-session',
     });
-    const riskFromCanonicalBase = Number(
-      canonicalBase.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0,
-    ) > 0;
+    const canonicalBase = buildCanonicalSimParams(canonicalBaseEconomics, canonicalBaseEconomics, {
+      applyCapital: true,
+      manualImpact: manualAdjustmentImpact,
+      riskCapitalEnabled: riskCapitalEnabledRef.current,
+    });
     setSimulationActive(false);
     setSimulationPreset('base');
-    setRiskCapitalEnabled(riskFromCanonicalBase);
     setSimOverrides(null);
     setSimParams(canonicalBase);
     startRecalculation('session-reset', () => canonicalBase);
-  }, [clearCalculationTimer, clearSimulationTimer, startRecalculation]);
+  }, [buildCanonicalSimParams, clearCalculationTimer, clearSimulationTimer, manualAdjustmentImpact, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -4256,6 +4257,12 @@ export default function App() {
           : simulationResultDiagnostics.resultDigest
             ? 'provisional'
             : 'missing';
+    const hasManualAdjustments = manualCapitalAdjustments.length > 0;
+    const manualAdjustmentsAppliedToInput =
+      !hasManualAdjustments || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine;
+    const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments
+      ? (manualAdjustmentsAppliedToInput ? 'canonical' : 'error')
+      : 'canonical';
 
     return buildResultConfidence({
       criticalSources: {
@@ -4263,9 +4270,7 @@ export default function App() {
         simulationConfig: sourceStatusFromSimulationConfig(simulationConfigSource, simulationConfigHydrationStatus),
         instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin),
         fx: sourceStatusFromFx(operativeFxResolution),
-        capitalAdjustments: assumptionModeDiagnostics.localUnsyncedAdjustments || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
-          ? 'local'
-          : 'canonical',
+        capitalAdjustments: capitalAdjustmentsSource,
         runResult: runResultStatus,
         sandbox: assumptionModeDiagnostics.sandboxActive ? 'sandbox' : 'canonical',
       },
@@ -4289,6 +4294,7 @@ export default function App() {
     assumptionModeDiagnostics,
     aurumIntegrationStatus,
     engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+    manualCapitalAdjustments.length,
     lastAppliedAurumSnapshotSignature,
     lastRenderedResultHash,
     lastRunInputHash,
