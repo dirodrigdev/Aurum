@@ -4,6 +4,7 @@ import { buildCanonicalBaseSimulationParams } from '../App';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from '../domain/model/defaults';
 import { applyScenarioVariant } from '../domain/simulation/engine';
 import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
+import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy';
 import { computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
@@ -107,6 +108,84 @@ assert.equal(computeMidasConsideredWealth({
   riskCapitalEnabled: false,
 }).consideredWealthClp, 1_531_000_000);
 
+const compositionMatrix = {
+  mode: 'full' as const,
+  totalNetWorthCLP: 1_980_000_000,
+  optimizableInvestmentsCLP: 1_500_000_000,
+  nonOptimizable: {
+    banksCLP: 31_000_000,
+    nonMortgageDebtCLP: 93_000_000,
+    realEstate: {
+      propertyValueCLP: 0,
+      realEstateEquityCLP: 155_000_000,
+      mortgageDebtOutstandingCLP: 0,
+    },
+    riskCapital: {
+      totalCLP: 294_000_000,
+      clp: 294_000_000,
+      usdSnapshotCLP: 900,
+      usdTotal: 326_666.666,
+    },
+  },
+};
+const runNoDebtOnOn = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: true,
+  riskCapitalEnabled: true,
+  includeNonExigibleDebtInRunCapital: false,
+});
+const runNoDebtOnOff = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  includeNonExigibleDebtInRunCapital: false,
+});
+const runNoDebtOffOn = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: false,
+  riskCapitalEnabled: true,
+  includeNonExigibleDebtInRunCapital: false,
+});
+const runNoDebtOffOff = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  includeNonExigibleDebtInRunCapital: false,
+});
+assert.equal(runNoDebtOnOn.runCapitalFromComponentsCLP, 1_980_000_000);
+assert.equal(runNoDebtOnOff.runCapitalFromComponentsCLP, 1_686_000_000);
+assert.equal(runNoDebtOffOn.runCapitalFromComponentsCLP, 1_825_000_000);
+assert.equal(runNoDebtOffOff.runCapitalFromComponentsCLP, 1_531_000_000);
+
+const runWithDebtOnOn = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: true,
+  riskCapitalEnabled: true,
+  includeNonExigibleDebtInRunCapital: true,
+});
+const runWithDebtOnOff = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  includeNonExigibleDebtInRunCapital: true,
+});
+const runWithDebtOffOn = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: false,
+  riskCapitalEnabled: true,
+  includeNonExigibleDebtInRunCapital: true,
+});
+const runWithDebtOffOff = buildRunCapitalBreakdown({
+  composition: compositionMatrix,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  includeNonExigibleDebtInRunCapital: true,
+});
+assert.equal(runWithDebtOnOn.runCapitalFromComponentsCLP, 2_073_000_000);
+assert.equal(runWithDebtOnOff.runCapitalFromComponentsCLP, 1_779_000_000);
+assert.equal(runWithDebtOffOn.runCapitalFromComponentsCLP, 1_918_000_000);
+assert.equal(runWithDebtOffOff.runCapitalFromComponentsCLP, 1_624_000_000);
+
 const t0FutureOnly = summarizeManualAdjustmentsT0([
   { id: 'a', direction: 'add', amount: 100_000_000, currency: 'CLP', effectiveDate: '2035-01', destination: 'liquidity' },
   { id: 'b', direction: 'remove', amount: 25_000_000, currency: 'CLP', effectiveDate: '2036-01', destination: 'liquidity' },
@@ -131,6 +210,7 @@ assert(source.includes('Patrimonio considerado por MIDAS'));
 assert(source.includes('Patrimonio considerado por MIDAS (corrida efectiva)'));
 assert(source.includes('Patrimonio de referencia MIDAS (sin ajustes manuales)'));
 assert(source.includes('Impacto recursos habilitados (Depto/Riesgo)'));
+assert(source.includes('Impacto deuda no hipotecaria no exigible'));
 assert(source.includes('Impacto ajustes manuales T0 (+)'));
 assert(source.includes('Capital efectivo usado por MIDAS (input actual)'));
 assert(source.includes('Incluye ajuste manual T0'));
@@ -149,7 +229,7 @@ assert(source.includes('Respaldo/depto incluido en patrimonio considerado'));
 assert(source.includes('Capital no usado por esta simulación'));
 assert(source.includes('Diferencia entre referencia MIDAS y considerado MIDAS'));
 assert(source.includes('Explicación de la diferencia'));
-assert(source.includes('Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'));
+assert(source.includes('Patrimonio considerado supera lo esperable por deuda no exigible y ajustes manuales. Revisar componentes antes de usar.'));
 assert(source.includes('Configuración OK'));
 assert(source.includes('T0'));
 assert(source.includes('Ajustes manuales T0: +'));

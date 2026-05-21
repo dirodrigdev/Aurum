@@ -18,6 +18,10 @@ import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
+import {
+  buildRunCapitalBreakdown,
+  DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+} from '../domain/simulation/runCapitalPolicy';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
 import { InfoHint } from './InfoHint';
@@ -1299,57 +1303,51 @@ export function SimulationPage({
     const total = Number(compositionSource?.totalNetWorthCLP ?? NaN);
     return Number.isFinite(total) && total > 0 ? total : null;
   }, [compositionSource]);
-  // Aurum V2 publishes totalNetWorthCLP as the visible base and riskCapital as a separate block.
-  // MIDAS keeps that separation so the reference can include detected risk without changing the toggle.
-  let riskCapitalIncludedInAurumBase: 'yes' | 'no' | 'unknown' = 'unknown';
-  if (riskDetectedClp > 0) riskCapitalIncludedInAurumBase = 'no';
-  const referenceRiskAdjustmentClp = patrimonioAurumBaseVisibleClp !== null && riskCapitalIncludedInAurumBase === 'no'
-    ? riskDetectedClp
-    : 0;
-  const referenceCapitalCLP = patrimonioAurumBaseVisibleClp !== null
-    ? patrimonioAurumBaseVisibleClp + referenceRiskAdjustmentClp
-    : null;
+  const runCapitalBreakdown = useMemo(() => buildRunCapitalBreakdown({
+    composition: compositionSource,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    manualLocalAdjustmentsImpactCLP: committedManualSummaryT0.netClp,
+    riskCapitalOverrideCLP: riskDetectedClp,
+    includeNonExigibleDebtInRunCapital: DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+  }), [
+    committedManualSummaryT0.netClp,
+    compositionSource,
+    liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    riskDetectedClp,
+  ]);
+  const riskCapitalIncludedInAurumBase: 'yes' | 'no' | 'unknown' = runCapitalBreakdown.riskInReference;
+  const referenceRiskAdjustmentClp = runCapitalBreakdown.referenceRiskAdjustmentCLP;
+  const referenceCapitalCLP = runCapitalBreakdown.referenceCapitalCLP;
   const nonOptimizableVisibleClp = useMemo(() => {
     if (!Number.isFinite(patrimonioAurumBaseVisibleClp) || patrimonioAurumBaseVisibleClp === null || capitalSentToMotorClp === null) return null;
     return patrimonioAurumBaseVisibleClp - capitalSentToMotorClp;
   }, [capitalSentToMotorClp, patrimonioAurumBaseVisibleClp]);
-  const realEstateConsideredClp = useMemo(() => {
-    const equity = Number(compositionSource?.nonOptimizable?.realEstate?.realEstateEquityCLP ?? NaN);
-    if (Number.isFinite(equity) && equity > 0) return equity;
-    const property = Number(compositionSource?.nonOptimizable?.realEstate?.propertyValueCLP ?? NaN);
-    const debt = Number(compositionSource?.nonOptimizable?.realEstate?.mortgageDebtOutstandingCLP ?? NaN);
-    if (Number.isFinite(property) && property > 0) {
-      const fallbackEquity = property - (Number.isFinite(debt) ? debt : 0);
-      return fallbackEquity > 0 ? fallbackEquity : null;
-    }
-    return null;
-  }, [compositionSource]);
+  const realEstateConsideredClp = runCapitalBreakdown.realEstateSupportCLP > 0
+    ? runCapitalBreakdown.realEstateSupportCLP
+    : null;
   const consideredWealthResolution = computeMidasConsideredWealth({
     referenceWealthClp: referenceCapitalCLP,
     realEstateSupportClp: realEstateConsideredClp,
-    riskCapitalClp: riskDetectedClp,
+    riskCapitalClp: runCapitalBreakdown.riskCapitalCLP,
     realEstateEnabled: liquidarDeptoEnabled,
     riskCapitalEnabled,
   });
-  const enabledResourcesImpactCLP = -(
-    Math.max(0, consideredWealthResolution.excludedRealEstateClp ?? 0)
-    + Math.max(0, consideredWealthResolution.excludedRiskCapitalClp ?? 0)
-  );
+  const enabledResourcesImpactCLP = runCapitalBreakdown.enabledResourcesImpactCLP;
+  const nonExigibleDebtPolicyImpactCLP = runCapitalBreakdown.nonExigibleDebtPolicyImpactCLP;
+  const nonMortgageDebtClp = runCapitalBreakdown.nonMortgageDebtCLP;
   const patrimonioConsideradoBaseMidasClp = referenceCapitalCLP !== null
-    ? referenceCapitalCLP + enabledResourcesImpactCLP
+    ? referenceCapitalCLP + nonExigibleDebtPolicyImpactCLP + enabledResourcesImpactCLP
     : null;
-  const manualLocalAdjustmentsImpactCLP = committedManualSummaryT0.netClp;
+  const manualLocalAdjustmentsImpactCLP = runCapitalBreakdown.manualLocalAdjustmentsImpactCLP;
   const runCapitalCLP = Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0
     ? effectiveBaseCapital
     : null;
   const patrimonioConsideradoEfectivoCorridaClp = runCapitalCLP;
   const ajusteManualAplicadoCorridaClp = manualLocalAdjustmentsImpactCLP;
   const patrimonioReferenciaMidasClp = referenceCapitalCLP;
-  const runCapitalFromComponentsCLP = (
-    referenceCapitalCLP !== null
-      ? referenceCapitalCLP + enabledResourcesImpactCLP + manualLocalAdjustmentsImpactCLP
-      : null
-  );
+  const runCapitalFromComponentsCLP = runCapitalBreakdown.runCapitalFromComponentsCLP;
   const runCapitalMismatchClp = (
     runCapitalCLP !== null && runCapitalFromComponentsCLP !== null
   )
@@ -1357,8 +1355,11 @@ export function SimulationPage({
     : null;
   const wealthConfigHasReference = patrimonioReferenciaMidasClp !== null && patrimonioReferenciaMidasClp > 0;
   const wealthConfigHasConsidered = patrimonioConsideradoEfectivoCorridaClp !== null && patrimonioConsideradoEfectivoCorridaClp > 0;
+  const wealthAllowedExcessClp =
+    Math.max(0, nonExigibleDebtPolicyImpactCLP)
+    + Math.max(0, manualLocalAdjustmentsImpactCLP);
   const wealthConsideredExceedsReference = wealthConfigHasReference && wealthConfigHasConsidered
-    ? patrimonioConsideradoEfectivoCorridaClp > (patrimonioReferenciaMidasClp * 1.005)
+    ? patrimonioConsideradoEfectivoCorridaClp > (patrimonioReferenciaMidasClp + wealthAllowedExcessClp + 0.5)
     : false;
   const wealthReferenceGapClp = wealthConfigHasReference && wealthConfigHasConsidered
     ? patrimonioReferenciaMidasClp - patrimonioConsideradoEfectivoCorridaClp
@@ -1376,7 +1377,7 @@ export function SimulationPage({
       ? 'Configuración con advertencias'
       : 'Configuración inválida / revisar';
   const wealthConfigCopy = wealthConsideredExceedsReference
-    ? 'Patrimonio considerado supera la referencia MIDAS. Revisar composición antes de usar.'
+    ? 'Patrimonio considerado supera lo esperable por deuda no exigible y ajustes manuales. Revisar componentes antes de usar.'
     : consideredWealthResolution.missingRealEstateSupport
       ? 'Configuración válida, pero falta valor canónico de respaldo/depto para explicar toda la diferencia.'
     : wealthConfigTone === 'alert'
@@ -2871,6 +2872,8 @@ export function SimulationPage({
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial configurado del motor:</span> {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto detectado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Deuda no hipotecaria (snapshot):</span> {formatMoneyCompact(nonMortgageDebtClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto política deuda no exigible:</span> {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto incluido en patrimonio considerado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
@@ -2892,7 +2895,10 @@ export function SimulationPage({
                         consideredWealthResolution.excludedRealEstateClp !== null && consideredWealthResolution.excludedRealEstateClp > 0 ? `depto excluido ${formatMoneyCompact(consideredWealthResolution.excludedRealEstateClp)}` : null,
                         consideredWealthResolution.excludedRiskCapitalClp > 0 ? `capital de riesgo excluido ${formatMoneyCompact(consideredWealthResolution.excludedRiskCapitalClp)}` : null,
                       ].filter(Boolean).join(' · ') || 'Diferencia pendiente de clasificar en bloques canónicos.'
-                    : 'Sin exclusiones materiales frente a la referencia.'}</div>
+                    : [
+                        nonExigibleDebtPolicyImpactCLP > 0 ? `deuda no exigible reincorporada ${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}` : null,
+                        manualLocalAdjustmentsImpactCLP !== 0 ? `ajuste manual T0 ${manualLocalAdjustmentsImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(manualLocalAdjustmentsImpactCLP)}` : null,
+                      ].filter(Boolean).join(' · ') || 'Sin exclusiones materiales frente a la referencia.'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital no usado por esta simulación:</span> {nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Fuente patrimonial:</span> {patrimonioSourceTechnical}</div>
                   <div style={{ color: wealthConfigTone === 'alert' ? T.negative : wealthConfigTone === 'warning' ? T.warning : T.textSecondary }}>
@@ -3877,6 +3883,7 @@ export function SimulationPage({
             <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
               <div>Patrimonio de referencia MIDAS (sin ajustes manuales): {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
               <div>Patrimonio considerado por MIDAS antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
+              <div>Impacto deuda no hipotecaria no exigible: {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
               <div>Impacto recursos habilitados (Depto/Riesgo): {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
               <div>Ajustes manuales T0: +{formatMoneyCompact(draftManualSummaryT0.positiveClp)} / -{formatMoneyCompact(draftManualSummaryT0.negativeClp)} / neto {formatMoneyCompact(draftManualSummaryT0.netClp)}</div>
               <div>Patrimonio MIDAS hoy ajustado T0 (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>

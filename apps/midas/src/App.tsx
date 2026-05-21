@@ -97,6 +97,10 @@ import {
   stripManualAdjustmentImpactFromParams,
   type ManualAdjustmentImpact,
 } from './domain/simulation/manualCapitalAdjustments';
+import {
+  buildRunCapitalBreakdown,
+  DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+} from './domain/simulation/runCapitalPolicy';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
@@ -2393,9 +2397,28 @@ export default function App() {
           }
         }
 
-        const targetVisibleCapital = riskEnabled
-          ? targetWithoutRisk + riskClpApplied
-          : targetWithoutRisk;
+        const manualCurrentDeltaApplied =
+          manualImpact.currentBanksDelta
+          + manualImpact.currentInvestmentsDelta
+          + (riskEnabled ? manualImpact.currentRiskDelta : 0);
+        const runCapitalBreakdown = buildRunCapitalBreakdown({
+          composition: baseComposition,
+          realEstateEnabled: next.realEstatePolicy?.enabled ?? true,
+          riskCapitalEnabled: riskEnabled,
+          manualLocalAdjustmentsImpactCLP: manualCurrentDeltaApplied,
+          riskCapitalOverrideCLP: riskBaseClp,
+          includeNonExigibleDebtInRunCapital: DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+        });
+        const targetVisibleCapital = (
+          Number.isFinite(runCapitalBreakdown.runCapitalFromComponentsCLP)
+            && (runCapitalBreakdown.runCapitalFromComponentsCLP ?? 0) > 0
+        )
+          ? Math.max(1, Number(runCapitalBreakdown.runCapitalFromComponentsCLP))
+          : (
+            riskEnabled
+              ? targetWithoutRisk + riskClpApplied
+              : targetWithoutRisk
+          );
 
         const nextComposition: SimulationCompositionInput = {
           ...baseComposition,
