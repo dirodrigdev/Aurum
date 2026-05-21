@@ -102,6 +102,7 @@ const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
 const AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY = 'midas:aurum-last-applied-signature.v1';
+const BASE_CANONICAL_RETURN_GUARDRAIL_EPS = 0.0005;
 const EMPTY_MANUAL_ADJUSTMENT_IMPACT: ManualAdjustmentImpact = {
   currentTotalDelta: 0,
   currentBanksDelta: 0,
@@ -359,6 +360,54 @@ function computeWeightedReturn(p: ModelParameters) {
   );
 }
 
+export function buildCanonicalBaseSimulationParams(
+  hydratedParams: ModelParameters,
+  options?: { activeWeights?: PortfolioWeights; diagnosticsLabel?: string },
+): ModelParameters {
+  const canonicalDefaults = cloneParams(DEFAULT_PARAMETERS);
+  const weightedSource = options?.activeWeights ? applyActiveDistributionToParams(hydratedParams, options.activeWeights) : hydratedParams;
+  const keepFx = weightedSource.fx ?? canonicalDefaults.fx;
+  const next: ModelParameters = {
+    ...weightedSource,
+    activeScenario: 'base',
+    returns: { ...canonicalDefaults.returns },
+    inflation: { ...canonicalDefaults.inflation },
+    spendingRule: { ...canonicalDefaults.spendingRule },
+    spendingPhases: normalizeModelSpendingPhases({
+      ...weightedSource,
+      spendingPhases: canonicalDefaults.spendingPhases.map((phase) => ({ ...phase })),
+    }),
+    realEstatePolicy: canonicalDefaults.realEstatePolicy ? { ...canonicalDefaults.realEstatePolicy } : weightedSource.realEstatePolicy,
+    fx: {
+      ...canonicalDefaults.fx,
+      ...keepFx,
+      tcrealLT: canonicalDefaults.fx.tcrealLT,
+      mrHalfLifeYears: canonicalDefaults.fx.mrHalfLifeYears,
+    },
+  };
+  const weightedCanonical = computeWeightedReturn(next);
+  const pessimisticVariant = SCENARIO_VARIANTS.find((variant) => variant.id === 'pessimistic');
+  if (pessimisticVariant) {
+    const pessimisticProbe = applyScenarioVariant(
+      {
+        ...cloneParams(DEFAULT_PARAMETERS),
+        weights: { ...next.weights },
+        activeScenario: 'pessimistic',
+      },
+      pessimisticVariant,
+    );
+    const weightedPessimistic = computeWeightedReturn(pessimisticProbe);
+    if (Math.abs(weightedCanonical - weightedPessimistic) <= BASE_CANONICAL_RETURN_GUARDRAIL_EPS) {
+      console.warn('[Midas][BaseCanonicalGuardrail] Base canónico quedó demasiado cerca de escenario pesimista.', {
+        context: options?.diagnosticsLabel ?? 'unknown',
+        canonicalWeightedReturn: weightedCanonical,
+        pessimisticWeightedReturn: weightedPessimistic,
+      });
+    }
+  }
+  return options?.activeWeights ? applyActiveDistributionToParams(next, options.activeWeights) : next;
+}
+
 function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters {
   if (!overrides || !overrides.active) return p;
   const blocksMode = isBlocksCompositionMode(p);
@@ -596,11 +645,15 @@ function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParamet
     const capital = Number(normalized.capitalInitial ?? NaN);
     if (!Number.isFinite(capital) || capital <= 0) return null;
     const hydratedFeeAnnual = Number(normalized.feeAnnual);
-    return {
+    const hydrated: ModelParameters = {
       ...normalized,
       feeAnnual: Number.isFinite(hydratedFeeAnnual) ? hydratedFeeAnnual : 0,
       spendingPhases: normalizeModelSpendingPhases(normalized),
     };
+    return buildCanonicalBaseSimulationParams(hydrated, {
+      activeWeights,
+      diagnosticsLabel: 'localStorage/base-vigente',
+    });
   } catch {
     return null;
   }
@@ -1130,7 +1183,11 @@ export default function App() {
       .then(async (loaded) => {
         if (cancelled) return;
         if (loaded.ok) {
-          const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+          const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+          const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+            activeWeights: activeWeightsRef.current,
+            diagnosticsLabel: 'cloud/active',
+          });
           cloudSimulationConfigHashRef.current = loaded.active.hash ?? null;
           hasSeededUserScopedConfigRef.current = true;
           setBaseParams(cloudParams);
@@ -1166,7 +1223,11 @@ export default function App() {
             if (cancelled) return;
             if (seeded.ok) {
               hasSeededUserScopedConfigRef.current = true;
-              const cloudParams = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
+              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
+              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+                activeWeights: activeWeightsRef.current,
+                diagnosticsLabel: 'cloud/seed-legacy',
+              });
               cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
               setBaseParams(cloudParams);
               setSimParams(cloudParams);
@@ -1205,7 +1266,11 @@ export default function App() {
             if (cancelled) return;
             if (seeded.ok) {
               hasSeededUserScopedConfigRef.current = true;
-              const cloudParams = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
+              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
+              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+                activeWeights: activeWeightsRef.current,
+                diagnosticsLabel: 'cloud/seed-local-cache',
+              });
               cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
               setBaseParams(cloudParams);
               setSimParams(cloudParams);
@@ -2763,9 +2828,10 @@ export default function App() {
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     clearCalculationTimer();
-    const canonicalBase = applyActiveDistribution(
-      applyScenarioEconomics(cloneParams(baseParams), 'base'),
-    );
+    const canonicalBase = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
+      activeWeights: activeWeightsRef.current,
+      diagnosticsLabel: 'reset-session',
+    });
     const riskFromCanonicalBase = Number(
       canonicalBase.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0,
     ) > 0;
@@ -2775,7 +2841,7 @@ export default function App() {
     setSimOverrides(null);
     setSimParams(canonicalBase);
     startRecalculation('session-reset', () => canonicalBase);
-  }, [applyActiveDistribution, applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
+  }, [clearCalculationTimer, clearSimulationTimer, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();

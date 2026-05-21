@@ -1,11 +1,71 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { buildCanonicalBaseSimulationParams } from '../App';
+import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from '../domain/model/defaults';
+import { applyScenarioVariant } from '../domain/simulation/engine';
 import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
 import { computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const adaptersSource = readFileSync(new URL('../integrations/aurum/adapters.ts', import.meta.url), 'utf8');
+
+const computeWeightedReturn = (p: typeof DEFAULT_PARAMETERS) => (
+  p.weights.rvGlobal * p.returns.rvGlobalAnnual
+  + p.weights.rfGlobal * p.returns.rfGlobalAnnual
+  + p.weights.rvChile * p.returns.rvChileAnnual
+  + p.weights.rfChile * p.returns.rfChileUFAnnual
+);
+
+const cloneParams = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const canonicalBase = buildCanonicalBaseSimulationParams(cloneParams(DEFAULT_PARAMETERS));
+const canonicalWeightedReturn = computeWeightedReturn(canonicalBase);
+assert(Math.abs(canonicalWeightedReturn - computeWeightedReturn(DEFAULT_PARAMETERS)) < 1e-12);
+
+const pessimisticVariant = SCENARIO_VARIANTS.find((variant) => variant.id === 'pessimistic');
+assert(pessimisticVariant);
+const pessimisticParams = applyScenarioVariant({
+  ...cloneParams(DEFAULT_PARAMETERS),
+  activeScenario: 'pessimistic',
+}, pessimisticVariant!);
+const pessimisticWeightedReturn = computeWeightedReturn(pessimisticParams as typeof DEFAULT_PARAMETERS);
+assert(Math.abs(pessimisticWeightedReturn - 0.026705) < 1e-4);
+
+const contaminatedBase = {
+  ...cloneParams(DEFAULT_PARAMETERS),
+  activeScenario: 'pessimistic' as const,
+  returns: cloneParams((pessimisticParams as typeof DEFAULT_PARAMETERS).returns),
+  inflation: cloneParams((pessimisticParams as typeof DEFAULT_PARAMETERS).inflation),
+  capitalInitial: 2_150_000_000,
+  fx: {
+    ...cloneParams(DEFAULT_PARAMETERS.fx),
+    clpUsdInitial: 903.25,
+    usdEurFixed: 1.113,
+  },
+  simulationComposition: {
+    ...cloneParams(DEFAULT_PARAMETERS.simulationComposition!),
+    totalNetWorthCLP: 2_150_000_000,
+    optimizableInvestmentsCLP: 1_770_000_000,
+    nonOptimizable: {
+      ...cloneParams(DEFAULT_PARAMETERS.simulationComposition!.nonOptimizable),
+      banksCLP: 380_000_000,
+    },
+  },
+};
+const canonicalFromContaminated = buildCanonicalBaseSimulationParams(contaminatedBase);
+assert.equal(canonicalFromContaminated.activeScenario, 'base');
+assert.equal(canonicalFromContaminated.capitalInitial, contaminatedBase.capitalInitial);
+assert.equal(canonicalFromContaminated.fx.clpUsdInitial, contaminatedBase.fx.clpUsdInitial);
+assert.equal(canonicalFromContaminated.fx.usdEurFixed, contaminatedBase.fx.usdEurFixed);
+assert.deepEqual(canonicalFromContaminated.simulationComposition, contaminatedBase.simulationComposition);
+assert.deepEqual(canonicalFromContaminated.returns, DEFAULT_PARAMETERS.returns);
+assert.deepEqual(canonicalFromContaminated.inflation, DEFAULT_PARAMETERS.inflation);
+assert(Math.abs(computeWeightedReturn(canonicalFromContaminated as typeof DEFAULT_PARAMETERS) - canonicalWeightedReturn) < 1e-8);
+assert(
+  Math.abs(computeWeightedReturn(canonicalFromContaminated as typeof DEFAULT_PARAMETERS) - pessimisticWeightedReturn)
+    > 0.01,
+);
 
 const converted = resolveAurumEurUsdForMidas(0.86);
 assert.equal(converted.valid, true);
@@ -118,7 +178,8 @@ assert(source.includes('Escenario temporal'));
 assert(source.includes('Monte Carlo'));
 assert(source.includes('Neutro'));
 assert(source.includes("const heroBaseChipLabel = 'Base';"));
-assert(source.includes("{ id: 'state', value: heroBaseChipLabel, onClick: simActive ? onResetSim : () => {} }"));
+assert(source.includes("id: 'state',"));
+assert(source.includes('value: heroBaseChipLabel,'));
 assert(!source.includes("variant.id === 'base' ? 'Base'"));
 assert(!source.includes('Capital riesgo motor'));
 assert(!source.includes('Aurum: Modelo base local (sin aplicar snapshot Aurum)'));
@@ -130,6 +191,11 @@ assert(appSource.includes('setAurumFxSourceUsdEur'));
 assert(appSource.includes('computeEffectiveEngineInputHashForParams'));
 assert(appSource.includes('setLastRunInputHash(runInputHash)'));
 assert(appSource.includes('setLastRenderedResultHash(runInputHash)'));
+assert(appSource.includes('buildCanonicalBaseSimulationParams('));
+assert(appSource.includes("diagnosticsLabel: 'cloud/active'"));
+assert(appSource.includes("diagnosticsLabel: 'reset-session'"));
+assert(appSource.includes("setSimulationActive(false);"));
+assert(appSource.includes("setSimOverrides(null);"));
 assert(appSource.includes('headerConfidenceLabel'));
 assert(appSource.includes('headerHasOnlyRunResultBlockingReasons'));
 assert(appSource.includes('headerShowsStaleResult'));
