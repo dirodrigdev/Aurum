@@ -97,10 +97,6 @@ import {
   stripManualAdjustmentImpactFromParams,
   type ManualAdjustmentImpact,
 } from './domain/simulation/manualCapitalAdjustments';
-import {
-  buildRunCapitalBreakdown,
-  DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
-} from './domain/simulation/runCapitalPolicy';
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
@@ -2375,10 +2371,6 @@ export default function App() {
         const riskUsdEnabledTotal = riskUsdSnapshot > 0
           ? riskEnabledClpTotal / riskUsdSnapshot
           : 0;
-        const riskUsdApplied = riskEnabled ? riskUsdEnabledTotal : 0;
-        const riskClpApplied = riskEnabled
-          ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
-          : 0;
 
         const targetWithoutRisk = Math.max(
           1,
@@ -2397,28 +2389,9 @@ export default function App() {
           }
         }
 
-        const manualCurrentDeltaApplied =
-          manualImpact.currentBanksDelta
-          + manualImpact.currentInvestmentsDelta
-          + (riskEnabled ? manualImpact.currentRiskDelta : 0);
-        const runCapitalBreakdown = buildRunCapitalBreakdown({
-          composition: baseComposition,
-          realEstateEnabled: next.realEstatePolicy?.enabled ?? true,
-          riskCapitalEnabled: riskEnabled,
-          manualLocalAdjustmentsImpactCLP: manualCurrentDeltaApplied,
-          riskCapitalOverrideCLP: riskBaseClp,
-          includeNonExigibleDebtInRunCapital: DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
-        });
-        const targetVisibleCapital = (
-          Number.isFinite(runCapitalBreakdown.runCapitalFromComponentsCLP)
-            && (runCapitalBreakdown.runCapitalFromComponentsCLP ?? 0) > 0
-        )
-          ? Math.max(1, Number(runCapitalBreakdown.runCapitalFromComponentsCLP))
-          : (
-            riskEnabled
-              ? targetWithoutRisk + riskClpApplied
-              : targetWithoutRisk
-          );
+        // capitalInitial debe seguir el capital core líquido usado por el motor (optimizable + bancos).
+        // Casa y riesgo viajan por canales separados (house / risk_capital_clp) en el payload M8.
+        const targetVisibleCapital = targetWithoutRisk;
 
         const nextComposition: SimulationCompositionInput = {
           ...baseComposition,
