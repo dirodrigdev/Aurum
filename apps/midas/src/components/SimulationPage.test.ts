@@ -7,7 +7,7 @@ import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
 import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy';
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
-import { computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
+import { computeEnabledResourcesForUi, computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -188,6 +188,42 @@ assert.equal(runWithDebtOnOff.runCapitalFromComponentsCLP, 1_779_000_000);
 assert.equal(runWithDebtOffOn.runCapitalFromComponentsCLP, 1_918_000_000);
 assert.equal(runWithDebtOffOff.runCapitalFromComponentsCLP, 1_624_000_000);
 
+const enabledResourcesCore = 1_530_974_913;
+const enabledResourcesRealEstate = 248_506_886;
+const enabledResourcesRisk = 294_112_400;
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: enabledResourcesCore,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: true,
+  riskCapitalEnabled: true,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 2_073_594_199);
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: enabledResourcesCore,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_779_481_799);
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: enabledResourcesCore,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: false,
+  riskCapitalEnabled: true,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_825_087_313);
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: enabledResourcesCore,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_530_974_913);
+
 const apr2026Reference = 1_980_337_721;
 const apr2026Optimizable = 1_793_600_594;
 const apr2026Banks = 31_486_718;
@@ -289,17 +325,19 @@ assert.equal(t0Summary.negativeClp, 25_000_000);
 assert.equal(t0Summary.netClp, 75_000_000);
 assert.equal(t0Summary.count, 2);
 
-assert(source.includes('Patrimonio de referencia MIDAS'));
+assert(source.includes('Foto Aurum neta'));
 assert(!source.includes('Patrimonio total Aurum'));
 assert(source.includes('Capital inicial líquido del motor'));
 assert(source.includes('Capital inicial líquido del motor (corrida efectiva)'));
-assert(source.includes('Patrimonio de referencia MIDAS (sin ajustes manuales)'));
+assert(source.includes('Foto Aurum neta (referencia patrimonial)'));
 assert(source.includes('Impacto recursos habilitados (Depto/Riesgo)'));
 assert(source.includes('Impacto deuda no hipotecaria no exigible'));
 assert(source.includes('Impacto ajustes manuales T0 (+)'));
 assert(source.includes('Capital efectivo usado por MIDAS (input actual)'));
 assert(source.includes('Incluye ajuste manual T0'));
-assert(source.includes('MIDAS hoy'));
+assert(source.includes('Core motor hoy'));
+assert(source.includes('Recursos habilitados esta corrida'));
+assert(source.includes('Este valor queda estable frente a Depto/Riesgo.'));
 assert(source.includes('Recursos ampliados bajo modelo'));
 assert(source.includes('Ver desglose patrimonial'));
 assert(source.includes('Patrimonio Aurum base visible'));
@@ -397,7 +435,7 @@ const decisionStart = source.indexOf('Barra de decisión');
 const decisionEnd = source.indexOf('Ver desglose patrimonial');
 assert(decisionStart !== -1 && decisionEnd !== -1 && decisionEnd > decisionStart);
 const decisionSlice = source.slice(decisionStart, decisionEnd);
-const idxPatrimonioAurum = decisionSlice.indexOf('Patrimonio de referencia MIDAS');
+const idxPatrimonioAurum = decisionSlice.indexOf('Foto Aurum neta');
 const idxDepto = decisionSlice.indexOf('Depto');
 const idxRiesgo = decisionSlice.indexOf('Capital de riesgo');
 const idxPatrimonioMidas = decisionSlice.indexOf('Capital inicial líquido del motor');
