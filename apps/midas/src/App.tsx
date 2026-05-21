@@ -2828,13 +2828,14 @@ export default function App() {
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     clearCalculationTimer();
+    setManualCapitalAdjustments([]);
     const canonicalBaseEconomics = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
       activeWeights: activeWeightsRef.current,
       diagnosticsLabel: 'reset-session',
     });
     const canonicalBase = buildCanonicalSimParams(canonicalBaseEconomics, canonicalBaseEconomics, {
       applyCapital: true,
-      manualImpact: manualAdjustmentImpact,
+      manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
       riskCapitalEnabled: riskCapitalEnabledRef.current,
     });
     setSimulationActive(false);
@@ -2842,7 +2843,7 @@ export default function App() {
     setSimOverrides(null);
     setSimParams(canonicalBase);
     startRecalculation('session-reset', () => canonicalBase);
-  }, [buildCanonicalSimParams, clearCalculationTimer, clearSimulationTimer, manualAdjustmentImpact, startRecalculation]);
+  }, [buildCanonicalSimParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();

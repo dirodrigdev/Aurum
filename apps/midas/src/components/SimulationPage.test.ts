@@ -107,9 +107,18 @@ assert.equal(computeMidasConsideredWealth({
   riskCapitalEnabled: false,
 }).consideredWealthClp, 1_531_000_000);
 
-const t0Summary = summarizeManualAdjustmentsT0([
+const t0FutureOnly = summarizeManualAdjustmentsT0([
   { id: 'a', direction: 'add', amount: 100_000_000, currency: 'CLP', effectiveDate: '2035-01', destination: 'liquidity' },
   { id: 'b', direction: 'remove', amount: 25_000_000, currency: 'CLP', effectiveDate: '2036-01', destination: 'liquidity' },
+], (amount) => amount);
+assert.equal(t0FutureOnly.positiveClp, 0);
+assert.equal(t0FutureOnly.negativeClp, 0);
+assert.equal(t0FutureOnly.netClp, 0);
+assert.equal(t0FutureOnly.count, 0);
+const todayKey = new Date().toISOString().slice(0, 7);
+const t0Summary = summarizeManualAdjustmentsT0([
+  { id: 'c', direction: 'add', amount: 100_000_000, currency: 'CLP', effectiveDate: todayKey, destination: 'liquidity' },
+  { id: 'd', direction: 'remove', amount: 25_000_000, currency: 'CLP', effectiveDate: todayKey, destination: 'liquidity' },
 ], (amount) => amount);
 assert.equal(t0Summary.positiveClp, 100_000_000);
 assert.equal(t0Summary.negativeClp, 25_000_000);
@@ -120,7 +129,10 @@ assert(source.includes('Patrimonio de referencia MIDAS'));
 assert(!source.includes('Patrimonio total Aurum'));
 assert(source.includes('Patrimonio considerado por MIDAS'));
 assert(source.includes('Patrimonio considerado por MIDAS (corrida efectiva)'));
-assert(source.includes('Patrimonio de referencia MIDAS (corrida efectiva)'));
+assert(source.includes('Patrimonio de referencia MIDAS (sin ajustes manuales)'));
+assert(source.includes('Impacto recursos habilitados (Depto/Riesgo)'));
+assert(source.includes('Impacto ajustes manuales T0 (+)'));
+assert(source.includes('Capital efectivo usado por MIDAS (input actual)'));
 assert(source.includes('Incluye ajuste manual T0'));
 assert(source.includes('MIDAS hoy'));
 assert(source.includes('Patrimonio MIDAS hoy ajustado T0'));
@@ -201,6 +213,7 @@ assert(appSource.includes("diagnosticsLabel: 'cloud/active'"));
 assert(appSource.includes("diagnosticsLabel: 'reset-session'"));
 assert(appSource.includes("setSimulationActive(false);"));
 assert(appSource.includes("setSimOverrides(null);"));
+assert(appSource.includes('setManualCapitalAdjustments([]);'));
 assert(appSource.includes('headerConfidenceLabel'));
 assert(appSource.includes('headerHasOnlyRunResultBlockingReasons'));
 assert(appSource.includes('headerShowsStaleResult'));
