@@ -7,7 +7,13 @@ import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
 import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy';
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
-import { computeEnabledResourcesForUi, computeMidasConsideredWealth, summarizeManualAdjustmentsFuture, summarizeManualAdjustmentsT0 } from './SimulationPage';
+import {
+  buildEnabledResourcesSubcopy,
+  computeEnabledResourcesForUi,
+  computeMidasConsideredWealth,
+  summarizeManualAdjustmentsFuture,
+  summarizeManualAdjustmentsT0,
+} from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -334,6 +340,36 @@ assert.equal(futureSummary.negativeClp, 25_000_000);
 assert.equal(futureSummary.netClp, 125_000_000);
 assert.equal(futureSummary.count, 2);
 assert.equal(futureSummary.firstFutureDate, '2039-05');
+assert.equal(buildEnabledResourcesSubcopy({
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  hasManualT0Adjustments: false,
+  hasFutureAdjustments: false,
+}), 'Core + Depto');
+assert.equal(buildEnabledResourcesSubcopy({
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  hasManualT0Adjustments: false,
+  hasFutureAdjustments: true,
+}), 'Core + Depto + Aj. futuros');
+assert.equal(buildEnabledResourcesSubcopy({
+  realEstateEnabled: true,
+  riskCapitalEnabled: true,
+  hasManualT0Adjustments: false,
+  hasFutureAdjustments: true,
+}), 'Core + Depto + Riesgo + Aj. futuros');
+assert.equal(buildEnabledResourcesSubcopy({
+  realEstateEnabled: false,
+  riskCapitalEnabled: true,
+  hasManualT0Adjustments: false,
+  hasFutureAdjustments: true,
+}), 'Core + Riesgo + Aj. futuros');
+assert.equal(buildEnabledResourcesSubcopy({
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  hasManualT0Adjustments: false,
+  hasFutureAdjustments: true,
+}), 'Core + Aj. futuros');
 
 assert(source.includes('Patrimonio total hoy'));
 assert(source.includes('Patrimonio total hoy (Aurum + capital de riesgo)'));
@@ -352,7 +388,8 @@ assert(source.includes('Ajustes futuros:'));
 assert(!source.includes('Core motor hoy'));
 assert(source.includes('Recursos habilitados esta corrida'));
 assert(source.includes('Core + Depto + Riesgo'));
-assert(source.includes('Solo core'));
+assert(source.includes('Aj. futuros'));
+assert(!source.includes('Solo core'));
 assert(source.includes('Recursos ampliados bajo modelo'));
 assert(source.includes('Ver desglose patrimonial'));
 assert(source.includes('Patrimonio Aurum base visible'));
@@ -417,6 +454,7 @@ assert(source.includes('Neutro'));
 assert(source.includes("const heroBaseChipLabel = 'Base';"));
 assert(source.includes("id: 'state',"));
 assert(source.includes('value: heroBaseChipLabel,'));
+assert(!source.includes("{simActive && (\n          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>"));
 assert(!source.includes('title="Agregar evento"'));
 assert(!source.includes('aria-label="Agregar evento"'));
 assert(!source.includes("variant.id === 'base' ? 'Base'"));

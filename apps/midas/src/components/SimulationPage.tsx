@@ -272,6 +272,22 @@ export function computeEnabledResourcesForUi(input: {
   return Math.max(0, enabledResources);
 }
 
+export function buildEnabledResourcesSubcopy(input: {
+  realEstateEnabled: boolean;
+  riskCapitalEnabled: boolean;
+  hasManualT0Adjustments: boolean;
+  hasFutureAdjustments: boolean;
+}): string {
+  const baseLabel = input.realEstateEnabled
+    ? (input.riskCapitalEnabled ? 'Core + Depto + Riesgo' : 'Core + Depto')
+    : (input.riskCapitalEnabled ? 'Core + Riesgo' : 'Core');
+  const suffixes: string[] = [];
+  if (input.hasManualT0Adjustments) suffixes.push('Ajuste T0');
+  if (input.hasFutureAdjustments) suffixes.push('Aj. futuros');
+  if (suffixes.length === 0) return baseLabel;
+  return `${baseLabel} + ${suffixes.join(' + ')}`;
+}
+
 export function summarizeManualAdjustmentsT0(
   adjustments: ManualCapitalAdjustment[],
   toClp: (amount: number, currency: 'CLP' | 'USD' | 'EUR') => number,
@@ -1414,10 +1430,12 @@ export function SimulationPage({
   const patrimonioTotalHoyClp = patrimonioTotalHoyAurumNetoClp !== null
     ? Math.max(0, patrimonioTotalHoyAurumNetoClp + patrimonioTotalHoyRiskClp)
     : null;
-  const recursosHabilitadosLayerLabel = liquidarDeptoEnabled
-    ? (riskCapitalEnabled ? 'Core + Depto + Riesgo' : 'Core + Depto')
-    : (riskCapitalEnabled ? 'Core + Riesgo' : 'Solo core');
-  const recursosHabilitadosSubcopy = `${recursosHabilitadosLayerLabel}${Math.abs(ajusteManualAplicadoCorridaClp) > 0.5 ? ' + Ajuste T0' : ''}`;
+  const recursosHabilitadosSubcopy = buildEnabledResourcesSubcopy({
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    hasManualT0Adjustments: Math.abs(ajusteManualAplicadoCorridaClp) > 0.5,
+    hasFutureAdjustments: committedManualSummaryFuture.count > 0,
+  });
   const runCapitalFromComponentsCLP = computeEnabledResourcesForUi({
     coreLiquidCapitalClp: runCapitalCLP,
     realEstateSupportClp: realEstateConsideredClp,
@@ -2268,29 +2286,6 @@ export function SimulationPage({
             ]}
           />
         </div>
-        {simActive && (
-          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={() => {
-                onRestoreScenarioPreset();
-                onResetSim();
-              }}
-              style={{
-                background: T.surfaceEl,
-                border: `1px solid ${T.border}`,
-                color: T.textSecondary,
-                borderRadius: 999,
-                padding: isMobileViewport ? '5px 9px' : '6px 10px',
-                fontSize: isMobileViewport ? 10 : 11,
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              Volver al Modelo Base
-            </button>
-          </div>
-        )}
         {!simActive && (
           <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
             Modelo base canónico · sin escenario aplicado.
