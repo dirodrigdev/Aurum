@@ -2238,33 +2238,38 @@ export function SimulationPage({
                 value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
                 note: heroWealthChipNote,
                 onClick: openSimulationPanelShortcut,
+                accessory: (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMovementForm();
+                      openCapitalLedger();
+                    }}
+                    style={{
+                      width: isMobileViewport ? 28 : 30,
+                      height: isMobileViewport ? 28 : 30,
+                      background: T.primary,
+                      border: 'none',
+                      color: '#fff',
+                      borderRadius: '50%',
+                      padding: 0,
+                      fontSize: isMobileViewport ? 18 : 19,
+                      lineHeight: 1,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                    title="Agregar evento manual"
+                    aria-label="Agregar evento manual"
+                  >
+                    +
+                  </button>
+                ),
               },
             ]}
           />
         </div>
-        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={() => {
-              resetMovementForm();
-              openCapitalLedger();
-            }}
-            style={{
-              background: T.primary,
-              border: 'none',
-              color: '#fff',
-              borderRadius: 999,
-              padding: isMobileViewport ? '5px 9px' : '6px 10px',
-              fontSize: isMobileViewport ? 10 : 11,
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-            title="Agregar evento patrimonial"
-            aria-label="Agregar evento patrimonial"
-          >
-            + Evento
-          </button>
-          {simActive && (
+        {simActive && (
+          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
             <button
               type="button"
               onClick={() => {
@@ -2284,8 +2289,8 @@ export function SimulationPage({
             >
               Volver al Modelo Base
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {!simActive && (
           <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
             Modelo base canónico · sin escenario aplicado.
