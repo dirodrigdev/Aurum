@@ -4000,7 +4000,18 @@ export default function App() {
       const baseEngineInput = toM8Input(strippedManualParamsForFingerprint, baseCapitalResolution);
       const manualCapitalAdjustmentsClp =
         Number(effectiveEngineInput.capital_initial_clp ?? 0) - Number(baseEngineInput.capital_initial_clp ?? 0);
-      const manualLocalAdjustmentsAffectEngine = JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput);
+      const effectiveManualFutureEvents = Array.isArray(effectiveEngineInput.future_events)
+        ? effectiveEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const baseManualFutureEvents = Array.isArray(baseEngineInput.future_events)
+        ? baseEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const manualLocalAdjustmentsAffectEngine = (
+        JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput)
+        || Math.abs(manualCapitalAdjustmentsClp) > 0.5
+        || effectiveManualFutureEvents.length !== baseManualFutureEvents.length
+        || effectiveManualFutureEvents.length > 0
+      );
       return {
         effectiveEngineInput,
         manualLocalAdjustmentsAffectEngine,
