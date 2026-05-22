@@ -83,11 +83,11 @@ export function HeroCard({
           {pct === null ? '—' : `${pct.toFixed(1)}%`}
         </div>
         {chips && chips.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 6 : 8, width: isMobileViewport ? (isCompactViewport ? 128 : 138) : 'auto', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 6 : 8, width: isMobileViewport ? (isCompactViewport ? 128 : 138) : 172, flexShrink: 0 }}>
             {chips.map((chip) => (
               <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
                 {chip.accessory ? <span style={{ display: 'inline-flex', alignItems: 'center' }}>{chip.accessory}</span> : null}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'stretch' : 'flex-end', gap: 1, minWidth: 0 }}>
                   <button
                     onClick={chip.onClick}
                     style={{
@@ -107,7 +107,7 @@ export function HeroCard({
                     {chip.value}
                   </button>
                   {chip.note ? (
-                    <span style={{ color: T.textMuted, fontSize: 10 }}>{chip.note}</span>
+                    <span style={{ color: T.textMuted, fontSize: 10, whiteSpace: 'pre-line', lineHeight: 1.2, textAlign: 'right' }}>{chip.note}</span>
                   ) : null}
                 </div>
               </div>

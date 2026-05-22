@@ -7,7 +7,7 @@ import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
 import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy';
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
-import { computeEnabledResourcesForUi, computeMidasConsideredWealth, summarizeManualAdjustmentsT0 } from './SimulationPage';
+import { computeEnabledResourcesForUi, computeMidasConsideredWealth, summarizeManualAdjustmentsFuture, summarizeManualAdjustmentsT0 } from './SimulationPage';
 
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -324,6 +324,16 @@ assert.equal(t0Summary.positiveClp, 100_000_000);
 assert.equal(t0Summary.negativeClp, 25_000_000);
 assert.equal(t0Summary.netClp, 75_000_000);
 assert.equal(t0Summary.count, 2);
+const futureSummary = summarizeManualAdjustmentsFuture([
+  { id: 'e', direction: 'add', amount: 150_000_000, currency: 'CLP', effectiveDate: '2039-05', destination: 'investments' },
+  { id: 'f', direction: 'remove', amount: 25_000_000, currency: 'CLP', effectiveDate: '2040-02', destination: 'liquidity' },
+  { id: 'g', direction: 'add', amount: 100_000_000, currency: 'CLP', effectiveDate: todayKey, destination: 'liquidity' },
+], (amount) => amount);
+assert.equal(futureSummary.positiveClp, 150_000_000);
+assert.equal(futureSummary.negativeClp, 25_000_000);
+assert.equal(futureSummary.netClp, 125_000_000);
+assert.equal(futureSummary.count, 2);
+assert.equal(futureSummary.firstFutureDate, '2039-05');
 
 assert(source.includes('Patrimonio total hoy'));
 assert(source.includes('Patrimonio total hoy (Aurum + capital de riesgo)'));
@@ -334,10 +344,11 @@ assert(source.includes('Foto Aurum neta (referencia patrimonial)'));
 assert(source.includes('Impacto recursos habilitados (Depto/Riesgo)'));
 assert(source.includes('Impacto deuda no exigible (diagnóstico)'));
 assert(source.includes('Impacto ajustes manuales T0 (+)'));
+assert(source.includes('Ajustes futuros programados (no afectan hoy):'));
 assert(source.includes('Capital efectivo usado por MIDAS (input actual)'));
 assert(source.includes('ajuste manual T0'));
 assert(source.includes('Recursos habilitados hoy'));
-assert(source.includes('Recursos habilitados hoy · ajustes futuros pendientes'));
+assert(source.includes('Ajustes futuros:'));
 assert(!source.includes('Core motor hoy'));
 assert(source.includes('Recursos habilitados esta corrida'));
 assert(source.includes('Core + Depto + Riesgo'));
@@ -360,8 +371,11 @@ assert(source.includes('Explicación de la diferencia ampliada'));
 assert(source.includes('El capital líquido del motor supera la referencia patrimonial. Revisar composición antes de usar.'));
 assert(source.includes('Configuración OK'));
 assert(source.includes('T0'));
-assert(source.includes('Ajustes manuales T0: +'));
+assert(source.includes('Ajustes T0 netos:'));
+assert(source.includes('Ajustes futuros netos:'));
+assert(source.includes('Primer evento futuro:'));
 assert(source.includes('Los ajustes manuales están expresados en valor T0/plata de hoy.'));
+assert(source.includes('Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.'));
 assert(source.includes('El capital del motor y los recursos ampliados pueden diferir'));
 assert(source.includes('Resultado anterior'));
 assert(source.includes('Pendiente de recalcular'));
@@ -403,6 +417,8 @@ assert(source.includes('Neutro'));
 assert(source.includes("const heroBaseChipLabel = 'Base';"));
 assert(source.includes("id: 'state',"));
 assert(source.includes('value: heroBaseChipLabel,'));
+assert(!source.includes('title="Agregar evento"'));
+assert(!source.includes('aria-label="Agregar evento"'));
 assert(!source.includes("variant.id === 'base' ? 'Base'"));
 assert(!source.includes('Capital riesgo motor'));
 assert(!source.includes('Aurum: Modelo base local (sin aplicar snapshot Aurum)'));

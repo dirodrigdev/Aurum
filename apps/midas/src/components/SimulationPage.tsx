@@ -297,6 +297,35 @@ export function summarizeManualAdjustmentsT0(
   });
 }
 
+export function summarizeManualAdjustmentsFuture(
+  adjustments: ManualCapitalAdjustment[],
+  toClp: (amount: number, currency: 'CLP' | 'USD' | 'EUR') => number,
+) {
+  const todayKey = new Date().toISOString().slice(0, 7);
+  return adjustments.reduce((acc, adj) => {
+    if (adj.effectiveDate <= todayKey) return acc;
+    const amountClp = Math.max(0, toClp(adj.amount, adj.currency));
+    if (adj.direction === 'add') {
+      acc.positiveClp += amountClp;
+      acc.netClp += amountClp;
+    } else {
+      acc.negativeClp += amountClp;
+      acc.netClp -= amountClp;
+    }
+    acc.count += 1;
+    if (acc.firstFutureDate === null || adj.effectiveDate < acc.firstFutureDate) {
+      acc.firstFutureDate = adj.effectiveDate;
+    }
+    return acc;
+  }, {
+    positiveClp: 0,
+    negativeClp: 0,
+    netClp: 0,
+    count: 0,
+    firstFutureDate: null as string | null,
+  });
+}
+
 export function deriveSleevesFromRvRfTarget(
   current: PortfolioWeights,
   targetRvPct: number,
@@ -774,16 +803,20 @@ export function SimulationPage({
     () => [...draftManualAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
     [draftManualAdjustments],
   );
-  const hasFutureAdjustments = useMemo(() => {
-    const todayKey = new Date().toISOString().slice(0, 7);
-    return manualCapitalAdjustments.some((adj) => adj.effectiveDate > todayKey);
-  }, [manualCapitalAdjustments]);
   const committedManualSummaryT0 = useMemo(
     () => summarizeManualAdjustmentsT0(manualCapitalAdjustments, toClp),
     [manualCapitalAdjustments, toClp],
   );
+  const committedManualSummaryFuture = useMemo(
+    () => summarizeManualAdjustmentsFuture(manualCapitalAdjustments, toClp),
+    [manualCapitalAdjustments, toClp],
+  );
   const draftManualSummaryT0 = useMemo(
     () => summarizeManualAdjustmentsT0(manualAdjustmentsSorted, toClp),
+    [manualAdjustmentsSorted, toClp],
+  );
+  const draftManualSummaryFuture = useMemo(
+    () => summarizeManualAdjustmentsFuture(manualAdjustmentsSorted, toClp),
     [manualAdjustmentsSorted, toClp],
   );
   const manualNetClp = useMemo(
@@ -1436,9 +1469,15 @@ export function SimulationPage({
       ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
       : 'Configuración patrimonial válida para esta corrida.';
   const patrimonioMidasHoyAjustadoT0Clp = patrimonioAmpliadoModeloClp ?? patrimonioConsideradoEfectivoCorridaClp;
-  const heroWealthChipNote = committedManualSummaryT0.count > 0
+  const heroResourcesTodayNote = committedManualSummaryT0.count > 0
     ? `Recursos habilitados hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
     : 'Recursos habilitados hoy';
+  const heroFutureAdjustmentsNote = committedManualSummaryFuture.count > 0
+    ? `Ajustes futuros: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
+    : null;
+  const heroWealthChipNote = heroFutureAdjustmentsNote
+    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}`
+    : heroResourcesTodayNote;
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
   const patrimonioSourceWarning = snapshotApplied
@@ -2197,41 +2236,35 @@ export function SimulationPage({
               {
                 id: 'capital',
                 value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
-                note: committedManualSummaryT0.count > 0
-                  ? heroWealthChipNote
-                  : hasFutureAdjustments
-                    ? 'Recursos habilitados hoy · ajustes futuros pendientes'
-                    : heroWealthChipNote,
+                note: heroWealthChipNote,
                 onClick: openSimulationPanelShortcut,
-                accessory: (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resetMovementForm();
-                      openCapitalLedger();
-                    }}
-                    style={{
-                      background: T.primary,
-                      border: 'none',
-                      color: '#fff',
-                      borderRadius: 999,
-                      padding: '4px 8px',
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
-                    title="Agregar evento"
-                    aria-label="Agregar evento"
-                  >
-                    +
-                  </button>
-                ),
               },
             ]}
           />
         </div>
-        {simActive && (
-          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              resetMovementForm();
+              openCapitalLedger();
+            }}
+            style={{
+              background: T.primary,
+              border: 'none',
+              color: '#fff',
+              borderRadius: 999,
+              padding: isMobileViewport ? '5px 9px' : '6px 10px',
+              fontSize: isMobileViewport ? 10 : 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+            title="Agregar evento patrimonial"
+            aria-label="Agregar evento patrimonial"
+          >
+            + Evento
+          </button>
+          {simActive && (
             <button
               type="button"
               onClick={() => {
@@ -2251,8 +2284,8 @@ export function SimulationPage({
             >
               Volver al Modelo Base
             </button>
-          </div>
-        )}
+          )}
+        </div>
         {!simActive && (
           <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
             Modelo base canónico · sin escenario aplicado.
@@ -2940,6 +2973,7 @@ export function SimulationPage({
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Recursos ampliados bajo modelo (corrida efectiva):</span> {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto recursos habilitados (Depto/Riesgo):</span> {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto ajustes manuales T0 (+):</span> {`${manualLocalAdjustmentsImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(manualLocalAdjustmentsImpactCLP)}`}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajustes futuros programados (no afectan hoy):</span> {committedManualSummaryFuture.count > 0 ? `${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` · desde ${committedManualSummaryFuture.firstFutureDate}` : ''}` : 'Sin eventos futuros'}</div>
                   <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital efectivo usado por MIDAS (input actual):</span> {runCapitalCLP !== null ? formatMoneyCompact(runCapitalCLP) : 'No disponible'}</div>
                   {motorCapitalMismatchClp !== null && Math.abs(motorCapitalMismatchClp) > 0.5 ? (
                     <div style={{ color: T.warning }}>
@@ -3948,12 +3982,15 @@ export function SimulationPage({
               <div>Recursos ampliados bajo modelo antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
               <div>Impacto deuda no hipotecaria no exigible: {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
               <div>Impacto recursos habilitados (Depto/Riesgo): {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
-              <div>Ajustes manuales T0: +{formatMoneyCompact(draftManualSummaryT0.positiveClp)} / -{formatMoneyCompact(draftManualSummaryT0.negativeClp)} / neto {formatMoneyCompact(draftManualSummaryT0.netClp)}</div>
+              <div>Ajustes T0 netos: {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`}</div>
+              <div>Ajustes futuros netos: {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}</div>
+              <div>Primer evento futuro: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}</div>
               <div>Capital inicial líquido del motor (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
               <div>Recursos ampliados bajo modelo (corrida efectiva): {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
               <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
               <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
               <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
+              <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
               <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
             </div>
 
