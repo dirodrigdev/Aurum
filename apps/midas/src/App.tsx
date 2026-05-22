@@ -4192,6 +4192,10 @@ export default function App() {
     cloudHydrationReady,
     simulationConfigDiagnostics.projectId,
   ]);
+  const effectiveRunInputHash = useMemo(
+    () => computeEffectiveEngineInputHashForParams(simParams),
+    [simParams],
+  );
 
   const simulationResultDiagnostics = useMemo<SimulationResultDiagnostics>(() => {
     const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
@@ -4201,14 +4205,14 @@ export default function App() {
     const resultSeed = finiteNumberOrNull(simResult?.params?.simulation?.seed ?? appliedRecalcSeed);
     const resultNSim = finiteNumberOrNull(simResult?.params?.simulation?.nSim ?? null);
     const resultInputHash =
-      simResult && lastRenderedResultHash === m8InputFingerprint.effectiveEngineInputHash
-        ? m8InputFingerprint.effectiveEngineInputHash
+      simResult && lastRenderedResultHash === effectiveRunInputHash
+        ? effectiveRunInputHash
         : lastRenderedResultHash;
 
     return buildSimulationResultDiagnostics({
       result: heroVisibleResult,
       resultInputHash,
-      effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+      effectiveEngineInputHash: effectiveRunInputHash,
       resultSeed,
       expectedSeed,
       resultNSim,
@@ -4230,7 +4234,7 @@ export default function App() {
 	    heroVisibleResult,
     lastRenderedResultHash,
     lastRunInputHash,
-    m8InputFingerprint.effectiveEngineInputHash,
+    effectiveRunInputHash,
     m8InputFingerprint.normalizedInput,
     simResult,
     simulationRunCompletedAt,
@@ -4286,7 +4290,7 @@ export default function App() {
         resultDigest: simulationResultDiagnostics.resultDigest,
         isFinalForCurrentInput: simulationResultDiagnostics.isFinalForCurrentInput,
         resultInputHash: simulationResultDiagnostics.resultInputHash,
-        effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+        effectiveEngineInputHash: effectiveRunInputHash,
         resultSeed: simulationResultDiagnostics.resultSeed,
         expectedSeed,
         resultNSim: simulationResultDiagnostics.resultNSim,
@@ -4306,7 +4310,7 @@ export default function App() {
     lastAppliedAurumSnapshotSignature,
     lastRenderedResultHash,
     lastRunInputHash,
-    m8InputFingerprint.effectiveEngineInputHash,
+    effectiveRunInputHash,
     m8InputFingerprint.normalizedInput,
     operativeFxResolution,
     simulationConfigHydrationStatus,
@@ -4349,7 +4353,7 @@ export default function App() {
         : T.negative;
 
   useEffect(() => {
-    const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
+    const effectiveHash = effectiveRunInputHash;
     const gate = evaluateSimulationRunGate({
       isCanonicalUserSession,
       hasEffectiveInput: Boolean(engineFingerprintDiagnostics.effectiveEngineInput),
@@ -4401,7 +4405,7 @@ export default function App() {
     engineFingerprintDiagnostics.effectiveEngineInput,
     isCanonicalUserSession,
     lastRenderedResultHash,
-    m8InputFingerprint.effectiveEngineInputHash,
+    effectiveRunInputHash,
     recalcWorkerStatus,
     simulationRunStatus,
     simOverrides,
