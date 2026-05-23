@@ -613,6 +613,7 @@ export function SimulationPage({
   const [openTraceRows, setOpenTraceRows] = useState<Record<string, boolean>>({});
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
+  const [spendingDraftByIndex, setSpendingDraftByIndex] = useState<Record<number, string>>({});
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
@@ -2072,6 +2073,33 @@ export function SimulationPage({
       return next;
     });
   };
+  const beginSpendingEdit = useCallback((index: number, currentAmount: number) => {
+    setSpendingDraftByIndex((prev) => ({
+      ...prev,
+      [index]: String(Math.max(0, Math.round(currentAmount))),
+    }));
+  }, []);
+  const updateSpendingDraft = useCallback((index: number, rawValue: string) => {
+    const digitsOnly = rawValue.replace(/\D/g, '');
+    setSpendingDraftByIndex((prev) => ({
+      ...prev,
+      [index]: digitsOnly,
+    }));
+  }, []);
+  const commitSpendingDraft = useCallback((index: number) => {
+    setSpendingDraftByIndex((prev) => {
+      const draftValue = prev[index];
+      if (typeof draftValue === 'string' && draftValue.trim() !== '') {
+        const parsed = Number(draftValue);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          updateSpendingPhase(index, parsed);
+        }
+      }
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  }, [updateSpendingPhase]);
 
   const toggleLiquidarDepto = () => {
     if (!hasEffectiveRealEstate) return;
@@ -2658,8 +2686,18 @@ export function SimulationPage({
                   </span>
                   <input
                     type="text"
-                    value={formatCLP(phase.amountReal)}
-                    onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                    inputMode="numeric"
+                    value={Object.prototype.hasOwnProperty.call(spendingDraftByIndex, idx)
+                      ? (spendingDraftByIndex[idx] ?? '')
+                      : formatCLP(phase.amountReal)}
+                    onFocus={() => beginSpendingEdit(idx, phase.amountReal)}
+                    onChange={(e) => updateSpendingDraft(idx, e.target.value)}
+                    onBlur={() => commitSpendingDraft(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
@@ -3566,8 +3604,18 @@ export function SimulationPage({
                     </span>
                     <input
                       type="text"
-                      value={formatCLP(phase.amountReal)}
-                      onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                      inputMode="numeric"
+                      value={Object.prototype.hasOwnProperty.call(spendingDraftByIndex, idx)
+                        ? (spendingDraftByIndex[idx] ?? '')
+                        : formatCLP(phase.amountReal)}
+                      onFocus={() => beginSpendingEdit(idx, phase.amountReal)}
+                      onChange={(e) => updateSpendingDraft(idx, e.target.value)}
+                      onBlur={() => commitSpendingDraft(idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        }
+                      }}
                       style={{
                         background: T.surfaceEl,
                         border: `1px solid ${T.border}`,
