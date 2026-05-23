@@ -229,6 +229,42 @@ assert.equal(computeEnabledResourcesForUi({
   riskCapitalEnabled: false,
   manualLocalAdjustmentsImpactClp: 0,
 }), 1_530_974_913);
+const t0Plus100 = 100_000_000;
+const coreWithT0Plus100 = enabledResourcesCore + t0Plus100;
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: coreWithT0Plus100,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_879_481_799);
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: coreWithT0Plus100,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_630_974_913);
+const t0Minus100 = -100_000_000;
+const coreWithT0Minus100 = enabledResourcesCore + t0Minus100;
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: coreWithT0Minus100,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_679_481_799);
+assert.equal(computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: coreWithT0Minus100,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: false,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+}), 1_430_974_913);
 
 const apr2026Reference = 1_980_337_721;
 const apr2026Optimizable = 1_793_600_594;
@@ -340,6 +376,25 @@ assert.equal(futureSummary.negativeClp, 25_000_000);
 assert.equal(futureSummary.netClp, 125_000_000);
 assert.equal(futureSummary.count, 2);
 assert.equal(futureSummary.firstFutureDate, '2039-05');
+const mixedAdjustments = [
+  { id: 'h', direction: 'add' as const, amount: 100_000_000, currency: 'CLP' as const, effectiveDate: todayKey, destination: 'liquidity' as const },
+  { id: 'i', direction: 'add' as const, amount: 150_000_000, currency: 'CLP' as const, effectiveDate: '2039-05', destination: 'investments' as const },
+];
+const mixedT0Summary = summarizeManualAdjustmentsT0(mixedAdjustments, (amount) => amount);
+const mixedFutureSummary = summarizeManualAdjustmentsFuture(mixedAdjustments, (amount) => amount);
+assert.equal(mixedT0Summary.netClp, 100_000_000);
+assert.equal(mixedFutureSummary.netClp, 150_000_000);
+const mixedCoreWithT0 = enabledResourcesCore + mixedT0Summary.netClp;
+const mixedResourcesToday = computeEnabledResourcesForUi({
+  coreLiquidCapitalClp: mixedCoreWithT0,
+  realEstateSupportClp: enabledResourcesRealEstate,
+  riskCapitalClp: enabledResourcesRisk,
+  realEstateEnabled: true,
+  riskCapitalEnabled: false,
+  manualLocalAdjustmentsImpactClp: 0,
+});
+assert.equal(mixedResourcesToday, 1_879_481_799);
+assert.equal(mixedResourcesToday, 1_779_481_799 + 100_000_000);
 assert.equal(buildEnabledResourcesSubcopy({
   realEstateEnabled: true,
   riskCapitalEnabled: false,
@@ -382,6 +437,7 @@ assert(source.includes('Impacto deuda no exigible (diagnóstico)'));
 assert(source.includes('Impacto ajustes manuales T0 (+)'));
 assert(source.includes('Ajustes futuros programados (no afectan hoy):'));
 assert(source.includes('Capital efectivo usado por MIDAS (input actual)'));
+assert(source.includes('manualLocalAdjustmentsImpactClp: 0'));
 assert(source.includes('ajuste manual T0'));
 assert(source.includes('Recursos habilitados hoy'));
 assert(source.includes('Ajustes futuros:'));

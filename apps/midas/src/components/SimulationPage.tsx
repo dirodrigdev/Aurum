@@ -1443,7 +1443,9 @@ export function SimulationPage({
     riskCapitalClp: runCapitalBreakdown.riskCapitalCLP,
     realEstateEnabled: liquidarDeptoEnabled,
     riskCapitalEnabled,
-    manualLocalAdjustmentsImpactClp: manualLocalAdjustmentsImpactCLP,
+    // runCapitalCLP ya refleja el capital core efectivo de la corrida (incluye T0 cuando aplica).
+    // Aquí no se vuelve a sumar T0 para evitar doble conteo visual en "Recursos habilitados".
+    manualLocalAdjustmentsImpactClp: 0,
   });
   const patrimonioAmpliadoModeloClp = runCapitalFromComponentsCLP;
   const motorCapitalMismatchClp = (
