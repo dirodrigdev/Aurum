@@ -155,6 +155,35 @@ const baseInput = (): M8InputFingerprintInput => {
 (() => {
   const input = baseInput();
   const original = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).future_events = [
+    { id: 'manual-1', type: 'inflow', month: 156, amount_clp: 150_000_000 },
+  ];
+  const changed = buildM8InputFingerprint(input);
+  assert.notEqual(original.effectiveEngineInputHash, changed.effectiveEngineInputHash, 'changing future_events must change hash');
+})();
+
+(() => {
+  const input = baseInput();
+  const original = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).risk_capital_clp = 294_112_400;
+  const changed = buildM8InputFingerprint(input);
+  assert.notEqual(original.effectiveEngineInputHash, changed.effectiveEngineInputHash, 'changing risk capital in engine input must change hash');
+})();
+
+(() => {
+  const input = baseInput();
+  const original = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).house = { include_house: true };
+  const withHouseEnabled = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).house = { include_house: false };
+  const withHouseDisabled = buildM8InputFingerprint(input);
+  assert.notEqual(original.effectiveEngineInputHash, withHouseEnabled.effectiveEngineInputHash, 'adding house channel to engine input must change hash');
+  assert.notEqual(withHouseEnabled.effectiveEngineInputHash, withHouseDisabled.effectiveEngineInputHash, 'toggling include_house must change hash');
+})();
+
+(() => {
+  const input = baseInput();
+  const original = buildM8InputFingerprint(input);
   input.params.activeScenario = 'pessimistic';
   const changed = buildM8InputFingerprint(input);
   assert.equal(original.effectiveEngineInputHash, changed.effectiveEngineInputHash, 'changing diagnostics-only scenario label must not change effective engine hash unless m8 input changes');
