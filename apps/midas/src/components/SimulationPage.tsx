@@ -119,6 +119,17 @@ const formatMoneyCompact = (value: number) => {
   return `$${value.toFixed(0)}`;
 };
 
+const formatMonthYearLabel = (value: string | null | undefined): string => {
+  if (!value) return 'Sin eventos futuros';
+  const [yearRaw, monthRaw] = value.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return value;
+  const parsed = new Date(Date.UTC(year, month - 1, 1));
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('es-CL', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+
 const formatSessionMoment = (atMs: number | null) => {
   if (atMs === null || !Number.isFinite(atMs) || atMs < 0) return 'Sin registro';
   const seconds = atMs / 1000;
@@ -4022,7 +4033,7 @@ export function SimulationPage({
                 Recursos hoy {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'} · T0 {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`} · Futuros {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}
               </div>
               <div style={{ marginTop: 4, color: T.textMuted, fontSize: 11 }}>
-                Próximo evento: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}
+                Próximo evento: {formatMonthYearLabel(draftManualSummaryFuture.firstFutureDate)}
               </div>
             </div>
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', paddingRight: 2 }}>
