@@ -67,7 +67,7 @@ export function BottomNav({
     { id: 'sim', label: 'Simulación' },
     { id: 'assist', label: 'Asistida' },
     { id: 'sens', label: 'Palancas' },
-    { id: 'bucketlab', label: 'Bucket Lab' },
+    { id: 'bucketlab', label: 'Lab técnico' },
     { id: 'opt', label: 'Optimización' },
     { id: 'settings', label: 'Ajustes' },
   ];

@@ -420,9 +420,12 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
             <div style={{ color: T.textSecondary, fontSize: 13, lineHeight: 1.45, maxWidth: 760 }}>
               {executiveSummary}
             </div>
+            <div style={{ color: T.warning, fontSize: 12, lineHeight: 1.4, maxWidth: 760 }}>
+              Herramienta técnica de exploración. No reemplaza el resultado auditado de Simulación.
+            </div>
           </div>
           <div style={{ display: 'inline-flex', width: 'fit-content', border: `1px solid ${T.warning}`, borderRadius: 999, padding: '3px 8px', color: T.warning, fontSize: 11, fontWeight: 700 }}>
-            Read-only
+            Laboratorio técnico
           </div>
         </div>
 
@@ -511,9 +514,9 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
       </div>
 
       <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Bucket Lab</div>
+        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Laboratorio de buckets</div>
         <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          Compara el costo de tener más defensa desde el inicio versus el riesgo de vender balanceados en una crisis larga.
+          Herramienta técnica de exploración. No reemplaza el resultado auditado de Simulación.
         </div>
       </div>
 

@@ -114,6 +114,11 @@ function formatDateTime(iso: string): string {
   });
 }
 
+function shortFingerprint(value: string): string {
+  if (!value) return 'n/a';
+  return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
+
 function summarizeRiskMix(params: ModelParameters): string {
   const rv = params.weights.rvGlobal + params.weights.rvChile;
   const rf = params.weights.rfGlobal + params.weights.rfChile;
@@ -401,6 +406,11 @@ export function PalancasPage({
     if (!evaluationMeta) return false;
     return evaluationMeta.source !== sourceMode || evaluationMeta.paramsFingerprint !== activeParamsFingerprint;
   }, [evaluationMeta, sourceMode, activeParamsFingerprint]);
+  const comparabilityState = !evaluationMeta
+    ? 'No comparable'
+    : resultIsStale
+      ? 'Requiere actualizar'
+      : 'Vigente';
 
   useEffect(() => {
     if (!simulationActive && sourceMode === 'simulation') {
@@ -484,9 +494,9 @@ export function PalancasPage({
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Palancas</div>
+        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Palancas de sensibilidad</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Explora qué cambios podrían mejorar el resultado del plan completo.
+          Explora qué variables mueven el resultado. La decisión principal sigue estando en Simulación.
         </div>
       </div>
 
@@ -535,6 +545,9 @@ export function PalancasPage({
         <div style={{ display: 'grid', gap: 4 }}>
           <div style={{ color: T.textSecondary, fontSize: 11 }}>{sourceDescription}</div>
           <div style={{ color: T.textMuted, fontSize: 10 }}>{sourceDeltaSummary}</div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Fuente: {sourceMode === 'simulation' && simulationActive ? 'Simulación activa' : 'Modelo Base'} · Hash {shortFingerprint(activeParamsFingerprint)} · Estado {comparabilityState}
+          </div>
           {!simulationActive ? (
             <div style={{ color: T.warning, fontSize: 10 }}>No hay simulación activa.</div>
           ) : null}
@@ -593,6 +606,9 @@ export function PalancasPage({
         ) : null}
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Estimación orientativa por sensibilidad local (una variable a la vez) sobre el modelo completo. No reemplaza la simulación integral.
+        </div>
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          Estos resultados son exploratorios. Para decidir, usa el resultado auditado de Simulación.
         </div>
       </div>
 

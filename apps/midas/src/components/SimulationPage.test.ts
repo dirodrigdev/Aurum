@@ -18,6 +18,9 @@ import {
 const source = readFileSync(new URL('./SimulationPage.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const adaptersSource = readFileSync(new URL('../integrations/aurum/adapters.ts', import.meta.url), 'utf8');
+const palancasSource = readFileSync(new URL('./PalancasPage.tsx', import.meta.url), 'utf8');
+const bucketLabSource = readFileSync(new URL('./BucketLabPage.tsx', import.meta.url), 'utf8');
+const bottomNavSource = readFileSync(new URL('./BottomNav.tsx', import.meta.url), 'utf8');
 
 const computeWeightedReturn = (p: typeof DEFAULT_PARAMETERS) => (
   p.weights.rvGlobal * p.returns.rvGlobalAnnual
@@ -571,6 +574,18 @@ assert(!appSource.includes('aria-label="Abrir parámetros"'));
 assert(source.includes('title="Agregar evento patrimonial"'));
 assert(source.includes('aria-label="Agregar evento patrimonial"'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));
+assert(palancasSource.includes('Palancas de sensibilidad'));
+assert(palancasSource.includes('La decisión principal sigue estando en Simulación.'));
+assert(palancasSource.includes('Estos resultados son exploratorios. Para decidir, usa el resultado auditado de Simulación.'));
+assert(palancasSource.includes('Fuente:'));
+assert(palancasSource.includes('Hash'));
+assert(palancasSource.includes('Estado'));
+assert(palancasSource.includes('Resultado desactualizado'));
+assert(palancasSource.includes('Recalcular palancas'));
+assert(bucketLabSource.includes('Laboratorio técnico'));
+assert(bucketLabSource.includes('Laboratorio de buckets'));
+assert(bucketLabSource.includes('No reemplaza el resultado auditado de Simulación.'));
+assert(bottomNavSource.includes("{ id: 'bucketlab', label: 'Lab técnico' }"));
 
 const decisionStart = source.indexOf('Barra de decisión');
 const decisionEnd = source.indexOf('Ver desglose patrimonial');
