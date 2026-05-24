@@ -680,6 +680,7 @@ export function SimulationPage({
   const scenarioUiLabel =
     activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
   const heroBaseChipLabel = 'Base';
+  const canResetToBase = simActive;
   const simulationConfigSourceLabel =
     simulationConfigSource === 'cloud' ? 'Cloud canónico' : simulationConfigSource === 'local_cache' ? 'Cache local' : 'Fallback';
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
@@ -2272,12 +2273,13 @@ export function SimulationPage({
               {
                 id: 'state',
                 value: heroBaseChipLabel,
-                onClick: simActive
+                onClick: canResetToBase
                   ? () => {
                       onRestoreScenarioPreset();
                       onResetSim();
                     }
-                  : () => {},
+                  : undefined,
+                disabled: !canResetToBase,
               },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: openSimulationPanelShortcut },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: openSimulationPanelShortcut },
@@ -3695,27 +3697,6 @@ export function SimulationPage({
                 }}
               >
                 Ejecutar simulación
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onRestoreScenarioPreset();
-                  onResetSim();
-                }}
-                disabled={!simActive}
-                style={{
-                  background: T.surface,
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  borderRadius: 999,
-                  padding: '6px 10px',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: simActive ? 'pointer' : 'not-allowed',
-                  opacity: simActive ? 1 : 0.6,
-                }}
-              >
-                Volver al Modelo Base
               </button>
             </div>
           </div>

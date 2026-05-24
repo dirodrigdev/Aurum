@@ -18,7 +18,7 @@ export function HeroCard({
   ruinCopy?: string;
   footerContent?: React.ReactNode | null;
   labelAccessory?: React.ReactNode;
-  chips?: Array<{ id: string; value: string; onClick: () => void; accessory?: React.ReactNode; note?: string }>;
+  chips?: Array<{ id: string; value: string; onClick?: () => void; disabled?: boolean; accessory?: React.ReactNode; note?: string }>;
   mode?: 'real' | 'sim';
   stale?: boolean;
 }) {
@@ -90,15 +90,18 @@ export function HeroCard({
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMobileViewport ? 'stretch' : 'flex-end', gap: 1, minWidth: 0 }}>
                   <button
                     onClick={chip.onClick}
+                    disabled={Boolean(chip.disabled)}
+                    aria-disabled={Boolean(chip.disabled)}
                     style={{
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
-                      color: T.textSecondary,
+                      color: chip.disabled ? T.textMuted : T.textSecondary,
                       fontSize: isMobileViewport ? 11 : 12,
                       fontWeight: 700,
                       padding: isMobileViewport ? '5px 8px' : '6px 10px',
                       borderRadius: 999,
-                      cursor: 'pointer',
+                      cursor: chip.disabled ? 'default' : 'pointer',
+                      opacity: chip.disabled ? 0.72 : 1,
                       minWidth: isMobileViewport ? 84 : 96,
                       textAlign: 'center',
                       whiteSpace: 'nowrap',

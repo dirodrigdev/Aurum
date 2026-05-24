@@ -19,8 +19,6 @@ import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
 import { PalancasPage } from './components/PalancasPage';
-import { StressPage } from './components/StressPage';
-import { OptPage } from './components/OptPage';
 import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { AssistedSimulationPage } from './components/AssistedSimulationPage';
@@ -723,6 +721,9 @@ function persistLastAppliedAurumSnapshotSignature(signature: string | null): voi
     // noop
   }
 }
+
+const LEGACY_TABS = new Set<TabId>(['stress', 'optv0']);
+const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' : tab);
 
 export default function App() {
   const initialDistributionRef = useRef(resolveInitialDistributionState());
@@ -3454,8 +3455,14 @@ export default function App() {
   }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
-    setActiveTab(tab);
+    setActiveTab(resolveProductTab(tab));
   }, []);
+
+  useEffect(() => {
+    if (LEGACY_TABS.has(activeTab)) {
+      setActiveTab('sim');
+    }
+  }, [activeTab]);
 
   const handleGoogleSignIn = useCallback(async () => {
     try {
@@ -3510,10 +3517,6 @@ export default function App() {
   const simulationOptimizerSnapshot = useMemo(
     () => (simulationActive ? toOptimizerBaselineSnapshot(simResult) : null),
     [simulationActive, simResult],
-  );
-  const optBaseSnapshot = useMemo(
-    () => liveBaseSnapshot ?? baseOptimizerSnapshot ?? null,
-    [baseOptimizerSnapshot, liveBaseSnapshot],
   );
   const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
     amountClp: null,
@@ -4583,7 +4586,9 @@ export default function App() {
     return `banks=${Math.round(banks)} · usdLiquidity=${Math.round(usdLiquidity)} · realEstateEquity=${Math.round(realEstate)} · nonMortgageDebt=${Math.round(debt)} · riskCapital=${Math.round(risk)}`;
   })();
 
-  const content = activeTab === 'sim' ? (
+  const productActiveTab = resolveProductTab(activeTab);
+
+  const content = productActiveTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
       params={simParams}
@@ -4664,34 +4669,22 @@ export default function App() {
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
     />
-  ) : activeTab === 'assist' ? (
+  ) : productActiveTab === 'assist' ? (
     <AssistedSimulationPage />
-  ) : activeTab === 'sens' ? (
+  ) : productActiveTab === 'sens' ? (
     <PalancasPage
       baseParams={baseParams}
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
     />
-  ) : activeTab === 'stress' ? (
-    <StressPage params={simParams} stateLabel={stateLabel} />
-  ) : activeTab === 'bucketlab' ? (
+  ) : productActiveTab === 'bucketlab' ? (
     <BucketLabPage params={simParams} />
-  ) : activeTab === 'settings' ? (
+  ) : productActiveTab === 'settings' ? (
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       targetWeights={optimizerSimulationParams.weights}
-    />
-  ) : activeTab === 'optv0' ? (
-    <OptPage
-      baseParams={baseParams}
-      simulationParams={optimizerSimulationParams}
-      simulationActive={simulationActive}
-      simulationLabel={stateLabel}
-      preloadedBaseStats={optBaseSnapshot}
-      preloadedSimulationStats={simulationOptimizerSnapshot}
-      optimizableBaseReference={optimizableBaseAdjusted}
     />
   ) : (
     <OptimizationLightPage
@@ -4866,7 +4859,7 @@ export default function App() {
           {content}
         </main>
 
-        <BottomNav active={activeTab} onChange={handleTabChange} />
+        <BottomNav active={productActiveTab} onChange={handleTabChange} />
       </div>
     </MidasErrorBoundary>
   );
