@@ -545,6 +545,8 @@ assert(appSource.includes("diagnosticsLabel: 'reset-session'"));
 assert(appSource.includes("setSimulationActive(false);"));
 assert(appSource.includes("setSimOverrides(null);"));
 assert(appSource.includes('setManualCapitalAdjustments([]);'));
+assert(/const resetSimulationSession[\s\S]*setRiskCapitalEnabled\(false\);/.test(appSource));
+assert(/const resetSimulationSession[\s\S]*riskCapitalEnabled:\s*false,/.test(appSource));
 assert(appSource.includes("const LEGACY_TABS = new Set<TabId>(['stress', 'optv0']);"));
 assert(appSource.includes("const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' : tab);"));
 assert(appSource.includes('setActiveTab(resolveProductTab(tab));'));

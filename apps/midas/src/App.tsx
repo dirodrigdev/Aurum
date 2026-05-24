@@ -2826,6 +2826,7 @@ export default function App() {
     clearSimulationTimer();
     clearCalculationTimer();
     setManualCapitalAdjustments([]);
+    setRiskCapitalEnabled(false);
     const canonicalBaseEconomics = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
       activeWeights: activeWeightsRef.current,
       diagnosticsLabel: 'reset-session',
@@ -2833,7 +2834,7 @@ export default function App() {
     const canonicalBase = buildCanonicalSimParams(canonicalBaseEconomics, canonicalBaseEconomics, {
       applyCapital: true,
       manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
-      riskCapitalEnabled: riskCapitalEnabledRef.current,
+      riskCapitalEnabled: false,
     });
     setSimulationActive(false);
     setSimulationPreset('base');
