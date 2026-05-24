@@ -3097,7 +3097,7 @@ export function SimulationPage({
                   {!usdFxWarning && !eurFxWarning ? (
                     <span style={{ color: T.textMuted, fontSize: 10 }}>{dataSourceStatusCopy}</span>
                   ) : null}
-                  <details open={dataSourceTone !== 'ok'} style={{ marginTop: 0 }}>
+                  <details style={{ marginTop: 0 }}>
                     <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
                       Ver detalle técnico
                     </summary>

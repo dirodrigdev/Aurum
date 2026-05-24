@@ -501,6 +501,8 @@ assert(source.includes('dataSourceStatusLabel'));
 assert(source.includes('dataSourceTone'));
 assert(source.includes('EUR/USD no validado contra Aurum; usando valor estructural del modelo.'));
 assert(source.includes('Ver detalle técnico'));
+assert(source.includes('<details style={{ marginTop: 0 }}>'));
+assert(!source.includes("open={dataSourceTone !== 'ok'}"));
 assert(source.includes('Valor fuente Aurum'));
 assert(source.includes('USD/EUR'));
 assert(source.includes('Transformación aplicada: 1 /'));
