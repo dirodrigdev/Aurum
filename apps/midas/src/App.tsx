@@ -17,11 +17,8 @@ import { normalizeModelSpendingPhases } from './domain/model/spendingPhases';
 import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
-import { ParamSheet } from './components/ParamSheet';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
 import { PalancasPage } from './components/PalancasPage';
-import { StressPage } from './components/StressPage';
-import { OptPage } from './components/OptPage';
 import { OptimizationLightPage } from './components/OptimizationLightPage';
 import { SettingsPage } from './components/SettingsPage';
 import { AssistedSimulationPage } from './components/AssistedSimulationPage';
@@ -45,7 +42,7 @@ import {
   resolveCanonicalInstrumentUniverseState,
   type InstrumentUniverseDiagnostics,
 } from './domain/model/canonicalInstrumentUniverse';
-import { resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
+import { resolveAurumEurUsdForMidas, resolveOperativeMasterFx, type OperativeFxResolution } from './domain/model/operativeFx';
 import { optimizableSnapshotToReference, snapshotToSimulationComposition } from './integrations/aurum/adapters';
 import {
   subscribeToPublishedOptimizableInvestmentsSnapshot,
@@ -80,6 +77,17 @@ import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
 import { evaluateSimulationRunGate } from './domain/model/simulationRunGate';
+import {
+  buildSimulationResultDiagnostics,
+  type SimulationResultDiagnostics,
+} from './domain/model/simulationResultDigest';
+import {
+  buildResultConfidence,
+  type ResultConfidence,
+  type SourceStatus,
+} from './domain/model/resultConfidence';
+import { buildAssumptionModeDiagnostics } from './domain/model/assumptionMode';
+import { selectRunSeed } from './domain/model/simulationSeedSelection';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -92,6 +100,7 @@ const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
 const PERSISTED_BASE_PARAMS_STORAGE_KEY = 'midas:base-vigente.v1';
 const AURUM_LAST_APPLIED_SNAPSHOT_SIGNATURE_STORAGE_KEY = 'midas:aurum-last-applied-signature.v1';
+const BASE_CANONICAL_RETURN_GUARDRAIL_EPS = 0.0005;
 const EMPTY_MANUAL_ADJUSTMENT_IMPACT: ManualAdjustmentImpact = {
   currentTotalDelta: 0,
   currentBanksDelta: 0,
@@ -330,6 +339,16 @@ function hashJson(value: unknown): string {
   return hashString(stableSerialize(value));
 }
 
+function computeEffectiveEngineInputHashForParams(params: ModelParameters): string | null {
+  try {
+    const capitalResolution = resolveCapital({ params });
+    const effectiveEngineInput = toM8Input(params, capitalResolution);
+    return `fnv1a-${hashJson(effectiveEngineInput)}`;
+  } catch {
+    return null;
+  }
+}
+
 function computeWeightedReturn(p: ModelParameters) {
   return (
     p.weights.rvGlobal * p.returns.rvGlobalAnnual +
@@ -337,6 +356,54 @@ function computeWeightedReturn(p: ModelParameters) {
     p.weights.rvChile * p.returns.rvChileAnnual +
     p.weights.rfChile * p.returns.rfChileUFAnnual
   );
+}
+
+export function buildCanonicalBaseSimulationParams(
+  hydratedParams: ModelParameters,
+  options?: { activeWeights?: PortfolioWeights; diagnosticsLabel?: string },
+): ModelParameters {
+  const canonicalDefaults = cloneParams(DEFAULT_PARAMETERS);
+  const weightedSource = options?.activeWeights ? applyActiveDistributionToParams(hydratedParams, options.activeWeights) : hydratedParams;
+  const keepFx = weightedSource.fx ?? canonicalDefaults.fx;
+  const next: ModelParameters = {
+    ...weightedSource,
+    activeScenario: 'base',
+    returns: { ...canonicalDefaults.returns },
+    inflation: { ...canonicalDefaults.inflation },
+    spendingRule: { ...canonicalDefaults.spendingRule },
+    spendingPhases: normalizeModelSpendingPhases({
+      ...weightedSource,
+      spendingPhases: canonicalDefaults.spendingPhases.map((phase) => ({ ...phase })),
+    }),
+    realEstatePolicy: canonicalDefaults.realEstatePolicy ? { ...canonicalDefaults.realEstatePolicy } : weightedSource.realEstatePolicy,
+    fx: {
+      ...canonicalDefaults.fx,
+      ...keepFx,
+      tcrealLT: canonicalDefaults.fx.tcrealLT,
+      mrHalfLifeYears: canonicalDefaults.fx.mrHalfLifeYears,
+    },
+  };
+  const weightedCanonical = computeWeightedReturn(next);
+  const pessimisticVariant = SCENARIO_VARIANTS.find((variant) => variant.id === 'pessimistic');
+  if (pessimisticVariant) {
+    const pessimisticProbe = applyScenarioVariant(
+      {
+        ...cloneParams(DEFAULT_PARAMETERS),
+        weights: { ...next.weights },
+        activeScenario: 'pessimistic',
+      },
+      pessimisticVariant,
+    );
+    const weightedPessimistic = computeWeightedReturn(pessimisticProbe);
+    if (Math.abs(weightedCanonical - weightedPessimistic) <= BASE_CANONICAL_RETURN_GUARDRAIL_EPS) {
+      console.warn('[Midas][BaseCanonicalGuardrail] Base canónico quedó demasiado cerca de escenario pesimista.', {
+        context: options?.diagnosticsLabel ?? 'unknown',
+        canonicalWeightedReturn: weightedCanonical,
+        pessimisticWeightedReturn: weightedPessimistic,
+      });
+    }
+  }
+  return options?.activeWeights ? applyActiveDistributionToParams(next, options.activeWeights) : next;
 }
 
 function applySimulationOverrides(p: ModelParameters, overrides: SimulationOverrides | null): ModelParameters {
@@ -467,12 +534,61 @@ function getAurumFxReferenceClpUsd(snapshot: AurumOptimizableInvestmentsSnapshot
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getAurumFxReferenceUsdEur(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): number | null {
+  if (!snapshot) return null;
+  const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
+  const parsed = Number(fxReference?.usdEur ?? NaN);
+  const resolved = resolveAurumEurUsdForMidas(parsed);
+  return resolved.sourceUsdEur;
+}
+
 function getAurumFxReferenceSource(snapshot: AurumOptimizableInvestmentsSnapshot | null | undefined): string | null {
   if (!snapshot) return null;
   const fxReference = 'fxReference' in snapshot ? snapshot.fxReference : undefined;
   return typeof fxReference?.source === 'string' && fxReference.source.trim().length > 0
     ? fxReference.source.trim()
     : null;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+const SUCCESS_PCT_FORMATTER = new Intl.NumberFormat('es-CL', {
+  style: 'percent',
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+function formatSuccessPct(value: number | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  return SUCCESS_PCT_FORMATTER.format(value);
+}
+
+function sourceStatusFromSimulationConfig(
+  source: 'cloud' | 'local_cache' | 'fallback',
+  hydrationStatus: SimulationConfigHydrationStatus,
+): SourceStatus {
+  if (hydrationStatus === 'error') return 'error';
+  if (hydrationStatus === 'missing') return 'missing';
+  if (hydrationStatus === 'loading') return 'provisional';
+  if (source === 'cloud') return 'canonical';
+  return source === 'local_cache' ? 'local' : 'fallback';
+}
+
+function sourceStatusFromInstrumentUniverse(origin: 'firestore' | 'bundled' | 'cache-local' | 'none'): SourceStatus {
+  if (origin === 'firestore') return 'canonical';
+  if (origin === 'bundled') return 'fallback';
+  if (origin === 'cache-local') return 'local';
+  return 'missing';
+}
+
+function sourceStatusFromFx(resolution: OperativeFxResolution): SourceStatus {
+  if (resolution.reasonCode === 'aurum_current_applied') return 'canonical';
+  if (resolution.reasonCode === 'manual_override_applied') return 'local';
+  if (resolution.reasonCode === 'no_usable_fx') return 'missing';
+  return 'fallback';
 }
 
 function deriveVisibleCapitalFromComposition(
@@ -527,11 +643,15 @@ function loadPersistedBaseVigente(activeWeights: PortfolioWeights): ModelParamet
     const capital = Number(normalized.capitalInitial ?? NaN);
     if (!Number.isFinite(capital) || capital <= 0) return null;
     const hydratedFeeAnnual = Number(normalized.feeAnnual);
-    return {
+    const hydrated: ModelParameters = {
       ...normalized,
       feeAnnual: Number.isFinite(hydratedFeeAnnual) ? hydratedFeeAnnual : 0,
       spendingPhases: normalizeModelSpendingPhases(normalized),
     };
+    return buildCanonicalBaseSimulationParams(hydrated, {
+      activeWeights,
+      diagnosticsLabel: 'localStorage/base-vigente',
+    });
   } catch {
     return null;
   }
@@ -602,6 +722,9 @@ function persistLastAppliedAurumSnapshotSignature(signature: string | null): voi
   }
 }
 
+const LEGACY_TABS = new Set<TabId>(['stress', 'optv0']);
+const resolveProductTab = (tab: TabId): TabId => (LEGACY_TABS.has(tab) ? 'sim' : tab);
+
 export default function App() {
   const initialDistributionRef = useRef(resolveInitialDistributionState());
   const initialPersistedBaseRef = useRef<ModelParameters | null>(
@@ -628,7 +751,6 @@ export default function App() {
     applyActiveDistributionToParams(cloneParams(initialModelParams), initialDistributionRef.current.activeWeights),
   );
   const [activeTab, setActiveTab] = useState<TabId>('sim');
-  const [paramSheetOpen, setParamSheetOpen] = useState(false);
   const [simResult, setSimResult] = useState<SimulationResults | null>(null);
   const [lastStableCentral, setLastStableCentral] = useState<SimulationResults | null>(null);
   const [simOverrides, setSimOverrides] = useState<SimulationOverrides | null>(null);
@@ -696,6 +818,8 @@ export default function App() {
   const [, setRiskCapitalUsdTotal] = useState(0);
   const [riskCapitalUsdSnapshotCLP, setRiskCapitalUsdSnapshotCLP] = useState(0);
   const [aurumFxSpotCLP, setAurumFxSpotCLP] = useState<number | null>(null);
+  const [aurumFxSpotUsdEur, setAurumFxSpotUsdEur] = useState<number | null>(null);
+  const [aurumFxSourceUsdEur, setAurumFxSourceUsdEur] = useState<number | null>(null);
   const [aurumFxSpotSource, setAurumFxSpotSource] = useState<string | null>(null);
   const [riskCapitalEnabled, setRiskCapitalEnabled] = useState(false);
   const [universeWeights, setUniverseWeights] = useState<PortfolioWeights | null>(() => initialDistributionRef.current.universeWeights);
@@ -1060,7 +1184,11 @@ export default function App() {
       .then(async (loaded) => {
         if (cancelled) return;
         if (loaded.ok) {
-          const cloudParams = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+          const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(loaded.params), activeWeightsRef.current);
+          const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+            activeWeights: activeWeightsRef.current,
+            diagnosticsLabel: 'cloud/active',
+          });
           cloudSimulationConfigHashRef.current = loaded.active.hash ?? null;
           hasSeededUserScopedConfigRef.current = true;
           setBaseParams(cloudParams);
@@ -1096,7 +1224,11 @@ export default function App() {
             if (cancelled) return;
             if (seeded.ok) {
               hasSeededUserScopedConfigRef.current = true;
-              const cloudParams = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
+              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
+              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+                activeWeights: activeWeightsRef.current,
+                diagnosticsLabel: 'cloud/seed-legacy',
+              });
               cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
               setBaseParams(cloudParams);
               setSimParams(cloudParams);
@@ -1135,7 +1267,11 @@ export default function App() {
             if (cancelled) return;
             if (seeded.ok) {
               hasSeededUserScopedConfigRef.current = true;
-              const cloudParams = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
+              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
+              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
+                activeWeights: activeWeightsRef.current,
+                diagnosticsLabel: 'cloud/seed-local-cache',
+              });
               cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
               setBaseParams(cloudParams);
               setSimParams(cloudParams);
@@ -1312,6 +1448,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isCanonicalUserSession) return;
+    if (simulationActive || simOverrides?.active) return;
     const nextHash = buildSimulationConfigHash(simParams);
     setSimulationConfigHash(nextHash);
     if (simulationConfigHydrationStatus !== 'cloud' && simulationConfigSource !== 'cloud') {
@@ -1356,7 +1493,7 @@ export default function App() {
       });
     }, 800);
     return () => window.clearTimeout(handle);
-  }, [isCanonicalUserSession, simParams, simulationConfigHydrationStatus, simulationConfigSource]);
+  }, [isCanonicalUserSession, simOverrides?.active, simParams, simulationActive, simulationConfigHydrationStatus, simulationConfigSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1940,6 +2077,10 @@ export default function App() {
       snapshot.version === 2
         ? snapshot.fxReference?.clpUsd ?? ''
         : '';
+    const fxUsdEur =
+      snapshot.version === 2
+        ? snapshot.fxReference?.usdEur ?? ''
+        : '';
     return [
       snapshot.version,
       snapshot.snapshotMonth,
@@ -1951,6 +2092,7 @@ export default function App() {
       riskClp,
       riskUsd,
       fxClpUsd,
+      fxUsdEur,
     ].join('|');
   }, []);
   const computeRiskCapital = useCallback((snapshot: AurumOptimizableInvestmentsSnapshot) => {
@@ -2230,10 +2372,6 @@ export default function App() {
         const riskUsdEnabledTotal = riskUsdSnapshot > 0
           ? riskEnabledClpTotal / riskUsdSnapshot
           : 0;
-        const riskUsdApplied = riskEnabled ? riskUsdEnabledTotal : 0;
-        const riskClpApplied = riskEnabled
-          ? Math.max(0, riskUsdApplied * riskUsdSnapshot)
-          : 0;
 
         const targetWithoutRisk = Math.max(
           1,
@@ -2252,9 +2390,9 @@ export default function App() {
           }
         }
 
-        const targetVisibleCapital = riskEnabled
-          ? targetWithoutRisk + riskClpApplied
-          : targetWithoutRisk;
+        // capitalInitial debe seguir el capital core líquido usado por el motor (optimizable + bancos).
+        // Casa y riesgo viajan por canales separados (house / risk_capital_clp) en el payload M8.
+        const targetVisibleCapital = targetWithoutRisk;
 
         const nextComposition: SimulationCompositionInput = {
           ...baseComposition,
@@ -2352,14 +2490,14 @@ export default function App() {
       activeRecalcOwnerRequestIdRef.current = requestId;
       setActiveRecalcOwner(ownerForRun);
     }
-    const simulationSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
+    const fallbackSeed = nextSimulationSeed(auditPreviewMode ? 42 : null);
     recalcRequestIdRef.current = requestId;
     setActiveRecalcRequestId(requestId);
-    setActiveRecalcSeed(simulationSeed);
+    setActiveRecalcSeed(fallbackSeed);
     appendRuntimeTimeline('start_recalculation', {
       cause,
       requestId,
-      simulationSeed,
+      simulationSeed: fallbackSeed,
       heroPhase: heroPhaseRef.current,
       owner: ownerForRun ?? 'none',
     });
@@ -2372,10 +2510,16 @@ export default function App() {
         activeRecalcOwnerRequestIdRef.current = null;
         setActiveRecalcOwner(null);
       };
+      let simulationSeedForRun = fallbackSeed;
       try {
         setRecalcWorkerStatus('running');
         setSimulationRunStatus('running');
         const paramsBase = run();
+        const simulationSeed = selectRunSeed(
+          paramsBase.simulation?.seed,
+          fallbackSeed,
+        );
+        simulationSeedForRun = simulationSeed;
         const params: ModelParameters = {
           ...paramsBase,
           simulation: {
@@ -2384,14 +2528,18 @@ export default function App() {
             seed: simulationSeed,
           },
         };
+        const runInputHash = computeEffectiveEngineInputHashForParams(params);
+        setLastRunInputHash(runInputHash);
         appendRuntimeTimeline('start_recalculation_params', {
           cause,
           requestId,
+          runInputHash,
           ...summarizeParams(params),
         });
         const nextResult = await runPrimaryRecalcWorker(params, requestId, cause);
         if (requestId !== recalcRequestIdRef.current) return;
         setSimResult(nextResult);
+        setLastRenderedResultHash(runInputHash);
         lastStableCentralRef.current = nextResult;
         setLastStableCentral(nextResult);
         setAppliedRecalcRequestId(requestId);
@@ -2438,7 +2586,7 @@ export default function App() {
         setSimulationRunError(String(error?.message || 'No pude recalcular la simulación.'));
         appendRuntimeTimeline('sim_result_error', {
           requestId,
-          simulationSeed,
+          simulationSeed: simulationSeedForRun,
           message: String(error?.message || 'simulation_error'),
         });
       } finally {
@@ -2568,6 +2716,8 @@ export default function App() {
       const aurumBanks = Number(snapshot?.version === 2 ? snapshot.nonOptimizable?.banksCLP ?? 0 : 0);
       const aurumFinancialBase = aurumOptimizable + aurumBanks;
       const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+      const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+      const aurumFxEurUsdForMidas = resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas;
       const aurumFxSource = getAurumFxReferenceSource(snapshot);
       const compositionWithToggle = withRiskCapitalDetectionState(composition, riskExposure, riskCapitalEnabled);
 
@@ -2577,6 +2727,8 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(aurumFxClpUsd);
+      setAurumFxSourceUsdEur(aurumFxUsdEurSource);
+      setAurumFxSpotUsdEur(aurumFxEurUsdForMidas);
       setAurumFxSpotSource(aurumFxSource);
       if (!Number.isFinite(aurumFinancialBase) || aurumFinancialBase <= 0) {
         setAurumIntegrationStatus('partial');
@@ -2601,10 +2753,11 @@ export default function App() {
         label: `Desde Aurum · ${snapshot?.snapshotLabel || 'ultimo cierre confirmado'}`,
         simulationComposition: nextBaseComposition,
       };
-      if (aurumFxClpUsd !== null) {
+      if (aurumFxClpUsd !== null || aurumFxEurUsdForMidas !== null) {
         baseSnapshotLayer.fx = {
           ...baseSnapshotLayer.fx,
-          clpUsdInitial: aurumFxClpUsd,
+          ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
+          ...(aurumFxEurUsdForMidas !== null ? { usdEurFixed: aurumFxEurUsdForMidas } : {}),
         };
       }
       const nextBaseOfficialParams = buildCanonicalSimParams(baseSnapshotLayer, baseSnapshotLayer, {
@@ -2672,27 +2825,23 @@ export default function App() {
   const resetSimulationSession = useCallback(() => {
     clearSimulationTimer();
     clearCalculationTimer();
+    setManualCapitalAdjustments([]);
+    setRiskCapitalEnabled(false);
+    const canonicalBaseEconomics = buildCanonicalBaseSimulationParams(baseParamsRef.current, {
+      activeWeights: activeWeightsRef.current,
+      diagnosticsLabel: 'reset-session',
+    });
+    const canonicalBase = buildCanonicalSimParams(canonicalBaseEconomics, canonicalBaseEconomics, {
+      applyCapital: true,
+      manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
+      riskCapitalEnabled: false,
+    });
     setSimulationActive(false);
     setSimulationPreset('base');
-    setRiskCapitalEnabled(false);
     setSimOverrides(null);
-    const next = applyScenarioEconomics(
-      {
-        ...cloneParams(baseParams),
-        realEstatePolicy: {
-          enabled: true,
-          triggerRunwayMonths: baseParams.realEstatePolicy?.triggerRunwayMonths ?? 36,
-          saleDelayMonths: baseParams.realEstatePolicy?.saleDelayMonths ?? 12,
-          saleCostPct: baseParams.realEstatePolicy?.saleCostPct ?? 0,
-          realAppreciationAnnual: baseParams.realEstatePolicy?.realAppreciationAnnual ?? 0,
-        },
-      },
-      'base',
-    );
-    setSimParams(next);
-    startRecalculation('session-reset', () => next);
-    setParamSheetOpen(false);
-  }, [applyScenarioEconomics, baseParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
+    setSimParams(canonicalBase);
+    startRecalculation('session-reset', () => canonicalBase);
+  }, [buildCanonicalSimParams, clearCalculationTimer, clearSimulationTimer, startRecalculation]);
 
   const scheduleInactivityReset = useCallback(() => {
     clearSimulationTimer();
@@ -3307,8 +3456,14 @@ export default function App() {
   }, [markSimulationInteraction, simOverrides, simParams, startRecalculation]);
 
   const handleTabChange = useCallback((tab: TabId) => {
-    setActiveTab(tab);
+    setActiveTab(resolveProductTab(tab));
   }, []);
+
+  useEffect(() => {
+    if (LEGACY_TABS.has(activeTab)) {
+      setActiveTab('sim');
+    }
+  }, [activeTab]);
 
   const handleGoogleSignIn = useCallback(async () => {
     try {
@@ -3344,7 +3499,6 @@ export default function App() {
     }
   }, []);
 
-  const statusColor = simulationActive ? T.primary : simResult ? T.positive : T.textMuted;
   const activeScenario = resolveScenarioVariantId(simParams.activeScenario);
   const stateLabel = selectVariant(activeScenario).label;
   const isScenarioAdjusted = useMemo(() => {
@@ -3364,10 +3518,6 @@ export default function App() {
   const simulationOptimizerSnapshot = useMemo(
     () => (simulationActive ? toOptimizerBaselineSnapshot(simResult) : null),
     [simulationActive, simResult],
-  );
-  const optBaseSnapshot = useMemo(
-    () => liveBaseSnapshot ?? baseOptimizerSnapshot ?? null,
-    [baseOptimizerSnapshot, liveBaseSnapshot],
   );
   const [optimizableBaseReference, setOptimizableBaseReference] = useState<OptimizableBaseReference>({
     amountClp: null,
@@ -3401,6 +3551,8 @@ export default function App() {
       setRiskCapitalUsdTotal(0);
       setRiskCapitalUsdSnapshotCLP(0);
       setAurumFxSpotCLP(null);
+      setAurumFxSpotUsdEur(null);
+      setAurumFxSourceUsdEur(null);
       setAurumFxSpotSource(null);
       setOptimizableBaseReference({
         amountClp: null,
@@ -3468,6 +3620,8 @@ export default function App() {
         setRiskCapitalUsdTotal(0);
         setRiskCapitalUsdSnapshotCLP(0);
         setAurumFxSpotCLP(null);
+        setAurumFxSpotUsdEur(null);
+        setAurumFxSourceUsdEur(null);
         setAurumFxSpotSource(null);
         setAurumSyncState('unknown');
         setAurumSyncDiff(null);
@@ -3508,6 +3662,11 @@ export default function App() {
       setRiskCapitalUsdTotal(riskExposure.usdTotal);
       setRiskCapitalUsdSnapshotCLP(riskExposure.usdSnapshotCLP);
       setAurumFxSpotCLP(getAurumFxReferenceClpUsd(snapshot));
+      {
+        const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+        setAurumFxSourceUsdEur(aurumFxUsdEurSource);
+        setAurumFxSpotUsdEur(resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas);
+      }
       setAurumFxSpotSource(getAurumFxReferenceSource(snapshot));
 
       const baseOptimizable = Number(baseParamsRef.current.simulationComposition?.optimizableInvestmentsCLP ?? NaN);
@@ -3539,6 +3698,16 @@ export default function App() {
                 riskCapitalEnabledRef.current,
               ) ?? compositionWithDetectedRisk,
             };
+            const aurumFxClpUsd = getAurumFxReferenceClpUsd(snapshot);
+            const aurumFxUsdEurSource = getAurumFxReferenceUsdEur(snapshot);
+            const aurumFxEurUsdForMidas = resolveAurumEurUsdForMidas(aurumFxUsdEurSource).eurUsdForMidas;
+            if (aurumFxClpUsd !== null || aurumFxEurUsdForMidas !== null) {
+              canonicalSnapshotLayer.fx = {
+                ...canonicalSnapshotLayer.fx,
+                ...(aurumFxClpUsd !== null ? { clpUsdInitial: aurumFxClpUsd } : {}),
+                ...(aurumFxEurUsdForMidas !== null ? { usdEurFixed: aurumFxEurUsdForMidas } : {}),
+              };
+            }
             const canonicalSnapshotParams = buildCanonicalSimParamsCurrent(canonicalSnapshotLayer, simParamsRef.current, {
               applyCapital: true,
               manualImpact: EMPTY_MANUAL_ADJUSTMENT_IMPACT,
@@ -3835,7 +4004,18 @@ export default function App() {
       const baseEngineInput = toM8Input(strippedManualParamsForFingerprint, baseCapitalResolution);
       const manualCapitalAdjustmentsClp =
         Number(effectiveEngineInput.capital_initial_clp ?? 0) - Number(baseEngineInput.capital_initial_clp ?? 0);
-      const manualLocalAdjustmentsAffectEngine = JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput);
+      const effectiveManualFutureEvents = Array.isArray(effectiveEngineInput.future_events)
+        ? effectiveEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const baseManualFutureEvents = Array.isArray(baseEngineInput.future_events)
+        ? baseEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const manualLocalAdjustmentsAffectEngine = (
+        JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput)
+        || Math.abs(manualCapitalAdjustmentsClp) > 0.5
+        || effectiveManualFutureEvents.length !== baseManualFutureEvents.length
+        || effectiveManualFutureEvents.length > 0
+      );
       return {
         effectiveEngineInput,
         manualLocalAdjustmentsAffectEngine,
@@ -4016,9 +4196,168 @@ export default function App() {
     cloudHydrationReady,
     simulationConfigDiagnostics.projectId,
   ]);
+  const effectiveRunInputHash = useMemo(
+    () => computeEffectiveEngineInputHashForParams(simParams),
+    [simParams],
+  );
+
+  const simulationResultDiagnostics = useMemo<SimulationResultDiagnostics>(() => {
+    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
+    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
+    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
+    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const resultSeed = finiteNumberOrNull(simResult?.params?.simulation?.seed ?? appliedRecalcSeed);
+    const resultNSim = finiteNumberOrNull(simResult?.params?.simulation?.nSim ?? null);
+    const resultInputHash =
+      simResult && lastRenderedResultHash === effectiveRunInputHash
+        ? effectiveRunInputHash
+        : lastRenderedResultHash;
+
+    return buildSimulationResultDiagnostics({
+      result: heroVisibleResult,
+      resultInputHash,
+      effectiveEngineInputHash: effectiveRunInputHash,
+      resultSeed,
+      expectedSeed,
+      resultNSim,
+      expectedNSim,
+      completedAt: simulationRunCompletedAt,
+      simulationRunStatus,
+      resultMetricsAvailable: Boolean(heroVisibleResult),
+      lastRunInputHash,
+      lastRenderedResultHash,
+      engineVersion: 'm8-central-wrapper',
+      workerVersion: 'primary-recalc-worker',
+      previousResultDigest: null,
+      previousResultInputHash: null,
+      provisionalResultShownBeforeFinal: heroPhase === 'stale',
+    });
+	  }, [
+	    appliedRecalcSeed,
+	    heroPhase,
+	    heroVisibleResult,
+    lastRenderedResultHash,
+    lastRunInputHash,
+    effectiveRunInputHash,
+    m8InputFingerprint.normalizedInput,
+    simResult,
+    simulationRunCompletedAt,
+	    simulationRunStatus,
+	  ]);
+
+  const assumptionModeDiagnostics = useMemo(() => buildAssumptionModeDiagnostics({
+    assumptionMode: 'base',
+    sandboxActive: false,
+    localUnsyncedAdjustments: manualCapitalAdjustments.length > 0,
+    structuralAssumptionsSource: 'not_implemented',
+  }), [manualCapitalAdjustments.length]);
+
+  const resultConfidence = useMemo<ResultConfidence>(() => {
+    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
+    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
+    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
+    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const aurumSnapshotStatus: SourceStatus =
+      lastAppliedAurumSnapshotSignature
+        ? 'canonical'
+        : aurumIntegrationStatus === 'error'
+          ? 'error'
+          : aurumIntegrationStatus === 'missing'
+            ? 'missing'
+            : 'provisional';
+    const runResultStatus: SourceStatus =
+      simulationRunStatus === 'error'
+        ? 'error'
+        : simulationResultDiagnostics.isFinalForCurrentInput
+          ? 'canonical'
+          : simulationResultDiagnostics.resultDigest
+            ? 'provisional'
+            : 'missing';
+    const hasManualAdjustments = manualCapitalAdjustments.length > 0;
+    const manualAdjustmentsAppliedToInput =
+      !hasManualAdjustments || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine;
+    const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments
+      ? (manualAdjustmentsAppliedToInput ? 'canonical' : 'error')
+      : 'canonical';
+
+    return buildResultConfidence({
+      criticalSources: {
+        aurumSnapshot: aurumSnapshotStatus,
+        simulationConfig: sourceStatusFromSimulationConfig(simulationConfigSource, simulationConfigHydrationStatus),
+        instrumentUniverse: sourceStatusFromInstrumentUniverse(universeSourceOrigin),
+        fx: sourceStatusFromFx(operativeFxResolution),
+        capitalAdjustments: capitalAdjustmentsSource,
+        runResult: runResultStatus,
+        sandbox: assumptionModeDiagnostics.sandboxActive ? 'sandbox' : 'canonical',
+      },
+      run: {
+        resultDigest: simulationResultDiagnostics.resultDigest,
+        isFinalForCurrentInput: simulationResultDiagnostics.isFinalForCurrentInput,
+        resultInputHash: simulationResultDiagnostics.resultInputHash,
+        effectiveEngineInputHash: effectiveRunInputHash,
+        resultSeed: simulationResultDiagnostics.resultSeed,
+        expectedSeed,
+        resultNSim: simulationResultDiagnostics.resultNSim,
+        expectedNSim,
+        simulationRunStatus,
+        resultMetricsAvailable: simulationRunDiagnostics.resultMetricsAvailable,
+        lastRunInputHash,
+        lastRenderedResultHash,
+      },
+      sandboxActive: assumptionModeDiagnostics.sandboxActive,
+    });
+  }, [
+    assumptionModeDiagnostics,
+    aurumIntegrationStatus,
+    engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+    manualCapitalAdjustments.length,
+    lastAppliedAurumSnapshotSignature,
+    lastRenderedResultHash,
+    lastRunInputHash,
+    effectiveRunInputHash,
+    m8InputFingerprint.normalizedInput,
+    operativeFxResolution,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+    simulationResultDiagnostics,
+    simulationRunDiagnostics.resultMetricsAvailable,
+    simulationRunStatus,
+    universeSourceOrigin,
+  ]);
+  const headerSuccess40 = useMemo(() => {
+    if (!heroVisibleResult) return null;
+    return heroVisibleResult.success40 ?? (1 - (heroVisibleResult.probRuin40 ?? heroVisibleResult.probRuin));
+  }, [heroVisibleResult]);
+  const headerShowsDefinitiveNumber = (
+    simulationRunStatus === 'completed'
+    && simulationRunError === null
+    && !simulationRunTimedOut
+    && typeof headerSuccess40 === 'number'
+    && Number.isFinite(headerSuccess40)
+  );
+  const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
+  const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
+  const headerShowsStaleResult = heroPhase === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
+  const headerMetricText = headerShowsStaleResult
+    ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
+      ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
+      : 'Pendiente de recalcular'
+    : headerShowsDefinitiveNumber
+      ? `Éxito ${formatSuccessPct(headerSuccess40)}`
+      : 'Calculando…';
+  const headerConfidenceLabel = headerShowsStaleResult
+    ? 'Recalcular'
+    : resultConfidence.label;
+  const headerStatusColor = headerShowsStaleResult
+    ? T.warning
+    : resultConfidence.status === 'canonical'
+      ? T.positive
+      : resultConfidence.status === 'review'
+        ? T.warning
+        : T.negative;
 
   useEffect(() => {
-    const effectiveHash = m8InputFingerprint.effectiveEngineInputHash;
+    const effectiveHash = effectiveRunInputHash;
     const gate = evaluateSimulationRunGate({
       isCanonicalUserSession,
       hasEffectiveInput: Boolean(engineFingerprintDiagnostics.effectiveEngineInput),
@@ -4059,7 +4398,6 @@ export default function App() {
     if (!effectiveHash) return;
     setSimulationRunBlockedReason(null);
     cloudConfigRecalcHashRef.current = effectiveHash;
-    setLastRunInputHash(effectiveHash);
     setRunAttemptCount((prev) => prev + 1);
     setSimulationRunTimedOut(false);
     const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
@@ -4071,7 +4409,7 @@ export default function App() {
     engineFingerprintDiagnostics.effectiveEngineInput,
     isCanonicalUserSession,
     lastRenderedResultHash,
-    m8InputFingerprint.effectiveEngineInputHash,
+    effectiveRunInputHash,
     recalcWorkerStatus,
     simulationRunStatus,
     simOverrides,
@@ -4136,10 +4474,6 @@ export default function App() {
     weightsSourceMode,
     m8InputFingerprint,
   ]);
-  useEffect(() => {
-    if (!simResult) return;
-    setLastRenderedResultHash(m8InputFingerprint.effectiveEngineInputHash);
-  }, [m8InputFingerprint.effectiveEngineInputHash, simResult]);
   const authGateStatus = useMemo(() => buildAuthGateStatus({
     authStatus,
     authResolved,
@@ -4199,6 +4533,33 @@ export default function App() {
     });
   }, [operativeFxResolution]);
 
+  useEffect(() => {
+    const targetEurUsdForMidas = aurumFxSpotUsdEur;
+    if (targetEurUsdForMidas === null || !Number.isFinite(targetEurUsdForMidas) || targetEurUsdForMidas <= 0) return;
+    setBaseParams((prev) => {
+      const current = Number(prev.fx?.usdEurFixed ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - targetEurUsdForMidas) / targetEurUsdForMidas <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          usdEurFixed: targetEurUsdForMidas,
+        },
+      };
+    });
+    setSimParams((prev) => {
+      const current = Number(prev.fx?.usdEurFixed ?? NaN);
+      if (Number.isFinite(current) && current > 0 && Math.abs(current - targetEurUsdForMidas) / targetEurUsdForMidas <= 0.0005) return prev;
+      return {
+        ...prev,
+        fx: {
+          ...prev.fx,
+          usdEurFixed: targetEurUsdForMidas,
+        },
+      };
+    });
+  }, [aurumFxSpotUsdEur]);
+
   const patrimonioSourceTechnical = snapshotApplied
     ? `Aurum (${aurumSnapshotLabel || 'snapshot aplicado'}) · Base oficial + capa MIDAS persistente`
     : 'Modelo base local (sin aplicar snapshot Aurum)';
@@ -4226,7 +4587,9 @@ export default function App() {
     return `banks=${Math.round(banks)} · usdLiquidity=${Math.round(usdLiquidity)} · realEstateEquity=${Math.round(realEstate)} · nonMortgageDebt=${Math.round(debt)} · riskCapital=${Math.round(risk)}`;
   })();
 
-  const content = activeTab === 'sim' ? (
+  const productActiveTab = resolveProductTab(activeTab);
+
+  const content = productActiveTab === 'sim' ? (
     <SimulationPage
       resultCentral={simResult}
       params={simParams}
@@ -4239,7 +4602,6 @@ export default function App() {
       simUiError={simUiError}
       lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
-      stateLabel={stateLabel}
       isScenarioAdjusted={isScenarioAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
@@ -4273,6 +4635,8 @@ export default function App() {
       fxSpotSourceTechnical={fxSpotSourceTechnical}
       nonOptimizableBlocksTechnical={nonOptimizableBlocksTechnical}
       aurumFxSpotCLP={aurumFxSpotCLP}
+      aurumFxSpotUsdEur={aurumFxSpotUsdEur}
+      aurumFxSourceUsdEur={aurumFxSourceUsdEur}
       aurumFxSpotSource={aurumFxSpotSource}
       operativeFxResolution={operativeFxResolution}
       weightsSourceMode={weightsSourceMode}
@@ -4280,10 +4644,12 @@ export default function App() {
       universeSourceOrigin={universeSourceOrigin}
       cloudHydrationReady={cloudHydrationReady}
       simulationConfigSource={simulationConfigSource}
-      simulationConfigSavedAt={simulationConfigSavedAt}
-      m8InputFingerprint={m8InputFingerprint}
-      simulationActionStatus={simulationActionStatus}
-      officialReferenceWeights={officialReferenceWeights}
+	      simulationConfigSavedAt={simulationConfigSavedAt}
+	      m8InputFingerprint={m8InputFingerprint}
+	      simulationResultDiagnostics={simulationResultDiagnostics}
+	      resultConfidence={resultConfidence}
+	      assumptionModeDiagnostics={assumptionModeDiagnostics}
+	      officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
       activeWeights={activeWeightsNormalized}
@@ -4300,37 +4666,26 @@ export default function App() {
       onRestoreOfficialDistribution={restoreOfficialDistribution}
       onSimOverridesChange={handleSimOverridesChange}
       onUpdateParams={patchSimParams}
+      onRunSimulation={runSim}
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
     />
-  ) : activeTab === 'assist' ? (
+  ) : productActiveTab === 'assist' ? (
     <AssistedSimulationPage />
-  ) : activeTab === 'sens' ? (
+  ) : productActiveTab === 'sens' ? (
     <PalancasPage
       baseParams={baseParams}
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
     />
-  ) : activeTab === 'stress' ? (
-    <StressPage params={simParams} stateLabel={stateLabel} />
-  ) : activeTab === 'bucketlab' ? (
+  ) : productActiveTab === 'bucketlab' ? (
     <BucketLabPage params={simParams} />
-  ) : activeTab === 'settings' ? (
+  ) : productActiveTab === 'settings' ? (
     <SettingsPage
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       targetWeights={optimizerSimulationParams.weights}
-    />
-  ) : activeTab === 'optv0' ? (
-    <OptPage
-      baseParams={baseParams}
-      simulationParams={optimizerSimulationParams}
-      simulationActive={simulationActive}
-      simulationLabel={stateLabel}
-      preloadedBaseStats={optBaseSnapshot}
-      preloadedSimulationStats={simulationOptimizerSnapshot}
-      optimizableBaseReference={optimizableBaseAdjusted}
     />
   ) : (
     <OptimizationLightPage
@@ -4338,6 +4693,7 @@ export default function App() {
       simulationParams={optimizerSimulationParams}
       simulationActive={simulationActive}
       simulationLabel={stateLabel}
+      simulationSnapshot={simulationOptimizerSnapshot}
     />
   );
 
@@ -4469,7 +4825,11 @@ export default function App() {
             />
           </>
         )}
-        <Header statusColor={statusColor} />
+        <Header
+          statusColor={headerStatusColor}
+          metricText={headerMetricText}
+          confidenceLabel={headerConfidenceLabel}
+        />
         <main
           style={{
             padding: '12px 16px 90px',
@@ -4500,51 +4860,21 @@ export default function App() {
           {content}
         </main>
 
-        <button
-          onClick={() => setParamSheetOpen(true)}
-          style={{
-            position: 'fixed',
-            bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
-            right: 16,
-            width: 52,
-            height: 52,
-            borderRadius: '50%',
-            border: `1px solid ${T.metalBase}`,
-            background: T.surfaceEl,
-            color: T.textPrimary,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            zIndex: 25,
-            boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
-          }}
-          aria-label="Abrir parámetros"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 4.5 13.2 6h2.3l.3 2 1.7 1-.9 1.9.9 1.9-1.7 1-.3 2h-2.3L12 19.5 10.8 18H8.5l-.3-2-1.7-1 .9-1.9-.9-1.9 1.7-1 .3-2h2.3L12 4.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-            <circle cx="12" cy="12" r="2.2" fill="currentColor" />
-          </svg>
-        </button>
-
-        <BottomNav active={activeTab} onChange={handleTabChange} />
-
-        <ParamSheet
-          open={paramSheetOpen}
-          onClose={() => setParamSheetOpen(false)}
-          params={simParams}
-          onUpdate={updateSimParam}
-          cashflowEvents={simParams.cashflowEvents}
-          onCashflowEventsChange={handleCashflowEventsChange}
-          onReset={resetSimulationSession}
-          onRun={runSim}
-        />
+        <BottomNav active={productActiveTab} onChange={handleTabChange} />
       </div>
     </MidasErrorBoundary>
   );
 }
 
-function Header({ statusColor }: { statusColor: string }) {
+function Header({
+  statusColor,
+  metricText,
+  confidenceLabel,
+}: {
+  statusColor: string;
+  metricText: string;
+  confidenceLabel: string;
+}) {
   return (
     <header
       style={{
@@ -4566,10 +4896,15 @@ function Header({ statusColor }: { statusColor: string }) {
         <span style={{ color: T.primary }}>◆</span>
         <span>Midas V1.2</span>
       </div>
-      <div
-        title={statusColor === T.primary ? 'Modo simulación' : statusColor === T.positive ? 'Resultados listos' : 'Sin resultados'}
-        style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
+          {metricText} · {confidenceLabel}
+        </span>
+        <div
+          title={confidenceLabel}
+          style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor, flex: '0 0 auto' }}
+        />
+      </div>
     </header>
   );
 }

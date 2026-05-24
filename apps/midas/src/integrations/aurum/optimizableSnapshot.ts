@@ -117,7 +117,7 @@ export function subscribeToPublishedOptimizableInvestmentsSnapshot(listener: Pub
   };
 }
 
-function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined) {
+export function normalizeSnapshotData(data: Partial<AurumOptimizableInvestmentsSnapshot> | undefined) {
   if (!data) return null;
   const optimizable = asFiniteOrNull((data as { optimizableInvestmentsCLP?: unknown }).optimizableInvestmentsCLP);
   if (optimizable === null) return null;

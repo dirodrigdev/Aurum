@@ -48,6 +48,16 @@ const base = () => ({
 (() => {
   const result = evaluateSimulationRunGate({
     ...base(),
+    simResultAvailable: true,
+    lastRenderedResultHash: 'old-hash',
+    lastRequestedRunHash: 'old-hash',
+  });
+  assert.equal(result.status, 'should_run');
+})();
+
+(() => {
+  const result = evaluateSimulationRunGate({
+    ...base(),
     cloudHydrationReady: false,
     simulationConfigHydrationStatus: 'loading',
   });

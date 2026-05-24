@@ -32,6 +32,7 @@ import {
   M8_STUDENT_T_DF,
   remapLegacyCorrelationMatrixToM8,
 } from './m8Calibration';
+import { buildQualityOfLifeMetricsFromPathDiagnostics } from './qualityOfLifeMetrics';
 
 const M8_DEFAULT_N_PATHS = 3000;
 const M8_DEFAULT_OPERATIONAL_WEIGHTS: M8OperationalWeights = {
@@ -562,6 +563,8 @@ export const fromM8Output = (
     stressTimeShare: output.StressTimeShare,
     cut1TimeShare: output.Cut1TimeShare,
     cut2TimeShare: output.Cut2TimeShare,
+    pathQualityDiagnostics: output.pathQualityDiagnostics,
+    qualityOfLifeMetrics: buildQualityOfLifeMetricsFromPathDiagnostics(output.pathQualityDiagnostics),
     computedAt: new Date(),
     durationMs,
     params,

@@ -11,6 +11,7 @@ import type {
   SimulationCompositionDiagnostics,
 } from '../../domain/model/types';
 import { DEFAULT_PARAMETERS } from '../../domain/model/defaults';
+import { resolveAurumEurUsdForMidas } from '../../domain/model/operativeFx';
 import type { OptimizableBaseReference } from '../../domain/instrumentBase';
 
 /**
@@ -51,7 +52,7 @@ export function snapshotToParams(
     fx: {
       ...baseParams.fx,
       clpUsdInitial: fxReference.clpUsd,
-      usdEurFixed:   fxReference.usdEur,
+      usdEurFixed: resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas ?? baseParams.fx.usdEurFixed,
     },
     label: `Desde Aurum — ${snapshot.snapshotDate}`,
   };

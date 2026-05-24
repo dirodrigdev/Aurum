@@ -13,11 +13,19 @@ import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../dom
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
-import type { SimulationActionStatus } from '../domain/model/simulationActionStatus';
+import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
+import type { ResultConfidence } from '../domain/model/resultConfidence';
+import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
+import {
+  buildRunCapitalBreakdown,
+  DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+} from '../domain/simulation/runCapitalPolicy';
 import { T, css } from './theme';
 import { HeroCard } from './HeroCard';
+import { InfoHint } from './InfoHint';
+import { QualityOfLifeMetricsBlock } from './QualityOfLifeMetricsBlock';
 import {
   AreaChart,
   Area,
@@ -101,10 +109,25 @@ const formatNumber = (value: number) =>
 const formatMoneyCompact = (value: number) => {
   if (!Number.isFinite(value)) return '—';
   const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}MM`;
+  if (abs >= 1_000_000_000) {
+    return `$${(value / 1_000_000).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}MM`;
+  }
+  if (abs >= 1_000_000) {
+    return `$${(value / 1_000_000).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}MM`;
+  }
   if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
+};
+
+const formatMonthYearLabel = (value: string | null | undefined): string => {
+  if (!value) return 'Sin eventos futuros';
+  const [yearRaw, monthRaw] = value.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return value;
+  const parsed = new Date(Date.UTC(year, month - 1, 1));
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('es-CL', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 };
 
 const formatSessionMoment = (atMs: number | null) => {
@@ -175,12 +198,16 @@ const buildLongevityPlus5Params = (baseParams: ModelParameters): ModelParameters
 
 type TrafficLight = 'green' | 'yellow' | 'red' | 'neutral';
 
+type SourceBadgeTone = 'ok' | 'warning' | 'alert' | 'neutral';
+
 const TRAFFIC_COLORS: Record<TrafficLight, string> = {
   green: '#32c97b',
   yellow: '#f4b740',
   red: '#ff6a6a',
   neutral: '#71829b',
 };
+
+const FX_REL_TOLERANCE = 0.0005;
 
 function classifyThreshold(value: number | null, thresholds: { greenMax?: number; yellowMax?: number; greenMin?: number; yellowMin?: number }): TrafficLight {
   if (value === null || !Number.isFinite(value)) return 'neutral';
@@ -189,6 +216,194 @@ function classifyThreshold(value: number | null, thresholds: { greenMax?: number
   if (thresholds.greenMin !== undefined && value >= thresholds.greenMin) return 'green';
   if (thresholds.yellowMin !== undefined && value >= thresholds.yellowMin) return 'yellow';
   return 'red';
+}
+
+const isApproximatelyEqual = (a: number, b: number) => Math.abs(a - b) / a <= FX_REL_TOLERANCE;
+
+const sourceBadgeTonePresentation = (tone: SourceBadgeTone) => {
+  if (tone === 'ok') return { color: T.positive, bg: 'rgba(61, 212, 141, 0.14)', border: 'rgba(61, 212, 141, 0.35)' };
+  if (tone === 'warning') return { color: T.warning, bg: 'rgba(255, 176, 32, 0.14)', border: 'rgba(255, 176, 32, 0.35)' };
+  if (tone === 'alert') return { color: T.negative, bg: 'rgba(255, 106, 106, 0.14)', border: 'rgba(255, 106, 106, 0.35)' };
+  return { color: T.textMuted, bg: 'rgba(148, 163, 184, 0.14)', border: 'rgba(148, 163, 184, 0.35)' };
+};
+
+const formatRiskCapitalInBaseLabel = (status: 'yes' | 'no' | 'unknown') => {
+  if (status === 'yes') return 'Sí';
+  if (status === 'no') return 'No';
+  return 'No determinado';
+};
+
+export function computeMidasConsideredWealth(input: {
+  referenceWealthClp: number | null;
+  realEstateSupportClp: number | null;
+  riskCapitalClp: number;
+  realEstateEnabled: boolean;
+  riskCapitalEnabled: boolean;
+}) {
+  const reference = Number(input.referenceWealthClp ?? NaN);
+  if (!Number.isFinite(reference) || reference <= 0) {
+    return {
+      consideredWealthClp: null,
+      excludedRealEstateClp: null,
+      excludedRiskCapitalClp: input.riskCapitalEnabled ? 0 : Math.max(0, input.riskCapitalClp),
+      missingRealEstateSupport: !input.realEstateEnabled && input.realEstateSupportClp === null,
+    };
+  }
+  const support = Number(input.realEstateSupportClp ?? NaN);
+  const safeSupport = Number.isFinite(support) && support > 0 ? support : 0;
+  const safeRisk = Number.isFinite(input.riskCapitalClp) && input.riskCapitalClp > 0 ? input.riskCapitalClp : 0;
+  const excludedRealEstateClp = input.realEstateEnabled ? 0 : safeSupport;
+  const excludedRiskCapitalClp = input.riskCapitalEnabled ? 0 : safeRisk;
+  return {
+    consideredWealthClp: Math.max(0, reference - excludedRealEstateClp - excludedRiskCapitalClp),
+    excludedRealEstateClp,
+    excludedRiskCapitalClp,
+    missingRealEstateSupport: !input.realEstateEnabled && input.realEstateSupportClp === null,
+  };
+}
+
+export function computeEnabledResourcesForUi(input: {
+  coreLiquidCapitalClp: number | null;
+  realEstateSupportClp: number | null;
+  riskCapitalClp: number;
+  realEstateEnabled: boolean;
+  riskCapitalEnabled: boolean;
+  manualLocalAdjustmentsImpactClp: number;
+}): number | null {
+  const core = Number(input.coreLiquidCapitalClp ?? NaN);
+  if (!Number.isFinite(core) || core <= 0) return null;
+  const realEstate = Number(input.realEstateSupportClp ?? NaN);
+  const safeRealEstate = Number.isFinite(realEstate) && realEstate > 0 ? realEstate : 0;
+  const safeRisk = Number.isFinite(input.riskCapitalClp) && input.riskCapitalClp > 0 ? input.riskCapitalClp : 0;
+  const safeManual = Number.isFinite(input.manualLocalAdjustmentsImpactClp) ? input.manualLocalAdjustmentsImpactClp : 0;
+  const enabledResources = core
+    + (input.realEstateEnabled ? safeRealEstate : 0)
+    + (input.riskCapitalEnabled ? safeRisk : 0)
+    + safeManual;
+  return Math.max(0, enabledResources);
+}
+
+export function buildEnabledResourcesSubcopy(input: {
+  realEstateEnabled: boolean;
+  riskCapitalEnabled: boolean;
+  hasManualT0Adjustments: boolean;
+  hasFutureAdjustments: boolean;
+}): string {
+  const baseLabel = input.realEstateEnabled
+    ? (input.riskCapitalEnabled ? 'Core + Depto + Riesgo' : 'Core + Depto')
+    : (input.riskCapitalEnabled ? 'Core + Riesgo' : 'Core');
+  const suffixes: string[] = [];
+  if (input.hasManualT0Adjustments) suffixes.push('Ajuste T0');
+  if (input.hasFutureAdjustments) suffixes.push('Aj. futuros');
+  if (suffixes.length === 0) return baseLabel;
+  return `${baseLabel} + ${suffixes.join(' + ')}`;
+}
+
+export function summarizeManualAdjustmentsT0(
+  adjustments: ManualCapitalAdjustment[],
+  toClp: (amount: number, currency: 'CLP' | 'USD' | 'EUR') => number,
+) {
+  const todayKey = new Date().toISOString().slice(0, 7);
+  return adjustments.reduce((acc, adj) => {
+    if (adj.effectiveDate > todayKey) return acc;
+    const amountClp = Math.max(0, toClp(adj.amount, adj.currency));
+    if (adj.direction === 'add') {
+      acc.positiveClp += amountClp;
+      acc.netClp += amountClp;
+    } else {
+      acc.negativeClp += amountClp;
+      acc.netClp -= amountClp;
+    }
+    acc.count += 1;
+    return acc;
+  }, {
+    positiveClp: 0,
+    negativeClp: 0,
+    netClp: 0,
+    count: 0,
+  });
+}
+
+export function summarizeManualAdjustmentsFuture(
+  adjustments: ManualCapitalAdjustment[],
+  toClp: (amount: number, currency: 'CLP' | 'USD' | 'EUR') => number,
+) {
+  const todayKey = new Date().toISOString().slice(0, 7);
+  return adjustments.reduce((acc, adj) => {
+    if (adj.effectiveDate <= todayKey) return acc;
+    const amountClp = Math.max(0, toClp(adj.amount, adj.currency));
+    if (adj.direction === 'add') {
+      acc.positiveClp += amountClp;
+      acc.netClp += amountClp;
+    } else {
+      acc.negativeClp += amountClp;
+      acc.netClp -= amountClp;
+    }
+    acc.count += 1;
+    if (acc.firstFutureDate === null || adj.effectiveDate < acc.firstFutureDate) {
+      acc.firstFutureDate = adj.effectiveDate;
+    }
+    return acc;
+  }, {
+    positiveClp: 0,
+    negativeClp: 0,
+    netClp: 0,
+    count: 0,
+    firstFutureDate: null as string | null,
+  });
+}
+
+export function deriveSleevesFromRvRfTarget(
+  current: PortfolioWeights,
+  targetRvPct: number,
+): PortfolioWeights {
+  const rvTarget = Math.max(0, Math.min(100, targetRvPct)) / 100;
+  const rfTarget = 1 - rvTarget;
+  const currentRvTotal = Math.max(0, current.rvGlobal + current.rvChile);
+  const currentRfTotal = Math.max(0, current.rfGlobal + current.rfChile);
+  const rvGlobalShare = currentRvTotal > 0 ? current.rvGlobal / currentRvTotal : 0.5;
+  const rfGlobalShare = currentRfTotal > 0 ? current.rfGlobal / currentRfTotal : 0.5;
+
+  const rvGlobal = rvTarget * rvGlobalShare;
+  const rvChile = rvTarget * (1 - rvGlobalShare);
+  const rfGlobal = rfTarget * rfGlobalShare;
+  const rfChile = rfTarget * (1 - rfGlobalShare);
+  const total = rvGlobal + rvChile + rfGlobal + rfChile;
+  if (!Number.isFinite(total) || total <= 0) {
+    return { rvGlobal: 0, rvChile: 0, rfGlobal: 0, rfChile: 1 };
+  }
+  return {
+    rvGlobal: rvGlobal / total,
+    rvChile: rvChile / total,
+    rfGlobal: rfGlobal / total,
+    rfChile: rfChile / total,
+  };
+}
+
+function SourceBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: SourceBadgeTone;
+}) {
+  const ui = sourceBadgeTonePresentation(tone);
+  return (
+    <span
+      style={{
+        color: ui.color,
+        background: ui.bg,
+        border: `1px solid ${ui.border}`,
+        borderRadius: 999,
+        padding: '2px 7px',
+        fontSize: 10,
+        fontWeight: 800,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 export function SimulationPage({
@@ -203,7 +418,6 @@ export function SimulationPage({
   simUiError,
   lastRecalcCause,
   simulationPreset,
-  stateLabel,
   isScenarioAdjusted,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
@@ -237,6 +451,8 @@ export function SimulationPage({
   fxSpotSourceTechnical,
   nonOptimizableBlocksTechnical,
   aurumFxSpotCLP,
+  aurumFxSpotUsdEur,
+  aurumFxSourceUsdEur,
   aurumFxSpotSource,
   operativeFxResolution,
   weightsSourceMode,
@@ -246,7 +462,9 @@ export function SimulationPage({
   simulationConfigSource,
   simulationConfigSavedAt,
   m8InputFingerprint,
-  simulationActionStatus,
+  simulationResultDiagnostics,
+  resultConfidence,
+  assumptionModeDiagnostics,
   officialReferenceWeights,
   instrumentUniverseReferenceWeights,
   instrumentBaseReferenceWeights,
@@ -264,6 +482,7 @@ export function SimulationPage({
   onRestoreOfficialDistribution,
   onSimOverridesChange,
   onUpdateParams,
+  onRunSimulation,
   onResetSim,
   onOpenOptimization,
 }: {
@@ -278,7 +497,6 @@ export function SimulationPage({
   simUiError: string | null;
   lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
-  stateLabel: string;
   isScenarioAdjusted: boolean;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
@@ -320,6 +538,8 @@ export function SimulationPage({
   fxSpotSourceTechnical: string;
   nonOptimizableBlocksTechnical: string;
   aurumFxSpotCLP: number | null;
+  aurumFxSpotUsdEur: number | null;
+  aurumFxSourceUsdEur: number | null;
   aurumFxSpotSource: string | null;
   operativeFxResolution: OperativeFxResolution;
   weightsSourceMode: WeightsSourceMode;
@@ -329,7 +549,9 @@ export function SimulationPage({
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
   m8InputFingerprint: M8InputFingerprint;
-  simulationActionStatus: SimulationActionStatus;
+  simulationResultDiagnostics: SimulationResultDiagnostics;
+  resultConfidence: ResultConfidence;
+  assumptionModeDiagnostics: AssumptionModeDiagnostics;
   officialReferenceWeights: PortfolioWeights;
   instrumentUniverseReferenceWeights: PortfolioWeights | null;
   instrumentBaseReferenceWeights: PortfolioWeights | null;
@@ -375,15 +597,18 @@ export function SimulationPage({
   onRestoreOfficialDistribution: () => void;
   onSimOverridesChange: (next: SimulationOverrides | null) => void;
   onUpdateParams: (patcher: (prev: ModelParameters) => ModelParameters) => void;
+  onRunSimulation: () => void;
   onResetSim: () => void;
   onOpenOptimization: () => void;
 }) {
   const [showSimToast, setShowSimToast] = useState(false);
-  const [activeChip, setActiveChip] = useState<'return' | 'years' | 'capital' | null>(null);
-  const [draftValue, setDraftValue] = useState('');
+  const simulationPanelRef = useRef<HTMLDivElement | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [simulationDataOpen, setSimulationDataOpen] = useState(true);
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [modelBaseOpen, setModelBaseOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 760 : false
   );
@@ -399,6 +624,7 @@ export function SimulationPage({
   const [openTraceRows, setOpenTraceRows] = useState<Record<string, boolean>>({});
   const [draftManualAdjustments, setDraftManualAdjustments] = useState<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
+  const [spendingDraftByIndex, setSpendingDraftByIndex] = useState<Record<number, string>>({});
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
@@ -409,7 +635,7 @@ export function SimulationPage({
     note: '',
   });
   const prevSimActive = useRef(false);
-  const heroCardRef = useRef<HTMLDivElement | null>(null);
+  const diagnosticsRef = useRef<HTMLDetailsElement | null>(null);
   const destinationOptions: Array<{ value: ManualCapitalDestination; label: string }> = [
     { value: 'liquidity', label: 'Liquidez / Bancos' },
     { value: 'investments', label: 'Inversiones financieras' },
@@ -462,6 +688,12 @@ export function SimulationPage({
     scenarioFromParamsRaw !== 'base' &&
     scenarioFromParamsRaw !== 'pessimistic' &&
     scenarioFromParamsRaw !== 'optimistic';
+  const scenarioUiLabel =
+    activeScenarioForUi === 'base' ? 'Neutro' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista';
+  const heroBaseChipLabel = 'Base';
+  const canResetToBase = simActive;
+  const simulationConfigSourceLabel =
+    simulationConfigSource === 'cloud' ? 'Cloud canónico' : simulationConfigSource === 'local_cache' ? 'Cache local' : 'Fallback';
   const scenarioFromResultRaw = resultCentral?.params?.activeScenario as unknown;
   const scenarioFromResult =
     scenarioFromResultRaw === 'base' || scenarioFromResultRaw === 'pessimistic' || scenarioFromResultRaw === 'optimistic'
@@ -480,7 +712,7 @@ export function SimulationPage({
       : effectiveCapitalSource === 'manual'
         ? 'Manual'
         : 'Local';
-  const effectiveBaseCapital = Number(resultCentral?.params?.capitalInitial ?? params.capitalInitial ?? 0);
+  const effectiveBaseCapital = Number(params.capitalInitial ?? 0);
   const aurumTechnicalLabel = aurumSnapshotLabel
     ? `Aurum: ${aurumSnapshotLabel}`
     : aurumIntegrationStatus === 'missing'
@@ -600,16 +832,25 @@ export function SimulationPage({
     () => [...draftManualAdjustments].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
     [draftManualAdjustments],
   );
-  const hasFutureAdjustments = useMemo(() => {
-    const todayKey = new Date().toISOString().slice(0, 7);
-    return manualCapitalAdjustments.some((adj) => adj.effectiveDate > todayKey);
-  }, [manualCapitalAdjustments]);
-  const manualNetClp = useMemo(
-    () => manualAdjustmentsSorted.reduce((acc, adj) => {
-      const signed = adj.direction === 'add' ? 1 : -1;
-      return acc + signed * toClp(adj.amount, adj.currency);
-    }, 0),
+  const committedManualSummaryT0 = useMemo(
+    () => summarizeManualAdjustmentsT0(manualCapitalAdjustments, toClp),
+    [manualCapitalAdjustments, toClp],
+  );
+  const committedManualSummaryFuture = useMemo(
+    () => summarizeManualAdjustmentsFuture(manualCapitalAdjustments, toClp),
+    [manualCapitalAdjustments, toClp],
+  );
+  const draftManualSummaryT0 = useMemo(
+    () => summarizeManualAdjustmentsT0(manualAdjustmentsSorted, toClp),
     [manualAdjustmentsSorted, toClp],
+  );
+  const draftManualSummaryFuture = useMemo(
+    () => summarizeManualAdjustmentsFuture(manualAdjustmentsSorted, toClp),
+    [manualAdjustmentsSorted, toClp],
+  );
+  const manualNetClp = useMemo(
+    () => draftManualSummaryT0.netClp,
+    [draftManualSummaryT0.netClp],
   );
   const resetMovementForm = useCallback(() => {
     setEditingMovementId(null);
@@ -697,13 +938,6 @@ export function SimulationPage({
     }
     prevSimActive.current = simActive;
     return undefined;
-  }, [simActive]);
-
-  useEffect(() => {
-    if (!simActive) {
-      setActiveChip(null);
-      setDraftValue('');
-    }
   }, [simActive]);
 
   useEffect(() => {
@@ -802,6 +1036,126 @@ export function SimulationPage({
           }
         : { label: 'Cuts', detail: 'No se activan' }
       : { label: 'Cuts', detail: 'No disponible' };
+  const runtimeDiagnostics =
+    (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+  const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
+  const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
+  const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
+  const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
+  const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
+  const reviewCause = useMemo(() => {
+    if (!primaryReasonCode) return 'Resultado usable con salvedades.';
+    if (primaryReasonCode.startsWith('instrumentUniverse_')) {
+      return 'Resultado usable con salvedades.';
+    }
+    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
+      return 'Hay ajustes locales de capital no sincronizados.';
+    }
+    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
+      return 'Estás viendo una simulación temporal, no el Modelo Base.';
+    }
+    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
+      return 'La base de Aurum aplicada no es la fuente cloud final.';
+    }
+    return 'Resultado usable con salvedades.';
+  }, [primaryReasonCode]);
+  const reviewGap = useMemo(() => {
+    if (!primaryReasonCode || primaryReasonCode.startsWith('instrumentUniverse_')) {
+      return 'Falta: Sincronizar el mix aperturado por instrumento para llegar a OK.';
+    }
+    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
+      return 'Falta: Sincronizar o descartar los ajustes locales de capital.';
+    }
+    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
+      return 'Falta: Volver al Modelo Base o guardar el escenario temporal.';
+    }
+    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
+      return 'Falta: Aplicar la nueva base Aurum disponible.';
+    }
+    if (primaryReasonCode.startsWith('simulationConfig_')) {
+      return 'Falta: Terminar la carga de configuración cloud de simulación.';
+    }
+    return 'Falta: Resolver la salvedad principal para llegar a OK.';
+  }, [primaryReasonCode]);
+  const heroPrimaryState = useMemo(() => {
+    if (isRunActive) {
+      return {
+        label: 'Calculando',
+        tone: T.warning,
+        headline: 'Calculando resultado final.',
+        explanation: 'Falta terminar la simulación final.',
+        gap: 'Falta: Esperar resultado final.',
+      };
+    }
+    if (heroPhase === 'stale') {
+      return {
+        label: showGhostResult ? 'Resultado anterior' : 'Pendiente',
+        tone: T.warning,
+        headline: showGhostResult
+          ? 'Resultado anterior · recalcular.'
+          : 'Pendiente de recalcular.',
+        explanation: showGhostResult
+          ? 'La configuración cambió. El resultado visible pertenece a la configuración anterior.'
+          : 'No hay resultado actualizado para esta configuración.',
+        gap: 'Ejecuta simulación para validar Depto ON/OFF + Capital de riesgo ON/OFF.',
+      };
+    }
+    if (resultConfidence.status === 'not_decisional' && hasOnlyRunResultBlockingReasons) {
+      return {
+        label: heroResult ? 'Resultado anterior' : 'Pendiente',
+        tone: T.warning,
+        headline: heroResult
+          ? 'Resultado anterior · recalcular.'
+          : 'Pendiente de recalcular.',
+        explanation: 'No hay resultado actualizado para esta configuración.',
+        gap: 'Ejecuta simulación para validar los cambios.',
+      };
+    }
+    if (resultConfidence.status === 'not_decisional') {
+      return {
+        label: 'No usar',
+        tone: T.negative,
+        headline: 'No hay resultado auditado para el input actual.',
+        explanation: 'Falta recalcular un resultado auditado para este input.',
+        gap: 'Falta: Recalcular resultado para el input actual. Si no cambia, recarga.',
+      };
+    }
+    if (resultConfidence.status === 'review') {
+      return {
+        label: 'Revisar',
+        tone: T.warning,
+        headline: 'Resultado usable con salvedades.',
+        explanation: reviewCause,
+        gap: reviewGap,
+      };
+    }
+    return {
+      label: 'OK',
+      tone: T.positive,
+      headline: 'Resultado canónico.',
+      explanation: 'Resultado canónico.',
+      gap: null as string | null,
+    };
+  }, [T.negative, T.positive, T.warning, hasOnlyRunResultBlockingReasons, heroPhase, heroResult, isRunActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
+  const heroConfidenceBlock = useMemo(
+    () => (
+      <span style={{ display: 'grid', gap: 4 }}>
+        <span style={{ color: T.textSecondary, fontSize: 12 }}>{heroPrimaryState.explanation}</span>
+        {heroPrimaryState.gap && (
+          <span style={{ color: T.textSecondary, fontSize: 11 }}>
+            {heroPrimaryState.gap}
+          </span>
+        )}
+      </span>
+    ),
+    [T.textSecondary, heroPrimaryState.explanation, heroPrimaryState.gap],
+  );
+  const openDiagnosticsFromHero = useCallback(() => {
+    setDiagnosticsOpen(true);
+    window.requestAnimationFrame(() => {
+      diagnosticsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
   const ruin40Light = classifyThreshold(probRuin40, { greenMax: 0.05, yellowMax: 0.15 });
   const ruin20Light = classifyThreshold(probRuin20, { greenMax: 0.02, yellowMax: 0.08 });
   const cutTimeLight = classifyThreshold(cutShare, { greenMax: 0.10, yellowMax: 0.25 });
@@ -876,59 +1230,37 @@ export function SimulationPage({
   const successAxisSpan = Math.max(1, successAxisMax - successAxisMin);
   const mapSuccessPct = (value: number) =>
     Math.min(100, Math.max(0, ((value - successAxisMin) / successAxisSpan) * 100));
-  const openChip = (chip: 'return' | 'years' | 'capital') => {
+  const openSimulationPanelShortcut = () => {
     onSimulationTouch('custom');
-    setActiveChip(chip);
-    if (chip === 'return') setDraftValue((effectiveReturn * 100).toFixed(2));
-    if (chip === 'years') setDraftValue(String(effectiveYears));
-    if (chip === 'capital') {
-      // Si el capital es derivado (bloques), no permitimos edición manual engañosa.
-      if (isDerivedCapital) return;
-      setDraftValue(String(Math.round(effectiveCapital)));
-    }
+    setAdvancedOpen(true);
+    window.setTimeout(() => {
+      simulationPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   };
 
-  const restoreFieldFromScenario = useCallback((field: 'return' | 'years') => {
-    if (!simOverrides?.active) return;
-    const next: SimulationOverrides = { ...simOverrides };
-    if (field === 'return') delete next.returnPct;
-    if (field === 'years') delete next.horizonYears;
-    const hasAnyOverride =
-      next.returnPct !== undefined ||
-      next.horizonYears !== undefined ||
-      next.capital !== undefined;
-    if (!hasAnyOverride) {
-      onSimOverridesChange(null);
-      return;
-    }
-    onSimOverridesChange({
+  const updateTemporaryReturnPct = useCallback((nextPct: number) => {
+    const clamped = Math.max(-10, Math.min(30, nextPct));
+    const next: SimulationOverrides = {
       active: true,
-      preset: next.preset,
-      ...(next.returnPct !== undefined ? { returnPct: next.returnPct } : {}),
-      ...(next.horizonYears !== undefined ? { horizonYears: next.horizonYears } : {}),
-      ...(next.capital !== undefined ? { capital: next.capital } : {}),
-    });
+      preset: 'custom',
+      ...(simOverrides?.horizonYears !== undefined ? { horizonYears: simOverrides.horizonYears } : {}),
+      ...(simOverrides?.capital !== undefined ? { capital: simOverrides.capital } : {}),
+      returnPct: clamped / 100,
+    };
+    onSimOverridesChange(next);
   }, [onSimOverridesChange, simOverrides]);
 
-  const applyChip = () => {
-    const parsed = Number(draftValue);
-    if (!Number.isFinite(parsed)) {
-      setActiveChip(null);
-      return;
-    }
+  const updateTemporaryHorizonYears = useCallback((nextYears: number) => {
+    const clampedYears = Math.max(1, Math.round(nextYears));
     const next: SimulationOverrides = {
       active: true,
       preset: 'custom',
       ...(simOverrides?.returnPct !== undefined ? { returnPct: simOverrides.returnPct } : {}),
-      ...(simOverrides?.horizonYears !== undefined ? { horizonYears: simOverrides.horizonYears } : {}),
       ...(simOverrides?.capital !== undefined ? { capital: simOverrides.capital } : {}),
+      horizonYears: clampedYears,
     };
-    if (activeChip === 'return') next.returnPct = parsed / 100;
-    if (activeChip === 'years') next.horizonYears = Math.max(1, Math.round(parsed));
-    if (activeChip === 'capital') next.capital = Math.max(1, parsed);
     onSimOverridesChange(next);
-    setActiveChip(null);
-  };
+  }, [onSimOverridesChange, simOverrides]);
 
   const formatCLP = (value: number) =>
     value.toLocaleString('es-CL', { maximumFractionDigits: 0 });
@@ -1004,10 +1336,18 @@ export function SimulationPage({
     : null;
   const primaryFxTechnical = 'snapshot.fxReference.clpUsd';
   const backupFxClp = Number(params.fx.clpUsdInitial ?? NaN);
+  const eurUsdModelValue = Number(params.fx.usdEurFixed ?? NaN);
+  const aurumEurUsd = Number(aurumFxSpotUsdEur ?? NaN);
+  const aurumSourceUsdEur = Number(aurumFxSourceUsdEur ?? NaN);
   const fxDiffPct = Number.isFinite(primaryFxClp) && primaryFxClp !== null && Number.isFinite(backupFxClp) && backupFxClp > 0
     ? Math.abs(backupFxClp - primaryFxClp) / primaryFxClp
     : null;
   const usingPrimaryFx = operativeFxResolution.usingAurumCurrent;
+  const hasAurumEurUsd = Number.isFinite(aurumEurUsd) && aurumEurUsd > 0;
+  const hasAurumSourceUsdEur = Number.isFinite(aurumSourceUsdEur) && aurumSourceUsdEur > 0;
+  const usingAurumEurUsd = hasAurumEurUsd && Number.isFinite(eurUsdModelValue) && eurUsdModelValue > 0
+    ? isApproximatelyEqual(aurumEurUsd, eurUsdModelValue)
+    : false;
   const snapshotFreshness = useMemo(
     () => getFreshnessStatus(aurumSnapshotPublishedAt),
     [aurumSnapshotPublishedAt],
@@ -1020,14 +1360,14 @@ export function SimulationPage({
   const mixTrustSourceLabel = useMemo(() => {
     if (weightsSourceMode === 'instrument-universe') {
       return universeSourceOrigin === 'firestore'
-        ? 'Instrument Universe · Firestore'
+        ? 'Mix aperturado por instrumento · cloud'
         : universeSourceOrigin === 'bundled'
-          ? 'Instrument Universe · bundled canónico'
-          : 'Instrument Universe · copia local';
+          ? 'Mix aperturado por instrumento · versión interna de respaldo'
+          : 'Mix aperturado por instrumento · copia local';
     }
-    if (weightsSourceMode === 'instrument-base') return 'Instrument Base · fallback';
-    if (weightsSourceMode === 'system-defaults') return 'Defaults del sistema';
-    if (weightsSourceMode === 'simulation') return 'Override manual temporal';
+    if (weightsSourceMode === 'instrument-base') return 'Mix por instrumento · respaldo';
+    if (weightsSourceMode === 'system-defaults') return 'Mix por instrumento · defaults del sistema';
+    if (weightsSourceMode === 'simulation') return 'Mix agregado M8 · override temporal';
     return weightsSourceLabel;
   }, [universeSourceOrigin, weightsSourceLabel, weightsSourceMode]);
   const riskFxMismatchPct = useMemo(() => {
@@ -1042,14 +1382,211 @@ export function SimulationPage({
     if (!Number.isFinite(optimizable)) return null;
     return Math.max(0, optimizable) + (Number.isFinite(banks) ? Math.max(0, banks) : 0);
   }, [compositionSource]);
-  const totalNetWorthVisibleClp = useMemo(() => {
+  const patrimonioAurumBaseVisibleClp = useMemo(() => {
     const total = Number(compositionSource?.totalNetWorthCLP ?? NaN);
     return Number.isFinite(total) && total > 0 ? total : null;
   }, [compositionSource]);
+  const runCapitalBreakdown = useMemo(() => buildRunCapitalBreakdown({
+    composition: compositionSource,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    manualLocalAdjustmentsImpactCLP: committedManualSummaryT0.netClp,
+    riskCapitalOverrideCLP: riskDetectedClp,
+    includeNonExigibleDebtInRunCapital: DEFAULT_INCLUDE_NON_EXIGIBLE_DEBT_IN_RUN_CAPITAL,
+  }), [
+    committedManualSummaryT0.netClp,
+    compositionSource,
+    liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    riskDetectedClp,
+  ]);
+  const riskCapitalIncludedInAurumBase: 'yes' | 'no' | 'unknown' = runCapitalBreakdown.riskInReference;
+  const referenceRiskAdjustmentClp = runCapitalBreakdown.referenceRiskAdjustmentCLP;
+  const referenceCapitalCLP = runCapitalBreakdown.referenceCapitalCLP;
   const nonOptimizableVisibleClp = useMemo(() => {
-    if (!Number.isFinite(totalNetWorthVisibleClp) || totalNetWorthVisibleClp === null || capitalSentToMotorClp === null) return null;
-    return totalNetWorthVisibleClp - capitalSentToMotorClp;
-  }, [capitalSentToMotorClp, totalNetWorthVisibleClp]);
+    if (!Number.isFinite(patrimonioAurumBaseVisibleClp) || patrimonioAurumBaseVisibleClp === null || capitalSentToMotorClp === null) return null;
+    return patrimonioAurumBaseVisibleClp - capitalSentToMotorClp;
+  }, [capitalSentToMotorClp, patrimonioAurumBaseVisibleClp]);
+  const realEstateConsideredClp = runCapitalBreakdown.realEstateSupportCLP > 0
+    ? runCapitalBreakdown.realEstateSupportCLP
+    : null;
+  const consideredWealthResolution = computeMidasConsideredWealth({
+    referenceWealthClp: referenceCapitalCLP,
+    realEstateSupportClp: realEstateConsideredClp,
+    riskCapitalClp: runCapitalBreakdown.riskCapitalCLP,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+  });
+  const enabledResourcesImpactCLP = (
+    (liquidarDeptoEnabled ? (realEstateConsideredClp ?? 0) : 0)
+    + (riskCapitalEnabled ? Math.max(0, runCapitalBreakdown.riskCapitalCLP) : 0)
+  );
+  const nonExigibleDebtPolicyImpactCLP = runCapitalBreakdown.nonExigibleDebtPolicyImpactCLP;
+  const nonMortgageDebtClp = runCapitalBreakdown.nonMortgageDebtCLP;
+  const manualLocalAdjustmentsImpactCLP = runCapitalBreakdown.manualLocalAdjustmentsImpactCLP;
+  const runCapitalCLP = Number.isFinite(effectiveBaseCapital) && effectiveBaseCapital > 0
+    ? effectiveBaseCapital
+    : null;
+  const patrimonioConsideradoBaseMidasClp = computeEnabledResourcesForUi({
+    coreLiquidCapitalClp: runCapitalCLP,
+    realEstateSupportClp: realEstateConsideredClp,
+    riskCapitalClp: runCapitalBreakdown.riskCapitalCLP,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    manualLocalAdjustmentsImpactClp: 0,
+  });
+  const patrimonioConsideradoEfectivoCorridaClp = runCapitalCLP;
+  const ajusteManualAplicadoCorridaClp = manualLocalAdjustmentsImpactCLP;
+  const patrimonioReferenciaMidasClp = referenceCapitalCLP;
+  const patrimonioTotalHoyAurumNetoClp = patrimonioReferenciaMidasClp;
+  const patrimonioTotalHoyRiskClp = Math.max(0, runCapitalBreakdown.riskCapitalCLP);
+  const patrimonioTotalHoyClp = patrimonioTotalHoyAurumNetoClp !== null
+    ? Math.max(0, patrimonioTotalHoyAurumNetoClp + patrimonioTotalHoyRiskClp)
+    : null;
+  const recursosHabilitadosSubcopy = buildEnabledResourcesSubcopy({
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    hasManualT0Adjustments: Math.abs(ajusteManualAplicadoCorridaClp) > 0.5,
+    hasFutureAdjustments: committedManualSummaryFuture.count > 0,
+  });
+  const runCapitalFromComponentsCLP = computeEnabledResourcesForUi({
+    coreLiquidCapitalClp: runCapitalCLP,
+    realEstateSupportClp: realEstateConsideredClp,
+    riskCapitalClp: runCapitalBreakdown.riskCapitalCLP,
+    realEstateEnabled: liquidarDeptoEnabled,
+    riskCapitalEnabled,
+    // runCapitalCLP ya refleja el capital core efectivo de la corrida (incluye T0 cuando aplica).
+    // Aquí no se vuelve a sumar T0 para evitar doble conteo visual en "Recursos habilitados".
+    manualLocalAdjustmentsImpactClp: 0,
+  });
+  const patrimonioAmpliadoModeloClp = runCapitalFromComponentsCLP;
+  const motorCapitalMismatchClp = (
+    runCapitalCLP !== null && capitalSentToMotorClp !== null
+  )
+    ? runCapitalCLP - capitalSentToMotorClp
+    : null;
+  const expandedVsMotorGapClp = (
+    runCapitalCLP !== null && runCapitalFromComponentsCLP !== null
+  ) ? runCapitalFromComponentsCLP - runCapitalCLP : null;
+  const wealthConfigHasReference = patrimonioReferenciaMidasClp !== null && patrimonioReferenciaMidasClp > 0;
+  const wealthConfigHasConsidered = patrimonioConsideradoEfectivoCorridaClp !== null && patrimonioConsideradoEfectivoCorridaClp > 0;
+  const wealthAllowedExcessClp =
+    Math.max(0, nonExigibleDebtPolicyImpactCLP)
+    + Math.max(0, manualLocalAdjustmentsImpactCLP);
+  const wealthConsideredExceedsReference = wealthConfigHasReference && wealthConfigHasConsidered
+    ? patrimonioConsideradoEfectivoCorridaClp > (patrimonioReferenciaMidasClp + wealthAllowedExcessClp + 0.5)
+    : false;
+  const coreReferenceGapClp = wealthConfigHasReference && wealthConfigHasConsidered
+    ? patrimonioReferenciaMidasClp - patrimonioConsideradoEfectivoCorridaClp
+    : null;
+  const expandedReferenceGapClp = wealthConfigHasReference && patrimonioAmpliadoModeloClp !== null
+    ? patrimonioReferenciaMidasClp - patrimonioAmpliadoModeloClp
+    : null;
+  const wealthConfigTone: SourceBadgeTone = !wealthConfigHasReference || !wealthConfigHasConsidered || wealthConsideredExceedsReference
+    ? 'alert'
+    : consideredWealthResolution.missingRealEstateSupport
+      ? 'warning'
+    : riskCapitalIncludedInAurumBase === 'unknown' && riskDetectedClp > 0
+      ? 'warning'
+      : 'ok';
+  const wealthConfigLabel = wealthConfigTone === 'ok'
+    ? 'Configuración OK'
+    : wealthConfigTone === 'warning'
+      ? 'Configuración con advertencias'
+      : 'Configuración inválida / revisar';
+  const wealthConfigCopy = wealthConsideredExceedsReference
+    ? 'El capital líquido del motor supera la referencia patrimonial. Revisar composición antes de usar.'
+    : consideredWealthResolution.missingRealEstateSupport
+      ? 'Configuración válida, pero falta valor canónico de respaldo/depto para explicar toda la diferencia.'
+    : wealthConfigTone === 'alert'
+      ? 'Faltan datos patrimoniales críticos para validar esta configuración.'
+      : 'Configuración patrimonial válida para esta corrida.';
+  const patrimonioMidasHoyAjustadoT0Clp = patrimonioAmpliadoModeloClp ?? patrimonioConsideradoEfectivoCorridaClp;
+  const heroResourcesTodayNote = committedManualSummaryT0.count > 0
+    ? `Recursos habilitados hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
+    : 'Recursos habilitados hoy';
+  const heroFutureAdjustmentsNote = committedManualSummaryFuture.count > 0
+    ? `Ajustes futuros: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
+    : null;
+  const heroWealthChipNote = heroFutureAdjustmentsNote
+    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}`
+    : heroResourcesTodayNote;
+  const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
+  const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
+  const patrimonioSourceWarning = snapshotApplied
+    ? null
+    : hasPendingSnapshot
+      ? 'Hay un snapshot Aurum detectado pendiente de aplicar.'
+      : 'Esta corrida usa base local; puede diferir de Aurum.';
+  const mixSourceTone: SourceBadgeTone = weightsSourceMode === 'instrument-universe'
+    ? (universeSourceOrigin === 'firestore' ? 'ok' : universeSourceOrigin === 'bundled' ? 'warning' : 'warning')
+    : 'alert';
+  const mixSourceWarning = weightsSourceMode === 'instrument-universe'
+    ? universeSourceOrigin === 'cache-local'
+      ? 'El mix aperturado por instrumento está usando copia local.'
+      : universeSourceOrigin === 'bundled'
+        ? 'El mix aperturado por instrumento está usando versión interna de respaldo.'
+        : null
+    : 'El mix aperturado por instrumento no está disponible y se está usando un respaldo.';
+  const usdFxSourceSummary = usingPrimaryFx
+    ? 'Aurum current'
+    : operativeFxResolution.reasonCode === 'manual_override_applied'
+      ? 'Manual local'
+      : operativeFxResolution.aurumSource?.includes('closure')
+        ? 'Aurum cierre'
+        : 'Fallback operativo';
+  const usdFxTone: SourceBadgeTone = usingPrimaryFx
+    ? 'ok'
+    : operativeFxResolution.reasonCode === 'manual_override_applied'
+      ? 'warning'
+      : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+        ? 'alert'
+        : 'warning';
+  const usdFxWarning = usingPrimaryFx
+    ? null
+    : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied'
+      ? 'Aurum publica un FX current usable, pero esta corrida está aplicando fallback operativo.'
+      : 'FX del modelo puede diferir de Aurum si no hay snapshot aplicado.';
+  const eurFxSourceSummary = usingAurumEurUsd ? (snapshotApplied ? 'Snapshot Aurum' : 'Aurum current') : 'Estructural del modelo';
+  const eurFxTone: SourceBadgeTone = usingAurumEurUsd ? 'ok' : hasAurumEurUsd ? 'alert' : 'warning';
+  const eurFxWarning = usingAurumEurUsd
+    ? null
+    : hasAurumEurUsd
+      ? 'Aurum publica USD/EUR usable, pero esta corrida está aplicando fallback estructural.'
+      : 'EUR/USD no validado contra Aurum; usando valor estructural del modelo.';
+  const dataSourceTone: SourceBadgeTone = (
+    eurFxTone === 'alert' ||
+    usdFxTone === 'alert' ||
+    mixSourceTone === 'alert'
+  )
+    ? 'alert'
+    : (
+        eurFxTone === 'warning' ||
+        usdFxTone === 'warning' ||
+        mixSourceTone === 'warning' ||
+        patrimonioSourceTone !== 'ok'
+      )
+      ? 'warning'
+      : 'ok';
+  const dataSourceStatusLabel = dataSourceTone === 'ok'
+    ? 'OK'
+    : dataSourceTone === 'warning'
+      ? 'Revisar'
+      : 'Alerta';
+  const dataSourceStatusCopy = dataSourceTone === 'ok'
+    ? 'Fuentes aplicadas y trazables.'
+    : dataSourceTone === 'warning'
+      ? 'Datos usables con advertencias de fuente.'
+      : 'Inconsistencia o fallback crítico en fuentes.';
+  const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
+    ? universeSourceOrigin === 'firestore'
+      ? 'Mix cloud'
+      : universeSourceOrigin === 'bundled'
+        ? 'Mix respaldo'
+        : 'Mix local'
+    : weightsSourceMode === 'simulation'
+      ? 'Mix override'
+      : 'Mix fallback';
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt
@@ -1087,13 +1624,13 @@ export function SimulationPage({
     else mixSeverity = 'Aviso';
     const mixFallbackName =
       weightsSourceMode === 'instrument-base'
-        ? 'Base instrumental real'
+        ? 'Mix por instrumento (respaldo)'
         : weightsSourceMode === 'system-defaults'
-          ? 'Defaults del sistema'
+          ? 'Mix por instrumento (defaults del sistema)'
           : weightsSourceMode === 'simulation'
-            ? 'Override manual temporal'
+            ? 'Mix agregado M8 (override temporal)'
             : weightsSourceMode === 'json-official'
-              ? 'Base instrumental real'
+              ? 'Mix por instrumento (respaldo)'
               : weightsSourceMode === 'last-known-official'
                 ? 'Último oficial válido'
                 : 'Sin respaldo usable';
@@ -1110,11 +1647,11 @@ export function SimulationPage({
                 ? 'lastKnownOfficialWeights'
                 : 'weightsSourceMode=error';
     const mixReason = weightsSourceMode === 'instrument-universe'
-      ? 'Se usa la fuente principal porque Instrument Universe está disponible y se pudo derivar a sleeves de Simulación.'
+      ? 'Se usa la fuente principal porque el mix aperturado por instrumento está disponible y se pudo derivar al mix agregado M8.'
       : weightsSourceMode === 'simulation'
-        ? 'Se usa override manual temporal de Simulación; no reemplaza la fuente estructural.'
+        ? 'Se usa override manual temporal en el mix agregado M8; no reemplaza la fuente estructural.'
         : weightsSourceMode === 'instrument-base'
-          ? 'Se usa respaldo porque Instrument Universe no está disponible o no alcanza para derivar el mix.'
+          ? 'Se usa respaldo porque el mix aperturado por instrumento no está disponible o no alcanza para derivar el mix agregado M8.'
           : mixDiffPp <= 0.5
             ? 'Se usa fallback activo, sin diferencia material contra la mejor referencia disponible.'
             : 'Se usa fallback activo; la diferencia contra la mejor referencia disponible sí es material.';
@@ -1187,13 +1724,13 @@ export function SimulationPage({
       },
       {
         id: 'distribution',
-        name: 'Distribución / mix',
+        name: 'Mix aperturado por instrumento',
         severity: mixSeverity,
         usingNow: `${weightsSourceLabel} (${weightsSourceMode})`,
         valueApplied: activeWeightSummary,
         appliedAt: formatSessionMoment(lastTimelineAtMs),
         principal: {
-          human: 'Instrument Universe',
+          human: 'Mix aperturado por instrumento',
           technical: 'midas.instrument-universe.v1',
           value: universeWeightSummary,
         },
@@ -1317,20 +1854,228 @@ export function SimulationPage({
   const toggleTraceRow = useCallback((id: string) => {
     setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
-  const stickyStatusLabel = isRecalculating
-    ? 'Recalculando...'
-    : simUiState === 'error'
-      ? 'Error de simulación'
-      : displayResult
-        ? 'Resultado actual'
-        : 'Sin resultado actual';
-  const stickySuccess40 = isRecalculating ? null : success40;
-  const stickyRuin20 = isRecalculating ? null : probRuin20;
-  const stickyHouseSalePct = isRecalculating ? null : houseSalePct;
-  const stickyDrawdownP50 = isRecalculating ? null : drawdownP50;
-  const scrollToSummary = useCallback(() => {
-    heroCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
+  const heroHorizonYears = useMemo(() => {
+    const normalized = (m8InputFingerprint.normalizedInput ?? {}) as Record<string, unknown>;
+    const years = Number(normalized.years ?? NaN);
+    if (Number.isFinite(years) && years > 0) return Math.round(years);
+    const simulation = normalized.simulation as Record<string, unknown> | undefined;
+    const horizonMonths = Number(simulation?.horizonMonths ?? NaN);
+    if (Number.isFinite(horizonMonths) && horizonMonths > 0) return Math.round(horizonMonths / 12);
+    return null;
+  }, [m8InputFingerprint.normalizedInput]);
+  const heroQuestion = heroHorizonYears !== null
+    ? `¿Llegarás a ${heroHorizonYears} años?`
+    : '¿Llegarás al horizonte objetivo?';
+  const appliedDataTechnicalBlock = (
+    <div
+      style={{
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: 10,
+        padding: isMobileViewport ? '7px 8px' : '8px 10px',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'grid', gap: 2 }}>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
+          Datos aplicados automáticamente
+        </div>
+        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+          {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 5 }}>
+        {appliedTraceRows.map((row) => {
+          const isOpen = Boolean(openTraceRows[row.id]);
+          const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
+          return (
+            <div
+              key={row.id}
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                borderRadius: 8,
+                padding: isMobileViewport ? '5px 7px' : '6px 9px',
+                display: 'grid',
+                gap: 4,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => toggleTraceRow(row.id)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  margin: 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  color: 'inherit',
+                  display: 'grid',
+                  gap: 2,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+                      {row.name}
+                    </span>
+                    <span
+                      style={{
+                        color: severityColor,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        background: 'rgba(148,163,184,0.12)',
+                        border: '1px solid rgba(148,163,184,0.25)',
+                        borderRadius: 999,
+                        padding: '2px 7px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {row.severity}
+                    </span>
+                  </div>
+                  <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
+                    {isOpen ? '▴' : '▾'}
+                  </span>
+                </div>
+                <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                  Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                </div>
+              </button>
+              {isOpen && (
+                <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Respaldo: {row.fallback
+                      ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
+                      : 'Sin respaldo definido'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
+                    Cuándo: {row.appliedAt}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+  const inputM8TechnicalBlock = (
+    <div
+      style={{
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: 10,
+        padding: isMobileViewport ? '7px 8px' : '9px 10px',
+        display: 'grid',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
+          Input M8: {m8InputFingerprint.hash} · {cloudHydrationReady ? 'cloud' : 'mixto cloud/cache'} · seed {Number(params.simulation?.seed ?? 0)} · nSim {Number(params.simulation?.nSim ?? 0)}
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            const runtimeDiagnostics =
+              (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+            const instrumentUniverseDiagnostics =
+              (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
+            const simulationRunDiagnostics = {
+              simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
+              simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
+              simulationRunCompletedAt: runtimeDiagnostics.simulationRunCompletedAt ?? null,
+              simulationRunError: runtimeDiagnostics.simulationRunError ?? null,
+              blockedReason: runtimeDiagnostics.blockedReason ?? null,
+              effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+              lastRunInputHash: runtimeDiagnostics.lastRunInputHash ?? null,
+              lastRenderedResultHash: runtimeDiagnostics.lastRenderedResultHash ?? null,
+              resultMetricsAvailable: runtimeDiagnostics.resultMetricsAvailable ?? false,
+              resultSource: runtimeDiagnostics.resultSource ?? 'none',
+              staleResult:
+                runtimeDiagnostics.lastRenderedResultHash != null
+                  ? runtimeDiagnostics.lastRenderedResultHash !== m8InputFingerprint.effectiveEngineInputHash
+                  : Boolean(runtimeDiagnostics.staleResult ?? false),
+              heroMetricsSource: runtimeDiagnostics.heroMetricsSource ?? 'none',
+            };
+            const payload = JSON.stringify({
+              fingerprint: m8InputFingerprint.hash,
+              effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
+              diagnosticHash: m8InputFingerprint.diagnosticHash,
+              hashIncludesDiagnostics: m8InputFingerprint.hashIncludesDiagnostics,
+              createdAt: m8InputFingerprint.createdAt,
+              sources: m8InputFingerprint.sources,
+              warnings: m8InputFingerprint.warnings,
+              normalizedInput: m8InputFingerprint.normalizedInput,
+              diagnosticInput: m8InputFingerprint.diagnosticInput,
+              instrumentUniverseDiagnostics,
+              simulationRunDiagnostics,
+              simulationResultDiagnostics,
+              resultConfidence,
+              assumptionModeDiagnostics,
+            }, null, 2);
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(payload);
+              return;
+            }
+            window.prompt('Copiar input M8 aplicado', payload);
+          }}
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.surfaceEl,
+            color: T.textPrimary,
+            borderRadius: 999,
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '5px 9px',
+            cursor: 'pointer',
+          }}
+        >
+          Copiar input M8 aplicado
+        </button>
+      </div>
+      <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+        Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
+        {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
+      </div>
+      {!cloudHydrationReady && (
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          Sincronizando fuentes canónicas... resultado provisional desde cache local.
+        </div>
+      )}
+      {m8InputFingerprint.warnings.length > 0 && (
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          {m8InputFingerprint.warnings.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
 
   const updateSpendingPhase = (index: number, amount: number) => {
     onUpdateParams((prev) => {
@@ -1342,54 +2087,33 @@ export function SimulationPage({
       return next;
     });
   };
-
-  const updateRvRfMix = (rvPct: number) => {
-    const rvTarget = Math.min(100, Math.max(0, rvPct)) / 100;
-    onUpdateParams((prev) => {
-      const rvTotal = prev.weights.rvGlobal + prev.weights.rvChile;
-      const rfTotal = prev.weights.rfGlobal + prev.weights.rfChile;
-      const rvRatio = rvTotal > 0 ? prev.weights.rvGlobal / rvTotal : 0.5;
-      const rfRatio = rfTotal > 0 ? prev.weights.rfGlobal / rfTotal : 0.5;
-      const nextRvGlobal = rvTarget * rvRatio;
-      const nextRvChile = rvTarget * (1 - rvRatio);
-      const rfTarget = 1 - rvTarget;
-      const nextRfGlobal = rfTarget * rfRatio;
-      const nextRfChile = rfTarget * (1 - rfRatio);
-      return {
-        ...prev,
-        weights: {
-          rvGlobal: nextRvGlobal,
-          rvChile: nextRvChile,
-          rfGlobal: nextRfGlobal,
-          rfChile: nextRfChile,
-        },
-      };
+  const beginSpendingEdit = useCallback((index: number, currentAmount: number) => {
+    setSpendingDraftByIndex((prev) => ({
+      ...prev,
+      [index]: String(Math.max(0, Math.round(currentAmount))),
+    }));
+  }, []);
+  const updateSpendingDraft = useCallback((index: number, rawValue: string) => {
+    const digitsOnly = rawValue.replace(/\D/g, '');
+    setSpendingDraftByIndex((prev) => ({
+      ...prev,
+      [index]: digitsOnly,
+    }));
+  }, []);
+  const commitSpendingDraft = useCallback((index: number) => {
+    setSpendingDraftByIndex((prev) => {
+      const draftValue = prev[index];
+      if (typeof draftValue === 'string' && draftValue.trim() !== '') {
+        const parsed = Number(draftValue);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          updateSpendingPhase(index, parsed);
+        }
+      }
+      const next = { ...prev };
+      delete next[index];
+      return next;
     });
-  };
-
-  const updateGlobalLocalMix = (globalPct: number) => {
-    const globalTarget = Math.min(100, Math.max(0, globalPct)) / 100;
-    onUpdateParams((prev) => {
-      const globalTotal = prev.weights.rvGlobal + prev.weights.rfGlobal;
-      const localTotal = prev.weights.rvChile + prev.weights.rfChile;
-      const globalRvRatio = globalTotal > 0 ? prev.weights.rvGlobal / globalTotal : 0.5;
-      const localRvRatio = localTotal > 0 ? prev.weights.rvChile / localTotal : 0.5;
-      const nextGlobalRv = globalTarget * globalRvRatio;
-      const nextGlobalRf = globalTarget * (1 - globalRvRatio);
-      const localTarget = 1 - globalTarget;
-      const nextLocalRv = localTarget * localRvRatio;
-      const nextLocalRf = localTarget * (1 - localRvRatio);
-      return {
-        ...prev,
-        weights: {
-          rvGlobal: nextGlobalRv,
-          rfGlobal: nextGlobalRf,
-          rvChile: nextLocalRv,
-          rfChile: nextLocalRf,
-        },
-      };
-    });
-  };
+  }, [updateSpendingPhase]);
 
   const toggleLiquidarDepto = () => {
     if (!hasEffectiveRealEstate) return;
@@ -1406,6 +2130,22 @@ export function SimulationPage({
   };
   const nSimOptions = [1000, 3000, 5000] as const;
   const currentNSim = Number(params.simulation?.nSim ?? 1000);
+  const simulationDataSummary = useMemo(() => {
+    const totalLabel = patrimonioTotalHoyClp !== null
+      ? `Patrimonio hoy ${formatMoneyCompact(patrimonioTotalHoyClp)}`
+      : 'Patrimonio hoy no disponible';
+    const resourcesLabel = patrimonioAmpliadoModeloClp !== null
+      ? `Recursos ${formatMoneyCompact(patrimonioAmpliadoModeloClp)}`
+      : 'Recursos no disponibles';
+    return [
+      totalLabel,
+      resourcesLabel,
+      scenarioUiLabel,
+      `${currentNSim} sim`,
+      `Depto ${liquidarDeptoEnabled ? 'ON' : 'OFF'}`,
+      `Capital riesgo ${riskCapitalEnabled ? 'ON' : 'OFF'}`,
+    ].join(' · ');
+  }, [currentNSim, liquidarDeptoEnabled, patrimonioAmpliadoModeloClp, patrimonioTotalHoyClp, riskCapitalEnabled, scenarioUiLabel]);
   const setNSim = (nSim: number) => {
     onUpdateParams((prev) => ({
       ...prev,
@@ -1414,6 +2154,12 @@ export function SimulationPage({
         nSim,
       },
     }));
+  };
+  const currentRvTotalPct = Math.round((params.weights.rvGlobal + params.weights.rvChile) * 1000) / 10;
+  const currentRfTotalPct = Math.round((params.weights.rfGlobal + params.weights.rfChile) * 1000) / 10;
+  const updateTemporaryRvTotalPct = (rvPct: number) => {
+    const nextWeights = deriveSleevesFromRvRfTarget(params.weights, rvPct);
+    onUpdateParams((prev) => ({ ...prev, weights: nextWeights }));
   };
   const runLongevityPlus5 = useCallback(async () => {
     if (longevityRunning || !displayResult) return;
@@ -1445,89 +2191,177 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div
-        style={{
-          position: 'sticky',
-          top: isMobileViewport ? 'calc(48px + env(safe-area-inset-top, 0px))' : 48,
-          zIndex: 70,
-          background: 'rgba(11,16,24,0.94)',
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '6px 8px' : '7px 10px',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          cursor: 'pointer',
-        }}
-        onClick={scrollToSummary}
-        role="button"
-        tabIndex={0}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>Midas</span>
-          <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Success40 {stickySuccess40 !== null ? formatPct(stickySuccess40) : '—'}
-          </span>
+      <div style={{ position: 'relative', order: 2 }}>
+        <style>{`
+          @keyframes midasPulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.25); opacity: 1; }
+          }
+        `}</style>
+        <div style={{ opacity: heroPrimaryState.label === 'No usar' ? 0.72 : 1 }}>
+          <HeroCard
+            label={heroQuestion.toUpperCase()}
+            valuePct={showBootPlaceholder ? null : heroProbSuccess}
+            stale={showGhostResult || isRunActive}
+            subtitle={
+              simUiState === 'error'
+                ? `Error de recálculo: ${simUiError || 'reintenta'}`
+                : isRunActive
+                ? 'Calculando resultado final.'
+                : displayResult
+                  ? (
+                    <span style={{ display: 'grid', gap: 8 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={openDiagnosticsFromHero}
+                          title="Ver diagnóstico"
+                          style={{
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            border: `1px solid ${heroPrimaryState.tone}`,
+                            color: heroPrimaryState.tone,
+                            borderRadius: 999,
+                            padding: '2px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {heroPrimaryState.label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openDiagnosticsFromHero}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            padding: 0,
+                            color: T.textSecondary,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {heroPrimaryState.headline}
+                        </button>
+                      </span>
+                      {heroConfidenceBlock}
+                      <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
+                      <span
+                        style={{
+                          display: 'grid',
+                          gap: 3,
+                          gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                        }}
+                      >
+                        {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
+                          <span
+                            key={item.label}
+                            style={{
+                              display: 'grid',
+                              gap: 1,
+                              padding: '4px 6px',
+                              borderRadius: 8,
+                              background: T.surfaceEl,
+                              border: `1px solid ${T.border}`,
+                            }}
+                          >
+                            <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
+                              {item.label}
+                            </span>
+                            <span>{item.detail}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  )
+                  : 'Corre una simulación para ver resultados'
+            }
+            footerContent={null}
+            mode={simActive ? 'sim' : 'real'}
+            chips={[
+              {
+                id: 'state',
+                value: heroBaseChipLabel,
+                onClick: canResetToBase
+                  ? () => {
+                      onRestoreScenarioPreset();
+                      onResetSim();
+                    }
+                  : undefined,
+                disabled: !canResetToBase,
+              },
+              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: openSimulationPanelShortcut },
+              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: openSimulationPanelShortcut },
+              {
+                id: 'capital',
+                value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
+                note: heroWealthChipNote,
+                onClick: openSimulationPanelShortcut,
+                accessory: (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMovementForm();
+                      openCapitalLedger();
+                    }}
+                    style={{
+                      width: isMobileViewport ? 28 : 30,
+                      height: isMobileViewport ? 28 : 30,
+                      background: T.primary,
+                      border: 'none',
+                      color: '#fff',
+                      borderRadius: '50%',
+                      padding: 0,
+                      fontSize: isMobileViewport ? 18 : 19,
+                      lineHeight: 1,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                    title="Agregar evento manual"
+                    aria-label="Agregar evento manual"
+                  >
+                    +
+                  </button>
+                ),
+              },
+            ]}
+          />
         </div>
-        <span
-          style={{
-            border: `1px solid ${simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning}`,
-            color: simulationActionStatus.level === 'ok' ? T.positive : simulationActionStatus.level === 'blocked' ? T.negative : T.warning,
-            borderRadius: 999,
-            padding: '2px 8px',
-            fontSize: 10,
-            fontWeight: 800,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {simulationActionStatus.level === 'ok' ? 'OK' : simulationActionStatus.level === 'review' ? 'Revisar' : simulationActionStatus.level === 'provisional' ? 'Provisional' : 'Bloqueado'}
-        </span>
-      </div>
-
-      <div
-        ref={heroCardRef}
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 12,
-          padding: isMobileViewport ? '10px 10px' : '12px 14px',
-          display: 'grid',
-          gap: 8,
-        }}
-      >
-        <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          ¿Llegarás al año 40?
-        </div>
-        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 34 : 38, fontWeight: 850, lineHeight: 1 }}>
-          {success40 !== null ? formatPct(success40) : '—'}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6 }}>
-          {[
-            ['Ruina 40a', formatPct(probRuin40)],
-            ['Casa', formatPct(houseSalePct)],
-            ['MaxDD P50', formatPct(drawdownP50)],
-          ].map(([label, value]) => (
-            <div key={label} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: '6px 7px' }}>
-              <div style={{ color: T.textMuted, fontSize: 10 }}>{label}</div>
-              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>{value}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ color: T.textSecondary, fontSize: 12 }}>
-          {simulationActionStatus.level === 'ok'
-            ? 'Resultado usable y consistente para decidir.'
-            : simulationActionStatus.level === 'provisional'
-              ? 'Resultado provisional mientras sincroniza fuentes.'
-              : simulationActionStatus.level === 'review'
-                ? 'Resultado usable, pero conviene revisar un punto.'
-                : 'Faltan datos críticos para usar este resultado.'}
-        </div>
+        {!simActive && (
+          <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
+            Modelo base canónico · sin escenario aplicado.
+          </div>
+        )}
+        {showSimToast && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 6,
+              background: T.surfaceEl,
+              border: `1px solid ${T.border}`,
+              borderRadius: 10,
+              padding: '8px 12px',
+              color: T.textSecondary,
+              fontSize: 11,
+            }}
+          >
+            Esta simulación no se guardará.
+          </div>
+        )}
+        {simWorking && simActive && (
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
+            Recalculando simulación...
+          </div>
+        )}
       </div>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
+            order: 4,
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
             borderRadius: 10,
@@ -1567,6 +2401,7 @@ export function SimulationPage({
       {hasSyncBanner && (
         <div
           style={{
+            order: 4,
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
             borderRadius: 10,
@@ -1587,253 +2422,18 @@ export function SimulationPage({
           <span style={{ color: T.textMuted, fontSize: 10 }}>{pendingSnapshotLabel}</span>
         </div>
       )}
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '8px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
+      <details
+        ref={diagnosticsRef}
+        open={diagnosticsOpen}
+        onToggle={(e) => setDiagnosticsOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 10 }}
       >
-        <div style={{ display: 'grid', gap: 2 }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Datos aplicados automáticamente
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            {appliedTraceRows.length} fuentes · {traceStatusCounts.ok} OK · {traceStatusCounts.warning} Aviso · {traceStatusCounts.alert} Alerta · última aplicación {formatSessionMoment(lastAutoAppliedAtMs)}
-          </div>
-        </div>
-        <div style={{ display: 'grid', gap: 5 }}>
-          {appliedTraceRows.map((row) => {
-            const isOpen = Boolean(openTraceRows[row.id]);
-            const severityColor = row.severity === 'OK' ? T.positive : row.severity === 'Aviso' ? T.warning : T.negative;
-            return (
-              <div
-                key={row.id}
-                style={{
-                  border: `1px solid ${T.border}`,
-                  background: T.surfaceEl,
-                  borderRadius: 8,
-                  padding: isMobileViewport ? '5px 7px' : '6px 9px',
-                  display: 'grid',
-                  gap: 4,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => toggleTraceRow(row.id)}
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    padding: 0,
-                    margin: 0,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    color: 'inherit',
-                    display: 'grid',
-                    gap: 2,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                      flexWrap: isMobileViewport ? 'wrap' : 'nowrap',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <span style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
-                        {row.name}
-                      </span>
-                      <span
-                        style={{
-                          color: severityColor,
-                          fontSize: 10,
-                          fontWeight: 800,
-                          background: 'rgba(148,163,184,0.12)',
-                          border: '1px solid rgba(148,163,184,0.25)',
-                          borderRadius: 999,
-                          padding: '2px 7px',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {row.severity}
-                      </span>
-                    </div>
-                    <span style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
-                      {isOpen ? '▴' : '▾'}
-                    </span>
-                  </div>
-                  <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                    Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span> · Valor aplicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
-                  </div>
-                </button>
-                {isOpen && (
-                  <div style={{ display: 'grid', gap: 2, borderTop: `1px solid ${T.border}`, paddingTop: 5 }}>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Principal: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.principal.human}</span> ({row.principal.technical}) · {row.principal.value}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Respaldo: {row.fallback
-                        ? <><span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.fallback.human}</span> ({row.fallback.technical}) · {row.fallback.value}</>
-                        : 'Sin respaldo definido'}
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Usando ahora: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.usingNow}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Motivo: <span style={{ color: T.textPrimary }}>{row.reason}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Valor aplicado final: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{row.valueApplied}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Impacto / diferencia: <span style={{ color: T.textPrimary }}>{row.impact}</span>
-                    </div>
-                    <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10 }}>
-                      Cuándo: {row.appliedAt}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '9px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 800 }}>
-            Input M8: {m8InputFingerprint.hash} · {cloudHydrationReady ? 'cloud' : 'mixto cloud/cache'} · seed {Number(params.simulation?.seed ?? 0)} · nSim {Number(params.simulation?.nSim ?? 0)}
-          </div>
-          <button
-            type="button"
-            onClick={async () => {
-              const runtimeDiagnostics =
-                (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
-              const instrumentUniverseDiagnostics =
-                (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
-              const simulationRunDiagnostics = {
-                simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
-                simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
-                simulationRunCompletedAt: runtimeDiagnostics.simulationRunCompletedAt ?? null,
-                simulationRunError: runtimeDiagnostics.simulationRunError ?? null,
-                blockedReason: runtimeDiagnostics.blockedReason ?? null,
-                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
-                lastRunInputHash: runtimeDiagnostics.lastRunInputHash ?? null,
-                lastRenderedResultHash: runtimeDiagnostics.lastRenderedResultHash ?? null,
-                resultMetricsAvailable: runtimeDiagnostics.resultMetricsAvailable ?? false,
-                resultSource: runtimeDiagnostics.resultSource ?? 'none',
-                staleResult:
-                  runtimeDiagnostics.lastRenderedResultHash != null
-                    ? runtimeDiagnostics.lastRenderedResultHash !== m8InputFingerprint.effectiveEngineInputHash
-                    : Boolean(runtimeDiagnostics.staleResult ?? false),
-                heroMetricsSource: runtimeDiagnostics.heroMetricsSource ?? 'none',
-              };
-              const payload = JSON.stringify({
-                fingerprint: m8InputFingerprint.hash,
-                effectiveEngineInputHash: m8InputFingerprint.effectiveEngineInputHash,
-                diagnosticHash: m8InputFingerprint.diagnosticHash,
-                hashIncludesDiagnostics: m8InputFingerprint.hashIncludesDiagnostics,
-                createdAt: m8InputFingerprint.createdAt,
-                sources: m8InputFingerprint.sources,
-                warnings: m8InputFingerprint.warnings,
-                normalizedInput: m8InputFingerprint.normalizedInput,
-                diagnosticInput: m8InputFingerprint.diagnosticInput,
-                instrumentUniverseDiagnostics,
-                simulationRunDiagnostics,
-              }, null, 2);
-              if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(payload);
-                return;
-              }
-              window.prompt('Copiar input M8 aplicado', payload);
-            }}
-            style={{
-              border: `1px solid ${T.border}`,
-              background: T.surfaceEl,
-              color: T.textPrimary,
-              borderRadius: 999,
-              fontSize: 10,
-              fontWeight: 700,
-              padding: '5px 9px',
-              cursor: 'pointer',
-            }}
-          >
-            Copiar input M8 aplicado
-          </button>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-          Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
-          {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
-        </div>
-        {!cloudHydrationReady && (
-          <div style={{ color: T.warning, fontSize: 10 }}>
-            Sincronizando fuentes canónicas... resultado provisional desde cache local.
-          </div>
-        )}
-        {m8InputFingerprint.warnings.length > 0 && (
-          <div style={{ color: T.warning, fontSize: 10 }}>
-            {m8InputFingerprint.warnings.join(' · ')}
-          </div>
-        )}
-      </div>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${
-            simulationActionStatus.level === 'blocked'
-              ? T.negative
-              : simulationActionStatus.level === 'provisional'
-                ? T.warning
-                : simulationActionStatus.level === 'review'
-                  ? T.warning
-                  : T.border
-          }`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '8px 9px' : '10px 11px',
-          display: 'grid',
-          gap: 6,
-        }}
-      >
-        <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Estado de la simulación
-        </div>
-        <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? (simulationActionStatus.level === 'ok' ? 13 : 16) : (simulationActionStatus.level === 'ok' ? 14 : 18), fontWeight: 800 }}>
-          {simulationActionStatus.headline}
-        </div>
-        {simulationActionStatus.level !== 'ok' && (
-          <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12 }}>
-            {simulationActionStatus.message}
-          </div>
-        )}
-        {simulationActionStatus.level !== 'ok' && simulationActionStatus.actionItems.length > 0 && (
-          <div style={{ display: 'grid', gap: 3 }}>
-            {simulationActionStatus.actionItems.map((item) => (
-              <div key={item} style={{ color: T.textSecondary, fontSize: 11 }}>
-                • {item}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      <details>
-        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
           Ver detalle técnico
         </summary>
         <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+      {appliedDataTechnicalBlock}
+      {inputM8TechnicalBlock}
       <div
         style={{
           background: T.surface,
@@ -1849,7 +2449,7 @@ export function SimulationPage({
             Data Trust Layer
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            Fuente, frescura y respaldo de los datos que más mueven la corrida.
+            Fuente, frescura y respaldo de los datos que más mueven la simulación.
           </div>
           <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
             Gastos aplicados: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.spendingPhases ?? []).map((phase, idx) => `F${idx + 1} ${formatMillionsMM(Number(phase.amountReal ?? 0) / 1_000_000)}`).join(' · ')}</span> ·
@@ -1894,7 +2494,7 @@ export function SimulationPage({
                 </div>
                 {snapshotFreshness !== 'fresh' && (
                   <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
-                    Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                    Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la simulación.
                   </div>
                 )}
               </div>
@@ -1913,13 +2513,13 @@ export function SimulationPage({
                 </div>
                 {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
                   <div style={{ color: T.warning, fontSize: 10 }}>
-                    Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                    Usando respaldo interno de FX. Revisa la fuente antes de confiar en la simulación.
                   </div>
                 )}
               </div>
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                  <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
                   <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
                     {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                   </span>
@@ -1930,8 +2530,8 @@ export function SimulationPage({
                 {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                   <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                     {weightsSourceMode === 'instrument-universe'
-                      ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
-                      : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                      ? 'El mix aperturado por instrumento está usando una copia local.'
+                      : 'El mix aperturado por instrumento está en modo de respaldo.'}
                   </div>
                 )}
               </div>
@@ -1960,7 +2560,7 @@ export function SimulationPage({
               </div>
               {snapshotFreshness !== 'fresh' && (
                 <div style={{ color: snapshotFreshness === 'stale' ? T.negative : T.warning, fontSize: 10 }}>
-                  Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la corrida.
+                  Snapshot Aurum {snapshotFreshness === 'unknown' ? 'sin fecha auditable' : 'antiguo'}: revisa publicación antes de confiar en la simulación.
                 </div>
               )}
             </div>
@@ -1979,13 +2579,13 @@ export function SimulationPage({
               </div>
               {!usingPrimaryFx && !operativeFxResolution.aurumSource?.includes('closure') && operativeFxResolution.reasonCode !== 'manual_override_applied' && (
                 <div style={{ color: T.warning, fontSize: 10 }}>
-                  Usando respaldo interno de FX. Revisa la fuente antes de confiar en la corrida.
+                  Usando respaldo interno de FX. Revisa la fuente antes de confiar en la simulación.
                 </div>
               )}
             </div>
             <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix efectivo</div>
+                <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
                 <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
                   {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                 </span>
@@ -1999,8 +2599,8 @@ export function SimulationPage({
               {(weightsSourceMode !== 'instrument-universe' || (universeSourceOrigin !== 'firestore' && universeSourceOrigin !== 'bundled')) && (
                 <div style={{ color: weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, fontSize: 10 }}>
                   {weightsSourceMode === 'instrument-universe'
-                    ? 'Usando copia local del mix. Revisa la sincronización del JSON de instrumentos.'
-                    : 'Usando mix de respaldo. Revisa la sincronización del JSON de instrumentos.'}
+                    ? 'El mix aperturado por instrumento está usando una copia local.'
+                    : 'El mix aperturado por instrumento está en modo de respaldo.'}
                 </div>
               )}
             </div>
@@ -2009,99 +2609,186 @@ export function SimulationPage({
       </div>
       </div>
       </details>
-      <div
-        style={{
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 10,
-          padding: isMobileViewport ? '7px 8px' : '9px 10px',
-          display: 'grid',
-          gap: 6,
-        }}
+      <QualityOfLifeMetricsBlock
+        qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
+        isMobile={isMobileViewport}
+      />
+      <details
+        open={modelBaseOpen}
+        onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 9, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
       >
-        <div style={{ display: 'grid', gap: 2 }}>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 12 : 13, fontWeight: 800 }}>
-            Reconciliación Aurum → MIDAS
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
-            Patrimonio total y capital simulable no son el mismo número.
-          </div>
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
+          Modelo Base
+        </summary>
+        <div style={{ marginTop: 8, color: T.textMuted, fontSize: 10 }}>
+          Edita los supuestos oficiales guardados. La simulación temporal no modifica este modelo.
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))', gap: 6 }}>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Patrimonio total</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{totalNetWorthVisibleClp !== null ? formatMoneyCompact(totalNetWorthVisibleClp) : 'No disponible'}</div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital simulable motor</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital de riesgo</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{formatMoneyCompact(riskDetectedClp)}</div>
-            <div style={{ color: riskCapitalEffective ? T.positive : T.warning, fontSize: 10, marginTop: 2 }}>
-              {riskCapitalEffective ? 'Incluido por separado en M8' : 'Excluido del motor por toggle'}
-            </div>
-          </div>
-          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px' }}>
-            <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capital fuera del motor</div>
-            <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800, marginTop: 3 }}>{nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
-          </div>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Snapshot: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{patrimonioSourceTechnical}</span> · Publicado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{snapshotPublishedRelative}</span>
-        </div>
-        <div style={{ color: T.textMuted, fontSize: 10 }}>
-          Parte del patrimonio que se muestra en Aurum pero no entra en esta simulación.
-        </div>
-        {riskFxMismatchPct !== null && riskCapitalUsdSnapshotCLP > 0 && riskFxMismatchPct > 0.02 && (
-          <div style={{ color: riskFxMismatchPct > 0.05 ? T.negative : riskFxMismatchPct > 0.02 ? T.warning : T.textMuted, fontSize: 10 }}>
-            El capital de riesgo usa un FX distinto del operativo actual (dif. {(riskFxMismatchPct * 100).toFixed(2)}%).
+        {simActive && (
+          <div
+            style={{
+              marginTop: 8,
+              background: 'rgba(255, 176, 32, 0.10)',
+              border: `1px solid rgba(255, 176, 32, 0.30)`,
+              borderRadius: 10,
+              padding: '7px 9px',
+              color: '#f6d38d',
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            Hay una simulación temporal activa. Cambiar el Modelo Base modifica la fuente oficial, no solo esta prueba.
           </div>
         )}
-      </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: isMobileViewport ? 6 : 8,
-        }}
-      >
         <div
           style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: isMobileViewport ? '8px 9px' : '10px 12px',
+            marginTop: 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
           }}
         >
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            Base activa
-          </div>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
-            {activeCapitalSourceLabel}
-          </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>{patrimonioSourceTechnical}</div>
+          {[
+            `Persistencia ${simulationConfigSourceLabel}`,
+            simulationConfigSavedAt ? `Actualizado ${formatRelativePublishedAt(simulationConfigSavedAt)}` : 'Sin timestamp cloud',
+            `Escenario oficial ${scenarioUiLabel}`,
+            `Origen del capital ${activeCapitalSourceLabel}`,
+            `Origen del mix ${weightsSourceLabel}`,
+          ].map((item) => (
+            <span
+              key={item}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 8px',
+                borderRadius: 999,
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                color: T.textSecondary,
+                fontSize: 10,
+                fontWeight: 700,
+              }}
+            >
+              {item}
+            </span>
+          ))}
         </div>
-        <div
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: isMobileViewport ? '8px 9px' : '10px 12px',
-          }}
-        >
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 9 : 10, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            Capital base efectivo
+        <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>
+          <div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Horizonte base</div>
+            <div
+              style={{
+                border: `1px solid ${T.border}`,
+                background: T.surfaceEl,
+                borderRadius: 10,
+                padding: '8px 10px',
+                color: T.textPrimary,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {baseYears} años
+            </div>
           </div>
-          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 14 : 16, fontWeight: 800, marginTop: 2 }}>
-            {formatMoneyCompact(effectiveBaseCapital)}
+          <div>
+            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramos</div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+              {spendingPhases.map((phase, idx) => (
+                <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {spendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={Object.prototype.hasOwnProperty.call(spendingDraftByIndex, idx)
+                      ? (spendingDraftByIndex[idx] ?? '')
+                      : formatCLP(phase.amountReal)}
+                    onFocus={() => beginSpendingEdit(idx, phase.amountReal)}
+                    onChange={(e) => updateSpendingDraft(idx, e.target.value)}
+                    onBlur={() => commitSpendingDraft(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    style={{
+                      background: T.surfaceEl,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 8,
+                      padding: '6px 8px',
+                      color: T.textPrimary,
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
           </div>
-          <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11, marginTop: 3 }}>
-            Corrida actual · {formatCapital(effectiveBaseCapital)}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+            <label style={{ display: 'grid', gridTemplateColumns: 'auto 120px', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual</span>
+              <input
+                type="number"
+                value={(params.feeAnnual * 100).toFixed(2)}
+                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  padding: '6px 8px',
+                  color: T.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+            </label>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo oficial</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.simulation?.nSim ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Seed oficial</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.simulation?.seed ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>Bucket months</div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '6px 8px', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                {Number(params.bucketMonths ?? 0).toLocaleString('es-CL')}
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              border: `1px solid ${T.border}`,
+              background: T.surfaceEl,
+              borderRadius: 10,
+              padding: '8px 10px',
+              display: 'grid',
+              gap: 4,
+            }}
+          >
+            <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+              Origen del mix: Mix aperturado por instrumento ({weightsSourceLabel})
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Activo: {activeWeightSummary}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Fuente estructural: {officialWeightSummary}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Origen del capital: Aurum
+            </div>
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            La configuración oficial se persiste en cloud existente (`simulationActiveV1`) cuando la sesión canónica está activa. No se creó storage nuevo.
           </div>
         </div>
-      </div>
       {auditModeEnabled && auditProbe && (
         <div
           style={{
@@ -2157,372 +2844,294 @@ export function SimulationPage({
           </div>
         </div>
       )}
-      <details style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}>
-        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
-          Configuración actual · {activeScenarioForUi === 'base' ? 'Base' : activeScenarioForUi === 'pessimistic' ? 'Pesimista' : 'Optimista'} · {currentNSim} sims · Depto {liquidarDeptoEnabled ? 'ON' : 'OFF'} · Riesgo {riskToggleCopy}
+      </details>
+      <details
+        open={simulationDataOpen}
+        onToggle={(e) => setSimulationDataOpen((e.currentTarget as HTMLDetailsElement).open)}
+        style={{ order: 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800, listStyle: 'none' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>Datos de simulación</span>
+            <span style={{ color: T.textMuted, fontSize: 11 }}>{simulationDataOpen ? 'Ocultar detalle' : 'Ver detalle'}</span>
+          </div>
+          <div style={{ color: T.textPrimary, fontSize: isMobileViewport ? 11 : 12, fontWeight: 700, marginTop: 4 }}>
+            {simulationDataSummary}
+          </div>
         </summary>
         <div style={{ marginTop: 8 }}>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,220px)',
-          gap: isMobileViewport ? 8 : 12,
-          alignItems: 'start',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
-            const active = activeScenarioForUi === variant.id;
-            return (
-              <div key={variant.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <button
-                  type="button"
-                  onClick={() => onScenarioChange(variant.id)}
-                  disabled={isRecalculating}
-                  style={{
-                    background: active ? T.primary : T.surfaceEl,
-                    border: `1px solid ${active ? T.primary : T.border}`,
-                    color: active ? '#fff' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: isMobileViewport ? '5px 9px' : '6px 11px',
-                    fontSize: isMobileViewport ? 10 : 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.65 : 1,
-                  }}
-                >
-                  {variant.label}
-                </button>
-                {active && isScenarioAdjusted ? (
-                  <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Ajustada</span>
-                ) : null}
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Barra de decisión
               </div>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={toggleLiquidarDepto}
-          disabled={isRecalculating || !hasEffectiveRealEstate}
-          style={{
-            background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surfaceEl,
-            border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
-            color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '8px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            textAlign: 'left',
-            cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
-          }}
-        >
-          Incluir venta de depto · {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
-        </button>
-        <button
-          type="button"
-          onClick={onRestoreScenarioPreset}
-          disabled={isRecalculating}
-          style={{
-            background: T.surfaceEl,
-            border: `1px solid ${T.border}`,
-            color: T.textSecondary,
-            borderRadius: 999,
-            padding: isMobileViewport ? '5px 9px' : '6px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            cursor: isRecalculating ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating ? 0.6 : 1,
-          }}
-        >
-          Restaurar ajustes del escenario
-        </button>
-        <button
-          type="button"
-          onClick={onToggleRiskCapital}
-          disabled={isRecalculating}
-          style={{
-            background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surfaceEl,
-            border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
-            color: riskCapitalEnabled
-              ? '#f6d38d'
-              : T.textSecondary,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '8px 10px',
-            fontSize: isMobileViewport ? 10 : 11,
-            fontWeight: 700,
-            textAlign: 'left',
-            cursor: isRecalculating ? 'not-allowed' : 'pointer',
-            opacity: isRecalculating ? 0.65 : 1,
-          }}
-        >
-          Incluir capital de riesgo · {riskToggleCopy}
-        </button>
-        <div
-          style={{
-            gridColumn: '1 / -1',
-            display: 'grid',
-            gridTemplateColumns: isMobileViewport ? '1fr auto' : 'auto auto',
-            alignItems: 'center',
-            gap: 8,
-            background: T.surfaceEl,
-            border: `1px solid ${T.border}`,
-            borderRadius: 9,
-            padding: isMobileViewport ? '6px 8px' : '7px 10px',
-          }}
-        >
-          <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
-            Monte Carlo
-          </div>
-          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-            {nSimOptions.map((nSimOption) => {
-              const active = currentNSim === nSimOption;
-              return (
-                <button
-                  key={nSimOption}
-                  type="button"
-                  onClick={() => setNSim(nSimOption)}
-                  disabled={isRecalculating}
-                  style={{
-                    background: active ? T.primary : T.surface,
-                    border: `1px solid ${active ? T.primary : T.border}`,
-                    color: active ? '#fff' : T.textSecondary,
-                    borderRadius: 999,
-                    padding: isMobileViewport ? '5px 8px' : '5px 9px',
-                    fontSize: isMobileViewport ? 10 : 11,
-                    fontWeight: 700,
-                    cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                    opacity: isRecalculating ? 0.65 : 1,
-                    minWidth: isMobileViewport ? 52 : 60,
-                  }}
-                >
-                  {nSimOption}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      </div>
-      </details>
-      <div style={{ position: 'relative' }}>
-        <style>{`
-          @keyframes midasPulse {
-            0%, 100% { transform: scale(1); opacity: 0.5; }
-            50% { transform: scale(1.25); opacity: 1; }
-          }
-        `}</style>
-        <HeroCard
-          label="¿LLEGARÁS AL AÑO 40?"
-          valuePct={showBootPlaceholder ? null : heroProbSuccess}
-          stale={showGhostResult}
-          subtitle={
-            simUiState === 'error'
-              ? `Error de recálculo: ${simUiError || 'reintenta'}`
-              : heroPhase !== 'ready'
-              ? 'Calculando simulación...'
-              : displayResult
-                ? (
-                  <span style={{ display: 'grid', gap: 4 }}>
-                    <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
-                    <span
-                      style={{
-                        display: 'grid',
-                        gap: 3,
-                        gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-                      }}
-                    >
-                      {[heroProbRuinLine, heroHouseCostLine, heroCutCostLine].map((item) => (
-                        <span
-                          key={item.label}
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.35fr 0.9fr 0.9fr 1.25fr 1.2fr 1.1fr', gap: 6 }}>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio total hoy</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>{patrimonioTotalHoyClp !== null ? formatMoneyCompact(patrimonioTotalHoyClp) : 'No disponible'}</div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {patrimonioTotalHoyAurumNetoClp !== null
+                      ? `Aurum ${formatMoneyCompact(patrimonioTotalHoyAurumNetoClp)} + Cap. riesgo ${formatMoneyCompact(patrimonioTotalHoyRiskClp)}`
+                      : 'Patrimonio contable total desde snapshot Aurum.'}
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
+                  <button
+                    type="button"
+                    onClick={toggleLiquidarDepto}
+                    disabled={isRecalculating || !hasEffectiveRealEstate}
+                    style={{
+                      background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
+                      border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                      color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+                    }}
+                  >
+                    {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+                  </button>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {liquidarDeptoEnabled ? 'Respaldo habilitado.' : 'No se usa como respaldo.'}
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Capital de riesgo</div>
+                  <button
+                    type="button"
+                    onClick={onToggleRiskCapital}
+                    disabled={isRecalculating}
+                    style={{
+                      background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
+                      border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                      color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    {riskToggleCopy}
+                  </button>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {riskCapitalEnabled ? 'Habilitado.' : 'No entra.'}
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Recursos habilitados esta corrida</div>
+                  <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 800 }}>
+                    {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {recursosHabilitadosSubcopy}
+                  </div>
+                  <SourceBadge label={wealthConfigLabel} tone={wealthConfigTone} />
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Escenario</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+                      const active = activeScenarioForUi === variant.id;
+                      return (
+                        <button
+                          key={variant.id}
+                          type="button"
+                          onClick={() => onScenarioChange(variant.id)}
+                          disabled={isRecalculating}
                           style={{
-                            display: 'grid',
-                            gap: 1,
-                            padding: '4px 6px',
-                            borderRadius: 8,
-                            background: T.surfaceEl,
-                            border: `1px solid ${T.border}`,
+                            background: active ? T.primary : T.surface,
+                            border: `1px solid ${active ? T.primary : T.border}`,
+                            color: active ? '#fff' : T.textSecondary,
+                            borderRadius: 999,
+                            padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                            fontSize: isMobileViewport ? 10 : 11,
+                            fontWeight: 700,
+                            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                            opacity: isRecalculating ? 0.65 : 1,
                           }}
                         >
-                          <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>
-                            {item.label}
-                          </span>
-                          <span>{item.detail}</span>
-                        </span>
-                      ))}
-                    </span>
-                  </span>
-                )
-                : 'Corre una simulación para ver resultados'
-          }
-          footerContent={null}
-          mode={simActive ? 'sim' : 'real'}
-          chips={[
-            { id: 'state', value: stateLabel, onClick: simActive ? onResetSim : () => {} },
-            { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openChip('return') },
-            { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openChip('years') },
-            {
-              id: 'capital',
-              value: formatCapital(effectiveCapital),
-              note: hasFutureAdjustments ? '+ futuros' : undefined,
-              onClick: isDerivedCapital ? () => {} : () => openChip('capital'),
-              accessory: (
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetMovementForm();
-                    openCapitalLedger();
-                  }}
-                  style={{
-                    background: T.primary,
-                    border: 'none',
-                    color: '#fff',
-                    borderRadius: 999,
-                    padding: '4px 8px',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  +
-                </button>
-              ),
-            },
-          ]}
-        />
-        {showSimToast && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: 6,
-              background: T.surfaceEl,
-              border: `1px solid ${T.border}`,
-              borderRadius: 10,
-              padding: '8px 12px',
-              color: T.textSecondary,
-              fontSize: 11,
-            }}
-          >
-            Esta simulación no se guardará.
-          </div>
-        )}
-        {activeChip && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: showSimToast ? 42 : 6,
-              width: 320,
-              background: 'rgba(21, 25, 34, 0.98)',
-              border: `1px solid rgba(91, 140, 255, 0.26)`,
-              borderRadius: 12,
-              padding: 12,
-              boxShadow: '0 18px 34px rgba(0,0,0,0.36)',
-              backdropFilter: 'blur(10px)',
-              zIndex: 40,
-            }}
-          >
-            <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 8 }}>
-              {activeChip === 'return'
-                ? 'Retorno promedio (%)'
-                : activeChip === 'years'
-                  ? 'Horizonte (años)'
-                  : 'Capital inicial (CLP)'}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <input
-                type="number"
-                value={draftValue}
-                onChange={(e) => setDraftValue(e.target.value)}
-                style={{
-                  flex: 1,
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  color: T.textPrimary,
-                }}
-              />
-              <button
-                onClick={applyChip}
-                style={{
-                  background: T.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                Aplicar
-              </button>
-              <button
-                onClick={() => setActiveChip(null)}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${T.border}`,
-                  color: T.textSecondary,
-                  borderRadius: 10,
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-            {(activeChip === 'return' || activeChip === 'years') && (
-              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={() => restoreFieldFromScenario(activeChip)}
-                  disabled={
-                    !simOverrides?.active ||
-                    (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                    (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                  }
-                  style={{
-                    background: T.surfaceEl,
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    borderRadius: 10,
-                    padding: '6px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 'not-allowed'
-                        : 'pointer',
-                    opacity:
-                      !simOverrides?.active ||
-                      (activeChip === 'return' && simOverrides.returnPct === undefined) ||
-                      (activeChip === 'years' && simOverrides.horizonYears === undefined)
-                        ? 0.6
-                        : 1,
-                  }}
-                >
-                  Volver al valor del escenario
-                </button>
+                          {variant.id === 'base' ? 'Neutro' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>
+                    {isScenarioAdjusted ? 'Ajustada sobre preset base.' : 'Preset activo.'}
+                  </div>
+                </div>
+                <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Monte Carlo</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {nSimOptions.map((nSimOption) => {
+                      const active = currentNSim === nSimOption;
+                      return (
+                        <button
+                          key={nSimOption}
+                          type="button"
+                          onClick={() => setNSim(nSimOption)}
+                          disabled={isRecalculating}
+                          style={{
+                            background: active ? T.primary : T.surface,
+                            border: `1px solid ${active ? T.primary : T.border}`,
+                            color: active ? '#fff' : T.textSecondary,
+                            borderRadius: 999,
+                            padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                            fontSize: isMobileViewport ? 10 : 11,
+                            fontWeight: 700,
+                            cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                            opacity: isRecalculating ? 0.65 : 1,
+                            minWidth: isMobileViewport ? 52 : 60,
+                          }}
+                        >
+                          {nSimOption}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Trayectorias de esta corrida.</div>
+                </div>
               </div>
-            )}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <details>
+                <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                  Ver desglose patrimonial
+                </summary>
+                <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio Aurum base visible:</span> {patrimonioAurumBaseVisibleClp !== null ? formatMoneyCompact(patrimonioAurumBaseVisibleClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo detectado:</span> {formatMoneyCompact(riskDetectedClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio total hoy (Aurum + capital de riesgo):</span> {patrimonioTotalHoyClp !== null ? formatMoneyCompact(patrimonioTotalHoyClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio Aurum base:</span> {formatRiskCapitalInBaseLabel(riskCapitalIncludedInAurumBase)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajuste de referencia por capital de riesgo:</span> {formatMoneyCompact(referenceRiskAdjustmentClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Foto Aurum neta (referencia patrimonial):</span> {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial del motor:</span> {capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial configurado del motor:</span> {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto detectado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Deuda no hipotecaria (snapshot):</span> {formatMoneyCompact(nonMortgageDebtClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Deuda no hipotecaria (reconciliación Aurum):</span> {formatMoneyCompact(nonMortgageDebtClp)}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto deuda no exigible (diagnóstico):</span> {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Depto habilitado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Respaldo/depto incluido en patrimonio considerado:</span> {liquidarDeptoEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor/respaldo depto considerado:</span> {realEstateConsideredClp !== null ? formatMoneyCompact(realEstateConsideredClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo habilitado para esta corrida:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital de riesgo incluido en patrimonio considerado:</span> {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital inicial líquido del motor (corrida efectiva):</span> {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Recursos ampliados bajo modelo (sin ajustes T0):</span> {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Recursos ampliados bajo modelo (corrida efectiva):</span> {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto recursos habilitados (Depto/Riesgo):</span> {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Impacto ajustes manuales T0 (+):</span> {`${manualLocalAdjustmentsImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(manualLocalAdjustmentsImpactCLP)}`}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Ajustes futuros programados (no afectan hoy):</span> {committedManualSummaryFuture.count > 0 ? `${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` · desde ${committedManualSummaryFuture.firstFutureDate}` : ''}` : 'Sin eventos futuros'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital efectivo usado por MIDAS (input actual):</span> {runCapitalCLP !== null ? formatMoneyCompact(runCapitalCLP) : 'No disponible'}</div>
+                  {motorCapitalMismatchClp !== null && Math.abs(motorCapitalMismatchClp) > 0.5 ? (
+                    <div style={{ color: T.warning }}>
+                      Inconsistencia de capital core ({`${motorCapitalMismatchClp >= 0 ? '+' : ''}${formatMoneyCompact(motorCapitalMismatchClp)}`}) entre input actual y capital líquido (optimizable + bancos).
+                    </div>
+                  ) : null}
+                  {expandedVsMotorGapClp !== null && Math.abs(expandedVsMotorGapClp) > 0.5 ? (
+                    <div style={{ color: T.textMuted }}>
+                      Diferencia recursos ampliados vs capital core: {`${expandedVsMotorGapClp >= 0 ? '+' : ''}${formatMoneyCompact(expandedVsMotorGapClp)}`}.
+                    </div>
+                  ) : null}
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Diferencia referencia vs capital core motor:</span> {coreReferenceGapClp !== null ? formatMoneyCompact(coreReferenceGapClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Diferencia referencia vs recursos ampliados:</span> {expandedReferenceGapClp !== null ? formatMoneyCompact(expandedReferenceGapClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Explicación de la diferencia ampliada:</span> {expandedReferenceGapClp !== null && expandedReferenceGapClp > 0
+                    ? [
+                        consideredWealthResolution.excludedRealEstateClp !== null && consideredWealthResolution.excludedRealEstateClp > 0 ? `depto excluido ${formatMoneyCompact(consideredWealthResolution.excludedRealEstateClp)}` : null,
+                        consideredWealthResolution.excludedRiskCapitalClp > 0 ? `capital de riesgo excluido ${formatMoneyCompact(consideredWealthResolution.excludedRiskCapitalClp)}` : null,
+                      ].filter(Boolean).join(' · ') || 'Diferencia pendiente de clasificar en bloques canónicos.'
+                    : [
+                        nonExigibleDebtPolicyImpactCLP > 0 ? `deuda no exigible reincorporada ${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}` : null,
+                        manualLocalAdjustmentsImpactCLP !== 0 ? `ajuste manual T0 ${manualLocalAdjustmentsImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(manualLocalAdjustmentsImpactCLP)}` : null,
+                      ].filter(Boolean).join(' · ') || 'Sin exclusiones materiales frente a la referencia.'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Capital no usado por esta simulación:</span> {nonOptimizableVisibleClp !== null ? formatMoneyCompact(nonOptimizableVisibleClp) : 'No disponible'}</div>
+                  <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Fuente patrimonial:</span> {patrimonioSourceTechnical}</div>
+                  <div style={{ color: wealthConfigTone === 'alert' ? T.negative : wealthConfigTone === 'warning' ? T.warning : T.textSecondary }}>
+                    {wealthConfigCopy}
+                  </div>
+                  <div>
+                    El patrimonio de referencia MIDAS puede diferir del patrimonio visible de Aurum porque incorpora capital de riesgo detectado para análisis. El switch decide si MIDAS puede usarlo en esta corrida.
+                  </div>
+                  {realEstateConsideredClp === null || nonOptimizableVisibleClp === null ? (
+                    <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Nota:</span> Algunos valores no están disponibles en esta corrida.</div>
+                  ) : null}
+                </div>
+              </details>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: isMobileViewport ? '7px 8px' : '6px 9px', display: 'grid', gap: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', rowGap: 4 }}>
+                  <span style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Fuente de datos
+                  </span>
+                  <SourceBadge label={dataSourceStatusLabel} tone={dataSourceTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'}</span>
+                  <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                    USD/CLP aplicado {Number.isFinite(backupFxClp) ? formatNumber(backupFxClp) : 'No disponible'}
+                  </span>
+                  <SourceBadge label={usdFxSourceSummary} tone={usdFxTone} />
+                  <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
+                    EUR/USD aplicado {Number.isFinite(eurUsdModelValue)
+                      ? eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : 'No disponible'}
+                  </span>
+                  <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 4, minHeight: isMobileViewport ? undefined : 18 }}>
+                  {usdFxWarning ? (
+                    <span style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {usdFxWarning}
+                    </span>
+                  ) : null}
+                  {eurFxWarning ? (
+                    <span style={{ color: eurFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
+                      {eurFxWarning}
+                    </span>
+                  ) : null}
+                  {!usdFxWarning && !eurFxWarning ? (
+                    <span style={{ color: T.textMuted, fontSize: 10 }}>{dataSourceStatusCopy}</span>
+                  ) : null}
+                  <details open={dataSourceTone !== 'ok'} style={{ marginTop: 0 }}>
+                    <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
+                      Ver detalle técnico
+                    </summary>
+                    <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
+                      <div>
+                        <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}
+                        {usingAurumEurUsd
+                          ? `Transformación aplicada: 1 / ${aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} = ${eurUsdModelValue.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} EUR/USD.`
+                          : 'Valor tomado desde params.fx.usdEurFixed.'}
+                      </div>
+                      {hasAurumSourceUsdEur ? (
+                        <div>
+                          <span style={{ color: T.textSecondary, fontWeight: 700 }}>Valor fuente Aurum:</span>{' '}
+                          fxReference.usdEur = {aurumSourceUsdEur.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD/EUR
+                        </div>
+                      ) : null}
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Bloques fuera del motor:</span> {nonOptimizableBlocksTechnical}</div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-        {simWorking && simActive && (
-          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: showSimToast ? 88 : 30, color: T.textMuted, fontSize: 11 }}>
-            Recalculando simulación...
-          </div>
-        )}
       </div>
+      </details>
       {!hideResultBlocks && displayResult && (
         <details
           open={keyMetricsOpen}
           onToggle={(e) => setKeyMetricsOpen((e.currentTarget as HTMLDetailsElement).open)}
           style={{
+            order: 5,
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 14,
@@ -2683,7 +3292,7 @@ export function SimulationPage({
           </details>
         </details>
       )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ order: 5, display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={onOpenOptimization}
@@ -2707,6 +3316,7 @@ export function SimulationPage({
           open={longevityOpen}
           onToggle={(e) => setLongevityOpen((e.currentTarget as HTMLDetailsElement).open)}
           style={{
+            order: 6,
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 12,
@@ -2790,7 +3400,7 @@ export function SimulationPage({
         </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 60 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 3 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{
@@ -2806,28 +3416,226 @@ export function SimulationPage({
             fontWeight: 700,
           }}
         >
-          <span>Otros parámetros</span>
+          <span>Parámetros de simulación</span>
           <span style={{ color: T.textMuted }}>{advancedOpen ? '▴' : '▾'}</span>
         </button>
         {advancedOpen && (
-          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div ref={simulationPanelRef} style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.45 }}>
+              Estos cambios son temporales. No modifican el Modelo Base.
+            </div>
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))' }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Escenario temporal</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'pessimistic' as const, label: 'Pesimista' },
+                    { id: 'base' as const, label: 'Neutro' },
+                    { id: 'optimistic' as const, label: 'Optimista' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onScenarioChange(item.id)}
+                      style={{
+                        background: activeScenarioForUi === item.id ? T.primary : T.surfaceEl,
+                        border: `1px solid ${activeScenarioForUi === item.id ? T.primary : T.border}`,
+                        color: activeScenarioForUi === item.id ? '#fff' : T.textSecondary,
+                        borderRadius: 999,
+                        padding: '5px 9px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Horizonte (años)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={effectiveYears}
+                  onChange={(e) => updateTemporaryHorizonYears(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Retorno (%)</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  value={(effectiveReturn * 100).toFixed(2)}
+                  onChange={(e) => updateTemporaryReturnPct(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : 'repeat(4, minmax(0,1fr))' }}>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 5 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Depto</div>
+                <button
+                  type="button"
+                  onClick={toggleLiquidarDepto}
+                  style={{
+                    background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
+                    border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                    color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 5 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Capital de riesgo</div>
+                <button
+                  type="button"
+                  onClick={onToggleRiskCapital}
+                  style={{
+                    background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
+                    border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                    color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                    borderRadius: 999,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {riskCapitalEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo</span>
+                <select
+                  value={currentNSim}
+                  onChange={(e) => setNSim(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                >
+                  {[1000, 3000, 5000].map((value) => (
+                    <option key={value} value={value}>{value.toLocaleString('es-CL')}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Fee anual (%)</span>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={(params.feeAnnual * 100).toFixed(2)}
+                  onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))' }}>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>RV total (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={currentRvTotalPct.toFixed(1)}
+                  onChange={(e) => updateTemporaryRvTotalPct(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>RF total (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={currentRfTotalPct.toFixed(1)}
+                  onChange={(e) => updateTemporaryRvTotalPct(100 - Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              Distribución interna proporcional al mix aperturado actual.
+            </div>
+
             <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto por tramo</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Gasto temporal por tramo</div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
                 {spendingPhases.map((phase, idx) => (
-                  <label key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <span style={{ color: T.textSecondary, fontSize: 11 }}>
-                      {spendingPhaseLabels[idx]?.title ?? `Tramo ${idx + 1}`}
+                  <label key={idx} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: T.textSecondary, fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {spendingPhaseLabels[idx]?.title ?? `F${idx + 1}`}
                     </span>
                     <input
                       type="text"
-                      value={formatCLP(phase.amountReal)}
-                      onChange={(e) => updateSpendingPhase(idx, parseCLP(e.target.value))}
+                      inputMode="numeric"
+                      value={Object.prototype.hasOwnProperty.call(spendingDraftByIndex, idx)
+                        ? (spendingDraftByIndex[idx] ?? '')
+                        : formatCLP(phase.amountReal)}
+                      onFocus={() => beginSpendingEdit(idx, phase.amountReal)}
+                      onChange={(e) => updateSpendingDraft(idx, e.target.value)}
+                      onBlur={() => commitSpendingDraft(idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        }
+                      }}
                       style={{
                         background: T.surfaceEl,
                         border: `1px solid ${T.border}`,
-                        borderRadius: 10,
-                        padding: '8px 10px',
+                        borderRadius: 8,
+                        padding: '6px 8px',
                         color: T.textPrimary,
                         fontSize: 12,
                       }}
@@ -2836,143 +3644,71 @@ export function SimulationPage({
                 ))}
               </div>
             </div>
-            <div style={{ color: T.textMuted, fontSize: 11 }}>
-              Generador: <span style={{ color: T.textSecondary, fontWeight: 700 }}>{activeGenerator}</span>
+
+            <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '8px 10px', display: 'grid', gap: 5 }}>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Capital usado por motor: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{capitalSentToMotorClp !== null ? formatMoneyCompact(capitalSentToMotorClp) : 'No disponible'}</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>Aurum</span>
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Para ajustes de capital o flujos, usa + Evento.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  resetMovementForm();
+                  openCapitalLedger();
+                }}
+                style={{
+                  justifySelf: 'start',
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+                title="Agregar evento patrimonial"
+                aria-label="Agregar evento patrimonial"
+              >
+                + Evento
+              </button>
             </div>
 
-            <div>
-              <div
+            <details>
+              <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                Avanzado técnico
+              </summary>
+              <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
+                <div>Generador: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{activeGenerator}</span></div>
+                <div>IPC Chile anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.ipcChileAnnual * 100).toFixed(2)}%</span></div>
+                <div>HICP Eurozona anual: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{(params.inflation.hipcEurAnnual * 100).toFixed(2)}%</span></div>
+                <div>TCREAL LT: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{Number(params.fx.tcrealLT ?? 0).toLocaleString('es-CL')}</span></div>
+                <div>Nota: TCREAL LT es supuesto estructural; no reemplaza USD/CLP ni EUR/USD operativo.</div>
+              </div>
+            </details>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                onClick={onRunSimulation}
                 style={{
-                  border: `1px solid ${T.border}`,
-                  background: T.surfaceEl,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  marginBottom: 10,
-                  display: 'grid',
-                  gap: 4,
+                  background: T.primary,
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '6px 11px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
                 }}
               >
-                <div style={{ color: T.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                  Origen weights: {weightsSourceLabel}
-                </div>
-                <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Activa: {activeWeightSummary}
-                </div>
-                <div style={{ color: T.textMuted, fontSize: 11 }}>
-                  Fuente estructural: {officialWeightSummary}
-                </div>
-                <div>
-                  <button
-                    type="button"
-                    onClick={onRestoreOfficialDistribution}
-                    disabled={isRecalculating || weightsSourceMode !== 'simulation'}
-                    style={{
-                      marginTop: 2,
-                      background: T.surface,
-                      border: `1px solid ${T.border}`,
-                      color: T.textSecondary,
-                      borderRadius: 999,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: isRecalculating || weightsSourceMode !== 'simulation' ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating || weightsSourceMode !== 'simulation' ? 0.6 : 1,
-                    }}
-                  >
-                    Restaurar fuente estructural
-                  </button>
-                </div>
-              </div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix renta variable / renta fija</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RV (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvGlobal + params.weights.rvChile) * 100)}
-                    onChange={(e) => updateRvRfMix(Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>RF (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rfGlobal + params.weights.rfChile) * 100)}
-                    onChange={(e) => updateRvRfMix(100 - Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Mix global / local</div>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Global (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvGlobal + params.weights.rfGlobal) * 100)}
-                    onChange={(e) => updateGlobalLocalMix(Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <span style={{ color: T.textSecondary, fontSize: 11 }}>Local (%)</span>
-                  <input
-                    type="number"
-                    value={Math.round((params.weights.rvChile + params.weights.rfChile) * 100)}
-                    onChange={(e) => updateGlobalLocalMix(100 - Number(e.target.value))}
-                    style={{
-                      background: T.surfaceEl,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      padding: '8px 10px',
-                      color: T.textPrimary,
-                      fontSize: 12,
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ color: T.textMuted, fontSize: 11, marginBottom: 6 }}>Fee anual</div>
-              <input
-                type="number"
-                value={(params.feeAnnual * 100).toFixed(2)}
-                onChange={(e) => onUpdateParams((prev) => ({ ...prev, feeAnnual: Number(e.target.value) / 100 }))}
-                style={{
-                  background: T.surfaceEl,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  color: T.textPrimary,
-                  fontSize: 12,
-                }}
-              />
+                Ejecutar simulación
+              </button>
             </div>
           </div>
         )}
@@ -2980,7 +3716,7 @@ export function SimulationPage({
 
       {!hideResultBlocks && displayResult && (
         <>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ order: 7, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>TRAYECTORIAS SIMULADAS (TODOS LOS ESCENARIOS)</div>
               <div
@@ -2993,7 +3729,7 @@ export function SimulationPage({
                   padding: '5px 10px',
                 }}
               >
-                Escenario activo: {stateLabel}
+                Escenario activo: {scenarioUiLabel}
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
@@ -3097,11 +3833,11 @@ export function SimulationPage({
               </ResponsiveContainer>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8, color: T.textSecondary, fontSize: 11 }}>
-              <span>Franja roja: zona de ruina · Línea roja punteada: wealth = 0 · Línea ámbar: ganancia 0</span>
+              <span>Franja roja: zona de ruina · Línea roja punteada: umbral de ruina (wealth = 0) · Línea ámbar: umbral ganancia 0</span>
               <span>Eje temporal anual</span>
             </div>
           </div>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ order: 7, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em' }}>
               PERCENTILES TERMINALES (SOBREVIVIENTES VS TODOS)
             </div>
@@ -3223,7 +3959,7 @@ export function SimulationPage({
               </div>
             )}
           </div>
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ order: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
             <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.08em', marginBottom: 4 }}>TCREAL</div>
             <div style={{ color: T.warning, fontSize: 12 }}>
               PRELIMINARY: Este parámetro usa supuestos internos, revísalo antes de tomar decisiones.
@@ -3257,187 +3993,253 @@ export function SimulationPage({
               border: `1px solid ${T.border}`,
               borderRadius: 16,
               padding: 16,
+              maxHeight: 'calc(100vh - 32px)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes manuales de capital</div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes de capital</div>
+                <div style={{ color: T.textMuted, fontSize: 12, marginTop: 4 }}>
+                  Agrega entradas o salidas T0/futuras para esta corrida.
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={handleSaveAndClose}
-                disabled={savingMovement}
+                onClick={closeCapitalLedger}
                 style={{
                   background: 'transparent',
                   border: `1px solid ${T.border}`,
                   borderRadius: 999,
-                  padding: '6px 10px',
+                  width: 30,
+                  height: 30,
+                  display: 'grid',
+                  placeItems: 'center',
                   color: T.textSecondary,
-                  fontSize: 12,
-                  cursor: savingMovement ? 'not-allowed' : 'pointer',
-                  opacity: savingMovement ? 0.6 : 1,
+                  fontSize: 16,
+                  lineHeight: 1,
+                  cursor: 'pointer',
                 }}
+                aria-label="Cerrar ajustes de capital"
               >
-                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
+                ×
               </button>
             </div>
 
-            <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
-              Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
+            <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: `1px solid ${T.border}`, background: T.surfaceEl }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                Recursos hoy {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'} · T0 {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`} · Futuros {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}
+              </div>
+              <div style={{ marginTop: 4, color: T.textMuted, fontSize: 11 }}>
+                Próximo evento: {formatMonthYearLabel(draftManualSummaryFuture.firstFutureDate)}
+              </div>
             </div>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', paddingRight: 2 }}>
+              <div style={{ marginTop: 2, color: T.textMuted, fontSize: 11 }}>
+                Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
+              </div>
 
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflow: 'auto' }}>
-              {manualAdjustmentsSorted.length === 0 ? (
-                <div style={{ color: T.textSecondary, fontSize: 12 }}>
-                  No hay movimientos cargados.
-                </div>
-              ) : (
-                manualAdjustmentsSorted.map((adj) => {
-                  const sign = adj.direction === 'add' ? '+' : '-';
-                  const destinationLabel = destinationOptions.find((d) => d.value === adj.destination)?.label ?? 'Otros';
-                  return (
-                    <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
-                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                        {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
-                      </div>
-                      {adj.note && (
-                        <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                          {adj.note}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflow: 'auto' }}>
+                {manualAdjustmentsSorted.length === 0 ? (
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    No hay movimientos cargados.
+                  </div>
+                ) : (
+                  manualAdjustmentsSorted.map((adj) => {
+                    const sign = adj.direction === 'add' ? '+' : '-';
+                    const destinationLabel = destinationOptions.find((d) => d.value === adj.destination)?.label ?? 'Otros';
+                    return (
+                      <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                          {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
                         </div>
-                      )}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => startEditMovement(adj)}
-                          style={{
-                            background: 'transparent',
-                            border: `1px solid ${T.border}`,
-                            color: T.textSecondary,
-                            borderRadius: 999,
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftManualAdjustments((prev) => {
-                              const nextDraft = prev.filter((item) => item.id !== adj.id);
-                              draftManualAdjustmentsRef.current = nextDraft;
-                              return nextDraft;
-                            });
-                            if (editingMovementId === adj.id) {
-                              resetMovementForm();
-                            }
-                          }}
-                          style={{
-                            background: 'transparent',
-                            border: `1px solid ${T.negative}`,
-                            color: T.negative,
-                            borderRadius: 999,
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Borrar
-                        </button>
+                        <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                          Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
+                        </div>
+                        {adj.note && (
+                          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                            {adj.note}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <button
+                            type="button"
+                            onClick={() => startEditMovement(adj)}
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${T.border}`,
+                              color: T.textSecondary,
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDraftManualAdjustments((prev) => {
+                                const nextDraft = prev.filter((item) => item.id !== adj.id);
+                                draftManualAdjustmentsRef.current = nextDraft;
+                                return nextDraft;
+                              });
+                              if (editingMovementId === adj.id) {
+                                resetMovementForm();
+                              }
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${T.negative}`,
+                              color: T.negative,
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Borrar
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
+
+              <div style={{ marginTop: 2, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
+                  <select
+                    value={movementForm.direction}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, direction: e.target.value as 'add' | 'remove' }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    <option value="add">Sumar</option>
+                    <option value="remove">Restar</option>
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
+                  <input
+                    type="number"
+                    value={movementForm.amount}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Moneda</span>
+                  <select
+                    value={movementForm.currency}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, currency: e.target.value as 'CLP' | 'USD' | 'EUR' }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    <option value="CLP">CLP</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Fecha efectiva</span>
+                  <input
+                    type="month"
+                    value={movementForm.effectiveDate}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Destino</span>
+                  <select
+                    value={movementForm.destination}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, destination: e.target.value as ManualCapitalDestination }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    {destinationOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Nota</span>
+                  <input
+                    type="text"
+                    value={movementForm.note}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, note: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveMovement}
+                  disabled={savingMovement}
+                  style={{
+                    background: T.primary,
+                    border: 'none',
+                    color: '#fff',
+                    borderRadius: 10,
+                    padding: '8px 14px',
+                    fontWeight: 700,
+                    cursor: savingMovement ? 'not-allowed' : 'pointer',
+                    opacity: savingMovement ? 0.7 : 1,
+                  }}
+                >
+                  {savingMovement ? 'Guardando...' : editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+                </button>
+                {editingMovementId && (
+                  <button
+                    type="button"
+                    onClick={resetMovementForm}
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      borderRadius: 10,
+                      padding: '8px 14px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+
+              <details style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: '8px 10px', background: T.surfaceEl }}>
+                <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                  Ver detalle técnico / conciliación
+                </summary>
+                <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
+                  <div>Foto Aurum neta (sin ajustes manuales): {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div>Recursos ampliados bajo modelo antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
+                  <div>Impacto deuda no hipotecaria no exigible: {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
+                  <div>Impacto recursos habilitados (Depto/Riesgo): {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
+                  <div>Ajustes T0 netos: {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`}</div>
+                  <div>Ajustes futuros netos: {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}</div>
+                  <div>Primer evento futuro: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}</div>
+                  <div>Capital inicial líquido del motor (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
+                  <div>Recursos ampliados bajo modelo (corrida efectiva): {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
+                  <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
+                  <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
+                  <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
+                  <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
+                </div>
+              </details>
             </div>
 
-            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
-                <select
-                  value={movementForm.direction}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, direction: e.target.value as 'add' | 'remove' }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  <option value="add">Sumar</option>
-                  <option value="remove">Restar</option>
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
-                <input
-                  type="number"
-                  value={movementForm.amount}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Moneda</span>
-                <select
-                  value={movementForm.currency}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, currency: e.target.value as 'CLP' | 'USD' | 'EUR' }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  <option value="CLP">CLP</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Fecha efectiva</span>
-                <input
-                  type="month"
-                  value={movementForm.effectiveDate}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Destino</span>
-                <select
-                  value={movementForm.destination}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, destination: e.target.value as ManualCapitalDestination }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  {destinationOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Nota</span>
-                <input
-                  type="text"
-                  value={movementForm.note}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, note: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-            </div>
-
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleSaveMovement}
-                disabled={savingMovement}
-                style={{
-                  background: T.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 700,
-                  cursor: savingMovement ? 'not-allowed' : 'pointer',
-                  opacity: savingMovement ? 0.7 : 1,
-                }}
-              >
-                {savingMovement ? 'Guardando...' : editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
-              </button>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: T.surface }}>
               <button
                 type="button"
                 onClick={closeCapitalLedger}
@@ -3454,22 +4256,23 @@ export function SimulationPage({
               >
                 Cancelar
               </button>
-              {editingMovementId && (
-                <button
-                  type="button"
-                  onClick={resetMovementForm}
-                  style={{
-                    background: 'transparent',
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    borderRadius: 10,
-                    padding: '8px 14px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancelar edición
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleSaveAndClose}
+                disabled={savingMovement}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  borderRadius: 10,
+                  color: '#fff',
+                  padding: '8px 14px',
+                  fontWeight: 700,
+                  cursor: savingMovement ? 'not-allowed' : 'pointer',
+                  opacity: savingMovement ? 0.7 : 1,
+                }}
+              >
+                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
+              </button>
             </div>
           </div>
         </div>
@@ -3568,101 +4371,5 @@ function LabelWithInfo({ label, info }: { label: string; info: string }) {
       <span>{label}</span>
       <InfoHint text={info} />
     </>
-  );
-}
-
-function InfoHint({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [placement, setPlacement] = useState<'left' | 'right' | 'center'>('center');
-  const wrapRef = useRef<HTMLSpanElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointerDown = (event: MouseEvent | TouchEvent) => {
-      const node = wrapRef.current;
-      if (!node) return;
-      if (event.target instanceof Node && !node.contains(event.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('touchstart', onPointerDown, { passive: true });
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('touchstart', onPointerDown);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || typeof window === 'undefined') return undefined;
-    const node = wrapRef.current;
-    if (!node) return undefined;
-    const rect = node.getBoundingClientRect();
-    const minSideSpace = 140;
-    const nextPlacement =
-      window.innerWidth - rect.right < minSideSpace
-        ? 'right'
-        : rect.left < minSideSpace
-          ? 'left'
-          : 'center';
-    setPlacement(nextPlacement);
-    return undefined;
-  }, [open]);
-
-  return (
-    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-      <button
-        type="button"
-        aria-label="Mostrar explicación"
-        onClick={() => setOpen((prev) => !prev)}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') setOpen(false);
-        }}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 20,
-          height: 20,
-          borderRadius: 999,
-          border: `1px solid ${T.border}`,
-          color: T.textMuted,
-          background: T.surface,
-          fontSize: 11,
-          fontWeight: 800,
-          cursor: 'pointer',
-          userSelect: 'none',
-          padding: 0,
-        }}
-      >
-        i
-      </button>
-      {open && (
-        <span
-          role="note"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            ...(placement === 'right'
-              ? { right: 0 }
-              : placement === 'left'
-                ? { left: 0 }
-                : { left: '50%', transform: 'translateX(-50%)' }),
-            maxWidth: 'min(260px, calc(100vw - 24px))',
-            background: 'rgba(11, 16, 24, 0.98)',
-            border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            color: T.textSecondary,
-            padding: '8px 10px',
-            fontSize: 11,
-            lineHeight: 1.35,
-            zIndex: 70,
-            boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
-          }}
-        >
-          {text}
-        </span>
-      )}
-    </span>
   );
 }

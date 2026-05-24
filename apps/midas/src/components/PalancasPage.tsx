@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, SimulationResults } from '../domain/model/types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { T } from './theme';
@@ -38,6 +38,13 @@ type SimSnapshot = {
   firstCutYearP50: number | null;
 };
 
+type LeverEvaluationMeta = {
+  source: SourceMode;
+  simulationLabel: string | null;
+  evaluatedAtIso: string;
+  paramsFingerprint: string;
+};
+
 const LEVER_LABELS: Record<LeverId, string> = {
   mix_rv_rf: 'Mix RF/RV',
   bucket_months: 'Bucket',
@@ -71,6 +78,45 @@ function formatMonths(value: number): string {
 
 function safeNumber(value: number | undefined | null, fallback = 0): number {
   return Number.isFinite(value ?? Number.NaN) ? Number(value) : fallback;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`);
+  return `{${entries.join(',')}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function buildParamsFingerprint(params: ModelParameters): string {
+  return hashString(stableSerialize(params));
+}
+
+function formatDateTime(iso: string): string {
+  const parsed = new Date(iso);
+  if (!Number.isFinite(parsed.getTime())) return 'Fecha inválida';
+  return parsed.toLocaleString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function shortFingerprint(value: string): string {
+  if (!value) return 'n/a';
+  return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
 function summarizeRiskMix(params: ModelParameters): string {
@@ -342,6 +388,7 @@ export function PalancasPage({
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<SimSnapshot | null>(null);
   const [rows, setRows] = useState<LeverResult[]>([]);
+  const [evaluationMeta, setEvaluationMeta] = useState<LeverEvaluationMeta | null>(null);
 
   const activeParams = sourceMode === 'simulation' && simulationActive ? simulationParams : baseParams;
   const activeLabel = sourceMode === 'simulation' && simulationActive ? (simulationLabel ?? 'Simulación activa') : 'Base vigente';
@@ -353,14 +400,37 @@ export function PalancasPage({
     : 'Sin cambios temporales respecto de la base vigente';
 
   const targetDeltaPp = goal === '2pp' ? 2 : 5;
+  const activeParamsFingerprint = useMemo(() => buildParamsFingerprint(activeParams), [activeParams]);
+  const hasResults = rows.length > 0 && baseline !== null;
+  const resultIsStale = useMemo(() => {
+    if (!evaluationMeta) return false;
+    return evaluationMeta.source !== sourceMode || evaluationMeta.paramsFingerprint !== activeParamsFingerprint;
+  }, [evaluationMeta, sourceMode, activeParamsFingerprint]);
+  const comparabilityState = !evaluationMeta
+    ? 'No comparable'
+    : resultIsStale
+      ? 'Requiere actualizar'
+      : 'Vigente';
+
+  useEffect(() => {
+    if (!simulationActive && sourceMode === 'simulation') {
+      setSourceMode('base');
+    }
+  }, [simulationActive, sourceMode]);
 
   const runLevers = useCallback(async () => {
     if (running) return;
+    const evaluationSource: SourceMode = sourceMode === 'simulation' && simulationActive ? 'simulation' : 'base';
+    const evaluationSourceLabel = evaluationSource === 'simulation'
+      ? (simulationLabel ?? 'Simulación activa')
+      : null;
+    const evaluationParams = evaluationSource === 'simulation' ? simulationParams : baseParams;
+    const evaluationFingerprint = buildParamsFingerprint(evaluationParams);
     setRunning(true);
     setProgressLabel('Preparando baseline...');
     try {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      const baseResult = toSnapshot(runSimulationCentral(activeParams));
+      const baseResult = toSnapshot(runSimulationCentral(evaluationParams));
       setBaseline(baseResult);
       const targetSuccess = baseResult.success40 + (targetDeltaPp / 100);
 
@@ -378,7 +448,7 @@ export function PalancasPage({
       for (const [index, id] of leverIds.entries()) {
         setProgressLabel(`Analizando ${index + 1} de ${leverIds.length}: ${LEVER_LABELS[id]}`);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-        const out = evaluateLeverCandidates(activeParams, baseResult, targetSuccess, id);
+        const out = evaluateLeverCandidates(evaluationParams, baseResult, targetSuccess, id);
         if (out.best) nextRows.push(out.best);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       }
@@ -390,11 +460,25 @@ export function PalancasPage({
         return b.utilityScore - a.utilityScore;
       });
       setRows(nextRows);
+      setEvaluationMeta({
+        source: evaluationSource,
+        simulationLabel: evaluationSourceLabel,
+        evaluatedAtIso: new Date().toISOString(),
+        paramsFingerprint: evaluationFingerprint,
+      });
     } finally {
       setRunning(false);
       setProgressLabel(null);
     }
-  }, [activeParams, running, targetDeltaPp]);
+  }, [
+    baseParams,
+    running,
+    simulationActive,
+    simulationLabel,
+    simulationParams,
+    sourceMode,
+    targetDeltaPp,
+  ]);
 
   const summary = useMemo(() => {
     if (!baseline || !rows.length) return null;
@@ -410,9 +494,9 @@ export function PalancasPage({
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Palancas</div>
+        <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Palancas de sensibilidad</div>
         <div style={{ color: T.textMuted, fontSize: 12 }}>
-          Explora qué cambios podrían mejorar el resultado del plan completo.
+          Explora qué variables mueven el resultado. La decisión principal sigue estando en Simulación.
         </div>
       </div>
 
@@ -461,6 +545,12 @@ export function PalancasPage({
         <div style={{ display: 'grid', gap: 4 }}>
           <div style={{ color: T.textSecondary, fontSize: 11 }}>{sourceDescription}</div>
           <div style={{ color: T.textMuted, fontSize: 10 }}>{sourceDeltaSummary}</div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Fuente: {sourceMode === 'simulation' && simulationActive ? 'Simulación activa' : 'Modelo Base'} · Hash {shortFingerprint(activeParamsFingerprint)} · Estado {comparabilityState}
+          </div>
+          {!simulationActive ? (
+            <div style={{ color: T.warning, fontSize: 10 }}>No hay simulación activa.</div>
+          ) : null}
         </div>
       </div>
 
@@ -506,7 +596,7 @@ export function PalancasPage({
               cursor: running ? 'not-allowed' : 'pointer',
             }}
           >
-            {running ? 'Evaluando...' : 'Evaluar palancas'}
+            {running ? 'Evaluando...' : hasResults && resultIsStale ? 'Recalcular palancas' : 'Evaluar palancas'}
           </button>
         </div>
         {running && progressLabel ? (
@@ -516,6 +606,9 @@ export function PalancasPage({
         ) : null}
         <div style={{ color: T.textMuted, fontSize: 10 }}>
           Estimación orientativa por sensibilidad local (una variable a la vez) sobre el modelo completo. No reemplaza la simulación integral.
+        </div>
+        <div style={{ color: T.warning, fontSize: 10 }}>
+          Estos resultados son exploratorios. Para decidir, usa el resultado auditado de Simulación.
         </div>
       </div>
 
@@ -529,6 +622,38 @@ export function PalancasPage({
           </div>
         </div>
       )}
+
+      {evaluationMeta && hasResults ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, display: 'grid', gap: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ color: T.textSecondary, fontSize: 11 }}>
+              Evaluado con:{' '}
+              <strong>
+                {evaluationMeta.source === 'base'
+                  ? 'Base'
+                  : `Simulación activa${evaluationMeta.simulationLabel ? ` · ${evaluationMeta.simulationLabel}` : ''}`}
+              </strong>
+            </div>
+            <div
+              style={{
+                border: `1px solid ${resultIsStale ? T.warning : T.positive}`,
+                color: resultIsStale ? T.warning : T.positive,
+                borderRadius: 999,
+                padding: '2px 8px',
+                fontSize: 10,
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              {resultIsStale ? 'Resultado desactualizado' : 'Resultado vigente'}
+            </div>
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            Última evaluación: {formatDateTime(evaluationMeta.evaluatedAtIso)}
+          </div>
+        </div>
+      ) : null}
 
       {running && rows.length === 0 ? (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, display: 'grid', gap: 6 }}>

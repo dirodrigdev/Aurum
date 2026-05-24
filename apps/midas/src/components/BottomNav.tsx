@@ -67,10 +67,8 @@ export function BottomNav({
     { id: 'sim', label: 'Simulación' },
     { id: 'assist', label: 'Asistida' },
     { id: 'sens', label: 'Palancas' },
-    { id: 'stress', label: 'Stress' },
-    { id: 'bucketlab', label: 'Bucket Lab' },
-    { id: 'optv0', label: 'OPT', legacy: true },
-    { id: 'opt', label: 'Optimizador', legacy: true },
+    { id: 'bucketlab', label: 'Lab técnico' },
+    { id: 'opt', label: 'Optimización' },
     { id: 'settings', label: 'Ajustes' },
   ];
   return (
@@ -83,7 +81,7 @@ export function BottomNav({
         height: 'calc(64px + env(safe-area-inset-bottom, 0px))',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         display: 'grid',
-        gridTemplateColumns: 'repeat(8, 1fr)',
+        gridTemplateColumns: `repeat(${items.length}, 1fr)`,
         background: T.surface,
         borderTop: `1px solid ${T.border}`,
         zIndex: 20,

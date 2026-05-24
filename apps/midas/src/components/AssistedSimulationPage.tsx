@@ -123,6 +123,37 @@ const profileConfigs: Record<ProfileId, {
   },
 };
 
+export type AssistedDataSourceSummary = {
+  source: string;
+  sync: string;
+  fingerprintShort: string | null;
+};
+
+export const buildAssistedDataSourceSummary = ({
+  profileId,
+  portfolioSourceMode,
+  scenarioSignature,
+}: {
+  profileId: ProfileId;
+  portfolioSourceMode: PortfolioSourceMode;
+  scenarioSignature: string | null;
+}): AssistedDataSourceSummary => {
+  const profileSource =
+    profileId === 'custom'
+      ? 'capital ingresado manualmente'
+      : profileId === 'me_current'
+        ? 'perfil rápido (importación pendiente)'
+        : 'perfil rápido';
+  const portfolioSource = portfolioSourceMode === 'simple'
+    ? 'mix simple RV/RF'
+    : 'instrumentos seleccionados';
+  return {
+    source: `Fuente: ${profileSource} · ${portfolioSource}`,
+    sync: 'No sincronizado con Simulación principal',
+    fingerprintShort: scenarioSignature ? scenarioSignature.slice(0, 10) : null,
+  };
+};
+
 const formatMoney = (value: number): string => {
   if (!Number.isFinite(value)) return '--';
   const abs = Math.abs(value);
@@ -445,6 +476,51 @@ const statusLabelForResult = (
   if (result.best.successAtHorizon >= 0.8) return { label: 'Alto', color: T.positive };
   if (result.best.successAtHorizon >= 0.6) return { label: 'Medio', color: T.warning };
   return { label: 'Bajo', color: T.negative };
+};
+
+export const validateAssistedRuntimeInputs = ({
+  runtimeInputs,
+  questionMode,
+  portfolioSourceMode,
+}: {
+  runtimeInputs: AssistedInputs;
+  questionMode: AssistedQuestionMode;
+  portfolioSourceMode: PortfolioSourceMode;
+}): string | null => {
+  if (!Number.isFinite(runtimeInputs.initialCapitalClp) || runtimeInputs.initialCapitalClp <= 0) {
+    return 'Ingresa un capital total mayor a 0 antes de calcular.';
+  }
+
+  if (questionMode !== 'max_spending') {
+    const fixedSpend = Number(runtimeInputs.fixedMonthlyClp ?? 0);
+    if (!Number.isFinite(fixedSpend) || fixedSpend <= 0) {
+      return 'Ingresa un gasto mensual mayor a 0 para este modo.';
+    }
+  }
+
+  if (runtimeInputs.spendingMode === 'two_phase') {
+    const p1 = Number(runtimeInputs.phase1MonthlyClp ?? 0);
+    const p2 = Number(runtimeInputs.phase2MonthlyClp ?? 0);
+    if (!Number.isFinite(p1) || p1 <= 0 || !Number.isFinite(p2) || p2 <= 0) {
+      return 'Completa ambas fases con gasto mensual mayor a 0.';
+    }
+  }
+
+  if (portfolioSourceMode === 'instruments' && runtimeInputs.portfolioEntries.length > 0) {
+    if (runtimeInputs.portfolioEntryMode === 'percentage') {
+      const totalPct = runtimeInputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.percentage || 0)), 0);
+      if (totalPct < 99.5 || totalPct > 100.5) {
+        return 'Los porcentajes del portafolio deben sumar 100%.';
+      }
+    } else {
+      const totalAmount = runtimeInputs.portfolioEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.amountClp || 0)), 0);
+      if (totalAmount <= 0) {
+        return 'Asigna montos positivos a instrumentos antes de calcular.';
+      }
+    }
+  }
+
+  return null;
 };
 
 function MiniFanChart({
@@ -1564,6 +1640,15 @@ export function AssistedSimulationPage() {
     setRunning(true);
     try {
       const { runtimeInputs, runtimeInstruments } = buildRuntimeContext(nextInputs, nextSimpleRvPct);
+      const runtimeValidationError = validateAssistedRuntimeInputs({
+        runtimeInputs,
+        questionMode,
+        portfolioSourceMode,
+      });
+      if (runtimeValidationError) {
+        setError(runtimeValidationError);
+        return;
+      }
       const output = runAssistedSimulation(runtimeInputs, runtimeInstruments);
       setResult(output);
       setResultMode(questionMode);
@@ -1730,6 +1815,14 @@ export function AssistedSimulationPage() {
       numericIssues,
     ],
   );
+  const assistedDataSource = useMemo(
+    () => buildAssistedDataSourceSummary({
+      profileId: activeProfile,
+      portfolioSourceMode,
+      scenarioSignature: currentScenarioSignature,
+    }),
+    [activeProfile, portfolioSourceMode, currentScenarioSignature],
+  );
   const leversAreStale = !!leversResult && !!leversScenarioSignature && leversScenarioSignature !== currentScenarioSignature;
 
   const calculateLevers85 = () => {
@@ -1744,6 +1837,15 @@ export function AssistedSimulationPage() {
     try {
       const target = 0.85;
       const { runtimeInputs, runtimeInstruments } = buildRuntimeContext(nextInputs, nextSimpleRvPct);
+      const runtimeValidationError = validateAssistedRuntimeInputs({
+        runtimeInputs,
+        questionMode,
+        portfolioSourceMode,
+      });
+      if (runtimeValidationError) {
+        setLeversError(runtimeValidationError);
+        return;
+      }
       const baseForLevers: AssistedInputs = {
         ...runtimeInputs,
         optimizationObjective: 'max_success',
@@ -1873,9 +1975,9 @@ export function AssistedSimulationPage() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <div>
-            <div style={{ color: ASSISTED_COCKPIT.accent, fontWeight: 900, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Simulación Asistida</div>
+            <div style={{ color: ASSISTED_COCKPIT.accent, fontWeight: 900, fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Asistida</div>
             <div style={{ color: T.textMuted, fontSize: 12 }}>
-              Calcula gasto, duración o probabilidad de éxito sin entrar al modelo completo.
+              Calculadora simplificada para explorar preguntas rápidas. Para decidir, valida en Simulación.
             </div>
           </div>
           <div style={{
@@ -1888,7 +1990,7 @@ export function AssistedSimulationPage() {
             fontSize: 11,
             fontWeight: 700,
           }}>
-            Motor M8 real · entrada simplificada
+            Exploratorio
           </div>
         </div>
       </section>
@@ -1933,6 +2035,22 @@ export function AssistedSimulationPage() {
           textOverflow: 'ellipsis',
         }}>
           {quickSummary}
+        </div>
+        <div style={{
+          background: ASSISTED_COCKPIT.panelSoft,
+          border: `1px solid ${ASSISTED_COCKPIT.borderSoft}`,
+          borderRadius: 10,
+          padding: '6px 10px',
+          color: T.textSecondary,
+          fontSize: 12,
+          display: 'grid',
+          gap: 3,
+        }}>
+          <div>{assistedDataSource.source}</div>
+          <div>{assistedDataSource.sync}</div>
+          {assistedDataSource.fingerprintShort && (
+            <div style={{ color: T.textMuted }}>Firma local: {assistedDataSource.fingerprintShort}</div>
+          )}
         </div>
       </section>
 
@@ -2804,6 +2922,17 @@ export function AssistedSimulationPage() {
           display: 'grid',
           gap: 12,
         }}>
+          <div style={{
+            background: 'rgba(184,115,51,0.12)',
+            border: `1px solid ${ASSISTED_COCKPIT.accent}`,
+            borderRadius: 10,
+            padding: '8px 10px',
+            color: T.textPrimary,
+            fontSize: 12,
+            fontWeight: 600,
+          }}>
+            Resultado exploratorio. No reemplaza el resultado auditado de Simulación.
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
             <div>
               <div style={{ color: T.textMuted, fontSize: 12, fontWeight: 700 }}>{resultTitle}</div>

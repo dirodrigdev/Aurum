@@ -304,9 +304,111 @@ export interface SimulationResults {
   stressTimeShare?:            number;
   cut1TimeShare?:              number;
   cut2TimeShare?:              number;
+  pathQualityDiagnostics?:      PathQualityDiagnosticsV1;
+  qualityOfLifeMetrics?:        QualityOfLifeMetricsV1;
   computedAt:                  Date;
   durationMs:                  number;
   params:                      ModelParameters;
+}
+
+export interface PathQualityPathDiagnosticsV1 {
+  pathId: number;
+  ruined: boolean;
+  ruinMonth: number | null;
+  ruinYear: number | null;
+  terminalWealthClp: number | null;
+  qasrAlpha: 1.5;
+  meanShortfallPenaltyAlpha15: number | null;
+  qualityScoreAlpha15: number | null;
+  observedConsumptionMonths: number;
+  postRuinMonths: number | null;
+  averageConsumptionRatio: number | null;
+  minMonthlyConsumptionRatio: number | null;
+  minAnnualConsumptionRatio: number | null;
+  p10MonthlyConsumptionRatio: number | null;
+  p25MonthlyConsumptionRatio: number | null;
+  monthsInCut: number | null;
+  monthsInSevereCut: number | null;
+  maxConsecutiveCutMonths: number | null;
+  maxConsecutiveSevereCutMonths: number | null;
+  houseSold: boolean | null;
+  houseSaleTriggerMonth: number | null;
+  houseSaleTriggerYear: number | null;
+  houseSaleMonth: number | null;
+  houseSaleYear: number | null;
+  monthsBetweenHouseSaleTriggerAndSale: number | null;
+  monthsInCutBetweenHouseSaleTriggerAndSale: number | null;
+  monthsInSevereCutBetweenHouseSaleTriggerAndSale: number | null;
+  monthsInCutBeforeHouseSale: number | null;
+  monthsInSevereCutBeforeHouseSale: number | null;
+  liquidWealthAfterHouseSaleClp: number | null;
+  warnings: string[];
+}
+
+export interface PathQualityDiagnosticsV1 {
+  schemaVersion: 1;
+  pathCount: number;
+  horizonMonths: number;
+  source: 'm8_runtime_path_summary';
+  warnings: string[];
+  paths: PathQualityPathDiagnosticsV1[];
+}
+
+export interface QualityOfLifeMetricsV1 {
+  schemaVersion: 1;
+  source: 'path_quality_diagnostics_v1';
+  warnings: string[];
+  pathCount: number;
+  horizonMonths: number;
+  horizonYears: number;
+  classicSuccessRate: number | null;
+  ruinRate: number | null;
+  ruinedPathCount: number;
+  csr85_4: number | null;
+  csrPassingPathCount: number;
+  csrThresholds: {
+    minAverageConsumptionRatio: 0.85;
+    maxSevereCutMonths: 48;
+  };
+  qasrAlpha: 1.5;
+  qasrStrict: number | null;
+  qualityScoreMean: number | null;
+  qualityScoreP25: number | null;
+  qualityScoreP50: number | null;
+  averageConsumptionRatioMean: number | null;
+  averageConsumptionRatioP25: number | null;
+  averageConsumptionRatioP50: number | null;
+  minMonthlyConsumptionRatioP10: number | null;
+  minMonthlyConsumptionRatioP25: number | null;
+  minAnnualConsumptionRatioP10: number | null;
+  minAnnualConsumptionRatioP25: number | null;
+  monthsInCutMean: number | null;
+  monthsInCutP50: number | null;
+  monthsInSevereCutMean: number | null;
+  monthsInSevereCutP50: number | null;
+  maxConsecutiveSevereCutMonthsP50: number | null;
+  maxConsecutiveSevereCutMonthsP75: number | null;
+  severeCutYearsMean: number | null;
+  severeCutYearsP50: number | null;
+  houseSaleRate: number | null;
+  houseSoldPathCount: number;
+  houseSaleYearMedian: number | null;
+  houseSaleYearP10: number | null;
+  houseSaleYearP90: number | null;
+  houseSaleTriggerToSaleMonthsMedian: number | null;
+  houseSaleTriggerToSaleMonthsMean: number | null;
+  houseSaleTriggerToSaleMonthsP75: number | null;
+  severeCutMonthsDuringHouseSaleMean: number | null;
+  severeCutMonthsDuringHouseSaleMedian: number | null;
+  severeCutMonthsDuringHouseSaleP75: number | null;
+  monthsInCutBeforeHouseSaleMean: number | null;
+  monthsInSevereCutBeforeHouseSaleMean: number | null;
+  liquidWealthAfterHouseSaleP25: number | null;
+  liquidWealthAfterHouseSaleP50: number | null;
+  terminalWealthP10: number | null;
+  terminalWealthP25: number | null;
+  terminalWealthP50: number | null;
+  terminalWealthP75: number | null;
 }
 
 export interface SensitivityParameter {

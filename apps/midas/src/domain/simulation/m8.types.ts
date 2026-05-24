@@ -1,7 +1,7 @@
 // domain/simulation/m8.types.ts
 // Contrato puente M8 v12 — solo tipos (fase 1, sin integración del motor)
 
-import type { CapitalSource, M8GeneratorType } from '../model/types';
+import type { CapitalSource, M8GeneratorType, PathQualityDiagnosticsV1 } from '../model/types';
 import type { ScenarioVariantId } from '../model/types';
 
 export interface M8LegacyPortfolioWeights {
@@ -234,4 +234,5 @@ export interface M8Output {
   RiskEAnyLargeSalePct?: number;
   RiskELargeSalesStats?: M8RiskELargeSaleStat[];
   RiskEMicroSalesStats?: M8RiskEMicroSaleStat;
+  pathQualityDiagnostics?: PathQualityDiagnosticsV1;
 }
