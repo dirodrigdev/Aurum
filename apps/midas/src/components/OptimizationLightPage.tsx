@@ -528,6 +528,63 @@ export function hasStaleOptimizationMeta(meta: OptimizationResultMeta | null, ac
   return Boolean(meta && meta.inputFingerprint !== activeFingerprint);
 }
 
+export function shortOptimizationHash(value: string | null | undefined): string {
+  if (!value) return '—';
+  return value.slice(0, 10);
+}
+
+export type OptimizationInputAuditSummary = {
+  sourceLabel: string;
+  scenarioLabel: string | null;
+  hashShort: string;
+  nSim: number | null;
+  seed: number | null;
+  ranAtLabel: string | null;
+  statusLabel: string;
+  stale: boolean;
+};
+
+export function buildOptimizationInputAuditSummary(input: {
+  activeInputFingerprint: string;
+  sourceLabel: string;
+  scenarioLabel: string | null;
+  executionState: 'idle' | 'running' | 'background' | 'restarting' | 'interrupted' | 'completed';
+  flowStatus: {
+    inputFingerprint: string;
+    nSim: number;
+    seed: number;
+    ranAtLabel: string | null;
+  } | null;
+  resultMeta: {
+    inputFingerprint: string;
+    nSim: number;
+    seed: number;
+    ranAtLabel: string;
+  } | null;
+}): OptimizationInputAuditSummary {
+  const runFingerprint = input.flowStatus?.inputFingerprint ?? input.resultMeta?.inputFingerprint ?? null;
+  const stale = Boolean(runFingerprint && runFingerprint !== input.activeInputFingerprint);
+  const runPending = input.executionState === 'running' || input.executionState === 'background' || input.executionState === 'restarting';
+  let statusLabel = 'Sin corrida';
+  if (runPending) statusLabel = 'Calculando';
+  else if (input.executionState === 'interrupted') statusLabel = 'Interrumpido';
+  else if (runFingerprint && !stale) statusLabel = 'Vigente';
+  else if (stale) statusLabel = 'Requiere actualizar';
+  const nSim = input.flowStatus?.nSim ?? input.resultMeta?.nSim ?? null;
+  const seed = input.flowStatus?.seed ?? input.resultMeta?.seed ?? null;
+  const ranAtLabel = input.flowStatus?.ranAtLabel ?? input.resultMeta?.ranAtLabel ?? null;
+  return {
+    sourceLabel: input.sourceLabel,
+    scenarioLabel: input.scenarioLabel,
+    hashShort: shortOptimizationHash(runFingerprint ?? input.activeInputFingerprint),
+    nSim,
+    seed,
+    ranAtLabel,
+    statusLabel,
+    stale,
+  };
+}
+
 function formatPct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -2184,6 +2241,34 @@ export function OptimizationLightPage({
   const implementationResultIsStale = hasStaleOptimizationMeta(implementationMeta, activeOptimizationInputFingerprint);
   const finalImplementationIsStale = hasStaleOptimizationMeta(finalImplementationMeta, activeOptimizationInputFingerprint);
   const realisticValidationIsStale = hasStaleOptimizationMeta(realisticValidationMeta, activeOptimizationInputFingerprint);
+  const optimizationInputAudit = useMemo(
+    () => buildOptimizationInputAuditSummary({
+      activeInputFingerprint: activeOptimizationInputFingerprint,
+      sourceLabel: activeSourceLabel,
+      scenarioLabel: activeScenarioLabel,
+      executionState: decisionExecutionState,
+      flowStatus: decisionFlowStatus ? {
+        inputFingerprint: decisionFlowStatus.inputFingerprint,
+        nSim: decisionFlowStatus.nSim,
+        seed: decisionFlowStatus.seed,
+        ranAtLabel: decisionFlowStatus.ranAtLabel,
+      } : null,
+      resultMeta: decisionResultMeta ? {
+        inputFingerprint: decisionResultMeta.inputFingerprint,
+        nSim: decisionResultMeta.nSim,
+        seed: decisionResultMeta.seed,
+        ranAtLabel: decisionResultMeta.ranAtLabel,
+      } : null,
+    }),
+    [
+      activeOptimizationInputFingerprint,
+      activeScenarioLabel,
+      activeSourceLabel,
+      decisionExecutionState,
+      decisionFlowStatus,
+      decisionResultMeta,
+    ],
+  );
 
   useEffect(() => {
     activeDecisionFingerprintRef.current = activeOptimizationInputFingerprint;
@@ -4304,9 +4389,12 @@ export function OptimizationLightPage({
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, display: 'grid', gap: 12 }}>
         <div style={{ display: 'grid', gap: 5 }}>
-          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900, lineHeight: 1.2 }}>Recomendación MIDAS</div>
+          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900, lineHeight: 1.2 }}>Optimización MIDAS · Candidatos</div>
           <div style={{ color: T.textSecondary, fontSize: 12, lineHeight: 1.45 }}>
-            Ejecuta una simulación express para explorar o corre el flujo completo para obtener candidato confirmado y movimientos concretos.
+            Optimización busca escenarios candidatos bajo restricciones. Valida la decisión final en Simulación.
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10, lineHeight: 1.45 }}>
+            Ejecuta una simulación express para explorar o corre el flujo completo para obtener un candidato confirmado para validar y sus movimientos concretos.
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -4478,6 +4566,28 @@ export function OptimizationLightPage({
             </details>
           </div>
         ) : null}
+        <div style={{ display: 'grid', gap: 4, border: `1px solid ${optimizationInputAudit.stale ? T.warning : T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
+          <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Input optimizado</div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            {`Fuente: ${optimizationInputAudit.sourceLabel}${optimizationInputAudit.scenarioLabel ? ` · escenario ${optimizationInputAudit.scenarioLabel}` : ''}`}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            {`Hash ${optimizationInputAudit.hashShort} · nSim ${optimizationInputAudit.nSim?.toLocaleString('es-ES') ?? '—'} · seed ${optimizationInputAudit.seed ?? '—'} · Estado ${optimizationInputAudit.statusLabel}`}
+          </div>
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            {optimizationInputAudit.ranAtLabel ? `Corrida: ${optimizationInputAudit.ranAtLabel}` : 'No hay corrida registrada todavía.'}
+          </div>
+          {optimizationInputAudit.stale ? (
+            <div style={{ color: T.warning, fontSize: 10, fontWeight: 700 }}>
+              Input cambiado: actualiza la optimización antes de usar estos candidatos.
+            </div>
+          ) : null}
+        </div>
+        {!decisionFlowStatus && !decisionProfilesRunning ? (
+          <div style={{ color: T.textMuted, fontSize: 10 }}>
+            No hay candidatos calculados todavía.
+          </div>
+        ) : null}
         <div style={{ display: 'grid', gap: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
             {[
@@ -4513,10 +4623,10 @@ export function OptimizationLightPage({
                   {decisionFlowStatus?.stage === 'zoom' ? 'Preliminar · Zoom refinado' : 'Preliminar · Express'} · No implementar
                 </div>
               ) : null}
-              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Recomendación confirmada</div>
+              <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 13, fontWeight: 900 }}>Candidato confirmado para validar</div>
               <div style={{ color: decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary, fontSize: 24, fontWeight: 900 }}>{officialMainRecommendation!.mixLabel}</div>
               <div style={{ color: T.textMuted, fontSize: 11 }}>
-                Mix elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
+                Escenario candidato elegido por el modelo al equilibrar calidad base, holgura futura, recortes y estabilidad.
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Fuente usada: {decisionResultMeta?.sourceLabel ?? activeSourceLabel}
@@ -4528,6 +4638,9 @@ export function OptimizationLightPage({
               ) : null}
               <div style={{ color: T.textMuted, fontSize: 10 }}>
                 Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · Referencia defensiva: {officialDefensiveReference?.mixLabel ?? 'No disponible'} · Alternativa de holgura: {officialHeadroomAlternative?.mixLabel ?? 'No disponible'} · Benchmark extremo: {officialBenchmarkExtreme?.mixLabel ?? 'RV 100 / RF 0'}
+              </div>
+              <div style={{ color: T.textMuted, fontSize: 10 }}>
+                Trazabilidad: candidateId {officialMainRecommendation!.candidateId} · input {shortOptimizationHash(decisionFlowStatus?.inputFingerprint ?? decisionResultMeta?.inputFingerprint ?? activeOptimizationInputFingerprint)} · nSim {decisionFlowStatus?.nSim?.toLocaleString('es-ES') ?? decisionResultMeta?.nSim?.toLocaleString('es-ES') ?? '—'} · seed {decisionFlowStatus?.seed ?? decisionResultMeta?.seed ?? '—'}
               </div>
               {decisionFlowWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div> : null}
               {officialRecommendationWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div> : null}
@@ -4541,7 +4654,7 @@ export function OptimizationLightPage({
                 </div>
                 <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 900 }}>{financialOptimum.mixLabel}</div>
                 <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.45 }}>
-                  Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo. No es la recomendación final.
+                  Referencia autónoma: estima qué mix reduce mejor el riesgo financiero sin venta de casa, sin recortes adaptativos y sin capital de riesgo. No es una recomendación definitiva.
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
                   Métrica financiera usada: éxito {formatPct(financialOptimum.success40)} · ruina20 {formatPct(financialOptimum.ruin20)} · MaxDD P50 {formatPctOrNA(financialOptimum.drawdownP50)} · P50 terminal informativo {formatClpShort(financialOptimum.terminalWealthP50)} · Estado: {decisionFlowStatus?.badge ?? 'Preliminar pendiente'} · {financialOptimum.candidateId === officialMainRecommendation!.candidateId ? 'Coincide con el Óptimo MIDAS recomendado.' : `Difiere del Óptimo MIDAS recomendado (${officialMainRecommendation!.mixLabel}).`}
@@ -4589,6 +4702,9 @@ export function OptimizationLightPage({
                   <div key={item.key} style={{ border: `1px solid ${item.key === 'main' ? T.primary : T.border}`, borderRadius: 9, padding: 9, background: T.surface, display: 'grid', gap: 5 }}>
                     <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>{item.title}</div>
                     <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900 }}>{item.candidate.mixLabel}</div>
+                    <div style={{ color: T.textMuted, fontSize: 10 }}>
+                      candidateId {item.candidate.candidateId} · input {shortOptimizationHash(decisionFlowStatus?.inputFingerprint ?? decisionResultMeta?.inputFingerprint ?? activeOptimizationInputFingerprint)}
+                    </div>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>{item.copy}</div>
                     <div style={{ color: T.textSecondary, fontSize: 10 }}>
                       QASR base {formatScore100(item.candidate.qasrBase)} · QASR +20 {formatScore100(item.candidate.qasrAt120)} · CSR {formatPctOrNA(item.candidate.csrBase)}

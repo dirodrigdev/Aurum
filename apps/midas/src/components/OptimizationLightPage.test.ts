@@ -21,12 +21,14 @@ import {
     buildOptimizationInputFingerprint,
     buildOptimizationConfirmationShortlist,
     buildOptimizationExpressGrid,
+    buildOptimizationInputAuditSummary,
     buildOptimizationZoomFallbackShortlist,
     buildOptimizationZoomShortlist,
     canUseDecisionFlowForImplementation,
     classifyImplementationMateriality,
     hasStaleOptimizationMeta,
     isOptimizationResultMetaCurrent,
+    shortOptimizationHash,
     selectClosestDiscardedCompetitor,
     selectFinancialOptimumCandidate,
     selectBestAvailableFallbackCandidate,
@@ -1415,6 +1417,8 @@ const simulationFingerprint = buildOptimizationInputFingerprint({
   },
 });
 assert.notEqual(baseFingerprint, simulationFingerprint);
+assert.equal(shortOptimizationHash(baseFingerprint), baseFingerprint.slice(0, 10));
+assert.equal(shortOptimizationHash(null), '—');
 assert.equal(isOptimizationResultMetaCurrent({
   inputFingerprint: baseFingerprint,
   sourceMode: 'base',
@@ -1453,6 +1457,62 @@ assert.equal(hasStaleOptimizationMeta({
   seed: 123,
   ranAtLabel: '2026-05-18 10:00',
 }, simulationFingerprint), true);
+
+const optimizationInputAuditCurrent = buildOptimizationInputAuditSummary({
+  activeInputFingerprint: baseFingerprint,
+  sourceLabel: 'Base vigente',
+  scenarioLabel: null,
+  executionState: 'completed',
+  flowStatus: {
+    inputFingerprint: baseFingerprint,
+    nSim: 3000,
+    seed: 123,
+    ranAtLabel: '2026-05-18 10:00',
+  },
+  resultMeta: null,
+});
+assert.equal(optimizationInputAuditCurrent.statusLabel, 'Vigente');
+assert.equal(optimizationInputAuditCurrent.stale, false);
+assert.equal(optimizationInputAuditCurrent.hashShort, baseFingerprint.slice(0, 10));
+assert.equal(optimizationInputAuditCurrent.nSim, 3000);
+assert.equal(optimizationInputAuditCurrent.seed, 123);
+
+const optimizationInputAuditStale = buildOptimizationInputAuditSummary({
+  activeInputFingerprint: simulationFingerprint,
+  sourceLabel: 'Base vigente',
+  scenarioLabel: null,
+  executionState: 'completed',
+  flowStatus: {
+    inputFingerprint: baseFingerprint,
+    nSim: 3000,
+    seed: 123,
+    ranAtLabel: '2026-05-18 10:00',
+  },
+  resultMeta: null,
+});
+assert.equal(optimizationInputAuditStale.statusLabel, 'Requiere actualizar');
+assert.equal(optimizationInputAuditStale.stale, true);
+
+const optimizationInputAuditRunning = buildOptimizationInputAuditSummary({
+  activeInputFingerprint: simulationFingerprint,
+  sourceLabel: 'Simulación activa',
+  scenarioLabel: 'Base',
+  executionState: 'running',
+  flowStatus: null,
+  resultMeta: null,
+});
+assert.equal(optimizationInputAuditRunning.statusLabel, 'Calculando');
+assert.equal(optimizationInputAuditRunning.stale, false);
+
+const optimizationInputAuditInterrupted = buildOptimizationInputAuditSummary({
+  activeInputFingerprint: simulationFingerprint,
+  sourceLabel: 'Simulación activa',
+  scenarioLabel: 'Base',
+  executionState: 'interrupted',
+  flowStatus: null,
+  resultMeta: null,
+});
+assert.equal(optimizationInputAuditInterrupted.statusLabel, 'Interrumpido');
 
 assert.equal(canUseDecisionFlowForImplementation(null), false);
 assert.equal(canUseDecisionFlowForImplementation({
@@ -1522,9 +1582,10 @@ const initialMarkup = renderToStaticMarkup(
   }),
 );
 
-assert(initialMarkup.includes('Recomendación MIDAS'));
+assert(initialMarkup.includes('Optimización MIDAS · Candidatos'));
 assert(initialMarkup.includes('Calcular recomendación completa'));
 assert(initialMarkup.includes('Simulación express'));
+assert(initialMarkup.includes('Input optimizado'));
 assert(initialMarkup.includes('Mix actual'));
 assert(initialMarkup.includes('Mix recomendado'));
 assert(initialMarkup.includes('Mix implementable'));
@@ -1556,6 +1617,7 @@ const source = readFileSync(new URL('./OptimizationLightPage.tsx', import.meta.u
 assert(source.includes("onClick={runCompleteRecommendation}"));
 assert(source.includes("onClick={runExpressSimulation}"));
 assert(source.includes("onClick={runConfirmAndImplementation}"));
+assert(!source.includes('onClick={() => {}}'));
 assert(!/Calcular recomendación completa[\\s\\S]{0,500}runPhase1/.test(source));
 assert(!/Calcular recomendación completa[\\s\\S]{0,500}runPhase2/.test(source));
 assert(source.includes('DECISION_EXPRESS_NSIM = 750'));
@@ -1587,6 +1649,13 @@ assert(source.includes('Base vigente'));
 assert(source.includes('decisionProfilesRunning'));
 assert(source.includes('setDecisionExecutionState(\'background\')'));
 assert(source.includes('setDecisionExecutionState(\'interrupted\')'));
+assert(source.includes('buildOptimizationInputAuditSummary'));
+assert(source.includes('Input optimizado'));
+assert(source.includes('Input cambiado: actualiza la optimización antes de usar estos candidatos.'));
+assert(source.includes('No hay candidatos calculados todavía.'));
+assert(source.includes('Trazabilidad: candidateId'));
+assert(source.includes('Candidato confirmado para validar'));
+assert(source.includes('No es una recomendación definitiva.'));
 assert(source.includes('Referencia previa · no compite en la recomendación MIDAS'));
 assert(source.includes('Escenarios evaluados por el modelo'));
 assert(source.includes('Qué cambia frente a tu mix actual'));
