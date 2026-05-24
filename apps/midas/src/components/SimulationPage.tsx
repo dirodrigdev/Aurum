@@ -4001,206 +4001,253 @@ export function SimulationPage({
               border: `1px solid ${T.border}`,
               borderRadius: 16,
               padding: 16,
+              maxHeight: 'calc(100vh - 32px)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes manuales de capital</div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes de capital</div>
+                <div style={{ color: T.textMuted, fontSize: 12, marginTop: 4 }}>
+                  Agrega entradas o salidas T0/futuras para esta corrida.
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={handleSaveAndClose}
-                disabled={savingMovement}
+                onClick={closeCapitalLedger}
                 style={{
                   background: 'transparent',
                   border: `1px solid ${T.border}`,
                   borderRadius: 999,
-                  padding: '6px 10px',
+                  width: 30,
+                  height: 30,
+                  display: 'grid',
+                  placeItems: 'center',
                   color: T.textSecondary,
-                  fontSize: 12,
-                  cursor: savingMovement ? 'not-allowed' : 'pointer',
-                  opacity: savingMovement ? 0.6 : 1,
+                  fontSize: 16,
+                  lineHeight: 1,
+                  cursor: 'pointer',
                 }}
+                aria-label="Cerrar ajustes de capital"
               >
-                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
+                ×
               </button>
             </div>
 
-            <div style={{ marginTop: 10, color: T.textMuted, fontSize: 11 }}>
-              Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
+            <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: `1px solid ${T.border}`, background: T.surfaceEl }}>
+              <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                Recursos hoy {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'} · T0 {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`} · Futuros {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}
+              </div>
+              <div style={{ marginTop: 4, color: T.textMuted, fontSize: 11 }}>
+                Próximo evento: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}
+              </div>
             </div>
-            <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
-              <div>Foto Aurum neta (sin ajustes manuales): {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
-              <div>Recursos ampliados bajo modelo antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
-              <div>Impacto deuda no hipotecaria no exigible: {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
-              <div>Impacto recursos habilitados (Depto/Riesgo): {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
-              <div>Ajustes T0 netos: {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`}</div>
-              <div>Ajustes futuros netos: {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}</div>
-              <div>Primer evento futuro: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}</div>
-              <div>Capital inicial líquido del motor (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
-              <div>Recursos ampliados bajo modelo (corrida efectiva): {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
-              <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
-              <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
-              <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
-              <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
-              <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
-            </div>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', paddingRight: 2 }}>
+              <div style={{ marginTop: 2, color: T.textMuted, fontSize: 11 }}>
+                Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
+              </div>
 
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflow: 'auto' }}>
-              {manualAdjustmentsSorted.length === 0 ? (
-                <div style={{ color: T.textSecondary, fontSize: 12 }}>
-                  No hay movimientos cargados.
-                </div>
-              ) : (
-                manualAdjustmentsSorted.map((adj) => {
-                  const sign = adj.direction === 'add' ? '+' : '-';
-                  const destinationLabel = destinationOptions.find((d) => d.value === adj.destination)?.label ?? 'Otros';
-                  return (
-                    <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
-                      <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
-                        {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
-                      </div>
-                      <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                        Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
-                      </div>
-                      {adj.note && (
-                        <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                          {adj.note}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflow: 'auto' }}>
+                {manualAdjustmentsSorted.length === 0 ? (
+                  <div style={{ color: T.textSecondary, fontSize: 12 }}>
+                    No hay movimientos cargados.
+                  </div>
+                ) : (
+                  manualAdjustmentsSorted.map((adj) => {
+                    const sign = adj.direction === 'add' ? '+' : '-';
+                    const destinationLabel = destinationOptions.find((d) => d.value === adj.destination)?.label ?? 'Otros';
+                    return (
+                      <div key={adj.id} style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 12, padding: 10 }}>
+                        <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                          {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
                         </div>
-                      )}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => startEditMovement(adj)}
-                          style={{
-                            background: 'transparent',
-                            border: `1px solid ${T.border}`,
-                            color: T.textSecondary,
-                            borderRadius: 999,
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDraftManualAdjustments((prev) => {
-                              const nextDraft = prev.filter((item) => item.id !== adj.id);
-                              draftManualAdjustmentsRef.current = nextDraft;
-                              return nextDraft;
-                            });
-                            if (editingMovementId === adj.id) {
-                              resetMovementForm();
-                            }
-                          }}
-                          style={{
-                            background: 'transparent',
-                            border: `1px solid ${T.negative}`,
-                            color: T.negative,
-                            borderRadius: 999,
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Borrar
-                        </button>
+                        <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                          Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
+                        </div>
+                        {adj.note && (
+                          <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
+                            {adj.note}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <button
+                            type="button"
+                            onClick={() => startEditMovement(adj)}
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${T.border}`,
+                              color: T.textSecondary,
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDraftManualAdjustments((prev) => {
+                                const nextDraft = prev.filter((item) => item.id !== adj.id);
+                                draftManualAdjustmentsRef.current = nextDraft;
+                                return nextDraft;
+                              });
+                              if (editingMovementId === adj.id) {
+                                resetMovementForm();
+                              }
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${T.negative}`,
+                              color: T.negative,
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Borrar
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
+
+              <div style={{ marginTop: 2, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
+                  <select
+                    value={movementForm.direction}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, direction: e.target.value as 'add' | 'remove' }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    <option value="add">Sumar</option>
+                    <option value="remove">Restar</option>
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
+                  <input
+                    type="number"
+                    value={movementForm.amount}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Moneda</span>
+                  <select
+                    value={movementForm.currency}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, currency: e.target.value as 'CLP' | 'USD' | 'EUR' }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    <option value="CLP">CLP</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Fecha efectiva</span>
+                  <input
+                    type="month"
+                    value={movementForm.effectiveDate}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Destino</span>
+                  <select
+                    value={movementForm.destination}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, destination: e.target.value as ManualCapitalDestination }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  >
+                    {destinationOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' }}>
+                  <span style={{ color: T.textMuted, fontSize: 11 }}>Nota</span>
+                  <input
+                    type="text"
+                    value={movementForm.note}
+                    onChange={(e) => setMovementForm((prev) => ({ ...prev, note: e.target.value }))}
+                    style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveMovement}
+                  disabled={savingMovement}
+                  style={{
+                    background: T.primary,
+                    border: 'none',
+                    color: '#fff',
+                    borderRadius: 10,
+                    padding: '8px 14px',
+                    fontWeight: 700,
+                    cursor: savingMovement ? 'not-allowed' : 'pointer',
+                    opacity: savingMovement ? 0.7 : 1,
+                  }}
+                >
+                  {savingMovement ? 'Guardando...' : editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
+                </button>
+                {editingMovementId && (
+                  <button
+                    type="button"
+                    onClick={resetMovementForm}
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${T.border}`,
+                      color: T.textSecondary,
+                      borderRadius: 10,
+                      padding: '8px 14px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+
+              <details style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: '8px 10px', background: T.surfaceEl }}>
+                <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                  Ver detalle técnico / conciliación
+                </summary>
+                <div style={{ marginTop: 8, display: 'grid', gap: 4, color: T.textMuted, fontSize: 11 }}>
+                  <div>Foto Aurum neta (sin ajustes manuales): {patrimonioReferenciaMidasClp !== null ? formatMoneyCompact(patrimonioReferenciaMidasClp) : 'No disponible'}</div>
+                  <div>Recursos ampliados bajo modelo antes de ajustes manuales: {patrimonioConsideradoBaseMidasClp !== null ? formatMoneyCompact(patrimonioConsideradoBaseMidasClp) : 'No disponible'}</div>
+                  <div>Impacto deuda no hipotecaria no exigible: {`${nonExigibleDebtPolicyImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(nonExigibleDebtPolicyImpactCLP)}`}</div>
+                  <div>Impacto recursos habilitados (Depto/Riesgo): {`${enabledResourcesImpactCLP >= 0 ? '+' : ''}${formatMoneyCompact(enabledResourcesImpactCLP)}`}</div>
+                  <div>Ajustes T0 netos: {`${draftManualSummaryT0.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryT0.netClp)}`}</div>
+                  <div>Ajustes futuros netos: {`${draftManualSummaryFuture.netClp >= 0 ? '+' : ''}${formatMoneyCompact(draftManualSummaryFuture.netClp)}`}</div>
+                  <div>Primer evento futuro: {draftManualSummaryFuture.firstFutureDate ?? 'Sin eventos futuros'}</div>
+                  <div>Capital inicial líquido del motor (corrida efectiva): {patrimonioConsideradoEfectivoCorridaClp !== null ? formatMoneyCompact(patrimonioConsideradoEfectivoCorridaClp) : 'No disponible'}</div>
+                  <div>Recursos ampliados bajo modelo (corrida efectiva): {patrimonioAmpliadoModeloClp !== null ? formatMoneyCompact(patrimonioAmpliadoModeloClp) : 'No disponible'}</div>
+                  <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
+                  <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
+                  <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
+                  <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
+                  <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
+                </div>
+              </details>
             </div>
 
-            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(2, minmax(0,1fr))', gap: 10 }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Tipo</span>
-                <select
-                  value={movementForm.direction}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, direction: e.target.value as 'add' | 'remove' }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  <option value="add">Sumar</option>
-                  <option value="remove">Restar</option>
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
-                <input
-                  type="number"
-                  value={movementForm.amount}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Moneda</span>
-                <select
-                  value={movementForm.currency}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, currency: e.target.value as 'CLP' | 'USD' | 'EUR' }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  <option value="CLP">CLP</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Fecha efectiva</span>
-                <input
-                  type="month"
-                  value={movementForm.effectiveDate}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Destino</span>
-                <select
-                  value={movementForm.destination}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, destination: e.target.value as ManualCapitalDestination }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                >
-                  {destinationOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' }}>
-                <span style={{ color: T.textMuted, fontSize: 11 }}>Nota</span>
-                <input
-                  type="text"
-                  value={movementForm.note}
-                  onChange={(e) => setMovementForm((prev) => ({ ...prev, note: e.target.value }))}
-                  style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
-                />
-              </label>
-            </div>
-
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleSaveMovement}
-                disabled={savingMovement}
-                style={{
-                  background: T.primary,
-                  border: 'none',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '8px 14px',
-                  fontWeight: 700,
-                  cursor: savingMovement ? 'not-allowed' : 'pointer',
-                  opacity: savingMovement ? 0.7 : 1,
-                }}
-              >
-                {savingMovement ? 'Guardando...' : editingMovementId ? 'Guardar cambios' : 'Agregar movimiento'}
-              </button>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: T.surface }}>
               <button
                 type="button"
                 onClick={closeCapitalLedger}
@@ -4217,22 +4264,23 @@ export function SimulationPage({
               >
                 Cancelar
               </button>
-              {editingMovementId && (
-                <button
-                  type="button"
-                  onClick={resetMovementForm}
-                  style={{
-                    background: 'transparent',
-                    border: `1px solid ${T.border}`,
-                    color: T.textSecondary,
-                    borderRadius: 10,
-                    padding: '8px 14px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancelar edición
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleSaveAndClose}
+                disabled={savingMovement}
+                style={{
+                  background: T.primary,
+                  border: 'none',
+                  borderRadius: 10,
+                  color: '#fff',
+                  padding: '8px 14px',
+                  fontWeight: 700,
+                  cursor: savingMovement ? 'not-allowed' : 'pointer',
+                  opacity: savingMovement ? 0.7 : 1,
+                }}
+              >
+                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
+              </button>
             </div>
           </div>
         </div>
