@@ -6,7 +6,10 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test:motor": "tsx src/domain/simulation/motorInvariants.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test:motor": "tsx src/domain/simulation/motorInvariants.test.ts",
+    "test:critical": "npm run test:motor && tsx src/components/SimulationPage.test.ts && tsx src/components/OptimizationLightPage.test.ts && tsx src/domain/optimizer/rvRfDecisionProfiles.test.ts && tsx src/domain/model/m8InputFingerprint.test.ts && tsx src/domain/model/resultConfidence.test.ts && tsx src/domain/model/simulationRunGate.test.ts && tsx src/domain/bucketLab/bucketLab.test.ts",
+    "test": "sh -c 'set -e; for f in $(rg --files src | rg \"\\\\.test\\\\.ts$\"); do npx tsx \"$f\"; done'"
   },
   "dependencies": {
     "firebase": "^10.14.1",
