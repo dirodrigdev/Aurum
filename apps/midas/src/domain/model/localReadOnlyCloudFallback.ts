@@ -18,11 +18,11 @@ export function isLocalQaHostname(hostname?: string | null): boolean {
 export function shouldEnableLocalReadOnlyCloudFallback(
   input: LocalReadOnlyCloudFallbackInput,
 ): boolean {
-  if (!input.aurumIntegrationConfigured) return false;
-  if (!input.isCanonicalUserSession) return false;
   if (input.authStatus !== 'authenticatedGoogle') return false;
   if (input.simulationConfigHydrationStatus !== 'error' && input.simulationConfigHydrationStatus !== 'missing') {
     return false;
   }
-  return Boolean(input.isDev || isLocalQaHostname(input.hostname));
+  const isLocalRuntime = Boolean(input.isDev || isLocalQaHostname(input.hostname));
+  if (!isLocalRuntime) return false;
+  return true;
 }

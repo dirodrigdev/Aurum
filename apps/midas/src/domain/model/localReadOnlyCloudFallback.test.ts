@@ -38,6 +38,15 @@ assert.equal(shouldEnableLocalReadOnlyCloudFallback({
 assert.equal(shouldEnableLocalReadOnlyCloudFallback({
   aurumIntegrationConfigured: true,
   authStatus: 'authenticatedGoogle',
+  isCanonicalUserSession: false,
+  simulationConfigHydrationStatus: 'error',
+  hostname: '127.0.0.1',
+  isDev: true,
+}), true, 'localhost/dev cloud error should allow read-only shell when authUser is not hydrated');
+
+assert.equal(shouldEnableLocalReadOnlyCloudFallback({
+  aurumIntegrationConfigured: true,
+  authStatus: 'authenticatedGoogle',
   isCanonicalUserSession: true,
   simulationConfigHydrationStatus: 'missing',
   hostname: '127.0.0.1',
@@ -52,5 +61,14 @@ assert.equal(shouldEnableLocalReadOnlyCloudFallback({
   hostname: 'localhost',
   isDev: true,
 }), false, 'fallback must not bypass canonical auth');
+
+assert.equal(shouldEnableLocalReadOnlyCloudFallback({
+  aurumIntegrationConfigured: false,
+  authStatus: 'authenticatedGoogle',
+  isCanonicalUserSession: false,
+  simulationConfigHydrationStatus: 'error',
+  hostname: 'localhost',
+  isDev: true,
+}), true, 'localhost/dev can enter read-only fallback even when cloud integration is unavailable');
 
 console.log('localReadOnlyCloudFallback tests passed');
