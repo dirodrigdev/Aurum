@@ -339,10 +339,15 @@ export function SettingsPage({
   optimizableBaseReference,
   aurumIntegrationStatus,
   targetWeights,
+  localReadOnlyMode = { enabled: false, reason: null },
 }: {
   optimizableBaseReference: OptimizableBaseReference;
   aurumIntegrationStatus: AurumIntegrationStatus;
   targetWeights: PortfolioWeights;
+  localReadOnlyMode?: {
+    enabled: boolean;
+    reason: string | null;
+  };
 }) {
   const [savedSnapshot, setSavedSnapshot] = useState(() => loadInstrumentBaseSnapshot());
   const [editorValue, setEditorValue] = useState(() => loadInstrumentBaseSnapshot()?.rawJson || '');
@@ -491,6 +496,25 @@ export function SettingsPage({
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
+      {localReadOnlyMode.enabled && (
+        <section
+          style={{
+            border: `1px solid rgba(212,166,90,0.35)`,
+            background: 'rgba(212,166,90,0.08)',
+            borderRadius: 18,
+            padding: '14px 16px',
+            display: 'grid',
+            gap: 6,
+          }}
+        >
+          <div style={{ color: '#F3D38A', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+            Modo local de revisión
+          </div>
+          <div style={{ color: T.warning, fontSize: 13, lineHeight: 1.5 }}>
+            {localReadOnlyMode.reason ?? 'Configuración cloud no disponible. Las escrituras productivas quedan deshabilitadas en este dispositivo.'}
+          </div>
+        </section>
+      )}
       <section
         style={{
           border: `1px solid ${T.border}`,
@@ -646,15 +670,17 @@ export function SettingsPage({
           <button
             type="button"
             onClick={handleSave}
+            disabled={localReadOnlyMode.enabled}
             style={{
               borderRadius: 14,
               border: `1px solid ${T.border}`,
               background: T.surfaceEl,
-              color: T.textPrimary,
+              color: localReadOnlyMode.enabled ? T.textMuted : T.textPrimary,
               padding: '12px 16px',
               fontSize: 13,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: localReadOnlyMode.enabled ? 'not-allowed' : 'pointer',
+              opacity: localReadOnlyMode.enabled ? 0.6 : 1,
             }}
           >
             Guardar / reemplazar base
@@ -663,6 +689,7 @@ export function SettingsPage({
             <button
               type="button"
               onClick={handleClearSaved}
+              disabled={localReadOnlyMode.enabled}
               style={{
                 borderRadius: 14,
                 border: `1px solid ${T.negative}`,
@@ -671,7 +698,8 @@ export function SettingsPage({
                 padding: '12px 16px',
                 fontSize: 13,
                 fontWeight: 700,
-                cursor: 'pointer',
+                cursor: localReadOnlyMode.enabled ? 'not-allowed' : 'pointer',
+                opacity: localReadOnlyMode.enabled ? 0.6 : 1,
               }}
             >
               Eliminar base guardada
@@ -925,15 +953,17 @@ export function SettingsPage({
           <button
             type="button"
             onClick={handleSaveUniverse}
+            disabled={localReadOnlyMode.enabled}
             style={{
               borderRadius: 14,
               border: `1px solid ${T.border}`,
               background: T.surfaceEl,
-              color: T.textPrimary,
+              color: localReadOnlyMode.enabled ? T.textMuted : T.textPrimary,
               padding: '12px 16px',
               fontSize: 13,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: localReadOnlyMode.enabled ? 'not-allowed' : 'pointer',
+              opacity: localReadOnlyMode.enabled ? 0.6 : 1,
             }}
           >
             Guardar mix aperturado cloud
@@ -942,6 +972,7 @@ export function SettingsPage({
             <button
               type="button"
               onClick={handleClearUniverse}
+              disabled={localReadOnlyMode.enabled}
               style={{
                 borderRadius: 14,
                 border: `1px solid ${T.negative}`,
@@ -950,7 +981,8 @@ export function SettingsPage({
                 padding: '12px 16px',
                 fontSize: 13,
                 fontWeight: 700,
-                cursor: 'pointer',
+                cursor: localReadOnlyMode.enabled ? 'not-allowed' : 'pointer',
+                opacity: localReadOnlyMode.enabled ? 0.6 : 1,
               }}
             >
               Eliminar universe
