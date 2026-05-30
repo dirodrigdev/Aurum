@@ -24,6 +24,12 @@ assert.match(
 );
 
 assert.match(
+  appSource,
+  /QA visual: los montos pueden no coincidir con Aurum productivo/,
+  'App must explain that local read-only fallback is degraded QA mode',
+);
+
+assert.match(
   settingsSource,
   /disabled=\{localReadOnlyMode\.enabled\}/,
   'SettingsPage must disable mutating actions during local read-only fallback',

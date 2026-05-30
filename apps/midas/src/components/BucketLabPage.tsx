@@ -387,7 +387,7 @@ export function BucketLabPage({ params }: { params: ModelParameters }) {
     [activeExpectedCostAnalysis.rows, activeExpectedCostAnalysis.currentBucketMonths],
   );
   const quickCompareCards = useMemo(
-    () => [24, 36, activeExpectedCostAnalysis.currentBucketMonths]
+    () => Array.from(new Set([24, 36, activeExpectedCostAnalysis.currentBucketMonths]))
       .map((bucket) => tradeoffCards.find((card) => card.bucketMonths === bucket))
       .filter((card): card is NonNullable<typeof card> => Boolean(card)),
     [tradeoffCards, activeExpectedCostAnalysis.currentBucketMonths],

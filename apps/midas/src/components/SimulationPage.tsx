@@ -471,6 +471,7 @@ export function SimulationPage({
   activeWeights,
   auditModeEnabled,
   auditProbe,
+  localReadOnlyMode,
   applyAurumHarness,
   onApplyPendingSnapshot,
   onRunApplyAurumHarness,
@@ -557,6 +558,10 @@ export function SimulationPage({
   instrumentBaseReferenceWeights: PortfolioWeights | null;
   activeWeights: PortfolioWeights;
   auditModeEnabled: boolean;
+  localReadOnlyMode?: {
+    enabled: boolean;
+    reason: string | null;
+  };
   auditProbe: {
     heroSource: 'simResult' | 'lastStableCentral' | 'none';
     requestId: number | null;
@@ -722,7 +727,11 @@ export function SimulationPage({
         : aurumIntegrationStatus === 'error'
           ? 'Aurum: error de integración'
           : 'Aurum: en espera';
-  const isRecalculating = simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
+  const localReadOnlyFallbackActive = Boolean(localReadOnlyMode?.enabled);
+  const localReadOnlyFallbackCopy = 'Modo local de revisión: útil para QA visual. Los montos pueden no coincidir con Aurum productivo.';
+  const workerRecalcActive = simWorking || recalcWorkerStatus === 'queued' || recalcWorkerStatus === 'running';
+  const localReadOnlyVisualOnly = localReadOnlyFallbackActive && !workerRecalcActive;
+  const isRecalculating = !localReadOnlyVisualOnly && simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
   const simTechnicalLabel = isRecalculating
     ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
     : simUiState === 'ready'
@@ -737,6 +746,7 @@ export function SimulationPage({
   const hasEffectiveRealEstate = Boolean(compositionSource?.nonOptimizable?.realEstate);
   const liquidarDeptoConfigured = params.realEstatePolicy?.enabled ?? true;
   const liquidarDeptoEnabled = hasEffectiveRealEstate && liquidarDeptoConfigured;
+  const localReadOnlyDeptoUnavailable = localReadOnlyFallbackActive && !hasEffectiveRealEstate;
   const compositionDiagnostics = compositionSource?.diagnostics;
   const compositionMode = compositionSource?.mode ?? 'legacy';
   const diagnosticWarnings = compositionDiagnostics?.diagnosticWarnings ?? [];
@@ -1040,6 +1050,7 @@ export function SimulationPage({
     (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
   const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
   const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
+  const heroShowsRunActive = isRunActive && !localReadOnlyVisualOnly;
   const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
   const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
@@ -1078,7 +1089,7 @@ export function SimulationPage({
     return 'Falta: Resolver la salvedad principal para llegar a OK.';
   }, [primaryReasonCode]);
   const heroPrimaryState = useMemo(() => {
-    if (isRunActive) {
+    if (heroShowsRunActive) {
       return {
         label: 'Calculando',
         tone: T.warning,
@@ -1112,6 +1123,15 @@ export function SimulationPage({
       };
     }
     if (resultConfidence.status === 'not_decisional') {
+      if (localReadOnlyFallbackActive) {
+        return {
+          label: 'Modo local',
+          tone: T.warning,
+          headline: 'Resultado no auditado para decisión productiva.',
+          explanation: 'Datos locales/degradados por configuración cloud no disponible.',
+          gap: 'Usa este modo para QA visual; valida decisiones con cloud config real.',
+        };
+      }
       return {
         label: 'No usar',
         tone: T.negative,
@@ -1136,7 +1156,7 @@ export function SimulationPage({
       explanation: 'Resultado canónico.',
       gap: null as string | null,
     };
-  }, [T.negative, T.positive, T.warning, hasOnlyRunResultBlockingReasons, heroPhase, heroResult, isRunActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
+  }, [T.negative, T.positive, T.warning, hasOnlyRunResultBlockingReasons, heroPhase, heroResult, heroShowsRunActive, localReadOnlyFallbackActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
   const heroConfidenceBlock = useMemo(
     () => (
       <span style={{ display: 'grid', gap: 4 }}>
@@ -1321,6 +1341,13 @@ export function SimulationPage({
   const riskDetectedClp = Number.isFinite(riskInCompositionRaw) && riskInCompositionRaw > 0
     ? riskInCompositionRaw
     : Math.max(0, Number(riskCapitalCLP ?? 0));
+  const localReadOnlyRiskUnavailable = localReadOnlyFallbackActive && riskDetectedClp <= 0;
+  const riskCapitalToggleDisabled = isRecalculating || localReadOnlyRiskUnavailable;
+  const riskCapitalToggleHelp = localReadOnlyRiskUnavailable
+    ? 'Sin capital de riesgo disponible en modo local; ON/OFF no modifica recursos.'
+    : riskCapitalEnabled
+      ? 'Habilitado.'
+      : 'No entra.';
   const mixComparisonWeights = instrumentUniverseReferenceWeights ?? instrumentBaseReferenceWeights ?? officialReferenceWeights;
   const mixDiffPp = useMemo(() => {
     const sumAbs = Math.abs(activeWeights.rvGlobal - mixComparisonWeights.rvGlobal)
@@ -2202,11 +2229,11 @@ export function SimulationPage({
           <HeroCard
             label={heroQuestion.toUpperCase()}
             valuePct={showBootPlaceholder ? null : heroProbSuccess}
-            stale={showGhostResult || isRunActive}
+            stale={showGhostResult || heroShowsRunActive}
             subtitle={
               simUiState === 'error'
                 ? `Error de recálculo: ${simUiError || 'reintenta'}`
-                : isRunActive
+                : heroShowsRunActive
                 ? 'Calculando resultado final.'
                 : displayResult
                   ? (
@@ -2331,7 +2358,9 @@ export function SimulationPage({
         </div>
         {!simActive && (
           <div style={{ marginTop: 8, color: T.textMuted, fontSize: 11 }}>
-            Modelo base canónico · sin escenario aplicado.
+            {localReadOnlyFallbackActive
+              ? localReadOnlyFallbackCopy
+              : 'Modelo base canónico · sin escenario aplicado.'}
           </div>
         )}
         {showSimToast && (
@@ -2881,6 +2910,7 @@ export function SimulationPage({
                     type="button"
                     onClick={toggleLiquidarDepto}
                     disabled={isRecalculating || !hasEffectiveRealEstate}
+                    title={localReadOnlyDeptoUnavailable ? 'No disponible en modo local: falta configuración/snapshot cloud.' : undefined}
                     style={{
                       background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
                       border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
@@ -2896,7 +2926,11 @@ export function SimulationPage({
                     {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
                   </button>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    {liquidarDeptoEnabled ? 'Respaldo habilitado.' : 'No se usa como respaldo.'}
+                    {localReadOnlyDeptoUnavailable
+                      ? 'No disponible en modo local: falta configuración/snapshot cloud.'
+                      : liquidarDeptoEnabled
+                        ? 'Respaldo habilitado.'
+                        : 'No se usa como respaldo.'}
                   </div>
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
@@ -2904,7 +2938,8 @@ export function SimulationPage({
                   <button
                     type="button"
                     onClick={onToggleRiskCapital}
-                    disabled={isRecalculating}
+                    disabled={riskCapitalToggleDisabled}
+                    title={localReadOnlyRiskUnavailable ? 'Sin capital de riesgo disponible en modo local.' : undefined}
                     style={{
                       background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
                       border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
@@ -2913,14 +2948,14 @@ export function SimulationPage({
                       padding: isMobileViewport ? '6px 8px' : '6px 10px',
                       fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
-                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
-                      opacity: isRecalculating ? 0.65 : 1,
+                      cursor: riskCapitalToggleDisabled ? 'not-allowed' : 'pointer',
+                      opacity: riskCapitalToggleDisabled ? 0.65 : 1,
                     }}
                   >
                     {riskToggleCopy}
                   </button>
                   <div style={{ color: T.textMuted, fontSize: 10 }}>
-                    {riskCapitalEnabled ? 'Habilitado.' : 'No entra.'}
+                    {riskCapitalToggleHelp}
                   </div>
                 </div>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
@@ -3496,6 +3531,8 @@ export function SimulationPage({
                 <button
                   type="button"
                   onClick={toggleLiquidarDepto}
+                  disabled={!hasEffectiveRealEstate}
+                  title={localReadOnlyDeptoUnavailable ? 'No disponible en modo local: falta configuración/snapshot cloud.' : undefined}
                   style={{
                     background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
                     border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
@@ -3504,17 +3541,23 @@ export function SimulationPage({
                     padding: '5px 8px',
                     fontSize: 11,
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: hasEffectiveRealEstate ? 'pointer' : 'not-allowed',
+                    opacity: hasEffectiveRealEstate ? 1 : 0.65,
                   }}
                 >
-                  {liquidarDeptoEnabled ? 'ON' : 'OFF'}
+                  {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
                 </button>
+                {localReadOnlyDeptoUnavailable ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>No disponible en modo local.</div>
+                ) : null}
               </div>
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 5 }}>
                 <div style={{ color: T.textMuted, fontSize: 11 }}>Capital de riesgo</div>
                 <button
                   type="button"
                   onClick={onToggleRiskCapital}
+                  disabled={localReadOnlyRiskUnavailable}
+                  title={localReadOnlyRiskUnavailable ? 'Sin capital de riesgo disponible en modo local.' : undefined}
                   style={{
                     background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
                     border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
@@ -3523,11 +3566,15 @@ export function SimulationPage({
                     padding: '5px 8px',
                     fontSize: 11,
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: localReadOnlyRiskUnavailable ? 'not-allowed' : 'pointer',
+                    opacity: localReadOnlyRiskUnavailable ? 0.65 : 1,
                   }}
                 >
                   {riskCapitalEnabled ? 'ON' : 'OFF'}
                 </button>
+                {localReadOnlyRiskUnavailable ? (
+                  <div style={{ color: T.textMuted, fontSize: 10 }}>Sin capital de riesgo disponible en modo local.</div>
+                ) : null}
               </div>
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo</span>

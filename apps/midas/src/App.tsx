@@ -4374,11 +4374,15 @@ export default function App() {
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
       ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
       : 'Pendiente de recalcular'
+    : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
+      ? 'Modo local'
     : headerShowsDefinitiveNumber
       ? `Éxito ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
   const headerConfidenceLabel = headerShowsStaleResult
     ? 'Recalcular'
+    : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
+      ? 'Revisión local'
     : resultConfidence.label;
   const headerStatusColor = headerShowsStaleResult
     ? T.warning
@@ -4688,6 +4692,10 @@ export default function App() {
       activeWeights={activeWeightsNormalized}
       auditModeEnabled={auditPreviewMode}
       auditProbe={heroAuditProbe}
+      localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
+        enabled: true,
+        reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
+      } : { enabled: false, reason: null }}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}
@@ -4854,7 +4862,7 @@ export default function App() {
             }}
           >
             <strong style={{ color: '#F3D38A' }}>Modo local de revisión</strong>
-            {' · configuración cloud no disponible · sin escrituras productivas'}
+            {' · configuración cloud no disponible · sin escrituras productivas · QA visual: los montos pueden no coincidir con Aurum productivo'}
           </div>
         )}
         {simulationActive && (
