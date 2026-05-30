@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import type {
   CashflowEvent,
@@ -18,11 +18,6 @@ import { applyScenarioVariant } from './domain/simulation/engine';
 import { evaluateConcordance } from './domain/simulation/concordance';
 import { BottomNav, TabId } from './components/BottomNav';
 import { SimulationPage, SimulationOverrides, SimulationPreset } from './components/SimulationPage';
-import { PalancasPage } from './components/PalancasPage';
-import { OptimizationLightPage } from './components/OptimizationLightPage';
-import { SettingsPage } from './components/SettingsPage';
-import { AssistedSimulationPage } from './components/AssistedSimulationPage';
-import { BucketLabPage } from './components/BucketLabPage';
 import { T, css } from './components/theme';
 import { loadInstrumentBaseSnapshot, type OptimizableBaseReference } from './domain/instrumentBase';
 import { loadInstrumentUniverseSnapshot, loadInstrumentUniverseSnapshotMetadata } from './domain/instrumentUniverse';
@@ -96,6 +91,22 @@ import {
   stripManualAdjustmentImpactFromParams,
   type ManualAdjustmentImpact,
 } from './domain/simulation/manualCapitalAdjustments';
+
+const AssistedSimulationPageLazy = React.lazy(() =>
+  import('./components/AssistedSimulationPage').then((module) => ({ default: module.AssistedSimulationPage })),
+);
+const PalancasPageLazy = React.lazy(() =>
+  import('./components/PalancasPage').then((module) => ({ default: module.PalancasPage })),
+);
+const BucketLabPageLazy = React.lazy(() =>
+  import('./components/BucketLabPage').then((module) => ({ default: module.BucketLabPage })),
+);
+const SettingsPageLazy = React.lazy(() =>
+  import('./components/SettingsPage').then((module) => ({ default: module.SettingsPage })),
+);
+const OptimizationLightPageLazy = React.lazy(() =>
+  import('./components/OptimizationLightPage').then((module) => ({ default: module.OptimizationLightPage })),
+);
 
 const SIMULATION_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SIMULATION_NSIM = 3000;
@@ -257,6 +268,29 @@ class MidasErrorBoundary extends React.Component<
       </div>
     );
   }
+}
+
+function SectionSuspense({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            border: `1px solid ${T.border}`,
+            background: T.surface,
+            borderRadius: 18,
+            padding: '18px 20px',
+            color: T.textSecondary,
+            fontSize: 14,
+          }}
+        >
+          Cargando sección…
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
 }
 
 function toOptimizerBaselineSnapshot(result: SimulationResults | null): OptimizerBaselineSnapshot | null {
@@ -4681,12 +4715,12 @@ export default function App() {
       universeSourceOrigin={universeSourceOrigin}
       cloudHydrationReady={cloudHydrationReady}
       simulationConfigSource={simulationConfigSource}
-	      simulationConfigSavedAt={simulationConfigSavedAt}
-	      m8InputFingerprint={m8InputFingerprint}
-	      simulationResultDiagnostics={simulationResultDiagnostics}
-	      resultConfidence={resultConfidence}
-	      assumptionModeDiagnostics={assumptionModeDiagnostics}
-	      officialReferenceWeights={officialReferenceWeights}
+      simulationConfigSavedAt={simulationConfigSavedAt}
+      m8InputFingerprint={m8InputFingerprint}
+      simulationResultDiagnostics={simulationResultDiagnostics}
+      resultConfidence={resultConfidence}
+      assumptionModeDiagnostics={assumptionModeDiagnostics}
+      officialReferenceWeights={officialReferenceWeights}
       instrumentUniverseReferenceWeights={instrumentUniverseReferenceWeights}
       instrumentBaseReferenceWeights={instrumentBaseReferenceWeights}
       activeWeights={activeWeightsNormalized}
@@ -4711,35 +4745,39 @@ export default function App() {
       onResetSim={resetSimulationSession}
       onOpenOptimization={() => setActiveTab('opt')}
     />
-  ) : productActiveTab === 'assist' ? (
-    <AssistedSimulationPage />
-  ) : productActiveTab === 'sens' ? (
-    <PalancasPage
-      baseParams={baseParams}
-      simulationParams={optimizerSimulationParams}
-      simulationActive={simulationActive}
-      simulationLabel={stateLabel}
-    />
-  ) : productActiveTab === 'bucketlab' ? (
-    <BucketLabPage params={simParams} />
-  ) : productActiveTab === 'settings' ? (
-    <SettingsPage
-      optimizableBaseReference={optimizableBaseAdjusted}
-      aurumIntegrationStatus={aurumIntegrationStatus}
-      targetWeights={optimizerSimulationParams.weights}
-      localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
-        enabled: true,
-        reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
-      } : { enabled: false, reason: null }}
-    />
   ) : (
-    <OptimizationLightPage
-      baseParams={baseParams}
-      simulationParams={optimizerSimulationParams}
-      simulationActive={simulationActive}
-      simulationLabel={stateLabel}
-      simulationSnapshot={simulationOptimizerSnapshot}
-    />
+    <SectionSuspense>
+      {productActiveTab === 'assist' ? (
+        <AssistedSimulationPageLazy />
+      ) : productActiveTab === 'sens' ? (
+        <PalancasPageLazy
+          baseParams={baseParams}
+          simulationParams={optimizerSimulationParams}
+          simulationActive={simulationActive}
+          simulationLabel={stateLabel}
+        />
+      ) : productActiveTab === 'bucketlab' ? (
+        <BucketLabPageLazy params={simParams} />
+      ) : productActiveTab === 'settings' ? (
+        <SettingsPageLazy
+          optimizableBaseReference={optimizableBaseAdjusted}
+          aurumIntegrationStatus={aurumIntegrationStatus}
+          targetWeights={optimizerSimulationParams.weights}
+          localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
+            enabled: true,
+            reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
+          } : { enabled: false, reason: null }}
+        />
+      ) : (
+        <OptimizationLightPageLazy
+          baseParams={baseParams}
+          simulationParams={optimizerSimulationParams}
+          simulationActive={simulationActive}
+          simulationLabel={stateLabel}
+          simulationSnapshot={simulationOptimizerSnapshot}
+        />
+      )}
+    </SectionSuspense>
   );
 
   if (shouldBlockForAuthGate) {
