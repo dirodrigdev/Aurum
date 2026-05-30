@@ -88,6 +88,7 @@ import {
 } from './domain/model/resultConfidence';
 import { buildAssumptionModeDiagnostics } from './domain/model/assumptionMode';
 import { selectRunSeed } from './domain/model/simulationSeedSelection';
+import { shouldEnableLocalReadOnlyCloudFallback } from './domain/model/localReadOnlyCloudFallback';
 import type { AurumOptimizableInvestmentsSnapshot } from './integrations/aurum/types';
 import { resolveCapital } from './domain/simulation/capitalResolver';
 import { toM8Input } from './domain/simulation/m8Adapter';
@@ -957,6 +958,19 @@ export default function App() {
   }, [authUser]);
   const isCanonicalUserSession = !aurumIntegrationConfigured || Boolean(authUser && !authUser.isAnonymous);
   const loginRequired = aurumIntegrationConfigured && authResolved && !isCanonicalUserSession;
+  const localReadOnlyCloudFallbackEnabled = useMemo(() => shouldEnableLocalReadOnlyCloudFallback({
+    aurumIntegrationConfigured,
+    authStatus,
+    isCanonicalUserSession,
+    simulationConfigHydrationStatus,
+    hostname: typeof window !== 'undefined' ? window.location.hostname : null,
+    isDev: Boolean(import.meta.env?.DEV),
+  }), [
+    aurumIntegrationConfigured,
+    authStatus,
+    isCanonicalUserSession,
+    simulationConfigHydrationStatus,
+  ]);
 
   const formatRuntimeError = useCallback((label: string, payload: unknown) => {
     if (payload instanceof Error) {
@@ -1202,6 +1216,23 @@ export default function App() {
           return;
         }
 
+        const canEnterLocalReadOnlyFallback = shouldEnableLocalReadOnlyCloudFallback({
+          aurumIntegrationConfigured,
+          authStatus,
+          isCanonicalUserSession,
+          simulationConfigHydrationStatus: loaded.reason === 'active_not_found' ? 'missing' : 'error',
+          hostname: typeof window !== 'undefined' ? window.location.hostname : null,
+          isDev: Boolean(import.meta.env?.DEV),
+        });
+
+        if (canEnterLocalReadOnlyFallback) {
+          setCloudSimulationHydrated(false);
+          setSimulationConfigSource(loaded.reason === 'active_not_found' ? 'fallback' : 'local_cache');
+          setSimulationConfigHydrationStatus(loaded.reason === 'active_not_found' ? 'missing' : 'error');
+          setSimulationConfigDiagnostics(loaded.diagnostics);
+          return;
+        }
+
         const canSeedFromLocal = shouldSeedUserScopedSimulationConfig({
           readStatus: loaded.diagnostics.readStatus,
           isCanonicalUserSession,
@@ -1320,7 +1351,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authErrorMessage, authResolved, authUser?.uid, isCanonicalUserSession]);
+  }, [authErrorMessage, authResolved, authStatus, authUser?.uid, isCanonicalUserSession]);
 
   useEffect(() => {
     refreshOfficialDistribution();
@@ -1448,6 +1479,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isCanonicalUserSession) return;
+    if (localReadOnlyCloudFallbackEnabled) return;
     if (simulationActive || simOverrides?.active) return;
     const nextHash = buildSimulationConfigHash(simParams);
     setSimulationConfigHash(nextHash);
@@ -1493,7 +1525,7 @@ export default function App() {
       });
     }, 800);
     return () => window.clearTimeout(handle);
-  }, [isCanonicalUserSession, simOverrides?.active, simParams, simulationActive, simulationConfigHydrationStatus, simulationConfigSource]);
+  }, [isCanonicalUserSession, localReadOnlyCloudFallbackEnabled, simOverrides?.active, simParams, simulationActive, simulationConfigHydrationStatus, simulationConfigSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -4342,11 +4374,15 @@ export default function App() {
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
       ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
       : 'Pendiente de recalcular'
+    : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
+      ? 'Modo local'
     : headerShowsDefinitiveNumber
       ? `Éxito ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
   const headerConfidenceLabel = headerShowsStaleResult
     ? 'Recalcular'
+    : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
+      ? 'Revisión local'
     : resultConfidence.label;
   const headerStatusColor = headerShowsStaleResult
     ? T.warning
@@ -4489,6 +4525,7 @@ export default function App() {
     simulationConfigHydrationStatus,
     simulationConfigDiagnostics.errorMessage,
   ]);
+  const shouldBlockForAuthGate = authGateStatus.isBlocking && !localReadOnlyCloudFallbackEnabled;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -4655,6 +4692,10 @@ export default function App() {
       activeWeights={activeWeightsNormalized}
       auditModeEnabled={auditPreviewMode}
       auditProbe={heroAuditProbe}
+      localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
+        enabled: true,
+        reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
+      } : { enabled: false, reason: null }}
       applyAurumHarness={applyAurumHarness}
       onApplyPendingSnapshot={applyPendingSnapshot}
       onRunApplyAurumHarness={runApplyAurumHarness}
@@ -4686,6 +4727,10 @@ export default function App() {
       optimizableBaseReference={optimizableBaseAdjusted}
       aurumIntegrationStatus={aurumIntegrationStatus}
       targetWeights={optimizerSimulationParams.weights}
+      localReadOnlyMode={localReadOnlyCloudFallbackEnabled ? {
+        enabled: true,
+        reason: 'Modo local de revisión · configuración cloud no disponible · sin escrituras productivas.',
+      } : { enabled: false, reason: null }}
     />
   ) : (
     <OptimizationLightPage
@@ -4697,7 +4742,7 @@ export default function App() {
     />
   );
 
-  if (authGateStatus.isBlocking) {
+  if (shouldBlockForAuthGate) {
     return (
       <MidasErrorBoundary>
         <div style={{ ...css.app, minHeight: '100vh', padding: 24, display: 'grid', placeItems: 'center' }}>
@@ -4802,6 +4847,24 @@ export default function App() {
   return (
     <MidasErrorBoundary>
       <div style={{ ...css.app, position: 'relative', overflow: 'hidden' }}>
+        {localReadOnlyCloudFallbackEnabled && (
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 20,
+              padding: '10px 16px',
+              background: 'rgba(212,166,90,0.16)',
+              borderBottom: `1px solid rgba(212,166,90,0.36)`,
+              color: T.warning,
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            <strong style={{ color: '#F3D38A' }}>Modo local de revisión</strong>
+            {' · configuración cloud no disponible · sin escrituras productivas · QA visual: los montos pueden no coincidir con Aurum productivo'}
+          </div>
+        )}
         {simulationActive && (
           <>
             <style>{`
