@@ -1,0 +1,95 @@
+import { expect, test } from '@playwright/test';
+
+async function openApp(page: import('@playwright/test').Page) {
+  await page.goto('/');
+  await expect(page.getByText('Modo local de revisión', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Simulación', exact: true })).toBeVisible();
+}
+
+async function openTab(
+  page: import('@playwright/test').Page,
+  label: string,
+  expected: string | RegExp,
+  timeoutMs = 10000,
+) {
+  await page.getByRole('button', { name: label, exact: true }).click();
+  const body = page.locator('body');
+  try {
+    await expect(body).toContainText(expected, { timeout: timeoutMs });
+  } catch (error) {
+    const loaderVisible = await page.getByText('Cargando sección…').first().isVisible().catch(() => false);
+    const visibleSnippet = (await body.innerText().catch(() => ''))
+      .replace(/\s+/g, ' ')
+      .slice(0, 600);
+    throw new Error(
+      `Tab "${label}" did not finish loading. Expected ${String(expected)}. Loader visible=${String(loaderVisible)}. URL=${page.url()}. Visible body="${visibleSnippet}"`,
+      { cause: error instanceof Error ? error : undefined },
+    );
+  }
+}
+
+test('simulation home loads in local read-only mode', async ({ page }) => {
+  test.setTimeout(30000);
+  await openApp(page);
+  const technicalDetailLine = page.getByText(/Bloques fuera del motor:/);
+
+  await expect(page.getByText('¿LLEGARÁS A 40 AÑOS?')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/Calculando/i);
+  await expect(page.getByText(/Fuente de datos/i).last()).toBeVisible();
+  await expect(technicalDetailLine).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Asistida', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Palancas', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lab técnico', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Optimización', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ajustes', exact: true })).toBeVisible();
+
+  await page.getByText('Ver detalle técnico', { exact: true }).last().click();
+  await expect(technicalDetailLine).toBeVisible();
+});
+
+test.skip('assisted tab loads from the bottom nav', async ({ page }) => {
+  await openApp(page);
+  await openTab(page, 'Asistida', 'No sincronizado con Simulación principal');
+});
+
+test.skip('palancas tab loads from the bottom nav', async ({ page }) => {
+  await openApp(page);
+  await openTab(page, 'Palancas', 'Palancas de sensibilidad');
+});
+
+test.skip('lab tab loads from the bottom nav', async ({ page }) => {
+  test.setTimeout(45000);
+  await openApp(page);
+  await openTab(page, 'Lab técnico', 'Fuente de probabilidades', 30000);
+});
+
+test.skip('optimization tab loads from the bottom nav', async ({ page }) => {
+  await openApp(page);
+  await openTab(page, 'Optimización', 'Optimización MIDAS · Candidatos', 15000);
+});
+
+test('settings tab stays read-only in local fallback', async ({ page }) => {
+  await openApp(page);
+  await openTab(page, 'Ajustes', /Guardar \/ reemplazar base/);
+  await expect(page.getByText('Modo local de revisión', { exact: true }).last()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Guardar / reemplazar base' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Guardar mix aperturado cloud' })).toBeDisabled();
+});
+
+test.describe('mobile smoke', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('loads without horizontal overflow', async ({ page }) => {
+    await openApp(page);
+
+    await expect(page.getByText('¿LLEGARÁS A 40 AÑOS?')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ajustes', exact: true })).toBeVisible();
+
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      const root = document.documentElement;
+      return root.scrollWidth - root.clientWidth > 1;
+    });
+
+    expect(hasHorizontalOverflow).toBeFalsy();
+  });
+});

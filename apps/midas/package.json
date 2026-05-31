@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "test:motor": "tsx src/domain/simulation/motorInvariants.test.ts",
     "test:critical": "npm run test:motor && tsx src/App.localReadOnlyCloudFallback.test.ts && tsx src/App.lazyPages.test.ts && tsx src/components/SimulationPage.test.ts && tsx src/components/AssistedSimulationPage.test.ts && tsx src/components/OptimizationLightPage.test.ts && tsx src/domain/optimizer/rvRfDecisionProfiles.test.ts && tsx src/domain/model/localReadOnlyCloudFallback.test.ts && tsx src/domain/model/m8InputFingerprint.test.ts && tsx src/domain/model/resultConfidence.test.ts && tsx src/domain/model/simulationRunGate.test.ts && tsx src/domain/bucketLab/bucketLab.test.ts",
-    "test": "sh -c 'set -e; for f in $(rg --files src | rg \"\\\\.test\\\\.ts$\"); do npx tsx \"$f\"; done'"
+    "test": "sh -c 'set -e; for f in $(rg --files src | rg \"\\\\.test\\\\.ts$\"); do npx tsx \"$f\"; done'",
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:e2e:headed": "playwright test -c playwright.config.ts --headed"
   },
   "dependencies": {
     "firebase": "^10.14.1",
@@ -18,6 +20,7 @@
     "recharts": "^2.10.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
