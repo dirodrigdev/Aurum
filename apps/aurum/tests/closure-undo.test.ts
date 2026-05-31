@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setDoc } from 'firebase/firestore';
 
 type MockDoc = { __path: string };
 const cloudStore = new Map<string, any>();
@@ -355,13 +356,50 @@ describe('monthly close undo checkpoint', () => {
         fxRates,
         closedAt: '2026-04-15T12:00:00.000Z',
       }),
-    ).rejects.toThrow('No se pudo guardar el punto de respaldo del cierre');
+    ).rejects.toThrow('No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre');
     expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(false);
     expect(getMonthlyCloseCheckpoint('2026-04')).toBeNull();
 
     const preview = await previewUndoMonthlyClose('2026-04');
     expect(preview.ok).toBe(false);
     expect(preview.checkpointSource).toBeNull();
+  });
+
+  it('falls back to root doc cloud checkpoint when subcollection write is denied', async () => {
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      if (String(ref?.__path || '').includes('/monthly_close_checkpoints/')) {
+        const err: any = new Error('permission denied');
+        err.code = 'permission-denied';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04'),
+      fxRates,
+      closedAt: '2026-04-15T12:00:00.000Z',
+    });
+
+    expect(created.monthKey).toBe('2026-04');
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(true);
+    expect(getMonthlyCloseCheckpoint('2026-04')).not.toBeNull();
+    expect(
+      cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints?.['2026-04']?.monthKey,
+    ).toBe('2026-04');
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
   });
 
   it('prefers cloud checkpoint and keeps local as fallback only', async () => {

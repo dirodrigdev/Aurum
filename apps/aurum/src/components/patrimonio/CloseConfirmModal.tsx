@@ -15,7 +15,9 @@ interface CloseConfirmModalProps {
   monthKey: string;
   realCurrentMonthKey: string;
   selectedClosureMonthKey?: string | null;
-  recentCloseWarning: string;
+  latestClosureSummary: string | null;
+  latestClosureTechnicalUpdate: string | null;
+  closeSequenceWarning: string;
   closeBlockingIssues: CloseValidationIssueView[];
   closeWarningIssues: CloseValidationIssueView[];
   closeInfo: string;
@@ -55,7 +57,9 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   monthKey,
   realCurrentMonthKey,
   selectedClosureMonthKey,
-  recentCloseWarning,
+  latestClosureSummary,
+  latestClosureTechnicalUpdate,
+  closeSequenceWarning,
   closeBlockingIssues,
   closeWarningIssues,
   closeInfo,
@@ -96,9 +100,17 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
           </div>
         )}
 
-        {recentCloseWarning && (
+        {(latestClosureSummary || latestClosureTechnicalUpdate) && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+            {latestClosureSummary && <div>{latestClosureSummary}</div>}
+            <div>Mes a cerrar: {monthLabel(closeMonthDraft).toLowerCase()}.</div>
+            {latestClosureTechnicalUpdate && <div>{latestClosureTechnicalUpdate}</div>}
+          </div>
+        )}
+
+        {closeSequenceWarning && (
           <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
-            {recentCloseWarning}
+            {closeSequenceWarning}
           </div>
         )}
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">

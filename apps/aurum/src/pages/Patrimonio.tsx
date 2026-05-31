@@ -4616,14 +4616,29 @@ export const Patrimonio: React.FC = () => {
     () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
     [closures, closeMonthDraft],
   );
-  const recentCloseWarning = useMemo(() => {
+  const latestClosureSummary = useMemo(() => {
+    if (!latestClosure?.monthKey) return null;
+    return `Último cierre registrado: ${monthLabel(latestClosure.monthKey).toLowerCase()}.`;
+  }, [latestClosure]);
+  const latestClosureTechnicalUpdate = useMemo(() => {
     if (!latestClosure) return null;
-    const latestTs = new Date(latestClosure.closedAt).getTime();
-    if (!Number.isFinite(latestTs)) return null;
-    const days = (Date.now() - latestTs) / (1000 * 60 * 60 * 24);
-    if (days >= 30) return null;
+    const candidates = [
+      ...(latestClosure.repairAudit || []).map((entry) => String(entry.repairedAt || '')),
+      ...(latestClosure.previousVersions || []).map((version) => String(version.replacedAt || '')),
+    ]
+      .map((value) => new Date(value).getTime())
+      .filter((value) => Number.isFinite(value));
+    const latestTechnicalMs = candidates.length ? Math.max(...candidates) : NaN;
+    if (!Number.isFinite(latestTechnicalMs)) return null;
+    const days = Math.max(0, Math.floor((Date.now() - latestTechnicalMs) / (1000 * 60 * 60 * 24)));
+    return `Última modificación técnica del cierre anterior: hace ${days} día(s).`;
+  }, [latestClosure]);
+  const closeSequenceWarning = useMemo(() => {
+    if (!latestClosure?.monthKey) return null;
     if (latestClosure.monthKey === closeMonthDraft) return null;
-    return `El último cierre fue hace ${Math.max(0, Math.floor(days))} día(s). Confirma que quieres cerrar ${monthLabel(closeMonthDraft).toLowerCase()}.`;
+    const expectedNextMonth = monthAfterKey(latestClosure.monthKey);
+    if (expectedNextMonth === closeMonthDraft) return null;
+    return `Secuencia a revisar: el último cierre registrado es ${monthLabel(latestClosure.monthKey).toLowerCase()} y el mes a cerrar es ${monthLabel(closeMonthDraft).toLowerCase()}.`;
   }, [latestClosure, closeMonthDraft]);
 
   const sectionAmountsDisplay = useMemo(() => {
@@ -6399,7 +6414,9 @@ export const Patrimonio: React.FC = () => {
         monthKey={monthKey}
         realCurrentMonthKey={realCurrentMonthKey}
         selectedClosureMonthKey={selectedClosureForDraft?.monthKey}
-        recentCloseWarning={recentCloseWarning}
+        latestClosureSummary={latestClosureSummary}
+        latestClosureTechnicalUpdate={latestClosureTechnicalUpdate}
+        closeSequenceWarning={closeSequenceWarning}
         closeBlockingIssues={closeBlockingIssues}
         closeWarningIssues={closeWarningIssues}
         closeInfo={closeInfo}

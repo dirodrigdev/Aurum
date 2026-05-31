@@ -320,6 +320,7 @@ const WEALTH_CLOUD_DOC_COLLECTION = 'aurum_wealth';
 const WEALTH_CLOUD_BACKUPS_COLLECTION = 'backups';
 const WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_COLLECTION = 'monthly_close_checkpoints';
 const WEALTH_CLOUD_MONTHLY_CLOSE_UNDO_AUDIT_COLLECTION = 'monthly_close_undo_audit';
+const WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD = 'monthlyCloseCheckpoints';
 const WEALTH_SYNC_ISSUE_KEY = 'aurum:wealth-sync-issue';
 const WEALTH_SYNC_STATUS_KEY = 'aurum:wealth-sync-status-v1';
 const WEALTH_SYNC_BATCH_INTERVAL_MS = 5 * 60 * 1000;
@@ -2753,12 +2754,28 @@ const loadMonthlyCloseCheckpointFromCloud = async (
   const normalizedMonthKey = normalizeMonthKey(monthKey);
   if (!normalizedMonthKey) return null;
   const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
-  if (!checkpointsRef) return null;
+  if (checkpointsRef) {
+    try {
+      const checkpointRef = doc(checkpointsRef, normalizedMonthKey);
+      const snap = await getDoc(checkpointRef);
+      if (snap.exists()) {
+        const normalized = normalizeCheckpoint(snap.data());
+        if (normalized) {
+          saveMonthlyCloseCheckpointToLocalCache(normalized);
+          return normalized;
+        }
+      }
+    } catch {
+      // Intentamos también leer el checkpoint desde el doc raíz si la subcolección no está disponible.
+    }
+  }
+  const wealthRef = await getWealthCloudRef();
+  if (!wealthRef) return null;
   try {
-    const checkpointRef = doc(checkpointsRef, normalizedMonthKey);
-    const snap = await getDoc(checkpointRef);
+    const snap = await getDoc(wealthRef);
     if (!snap.exists()) return null;
-    const normalized = normalizeCheckpoint(snap.data());
+    const raw = snap.data()?.[WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD]?.[normalizedMonthKey];
+    const normalized = normalizeCheckpoint(raw);
     if (!normalized) return null;
     saveMonthlyCloseCheckpointToLocalCache(normalized);
     return normalized;
@@ -2769,23 +2786,68 @@ const loadMonthlyCloseCheckpointFromCloud = async (
 
 const saveMonthlyCloseCheckpointToCloud = async (
   checkpoint: WealthMonthlyCloseCheckpoint,
-): Promise<boolean> => {
+): Promise<{ ok: boolean; message: string; storage: 'subcollection' | 'root-doc' | null; code?: string }> => {
+  const checkpointPayload = stripUndefinedDeep({
+    ...checkpoint,
+    source: 'aurum',
+  });
   const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
-  if (!checkpointsRef) return false;
-  try {
-    const checkpointRef = doc(checkpointsRef, checkpoint.monthKey);
-    await setDoc(
-      checkpointRef,
-      stripUndefinedDeep({
-        ...checkpoint,
-        source: 'aurum',
-      }),
-      { merge: true },
-    );
-    return true;
-  } catch {
-    return false;
+  if (checkpointsRef) {
+    try {
+      const checkpointRef = doc(checkpointsRef, checkpoint.monthKey);
+      await setDoc(checkpointRef, checkpointPayload, { merge: true });
+      return { ok: true, message: 'Checkpoint guardado en subcolección cloud.', storage: 'subcollection' };
+    } catch (err: any) {
+      const classified = classifyCloudWriteError(err);
+      console.warn('[Aurum][close-checkpoint] subcollection write failed', {
+        code: classified.code || 'unknown',
+        path: `${WEALTH_CLOUD_DOC_COLLECTION}/{uid}/${WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_COLLECTION}/${checkpoint.monthKey}`,
+        monthKey: checkpoint.monthKey,
+      });
+      const wealthRef = await getWealthCloudRef();
+      if (!wealthRef) {
+        return {
+          ok: false,
+          message: classified.code === 'permission-denied'
+            ? classified.message
+            : 'No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre.',
+          storage: null,
+          code: classified.code,
+        };
+      }
+      try {
+        await setDoc(
+          wealthRef,
+          {
+            [WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD]: {
+              [checkpoint.monthKey]: checkpointPayload,
+            },
+          },
+          { merge: true },
+        );
+        return { ok: true, message: 'Checkpoint guardado en doc raíz cloud.', storage: 'root-doc' };
+      } catch (fallbackErr: any) {
+        const fallbackClassified = classifyCloudWriteError(fallbackErr);
+        console.error('[Aurum][close-checkpoint] root-doc fallback failed', {
+          code: fallbackClassified.code || 'unknown',
+          path: `${WEALTH_CLOUD_DOC_COLLECTION}/{uid}.${WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD}.${checkpoint.monthKey}`,
+          monthKey: checkpoint.monthKey,
+        });
+        return {
+          ok: false,
+          message: fallbackClassified.message,
+          storage: null,
+          code: fallbackClassified.code || classified.code,
+        };
+      }
+    }
   }
+  return {
+    ok: false,
+    message: 'No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre.',
+    storage: null,
+    code: 'no_uid_or_firebase_config',
+  };
 };
 
 const syncLocalCheckpointToCloudBestEffort = async (monthKey: string) => {
@@ -2814,10 +2876,35 @@ export const captureMonthlyCloseCheckpointCloudFirst = async (
 ): Promise<WealthMonthlyCloseCheckpoint | null> => {
   const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
   if (!checkpoint) return null;
-  const cloudOk = await saveMonthlyCloseCheckpointToCloud(checkpoint);
-  if (!cloudOk) return null;
+  const cloudResult = await saveMonthlyCloseCheckpointToCloud(checkpoint);
+  if (!cloudResult.ok) return null;
   saveMonthlyCloseCheckpointToLocalCache(checkpoint);
   return checkpoint;
+};
+
+const captureMonthlyCloseCheckpointCloudFirstDetailed = async (
+  monthKey: string,
+  options?: { overwrite?: boolean },
+): Promise<{ checkpoint: WealthMonthlyCloseCheckpoint | null; errorMessage: string | null }> => {
+  const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
+  if (!checkpoint) {
+    return {
+      checkpoint: null,
+      errorMessage: 'No pude preparar el checkpoint del cierre para ese mes.',
+    };
+  }
+  const cloudResult = await saveMonthlyCloseCheckpointToCloud(checkpoint);
+  if (!cloudResult.ok) {
+    return {
+      checkpoint: null,
+      errorMessage: cloudResult.message,
+    };
+  }
+  saveMonthlyCloseCheckpointToLocalCache(checkpoint);
+  return {
+    checkpoint,
+    errorMessage: null,
+  };
 };
 
 const finiteOr = (value: unknown, fallback = 0): number => {
@@ -3210,6 +3297,38 @@ const getWealthCloudRef = async () => {
   const uid = getCurrentUid();
   if (!uid) return null;
   return doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);
+};
+
+const classifyCloudWriteError = (err: any): { code: string; message: string } => {
+  const code = String(err?.code || '').trim();
+  if (code === 'permission-denied') {
+    return {
+      code,
+      message: 'Permiso denegado al guardar el checkpoint cloud del cierre.',
+    };
+  }
+  if (code === 'unauthenticated' || code === 'auth/no-current-user') {
+    return {
+      code,
+      message: 'No hay una sesión válida para guardar el checkpoint cloud del cierre.',
+    };
+  }
+  if (code === 'unavailable') {
+    return {
+      code,
+      message: 'Firestore no está disponible para guardar el checkpoint cloud del cierre.',
+    };
+  }
+  if (code === 'deadline-exceeded') {
+    return {
+      code,
+      message: 'La red tardó demasiado al guardar el checkpoint cloud del cierre.',
+    };
+  }
+  return {
+    code,
+    message: String(err?.message || 'No pude guardar el checkpoint cloud del cierre.'),
+  };
 };
 
 const getWealthBackupsCollectionRef = async () => {
@@ -3867,12 +3986,14 @@ export const closeMonthlyWithCheckpoint = async (input: {
       closedAt: input.closedAt || nowIso(),
     });
   }
-  const checkpoint = await captureMonthlyCloseCheckpointCloudFirst(normalizedMonthKey, {
+  const checkpointResult = await captureMonthlyCloseCheckpointCloudFirstDetailed(normalizedMonthKey, {
     overwrite: true,
   });
-  if (!checkpoint) {
+  if (!checkpointResult.checkpoint) {
     throw new Error(
-      'No se pudo guardar el punto de respaldo del cierre. Por seguridad, el cierre no se ejecutó.',
+      checkpointResult.errorMessage
+        ? `${checkpointResult.errorMessage} Por seguridad, el cierre no se ejecutó.`
+        : 'No se pudo guardar el punto de respaldo del cierre. Por seguridad, el cierre no se ejecutó.',
     );
   }
   return upsertMonthlyClosure({
