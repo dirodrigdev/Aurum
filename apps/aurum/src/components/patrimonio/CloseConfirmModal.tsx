@@ -25,7 +25,6 @@ interface CloseConfirmModalProps {
   closeSequenceWarning: string;
   closeBlockingIssues: CloseValidationIssueView[];
   closeWarningIssues: CloseValidationIssueView[];
-  closeCanonicalWarning?: string;
   closeInfo: string;
   closeError: string;
   closeFxReady: boolean;
@@ -68,7 +67,6 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
   closeSequenceWarning,
   closeBlockingIssues,
   closeWarningIssues,
-  closeCanonicalWarning,
   closeInfo,
   closeError,
   closeFxReady,
@@ -131,11 +129,6 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
         {closeSequenceWarning && (
           <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
             {closeSequenceWarning}
-          </div>
-        )}
-        {!!closeCanonicalWarning && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            {closeCanonicalWarning}
           </div>
         )}
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">

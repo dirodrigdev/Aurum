@@ -28,7 +28,6 @@ import {
 } from '../services/bankApi';
 import {
   WealthBlock,
-  WealthCheckpointStateSnapshot,
   WealthCurrency,
   WealthInvestmentInstrument,
   WealthMonthlyClosure,
@@ -58,10 +57,8 @@ import {
   loadIncludeRiskCapitalInTotals,
   loadFxRates,
   loadBankTokens,
-  loadCloudWealthStateSnapshotForClose,
   loadInvestmentInstruments,
   loadWealthRecords,
-  readLocalWealthStateSnapshotForClose,
   refreshFxRatesFromLive,
   RISK_CAPITAL_LABEL_CLP,
   RISK_CAPITAL_LABEL_USD,
@@ -116,10 +113,6 @@ import {
   shouldKeepMonthlyCloseDebtGuardError,
   shouldBlockMonthlyCloseForDebtMismatch,
 } from '../services/monthlyCloseDebtGuard';
-import {
-  buildMonthlyCloseSnapshotDetails,
-  hasMaterialDifferenceBetweenMonthlyCloseSnapshots,
-} from '../services/monthlyCloseCanonicalSource';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -4159,11 +4152,7 @@ export const Patrimonio: React.FC = () => {
   const [carryMessage, setCarryMessage] = useState('');
   const [closeError, setCloseError] = useState('');
   const [closeInfo, setCloseInfo] = useState('');
-  const [closeCanonicalWarning, setCloseCanonicalWarning] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
-  const [closeDialogPreparing, setCloseDialogPreparing] = useState(false);
-  const [closeCanonicalState, setCloseCanonicalState] = useState<WealthCheckpointStateSnapshot | null>(null);
-  const [closeCanonicalSource, setCloseCanonicalSource] = useState<'cloud' | 'local' | null>(null);
   const [closeOverwriteConfirmOpen, setCloseOverwriteConfirmOpen] = useState(false);
   const [closeMonthDraft, setCloseMonthDraft] = useState(() =>
     deriveOperationalMonthKeyFromClosures(loadClosures(), currentMonthKey()),
@@ -4196,8 +4185,6 @@ export const Patrimonio: React.FC = () => {
   );
   const [displayCurrency, setDisplayCurrency] = useState<WealthCurrency>(() => readPreferredDisplayCurrency());
   const suppressCloseDraftResetRef = useRef(false);
-  const closeDialogClosures = closeCanonicalState?.closures || closures;
-  const closeDialogRecords = closeCanonicalState?.records || records;
 
   useEffect(() => {
     if (!closeConfirmOpen) {
@@ -4216,10 +4203,10 @@ export const Patrimonio: React.FC = () => {
 
   useEffect(() => {
     if (!closeConfirmOpen) return;
-    const closureForDraft = closeDialogClosures.find((closure) => closure.monthKey === closeMonthDraft) || null;
-    const sourceFx = closureForDraft?.fxRates || closeCanonicalState?.fx || fx;
+    const closureForDraft = closures.find((closure) => closure.monthKey === closeMonthDraft) || null;
+    const sourceFx = closureForDraft?.fxRates || fx;
     setCloseFxDraft(buildCloseFxDraft(sourceFx));
-  }, [closeConfirmOpen, closeMonthDraft, closeDialogClosures, closeCanonicalState, fx]);
+  }, [closeConfirmOpen, closeMonthDraft, closures, fx]);
 
   useEffect(() => {
     window.localStorage.setItem(PREFERRED_DISPLAY_CURRENCY_KEY, displayCurrency);
@@ -4582,7 +4569,6 @@ export const Patrimonio: React.FC = () => {
   ]);
 
   const latestClosure = closures[0] || null;
-  const latestCloseDialogClosure = closeDialogClosures[0] || null;
 
   const growthVsPrevClosure = useMemo(() => {
     if (closures.length < 2) return null;
@@ -4633,18 +4619,18 @@ export const Patrimonio: React.FC = () => {
     sectionAmounts.totalNetClp,
   ]);
   const selectedClosureForDraft = useMemo(
-    () => closeDialogClosures.find((closure) => closure.monthKey === closeMonthDraft) || null,
-    [closeDialogClosures, closeMonthDraft],
+    () => closures.find((closure) => closure.monthKey === closeMonthDraft) || null,
+    [closures, closeMonthDraft],
   );
   const latestClosureSummary = useMemo(() => {
-    if (!latestCloseDialogClosure?.monthKey) return null;
-    return `Último cierre registrado: ${monthLabel(latestCloseDialogClosure.monthKey).toLowerCase()}.`;
-  }, [latestCloseDialogClosure]);
+    if (!latestClosure?.monthKey) return null;
+    return `Último cierre registrado: ${monthLabel(latestClosure.monthKey).toLowerCase()}.`;
+  }, [latestClosure]);
   const latestClosureTechnicalUpdate = useMemo(() => {
-    if (!latestCloseDialogClosure) return null;
+    if (!latestClosure) return null;
     const candidates = [
-      ...(latestCloseDialogClosure.repairAudit || []).map((entry) => String(entry.repairedAt || '')),
-      ...(latestCloseDialogClosure.previousVersions || []).map((version) => String(version.replacedAt || '')),
+      ...(latestClosure.repairAudit || []).map((entry) => String(entry.repairedAt || '')),
+      ...(latestClosure.previousVersions || []).map((version) => String(version.replacedAt || '')),
     ]
       .map((value) => new Date(value).getTime())
       .filter((value) => Number.isFinite(value));
@@ -4652,14 +4638,14 @@ export const Patrimonio: React.FC = () => {
     if (!Number.isFinite(latestTechnicalMs)) return null;
     const days = Math.max(0, Math.floor((Date.now() - latestTechnicalMs) / (1000 * 60 * 60 * 24)));
     return `Última modificación técnica del cierre anterior: hace ${days} día(s).`;
-  }, [latestCloseDialogClosure]);
+  }, [latestClosure]);
   const closeSequenceWarning = useMemo(() => {
-    if (!latestCloseDialogClosure?.monthKey) return null;
-    if (latestCloseDialogClosure.monthKey === closeMonthDraft) return null;
-    const expectedNextMonth = monthAfterKey(latestCloseDialogClosure.monthKey);
+    if (!latestClosure?.monthKey) return null;
+    if (latestClosure.monthKey === closeMonthDraft) return null;
+    const expectedNextMonth = monthAfterKey(latestClosure.monthKey);
     if (expectedNextMonth === closeMonthDraft) return null;
-    return `Secuencia a revisar: el último cierre registrado es ${monthLabel(latestCloseDialogClosure.monthKey).toLowerCase()} y el mes a cerrar es ${monthLabel(closeMonthDraft).toLowerCase()}.`;
-  }, [latestCloseDialogClosure, closeMonthDraft]);
+    return `Secuencia a revisar: el último cierre registrado es ${monthLabel(latestClosure.monthKey).toLowerCase()} y el mes a cerrar es ${monthLabel(closeMonthDraft).toLowerCase()}.`;
+  }, [latestClosure, closeMonthDraft]);
 
   const sectionAmountsDisplay = useMemo(() => {
     const convert = (valueClp: number) => fromClpUsingFx(valueClp, displayCurrency, activeDisplayFx);
@@ -4864,43 +4850,6 @@ export const Patrimonio: React.FC = () => {
     latestRecordsForMonth(sourceRecords, targetMonthKey).filter(
       (record) => !isStartMonthCheckpointRecord(record),
     );
-
-  const buildCloseSnapshotDetailsFromState = (
-    state: WealthCheckpointStateSnapshot,
-    targetMonthKey: string,
-  ) =>
-    buildMonthlyCloseSnapshotDetails({
-      state,
-      targetMonthKey,
-      includeRiskCapitalInTotals,
-    });
-
-  const readCanonicalCloseStateForDialog = async (targetMonthKey: string) => {
-    const localState = readLocalWealthStateSnapshotForClose();
-    const cloudState = await loadCloudWealthStateSnapshotForClose();
-    if (!cloudState) {
-      return {
-        ok: false as const,
-        errorMessage: `No pude leer el estado cloud actual para cerrar ${monthLabel(targetMonthKey).toLowerCase()}. Reintenta antes de confirmar.`,
-      };
-    }
-    const localSnapshot = buildCloseSnapshotDetailsFromState(localState, targetMonthKey);
-    const cloudSnapshot = buildCloseSnapshotDetailsFromState(cloudState, targetMonthKey);
-    const divergent = hasMaterialDifferenceBetweenMonthlyCloseSnapshots(
-      localSnapshot,
-      cloudSnapshot,
-    );
-    return {
-      ok: true as const,
-      localState,
-      cloudState,
-      warningMessage: divergent
-        ? `Se detectó diferencia entre estado local y cloud. Se usará el estado cloud actual para cerrar ${monthLabel(targetMonthKey).toLowerCase()}.`
-        : '',
-      fingerprint: cloudSnapshot.fingerprint,
-      snapshot: cloudSnapshot,
-    };
-  };
 
   const monthConsistencyCheckedRef = useRef(false);
   const autoCarryAttemptedMonthRef = useRef<string | null>(null);
@@ -5294,33 +5243,34 @@ export const Patrimonio: React.FC = () => {
       targetMonthKey,
       visualMonthSnapshotDate(targetMonthKey),
     );
-    const canonicalBaseState = closeCanonicalState || readLocalWealthStateSnapshotForClose();
-    const frozenCanonicalSnapshot = buildCloseSnapshotDetailsFromState(canonicalBaseState, targetMonthKey);
-    const latestCloudState = await loadCloudWealthStateSnapshotForClose();
-    if (!latestCloudState) {
-      const message = `No pude revalidar el estado cloud actual de ${monthLabel(targetMonthKey).toLowerCase()} antes de cerrar.`;
-      setCloseError(message);
-      return { ok: false, errorMessage: message };
-    }
-    const latestCloudSnapshot = buildCloseSnapshotDetailsFromState(latestCloudState, targetMonthKey);
-    if (
-      closeCanonicalSource === 'cloud' &&
-      latestCloudSnapshot.fingerprint !== frozenCanonicalSnapshot.fingerprint
-    ) {
-      const message = 'Los datos cambiaron. Recalcula antes de cerrar.';
-      setCloseCanonicalWarning(message);
-      setCloseError(message);
-      return { ok: false, errorMessage: message };
-    }
-    let targetRecords = frozenCanonicalSnapshot.targetRecords;
+    const persistedRecords = loadWealthRecords();
+    let targetRecords = buildCanonicalCloseTargetRecords(persistedRecords, targetMonthKey);
     let targetAmounts = computeWealthHomeSectionAmounts(
       resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals).recordsForTotals,
+      fxForClose,
+    );
+    const liveTargetRecords = buildCanonicalCloseTargetRecords(records, targetMonthKey);
+    const liveTargetAmounts = computeWealthHomeSectionAmounts(
+      resolveRiskCapitalRecordsForTotals(liveTargetRecords, includeRiskCapitalInTotals).recordsForTotals,
       fxForClose,
     );
     if (
       targetMonthKey === monthKey &&
       shouldBlockMonthlyCloseForDebtMismatch({
-        liveDebtClp: Math.abs(frozenCanonicalSnapshot.amounts.nonMortgageDebt),
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
+        previewDebtClp: targetAmounts.nonMortgageDebt,
+      }) &&
+      Math.abs(liveTargetAmounts.nonMortgageDebt) >= 1_000_000
+    ) {
+      // Si el storage local quedó atrasado respecto al estado vivo del mes, priorizamos el dataset vivo
+      // para que preview y persistencia usen la misma base canónica antes de cerrar.
+      targetRecords = liveTargetRecords;
+      targetAmounts = liveTargetAmounts;
+    }
+    if (
+      targetMonthKey === monthKey &&
+      shouldBlockMonthlyCloseForDebtMismatch({
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
         previewDebtClp: targetAmounts.nonMortgageDebt,
       })
     ) {
@@ -5328,7 +5278,7 @@ export const Patrimonio: React.FC = () => {
       console.warn('[Aurum][monthly-close-debt-guard][persist-block]', {
         source: 'completeMonthlyClose',
         targetMonthKey,
-        liveDebtClp: Math.abs(frozenCanonicalSnapshot.amounts.nonMortgageDebt),
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
         previewDebtClp: Math.abs(targetAmounts.nonMortgageDebt),
         previewTotalClp: targetAmounts.totalNetClp,
         shouldBlock: true,
@@ -5339,7 +5289,6 @@ export const Patrimonio: React.FC = () => {
     }
     setCloseError('');
     setCloseInfo('');
-    setCloseCanonicalWarning('');
     setCloseConfirmOpen(false);
     try {
       await closeMonthlyWithCheckpoint({
@@ -5347,7 +5296,6 @@ export const Patrimonio: React.FC = () => {
         records: targetRecords,
         fxRates: fxForClose,
         closedAt: new Date(toCloseDateFromMonthKey(targetMonthKey)).toISOString(),
-        checkpointBaseState: canonicalBaseState,
       });
     } catch (error: any) {
       const message = String(error?.message || 'No se pudo guardar el checkpoint de cierre en la nube.');
@@ -5384,9 +5332,6 @@ export const Patrimonio: React.FC = () => {
           nextVisualMonth,
         ).toLowerCase()} tenga datos listos para revisar.`,
       );
-      setCloseCanonicalState(null);
-      setCloseCanonicalSource(null);
-      setCloseCanonicalWarning('');
       return { ok: true };
     }
     setMonthKey(nextVisualMonth);
@@ -5394,9 +5339,6 @@ export const Patrimonio: React.FC = () => {
     const advanced = nextVisualMonth !== targetMonthKey;
     if (!advanced) {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
-      setCloseCanonicalState(null);
-      setCloseCanonicalSource(null);
-      setCloseCanonicalWarning('');
       return { ok: true };
     }
     if (carryResult.added > 0) {
@@ -5416,9 +5358,6 @@ export const Patrimonio: React.FC = () => {
         }. ${monthLabel(nextVisualMonth)} quedó sin cambios adicionales porque no había valores nuevos para arrastrar.`,
       );
     }
-    setCloseCanonicalState(null);
-    setCloseCanonicalSource(null);
-    setCloseCanonicalWarning('');
     return { ok: true };
   };
   const finalizeMonthlyClose = async (
@@ -5533,7 +5472,7 @@ export const Patrimonio: React.FC = () => {
 
   const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
     const issues: CloseValidationIssue[] = [];
-    const targetRecords = buildCanonicalCloseTargetRecords(closeDialogRecords, targetMonthKey);
+    const targetRecords = buildCanonicalCloseTargetRecords(records, targetMonthKey);
     const realCurrentMonth = calendarMonthKey;
 
     if (targetMonthKey > realCurrentMonth) {
@@ -5734,14 +5673,19 @@ export const Patrimonio: React.FC = () => {
           });
           return;
         }
-        const notices: string[] = [];
-        if (allCarried) notices.push('valor arrastrado');
-        if (staleByAge) notices.push(`última actualización ${ageDays} días atrás (máximo ${check.rule.maxAgeDays})`);
-        if (notices.length) {
+        if (allCarried) {
           issues.push({
-            type: 'config_update_warning',
-            level: 'warning',
-            label: `Configuración de cierre · ${check.label}: ${notices.join(' · ')} (puedes cerrar igual).`,
+            type: 'config_update_required',
+            level: 'error',
+            label: `Configuración de cierre · ${check.label}: valor arrastrado (requiere actualización real).`,
+            section: check.section,
+          });
+        }
+        if (staleByAge) {
+          issues.push({
+            type: 'config_update_required',
+            level: 'error',
+            label: `Configuración de cierre · ${check.label}: última actualización ${ageDays} días atrás (máximo ${check.rule.maxAgeDays}).`,
             section: check.section,
           });
         }
@@ -5792,7 +5736,7 @@ export const Patrimonio: React.FC = () => {
 
   const closeValidationDraft = useMemo(
     () => evaluateCloseValidation(closeMonthDraft),
-    [closeMonthDraft, closeDialogRecords, investmentInstruments, closeConfigSnapshot],
+    [closeMonthDraft, records, investmentInstruments, closeConfigSnapshot],
   );
   const closeFxValues = useMemo(() => {
     const parsedUsd = parseStrictNumber(closeFxDraft.usdClp);
@@ -5808,7 +5752,7 @@ export const Patrimonio: React.FC = () => {
   const closePreview = useMemo(() => {
     const previewingCurrentWorkingMonth = closeMonthDraft === monthKey && !selectedClosureForDraft;
     const previewRecords = previewingCurrentWorkingMonth
-      ? buildCanonicalCloseTargetRecords(closeDialogRecords, closeMonthDraft)
+      ? buildCanonicalCloseTargetRecords(records, closeMonthDraft)
       : closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(previewRecords, includeRiskCapitalInTotals);
     const fromLiveRecords = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
@@ -5838,7 +5782,6 @@ export const Patrimonio: React.FC = () => {
     const amounts =
       fromSelectedClosure ||
       (previewingCurrentWorkingMonth &&
-      !closeCanonicalState &&
       Math.abs(fromLiveRecords.nonMortgageDebt) < 1 &&
       Math.abs(sectionAmounts.nonMortgageDebt) >= 1_000_000
         ? sectionAmounts
@@ -5863,12 +5806,11 @@ export const Patrimonio: React.FC = () => {
     selectedClosureForDraft,
     monthRecords,
     sectionAmounts,
-    closeCanonicalState,
     closeValidationDraft.targetRecords,
     includeRiskCapitalInTotals,
     closeFxValues,
     resolveSectionAmountsFromClosure,
-    closeDialogRecords,
+    records,
   ]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
@@ -5937,12 +5879,7 @@ export const Patrimonio: React.FC = () => {
 
   const debtGuardRuntime = useMemo(() => {
     const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(closeValidationDraft.targetRecords, closeFxValues);
-    const visibleNonMortgageDebtClp =
-      closeMonthDraft === monthKey
-        ? closeCanonicalState
-          ? Math.abs(closePreview.nonMortgageDebt)
-          : Math.abs(sectionAmounts.nonMortgageDebt)
-        : 0;
+    const visibleNonMortgageDebtClp = closeMonthDraft === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
     const liveDebtClp = Math.max(rawNonMortgageDebtClp, visibleNonMortgageDebtClp);
     const previewDebtClp = Math.abs(closePreview.nonMortgageDebt);
     const shouldBlock = shouldBlockMonthlyCloseForDebtMismatch({
@@ -5963,7 +5900,6 @@ export const Patrimonio: React.FC = () => {
     closeMonthDraft,
     monthKey,
     sectionAmounts.nonMortgageDebt,
-    closeCanonicalState,
     closePreview.nonMortgageDebt,
     closePreview.totalNetClp,
   ]);
@@ -5975,7 +5911,7 @@ export const Patrimonio: React.FC = () => {
     setCloseError('');
   }, [closeConfirmOpen, closeError, debtGuardRuntime.shouldBlock]);
 
-  const attemptMonthlyClose = async (targetMonthKey: string) => {
+  const attemptMonthlyClose = (targetMonthKey: string) => {
     const evaluation = evaluateCloseValidation(targetMonthKey);
     const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
     const carried = evaluation.issues.filter((issue) => issue.type === 'carried_value_unconfirmed');
@@ -6022,37 +5958,9 @@ export const Patrimonio: React.FC = () => {
       );
       return;
     }
-    const frozenCanonicalState = closeCanonicalState || readLocalWealthStateSnapshotForClose();
-    const frozenCanonicalSnapshot = buildCloseSnapshotDetailsFromState(frozenCanonicalState, targetMonthKey);
-    const latestCloudState = await loadCloudWealthStateSnapshotForClose();
-    if (!latestCloudState) {
-      setCloseInfo('');
-      setCloseError(`No pude revalidar el estado cloud actual de ${monthLabel(targetMonthKey).toLowerCase()} antes de cerrar.`);
-      return;
-    }
-    const latestCloudSnapshot = buildCloseSnapshotDetailsFromState(latestCloudState, targetMonthKey);
-    if (
-      closeCanonicalSource === 'cloud' &&
-      latestCloudSnapshot.fingerprint !== frozenCanonicalSnapshot.fingerprint
-    ) {
-      const message = 'Los datos cambiaron. Recalcula antes de cerrar.';
-      setCloseCanonicalWarning(message);
-      setCloseInfo('');
-      setCloseError(message);
-      return;
-    }
     const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(evaluation.targetRecords, fxForClose);
-    const visibleNonMortgageDebtClp =
-      targetMonthKey === monthKey
-        ? closeCanonicalState
-          ? Math.abs(closePreview.nonMortgageDebt)
-          : Math.abs(sectionAmounts.nonMortgageDebt)
-        : 0;
-    const effectiveLiveDebtClp = Math.max(
-      rawNonMortgageDebtClp,
-      visibleNonMortgageDebtClp,
-      Math.abs(frozenCanonicalSnapshot.amounts.nonMortgageDebt),
-    );
+    const visibleNonMortgageDebtClp = targetMonthKey === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
+    const effectiveLiveDebtClp = Math.max(rawNonMortgageDebtClp, visibleNonMortgageDebtClp);
     if (
       shouldBlockMonthlyCloseForDebtMismatch({
         liveDebtClp: effectiveLiveDebtClp,
@@ -6072,7 +5980,7 @@ export const Patrimonio: React.FC = () => {
       setCloseError(MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE);
       return;
     }
-    const existingClosure = closeDialogClosures.find((closure) => closure.monthKey === targetMonthKey) || null;
+    const existingClosure = closures.find((closure) => closure.monthKey === targetMonthKey) || null;
     if (existingClosure) {
       suppressCloseDraftResetRef.current = true;
       setPendingCloseOverwrite({
@@ -6087,28 +5995,11 @@ export const Patrimonio: React.FC = () => {
     void finalizeMonthlyClose(targetMonthKey, fxForClose, carried.length);
   };
 
-  const runMonthlyClose = async () => {
-    if (closeDialogPreparing) return;
-    setCloseDialogPreparing(true);
+  const runMonthlyClose = () => {
     setCloseError('');
     setCloseInfo('');
-    setCloseCanonicalWarning('');
     setCloseMonthDraft(monthKey);
-    try {
-      const prepared = await readCanonicalCloseStateForDialog(monthKey);
-      if (!prepared.ok) {
-        setCloseCanonicalState(null);
-        setCloseCanonicalSource(null);
-        setCloseError(prepared.errorMessage);
-        return;
-      }
-      setCloseCanonicalState(prepared.cloudState);
-      setCloseCanonicalSource('cloud');
-      setCloseCanonicalWarning(prepared.warningMessage);
-      setCloseConfirmOpen(true);
-    } finally {
-      setCloseDialogPreparing(false);
-    }
+    setCloseConfirmOpen(true);
   };
 
   const closeBlockingIssues = useMemo(
@@ -6604,8 +6495,8 @@ export const Patrimonio: React.FC = () => {
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold">Cierre mensual manual</div>
-          <Button size="sm" onClick={() => void runMonthlyClose()} disabled={closeDialogPreparing}>
-            {closeDialogPreparing ? 'Cargando cierre…' : 'Cerrar mes'}
+          <Button size="sm" onClick={runMonthlyClose}>
+            Cerrar mes
           </Button>
         </div>
         {!!closeInfo && <div className="text-xs text-emerald-700">{closeInfo}</div>}
@@ -6649,7 +6540,6 @@ export const Patrimonio: React.FC = () => {
         closeSequenceWarning={closeSequenceWarning}
         closeBlockingIssues={closeBlockingIssues}
         closeWarningIssues={closeWarningIssues}
-        closeCanonicalWarning={closeCanonicalWarning}
         closeInfo={closeInfo}
         closeError={closeError}
         closeFxReady={closeFxReady}
@@ -6669,15 +6559,10 @@ export const Patrimonio: React.FC = () => {
         onReview={reviewCloseIssue}
         onCancel={() => {
           setCloseConfirmOpen(false);
-          setCloseCanonicalState(null);
-          setCloseCanonicalSource(null);
-          setCloseCanonicalWarning('');
           setCloseError('');
           setCloseInfo('');
         }}
-        onAttemptClose={(nextMonthKey) => {
-          void attemptMonthlyClose(nextMonthKey);
-        }}
+        onAttemptClose={attemptMonthlyClose}
       />
 
       <ConfirmActionModal
