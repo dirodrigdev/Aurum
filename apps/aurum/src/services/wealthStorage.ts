@@ -309,11 +309,15 @@ export type WealthClosureRepairAuditEntry = {
   id: string;
   monthKey: string;
   repairedAt: string;
-  reason: 'uf_historical_repair';
-  field: 'ufClp';
-  previousValue: number;
-  nextValue: number;
-  source: string;
+  reason: 'uf_historical_repair' | 'repair_non_mortgage_debt_omitted_from_may_2026_closure';
+  field: 'ufClp' | 'nonMortgageDebtClp';
+  previousValue?: number;
+  nextValue?: number;
+  source?: string;
+  previousTotalNetClp?: number;
+  repairedTotalNetClp?: number;
+  previousNonMortgageDebtClp?: number;
+  repairedNonMortgageDebtClp?: number;
 };
 
 type WealthDemoSeedMeta = {
@@ -1231,20 +1235,37 @@ const normalizeClosureRepairAudit = (raw: unknown): WealthClosureRepairAuditEntr
   return raw
     .map((item: any): WealthClosureRepairAuditEntry | null => {
       const monthKey = normalizeMonthKey(item?.monthKey);
-      const previousValue = Number(item?.previousValue);
-      const nextValue = Number(item?.nextValue);
-      if (!monthKey || !Number.isFinite(previousValue) || !Number.isFinite(nextValue)) return null;
-      if (item?.reason !== 'uf_historical_repair' || item?.field !== 'ufClp') return null;
-      return {
-        id: String(item?.id || crypto.randomUUID()),
-        monthKey,
-        repairedAt: String(item?.repairedAt || nowIso()),
-        reason: 'uf_historical_repair',
-        field: 'ufClp',
-        previousValue,
-        nextValue,
-        source: String(item?.source || 'unknown'),
-      };
+      if (!monthKey) return null;
+      const reason = String(item?.reason || '');
+      if (reason === 'uf_historical_repair' && item?.field === 'ufClp') {
+        const previousValue = Number(item?.previousValue);
+        const nextValue = Number(item?.nextValue);
+        if (!Number.isFinite(previousValue) || !Number.isFinite(nextValue)) return null;
+        return {
+          id: String(item?.id || crypto.randomUUID()),
+          monthKey,
+          repairedAt: String(item?.repairedAt || nowIso()),
+          reason: 'uf_historical_repair',
+          field: 'ufClp',
+          previousValue,
+          nextValue,
+          source: String(item?.source || 'unknown'),
+        };
+      }
+      if (reason === 'repair_non_mortgage_debt_omitted_from_may_2026_closure' && item?.field === 'nonMortgageDebtClp') {
+        return {
+          id: String(item?.id || crypto.randomUUID()),
+          monthKey,
+          repairedAt: String(item?.repairedAt || nowIso()),
+          reason: 'repair_non_mortgage_debt_omitted_from_may_2026_closure',
+          field: 'nonMortgageDebtClp',
+          previousTotalNetClp: Number(item?.previousTotalNetClp || 0),
+          repairedTotalNetClp: Number(item?.repairedTotalNetClp || 0),
+          previousNonMortgageDebtClp: Number(item?.previousNonMortgageDebtClp || 0),
+          repairedNonMortgageDebtClp: Number(item?.repairedNonMortgageDebtClp || 0),
+        };
+      }
+      return null;
     })
     .filter((item): item is WealthClosureRepairAuditEntry => !!item);
 };
@@ -6650,6 +6671,153 @@ export const repairKnownHistoricalUfClpClosures = async (): Promise<{
     repairedCount: repairedMonthKeys.length,
     repairedMonthKeys,
     skippedMonthKeys,
+  };
+};
+
+export const repairMay2026NonMortgageDebtClosure = async (): Promise<{
+  ok: boolean;
+  message: string;
+  monthKey: string;
+  previousTotalNetClp: number | null;
+  repairedTotalNetClp: number | null;
+  previousNonMortgageDebtClp: number | null;
+  repairedNonMortgageDebtClp: number | null;
+}> => {
+  const monthKey = '2026-05';
+  const beforeClosures = loadClosures();
+  const targetBefore = beforeClosures.find((closure) => closure.monthKey === monthKey) || null;
+  if (!targetBefore) {
+    return {
+      ok: false,
+      message: 'No encontré el cierre 2026-05 para reparar.',
+      monthKey,
+      previousTotalNetClp: null,
+      repairedTotalNetClp: null,
+      previousNonMortgageDebtClp: null,
+      repairedNonMortgageDebtClp: null,
+    };
+  }
+
+  const currentMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthKey).filter(
+    (record) => !isStartMonthCheckpointRecord(record),
+  );
+  const sourceRecords = currentMonthRecords.length ? currentMonthRecords : (targetBefore.records || []);
+  const normalizedRecords = dedupeLatestByAsset(sourceRecords);
+  if (!normalizedRecords.length) {
+    return {
+      ok: false,
+      message: 'No encontré records canónicos para reparar el cierre 2026-05.',
+      monthKey,
+      previousTotalNetClp: null,
+      repairedTotalNetClp: null,
+      previousNonMortgageDebtClp: null,
+      repairedNonMortgageDebtClp: null,
+    };
+  }
+
+  const fxRates = targetBefore.fxRates || loadFxRates();
+  const repairedSummary = buildCanonicalClosureSummary(normalizedRecords, fxRates);
+  const repairedDebt = Number(repairedSummary.nonMortgageDebtClp || 0);
+  if (!Number.isFinite(repairedDebt) || repairedDebt < 1_000_000) {
+    return {
+      ok: false,
+      message: 'La fuente canónica no trae deuda no hipotecaria suficiente para reparar mayo 2026.',
+      monthKey,
+      previousTotalNetClp: Number(targetBefore.summary?.netClp || 0),
+      repairedTotalNetClp: Number(repairedSummary.netClp || 0),
+      previousNonMortgageDebtClp: Number(targetBefore.summary?.nonMortgageDebtClp || 0),
+      repairedNonMortgageDebtClp: Number(repairedSummary.nonMortgageDebtClp || 0),
+    };
+  }
+
+  const previousTotalNetClp = Number(targetBefore.summary?.netClp || 0);
+  const previousNonMortgageDebtClp = Number(targetBefore.summary?.nonMortgageDebtClp || 0);
+  const repairedTotalNetClp = Number(repairedSummary.netClp || 0);
+  const repairedNonMortgageDebtClp = Number(repairedSummary.nonMortgageDebtClp || 0);
+
+  const repairedAt = nowIso();
+  const previousVersion = toClosureVersion(targetBefore, repairedAt);
+  const auditEntry: WealthClosureRepairAuditEntry = {
+    id: crypto.randomUUID(),
+    monthKey,
+    repairedAt,
+    reason: 'repair_non_mortgage_debt_omitted_from_may_2026_closure',
+    field: 'nonMortgageDebtClp',
+    previousTotalNetClp,
+    repairedTotalNetClp,
+    previousNonMortgageDebtClp,
+    repairedNonMortgageDebtClp,
+  };
+
+  const nextClosure: WealthMonthlyClosure = {
+    ...targetBefore,
+    id: crypto.randomUUID(),
+    closedAt: repairedAt,
+    summary: repairedSummary,
+    fxRates,
+    records: normalizedRecords,
+    previousVersions: [previousVersion, ...(targetBefore.previousVersions || [])].slice(0, 24),
+    repairAudit: [auditEntry, ...(targetBefore.repairAudit || [])].slice(0, 24),
+  };
+
+  const nextClosures = [
+    nextClosure,
+    ...beforeClosures.filter((closure) => closure.monthKey !== monthKey),
+  ].sort(compareClosuresByMonthDesc);
+  saveClosures(nextClosures);
+
+  const wealthRef = await getWealthCloudRef();
+  if (!wealthRef) {
+    return {
+      ok: true,
+      message: 'Cierre mayo 2026 reparado localmente (sin sesión cloud disponible en este entorno).',
+      monthKey,
+      previousTotalNetClp,
+      repairedTotalNetClp,
+      previousNonMortgageDebtClp,
+      repairedNonMortgageDebtClp,
+    };
+  }
+
+  const synced = await syncWealthNow();
+  if (!synced) {
+    return {
+      ok: false,
+      message: 'No pude sincronizar la reparación en la nube.',
+      monthKey,
+      previousTotalNetClp,
+      repairedTotalNetClp,
+      previousNonMortgageDebtClp,
+      repairedNonMortgageDebtClp,
+    };
+  }
+
+  if (wealthRef) {
+    const cloudSnap = await getDocFromServer(wealthRef);
+    const cloudState = cloudSnap.exists() ? normalizeCloudWealthState(cloudSnap.data() || {}) : null;
+    const cloudClosure = cloudState?.closures.find((closure) => closure.monthKey === monthKey) || null;
+    const cloudDebt = Number(cloudClosure?.summary?.nonMortgageDebtClp || 0);
+    if (!cloudClosure || Math.abs(cloudDebt - repairedNonMortgageDebtClp) > 1) {
+      return {
+        ok: false,
+        message: 'No pude confirmar en servidor la reparación de deuda no hipotecaria de mayo 2026.',
+        monthKey,
+        previousTotalNetClp,
+        repairedTotalNetClp,
+        previousNonMortgageDebtClp,
+        repairedNonMortgageDebtClp,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    message: 'Cierre mayo 2026 reparado correctamente.',
+    monthKey,
+    previousTotalNetClp,
+    repairedTotalNetClp,
+    previousNonMortgageDebtClp,
+    repairedNonMortgageDebtClp,
   };
 };
 

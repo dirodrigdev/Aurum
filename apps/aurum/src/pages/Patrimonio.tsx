@@ -65,6 +65,7 @@ import {
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   removeWealthRecordForMonthAsset,
   resolveClosureSectionAmounts,
+  repairMay2026NonMortgageDebtClosure,
   saveBankTokens,
   saveFxRates,
   saveIncludeRiskCapitalInTotals,
@@ -4854,6 +4855,7 @@ export const Patrimonio: React.FC = () => {
     );
 
   const monthConsistencyCheckedRef = useRef(false);
+  const may2026RepairAttemptedRef = useRef(false);
   const autoCarryAttemptedMonthRef = useRef<string | null>(null);
   useEffect(() => {
     if (!hydrationReady) return;
@@ -4875,6 +4877,28 @@ export const Patrimonio: React.FC = () => {
     setMonthKey(fallbackMonth);
     setCarryMessage(`Mes de carga ajustado a ${monthLabel(fallbackMonth).toLowerCase()} (mes permitido).`);
   }, [monthKey, selectableLoadMonthKeys, realCurrentMonthKey]);
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (may2026RepairAttemptedRef.current) return;
+    if (monthKey !== '2026-05') return;
+    const mayClosure = closures.find((closure) => closure.monthKey === '2026-05') || null;
+    if (!mayClosure) return;
+    const persistedDebt = Number(mayClosure.summary?.nonMortgageDebtClp || 0);
+    const liveDebt = Number(sectionAmounts.nonMortgageDebt || 0);
+    if (Math.abs(persistedDebt) >= 1_000_000) return;
+    if (Math.abs(liveDebt) < 1_000_000) return;
+    may2026RepairAttemptedRef.current = true;
+    (async () => {
+      const result = await repairMay2026NonMortgageDebtClosure();
+      if (result.ok) {
+        refreshClosures();
+        setCloseInfo('Reparación aplicada en cierre mayo 2026: deuda no hipotecaria alineada con fuente canónica.');
+      } else {
+        setCloseError(result.message);
+      }
+    })();
+  }, [hydrationReady, monthKey, closures, sectionAmounts.nonMortgageDebt]);
 
   const previousClosureForMonthStart = useMemo(
     () =>
