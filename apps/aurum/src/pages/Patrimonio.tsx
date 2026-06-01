@@ -5796,6 +5796,33 @@ export const Patrimonio: React.FC = () => {
     setCloseError(`Revisa "${issue.label}" en ${sectionLabel[issue.section].toLowerCase()}.`);
   };
 
+  const computeRawNonMortgageDebtClpForClose = (
+    targetRecords: WealthRecord[],
+    fxForClose: { usdClp: number; eurClp: number; ufClp: number },
+  ) =>
+    targetRecords
+      .filter(
+        (record) =>
+          record.block === 'debt' &&
+          !isStartMonthCheckpointRecord(record) &&
+          !isMortgagePrincipalDebtLabel(record.label) &&
+          !isMortgageMetaDebtLabel(record.label),
+      )
+      .reduce(
+        (sum, record) =>
+          sum +
+          Math.abs(
+            toClp(
+              record.amount,
+              record.currency,
+              fxForClose.usdClp,
+              fxForClose.eurClp,
+              fxForClose.ufClp,
+            ),
+          ),
+        0,
+      );
+
   const attemptMonthlyClose = (targetMonthKey: string) => {
     const evaluation = evaluateCloseValidation(targetMonthKey);
     const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
@@ -5841,6 +5868,12 @@ export const Patrimonio: React.FC = () => {
       setCloseError(
         `Valor fuera de rango esperado. Campo: ${invalidFx.field}, valor: ${invalidFx.value}, mes: ${targetMonthKey}. Verifica formato.`,
       );
+      return;
+    }
+    const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(evaluation.targetRecords, fxForClose);
+    if (rawNonMortgageDebtClp >= 1_000_000 && Math.abs(closePreview.nonMortgageDebt) < 1) {
+      setCloseInfo('');
+      setCloseError('El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.');
       return;
     }
     const existingClosure = closures.find((closure) => closure.monthKey === targetMonthKey) || null;

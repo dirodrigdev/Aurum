@@ -11,6 +11,7 @@ import {
   BANK_BALANCE_CLP_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
+  RISK_CAPITAL_LABEL_CLP,
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
   importHistoricalClosuresFromCsv,
@@ -123,6 +124,59 @@ describe('canonical closure summary', () => {
     expect(summary.nonMortgageDebtClp).toBe(closureLikeAmounts.nonMortgageDebt);
     expect(summary.realEstateNetClp).toBe(closureLikeAmounts.realEstateNet);
     expect(summary.netClp).toBe(closureLikeAmounts.totalNetClp);
+  });
+
+  it('treats non-mortgage block debt outside the whitelist as close debt', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 21_007_516,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'investment',
+        source: 'BTG',
+        label: 'BTG total valorizacion',
+        amount: 1_525_849_377,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'investment',
+        source: 'Manual',
+        label: RISK_CAPITAL_LABEL_CLP,
+        amount: 279_822_000,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'real_estate',
+        source: 'Manual',
+        label: 'Valor propiedad',
+        amount: 252_754_619,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: 'Deuda no hipotecaria vigente',
+        amount: 93_200_000,
+        currency: 'CLP',
+      }),
+    ];
+
+    const summary = buildCanonicalClosureSummary(records, fxRates);
+    const previewAmounts = computeWealthHomeSectionAmounts(
+      records.filter((record) => record.label !== RISK_CAPITAL_LABEL_CLP),
+      fxRates,
+    );
+
+    expect(summary.investmentClp).toBe(1_525_849_377);
+    expect(summary.riskCapitalClp).toBe(279_822_000);
+    expect(summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(summary.netClp).toBe(1_706_411_512);
+    expect(previewAmounts.nonMortgageDebt).toBe(93_200_000);
+    expect(previewAmounts.totalNetClp).toBe(summary.netClp);
   });
 
   it('normalizes raw closures and previous versions with canonical fields when records exist', () => {

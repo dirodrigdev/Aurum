@@ -70,6 +70,7 @@ import {
   loadClosures,
   loadWealthRecords,
   previewUndoMonthlyClose,
+  RISK_CAPITAL_LABEL_CLP,
   rollbackLegacyMonthlyClose,
   resolveClosureSectionAmounts,
   saveClosures,
@@ -219,6 +220,55 @@ describe('monthly close undo checkpoint', () => {
     expect(created.summary.nonMortgageDebtClp).toBe(93_200_000);
     expect(persisted?.summary.nonMortgageDebtClp).toBe(93_200_000);
     expect(resolveClosureSectionAmounts({ closure: persisted }).nonMortgageDebtClp).toBe(93_200_000);
+  });
+
+  it('persists non-whitelisted debt block records in the saved close summary', async () => {
+    const records = [
+      ...recordsForMonth('2026-05', 21_007_516, 0).filter((record) => record.label !== DEBT_CARD_CLP_LABEL),
+      makeRecord(
+        {
+          block: 'investment',
+          source: 'Manual',
+          label: RISK_CAPITAL_LABEL_CLP,
+          amount: 279_822_000,
+          currency: 'CLP',
+        },
+        '2026-05',
+      ),
+      makeRecord(
+        {
+          block: 'real_estate',
+          source: 'Manual',
+          label: 'Valor propiedad',
+          amount: 252_754_619,
+          currency: 'CLP',
+        },
+        '2026-05',
+      ),
+      makeRecord(
+        {
+          block: 'debt',
+          source: 'Manual',
+          label: 'Deuda no hipotecaria vigente',
+          amount: 93_200_000,
+          currency: 'CLP',
+        },
+        '2026-05',
+      ),
+    ];
+
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    const persisted = loadClosures().find((closure) => closure.monthKey === '2026-05') || null;
+
+    expect(created.summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(persisted?.summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(resolveClosureSectionAmounts({ closure: persisted }).nonMortgageDebtClp).toBe(93_200_000);
+    expect(resolveClosureSectionAmounts({ closure: persisted }).totalNetClp).toBe(280_562_135);
   });
 
   it('undoes close to no-closure state when month had no closure before closing', async () => {

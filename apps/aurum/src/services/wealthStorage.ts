@@ -866,7 +866,8 @@ const MANUAL_CARD_LABEL_KEYS = new Set(
   MANUAL_CARD_LABELS.map(normalizeText),
 );
 
-// [PRODUCT RULE] Lista blanca explícita: sólo estas etiquetas se consideran deuda no hipotecaria.
+// [PRODUCT RULE] Estas etiquetas permiten identificar deuda no hipotecaria aunque venga como bank.
+// En block=debt, todo lo que no sea hipotecario se descuenta como deuda vigente.
 const NON_MORTGAGE_DEBT_LABEL_WHITELIST = new Set([
   normalizeText(DEBT_CARD_CLP_LABEL),
   normalizeText(DEBT_CARD_USD_LABEL),
@@ -892,7 +893,7 @@ export const isNonMortgageDebtRecord = (record: Pick<WealthRecord, 'block' | 'la
         source: record.source,
       });
     }
-    return false;
+    return true;
   }
   if (record.block !== 'bank') return false;
 
