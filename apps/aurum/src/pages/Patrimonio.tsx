@@ -107,6 +107,7 @@ import {
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
 } from '../services/wealthStorage';
+import { shouldBlockMonthlyCloseForDebtMismatch } from '../services/monthlyCloseDebtGuard';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -5238,15 +5239,35 @@ export const Patrimonio: React.FC = () => {
       visualMonthSnapshotDate(targetMonthKey),
     );
     const persistedRecords = loadWealthRecords();
-    const targetRecords = buildCanonicalCloseTargetRecords(persistedRecords, targetMonthKey);
-    const targetAmounts = computeWealthHomeSectionAmounts(
+    let targetRecords = buildCanonicalCloseTargetRecords(persistedRecords, targetMonthKey);
+    let targetAmounts = computeWealthHomeSectionAmounts(
       resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals).recordsForTotals,
+      fxForClose,
+    );
+    const liveTargetRecords = buildCanonicalCloseTargetRecords(records, targetMonthKey);
+    const liveTargetAmounts = computeWealthHomeSectionAmounts(
+      resolveRiskCapitalRecordsForTotals(liveTargetRecords, includeRiskCapitalInTotals).recordsForTotals,
       fxForClose,
     );
     if (
       targetMonthKey === monthKey &&
-      Math.abs(sectionAmounts.nonMortgageDebt) >= 1_000_000 &&
-      Math.abs(targetAmounts.nonMortgageDebt) < 1
+      shouldBlockMonthlyCloseForDebtMismatch({
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
+        previewDebtClp: targetAmounts.nonMortgageDebt,
+      }) &&
+      Math.abs(liveTargetAmounts.nonMortgageDebt) >= 1_000_000
+    ) {
+      // Si el storage local quedó atrasado respecto al estado vivo del mes, priorizamos el dataset vivo
+      // para que preview y persistencia usen la misma base canónica antes de cerrar.
+      targetRecords = liveTargetRecords;
+      targetAmounts = liveTargetAmounts;
+    }
+    if (
+      targetMonthKey === monthKey &&
+      shouldBlockMonthlyCloseForDebtMismatch({
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
+        previewDebtClp: targetAmounts.nonMortgageDebt,
+      })
     ) {
       const message = 'El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.';
       setCloseError(message);
@@ -5891,9 +5912,12 @@ export const Patrimonio: React.FC = () => {
     }
     const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(evaluation.targetRecords, fxForClose);
     const visibleNonMortgageDebtClp = targetMonthKey === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
+    const effectiveLiveDebtClp = Math.max(rawNonMortgageDebtClp, visibleNonMortgageDebtClp);
     if (
-      (rawNonMortgageDebtClp >= 1_000_000 || visibleNonMortgageDebtClp >= 1_000_000) &&
-      Math.abs(closePreview.nonMortgageDebt) < 1
+      shouldBlockMonthlyCloseForDebtMismatch({
+        liveDebtClp: effectiveLiveDebtClp,
+        previewDebtClp: closePreview.nonMortgageDebt,
+      })
     ) {
       setCloseInfo('');
       setCloseError('El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.');

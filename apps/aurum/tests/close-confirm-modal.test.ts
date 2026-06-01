@@ -63,5 +63,57 @@ describe('CloseConfirmModal close preview', () => {
     expect(html).toContain('$93.200.000');
     expect(html).toContain('$1.706.411.512');
     expect(html).not.toContain('-$0');
+    expect(html).not.toContain('El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.');
+  });
+
+  it('renders the red guardrail message when closeError is present', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(CloseConfirmModal, {
+        open: true,
+        closeMonthDraft: '2026-05',
+        monthKey: '2026-05',
+        realCurrentMonthKey: '2026-05',
+        selectedClosureMonthKey: null,
+        latestClosureSummary: 'Último cierre registrado: abril de 2026.',
+        latestClosureTechnicalUpdate: null,
+        closeSequenceWarning: '',
+        closeBlockingIssues: [],
+        closeWarningIssues: [],
+        closeInfo: '',
+        closeError:
+          'El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.',
+        closeFxReady: true,
+        closePreview: {
+          banks: 21_007_516,
+          investments: 1_525_849_377,
+          riskClp: 279_822_000,
+          hasRisk: true,
+          propertyNet: 252_754_619,
+          hasProperty: true,
+          nonMortgageDebt: 0,
+          usdClp: 893,
+          eurClp: 970,
+          ufClp: 39_000,
+          totalNetClp: 1_799_611_514,
+        },
+        closeFxDraft: {
+          usdClp: '893',
+          eurClp: '970',
+          ufClp: '39000',
+        },
+        monthLabel: (monthKey: string) => (monthKey === '2026-05' ? 'Mayo 2026' : monthKey),
+        onCloseMonthDraftChange: noop,
+        onCloseFxDraftChange: noop,
+        onResolveWithPrevious: noop,
+        onResolveExclude: noop,
+        onReview: noop,
+        onCancel: noop,
+        onAttemptClose: noop,
+      }),
+    );
+
+    expect(html).toContain(
+      'El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.',
+    );
   });
 });
