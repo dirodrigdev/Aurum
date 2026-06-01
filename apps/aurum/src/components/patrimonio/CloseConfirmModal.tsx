@@ -1,6 +1,11 @@
 import React from 'react';
 import { Button, Input } from '../Components';
 import { formatCurrency } from '../../utils/wealthFormat';
+import {
+  MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE,
+  MONTHLY_CLOSE_DEBT_GUARD_MIN_CLP,
+  MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP,
+} from '../../services/monthlyCloseDebtGuard';
 
 interface CloseValidationIssueView {
   type: string;
@@ -78,6 +83,19 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
 }) => {
   if (!open) return null;
   const isHistoricalClose = closeMonthDraft !== realCurrentMonthKey;
+  const visibleDebtClp = Math.abs(Number(closePreview.nonMortgageDebt || 0));
+  const expectedTotalClp =
+    Number(closePreview.investments || 0) +
+    Number(closePreview.banks || 0) +
+    Number(closePreview.propertyNet || 0) -
+    visibleDebtClp;
+  const previewAppearsDebtIncluded =
+    visibleDebtClp >= MONTHLY_CLOSE_DEBT_GUARD_MIN_CLP &&
+    Math.abs(Number(closePreview.totalNetClp || 0) - expectedTotalClp) <= MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP;
+  const shouldSuppressDebtGuardError =
+    String(closeError || '').trim() === MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE &&
+    previewAppearsDebtIncluded;
+  const displayCloseError = shouldSuppressDebtGuardError ? '' : closeError;
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/40 p-4 flex items-end sm:items-center justify-center">
@@ -181,9 +199,9 @@ export const CloseConfirmModal: React.FC<CloseConfirmModalProps> = ({
           </div>
         )}
 
-        {!!closeError && (
+        {!!displayCloseError && (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {closeError}
+            {displayCloseError}
           </div>
         )}
 
