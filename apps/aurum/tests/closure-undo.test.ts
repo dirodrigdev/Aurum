@@ -74,6 +74,7 @@ import {
   resolveClosureSectionAmounts,
   saveClosures,
   saveWealthRecords,
+  syncWealthNow,
   undoMonthlyCloseToCheckpoint,
   upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
@@ -286,6 +287,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
 
     const preview = await previewUndoMonthlyClose('2026-05');
@@ -392,6 +394,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
     const currentRecords = loadWealthRecords();
 
@@ -404,6 +407,14 @@ describe('monthly close undo checkpoint', () => {
     expect(
       (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
     ).toBe(false);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closureDeletionTombstones || []).some(
+        (item: any) =>
+          item.monthKey === '2026-05' &&
+          item.reason === 'legacy_close_rollback_no_full_checkpoint' &&
+          item.source === 'legacy_rollback',
+      ),
+    ).toBe(true);
   });
 
   it('legacy rollback writes the canonical root closures payload without 2026-05', async () => {
@@ -421,6 +432,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
 
     const setDocMock = vi.mocked(setDoc);
@@ -433,8 +445,72 @@ describe('monthly close undo checkpoint', () => {
       ([ref, payload]) => String((ref as any)?.__path || '') === 'aurum_wealth/test-user' && Array.isArray((payload as any)?.closures),
     );
     expect(rootWrite).toBeTruthy();
-    expect((rootWrite?.[1] as any)?.closures.some((closure: any) => closure.monthKey === '2026-05')).toBe(false);
-    expect((rootWrite?.[1] as any)?.records).toEqual(preCloseRecords);
+    const payload = rootWrite?.[1] as any;
+    expect(payload?.closures.some((closure: any) => closure.monthKey === '2026-05')).toBe(false);
+    expect(payload?.closureDeletionTombstones?.some((item: any) => item.monthKey === '2026-05')).toBe(true);
+    expect(payload).not.toHaveProperty('records');
+    expect(payload).not.toHaveProperty('instruments');
+    expect(payload).not.toHaveProperty('fx');
+  });
+
+  it('hydrate does not revive a local close suppressed by a rollback tombstone', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    const april = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 8_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    const may = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    await syncWealthNow();
+    removeCheckpointState('2026-05');
+
+    const rolledBack = await rollbackLegacyMonthlyClose('2026-05');
+    expect(rolledBack.ok).toBe(true);
+    saveClosures([may, april], { skipCloudSync: true });
+
+    await hydrateWealthFromCloud();
+
+    expect(loadClosures().map((closure) => closure.monthKey)).toEqual(['2026-04']);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
+    ).toBe(false);
+  });
+
+  it('sync after rollback does not upload a local stale close suppressed by tombstone', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    const april = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 8_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    const may = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    await syncWealthNow();
+    removeCheckpointState('2026-05');
+
+    const rolledBack = await rollbackLegacyMonthlyClose('2026-05');
+    expect(rolledBack.ok).toBe(true);
+    saveClosures([may, april], { skipCloudSync: true });
+
+    await syncWealthNow();
+
+    expect(loadClosures().map((closure) => closure.monthKey)).toEqual(['2026-04']);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
+    ).toBe(false);
   });
 
   it('legacy rollback verifies with server read instead of stale cache reads', async () => {
@@ -452,6 +528,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
 
     const staleCloudSnapshot = {
@@ -857,6 +934,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
     cloudStore.set('aurum_wealth/test-user', {
       ...(cloudStore.get('aurum_wealth/test-user') || {}),
@@ -885,7 +963,7 @@ describe('monthly close undo checkpoint', () => {
     try {
       const result = await rollbackLegacyMonthlyClose('2026-05');
       expect(result.ok).toBe(false);
-      expect(result.message).toContain('siguió devolviendo el cierre deshecho');
+      expect(result.message).toContain('no confirmó el retiro del cierre legacy');
       expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
     } finally {
       if (original) {
@@ -905,6 +983,7 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
 
     const setDocMock = vi.mocked(setDoc);
@@ -975,19 +1054,35 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
     removeCheckpointState('2026-05');
 
     const rolledBack = await rollbackLegacyMonthlyClose('2026-05');
     expect(rolledBack.ok).toBe(true);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closureDeletionTombstones || []).some(
+        (item: any) => item.monthKey === '2026-05',
+      ),
+    ).toBe(true);
 
     const reclosed = await closeMonthlyWithCheckpoint({
       monthKey: '2026-05',
       records: preCloseRecords,
       fxRates,
-      closedAt: '2026-05-31T23:59:59.000Z',
+      closedAt: '2030-05-31T23:59:59.000Z',
     });
+    await syncWealthNow();
+
     expect(reclosed.monthKey).toBe('2026-05');
     expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
+    ).toBe(true);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closureDeletionTombstones || []).some(
+        (item: any) => item.monthKey === '2026-05',
+      ),
+    ).toBe(false);
   });
 
   it('prefers cloud checkpoint and keeps local as fallback only', async () => {

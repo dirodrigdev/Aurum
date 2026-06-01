@@ -62,4 +62,37 @@ describe('wealth storage closures merge', () => {
     expect(result.closuresForCloud).toHaveLength(1);
     expect(result.closuresForCloud[0].id).toBe('remote-apr');
   });
+
+  it('does not reintroduce a local closure removed by tombstone', () => {
+    const removedMay = makeClosure('2026-05', 'bad-may', '2026-06-01T10:00:00.000Z');
+    const april = makeClosure('2026-04', 'remote-apr', '2026-05-01T00:00:00.000Z');
+    const merged = mergeClosuresForSync([removedMay], [april], false, [
+      {
+        monthKey: '2026-05',
+        removedAt: '2026-06-01T12:00:00.000Z',
+        reason: 'legacy_close_rollback_no_full_checkpoint',
+        source: 'legacy_rollback',
+        removedClosureFingerprint: JSON.stringify({
+          id: removedMay.id,
+          monthKey: removedMay.monthKey,
+          closedAt: removedMay.closedAt,
+          netClp: 0,
+          investmentClp: 0,
+          bankClp: 0,
+          realEstateNetClp: 0,
+          nonMortgageDebtClp: 0,
+        }),
+        removedClosureSummary: {
+          bankClp: 0,
+          investmentClp: 0,
+          realEstateNetClp: 0,
+          nonMortgageDebtClp: 0,
+          netClp: 0,
+        },
+        removedClosedAt: removedMay.closedAt,
+      },
+    ]);
+
+    expect(merged.map((item) => item.monthKey)).toEqual(['2026-04']);
+  });
 });

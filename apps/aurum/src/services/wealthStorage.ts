@@ -126,6 +126,16 @@ export interface WealthMonthlyCloseCheckpoint {
   state?: WealthCheckpointStateSnapshot;
 }
 
+export interface WealthClosureDeletionTombstone {
+  monthKey: string;
+  removedAt: string;
+  reason: 'legacy_close_rollback_no_full_checkpoint';
+  source: 'legacy_rollback';
+  removedClosureFingerprint: string;
+  removedClosureSummary: ComparableClosureSummary;
+  removedClosedAt: string;
+}
+
 export interface WealthCheckpointStateSnapshot {
   updatedAt: string;
   records: WealthRecord[];
@@ -135,6 +145,7 @@ export interface WealthCheckpointStateSnapshot {
   deletedRecordIds: string[];
   deletedRecordAssetMonthKeys: string[];
   fx: WealthFxRates;
+  closureDeletionTombstones: WealthClosureDeletionTombstone[];
 }
 
 export interface WealthMonthlyCloseUndoAuditEntry {
@@ -324,6 +335,7 @@ const WEALTH_UPDATED_AT_KEY = 'wealth_updated_at_v1';
 const WEALTH_LAST_REMOTE_UPDATED_AT_KEY = 'wealth_last_remote_updated_at_v1';
 const MONTHLY_CLOSE_CHECKPOINTS_KEY = 'wealth_monthly_close_checkpoints_v1';
 const MONTHLY_CLOSE_UNDO_AUDIT_KEY = 'wealth_monthly_close_undo_audit_v1';
+const CLOSURE_DELETION_TOMBSTONES_KEY = 'wealth_closure_deletion_tombstones_v1';
 const WEALTH_DEMO_SEED_META_KEY = 'wealth_demo_seed_meta_v1';
 const WEALTH_FX_LIVE_META_KEY = 'wealth_fx_live_meta_v1';
 const WEALTH_FX_LAST_AUTO_DAY_KEY = 'wealth_fx_last_auto_day_v1';
@@ -1059,6 +1071,54 @@ const stripUndefinedDeep = (value: any): any => {
   return value;
 };
 
+const normalizeClosureDeletionTombstones = (raw: any): WealthClosureDeletionTombstone[] => {
+  const items = Array.isArray(raw) ? raw : [];
+  const byMonth = new Map<string, WealthClosureDeletionTombstone>();
+  items.forEach((item: any) => {
+    const monthKey = normalizeMonthKey(item?.monthKey);
+    if (!monthKey) return;
+    const removedAt = String(item?.removedAt || '');
+    const removedClosedAt = String(item?.removedClosedAt || '');
+    const removedClosureFingerprint = String(item?.removedClosureFingerprint || '').trim();
+    const summary = item?.removedClosureSummary || {};
+    const tombstone: WealthClosureDeletionTombstone = {
+      monthKey,
+      removedAt: removedAt || nowIso(),
+      reason: 'legacy_close_rollback_no_full_checkpoint',
+      source: 'legacy_rollback',
+      removedClosureFingerprint,
+      removedClosureSummary: {
+        bankClp: toNumber(summary.bankClp),
+        investmentClp: toNumber(summary.investmentClp),
+        realEstateNetClp: toNumber(summary.realEstateNetClp),
+        nonMortgageDebtClp: toNumber(summary.nonMortgageDebtClp),
+        netClp: toNumber(summary.netClp),
+      },
+      removedClosedAt,
+    };
+    const current = byMonth.get(monthKey);
+    if (!current || String(tombstone.removedAt) >= String(current.removedAt)) {
+      byMonth.set(monthKey, tombstone);
+    }
+  });
+  return [...byMonth.values()].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+};
+
+const loadClosureDeletionTombstones = (): WealthClosureDeletionTombstone[] => {
+  try {
+    return normalizeClosureDeletionTombstones(JSON.parse(localStorage.getItem(CLOSURE_DELETION_TOMBSTONES_KEY) || '[]'));
+  } catch {
+    return [];
+  }
+};
+
+const saveClosureDeletionTombstones = (items: WealthClosureDeletionTombstone[], options?: PersistOptions) => {
+  localStorage.setItem(CLOSURE_DELETION_TOMBSTONES_KEY, JSON.stringify(normalizeClosureDeletionTombstones(items)));
+  touchWealthUpdatedAt();
+  if (!options?.silent) dispatchWealthDataUpdated();
+  if (!options?.skipCloudSync) scheduleWealthCloudSync();
+};
+
 const clearAurumAndWealthLocalStorage = () => {
   if (typeof window === 'undefined') return;
   const keysToRemove = Object.keys(window.localStorage).filter(
@@ -1384,6 +1444,11 @@ const sameStringList = (a: string[], b: string[]) => {
   return true;
 };
 
+const sameClosureDeletionTombstones = (
+  a: WealthClosureDeletionTombstone[],
+  b: WealthClosureDeletionTombstone[],
+) => JSON.stringify(normalizeClosureDeletionTombstones(a)) === JSON.stringify(normalizeClosureDeletionTombstones(b));
+
 const sameBankTokens = (a: WealthBankTokenMap, b: WealthBankTokenMap) =>
   FINTOC_BANK_PROVIDER_IDS.every((providerId) => (a[providerId] || '') === (b[providerId] || ''));
 
@@ -1410,6 +1475,8 @@ type MergeWealthStateInput = {
   remoteRecords: WealthRecord[];
   localClosures: WealthMonthlyClosure[];
   remoteClosures: WealthMonthlyClosure[];
+  localClosureDeletionTombstones: WealthClosureDeletionTombstone[];
+  remoteClosureDeletionTombstones: WealthClosureDeletionTombstone[];
   localInstruments: WealthInvestmentInstrument[];
   remoteInstruments: WealthInvestmentInstrument[];
   localBankTokens: WealthBankTokenMap;
@@ -1428,6 +1495,7 @@ type MergeWealthStateInput = {
 type MergedWealthState = {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
+  closureDeletionTombstones: WealthClosureDeletionTombstone[];
   instruments: WealthInvestmentInstrument[];
   bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
@@ -1435,6 +1503,44 @@ type MergedWealthState = {
   fx: WealthFxRates;
   preferLocal: boolean;
 };
+
+const closureDeletionFingerprint = (closure: WealthMonthlyClosure | null): string => {
+  if (!closure) return '';
+  return JSON.stringify({
+    id: closure.id,
+    monthKey: closure.monthKey,
+    closedAt: closure.closedAt,
+    netClp: toNumber(closure.summary?.netClp ?? closure.summary?.netConsolidatedClp),
+    investmentClp: toNumber(closure.summary?.investmentClp),
+    bankClp: toNumber(closure.summary?.bankClp),
+    realEstateNetClp: toNumber(closure.summary?.realEstateNetClp),
+    nonMortgageDebtClp: toNumber(closure.summary?.nonMortgageDebtClp),
+  });
+};
+
+const mergeClosureDeletionTombstones = (
+  localItems: WealthClosureDeletionTombstone[],
+  remoteItems: WealthClosureDeletionTombstone[],
+) => normalizeClosureDeletionTombstones([...localItems, ...remoteItems]);
+
+const isClosureSuppressedByTombstone = (
+  closure: WealthMonthlyClosure,
+  tombstones: WealthClosureDeletionTombstone[],
+) => {
+  const tombstone = tombstones.find((item) => item.monthKey === closure.monthKey);
+  if (!tombstone) return false;
+  if (tombstone.removedClosureFingerprint && closureDeletionFingerprint(closure) === tombstone.removedClosureFingerprint) {
+    return true;
+  }
+  const closedAtMs = isoToMs(closure.closedAt);
+  const removedAtMs = isoToMs(tombstone.removedAt);
+  return Number.isFinite(closedAtMs) && Number.isFinite(removedAtMs) && closedAtMs <= removedAtMs;
+};
+
+const filterClosuresWithTombstones = (
+  closures: WealthMonthlyClosure[],
+  tombstones: WealthClosureDeletionTombstone[],
+) => closures.filter((closure) => !isClosureSuppressedByTombstone(closure, tombstones));
 
 const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
   let preferLocal = isLocalStateNewerOrEqual(input.localUpdatedAt, input.remoteUpdatedAt);
@@ -1485,9 +1591,28 @@ const mergeWealthState = (input: MergeWealthStateInput): MergedWealthState => {
     ...(preferLocal ? input.localBankTokens : input.remoteBankTokens),
   });
 
+  const closureDeletionTombstones = mergeClosureDeletionTombstones(
+    input.localClosureDeletionTombstones,
+    input.remoteClosureDeletionTombstones,
+  );
+  const closures = mergeClosures(
+    filterClosuresWithTombstones(input.localClosures, closureDeletionTombstones),
+    filterClosuresWithTombstones(input.remoteClosures, closureDeletionTombstones),
+    preferLocal,
+  );
+  const activeClosureDeletionTombstones = closureDeletionTombstones.filter(
+    (tombstone) =>
+      !closures.some(
+        (closure) =>
+          closure.monthKey === tombstone.monthKey &&
+          !isClosureSuppressedByTombstone(closure, [tombstone]),
+      ),
+  );
+
   return {
     records,
-    closures: mergeClosures(input.localClosures, input.remoteClosures, preferLocal),
+    closures,
+    closureDeletionTombstones: activeClosureDeletionTombstones,
     instruments: mergeInvestmentInstruments(input.localInstruments, input.remoteInstruments),
     bankTokens,
     deletedRecordIds,
@@ -2710,6 +2835,7 @@ const normalizeCheckpointState = (raw: any): WealthCheckpointStateSnapshot | und
     deletedRecordIds: normalized.deletedRecordIds,
     deletedRecordAssetMonthKeys: normalized.deletedRecordAssetMonthKeys,
     fx: normalized.fx,
+    closureDeletionTombstones: normalized.closureDeletionTombstones,
   };
 };
 
@@ -3122,6 +3248,25 @@ const toComparableSummaryFromRecords = (
   };
 };
 
+const buildClosureDeletionTombstone = (
+  closure: WealthMonthlyClosure,
+  removedAt: string,
+): WealthClosureDeletionTombstone => ({
+  monthKey: closure.monthKey,
+  removedAt,
+  reason: 'legacy_close_rollback_no_full_checkpoint',
+  source: 'legacy_rollback',
+  removedClosureFingerprint: closureDeletionFingerprint(closure),
+  removedClosureSummary: toComparableClosureSummary(closure) || {
+    bankClp: 0,
+    investmentClp: 0,
+    realEstateNetClp: 0,
+    nonMortgageDebtClp: 0,
+    netClp: 0,
+  },
+  removedClosedAt: String(closure.closedAt || ''),
+});
+
 const checkpointStateRecordsForMonth = (
   checkpoint: WealthMonthlyCloseCheckpoint | null,
   monthKey: string,
@@ -3381,6 +3526,7 @@ const persistUndoStateCloudFirst = async (
           bankTokens: restoredState.bankTokens,
           records: restoredState.records,
           closures: restoredState.closures,
+          closureDeletionTombstones: restoredState.closureDeletionTombstones,
           instruments: restoredState.instruments,
           deletedRecordIds: restoredState.deletedRecordIds,
           deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
@@ -3398,7 +3544,13 @@ const persistUndoStateCloudFirst = async (
     const monthMismatch = options?.shouldKeepMonthClosure ? !hasMonthClosure : !!hasMonthClosure;
     const closuresMatch = !!remoteState && sameClosures(remoteState.closures, restoredState.closures);
     const recordsMatch = !!remoteState && sameRecords(remoteState.records, restoredState.records);
-    if (!remoteState || monthMismatch || !closuresMatch || !recordsMatch) {
+    const tombstonesMatch =
+      !!remoteState &&
+      sameClosureDeletionTombstones(
+        remoteState.closureDeletionTombstones,
+        restoredState.closureDeletionTombstones,
+      );
+    if (!remoteState || monthMismatch || !closuresMatch || !recordsMatch || !tombstonesMatch) {
       const diagnostics = {
         writePath,
         verifyPath: writePath,
@@ -3463,20 +3615,12 @@ export const rollbackLegacyMonthlyClose = async (
     };
   }
 
-  const localState = readLocalWealthStateSnapshot();
-  const restoredState: WealthCheckpointStateSnapshot = {
-    ...localState,
-    closures: localState.closures.filter((closure) => closure.monthKey !== preview.monthKey),
-  };
-  const cloudPersist = await persistUndoStateCloudFirst(preview.monthKey, restoredState, {
-    shouldKeepMonthClosure: false,
-    timeoutMs: options?.timeoutMs,
-  });
-  if (cloudPersist.ok === false) {
+  const ref = await getWealthCloudRef();
+  if (!ref) {
     return {
       ok: false,
       monthKey: preview.monthKey,
-      message: cloudPersist.message,
+      message: 'No hay una sesión Firebase válida para retirar el cierre legacy en la nube.',
       restoredToNoClosure: false,
       restoredClosure: null,
       checkpoint: preview.checkpoint,
@@ -3484,15 +3628,109 @@ export const rollbackLegacyMonthlyClose = async (
     };
   }
 
+  const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || 12_000));
+  const updatedAt = nextMonotonicIsoAgainstRemote();
+  let nextClosures: WealthMonthlyClosure[] = [];
+  let nextTombstones: WealthClosureDeletionTombstone[] = [];
+
+  try {
+    await waitForWealthCloudSyncIdle();
+    setFirestoreChecking();
+    const serverSnap = await withTimeout(getDocFromServer(ref), timeoutMs, 'undo_cloud_verify_timeout');
+    const serverState = serverSnap.exists() ? normalizeCloudWealthState(serverSnap.data() || {}) : null;
+    const serverClosure = serverState?.closures.find((closure) => closure.monthKey === preview.monthKey) || null;
+    if (!serverState || !serverClosure) {
+      setFirestoreOk();
+      return {
+        ok: false,
+        monthKey: preview.monthKey,
+        message: 'No encontré el cierre legacy en la nube para retirarlo de forma verificable.',
+        restoredToNoClosure: false,
+        restoredClosure: null,
+        checkpoint: preview.checkpoint,
+        actionMode: 'legacy_rollback',
+      };
+    }
+    const tombstone = buildClosureDeletionTombstone(serverClosure, updatedAt);
+    nextClosures = serverState.closures.filter((closure) => closure.monthKey !== preview.monthKey);
+    nextTombstones = mergeClosureDeletionTombstones(serverState.closureDeletionTombstones, [tombstone]);
+
+    await withTimeout(
+      setDoc(
+        ref,
+        stripUndefinedDeep({
+          updatedAt,
+          closures: nextClosures,
+          closureDeletionTombstones: nextTombstones,
+        }),
+        { merge: true },
+      ),
+      timeoutMs,
+      'undo_cloud_write_timeout',
+    );
+
+    const verifySnap = await withTimeout(getDocFromServer(ref), timeoutMs, 'undo_cloud_verify_timeout');
+    const verifiedState = verifySnap.exists() ? normalizeCloudWealthState(verifySnap.data() || {}) : null;
+    const monthStillPresent = verifiedState?.closures.some((closure) => closure.monthKey === preview.monthKey);
+    const tombstoneExists = verifiedState?.closureDeletionTombstones.some(
+      (item) =>
+        item.monthKey === preview.monthKey &&
+        item.removedClosureFingerprint === tombstone.removedClosureFingerprint,
+    );
+    if (!verifiedState || monthStillPresent || !tombstoneExists) {
+      setLastWealthSyncIssue(
+        `legacy_rollback_verify_failed serverRead:true closuresAfterServer:${verifiedState?.closures.length ?? -1} monthStillPresent:${!!monthStillPresent} tombstoneExists:${!!tombstoneExists}`,
+      );
+      setFirestoreOk();
+      return {
+        ok: false,
+        monthKey: preview.monthKey,
+        message:
+          'La nube no confirmó el retiro del cierre legacy. No apliqué cambios locales para evitar inconsistencias.',
+        restoredToNoClosure: false,
+        restoredClosure: null,
+        checkpoint: preview.checkpoint,
+        actionMode: 'legacy_rollback',
+      };
+    }
+    markLastRemoteUpdatedAt(updatedAt);
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+  } catch (err: any) {
+    const classified = classifyCloudWriteError(err);
+    setLastWealthSyncIssue(`${classified.code || 'legacy_rollback_error'} ${classified.message}`.trim());
+    setFirestoreStatusFromError(err);
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: `${classified.message} No se aplicaron cambios locales para evitar inconsistencias.`,
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: preview.checkpoint,
+      actionMode: 'legacy_rollback',
+    };
+  }
+
+  const localState = readLocalWealthStateSnapshot();
+  const restoredState: WealthCheckpointStateSnapshot = {
+    ...localState,
+    closures: filterClosuresWithTombstones(
+      localState.closures.filter((closure) => closure.monthKey !== preview.monthKey),
+      nextTombstones,
+    ),
+    closureDeletionTombstones: nextTombstones,
+  };
+
   applyWealthStateLocal({
     records: restoredState.records,
     closures: restoredState.closures,
+    closureDeletionTombstones: restoredState.closureDeletionTombstones,
     instruments: restoredState.instruments,
     bankTokens: restoredState.bankTokens,
     deletedRecordIds: restoredState.deletedRecordIds,
     deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
     fx: restoredState.fx,
-    updatedAt: cloudPersist.updatedAt,
+    updatedAt,
   });
 
   const auditEntries = loadMonthlyCloseUndoAudit();
@@ -3601,6 +3839,7 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
   applyWealthStateLocal({
     records: restoredState.records,
     closures: restoredState.closures,
+    closureDeletionTombstones: restoredState.closureDeletionTombstones,
     instruments: restoredState.instruments,
     bankTokens: restoredState.bankTokens,
     deletedRecordIds: restoredState.deletedRecordIds,
@@ -3787,6 +4026,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       setFirestoreChecking();
       const localRecords = loadWealthRecords();
       const localClosures = loadClosures();
+      const localClosureDeletionTombstones = loadClosureDeletionTombstones();
       const localFx = loadFxRates();
       const localInstruments = loadInvestmentInstruments();
       const localBankTokens = loadBankTokens();
@@ -3798,6 +4038,9 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const remoteData = remoteSnap.exists() ? remoteSnap.data() || {} : {};
       const remoteRecords = normalizeRecordsFromRaw(Array.isArray(remoteData.records) ? remoteData.records : []);
       const remoteClosures = loadClosuresFromRaw(Array.isArray(remoteData.closures) ? remoteData.closures : []);
+      const remoteClosureDeletionTombstones = normalizeClosureDeletionTombstones(
+        remoteData.closureDeletionTombstones,
+      );
       const remoteFx = normalizeFxRates(remoteData.fx || defaultFxRates);
       const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(remoteData.instruments) ? remoteData.instruments : []);
       const remoteBankTokens = normalizeBankTokensFromRaw(remoteData.bankTokens);
@@ -3813,6 +4056,8 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
         remoteRecords,
         localClosures,
         remoteClosures,
+        localClosureDeletionTombstones,
+        remoteClosureDeletionTombstones,
         localInstruments,
         remoteInstruments,
         localBankTokens,
@@ -3830,6 +4075,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
       const mergedRecords = merged.records;
       const mergedClosures = merged.closures;
+      const mergedClosureDeletionTombstones = merged.closureDeletionTombstones;
       const closuresProtection = protectRemoteClosuresFromEmptyOverwrite({
         mergedClosures,
         remoteClosures,
@@ -3849,6 +4095,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
           bankTokens: mergedBankTokens,
           records: mergedRecords,
           closures: closuresForCloud,
+          closureDeletionTombstones: mergedClosureDeletionTombstones,
           instruments: mergedInstruments,
           deletedRecordIds: mergedDeletedRecordIds,
           deletedRecordAssetMonthKeys: mergedDeletedRecordAssetMonthKeys,
@@ -3878,6 +4125,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       if (
         !sameRecords(localRecords, mergedRecords) ||
           !sameClosures(localClosures, mergedClosures) ||
+          !sameClosureDeletionTombstones(localClosureDeletionTombstones, mergedClosureDeletionTombstones) ||
         !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
         !sameBankTokens(localBankTokens, mergedBankTokens) ||
         !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
@@ -3886,6 +4134,7 @@ const syncWealthToCloudNow = async (): Promise<boolean> => {
       ) {
         saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
         saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
+        saveClosureDeletionTombstones(mergedClosureDeletionTombstones, { skipCloudSync: true, silent: true });
         saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
         saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
         saveBankTokens(mergedBankTokens, { skipCloudSync: true, silent: true });
@@ -4011,6 +4260,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const data = snap.data() || {};
     const localRecords = loadWealthRecords();
     const localClosures = loadClosures();
+    const localClosureDeletionTombstones = loadClosureDeletionTombstones();
     const localFx = loadFxRates();
     const localInstruments = loadInvestmentInstruments();
     const localBankTokens = loadBankTokens();
@@ -4021,6 +4271,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const remoteUpdatedAt = String(data.updatedAt || '');
     const remoteRecords = normalizeRecordsFromRaw(Array.isArray(data.records) ? data.records : []);
     const remoteClosures = loadClosuresFromRaw(Array.isArray(data.closures) ? data.closures : []);
+    const remoteClosureDeletionTombstones = normalizeClosureDeletionTombstones(data.closureDeletionTombstones);
     const remoteFx = normalizeFxRates(data.fx || defaultFxRates);
     const remoteInstruments = loadInstrumentsFromRaw(Array.isArray(data.instruments) ? data.instruments : []);
     const remoteBankTokens = normalizeBankTokensFromRaw(data.bankTokens);
@@ -4035,6 +4286,8 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       remoteRecords,
       localClosures,
       remoteClosures,
+      localClosureDeletionTombstones,
+      remoteClosureDeletionTombstones,
       localInstruments,
       remoteInstruments,
       localBankTokens,
@@ -4052,6 +4305,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const mergedDeletedRecordAssetMonthKeys = merged.deletedRecordAssetMonthKeys;
     const mergedRecords = merged.records;
     const mergedClosures = merged.closures;
+    const mergedClosureDeletionTombstones = merged.closureDeletionTombstones;
     const mergedInstruments = merged.instruments;
     const mergedBankTokens = merged.bankTokens;
 
@@ -4064,6 +4318,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     const localNeedsUpdate =
       !sameRecords(localRecords, mergedRecords) ||
       !sameClosures(localClosures, mergedClosures) ||
+      !sameClosureDeletionTombstones(localClosureDeletionTombstones, mergedClosureDeletionTombstones) ||
       !sameInvestmentInstruments(localInstruments, mergedInstruments) ||
       !sameBankTokens(localBankTokens, mergedBankTokens) ||
       !sameStringList(localDeletedRecordIds, mergedDeletedRecordIds) ||
@@ -4073,6 +4328,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
     if (localNeedsUpdate) {
       saveWealthRecords(mergedRecords, { skipCloudSync: true, silent: true });
       saveClosures(mergedClosures, { skipCloudSync: true, silent: true });
+      saveClosureDeletionTombstones(mergedClosureDeletionTombstones, { skipCloudSync: true, silent: true });
       saveFxRatesInternal(mergedFx, { skipCloudSync: true, silent: true });
       saveInvestmentInstruments(mergedInstruments, { skipCloudSync: true, silent: true });
       saveBankTokens(mergedBankTokens, { skipCloudSync: true, silent: true });
@@ -4092,6 +4348,7 @@ export const hydrateWealthFromCloud = async (): Promise<'cloud' | 'local' | 'una
       (hasLocalData && !hasRemoteData) ||
       !sameRecords(mergedRecords, remoteRecords) ||
       !sameClosures(mergedClosures, remoteClosures) ||
+      !sameClosureDeletionTombstones(mergedClosureDeletionTombstones, remoteClosureDeletionTombstones) ||
       !sameInvestmentInstruments(mergedInstruments, remoteInstruments) ||
       !sameBankTokens(mergedBankTokens, remoteBankTokens) ||
       !sameStringList(mergedDeletedRecordIds, remoteDeletedRecordIds) ||
@@ -4212,10 +4469,14 @@ export const mergeClosuresForSync = (
   localClosures: WealthMonthlyClosure[],
   remoteClosures: WealthMonthlyClosure[],
   preferLocal = false,
+  closureDeletionTombstones: WealthClosureDeletionTombstone[] = [],
 ) => {
+  const normalizedTombstones = normalizeClosureDeletionTombstones(closureDeletionTombstones);
+  const filteredLocalClosures = filterClosuresWithTombstones(localClosures, normalizedTombstones);
+  const filteredRemoteClosures = filterClosuresWithTombstones(remoteClosures, normalizedTombstones);
   if (preferLocal) {
-    const mergedByMonth = new Map(remoteClosures.map((closure) => [closure.monthKey, closure] as const));
-    localClosures.forEach((localClosure) => {
+    const mergedByMonth = new Map(filteredRemoteClosures.map((closure) => [closure.monthKey, closure] as const));
+    filteredLocalClosures.forEach((localClosure) => {
       const remoteClosure = mergedByMonth.get(localClosure.monthKey);
       if (!remoteClosure) {
         mergedByMonth.set(localClosure.monthKey, localClosure);
@@ -4234,7 +4495,7 @@ export const mergeClosuresForSync = (
   }
 
   const map = new Map<string, WealthMonthlyClosure>();
-  for (const closure of [...localClosures, ...remoteClosures]) {
+  for (const closure of [...filteredLocalClosures, ...filteredRemoteClosures]) {
     const key = closure.monthKey;
     const prev = map.get(key);
     if (!prev) {
@@ -4262,7 +4523,8 @@ const mergeClosures = (
   localClosures: WealthMonthlyClosure[],
   remoteClosures: WealthMonthlyClosure[],
   preferLocal = false,
-) => mergeClosuresForSync(localClosures, remoteClosures, preferLocal);
+  closureDeletionTombstones: WealthClosureDeletionTombstone[] = [],
+) => mergeClosuresForSync(localClosures, remoteClosures, preferLocal, closureDeletionTombstones);
 
 export const protectRemoteClosuresFromEmptyOverwrite = (input: {
   mergedClosures: WealthMonthlyClosure[];
@@ -4362,6 +4624,9 @@ export const upsertMonthlyClosure = (input: {
   const next = [nextClosure, ...withoutSameMonth].sort(compareClosuresByMonthDesc);
 
   saveClosures(next);
+  saveClosureDeletionTombstones(
+    loadClosureDeletionTombstones().filter((item) => item.monthKey !== normalizedMonthKey),
+  );
   requestImmediateWealthSync();
   return nextClosure;
 };
@@ -4678,6 +4943,7 @@ export const ensureInitialMortgageDefaults = (
 const applyWealthStateLocal = (payload: {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
+  closureDeletionTombstones?: WealthClosureDeletionTombstone[];
   instruments: WealthInvestmentInstrument[];
   bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
@@ -4687,6 +4953,10 @@ const applyWealthStateLocal = (payload: {
 }) => {
   saveWealthRecords(payload.records, { skipCloudSync: true, silent: true });
   saveClosures(payload.closures, { skipCloudSync: true, silent: true });
+  saveClosureDeletionTombstones(payload.closureDeletionTombstones || loadClosureDeletionTombstones(), {
+    skipCloudSync: true,
+    silent: true,
+  });
   saveInvestmentInstruments(payload.instruments, { skipCloudSync: true, silent: true });
   saveBankTokens(payload.bankTokens, { skipCloudSync: true, silent: true });
   saveDeletedRecordIds(payload.deletedRecordIds, { skipCloudSync: true, silent: true });
@@ -4707,6 +4977,7 @@ type NormalizedCloudWealthState = {
   updatedAt: string;
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
+  closureDeletionTombstones: WealthClosureDeletionTombstone[];
   instruments: WealthInvestmentInstrument[];
   bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
@@ -4728,6 +4999,7 @@ const normalizeCloudWealthState = (raw: any): NormalizedCloudWealthState => ({
       updatedAt: String(raw?.updatedAt || ''),
       records,
       closures: loadClosuresFromRaw(Array.isArray(raw?.closures) ? raw.closures : []),
+      closureDeletionTombstones: normalizeClosureDeletionTombstones(raw?.closureDeletionTombstones),
       instruments: loadInstrumentsFromRaw(Array.isArray(raw?.instruments) ? raw.instruments : []),
       bankTokens: normalizeBankTokensFromRaw(raw?.bankTokens),
       deletedRecordIds,
@@ -4741,6 +5013,7 @@ const readLocalWealthStateSnapshot = (): NormalizedCloudWealthState => ({
   updatedAt: readWealthUpdatedAt() || nowIso(),
   records: loadWealthRecords(),
   closures: loadClosures(),
+  closureDeletionTombstones: loadClosureDeletionTombstones(),
   instruments: loadInvestmentInstruments(),
   bankTokens: loadBankTokens(),
   deletedRecordIds: loadDeletedRecordIds(),
@@ -4753,6 +5026,7 @@ const cloneWealthStateSnapshot = (snapshot: WealthCheckpointStateSnapshot): Weal
     updatedAt: snapshot.updatedAt || nowIso(),
     records: [],
     closures: [],
+    closureDeletionTombstones: [],
     instruments: [],
     bankTokens: {},
     deletedRecordIds: [],
@@ -5000,6 +5274,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         markLastRemoteUpdatedAt(remote.updatedAt);
         const localRecords = loadWealthRecords();
         const localClosures = loadClosures();
+        const localClosureDeletionTombstones = loadClosureDeletionTombstones();
         const localInstruments = loadInvestmentInstruments();
         const localBankTokens = loadBankTokens();
         const localDeletedRecordIds = loadDeletedRecordIds();
@@ -5012,6 +5287,8 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
           remoteRecords: remote.records,
           localClosures,
           remoteClosures: remote.closures,
+          localClosureDeletionTombstones,
+          remoteClosureDeletionTombstones: remote.closureDeletionTombstones,
           localInstruments,
           remoteInstruments: remote.instruments,
           localBankTokens,
@@ -5033,6 +5310,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         const sameAsLocal =
           sameRecords(localRecords, merged.records) &&
           sameClosures(localClosures, merged.closures) &&
+          sameClosureDeletionTombstones(localClosureDeletionTombstones, merged.closureDeletionTombstones) &&
           sameInvestmentInstruments(localInstruments, merged.instruments) &&
           sameBankTokens(localBankTokens, merged.bankTokens) &&
           sameStringList(localDeletedRecordIds, merged.deletedRecordIds) &&
@@ -5043,6 +5321,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         applyWealthStateLocal({
           records: merged.records,
           closures: merged.closures,
+          closureDeletionTombstones: merged.closureDeletionTombstones,
           instruments: merged.instruments,
           bankTokens: merged.bankTokens,
           deletedRecordIds: merged.deletedRecordIds,
@@ -5054,6 +5333,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
         const cloudNeedsUpdate =
           !sameRecords(merged.records, remote.records) ||
           !sameClosures(merged.closures, remote.closures) ||
+          !sameClosureDeletionTombstones(merged.closureDeletionTombstones, remote.closureDeletionTombstones) ||
           !sameInvestmentInstruments(merged.instruments, remote.instruments) ||
           !sameBankTokens(merged.bankTokens, remote.bankTokens) ||
           !sameStringList(merged.deletedRecordIds, remote.deletedRecordIds) ||
@@ -5088,6 +5368,7 @@ export const subscribeWealthCloud = async (): Promise<() => void> => {
 const persistWealthStateToCloud = async (payload: {
   records: WealthRecord[];
   closures: WealthMonthlyClosure[];
+  closureDeletionTombstones?: WealthClosureDeletionTombstone[];
   instruments: WealthInvestmentInstrument[];
   bankTokens: WealthBankTokenMap;
   deletedRecordIds: string[];
@@ -5108,6 +5389,7 @@ const persistWealthStateToCloud = async (payload: {
         bankTokens: payload.bankTokens,
         records: payload.records,
         closures: payload.closures,
+        closureDeletionTombstones: payload.closureDeletionTombstones || loadClosureDeletionTombstones(),
         instruments: payload.instruments,
         deletedRecordIds: payload.deletedRecordIds,
         deletedRecordAssetMonthKeys: payload.deletedRecordAssetMonthKeys,
