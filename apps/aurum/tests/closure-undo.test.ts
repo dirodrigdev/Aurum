@@ -64,6 +64,7 @@ import {
   previewUndoMonthlyClose,
   rollbackLegacyMonthlyClose,
   resolveClosureSectionAmounts,
+  saveClosures,
   saveWealthRecords,
   undoMonthlyCloseToCheckpoint,
   upsertMonthlyClosure,
@@ -247,6 +248,25 @@ describe('monthly close undo checkpoint', () => {
     expect(preview.previous?.netClp).toBeGreaterThan(0);
     expect(preview.previous?.nonMortgageDebtClp).toBe(93_200_000);
     expect(preview.delta).not.toBeNull();
+  });
+
+  it('preview current uses persisted closure totals without inflating risk capital', async () => {
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    const persisted = loadClosures().find((closure) => closure.monthKey === created.monthKey);
+    expect(Number(persisted?.summary.netClp || 0)).toBeGreaterThan(0);
+    if (persisted?.summary) {
+      persisted.summary.netClpWithRisk = Number(persisted.summary.netClp || 0) + 280_150_924;
+      saveClosures([persisted]);
+    }
+
+    const preview = await previewUndoMonthlyClose('2026-05');
+    expect(preview.current?.netClp).toBe(Number(persisted?.summary.netClp || 0));
+    expect(preview.current?.investmentClp).toBe(Number(persisted?.summary.investmentClp || 0));
   });
 
   it('legacy checkpoint without state blocks normal undo preview and enables legacy rollback instead', async () => {
@@ -766,6 +786,47 @@ describe('monthly close undo checkpoint', () => {
       const result = await rollbackLegacyMonthlyClose('2026-05');
       expect(result.ok).toBe(false);
       expect(result.message).toContain('siguió devolviendo el cierre deshecho');
+      expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
+    } finally {
+      if (original) {
+        setDocMock.mockImplementation(original);
+      } else {
+        setDocMock.mockReset();
+      }
+    }
+  });
+
+  it('legacy rollback surfaces timeout-style cloud errors without touching local state', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 1_500_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    removeCheckpointState('2026-05');
+
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      const path = String(ref?.__path || '');
+      if (path === 'aurum_wealth/test-user' && payload?.closures) {
+        const err: any = new Error('timeout');
+        err.code = 'undo_cloud_write_timeout';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    try {
+      const result = await rollbackLegacyMonthlyClose('2026-05');
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain('No se pudo confirmar la operación en la nube');
       expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
     } finally {
       if (original) {

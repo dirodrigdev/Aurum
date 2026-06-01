@@ -71,6 +71,8 @@ import {
 } from '../services/wealthStorage';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 
+type UndoCloseMessageTone = 'success' | 'error' | 'info';
+
 type ClosingTab = 'hoy' | 'cierre' | 'evolucion';
 type EvolutionKind = 'cierre' | 'hoy';
 const PREFERRED_CLOSING_CURRENCY_KEY = 'aurum.preferred.closing.currency';
@@ -200,6 +202,13 @@ const formatAuditSummary = (fields: ComparableVersionFields | null, currency: We
     `Deuda ${formatCurrency(fromClp(fields.nonMortgageDebtClp ?? 0, currency, fx), currency)}`,
   ].join(' · ');
 };
+
+const formatUndoCloseFeedbackClass = (tone: UndoCloseMessageTone) =>
+  tone === 'success'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : tone === 'error'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : 'border-slate-200 bg-slate-50 text-slate-700';
 
 const CLOSURE_CANONICAL_ALIASES: Record<string, string[]> = {
   'saldo bancos clp': [BANK_BALANCE_CLP_LEGACY_LABEL],
@@ -1089,6 +1098,7 @@ export const ClosingAurum: React.FC = () => {
   const [undoCloseConfirmOpen, setUndoCloseConfirmOpen] = useState(false);
   const [undoCloseBusy, setUndoCloseBusy] = useState(false);
   const [undoCloseMessage, setUndoCloseMessage] = useState('');
+  const [undoCloseMessageTone, setUndoCloseMessageTone] = useState<UndoCloseMessageTone>('info');
   const [undoClosePreview, setUndoClosePreview] = useState<WealthMonthlyCloseUndoPreview | null>(null);
   const [undoLocalCheckpointAcknowledged, setUndoLocalCheckpointAcknowledged] = useState(false);
   const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
@@ -2134,28 +2144,41 @@ export const ClosingAurum: React.FC = () => {
   const applyUndoMonthlyClose = async () => {
     if (undoCloseBusy || !selectedClosureMonthKey) return;
     if (undoClosePreview?.checkpointSource === 'local' && !undoLocalCheckpointAcknowledged) {
+      setUndoCloseMessageTone('error');
       setUndoCloseMessage('Confirma que entiendes que este checkpoint sólo existe en este navegador.');
       return;
     }
     setUndoCloseBusy(true);
     setUndoCloseMessage('');
+    setUndoCloseMessageTone('info');
     try {
       const result = undoClosePreview?.actionMode === 'legacy_rollback'
         ? await rollbackLegacyMonthlyClose(selectedClosureMonthKey)
         : await undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
       if (!result.ok) {
+        setUndoCloseMessageTone('error');
         setUndoCloseMessage(result.message || 'No pude deshacer este cierre.');
         return;
       }
-      setUndoCloseMessage(result.message);
+      await hydrateWealthFromCloudShared({ force: true, minIntervalMs: 0 });
+      const refreshed = loadClosures();
+      const nextSelectedMonthKey = refreshed[0]?.monthKey || '';
+      setUndoCloseMessageTone('success');
+      setUndoCloseMessage(
+        result.actionMode === 'legacy_rollback'
+          ? `Cierre ${monthLabel(result.monthKey).toLowerCase()} retirado. ${nextSelectedMonthKey ? `${monthLabel(nextSelectedMonthKey)} vuelve a ser el último cierre.` : 'Ya no quedan cierres posteriores.'} Ahora puedes cerrar ${monthLabel(result.monthKey).toLowerCase()} nuevamente.`
+          : result.message,
+      );
       setUndoCloseConfirmOpen(false);
       setRevision((value) => value + 1);
-      if (result.restoredToNoClosure) {
-        const refreshed = loadClosures();
-        if (refreshed.length > 0) {
-          setSelectedClosureMonthKey(refreshed[0].monthKey);
-        }
+      if (nextSelectedMonthKey) {
+        setSelectedClosureMonthKey(nextSelectedMonthKey);
+      } else {
+        setSelectedClosureMonthKey('');
       }
+    } catch (error: any) {
+      setUndoCloseMessageTone('error');
+      setUndoCloseMessage(String(error?.message || 'No se pudo completar esta operación.'));
     } finally {
       setUndoCloseBusy(false);
     }
@@ -2733,7 +2756,7 @@ export const ClosingAurum: React.FC = () => {
                               </div>
                             )}
                             {!!undoCloseMessage && (
-                              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700">
+                              <div className={`mt-2 rounded-lg border px-2 py-1 text-[11px] ${formatUndoCloseFeedbackClass(undoCloseMessageTone)}`}>
                                 {undoCloseMessage}
                               </div>
                             )}
@@ -2748,7 +2771,9 @@ export const ClosingAurum: React.FC = () => {
                               setUndoCloseConfirmOpen(true);
                             }}
                           >
-                            Deshacer cierre y volver al estado previo
+                            {undoClosePreview?.actionMode === 'legacy_rollback'
+                              ? 'Retirar cierre legacy y recerrar'
+                              : 'Deshacer cierre y volver al estado previo'}
                           </Button>
                         </div>
                       </Card>
@@ -3247,6 +3272,11 @@ export const ClosingAurum: React.FC = () => {
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Este flujo quita el cierre persistido de {monthLabel(undoClosePreview.monthKey).toLowerCase()} pero no toca los
             records actuales. Úsalo para retirar el cierre malo y volver a cerrarlo correctamente.
+          </div>
+        )}
+        {!!undoCloseMessage && (
+          <div className={`rounded-lg border px-3 py-2 text-xs ${formatUndoCloseFeedbackClass(undoCloseMessageTone)}`}>
+            {undoCloseMessage}
           </div>
         )}
       </ConfirmActionModal>

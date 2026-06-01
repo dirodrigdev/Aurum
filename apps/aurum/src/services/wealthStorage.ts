@@ -3090,7 +3090,7 @@ const toComparableClosureSummary = (
   closure: WealthMonthlyClosure | null,
 ): ComparableClosureSummary | null => {
   if (!closure || !closure.summary) return null;
-  const resolved = resolveClosureSectionAmounts({ closure, includeRiskCapitalInTotals: true });
+  const resolved = resolveClosureSectionAmounts({ closure, includeRiskCapitalInTotals: false });
   return {
     bankClp: resolved.bankClp,
     investmentClp: resolved.investmentClpWithRisk,
@@ -3110,7 +3110,7 @@ const toComparableSummaryFromRecords = (
     records,
     summary: canonical,
     fxRates: fx || defaultFxRates,
-    includeRiskCapitalInTotals: true,
+    includeRiskCapitalInTotals: false,
   });
   return {
     bankClp: resolved.bankClp,
@@ -3246,12 +3246,38 @@ const saveMonthlyCloseUndoAudit = (entries: WealthMonthlyCloseUndoAuditEntry[]) 
   localStorage.setItem(MONTHLY_CLOSE_UNDO_AUDIT_KEY, JSON.stringify(entries));
 };
 
+const withTimeout = async <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  code: string,
+): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const err: any = new Error('timeout');
+          err.code = code;
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 const appendMonthlyCloseUndoAuditCloud = async (entry: WealthMonthlyCloseUndoAuditEntry) => {
   const auditRef = await getMonthlyCloseUndoAuditCollectionRef();
   if (!auditRef) return false;
   try {
     const entryRef = doc(auditRef, entry.id);
-    await setDoc(entryRef, stripUndefinedDeep(entry), { merge: true });
+    await withTimeout(
+      setDoc(entryRef, stripUndefinedDeep(entry), { merge: true }),
+      8_000,
+      'audit_timeout',
+    );
     return true;
   } catch {
     return false;
@@ -3328,7 +3354,7 @@ const buildUndoRestoredState = (
 const persistUndoStateCloudFirst = async (
   monthKey: string,
   restoredState: WealthCheckpointStateSnapshot,
-  options?: { shouldKeepMonthClosure?: boolean },
+  options?: { shouldKeepMonthClosure?: boolean; timeoutMs?: number },
 ): Promise<{ ok: true; updatedAt: string } | { ok: false; message: string }> => {
   const ref = await getWealthCloudRef();
   if (!ref) {
@@ -3341,23 +3367,28 @@ const persistUndoStateCloudFirst = async (
   try {
     await waitForWealthCloudSyncIdle();
     setFirestoreChecking();
+    const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || 12_000));
     const updatedAt = nextMonotonicIsoAgainstRemote();
-    await setDoc(
-      ref,
-      stripUndefinedDeep({
-        schemaVersion: 1,
-        updatedAt,
-        fx: restoredState.fx,
-        bankTokens: restoredState.bankTokens,
-        records: restoredState.records,
-        closures: restoredState.closures,
-        instruments: restoredState.instruments,
-        deletedRecordIds: restoredState.deletedRecordIds,
-        deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
-      }),
-      { merge: true },
+    await withTimeout(
+      setDoc(
+        ref,
+        stripUndefinedDeep({
+          schemaVersion: 1,
+          updatedAt,
+          fx: restoredState.fx,
+          bankTokens: restoredState.bankTokens,
+          records: restoredState.records,
+          closures: restoredState.closures,
+          instruments: restoredState.instruments,
+          deletedRecordIds: restoredState.deletedRecordIds,
+          deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
+        }),
+        { merge: true },
+      ),
+      timeoutMs,
+      'undo_cloud_write_timeout',
     );
-    const remoteSnap = await getDoc(ref);
+    const remoteSnap = await withTimeout(getDoc(ref), timeoutMs, 'undo_cloud_verify_timeout');
     const remoteState = remoteSnap.exists()
       ? normalizeCloudWealthState(remoteSnap.data() || {})
       : null;
@@ -3389,7 +3420,10 @@ const persistUndoStateCloudFirst = async (
   }
 };
 
-export const rollbackLegacyMonthlyClose = async (monthKey: string): Promise<UndoMonthlyCloseResult> => {
+export const rollbackLegacyMonthlyClose = async (
+  monthKey: string,
+  options?: { timeoutMs?: number },
+): Promise<UndoMonthlyCloseResult> => {
   const preview = await previewUndoMonthlyClose(monthKey);
   if (!preview.checkpoint) {
     return {
@@ -3421,6 +3455,7 @@ export const rollbackLegacyMonthlyClose = async (monthKey: string): Promise<Undo
   };
   const cloudPersist = await persistUndoStateCloudFirst(preview.monthKey, restoredState, {
     shouldKeepMonthClosure: false,
+    timeoutMs: options?.timeoutMs,
   });
   if (cloudPersist.ok === false) {
     return {
@@ -3668,6 +3703,16 @@ const classifyCloudWriteError = (err: any): { code: string; message: string } =>
     return {
       code,
       message: 'La red tardó demasiado al guardar el checkpoint cloud del cierre.',
+    };
+  }
+  if (
+    code === 'undo_cloud_write_timeout' ||
+    code === 'undo_cloud_verify_timeout' ||
+    code === 'audit_timeout'
+  ) {
+    return {
+      code,
+      message: 'No se pudo confirmar la operación en la nube dentro del tiempo esperado.',
     };
   }
   return {
