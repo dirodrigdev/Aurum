@@ -5239,6 +5239,19 @@ export const Patrimonio: React.FC = () => {
     );
     const persistedRecords = loadWealthRecords();
     const targetRecords = buildCanonicalCloseTargetRecords(persistedRecords, targetMonthKey);
+    const targetAmounts = computeWealthHomeSectionAmounts(
+      resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals).recordsForTotals,
+      fxForClose,
+    );
+    if (
+      targetMonthKey === monthKey &&
+      Math.abs(sectionAmounts.nonMortgageDebt) >= 1_000_000 &&
+      Math.abs(targetAmounts.nonMortgageDebt) < 1
+    ) {
+      const message = 'El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.';
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
+    }
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
@@ -5731,7 +5744,13 @@ export const Patrimonio: React.FC = () => {
         : liveRiskClp;
     const hasRisk = selectedClosureForDraft ? Math.abs(riskClp) > 0 : riskRecords.length > 0;
     const hasProperty = selectedClosureForDraft ? fromSelectedClosure?.realEstateNet !== 0 : liveHasProperty;
-    const amounts = fromSelectedClosure || fromLiveRecords;
+    const amounts =
+      fromSelectedClosure ||
+      (previewingCurrentWorkingMonth &&
+      Math.abs(fromLiveRecords.nonMortgageDebt) < 1 &&
+      Math.abs(sectionAmounts.nonMortgageDebt) >= 1_000_000
+        ? sectionAmounts
+        : fromLiveRecords);
 
     return {
       banks: amounts.bank,
@@ -5871,7 +5890,11 @@ export const Patrimonio: React.FC = () => {
       return;
     }
     const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(evaluation.targetRecords, fxForClose);
-    if (rawNonMortgageDebtClp >= 1_000_000 && Math.abs(closePreview.nonMortgageDebt) < 1) {
+    const visibleNonMortgageDebtClp = targetMonthKey === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
+    if (
+      (rawNonMortgageDebtClp >= 1_000_000 || visibleNonMortgageDebtClp >= 1_000_000) &&
+      Math.abs(closePreview.nonMortgageDebt) < 1
+    ) {
       setCloseInfo('');
       setCloseError('El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.');
       return;

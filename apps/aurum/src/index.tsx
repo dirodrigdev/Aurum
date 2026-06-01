@@ -5,7 +5,7 @@ import App from './App';
 // 🔥 BUMP APP_BUILD:
 // Cada vez que quieras FORZAR que todos refresquen caché (celu incluido),
 // cambia este valor y vuelve a deployar.
-const APP_BUILD = '2025-12-17-01';
+const APP_BUILD = '2026-06-01-close-debt-01';
 
 // Key persistente en localStorage
 const BUILD_KEY = 'aurum_app_build_v1';
