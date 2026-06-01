@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   limit,
   onSnapshot,
@@ -3369,6 +3370,7 @@ const persistUndoStateCloudFirst = async (
     setFirestoreChecking();
     const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || 12_000));
     const updatedAt = nextMonotonicIsoAgainstRemote();
+    const writePath = getFirestoreRefPath(ref) || `${WEALTH_CLOUD_DOC_COLLECTION}/{uid}`;
     await withTimeout(
       setDoc(
         ref,
@@ -3388,7 +3390,7 @@ const persistUndoStateCloudFirst = async (
       timeoutMs,
       'undo_cloud_write_timeout',
     );
-    const remoteSnap = await withTimeout(getDoc(ref), timeoutMs, 'undo_cloud_verify_timeout');
+    const remoteSnap = await withTimeout(getDocFromServer(ref), timeoutMs, 'undo_cloud_verify_timeout');
     const remoteState = remoteSnap.exists()
       ? normalizeCloudWealthState(remoteSnap.data() || {})
       : null;
@@ -3397,7 +3399,20 @@ const persistUndoStateCloudFirst = async (
     const closuresMatch = !!remoteState && sameClosures(remoteState.closures, restoredState.closures);
     const recordsMatch = !!remoteState && sameRecords(remoteState.records, restoredState.records);
     if (!remoteState || monthMismatch || !closuresMatch || !recordsMatch) {
-      setLastWealthSyncIssue('undo_verify_failed El cierre sigue visible tras verificar cloud.');
+      const diagnostics = {
+        writePath,
+        verifyPath: writePath,
+        serverRead: true,
+        closuresBefore: loadClosures().length,
+        closuresAfterPayload: restoredState.closures.length,
+        closuresAfterServer: remoteState?.closures.length ?? -1,
+        monthStillPresent: !!hasMonthClosure,
+        shouldKeepMonthClosure: !!options?.shouldKeepMonthClosure,
+      };
+      console.warn('[Aurum][undo-verify] mismatch after cloud write', diagnostics);
+      setLastWealthSyncIssue(
+        `undo_verify_failed writePath:${diagnostics.writePath} verifyPath:${diagnostics.verifyPath} serverRead:true closuresBefore:${diagnostics.closuresBefore} closuresAfterPayload:${diagnostics.closuresAfterPayload} closuresAfterServer:${diagnostics.closuresAfterServer} monthStillPresent:${diagnostics.monthStillPresent}`,
+      );
       setFirestoreOk();
       return {
         ok: false,
@@ -3677,6 +3692,13 @@ const getWealthCloudRef = async () => {
   const uid = getCurrentUid();
   if (!uid) return null;
   return doc(db, WEALTH_CLOUD_DOC_COLLECTION, uid);
+};
+
+const getFirestoreRefPath = (ref: any) => {
+  if (!ref) return '';
+  if (typeof ref.path === 'string' && ref.path.trim()) return ref.path;
+  if (typeof ref.__path === 'string' && ref.__path.trim()) return ref.__path;
+  return '';
 };
 
 const classifyCloudWriteError = (err: any): { code: string; message: string } => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setDoc } from 'firebase/firestore';
+import { getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
 
 type MockDoc = { __path: string };
 const cloudStore = new Map<string, any>();
@@ -23,6 +23,13 @@ vi.mock('firebase/firestore', () => {
       data: () => value,
     };
   });
+  const getDocFromServer = vi.fn(async (ref: MockDoc) => {
+    const value = cloudStore.get(ref.__path);
+    return {
+      exists: () => value !== undefined,
+      data: () => value,
+    };
+  });
   const setDoc = vi.fn(async (ref: MockDoc, payload: any, options?: { merge?: boolean }) => {
     if (options?.merge && cloudStore.has(ref.__path)) {
       cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
@@ -35,6 +42,7 @@ vi.mock('firebase/firestore', () => {
     deleteDoc: vi.fn(async () => {}),
     doc,
     getDoc,
+    getDocFromServer,
     getDocs: vi.fn(async () => ({ docs: [] })),
     limit: vi.fn((value: number) => value),
     onSnapshot: vi.fn(() => () => {}),
@@ -396,6 +404,98 @@ describe('monthly close undo checkpoint', () => {
     expect(
       (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
     ).toBe(false);
+  });
+
+  it('legacy rollback writes the canonical root closures payload without 2026-05', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 8_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    removeCheckpointState('2026-05');
+
+    const setDocMock = vi.mocked(setDoc);
+    setDocMock.mockClear();
+
+    const result = await rollbackLegacyMonthlyClose('2026-05');
+    expect(result.ok).toBe(true);
+
+    const rootWrite = setDocMock.mock.calls.find(
+      ([ref, payload]) => String((ref as any)?.__path || '') === 'aurum_wealth/test-user' && Array.isArray((payload as any)?.closures),
+    );
+    expect(rootWrite).toBeTruthy();
+    expect((rootWrite?.[1] as any)?.closures.some((closure: any) => closure.monthKey === '2026-05')).toBe(false);
+    expect((rootWrite?.[1] as any)?.records).toEqual(preCloseRecords);
+  });
+
+  it('legacy rollback verifies with server read instead of stale cache reads', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 8_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    removeCheckpointState('2026-05');
+
+    const staleCloudSnapshot = {
+      ...(cloudStore.get('aurum_wealth/test-user') || {}),
+      closures: loadClosures(),
+      records: preCloseRecords,
+      fx: fxRates,
+    };
+
+    const getDocMock = vi.mocked(getDoc);
+    const getDocFromServerMock = vi.mocked(getDocFromServer);
+    const originalGetDoc = getDocMock.getMockImplementation();
+    const originalGetDocFromServer = getDocFromServerMock.getMockImplementation();
+
+    getDocMock.mockImplementation(async (ref: any) => {
+      if (String(ref?.__path || '') === 'aurum_wealth/test-user') {
+        return {
+          exists: () => true,
+          data: () => staleCloudSnapshot,
+        };
+      }
+      return originalGetDoc ? originalGetDoc(ref) : { exists: () => false, data: () => undefined };
+    });
+
+    try {
+      const result = await rollbackLegacyMonthlyClose('2026-05');
+      expect(result.ok).toBe(true);
+      expect(getDocFromServerMock).toHaveBeenCalled();
+      expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
+      expect(
+        (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
+      ).toBe(false);
+    } finally {
+      if (originalGetDoc) {
+        getDocMock.mockImplementation(originalGetDoc);
+      } else {
+        getDocMock.mockReset();
+      }
+      if (originalGetDocFromServer) {
+        getDocFromServerMock.mockImplementation(originalGetDocFromServer);
+      } else {
+        getDocFromServerMock.mockReset();
+      }
+    }
   });
 
   it('undoes close to previous closure snapshot when month already had a closure', async () => {
