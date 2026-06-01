@@ -108,6 +108,8 @@ import {
   TENENCIA_CXC_PREFIX_LABEL,
 } from '../services/wealthStorage';
 import {
+  MONTHLY_CLOSE_DEBT_GUARD_MIN_CLP,
+  MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP,
   MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE,
   isMonthlyCloseDebtGuardError,
   shouldKeepMonthlyCloseDebtGuardError,
@@ -5239,6 +5241,9 @@ export const Patrimonio: React.FC = () => {
     targetMonthKey: string,
     fxForClose: { usdClp: number; eurClp: number; ufClp: number },
   ): Promise<{ ok: true } | { ok: false; errorMessage: string }> => {
+    if (isMonthlyCloseDebtGuardError(closeError)) {
+      setCloseError('');
+    }
     const carriedIntoClose = fillMissingWithPreviousClosure(
       targetMonthKey,
       visualMonthSnapshotDate(targetMonthKey),
@@ -5260,7 +5265,8 @@ export const Patrimonio: React.FC = () => {
         liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
         previewDebtClp: targetAmounts.nonMortgageDebt,
       }) &&
-      Math.abs(liveTargetAmounts.nonMortgageDebt) >= 1_000_000
+      Math.abs(liveTargetAmounts.nonMortgageDebt) >= 1_000_000 &&
+      !closePreviewAppearsDebtIncluded
     ) {
       // Si el storage local quedó atrasado respecto al estado vivo del mes, priorizamos el dataset vivo
       // para que preview y persistencia usen la misma base canónica antes de cerrar.
@@ -5272,7 +5278,8 @@ export const Patrimonio: React.FC = () => {
       shouldBlockMonthlyCloseForDebtMismatch({
         liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
         previewDebtClp: targetAmounts.nonMortgageDebt,
-      })
+      }) &&
+      !closePreviewAppearsDebtIncluded
     ) {
       const message = MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE;
       console.warn('[Aurum][monthly-close-debt-guard][persist-block]', {
@@ -5813,6 +5820,26 @@ export const Patrimonio: React.FC = () => {
     records,
   ]);
 
+  const closePreviewAppearsDebtIncluded = useMemo(() => {
+    const visibleDebtClp = Math.abs(Number(closePreview.nonMortgageDebt || 0));
+    const expectedTotalClp =
+      Number(closePreview.investments || 0) +
+      Number(closePreview.banks || 0) +
+      Number(closePreview.propertyNet || 0) -
+      visibleDebtClp;
+    return (
+      visibleDebtClp >= MONTHLY_CLOSE_DEBT_GUARD_MIN_CLP &&
+      Math.abs(Number(closePreview.totalNetClp || 0) - expectedTotalClp) <=
+        MONTHLY_CLOSE_DEBT_GUARD_TOLERANCE_CLP
+    );
+  }, [
+    closePreview.nonMortgageDebt,
+    closePreview.investments,
+    closePreview.banks,
+    closePreview.propertyNet,
+    closePreview.totalNetClp,
+  ]);
+
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
     const result = fillMissingWithPreviousClosure(
@@ -5912,6 +5939,9 @@ export const Patrimonio: React.FC = () => {
   }, [closeConfirmOpen, closeError, debtGuardRuntime.shouldBlock]);
 
   const attemptMonthlyClose = (targetMonthKey: string) => {
+    if (isMonthlyCloseDebtGuardError(closeError)) {
+      setCloseError('');
+    }
     const evaluation = evaluateCloseValidation(targetMonthKey);
     const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
     const carried = evaluation.issues.filter((issue) => issue.type === 'carried_value_unconfirmed');
@@ -5965,7 +5995,8 @@ export const Patrimonio: React.FC = () => {
       shouldBlockMonthlyCloseForDebtMismatch({
         liveDebtClp: effectiveLiveDebtClp,
         previewDebtClp: closePreview.nonMortgageDebt,
-      })
+      }) &&
+      !closePreviewAppearsDebtIncluded
     ) {
       setCloseInfo('');
       console.warn('[Aurum][monthly-close-debt-guard][attempt-block]', {
@@ -6500,7 +6531,7 @@ export const Patrimonio: React.FC = () => {
           </Button>
         </div>
         {!!closeInfo && <div className="text-xs text-emerald-700">{closeInfo}</div>}
-        {!!closeError && <div className="text-xs text-red-700">{closeError}</div>}
+        {!closeConfirmOpen && !!closeError && <div className="text-xs text-red-700">{closeError}</div>}
 
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
