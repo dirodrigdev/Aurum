@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldBlockMonthlyCloseForDebtMismatch } from '../src/services/monthlyCloseDebtGuard';
+import {
+  MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE,
+  shouldBlockMonthlyCloseForDebtMismatch,
+  shouldKeepMonthlyCloseDebtGuardError,
+} from '../src/services/monthlyCloseDebtGuard';
 
 describe('monthly close debt guard', () => {
   it('does not block when live and preview debt match (current correct case)', () => {
@@ -36,6 +40,15 @@ describe('monthly close debt guard', () => {
         liveDebtClp: 93_200_000,
         previewDebtClp: 93_198_000,
       }),
+    ).toBe(false);
+  });
+
+  it('stale guard error should clear when recalculation is correct', () => {
+    expect(
+      shouldKeepMonthlyCloseDebtGuardError(MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE, true),
+    ).toBe(true);
+    expect(
+      shouldKeepMonthlyCloseDebtGuardError(MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE, false),
     ).toBe(false);
   });
 });

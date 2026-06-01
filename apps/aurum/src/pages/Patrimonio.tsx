@@ -107,7 +107,12 @@ import {
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
 } from '../services/wealthStorage';
-import { shouldBlockMonthlyCloseForDebtMismatch } from '../services/monthlyCloseDebtGuard';
+import {
+  MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE,
+  isMonthlyCloseDebtGuardError,
+  shouldKeepMonthlyCloseDebtGuardError,
+  shouldBlockMonthlyCloseForDebtMismatch,
+} from '../services/monthlyCloseDebtGuard';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -5269,7 +5274,16 @@ export const Patrimonio: React.FC = () => {
         previewDebtClp: targetAmounts.nonMortgageDebt,
       })
     ) {
-      const message = 'El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.';
+      const message = MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE;
+      console.warn('[Aurum][monthly-close-debt-guard][persist-block]', {
+        source: 'completeMonthlyClose',
+        targetMonthKey,
+        liveDebtClp: Math.max(Math.abs(sectionAmounts.nonMortgageDebt), Math.abs(liveTargetAmounts.nonMortgageDebt)),
+        previewDebtClp: Math.abs(targetAmounts.nonMortgageDebt),
+        previewTotalClp: targetAmounts.totalNetClp,
+        shouldBlock: true,
+        timestampIso: new Date().toISOString(),
+      });
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }
@@ -5863,6 +5877,40 @@ export const Patrimonio: React.FC = () => {
         0,
       );
 
+  const debtGuardRuntime = useMemo(() => {
+    const rawNonMortgageDebtClp = computeRawNonMortgageDebtClpForClose(closeValidationDraft.targetRecords, closeFxValues);
+    const visibleNonMortgageDebtClp = closeMonthDraft === monthKey ? Math.abs(sectionAmounts.nonMortgageDebt) : 0;
+    const liveDebtClp = Math.max(rawNonMortgageDebtClp, visibleNonMortgageDebtClp);
+    const previewDebtClp = Math.abs(closePreview.nonMortgageDebt);
+    const shouldBlock = shouldBlockMonthlyCloseForDebtMismatch({
+      liveDebtClp,
+      previewDebtClp,
+    });
+    return {
+      selectedMonthKey: closeMonthDraft,
+      liveDebtClp,
+      previewDebtClp,
+      previewTotalClp: closePreview.totalNetClp,
+      shouldBlock,
+      timestampIso: new Date().toISOString(),
+    };
+  }, [
+    closeValidationDraft.targetRecords,
+    closeFxValues,
+    closeMonthDraft,
+    monthKey,
+    sectionAmounts.nonMortgageDebt,
+    closePreview.nonMortgageDebt,
+    closePreview.totalNetClp,
+  ]);
+
+  useEffect(() => {
+    if (!closeConfirmOpen) return;
+    if (shouldKeepMonthlyCloseDebtGuardError(closeError, debtGuardRuntime.shouldBlock)) return;
+    if (!isMonthlyCloseDebtGuardError(closeError)) return;
+    setCloseError('');
+  }, [closeConfirmOpen, closeError, debtGuardRuntime.shouldBlock]);
+
   const attemptMonthlyClose = (targetMonthKey: string) => {
     const evaluation = evaluateCloseValidation(targetMonthKey);
     const blocking = evaluation.issues.filter((issue) => issue.level === 'error');
@@ -5920,7 +5968,16 @@ export const Patrimonio: React.FC = () => {
       })
     ) {
       setCloseInfo('');
-      setCloseError('El preview de cierre no está incorporando la deuda no hipotecaria vigente. Revisa antes de cerrar.');
+      console.warn('[Aurum][monthly-close-debt-guard][attempt-block]', {
+        source: 'attemptMonthlyClose',
+        targetMonthKey,
+        liveDebtClp: effectiveLiveDebtClp,
+        previewDebtClp: Math.abs(closePreview.nonMortgageDebt),
+        previewTotalClp: closePreview.totalNetClp,
+        shouldBlock: true,
+        timestampIso: new Date().toISOString(),
+      });
+      setCloseError(MONTHLY_CLOSE_DEBT_GUARD_ERROR_MESSAGE);
       return;
     }
     const existingClosure = closures.find((closure) => closure.monthKey === targetMonthKey) || null;
