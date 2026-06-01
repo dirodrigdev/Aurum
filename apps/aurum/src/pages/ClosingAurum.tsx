@@ -61,6 +61,7 @@ import {
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
   previewUndoMonthlyClose,
+  rollbackLegacyMonthlyClose,
   undoMonthlyCloseToCheckpoint,
   WEALTH_LABEL_CATALOG,
   WealthMonthlyClosure,
@@ -2139,7 +2140,9 @@ export const ClosingAurum: React.FC = () => {
     setUndoCloseBusy(true);
     setUndoCloseMessage('');
     try {
-      const result = await undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
+      const result = undoClosePreview?.actionMode === 'legacy_rollback'
+        ? await rollbackLegacyMonthlyClose(selectedClosureMonthKey)
+        : await undoMonthlyCloseToCheckpoint(selectedClosureMonthKey);
       if (!result.ok) {
         setUndoCloseMessage(result.message || 'No pude deshacer este cierre.');
         return;
@@ -2157,6 +2160,75 @@ export const ClosingAurum: React.FC = () => {
       setUndoCloseBusy(false);
     }
   };
+
+  const undoCloseModalMessage = useMemo(() => {
+    if (!undoClosePreview?.ok) {
+      return undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.';
+    }
+    if (undoClosePreview.actionMode === 'legacy_rollback') {
+      return `${undoClosePreview.message || ''}\n\nCierre actual: total ${formatCurrency(
+        undoClosePreview.current?.netClp || 0,
+        'CLP',
+      )}, inversiones ${formatCurrency(
+        undoClosePreview.current?.investmentClp || 0,
+        'CLP',
+      )}, bancos ${formatCurrency(
+        undoClosePreview.current?.bankClp || 0,
+        'CLP',
+      )}, bienes raíces ${formatCurrency(
+        undoClosePreview.current?.realEstateNetClp || 0,
+        'CLP',
+      )}, deudas no hipotecarias ${formatCurrency(
+        -(undoClosePreview.current?.nonMortgageDebtClp || 0),
+        'CLP',
+      )}.\n\nEste flujo retirará el cierre ${monthLabel(
+        undoClosePreview.monthKey,
+      ).toLowerCase()} de la nube y del historial, pero mantendrá los records actuales para que puedas recerrar el mes correctamente.`;
+    }
+    return `${undoClosePreview.checkpointSource === 'local'
+      ? 'Este checkpoint existe solo en este navegador y no está sincronizado en la nube. Úsalo solo si reconoces este cierre y estás seguro.'
+      : undoClosePreview.message || ''
+    }\n\nActual: total ${formatCurrency(
+      undoClosePreview.current?.netClp || 0,
+      'CLP',
+    )}, inversiones ${formatCurrency(undoClosePreview.current?.investmentClp || 0, 'CLP')}, bancos ${formatCurrency(
+      undoClosePreview.current?.bankClp || 0,
+      'CLP',
+    )}, bienes raíces ${formatCurrency(undoClosePreview.current?.realEstateNetClp || 0, 'CLP')}, deudas no hipotecarias ${formatCurrency(
+      -(undoClosePreview.current?.nonMortgageDebtClp || 0),
+      'CLP',
+    )}.\n\nEstado previo: total ${formatCurrency(
+      undoClosePreview.previous?.netClp || 0,
+      'CLP',
+    )}, inversiones ${formatCurrency(
+      undoClosePreview.previous?.investmentClp || 0,
+      'CLP',
+    )}, bancos ${formatCurrency(
+      undoClosePreview.previous?.bankClp || 0,
+      'CLP',
+    )}, bienes raíces ${formatCurrency(
+      undoClosePreview.previous?.realEstateNetClp || 0,
+      'CLP',
+    )}, deudas no hipotecarias ${formatCurrency(
+      -(undoClosePreview.previous?.nonMortgageDebtClp || 0),
+      'CLP',
+    )}.\n\nDelta: total ${formatDelta(
+      undoClosePreview.delta?.netClp || 0,
+      'CLP',
+    )}, inversiones ${formatDelta(
+      undoClosePreview.delta?.investmentClp || 0,
+      'CLP',
+    )}, bancos ${formatDelta(
+      undoClosePreview.delta?.bankClp || 0,
+      'CLP',
+    )}, bienes raíces ${formatDelta(
+      undoClosePreview.delta?.realEstateNetClp || 0,
+      'CLP',
+    )}, deudas no hipotecarias ${formatDelta(
+      undoClosePreview.delta?.nonMortgageDebtClp || 0,
+      'CLP',
+    )}.`;
+  }, [undoClosePreview]);
 
   return (
     <div className="p-4 space-y-2.5">
@@ -3125,57 +3197,30 @@ export const ClosingAurum: React.FC = () => {
       <ConfirmActionModal
         open={undoCloseConfirmOpen}
         busy={undoCloseBusy}
-        title={undoClosePreview?.checkpointSource === 'local' ? 'Deshacer con checkpoint local' : 'Deshacer cierre mensual'}
-        tone={undoClosePreview?.checkpointSource === 'local' ? 'danger' : 'default'}
-        message={
-          !undoClosePreview?.ok
-            ? undoClosePreview?.message || 'No hay checkpoint previo para deshacer este cierre de forma segura.'
-            : `${undoClosePreview.checkpointSource === 'local'
-                ? 'Este checkpoint existe solo en este navegador y no está sincronizado en la nube. Úsalo solo si reconoces este cierre y estás seguro.'
-                : undoClosePreview.message || ''
-              }\n\nActual: total ${formatCurrency(
-                undoClosePreview.current?.netClp || 0,
-                'CLP',
-              )}, inversiones ${formatCurrency(undoClosePreview.current?.investmentClp || 0, 'CLP')}, bancos ${formatCurrency(
-                undoClosePreview.current?.bankClp || 0,
-                'CLP',
-              )}, bienes raíces ${formatCurrency(undoClosePreview.current?.realEstateNetClp || 0, 'CLP')}, deudas no hipotecarias ${formatCurrency(
-                -(undoClosePreview.current?.nonMortgageDebtClp || 0),
-                'CLP',
-              )}.\n\nEstado previo: total ${formatCurrency(
-                undoClosePreview.previous?.netClp || 0,
-                'CLP',
-              )}, inversiones ${formatCurrency(
-                undoClosePreview.previous?.investmentClp || 0,
-                'CLP',
-              )}, bancos ${formatCurrency(
-                undoClosePreview.previous?.bankClp || 0,
-                'CLP',
-              )}, bienes raíces ${formatCurrency(
-                undoClosePreview.previous?.realEstateNetClp || 0,
-                'CLP',
-              )}, deudas no hipotecarias ${formatCurrency(
-                -(undoClosePreview.previous?.nonMortgageDebtClp || 0),
-                'CLP',
-              )}.\n\nDelta: total ${formatDelta(
-                undoClosePreview.delta?.netClp || 0,
-                'CLP',
-              )}, inversiones ${formatDelta(
-                undoClosePreview.delta?.investmentClp || 0,
-                'CLP',
-              )}, bancos ${formatDelta(
-                undoClosePreview.delta?.bankClp || 0,
-                'CLP',
-              )}, bienes raíces ${formatDelta(
-                undoClosePreview.delta?.realEstateNetClp || 0,
-                'CLP',
-              )}, deudas no hipotecarias ${formatDelta(
-                undoClosePreview.delta?.nonMortgageDebtClp || 0,
-                'CLP',
-              )}.`
+        title={
+          undoClosePreview?.actionMode === 'legacy_rollback'
+            ? 'Retirar cierre legacy'
+            : undoClosePreview?.checkpointSource === 'local'
+              ? 'Deshacer con checkpoint local'
+              : 'Deshacer cierre mensual'
         }
-        confirmText={undoClosePreview?.checkpointSource === 'local' ? 'Deshacer usando checkpoint local' : 'Confirmar deshacer cierre'}
-        confirmDisabled={undoClosePreview?.checkpointSource === 'local' && !undoLocalCheckpointAcknowledged}
+        tone={
+          undoClosePreview?.actionMode === 'legacy_rollback' || undoClosePreview?.checkpointSource === 'local'
+            ? 'danger'
+            : 'default'
+        }
+        message={undoCloseModalMessage}
+        confirmText={
+          undoClosePreview?.actionMode === 'legacy_rollback'
+            ? 'Retirar cierre legacy y recerrar'
+            : undoClosePreview?.checkpointSource === 'local'
+              ? 'Deshacer usando checkpoint local'
+              : 'Confirmar deshacer cierre'
+        }
+        confirmDisabled={
+          !undoClosePreview?.ok ||
+          (undoClosePreview?.checkpointSource === 'local' && !undoLocalCheckpointAcknowledged)
+        }
         cancelText="Cancelar"
         onCancel={() => {
           if (undoCloseBusy) return;
@@ -3197,6 +3242,12 @@ export const ClosingAurum: React.FC = () => {
               Entiendo que este respaldo existe solo en este navegador y quiero usarlo para deshacer este cierre.
             </span>
           </label>
+        )}
+        {undoClosePreview?.actionMode === 'legacy_rollback' && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Este flujo quita el cierre persistido de {monthLabel(undoClosePreview.monthKey).toLowerCase()} pero no toca los
+            records actuales. Úsalo para retirar el cierre malo y volver a cerrarlo correctamente.
+          </div>
         )}
       </ConfirmActionModal>
 

@@ -140,12 +140,14 @@ export interface WealthMonthlyCloseUndoAuditEntry {
   id: string;
   monthKey: string;
   createdAt: string;
-  reason: 'undo_monthly_close_to_pre_close_checkpoint';
+  reason: 'undo_monthly_close_to_pre_close_checkpoint' | 'legacy_close_rollback_no_full_checkpoint';
   checkpointId: string;
   checkpointCreatedAt: string;
   hadPreviousClosure: boolean;
   restoredToNoClosure: boolean;
   backupVersionId: string | null;
+  checkpointSource?: 'cloud' | 'local' | null;
+  warning?: string;
 }
 
 type ComparableClosureSummary = {
@@ -166,6 +168,9 @@ export interface WealthMonthlyCloseUndoPreview {
   current: ComparableClosureSummary | null;
   previous: ComparableClosureSummary | null;
   delta: ComparableClosureSummary | null;
+  actionMode: 'undo_full' | 'legacy_rollback' | 'blocked';
+  hasFullStateSnapshot: boolean;
+  previousStateSource: 'checkpoint_state' | 'previous_closure' | null;
 }
 
 export interface UndoMonthlyCloseResult {
@@ -175,6 +180,7 @@ export interface UndoMonthlyCloseResult {
   restoredToNoClosure: boolean;
   restoredClosure: WealthMonthlyClosure | null;
   checkpoint: WealthMonthlyCloseCheckpoint | null;
+  actionMode?: 'undo_full' | 'legacy_rollback' | 'blocked';
 }
 
 export interface WealthClosureCompleteness {
@@ -2758,7 +2764,7 @@ const saveMonthlyCloseCheckpointToLocalCache = (checkpoint: WealthMonthlyCloseCh
 
 const buildMonthlyCloseCheckpoint = (
   monthKey: string,
-  options?: { overwrite?: boolean },
+  options?: { overwrite?: boolean; stateOverride?: WealthCheckpointStateSnapshot },
 ): WealthMonthlyCloseCheckpoint | null => {
   const normalizedMonthKey = normalizeMonthKey(monthKey);
   if (!normalizedMonthKey) return null;
@@ -2774,7 +2780,7 @@ const buildMonthlyCloseCheckpoint = (
     schemaVersion: 2,
     hadPreviousClosure: !!existingClosure,
     previousClosure: cloneClosureForCheckpoint(existingClosure),
-    state: stripSensitiveBackupState(readLocalWealthStateSnapshot()),
+    state: stripSensitiveBackupState(options?.stateOverride || readLocalWealthStateSnapshot()),
   };
 };
 
@@ -2892,7 +2898,7 @@ const syncLocalCheckpointToCloudBestEffort = async (monthKey: string) => {
 
 export const captureMonthlyCloseCheckpoint = (
   monthKey: string,
-  options?: { overwrite?: boolean },
+  options?: { overwrite?: boolean; stateOverride?: WealthCheckpointStateSnapshot },
 ): WealthMonthlyCloseCheckpoint | null => {
   const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
   if (!checkpoint) return null;
@@ -2902,7 +2908,7 @@ export const captureMonthlyCloseCheckpoint = (
 
 export const captureMonthlyCloseCheckpointCloudFirst = async (
   monthKey: string,
-  options?: { overwrite?: boolean },
+  options?: { overwrite?: boolean; stateOverride?: WealthCheckpointStateSnapshot },
 ): Promise<WealthMonthlyCloseCheckpoint | null> => {
   const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
   if (!checkpoint) return null;
@@ -2914,7 +2920,7 @@ export const captureMonthlyCloseCheckpointCloudFirst = async (
 
 const captureMonthlyCloseCheckpointCloudFirstDetailed = async (
   monthKey: string,
-  options?: { overwrite?: boolean },
+  options?: { overwrite?: boolean; stateOverride?: WealthCheckpointStateSnapshot },
 ): Promise<{ checkpoint: WealthMonthlyCloseCheckpoint | null; errorMessage: string | null }> => {
   const checkpoint = buildMonthlyCloseCheckpoint(monthKey, options);
   if (!checkpoint) {
@@ -3094,6 +3100,35 @@ const toComparableClosureSummary = (
   };
 };
 
+const toComparableSummaryFromRecords = (
+  records: WealthRecord[] | null | undefined,
+  fx: WealthFxRates | null | undefined,
+): ComparableClosureSummary | null => {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const canonical = buildCanonicalClosureSummary(dedupeLatestByAsset(records), fx || defaultFxRates);
+  const resolved = resolveClosureSectionAmounts({
+    records,
+    summary: canonical,
+    fxRates: fx || defaultFxRates,
+    includeRiskCapitalInTotals: true,
+  });
+  return {
+    bankClp: resolved.bankClp,
+    investmentClp: resolved.investmentClpWithRisk,
+    realEstateNetClp: resolved.realEstateNetClp,
+    nonMortgageDebtClp: resolved.nonMortgageDebtClp,
+    netClp: resolved.totalNetClp,
+  };
+};
+
+const checkpointStateRecordsForMonth = (
+  checkpoint: WealthMonthlyCloseCheckpoint | null,
+  monthKey: string,
+): WealthRecord[] => {
+  if (!checkpoint?.state) return [];
+  return latestRecordsForMonth(checkpoint.state.records, monthKey);
+};
+
 export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthMonthlyCloseUndoPreview> => {
   const normalizedMonthKey = normalizeMonthKey(monthKey) || monthKey;
   const checkpointFromCloud = await loadMonthlyCloseCheckpointFromCloud(normalizedMonthKey);
@@ -3120,10 +3155,22 @@ export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthM
       current: toComparableClosureSummary(currentClosure),
       previous: null,
       delta: null,
+      actionMode: 'blocked',
+      hasFullStateSnapshot: false,
+      previousStateSource: null,
     };
   }
   const current = toComparableClosureSummary(currentClosure);
-  const previous = toComparableClosureSummary(checkpoint.previousClosure);
+  const stateMonthRecords = checkpointStateRecordsForMonth(checkpoint, normalizedMonthKey);
+  const hasFullStateSnapshot = stateMonthRecords.length > 0;
+  const previousFromState = toComparableSummaryFromRecords(stateMonthRecords, checkpoint.state?.fx || null);
+  const previousFromClosure = toComparableClosureSummary(checkpoint.previousClosure);
+  const previous = previousFromState || previousFromClosure;
+  const previousStateSource: 'checkpoint_state' | 'previous_closure' | null = previousFromState
+    ? 'checkpoint_state'
+    : previousFromClosure
+      ? 'previous_closure'
+      : null;
   const delta = current && previous
     ? {
         bankClp: previous.bankClp - current.bankClp,
@@ -3133,8 +3180,21 @@ export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthM
         netClp: previous.netClp - current.netClp,
       }
     : null;
+  const actionMode: 'undo_full' | 'legacy_rollback' | 'blocked' = previous
+    ? 'undo_full'
+    : currentClosure
+      ? 'legacy_rollback'
+      : 'blocked';
+  const message =
+    actionMode === 'legacy_rollback'
+      ? 'Este cierre tiene un checkpoint antiguo sin snapshot completo. No se puede restaurar automáticamente el estado previo. Puedes retirar el cierre de este mes para volver a cerrarlo con los datos actuales.'
+      : checkpointSource === 'local'
+        ? 'Checkpoint solo local. Este respaldo no está sincronizado.'
+        : checkpoint.hadPreviousClosure
+          ? 'Antes de este cierre existía un cierre previo. Al deshacer, se restaurará ese cierre.'
+          : 'Se restaurará el estado vivo previo a este cierre usando el snapshot guardado antes de cerrar.';
   return {
-    ok: true,
+    ok: actionMode !== 'blocked',
     monthKey: normalizedMonthKey,
     checkpointSource,
     checkpoint,
@@ -3142,12 +3202,10 @@ export const previewUndoMonthlyClose = async (monthKey: string): Promise<WealthM
     current,
     previous,
     delta,
-    message:
-      checkpointSource === 'local'
-        ? 'Checkpoint solo local. Este respaldo no está sincronizado.'
-        : checkpoint.hadPreviousClosure
-          ? 'Antes de este cierre existía un cierre previo. Al deshacer, se restaurará ese cierre.'
-          : 'Antes de este cierre no existía cierre para este mes. Al deshacer, el mes quedará sin cierre.',
+    message,
+    actionMode,
+    hasFullStateSnapshot,
+    previousStateSource,
   };
 };
 
@@ -3163,12 +3221,20 @@ const loadMonthlyCloseUndoAudit = (): WealthMonthlyCloseUndoAuditEntry[] => {
         id: String(item.id || crypto.randomUUID()),
         monthKey: String(item.monthKey || ''),
         createdAt: String(item.createdAt || nowIso()),
-        reason: 'undo_monthly_close_to_pre_close_checkpoint' as const,
+        reason:
+          item.reason === 'legacy_close_rollback_no_full_checkpoint'
+            ? ('legacy_close_rollback_no_full_checkpoint' as const)
+            : ('undo_monthly_close_to_pre_close_checkpoint' as const),
         checkpointId: String(item.checkpointId || ''),
         checkpointCreatedAt: String(item.checkpointCreatedAt || nowIso()),
         hadPreviousClosure: Boolean(item.hadPreviousClosure),
         restoredToNoClosure: Boolean(item.restoredToNoClosure),
         backupVersionId: item.backupVersionId ? String(item.backupVersionId) : null,
+        checkpointSource:
+          item.checkpointSource === 'cloud' || item.checkpointSource === 'local'
+            ? item.checkpointSource
+            : null,
+        warning: item.warning ? String(item.warning) : undefined,
       }))
       .filter((item) => !!item.monthKey);
   } catch {
@@ -3323,6 +3389,91 @@ const persistUndoStateCloudFirst = async (
   }
 };
 
+export const rollbackLegacyMonthlyClose = async (monthKey: string): Promise<UndoMonthlyCloseResult> => {
+  const preview = await previewUndoMonthlyClose(monthKey);
+  if (!preview.checkpoint) {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: preview.message || 'No hay checkpoint disponible.',
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: null,
+      actionMode: 'blocked',
+    };
+  }
+  if (preview.actionMode !== 'legacy_rollback') {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: 'Este cierre sí tiene un snapshot válido. Usa el deshacer normal.',
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: preview.checkpoint,
+      actionMode: preview.actionMode,
+    };
+  }
+
+  const localState = readLocalWealthStateSnapshot();
+  const restoredState: WealthCheckpointStateSnapshot = {
+    ...localState,
+    closures: localState.closures.filter((closure) => closure.monthKey !== preview.monthKey),
+  };
+  const cloudPersist = await persistUndoStateCloudFirst(preview.monthKey, restoredState, {
+    shouldKeepMonthClosure: false,
+  });
+  if (cloudPersist.ok === false) {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: cloudPersist.message,
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: preview.checkpoint,
+      actionMode: 'legacy_rollback',
+    };
+  }
+
+  applyWealthStateLocal({
+    records: restoredState.records,
+    closures: restoredState.closures,
+    instruments: restoredState.instruments,
+    bankTokens: restoredState.bankTokens,
+    deletedRecordIds: restoredState.deletedRecordIds,
+    deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
+    fx: restoredState.fx,
+    updatedAt: cloudPersist.updatedAt,
+  });
+
+  const auditEntries = loadMonthlyCloseUndoAudit();
+  const auditEntry: WealthMonthlyCloseUndoAuditEntry = {
+    id: crypto.randomUUID(),
+    monthKey: preview.monthKey,
+    createdAt: nowIso(),
+    reason: 'legacy_close_rollback_no_full_checkpoint',
+    checkpointId: preview.checkpoint.id,
+    checkpointCreatedAt: preview.checkpoint.createdAt,
+    hadPreviousClosure: preview.checkpoint.hadPreviousClosure,
+    restoredToNoClosure: true,
+    backupVersionId: null,
+    checkpointSource: preview.checkpointSource,
+    warning: 'legacy checkpoint without full state snapshot',
+  };
+  saveMonthlyCloseUndoAudit([auditEntry, ...auditEntries].slice(0, 64));
+  await appendMonthlyCloseUndoAuditCloud(auditEntry);
+
+  return {
+    ok: true,
+    monthKey: preview.monthKey,
+    message:
+      'Cierre legacy retirado. No restauré el estado previo porque este checkpoint no tenía snapshot completo; puedes volver a cerrar el mes con los datos actuales.',
+    restoredToNoClosure: true,
+    restoredClosure: null,
+    checkpoint: preview.checkpoint,
+    actionMode: 'legacy_rollback',
+  };
+};
+
 export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<UndoMonthlyCloseResult> => {
   const preview = await previewUndoMonthlyClose(monthKey);
   if (!preview.ok || !preview.checkpoint) {
@@ -3333,6 +3484,21 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
       restoredToNoClosure: false,
       restoredClosure: null,
       checkpoint: null,
+      actionMode: preview.actionMode,
+    };
+  }
+  if (preview.actionMode !== 'undo_full') {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message:
+        preview.actionMode === 'legacy_rollback'
+          ? 'Este cierre solo permite retirar el cierre legacy porque no existe snapshot completo del estado previo.'
+          : preview.message || 'No hay un checkpoint válido para deshacer este cierre.',
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint: preview.checkpoint,
+      actionMode: preview.actionMode,
     };
   }
   const checkpoint = preview.checkpoint;
@@ -3416,6 +3582,7 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
     restoredToNoClosure: !checkpoint.hadPreviousClosure,
     restoredClosure,
     checkpoint,
+    actionMode: 'undo_full',
   };
 };
 
@@ -4164,8 +4331,15 @@ export const closeMonthlyWithCheckpoint = async (input: {
       closedAt: input.closedAt || nowIso(),
     });
   }
+  const checkpointState = withMonthRecordsInSnapshot(
+    stripSensitiveBackupState(readLocalWealthStateSnapshot()),
+    normalizedMonthKey,
+    input.records,
+    input.fxRates,
+  );
   const checkpointResult = await captureMonthlyCloseCheckpointCloudFirstDetailed(normalizedMonthKey, {
     overwrite: true,
+    stateOverride: checkpointState,
   });
   if (!checkpointResult.checkpoint) {
     throw new Error(
@@ -4518,6 +4692,26 @@ const cloneWealthStateSnapshot = (snapshot: WealthCheckpointStateSnapshot): Weal
     deletedRecordAssetMonthKeys: [],
     fx: defaultFxRates,
   };
+
+const withMonthRecordsInSnapshot = (
+  snapshot: WealthCheckpointStateSnapshot,
+  monthKey: string,
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+): WealthCheckpointStateSnapshot => {
+  const normalizedMonthKey = normalizeMonthKey(monthKey);
+  if (!normalizedMonthKey) return snapshot;
+  const otherRecords = snapshot.records.filter((record) => {
+    const recordMonthKey = normalizeMonthKey(String(record.snapshotDate || '').slice(0, 7));
+    return recordMonthKey !== normalizedMonthKey;
+  });
+  return {
+    ...snapshot,
+    updatedAt: nowIso(),
+    records: [...records, ...otherRecords].sort(sortByCreatedDesc),
+    fx: fxRates,
+  };
+};
 
 const stripSensitiveBackupState = (snapshot: NormalizedCloudWealthState): NormalizedCloudWealthState => ({
   ...snapshot,
