@@ -4654,6 +4654,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
   records: WealthRecord[];
   fxRates: WealthFxRates;
   closedAt?: string;
+  checkpointBaseState?: WealthCheckpointStateSnapshot;
 }): Promise<WealthMonthlyClosure> => {
   const normalizedMonthKey = normalizeMonthKey(input.monthKey);
   if (!normalizedMonthKey) {
@@ -4665,7 +4666,7 @@ export const closeMonthlyWithCheckpoint = async (input: {
     });
   }
   const checkpointState = withMonthRecordsInSnapshot(
-    stripSensitiveBackupState(readLocalWealthStateSnapshot()),
+    input.checkpointBaseState || stripSensitiveBackupState(readLocalWealthStateSnapshot()),
     normalizedMonthKey,
     input.records,
     input.fxRates,
@@ -5035,6 +5036,9 @@ const cloneWealthStateSnapshot = (snapshot: WealthCheckpointStateSnapshot): Weal
     fx: defaultFxRates,
   };
 
+export const readLocalWealthStateSnapshotForClose = (): WealthCheckpointStateSnapshot =>
+  cloneWealthStateSnapshot(stripSensitiveBackupState(readLocalWealthStateSnapshot()));
+
 const withMonthRecordsInSnapshot = (
   snapshot: WealthCheckpointStateSnapshot,
   monthKey: string,
@@ -5059,6 +5063,23 @@ const stripSensitiveBackupState = (snapshot: NormalizedCloudWealthState): Normal
   ...snapshot,
   bankTokens: {},
 });
+
+export const loadCloudWealthStateSnapshotForClose = async (): Promise<WealthCheckpointStateSnapshot | null> => {
+  try {
+    const ref = await getWealthCloudRef();
+    if (!ref) return null;
+    setFirestoreChecking();
+    const snap = await getDocFromServer(ref);
+    setFirestoreOk();
+    if (!snap.exists()) return null;
+    return cloneWealthStateSnapshot(
+      stripSensitiveBackupState(normalizeCloudWealthState(snap.data() || {})),
+    );
+  } catch (err: any) {
+    setFirestoreStatusFromError(err);
+    return null;
+  }
+};
 
 export const loadCloudClosuresSummary = async (): Promise<WealthCloudClosuresSummary> => {
   try {
