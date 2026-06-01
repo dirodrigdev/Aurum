@@ -841,7 +841,7 @@ const PostCloseSummaryModal: React.FC<{
           <Button variant="outline" onClick={copySummary}>
             {copied ? 'Copiado' : 'Copiar resumen'}
           </Button>
-          <Button onClick={onClose}>Cerrar</Button>
+          <Button onClick={onClose}>Cerrar ventana</Button>
         </div>
       </div>
     </div>
@@ -4840,6 +4840,11 @@ export const Patrimonio: React.FC = () => {
     setFx(loadFxRates());
   };
 
+  const buildCanonicalCloseTargetRecords = (sourceRecords: WealthRecord[], targetMonthKey: string) =>
+    latestRecordsForMonth(sourceRecords, targetMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
+
   const monthConsistencyCheckedRef = useRef(false);
   const autoCarryAttemptedMonthRef = useRef<string | null>(null);
   useEffect(() => {
@@ -5233,9 +5238,7 @@ export const Patrimonio: React.FC = () => {
       visualMonthSnapshotDate(targetMonthKey),
     );
     const persistedRecords = loadWealthRecords();
-    const targetRecords = latestRecordsForMonth(persistedRecords, targetMonthKey).filter(
-      (record) => !isStartMonthCheckpointRecord(record),
-    );
+    const targetRecords = buildCanonicalCloseTargetRecords(persistedRecords, targetMonthKey);
     setCloseError('');
     setCloseInfo('');
     setCloseConfirmOpen(false);
@@ -5274,6 +5277,15 @@ export const Patrimonio: React.FC = () => {
     );
     refreshRecords();
     refreshInstruments();
+    const nextMonthRecords = buildCanonicalCloseTargetRecords(loadWealthRecords(), nextVisualMonth);
+    if (nextMonthRecords.length === 0) {
+      setCarryMessage(
+        `Cierre guardado. Mantuvimos ${monthLabel(targetMonthKey).toLowerCase()} en pantalla hasta que ${monthLabel(
+          nextVisualMonth,
+        ).toLowerCase()} tenga datos listos para revisar.`,
+      );
+      return { ok: true };
+    }
     setMonthKey(nextVisualMonth);
     setCloseMonthDraft(nextVisualMonth);
     const advanced = nextVisualMonth !== targetMonthKey;
@@ -5412,9 +5424,7 @@ export const Patrimonio: React.FC = () => {
 
   const evaluateCloseValidation = (targetMonthKey: string): { issues: CloseValidationIssue[]; targetRecords: WealthRecord[] } => {
     const issues: CloseValidationIssue[] = [];
-    const targetRecords = latestRecordsForMonth(records, targetMonthKey).filter(
-      (record) => !isStartMonthCheckpointRecord(record),
-    );
+    const targetRecords = buildCanonicalCloseTargetRecords(records, targetMonthKey);
     const realCurrentMonth = calendarMonthKey;
 
     if (targetMonthKey > realCurrentMonth) {
@@ -5693,36 +5703,9 @@ export const Patrimonio: React.FC = () => {
   const closeFxReady = closeFxValues.usdClp > 0 && closeFxValues.eurClp > 0 && closeFxValues.ufClp > 0;
   const closePreview = useMemo(() => {
     const previewingCurrentWorkingMonth = closeMonthDraft === monthKey && !selectedClosureForDraft;
-    if (previewingCurrentWorkingMonth) {
-      const riskRecords = monthRecords.filter(
-        (record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label),
-      );
-      const riskClp = riskRecords.reduce(
-        (sum, record) => sum + toClp(record.amount, record.currency, closeFxValues.usdClp, closeFxValues.eurClp, closeFxValues.ufClp),
-        0,
-      );
-      const hasProperty = monthRecords.some(
-        (record) =>
-          record.block === 'real_estate' &&
-          sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
-      );
-
-      return {
-        banks: sectionAmounts.bank,
-        investments: sectionAmounts.investment,
-        riskClp,
-        hasRisk: riskRecords.length > 0,
-        propertyNet: sectionAmounts.realEstateNet,
-        hasProperty,
-        nonMortgageDebt: sectionAmounts.nonMortgageDebt,
-        usdClp: closeFxValues.usdClp,
-        eurClp: closeFxValues.eurClp,
-        ufClp: closeFxValues.ufClp,
-        totalNetClp: sectionAmounts.totalNetClp,
-      };
-    }
-
-    const previewRecords = closeValidationDraft.targetRecords;
+    const previewRecords = previewingCurrentWorkingMonth
+      ? buildCanonicalCloseTargetRecords(records, closeMonthDraft)
+      : closeValidationDraft.targetRecords;
     const resolved = resolveRiskCapitalRecordsForTotals(previewRecords, includeRiskCapitalInTotals);
     const fromLiveRecords = computeWealthHomeSectionAmounts(resolved.recordsForTotals, closeFxValues);
     const riskRecords = previewRecords.filter(
@@ -5773,6 +5756,7 @@ export const Patrimonio: React.FC = () => {
     includeRiskCapitalInTotals,
     closeFxValues,
     resolveSectionAmountsFromClosure,
+    records,
   ]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {

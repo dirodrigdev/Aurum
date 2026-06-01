@@ -60,6 +60,7 @@ import {
   getMonthlyCloseCheckpoint,
   loadClosures,
   previewUndoMonthlyClose,
+  resolveClosureSectionAmounts,
   undoMonthlyCloseToCheckpoint,
   upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
@@ -157,6 +158,20 @@ describe('monthly close undo checkpoint', () => {
     expect(checkpoint?.monthKey).toBe(created.monthKey);
     expect(checkpoint?.hadPreviousClosure).toBe(false);
     expect(checkpoint?.previousClosure).toBeNull();
+  });
+
+  it('persists non-mortgage debt consistently in the saved close summary', async () => {
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    const persisted = loadClosures().find((closure) => closure.monthKey === '2026-05') || null;
+
+    expect(created.summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(persisted?.summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(resolveClosureSectionAmounts({ closure: persisted }).nonMortgageDebtClp).toBe(93_200_000);
   });
 
   it('undoes close to no-closure state when month had no closure before closing', async () => {
@@ -394,6 +409,42 @@ describe('monthly close undo checkpoint', () => {
     expect(
       cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints?.['2026-04']?.monthKey,
     ).toBe('2026-04');
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
+  });
+
+  it('preview undo reads checkpoint from root doc fallback as cloud source', async () => {
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      if (String(ref?.__path || '').includes('/monthly_close_checkpoints/')) {
+        const err: any = new Error('permission denied');
+        err.code = 'permission-denied';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 12_000_000, 1_500_000),
+      fxRates,
+      closedAt: '2026-04-15T12:00:00.000Z',
+    });
+
+    const preview = await previewUndoMonthlyClose('2026-04');
+
+    expect(preview.ok).toBe(true);
+    expect(preview.checkpointSource).toBe('cloud');
+    expect(preview.checkpoint?.monthKey).toBe('2026-04');
 
     if (original) {
       setDocMock.mockImplementation(original);
