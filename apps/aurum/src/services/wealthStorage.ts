@@ -3162,6 +3162,43 @@ const appendMonthlyCloseUndoAuditCloud = async (entry: WealthMonthlyCloseUndoAud
   }
 };
 
+const persistUndoClosuresCloudFirst = async (
+  nextClosures: WealthMonthlyClosure[],
+): Promise<{ ok: true } | { ok: false; message: string }> => {
+  const ref = await getWealthCloudRef();
+  if (!ref) {
+    return {
+      ok: false,
+      message: 'No hay una sesión Firebase válida para persistir el deshacer en la nube.',
+    };
+  }
+
+  try {
+    setFirestoreChecking();
+    const updatedAt = nextMonotonicIsoAgainstRemote();
+    await setDoc(
+      ref,
+      stripUndefinedDeep({
+        updatedAt,
+        closures: nextClosures,
+      }),
+      { merge: true },
+    );
+    markLastRemoteUpdatedAt(updatedAt);
+    setFirestoreOk();
+    setLastWealthSyncIssue('');
+    return { ok: true };
+  } catch (err: any) {
+    const classified = classifyCloudWriteError(err);
+    setLastWealthSyncIssue(`${classified.code || 'undo_sync_error'} ${classified.message}`.trim());
+    setFirestoreStatusFromError(err);
+    return {
+      ok: false,
+      message: `${classified.message} No se aplicaron cambios locales para evitar inconsistencias.`,
+    };
+  }
+};
+
 export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<UndoMonthlyCloseResult> => {
   const preview = await previewUndoMonthlyClose(monthKey);
   if (!preview.ok || !preview.checkpoint) {
@@ -3213,7 +3250,19 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
     nextClosures = [restoredClosure, ...nextClosures].sort(compareClosuresByMonthDesc);
   }
 
-  saveClosures(nextClosures);
+  const cloudPersist = await persistUndoClosuresCloudFirst(nextClosures);
+  if (cloudPersist.ok === false) {
+    return {
+      ok: false,
+      monthKey: preview.monthKey,
+      message: cloudPersist.message,
+      restoredToNoClosure: false,
+      restoredClosure: null,
+      checkpoint,
+    };
+  }
+
+  saveClosures(nextClosures, { skipCloudSync: true });
   const auditEntries = loadMonthlyCloseUndoAudit();
   const auditEntry: WealthMonthlyCloseUndoAuditEntry = {
     id: crypto.randomUUID(),

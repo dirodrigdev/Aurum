@@ -188,6 +188,9 @@ describe('monthly close undo checkpoint', () => {
     expect(result.ok).toBe(true);
     expect(result.restoredToNoClosure).toBe(true);
     expect(loadClosures().some((closure) => closure.monthKey === monthKey)).toBe(false);
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === monthKey),
+    ).toBe(false);
   });
 
   it('undoes close to previous closure snapshot when month already had a closure', async () => {
@@ -220,6 +223,9 @@ describe('monthly close undo checkpoint', () => {
     expect(restored).not.toBeNull();
     expect(Number(restored?.summary.bankClp || 0)).toBe(Number(beforeSummary.bankClp || 0));
     expect(Number(restored?.summary.nonMortgageDebtClp || 0)).toBe(Number(beforeSummary.nonMortgageDebtClp || 0));
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === monthKey),
+    ).toBe(true);
   });
 
   it('undoes to pre-close checkpoint even after multiple later edits', async () => {
@@ -445,6 +451,43 @@ describe('monthly close undo checkpoint', () => {
     expect(preview.ok).toBe(true);
     expect(preview.checkpointSource).toBe('cloud');
     expect(preview.checkpoint?.monthKey).toBe('2026-04');
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
+  });
+
+  it('does not report undo success when cloud persistence fails', async () => {
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 1_500_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    expect(loadClosures().some((closure) => closure.monthKey === created.monthKey)).toBe(true);
+
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      const path = String(ref?.__path || '');
+      if (path === 'aurum_wealth/test-user' && payload?.closures) {
+        const err: any = new Error('unavailable');
+        err.code = 'unavailable';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    const result = await undoMonthlyCloseToCheckpoint('2026-05');
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('No se aplicaron cambios locales');
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
 
     if (original) {
       setDocMock.mockImplementation(original);
