@@ -222,6 +222,32 @@ describe('monthly close undo checkpoint', () => {
     expect(resolveClosureSectionAmounts({ closure: persisted }).nonMortgageDebtClp).toBe(93_200_000);
   });
 
+  it('does not report close success when cloud read-after-write does not include the month closure', async () => {
+    vi.mocked(getDocFromServer).mockImplementationOnce(async () => ({
+      exists: () => true,
+      data: () => ({
+        updatedAt: '2026-06-01T00:00:00.000Z',
+        records: [],
+        closures: [],
+        closureDeletionTombstones: [],
+        instruments: [],
+        bankTokens: {},
+        deletedRecordIds: [],
+        deletedRecordAssetMonthKeys: [],
+        fx: fxRates,
+      }),
+    }));
+
+    await expect(
+      closeMonthlyWithCheckpoint({
+        monthKey: '2026-05',
+        records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+        fxRates,
+        closedAt: '2026-05-31T23:59:59.000Z',
+      }),
+    ).rejects.toThrow('El cierre no quedó guardado. No se actualizó el historial.');
+  });
+
   it('persists non-whitelisted debt block records in the saved close summary', async () => {
     const records = [
       ...recordsForMonth('2026-05', 21_007_516, 0).filter((record) => record.label !== DEBT_CARD_CLP_LABEL),

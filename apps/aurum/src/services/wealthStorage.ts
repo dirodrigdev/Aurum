@@ -1530,8 +1530,10 @@ const isClosureSuppressedByTombstone = (
 ) => {
   const tombstone = tombstones.find((item) => item.monthKey === closure.monthKey);
   if (!tombstone) return false;
-  if (tombstone.removedClosureFingerprint && closureDeletionFingerprint(closure) === tombstone.removedClosureFingerprint) {
-    return true;
+  // If we have a fingerprint, only suppress the exact removed closure.
+  // This prevents blocking a new valid re-close of the same month.
+  if (tombstone.removedClosureFingerprint) {
+    return closureDeletionFingerprint(closure) === tombstone.removedClosureFingerprint;
   }
   const closedAtMs = isoToMs(closure.closedAt);
   const removedAtMs = isoToMs(tombstone.removedAt);
@@ -4681,12 +4683,26 @@ export const closeMonthlyWithCheckpoint = async (input: {
         : 'No se pudo guardar el punto de respaldo del cierre. Por seguridad, el cierre no se ejecutó.',
     );
   }
-  return upsertMonthlyClosure({
+  const closure = upsertMonthlyClosure({
     monthKey: normalizedMonthKey,
     records: input.records,
     fxRates: input.fxRates,
     closedAt: input.closedAt || nowIso(),
   });
+  const synced = await syncWealthNow();
+  if (!synced) {
+    throw new Error('El cierre no quedó guardado. No se actualizó el historial.');
+  }
+  const wealthRef = await getWealthCloudRef();
+  if (wealthRef) {
+    const cloudSnap = await getDocFromServer(wealthRef);
+    const cloudState = cloudSnap.exists() ? normalizeCloudWealthState(cloudSnap.data() || {}) : null;
+    const persisted = cloudState?.closures.find((item) => item.monthKey === normalizedMonthKey) || null;
+    if (!persisted) {
+      throw new Error('El cierre no quedó guardado. No se actualizó el historial.');
+    }
+  }
+  return closure;
 };
 
 const findPreviousClosure = (monthKey: string, closures: WealthMonthlyClosure[]) => {
