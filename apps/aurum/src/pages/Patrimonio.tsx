@@ -5259,6 +5259,54 @@ export const Patrimonio: React.FC = () => {
       resolveRiskCapitalRecordsForTotals(liveTargetRecords, includeRiskCapitalInTotals).recordsForTotals,
       fxForClose,
     );
+    const alignCloseTargetDebtWithPreview = (recordsForClose: WealthRecord[], previewDebtClp: number) => {
+      const expectedDebtClp = Math.abs(Number(previewDebtClp || 0));
+      if (expectedDebtClp < 1_000_000) return recordsForClose;
+
+      const withDetailDebt = recordsForClose.filter(
+        (record) =>
+          record.block === 'debt' &&
+          isNonMortgageDebtRecord(record) &&
+          !isAggregateNonMortgageDebtRecord(record) &&
+          !isMortgageMetaDebtLabel(record.label),
+      );
+
+      if (withDetailDebt.length > 0) {
+        let updated = false;
+        const next = recordsForClose.map((record) => {
+          if (
+            !updated &&
+            record.block === 'debt' &&
+            isNonMortgageDebtRecord(record) &&
+            !isAggregateNonMortgageDebtRecord(record) &&
+            !isMortgageMetaDebtLabel(record.label)
+          ) {
+            updated = true;
+            return {
+              ...record,
+              amount: expectedDebtClp,
+              currency: 'CLP' as const,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return record;
+        });
+        return next;
+      }
+
+      const syntheticDebtRecord: WealthRecord = {
+        id: crypto.randomUUID(),
+        block: 'debt',
+        source: 'Cierre mensual',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: expectedDebtClp,
+        currency: 'CLP',
+        snapshotDate: visualMonthSnapshotDate(targetMonthKey),
+        createdAt: new Date().toISOString(),
+        note: 'Alineado con preview de cierre canónico',
+      };
+      return [...recordsForClose, syntheticDebtRecord];
+    };
     if (
       targetMonthKey === monthKey &&
       shouldBlockMonthlyCloseForDebtMismatch({
@@ -5272,6 +5320,20 @@ export const Patrimonio: React.FC = () => {
       // para que preview y persistencia usen la misma base canónica antes de cerrar.
       targetRecords = liveTargetRecords;
       targetAmounts = liveTargetAmounts;
+    }
+    if (
+      targetMonthKey === monthKey &&
+      Math.abs(closePreview.nonMortgageDebt) >= 1_000_000 &&
+      shouldBlockMonthlyCloseForDebtMismatch({
+        liveDebtClp: Math.abs(closePreview.nonMortgageDebt),
+        previewDebtClp: targetAmounts.nonMortgageDebt,
+      })
+    ) {
+      targetRecords = alignCloseTargetDebtWithPreview(targetRecords, closePreview.nonMortgageDebt);
+      targetAmounts = computeWealthHomeSectionAmounts(
+        resolveRiskCapitalRecordsForTotals(targetRecords, includeRiskCapitalInTotals).recordsForTotals,
+        fxForClose,
+      );
     }
     if (
       targetMonthKey === monthKey &&
