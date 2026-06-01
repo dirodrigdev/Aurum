@@ -21,6 +21,7 @@ import {
   repairKnownHistoricalUfClpClosures,
   repairHistoricalUfClpMonth,
   saveClosures,
+  upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
 
@@ -250,6 +251,64 @@ describe('canonical closure summary', () => {
     expect(closure.summary.bankClp).toBeUndefined();
     expect(closure.summary.nonMortgageDebtClp).toBeUndefined();
     expect(closure.summary.realEstateNetClp).toBeUndefined();
+  });
+
+  it('rebuilds summary debt from canonical records even without manual edits', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 21_007_516,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'investment',
+        source: 'BTG',
+        label: 'BTG total valorizacion',
+        amount: 1_525_849_377,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'real_estate',
+        source: 'Manual',
+        label: 'Valor propiedad',
+        amount: 252_860_424,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 93_200_000,
+        currency: 'CLP',
+      }),
+    ];
+
+    saveClosures([
+      {
+        id: 'bad-may-closure',
+        monthKey: '2026-05',
+        closedAt: '2026-05-31T12:00:00.000Z',
+        fxRates,
+        records,
+        summary: {
+          ...buildCanonicalClosureSummary(records, fxRates),
+          nonMortgageDebtClp: 0,
+          netClp: 1_799_717_317,
+        },
+      },
+    ]);
+
+    const repaired = upsertMonthlyClosure({
+      monthKey: '2026-05',
+      records,
+      fxRates,
+      closedAt: '2026-05-31T15:00:00.000Z',
+    });
+
+    expect(repaired.summary.nonMortgageDebtClp).toBe(93_200_000);
+    expect(repaired.summary.netClp).toBe(1_706_517_317);
   });
 
   it('imports detailed historical closures with canonical summary fields', async () => {

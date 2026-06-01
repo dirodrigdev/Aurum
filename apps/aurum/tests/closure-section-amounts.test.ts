@@ -145,6 +145,37 @@ describe('resolveClosureSectionAmounts', () => {
     expect(resolved.totalNetClp).toBe(1_300_000);
   });
 
+  it('no conserva deuda 0 cuando byBlock trae deuda legacy relevante', () => {
+    const summary = {
+      netByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      assetsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      debtsByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
+      netConsolidatedClp: 1_799_717_319,
+      byBlock: {
+        bank: { CLP: 21_007_516, USD: 0, EUR: 0, UF: 0 },
+        investment: { CLP: 1_805_671_377, USD: 0, EUR: 0, UF: 0 },
+        real_estate: { CLP: 252_860_424, USD: 0, EUR: 0, UF: 0 },
+        debt: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+      },
+      investmentClp: 1_525_849_377,
+      investmentClpWithRisk: 1_805_671_377,
+      bankClp: 21_007_516,
+      nonMortgageDebtClp: 0,
+      realEstateAssetsClp: 252_860_424,
+      mortgageDebtClp: 0,
+      realEstateNetClp: 252_860_424,
+      netClp: 1_799_717_319,
+      netClpWithRisk: 1_799_717_319,
+      riskCapitalClp: 279_822_000,
+    } satisfies WealthMonthlyClosure['summary'];
+
+    const resolved = resolveClosureSectionAmounts({ summary });
+    expect(resolved.source).toBe('summary_extended');
+    expect(resolved.nonMortgageDebtClp).toBe(93_200_000);
+    expect(resolved.warnings).toContain('summary_debt_zero_overridden_from_byblock');
+    expect(resolved.totalNetClp).toBe(1_706_517_319);
+  });
+
   it('cae a byBlock legacy solo como fallback y reporta warning', () => {
     const legacySummary = {
       netByCurrency: { CLP: 0, USD: 0, EUR: 0, UF: 0 },
@@ -166,4 +197,3 @@ describe('resolveClosureSectionAmounts', () => {
     expect(resolved.nonMortgageDebtClp).toBe(100_000);
   });
 });
-

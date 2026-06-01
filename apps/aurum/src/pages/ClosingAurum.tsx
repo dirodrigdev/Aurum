@@ -503,7 +503,12 @@ const buildSummaryBreakdown = (
     0,
   );
   const bankClp = readFinite(extended.bankClp) ?? 0;
-  const nonMortgageDebtClp = readFinite(extended.nonMortgageDebtClp) ?? 0;
+  const byBlockDebtClp = Math.abs(readFinite(summary?.byBlock?.debt?.CLP) ?? 0);
+  const nonMortgageDebtFromExtended = readFinite(extended.nonMortgageDebtClp) ?? 0;
+  const nonMortgageDebtClp =
+    Math.abs(nonMortgageDebtFromExtended) < 1 && byBlockDebtClp >= 1_000_000
+      ? byBlockDebtClp
+      : nonMortgageDebtFromExtended;
   const realEstateNetClp =
     readFinite(extended.realEstateNetClp) ?? (netClp - investmentFromRows - bankClp + nonMortgageDebtClp);
   const mortgageDebtClp = Math.abs(readFinite(extended.mortgageDebtClp) ?? 0);

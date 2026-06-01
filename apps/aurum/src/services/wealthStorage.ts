@@ -3195,6 +3195,22 @@ export const resolveClosureSectionAmounts = (input: {
   }
 
   if (hasExtendedSummaryAmounts(summary)) {
+    const extendedDebt = Math.max(0, finiteOr(summary?.nonMortgageDebtClp));
+    const legacyByBlockDebt = Math.max(0, Math.abs(finiteOr(summary?.byBlock?.debt?.CLP)));
+    if (extendedDebt < 1 && legacyByBlockDebt >= 1_000_000) {
+      const correctedSummary: WealthSnapshotSummary = {
+        ...summary!,
+        nonMortgageDebtClp: legacyByBlockDebt,
+        netClp: finiteOr(summary?.netClp, summary?.netConsolidatedClp) - legacyByBlockDebt,
+        netClpWithRisk: finiteOr(summary?.netClpWithRisk, summary?.netConsolidatedClp) - legacyByBlockDebt,
+      };
+      return toResolvedClosureSectionAmounts(
+        correctedSummary,
+        'summary_extended',
+        includeRiskCapitalInTotals,
+        ['summary_debt_zero_overridden_from_byblock'],
+      );
+    }
     return toResolvedClosureSectionAmounts(summary, 'summary_extended', includeRiskCapitalInTotals);
   }
 
