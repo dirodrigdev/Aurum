@@ -58,9 +58,12 @@ import {
   captureMonthlyCloseCheckpoint,
   closeMonthlyWithCheckpoint,
   getMonthlyCloseCheckpoint,
+  hydrateWealthFromCloud,
   loadClosures,
+  loadWealthRecords,
   previewUndoMonthlyClose,
   resolveClosureSectionAmounts,
+  saveWealthRecords,
   undoMonthlyCloseToCheckpoint,
   upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
@@ -136,6 +139,11 @@ const recordsForMonth = (monthKey = '2026-04', bankClp = 10_000_000, debtClp = 2
   ),
 ];
 
+const withCarryNote = (record: WealthRecord, fromMonthKey: string): WealthRecord => ({
+  ...record,
+  note: `Mes anterior: cierre ${fromMonthKey}`,
+});
+
 describe('monthly close undo checkpoint', () => {
   beforeEach(() => {
     cloudStore.clear();
@@ -191,6 +199,83 @@ describe('monthly close undo checkpoint', () => {
     expect(
       (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === monthKey),
     ).toBe(false);
+  });
+
+  it('restores full checkpoint state from subcollection cloud and keeps may removed after hydration', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const juneCarried = recordsForMonth('2026-06', 1_000_000, 500_000).map((record) =>
+      withCarryNote(record, '2026-05'),
+    );
+    saveWealthRecords(juneCarried, { skipCloudSync: true });
+
+    const result = await undoMonthlyCloseToCheckpoint('2026-05');
+    expect(result.ok).toBe(true);
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
+    expect(loadWealthRecords().map((record) => record.snapshotDate)).toEqual(
+      preCloseRecords.map((record) => record.snapshotDate),
+    );
+
+    await hydrateWealthFromCloud();
+
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
+    expect(loadWealthRecords().map((record) => record.snapshotDate)).toEqual(
+      preCloseRecords.map((record) => record.snapshotDate),
+    );
+    expect(
+      (cloudStore.get('aurum_wealth/test-user')?.closures || []).some((closure: any) => closure.monthKey === '2026-05'),
+    ).toBe(false);
+  });
+
+  it('restores full checkpoint state from root doc fallback cloud', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      if (String(ref?.__path || '').includes('/monthly_close_checkpoints/')) {
+        const err: any = new Error('permission denied');
+        err.code = 'permission-denied';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    saveWealthRecords(recordsForMonth('2026-06', 1_000_000, 500_000).map((record) => withCarryNote(record, '2026-05')), {
+      skipCloudSync: true,
+    });
+
+    const result = await undoMonthlyCloseToCheckpoint('2026-05');
+    expect(result.ok).toBe(true);
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
+    expect(
+      cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints?.['2026-05']?.state?.records?.length,
+    ).toBe(preCloseRecords.length);
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
   });
 
   it('undoes close to previous closure snapshot when month already had a closure', async () => {
@@ -494,6 +579,82 @@ describe('monthly close undo checkpoint', () => {
     } else {
       setDocMock.mockReset();
     }
+  });
+
+  it('fails undo when cloud verification still returns the removed month', async () => {
+    const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 1_500_000);
+    saveWealthRecords(preCloseRecords, { skipCloudSync: true });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: preCloseRecords,
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    cloudStore.set('aurum_wealth/test-user', {
+      ...(cloudStore.get('aurum_wealth/test-user') || {}),
+      updatedAt: '2026-05-31T23:59:59.000Z',
+      closures: loadClosures(),
+      records: preCloseRecords,
+      fx: fxRates,
+    });
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      const path = String(ref?.__path || '');
+      if (path === 'aurum_wealth/test-user' && payload?.closures) {
+        const previous = cloudStore.get(ref.__path) || {};
+        cloudStore.set(ref.__path, { ...previous, ...payload, closures: previous.closures });
+        return;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    try {
+      const result = await undoMonthlyCloseToCheckpoint('2026-05');
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain('siguió devolviendo el cierre deshecho');
+      expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
+    } finally {
+      if (original) {
+        setDocMock.mockImplementation(original);
+      } else {
+        setDocMock.mockReset();
+      }
+    }
+  });
+
+  it('allows closing the month again after undo restores april as latest closure', async () => {
+    saveWealthRecords(recordsForMonth('2026-05', 12_000_000, 93_200_000), { skipCloudSync: true });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 8_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const undone = await undoMonthlyCloseToCheckpoint('2026-05');
+    expect(undone.ok).toBe(true);
+    expect(loadClosures()[0]?.monthKey).toBe('2026-04');
+
+    const reclosed = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 12_000_000, 93_200_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    expect(reclosed.monthKey).toBe('2026-05');
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(true);
   });
 
   it('prefers cloud checkpoint and keeps local as fallback only', async () => {

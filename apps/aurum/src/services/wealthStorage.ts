@@ -122,6 +122,18 @@ export interface WealthMonthlyCloseCheckpoint {
   schemaVersion: number;
   hadPreviousClosure: boolean;
   previousClosure: WealthMonthlyClosure | null;
+  state?: WealthCheckpointStateSnapshot;
+}
+
+export interface WealthCheckpointStateSnapshot {
+  updatedAt: string;
+  records: WealthRecord[];
+  closures: WealthMonthlyClosure[];
+  instruments: WealthInvestmentInstrument[];
+  bankTokens: WealthBankTokenMap;
+  deletedRecordIds: string[];
+  deletedRecordAssetMonthKeys: string[];
+  fx: WealthFxRates;
 }
 
 export interface WealthMonthlyCloseUndoAuditEntry {
@@ -2679,12 +2691,28 @@ const normalizeCheckpointClosure = (raw: any, fallbackMonthKey: string): WealthM
   };
 };
 
+const normalizeCheckpointState = (raw: any): WealthCheckpointStateSnapshot | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const normalized = normalizeCloudWealthState(raw);
+  return {
+    updatedAt: normalized.updatedAt || nowIso(),
+    records: normalized.records,
+    closures: normalized.closures,
+    instruments: normalized.instruments,
+    bankTokens: normalized.bankTokens,
+    deletedRecordIds: normalized.deletedRecordIds,
+    deletedRecordAssetMonthKeys: normalized.deletedRecordAssetMonthKeys,
+    fx: normalized.fx,
+  };
+};
+
 const normalizeCheckpoint = (raw: any): WealthMonthlyCloseCheckpoint | null => {
   if (!raw || typeof raw !== 'object') return null;
   const monthKey = normalizeMonthKey(raw.monthKey);
   if (!monthKey) return null;
   const previousClosure = normalizeCheckpointClosure(raw.previousClosure, monthKey);
   const hadPreviousClosure = Boolean(raw.hadPreviousClosure || previousClosure);
+  const state = normalizeCheckpointState(raw.state);
   return {
     id: String(raw.id || crypto.randomUUID()),
     monthKey,
@@ -2693,6 +2721,7 @@ const normalizeCheckpoint = (raw: any): WealthMonthlyCloseCheckpoint | null => {
     schemaVersion: Number(raw.schemaVersion || 1),
     hadPreviousClosure,
     previousClosure: hadPreviousClosure ? previousClosure : null,
+    state,
   };
 };
 
@@ -2742,9 +2771,10 @@ const buildMonthlyCloseCheckpoint = (
     monthKey: normalizedMonthKey,
     createdAt: nowIso(),
     reason: 'before_monthly_close',
-    schemaVersion: 1,
+    schemaVersion: 2,
     hadPreviousClosure: !!existingClosure,
     previousClosure: cloneClosureForCheckpoint(existingClosure),
+    state: stripSensitiveBackupState(readLocalWealthStateSnapshot()),
   };
 };
 
@@ -3162,9 +3192,78 @@ const appendMonthlyCloseUndoAuditCloud = async (entry: WealthMonthlyCloseUndoAud
   }
 };
 
-const persistUndoClosuresCloudFirst = async (
-  nextClosures: WealthMonthlyClosure[],
-): Promise<{ ok: true } | { ok: false; message: string }> => {
+const waitForWealthCloudSyncIdle = async () => {
+  if (wealthCloudSyncTimer) {
+    clearTimeout(wealthCloudSyncTimer);
+    wealthCloudSyncTimer = null;
+  }
+  wealthCloudSyncRequestedWhileRunning = false;
+  if (wealthCloudSyncPromise) {
+    await wealthCloudSyncPromise.catch(() => false);
+  }
+  if (wealthCloudSyncTimer) {
+    clearTimeout(wealthCloudSyncTimer);
+    wealthCloudSyncTimer = null;
+  }
+  wealthCloudSyncRequestedWhileRunning = false;
+};
+
+const stripLegacyUndoCarryForwardRecords = (
+  records: WealthRecord[],
+  monthKey: string,
+): WealthRecord[] => {
+  const nextMonthKey = monthAfter(monthKey);
+  if (!nextMonthKey) return records;
+  return records.filter((record) => {
+    const recordMonthKey = normalizeMonthKey(String(record.snapshotDate || '').slice(0, 7));
+    if (recordMonthKey !== nextMonthKey) return true;
+    const note = String(record.note || '');
+    if (!isAutoFillNote(note)) return true;
+    return !note.includes(`cierre ${monthKey}`);
+  });
+};
+
+const buildUndoRestoredState = (
+  checkpoint: WealthMonthlyCloseCheckpoint,
+  monthKey: string,
+  backupVersion: WealthMonthlyClosureVersion | null,
+): WealthCheckpointStateSnapshot => {
+  const localState = readLocalWealthStateSnapshot();
+  const baseState = checkpoint.state
+    ? {
+        ...cloneWealthStateSnapshot(checkpoint.state),
+        bankTokens: localState.bankTokens,
+      }
+    : {
+        ...localState,
+        records: stripLegacyUndoCarryForwardRecords(localState.records, monthKey),
+      };
+
+  let nextClosures = baseState.closures.filter((closure) => closure.monthKey !== monthKey);
+  if (checkpoint.hadPreviousClosure && checkpoint.previousClosure?.summary) {
+    const restoredClosure = cloneClosureForCheckpoint(checkpoint.previousClosure);
+    if (restoredClosure) {
+      if (backupVersion) {
+        restoredClosure.previousVersions = mergeClosureVersions(
+          restoredClosure.previousVersions,
+          [backupVersion],
+        );
+      }
+      nextClosures = [restoredClosure, ...nextClosures].sort(compareClosuresByMonthDesc);
+    }
+  }
+
+  return {
+    ...baseState,
+    closures: nextClosures,
+  };
+};
+
+const persistUndoStateCloudFirst = async (
+  monthKey: string,
+  restoredState: WealthCheckpointStateSnapshot,
+  options?: { shouldKeepMonthClosure?: boolean },
+): Promise<{ ok: true; updatedAt: string } | { ok: false; message: string }> => {
   const ref = await getWealthCloudRef();
   if (!ref) {
     return {
@@ -3174,20 +3273,45 @@ const persistUndoClosuresCloudFirst = async (
   }
 
   try {
+    await waitForWealthCloudSyncIdle();
     setFirestoreChecking();
     const updatedAt = nextMonotonicIsoAgainstRemote();
     await setDoc(
       ref,
       stripUndefinedDeep({
+        schemaVersion: 1,
         updatedAt,
-        closures: nextClosures,
+        fx: restoredState.fx,
+        bankTokens: restoredState.bankTokens,
+        records: restoredState.records,
+        closures: restoredState.closures,
+        instruments: restoredState.instruments,
+        deletedRecordIds: restoredState.deletedRecordIds,
+        deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
       }),
       { merge: true },
     );
+    const remoteSnap = await getDoc(ref);
+    const remoteState = remoteSnap.exists()
+      ? normalizeCloudWealthState(remoteSnap.data() || {})
+      : null;
+    const hasMonthClosure = remoteState?.closures.some((closure) => closure.monthKey === monthKey);
+    const monthMismatch = options?.shouldKeepMonthClosure ? !hasMonthClosure : !!hasMonthClosure;
+    const closuresMatch = !!remoteState && sameClosures(remoteState.closures, restoredState.closures);
+    const recordsMatch = !!remoteState && sameRecords(remoteState.records, restoredState.records);
+    if (!remoteState || monthMismatch || !closuresMatch || !recordsMatch) {
+      setLastWealthSyncIssue('undo_verify_failed El cierre sigue visible tras verificar cloud.');
+      setFirestoreOk();
+      return {
+        ok: false,
+        message:
+          'El punto previo se escribió, pero la nube siguió devolviendo el cierre deshecho. No apliqué cambios locales para evitar inconsistencias.',
+      };
+    }
     markLastRemoteUpdatedAt(updatedAt);
     setFirestoreOk();
     setLastWealthSyncIssue('');
-    return { ok: true };
+    return { ok: true, updatedAt };
   } catch (err: any) {
     const classified = classifyCloudWriteError(err);
     setLastWealthSyncIssue(`${classified.code || 'undo_sync_error'} ${classified.message}`.trim());
@@ -3216,7 +3340,6 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
   const current = closures.find((closure) => closure.monthKey === preview.monthKey) || null;
   const replacedAt = nowIso();
   const backupVersion = current ? toClosureVersion(current, replacedAt) : null;
-  let nextClosures = closures.filter((closure) => closure.monthKey !== preview.monthKey);
   let restoredClosure: WealthMonthlyClosure | null = null;
 
   if (checkpoint.hadPreviousClosure) {
@@ -3241,16 +3364,13 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
         checkpoint,
       };
     }
-    if (backupVersion) {
-      restoredClosure.previousVersions = mergeClosureVersions(
-        restoredClosure.previousVersions,
-        [backupVersion],
-      );
-    }
-    nextClosures = [restoredClosure, ...nextClosures].sort(compareClosuresByMonthDesc);
   }
 
-  const cloudPersist = await persistUndoClosuresCloudFirst(nextClosures);
+  const restoredState = buildUndoRestoredState(checkpoint, preview.monthKey, backupVersion);
+  restoredClosure = restoredState.closures.find((closure) => closure.monthKey === preview.monthKey) || null;
+  const cloudPersist = await persistUndoStateCloudFirst(preview.monthKey, restoredState, {
+    shouldKeepMonthClosure: checkpoint.hadPreviousClosure,
+  });
   if (cloudPersist.ok === false) {
     return {
       ok: false,
@@ -3262,7 +3382,16 @@ export const undoMonthlyCloseToCheckpoint = async (monthKey: string): Promise<Un
     };
   }
 
-  saveClosures(nextClosures, { skipCloudSync: true });
+  applyWealthStateLocal({
+    records: restoredState.records,
+    closures: restoredState.closures,
+    instruments: restoredState.instruments,
+    bankTokens: restoredState.bankTokens,
+    deletedRecordIds: restoredState.deletedRecordIds,
+    deletedRecordAssetMonthKeys: restoredState.deletedRecordAssetMonthKeys,
+    fx: restoredState.fx,
+    updatedAt: cloudPersist.updatedAt,
+  });
   const auditEntries = loadMonthlyCloseUndoAudit();
   const auditEntry: WealthMonthlyCloseUndoAuditEntry = {
     id: crypto.randomUUID(),
@@ -4377,6 +4506,18 @@ const readLocalWealthStateSnapshot = (): NormalizedCloudWealthState => ({
   deletedRecordAssetMonthKeys: loadDeletedRecordAssetMonthKeys(),
   fx: loadFxRates(),
 });
+
+const cloneWealthStateSnapshot = (snapshot: WealthCheckpointStateSnapshot): WealthCheckpointStateSnapshot =>
+  normalizeCheckpointState(snapshot) || {
+    updatedAt: snapshot.updatedAt || nowIso(),
+    records: [],
+    closures: [],
+    instruments: [],
+    bankTokens: {},
+    deletedRecordIds: [],
+    deletedRecordAssetMonthKeys: [],
+    fx: defaultFxRates,
+  };
 
 const stripSensitiveBackupState = (snapshot: NormalizedCloudWealthState): NormalizedCloudWealthState => ({
   ...snapshot,
