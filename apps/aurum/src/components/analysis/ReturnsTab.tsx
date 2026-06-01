@@ -681,10 +681,11 @@ const WealthUfChartCard: React.FC<{
   const pointX = (index: number) =>
     padding.left + (months.length <= 1 ? innerWidth / 2 : (innerWidth * index) / Math.max(1, months.length - 1));
   const allValues = visibleSeries.flatMap((series) => series.curve.points.map((point) => point.value));
-  const domainMin = Math.min(...allValues);
-  const domainMax = Math.max(...allValues);
+  const domainMin = Math.min(...allValues, 100);
+  const domainMax = Math.max(...allValues, 100);
   const pointY = (value: number) =>
     padding.top + ((domainMax - value) / Math.max(1e-6, domainMax - domainMin || 1)) * innerHeight;
+  const baseY = pointY(100);
 
   return (
     <Card className="border-slate-200 p-3">
@@ -811,10 +812,11 @@ const WealthBase100ComparisonCard: React.FC<{
   const pointX = (index: number) =>
     padding.left + (months.length <= 1 ? innerWidth / 2 : (innerWidth * index) / Math.max(1, months.length - 1));
   const allValues = visibleSeries.flatMap((series) => series.curve.points.map((point) => point.value));
-  const domainMin = Math.min(...allValues);
-  const domainMax = Math.max(...allValues);
+  const domainMin = Math.min(...allValues, 100);
+  const domainMax = Math.max(...allValues, 100);
   const pointY = (value: number) =>
     padding.top + ((domainMax - value) / Math.max(1e-6, domainMax - domainMin || 1)) * innerHeight;
+  const baseY = pointY(100);
 
   return (
     <Card className="border-slate-200 p-3">
@@ -827,6 +829,16 @@ const WealthBase100ComparisonCard: React.FC<{
       </div>
       <div className="mt-3">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full">
+          <line
+            x1={padding.left}
+            x2={width - padding.right}
+            y1={baseY}
+            y2={baseY}
+            stroke="#94a3b8"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+            opacity="0.45"
+          />
           {months.map((monthKey, index) => {
             const x = pointX(index);
             const base100AtMonth = visibleSeries
