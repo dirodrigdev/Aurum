@@ -11,6 +11,7 @@ import {
   buildApril2026BankRepairPreview,
   buildClosureAuditDiagnosis,
   buildClosureAuditSnapshot,
+  buildClosureEditDraftFromRecords,
   buildEditedClosureRecordsFromDraft,
 } from '../src/pages/ClosingAurum';
 import { buildClosureBlockIntegrityAudit, buildClosureDetailRecoveryAudit } from '../src/services/wealthIntegrityAudit';
@@ -18,8 +19,11 @@ import {
   BANK_BCHILE_CLP_LABEL,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
-  CLOSURE_RECONCILIATION_BANK_LABEL,
+  BANK_BCHILE_USD_LABEL,
   BANK_SCOTIA_CLP_LABEL,
+  BANK_SCOTIA_USD_LABEL,
+  BANK_SANTANDER_CLP_LABEL,
+  BANK_SANTANDER_USD_LABEL,
   DEBT_CARD_CLP_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
   buildCanonicalClosureSummary,
@@ -114,6 +118,68 @@ const emptyDraft = {
   tarjetasClp: '',
   tarjetasUsd: '',
 };
+
+const may2026GranularBankRecords = (): WealthRecord[] => [
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_BCHILE_CLP_LABEL,
+    amount: 163_846,
+    currency: 'CLP',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_SCOTIA_CLP_LABEL,
+    amount: 0,
+    currency: 'CLP',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_SANTANDER_CLP_LABEL,
+    amount: 0,
+    currency: 'CLP',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_BCHILE_USD_LABEL,
+    amount: 5_590,
+    currency: 'USD',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_SCOTIA_USD_LABEL,
+    amount: 15_000,
+    currency: 'USD',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Fintoc',
+    label: BANK_SANTANDER_USD_LABEL,
+    amount: 2_803.57,
+    currency: 'USD',
+  }),
+];
+
+const poorAggregateBankRecords = (): WealthRecord[] => [
+  makeRecord({
+    block: 'bank',
+    source: 'Histórico manual',
+    label: BANK_BALANCE_CLP_LABEL,
+    amount: 3_659_143,
+    currency: 'CLP',
+  }),
+  makeRecord({
+    block: 'bank',
+    source: 'Histórico manual',
+    label: BANK_BALANCE_USD_LABEL,
+    amount: 4_622.47,
+    currency: 'USD',
+  }),
+];
 
 describe('closure edit record draft', () => {
   beforeEach(() => {
@@ -579,7 +645,7 @@ describe('closure edit record draft', () => {
     });
 
     expect(recovery.status).toBe('blocked');
-    expect(recovery.records.some((item) => item.label === CLOSURE_RECONCILIATION_BANK_LABEL)).toBe(false);
+    expect(recovery.records.some((item) => item.label === 'Saldo bancario no desglosado')).toBe(false);
   });
 
   it('reports requiresBreakdown when editable bank detail cannot recover the visible subtotal', () => {
@@ -625,5 +691,73 @@ describe('closure edit record draft', () => {
 
     expect(audit.requiresBreakdown).toBe(true);
     expect(audit.reasons).toContain('bank_visible_subtotal_requires_breakdown');
+  });
+
+  it('loads closure edit draft from granular bank records instead of poor aggregates for may 2026', () => {
+    const draft = buildClosureEditDraftFromRecords([
+      ...may2026GranularBankRecords(),
+      ...poorAggregateBankRecords(),
+      makeRecord({
+        block: 'debt',
+        source: 'Fintoc',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 93_200_000,
+        currency: 'CLP',
+      }),
+    ]);
+
+    expect(draft.bancosClp).toBe('163846');
+    expect(draft.bancosUsd).toBe('23393.57');
+  });
+
+  it('loads closure edit draft from june provider rows when granular bank records exist', () => {
+    const draft = buildClosureEditDraftFromRecords([
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 163_846,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_CLP_LABEL,
+        amount: 1_002_297,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_CLP_LABEL,
+        amount: 28_013,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 5_819,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 14_000,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_USD_LABEL,
+        amount: 2_803.57,
+        currency: 'USD',
+      }),
+      ...poorAggregateBankRecords(),
+    ]);
+
+    expect(draft.bancosClp).toBe('1194156');
+    expect(draft.bancosUsd).toBe('22622.57');
   });
 });

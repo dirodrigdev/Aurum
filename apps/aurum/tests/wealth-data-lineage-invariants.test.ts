@@ -18,8 +18,13 @@ import {
 } from '../src/services/wealthIntegrityAudit';
 import {
   BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_USD_LABEL,
   BANK_BCHILE_CLP_LABEL,
+  BANK_BCHILE_USD_LABEL,
   BANK_SCOTIA_CLP_LABEL,
+  BANK_SCOTIA_USD_LABEL,
+  BANK_SANTANDER_CLP_LABEL,
+  BANK_SANTANDER_USD_LABEL,
   CLOSURE_RECONCILIATION_BANK_LABEL,
   CLOSURE_RECONCILIATION_DEBT_LABEL,
   DEBT_CARD_CLP_LABEL,
@@ -251,6 +256,79 @@ describe('wealth data lineage invariants', () => {
     expect(closure.summary.netClp).toBe(canonicalSummary.netClp);
     expect(closure.summary.nonMortgageDebtClp).toBe(home.nonMortgageDebt);
     expect(closure.summary.netClp).toBe(home.totalNetClp);
+  });
+
+  it('prefers granular provider bank records over poor bank aggregates in canonical closure totals', () => {
+    const records = [
+      record({
+        id: 'bank-bchile-clp',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 163_846,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-scotia-clp',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_CLP_LABEL,
+        amount: 0,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-santander-clp',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_CLP_LABEL,
+        amount: 0,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-bchile-usd',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 5_590,
+        currency: 'USD',
+      }),
+      record({
+        id: 'bank-scotia-usd',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 15_000,
+        currency: 'USD',
+      }),
+      record({
+        id: 'bank-santander-usd',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_USD_LABEL,
+        amount: 2_803.57,
+        currency: 'USD',
+      }),
+      record({
+        id: 'bank-aggregate-clp',
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 3_659_143,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-aggregate-usd',
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_USD_LABEL,
+        amount: 4_622.47,
+        currency: 'USD',
+      }),
+    ];
+
+    const summary = buildCanonicalClosureSummary(records, { ...fx, usdClp: 891 });
+
+    expect(summary.bankClp).toBe(21_007_517);
   });
 
   it('detects bank inconsistency when visible closure subtotal is richer than editable and operative detail', () => {

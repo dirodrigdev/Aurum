@@ -21,6 +21,7 @@ import {
   BANK_BALANCE_USD_LEGACY_LABEL,
   buildCanonicalClosureSummary,
   buildWealthNetBreakdown,
+  computeWealthBankLiquiditySnapshot,
   DEBT_CARD_CLP_LABEL,
   DEBT_CARD_CLP_LEGACY_LABEL,
   DEBT_CARD_USD_LABEL,
@@ -1067,6 +1068,44 @@ export const buildEditedClosureRecordsFromDraft = ({
   };
 };
 
+export const buildClosureEditDraftFromRecords = (
+  records: WealthRecord[],
+): Record<EditableFieldKey, string> => {
+  const bankSnapshot = computeWealthBankLiquiditySnapshot(records);
+
+  return CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
+    if (field.key === 'bancosClp') {
+      acc[field.key] = bankSnapshot.bankClp ? String(bankSnapshot.bankClp) : '';
+      return acc;
+    }
+    if (field.key === 'bancosUsd') {
+      acc[field.key] = bankSnapshot.bankUsd ? String(bankSnapshot.bankUsd) : '';
+      return acc;
+    }
+
+    const existing = findRecordByCanonicalLabel(records, field.canonicalLabel);
+    if (existing) {
+      acc[field.key] = String(existing.amount);
+      return acc;
+    }
+    if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
+      const aggregate = records
+        .filter(
+          (record) =>
+            record.block === 'debt' &&
+            record.currency === field.currency &&
+            !isMortgagePrincipalDebtLabel(record.label) &&
+            !isMortgageMetaDebtLabel(record.label),
+        )
+        .reduce((sum, record) => sum + Math.abs(Number(record.amount || 0)), 0);
+      acc[field.key] = aggregate ? String(aggregate) : '';
+      return acc;
+    }
+    acc[field.key] = '';
+    return acc;
+  }, {} as Record<EditableFieldKey, string>);
+};
+
 
 export const ClosingAurum: React.FC = () => {
   const [tab, setTab] = useState<ClosingTab>('cierre');
@@ -1765,35 +1804,7 @@ export const ClosingAurum: React.FC = () => {
       setClosureEditOpen(true);
       return;
     }
-    const nextDraft = CLOSURE_EDITABLE_FIELDS.reduce((acc, field) => {
-      const existing = findRecordByCanonicalLabel(selectedClosureRecordsRaw, field.canonicalLabel);
-      if (existing) {
-        acc[field.key] = String(existing.amount);
-        return acc;
-      }
-      if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
-        const aggregate = selectedClosureRecordsRaw
-          .filter((record) => record.block === 'bank' && record.currency === field.currency)
-          .reduce((sum, record) => sum + Number(record.amount || 0), 0);
-        acc[field.key] = aggregate ? String(aggregate) : '';
-        return acc;
-      }
-      if (field.key === 'tarjetasClp' || field.key === 'tarjetasUsd') {
-        const aggregate = selectedClosureRecordsRaw
-          .filter(
-            (record) =>
-              record.block === 'debt' &&
-              record.currency === field.currency &&
-              !isMortgagePrincipalDebtLabel(record.label) &&
-              !isMortgageMetaDebtLabel(record.label),
-          )
-          .reduce((sum, record) => sum + Math.abs(Number(record.amount || 0)), 0);
-        acc[field.key] = aggregate ? String(aggregate) : '';
-        return acc;
-      }
-      acc[field.key] = '';
-      return acc;
-    }, {} as Record<EditableFieldKey, string>);
+    const nextDraft = buildClosureEditDraftFromRecords(selectedClosureRecordsRaw);
     setClosureEditDraft(nextDraft);
     setClosureEditDirtyFields({});
     setClosureEditRates({
