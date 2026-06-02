@@ -64,7 +64,6 @@ import {
   loadBankTokens,
   loadInvestmentInstruments,
   loadWealthRecords,
-  refreshFxRatesDailyIfNeeded,
   refreshFxRatesFromLive,
   RISK_CAPITAL_LABEL_CLP,
   RISK_CAPITAL_LABEL_USD,
@@ -185,6 +184,7 @@ export const buildMonthPreparationStepViews = (input: {
 }): MonthPreparationStepView[] => {
   const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
   const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
+  const monthStarted = input.actionStatus.realEstate === 'applied';
   const toneFor = (step: StartMonthActionKey, applied: boolean): MonthPreparationStepView['tone'] => {
     if (input.failedStep === step) return 'error';
     if (applied) return 'ready';
@@ -192,8 +192,10 @@ export const buildMonthPreparationStepViews = (input: {
   };
 
   const detailForCarry = () => {
-    if (input.monthHasRecords) return 'Mes ya iniciado';
-    if (input.actionStatus.carry === 'applied') return 'Mes iniciado';
+    if (monthStarted) return 'Mes iniciado';
+    if (input.monthHasRecords || input.actionStatus.carry === 'applied') {
+      return 'Copiado desde cierre anterior · pendiente de iniciar';
+    }
     if (!isCurrentOperationalMonth) return 'Solo aplica al mes operativo';
     if (!input.canCarryFromPrevious) return 'Sin cierre anterior válido para copiar';
     return 'Pendiente';
@@ -202,7 +204,7 @@ export const buildMonthPreparationStepViews = (input: {
   return [
     {
       key: 'carry',
-      label: 'Mes iniciado',
+      label: 'Base del mes',
       tone: toneFor('carry', carryApplied),
       detail: detailForCarry(),
       showAction: isCurrentOperationalMonth && !input.monthHasRecords && input.canCarryFromPrevious,
@@ -232,9 +234,9 @@ export const buildMonthPreparationStepViews = (input: {
             ? 'Actualizados'
             : !isCurrentOperationalMonth
               ? 'Solo aplica al mes operativo'
-              : 'Pendiente',
+              : 'Pendiente (manual/experimental)',
       showAction: isCurrentOperationalMonth && input.banksEnabled,
-      actionLabel: 'Reintentar bancos',
+      actionLabel: 'Actualizar bancos desde API (experimental/manual)',
     },
     {
       key: 'realEstate',
@@ -242,10 +244,12 @@ export const buildMonthPreparationStepViews = (input: {
       tone: toneFor('realEstate', input.actionStatus.realEstate === 'applied'),
       detail:
         input.actionStatus.realEstate === 'applied'
-          ? 'Calculada'
+          ? 'Hipoteca actualizada'
           : !isCurrentOperationalMonth
             ? 'Solo aplica al mes operativo'
-            : 'Pendiente',
+            : input.monthHasRecords || input.actionStatus.carry === 'applied'
+              ? 'Hipoteca pendiente de revisar'
+              : 'Pendiente',
       showAction: isCurrentOperationalMonth,
       actionLabel: 'Recalcular hipoteca',
     },
@@ -4270,9 +4274,6 @@ export const Patrimonio: React.FC = () => {
   const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
   const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
   const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
-  const autoFxAttemptedMonthRef = useRef<string | null>(null);
-  const autoBanksAttemptedMonthRef = useRef<string | null>(null);
-  const autoRealEstateAttemptedMonthRef = useRef<string | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -4575,17 +4576,11 @@ export const Patrimonio: React.FC = () => {
       setStartMonthActionStatus(startMonthCheckpoint.actions);
       setStartMonthFailedStep(startMonthCheckpoint.failedStep);
       setStartMonthFlowError(startMonthCheckpoint.lastError || '');
-      autoFxAttemptedMonthRef.current = null;
-      autoBanksAttemptedMonthRef.current = null;
-      autoRealEstateAttemptedMonthRef.current = null;
       return;
     }
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-    autoFxAttemptedMonthRef.current = null;
-    autoBanksAttemptedMonthRef.current = null;
-    autoRealEstateAttemptedMonthRef.current = null;
   }, [monthKey, realCurrentMonthKey, startMonthCheckpoint]);
 
   useEffect(() => {
@@ -4594,9 +4589,6 @@ export const Patrimonio: React.FC = () => {
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-    autoFxAttemptedMonthRef.current = null;
-    autoBanksAttemptedMonthRef.current = null;
-    autoRealEstateAttemptedMonthRef.current = null;
   }, [monthKey, realCurrentMonthKey, monthRecords.length]);
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
@@ -5419,79 +5411,13 @@ export const Patrimonio: React.FC = () => {
     markStartMonthStepApplied(monthToStart, 'realEstate');
   };
 
-  useEffect(() => {
-    if (!hydrationReady) return;
-    if (monthKey !== realCurrentMonthKey) return;
-    if (startMonthActionStatus.fx === 'applied') return;
-    if (startMonthRunning) return;
-    if (autoFxAttemptedMonthRef.current === realCurrentMonthKey) return;
-
-    autoFxAttemptedMonthRef.current = realCurrentMonthKey;
-    void (async () => {
-      const result = await refreshFxRatesDailyIfNeeded();
-      refreshAllWealthState();
-      if (result.ok) {
-        setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF al día.');
-        markStartMonthStepApplied(realCurrentMonthKey, 'fx');
-        return;
-      }
-      const message = String(result.message || 'No pude actualizar TC/UF.');
-      markStartMonthStepFailed(realCurrentMonthKey, 'fx', message);
-      setCarryMessage(`Error al actualizar TC/UF: ${message}`);
-    })();
-  }, [
-    hydrationReady,
-    monthKey,
-    realCurrentMonthKey,
-    startMonthActionStatus.fx,
-    startMonthRunning,
-  ]);
-
-  useEffect(() => {
-    if (!hydrationReady) return;
-    if (monthKey !== realCurrentMonthKey) return;
-    if (startMonthActionStatus.banks === 'applied') return;
-    if (startMonthRunning) return;
-    if (!startMonthBanksOptionEnabled) return;
-    if (!currentOperationalMonthHasRecords) return;
-    if (readBanksLastAutoSyncDay() === localYmd()) {
-      markStartMonthStepApplied(realCurrentMonthKey, 'banks');
+  const runStartMonthInitialize = () => {
+    if (!currentOperationalMonthHasRecords) {
+      setCarryConfirmOpen(true);
       return;
     }
-    if (readBanksLastAutoAttemptDay() === localYmd()) return;
-    if (autoBanksAttemptedMonthRef.current === realCurrentMonthKey) return;
-
-    autoBanksAttemptedMonthRef.current = realCurrentMonthKey;
-    writeBanksLastAutoAttemptDay(localYmd());
-    void runStartMonthBanksUpdate();
-  }, [
-    currentOperationalMonthHasRecords,
-    hydrationReady,
-    monthKey,
-    realCurrentMonthKey,
-    startMonthActionStatus.banks,
-    startMonthBanksOptionEnabled,
-    startMonthRunning,
-  ]);
-
-  useEffect(() => {
-    if (!hydrationReady) return;
-    if (monthKey !== realCurrentMonthKey) return;
-    if (startMonthActionStatus.realEstate === 'applied') return;
-    if (startMonthRunning) return;
-    if (!currentOperationalMonthHasRecords) return;
-    if (autoRealEstateAttemptedMonthRef.current === realCurrentMonthKey) return;
-
-    autoRealEstateAttemptedMonthRef.current = realCurrentMonthKey;
     runStartMonthRealEstateUpdate();
-  }, [
-    currentOperationalMonthHasRecords,
-    hydrationReady,
-    monthKey,
-    realCurrentMonthKey,
-    startMonthActionStatus.realEstate,
-    startMonthRunning,
-  ]);
+  };
 
   const completeMonthlyClose = async (
     targetMonthKey: string,
@@ -6862,7 +6788,7 @@ export const Patrimonio: React.FC = () => {
             <div>
               <div className="text-sm font-semibold text-slate-900">Estado del mes</div>
               <div className="mt-1 text-xs text-slate-500">
-                Preparación automática segura del mes operativo. Las acciones manuales quedan como fallback.
+                El mes se copia desde el último cierre válido. Las acciones externas quedan como fallback manual.
               </div>
             </div>
             {allStartMonthActionsApplied || startMonthCompletedNoticeVisible ? (
@@ -6871,6 +6797,27 @@ export const Patrimonio: React.FC = () => {
                 Mes preparado
               </div>
             ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={runStartMonthInitialize}
+              disabled={
+                startMonthRunning ||
+                (!currentOperationalMonthHasRecords && !previousClosureForMonthStart)
+              }
+            >
+              {currentOperationalMonthHasRecords ? 'Iniciar mes' : 'Copiar último cierre'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px]"
+              onClick={() => setActiveSection('bank')}
+            >
+              Editar bancos manualmente
+            </Button>
           </div>
 
           <div className="space-y-2">
@@ -6919,24 +6866,21 @@ export const Patrimonio: React.FC = () => {
 
           <div className="flex flex-wrap gap-2">
             {monthPreparationStepViews
-              .filter((step) => step.showAction)
+              .filter((step) => step.showAction && step.key !== 'carry' && step.key !== 'realEstate')
               .map((step) => {
                 const onClick =
-                  step.key === 'carry'
-                    ? () => setCarryConfirmOpen(true)
-                    : step.key === 'fx'
+                  step.key === 'fx'
                       ? () => {
                           void runStartMonthFxUpdate();
                         }
                       : step.key === 'banks'
                         ? () => {
-                            void runStartMonthBanksUpdate();
-                          }
-                        : () => runStartMonthRealEstateUpdate();
+                          void runStartMonthBanksUpdate();
+                        }
+                        : () => undefined;
 
                 const disabled =
                   startMonthRunning ||
-                  (step.key === 'carry' && !previousClosureForMonthStart) ||
                   (step.key === 'banks' && !startMonthBanksOptionEnabled);
 
                 return (

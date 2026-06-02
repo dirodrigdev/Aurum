@@ -624,7 +624,7 @@ describe('wealth data lineage invariants', () => {
     expect(audit.reasons).toContain('partial_refresh_reduced_bank_balance');
   });
 
-  it('marks the month as already started and hides carry fallback when current month already has records', () => {
+  it('treats a copied month with records as pending start until hipoteca is applied', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
       realCurrentMonthKey: '2026-06',
@@ -642,7 +642,7 @@ describe('wealth data lineage invariants', () => {
 
     const carry = steps.find((step) => step.key === 'carry');
     expect(carry?.tone).toBe('ready');
-    expect(carry?.detail).toBe('Mes ya iniciado');
+    expect(carry?.detail).toBe('Copiado desde cierre anterior · pendiente de iniciar');
     expect(carry?.showAction).toBe(false);
   });
 
@@ -685,8 +685,30 @@ describe('wealth data lineage invariants', () => {
     });
 
     const banks = steps.find((step) => step.key === 'banks');
-    expect(banks?.detail).toBe('Pendiente');
+    expect(banks?.detail).toBe('Pendiente (manual/experimental)');
     expect(banks?.showAction).toBe(true);
-    expect(banks?.actionLabel).toBe('Reintentar bancos');
+    expect(banks?.actionLabel).toBe('Actualizar bancos desde API (experimental/manual)');
+  });
+
+  it('marks the month as started only after hipoteca step is applied', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'applied',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+    });
+
+    const carry = steps.find((step) => step.key === 'carry');
+    const realEstate = steps.find((step) => step.key === 'realEstate');
+    expect(carry?.detail).toBe('Mes iniciado');
+    expect(realEstate?.detail).toBe('Hipoteca actualizada');
   });
 });
