@@ -13,17 +13,19 @@ import {
   buildClosureAuditSnapshot,
   buildEditedClosureRecordsFromDraft,
 } from '../src/pages/ClosingAurum';
-import { buildClosureBlockIntegrityAudit } from '../src/services/wealthIntegrityAudit';
+import { buildClosureBlockIntegrityAudit, buildClosureDetailRecoveryAudit } from '../src/services/wealthIntegrityAudit';
 import {
   BANK_BCHILE_CLP_LABEL,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
+  CLOSURE_RECONCILIATION_BANK_LABEL,
   BANK_SCOTIA_CLP_LABEL,
   DEBT_CARD_CLP_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
   buildCanonicalClosureSummary,
   createMonthlyClosure,
   loadClosures,
+  reconcileClosureDetailRecords,
   saveClosures,
   upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
@@ -521,5 +523,107 @@ describe('closure edit record draft', () => {
     expect(audit.status).toBe('blocked');
     expect(audit.visibleBankClp).toBe(21_007_516);
     expect(audit.editableBankClp).toBe(7_787_009);
+  });
+
+  it('does not create a reconciliation line automatically when a bank cell is touched in normal flow', () => {
+    const visibleClosure = {
+      id: 'visible-may',
+      monthKey: '2026-05',
+      closedAt: '2026-05-31T23:59:59.000Z',
+      fxRates: { ...fxRates, usdClp: 893 },
+      summary: {
+        netByCurrency: { CLP: 1_706_517_319, USD: 0, EUR: 0, UF: 0 },
+        assetsByCurrency: { CLP: 1_799_717_319, USD: 0, EUR: 0, UF: 0 },
+        debtsByCurrency: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        netConsolidatedClp: 1_706_517_319,
+        byBlock: {
+          bank: { CLP: 21_007_516, USD: 0, EUR: 0, UF: 0 },
+          investment: { CLP: 1_525_849_377, USD: 0, EUR: 0, UF: 0 },
+          real_estate: { CLP: 252_860_424, USD: 0, EUR: 0, UF: 0 },
+          debt: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        },
+        bankClp: 21_007_516,
+        investmentClp: 1_525_849_377,
+        investmentClpWithRisk: 1_525_849_377,
+        realEstateAssetsClp: 252_860_424,
+        mortgageDebtClp: 0,
+        realEstateNetClp: 252_860_424,
+        nonMortgageDebtClp: 93_200_000,
+        netClp: 1_706_517_319,
+        netClpWithRisk: 1_706_517_319,
+        riskCapitalClp: 0,
+      },
+    };
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: [
+        makeRecord({ block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_CLP_LABEL, amount: 21_007_516, currency: 'CLP' }),
+        makeRecord({ block: 'debt', source: 'Edición cierre', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+      ],
+      draft: {
+        ...emptyDraft,
+        bancosClp: '3659143',
+        bancosUsd: '4622.47',
+      },
+      dirtyFields: { bancosClp: true, bancosUsd: true },
+      monthKey: '2026-05',
+      createdAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const recovery = reconcileClosureDetailRecords({
+      closure: visibleClosure as any,
+      records,
+      fxRates: { ...fxRates, usdClp: 893 },
+      monthKey: '2026-05',
+      allowLegacySyntheticReconciliation: false,
+    });
+
+    expect(recovery.status).toBe('blocked');
+    expect(recovery.records.some((item) => item.label === CLOSURE_RECONCILIATION_BANK_LABEL)).toBe(false);
+  });
+
+  it('reports requiresBreakdown when editable bank detail cannot recover the visible subtotal', () => {
+    const visibleClosure = {
+      id: 'visible-may',
+      monthKey: '2026-05',
+      closedAt: '2026-05-31T23:59:59.000Z',
+      fxRates: { ...fxRates, usdClp: 893 },
+      summary: {
+        netByCurrency: { CLP: 1_706_517_319, USD: 0, EUR: 0, UF: 0 },
+        assetsByCurrency: { CLP: 1_799_717_319, USD: 0, EUR: 0, UF: 0 },
+        debtsByCurrency: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        netConsolidatedClp: 1_706_517_319,
+        byBlock: {
+          bank: { CLP: 21_007_516, USD: 0, EUR: 0, UF: 0 },
+          investment: { CLP: 1_525_849_377, USD: 0, EUR: 0, UF: 0 },
+          real_estate: { CLP: 252_860_424, USD: 0, EUR: 0, UF: 0 },
+          debt: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        },
+        bankClp: 21_007_516,
+        investmentClp: 1_525_849_377,
+        investmentClpWithRisk: 1_525_849_377,
+        realEstateAssetsClp: 252_860_424,
+        mortgageDebtClp: 0,
+        realEstateNetClp: 252_860_424,
+        nonMortgageDebtClp: 93_200_000,
+        netClp: 1_706_517_319,
+        netClpWithRisk: 1_706_517_319,
+        riskCapitalClp: 0,
+      },
+    };
+    const editableRecords = [
+      makeRecord({ block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_CLP_LABEL, amount: 3_659_143, currency: 'CLP' }),
+      makeRecord({ block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_USD_LABEL, amount: 4_622.47, currency: 'USD' }),
+      makeRecord({ block: 'debt', source: 'Edición cierre', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+    ];
+
+    const audit = buildClosureDetailRecoveryAudit({
+      closure: visibleClosure as any,
+      editableRecords,
+      fxRates: { ...fxRates, usdClp: 893 },
+    });
+
+    expect(audit.requiresBreakdown).toBe(true);
+    expect(audit.reasons).toContain('bank_visible_subtotal_requires_breakdown');
   });
 });

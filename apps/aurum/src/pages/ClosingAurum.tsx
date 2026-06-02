@@ -56,6 +56,7 @@ import {
   createWealthBackupSnapshot,
   loadFxRates,
   loadWealthRecords,
+  reconcileClosureDetailRecords,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   saveClosures,
   saveIncludeRiskCapitalInTotals,
@@ -1806,6 +1807,7 @@ export const ClosingAurum: React.FC = () => {
 
   const applyClosureEdit = () => {
     if (!selectedClosure) return;
+    setClosureEditError('');
 
     const usdClp = parseStrictNumber(closureEditRates.usdClp);
     const eurUsd = parseStrictNumber(closureEditRates.eurUsd);
@@ -1984,10 +1986,40 @@ export const ClosingAurum: React.FC = () => {
       monthKey: selectedClosure.monthKey,
       createdAt,
     });
+    const reconciliation = reconcileClosureDetailRecords({
+      closure: selectedClosure,
+      records: normalizedNextRecords,
+      fxRates: nextFx,
+      monthKey: selectedClosure.monthKey,
+      createdAt,
+      allowLegacySyntheticReconciliation: false,
+    });
+    const finalNextRecords = normalizedNextRecords;
+
+    if (reconciliation.status === 'blocked') {
+      const readableReasons = [
+        reconciliation.reasons.includes('bank_visible_subtotal_requires_breakdown')
+          ? 'el subtotal visible de bancos no tiene desglose real suficiente'
+          : null,
+        reconciliation.reasons.includes('debt_visible_subtotal_requires_breakdown')
+          ? 'la deuda no hipotecaria visible no tiene desglose real suficiente'
+          : null,
+        reconciliation.reasons.includes('bank_detail_exceeds_visible_subtotal')
+          ? 'el detalle bancario supera el subtotal visible'
+          : null,
+        reconciliation.reasons.includes('debt_detail_exceeds_visible_subtotal')
+          ? 'la deuda no hipotecaria supera el subtotal visible'
+          : null,
+      ].filter(Boolean);
+      setClosureEditError(
+        `Inconsistencia patrimonial en cierre: ${readableReasons.join('; ') || 'no hay detalle real suficiente para respaldar el subtotal visible'}. Revisa Bancos/Deuda antes de guardar.`,
+      );
+      return;
+    }
 
     const integrityAudit = buildClosureBlockIntegrityAuditReadOnly({
       closure: selectedClosure,
-      editableRecords: normalizedNextRecords,
+      editableRecords: finalNextRecords,
       fxRates: nextFx,
     });
     if (integrityAudit.reasons.length > 0) {
@@ -2008,13 +2040,13 @@ export const ClosingAurum: React.FC = () => {
       return;
     }
 
-    const expectedSummary = summarizeWealth(normalizedNextRecords, nextFx);
+    const expectedSummary = summarizeWealth(finalNextRecords, nextFx);
     const expectedRiskOffNet = buildWealthNetBreakdown(
-      resolveRiskCapitalRecordsForTotals(normalizedNextRecords, false).recordsForTotals,
+      resolveRiskCapitalRecordsForTotals(finalNextRecords, false).recordsForTotals,
       nextFx,
     ).netClp;
     const expectedRiskOnNet = buildWealthNetBreakdown(
-      resolveRiskCapitalRecordsForTotals(normalizedNextRecords, true).recordsForTotals,
+      resolveRiskCapitalRecordsForTotals(finalNextRecords, true).recordsForTotals,
       nextFx,
     ).netClp;
     console.info('[Closing][edit-recalc-before]', {
@@ -2024,12 +2056,12 @@ export const ClosingAurum: React.FC = () => {
       expectedSummaryNetClpWithRisk: expectedSummary.netClpWithRisk,
       expectedRiskOffNet,
       expectedRiskOnNet,
-      normalizedRecordsCount: normalizedNextRecords.length,
+      normalizedRecordsCount: finalNextRecords.length,
     });
 
     upsertMonthlyClosure({
       monthKey: selectedClosure.monthKey,
-      records: normalizedNextRecords,
+      records: finalNextRecords,
       fxRates: nextFx,
       closedAt: new Date().toISOString(),
     });

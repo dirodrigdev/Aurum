@@ -224,6 +224,34 @@ export interface ClosureSectionAmountsResolved {
   warnings: string[];
 }
 
+export interface PreferredClosureVisibleBlockSubtotals {
+  bankClp: number;
+  nonMortgageDebtClp: number;
+  bankSource: 'records' | 'summary' | 'records_and_summary_match' | 'summary_richer_than_records';
+  debtSource: 'records' | 'summary' | 'records_and_summary_match' | 'summary_richer_than_records';
+}
+
+export type ClosureBlockReconciliationStatus = 'ok' | 'reconciled' | 'blocked';
+
+export interface ClosureBlockReconciliationResult {
+  block: 'bank' | 'debt';
+  records: WealthRecord[];
+  visibleSubtotalClp: number;
+  detailSubtotalClp: number;
+  deltaClp: number;
+  status: ClosureBlockReconciliationStatus;
+  reason: string | null;
+  reconciliationRecord: WealthRecord | null;
+}
+
+export interface ClosureDetailReconciliationResult {
+  records: WealthRecord[];
+  status: ClosureBlockReconciliationStatus;
+  results: ClosureBlockReconciliationResult[];
+  reconciledBlocks: Array<'bank' | 'debt'>;
+  reasons: string[];
+}
+
 export interface WealthInvestmentInstrument {
   id: string;
   label: string;
@@ -652,6 +680,7 @@ export const DEBT_CARD_CLP_LABEL = 'Deuda tarjetas CLP';
 export const DEBT_CARD_USD_LABEL = 'Deuda tarjetas USD';
 export const DEBT_CARD_CLP_LEGACY_LABEL = 'Tarjetas CLP histórico';
 export const DEBT_CARD_USD_LEGACY_LABEL = 'Tarjetas USD histórico';
+export const CLOSURE_RECONCILIATION_DEBT_LABEL = 'Deuda no hipotecaria no desglosada';
 
 export const CARD_VISA_BCHILE_LABEL = 'Visa Banco de Chile';
 export const CARD_VISA_SCOTIA_LABEL = 'Visa Scotia';
@@ -664,6 +693,8 @@ export const BANK_BALANCE_CLP_LABEL = 'Saldo bancos CLP';
 export const BANK_BALANCE_USD_LABEL = 'Saldo bancos USD';
 export const BANK_BALANCE_CLP_LEGACY_LABEL = 'Bancos CLP histórico';
 export const BANK_BALANCE_USD_LEGACY_LABEL = 'Bancos USD histórico';
+export const CLOSURE_RECONCILIATION_BANK_LABEL = 'Saldo bancario no desglosado';
+export const CLOSURE_RECONCILIATION_SOURCE = 'closure_reconciliation';
 export const BANK_BCHILE_CLP_LABEL = 'Banco de Chile CLP';
 export const BANK_BCHILE_USD_LABEL = 'Banco de Chile USD';
 export const BANK_SCOTIA_CLP_LABEL = 'Scotiabank CLP';
@@ -3279,6 +3310,252 @@ export const resolveClosureSectionAmounts = (input: {
   };
 };
 
+const isClosureReconciliationRecord = (record: WealthRecord, block: 'bank' | 'debt') => {
+  if (record.source !== CLOSURE_RECONCILIATION_SOURCE) return false;
+  const label = normalizeText(record.label);
+  if (block === 'bank') return label === normalizeText(CLOSURE_RECONCILIATION_BANK_LABEL);
+  return label === normalizeText(CLOSURE_RECONCILIATION_DEBT_LABEL);
+};
+
+const buildClosureReconciliationNote = (input: {
+  monthKey: string;
+  block: 'bank' | 'debt';
+  originalVisibleSubtotal: number;
+  originalDetailSubtotal: number;
+  delta: number;
+}) =>
+  JSON.stringify({
+    kind: 'closure_reconciliation',
+    requiresReview: true,
+    monthKey: input.monthKey,
+    block: input.block,
+    originalVisibleSubtotal: Math.round(input.originalVisibleSubtotal),
+    originalDetailSubtotal: Math.round(input.originalDetailSubtotal),
+    delta: Math.round(input.delta),
+  });
+
+const summarizeClosureBlockDetailClp = (
+  block: 'bank' | 'debt',
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+) => {
+  const deduped = dedupeLatestByAsset(records);
+  if (block === 'bank') return resolveCanonicalBankClp(deduped, fxRates);
+  return resolveCanonicalNonMortgageDebtClp(deduped, fxRates);
+};
+
+export const resolvePreferredClosureVisibleBlockSubtotals = (input: {
+  closure: WealthMonthlyClosure;
+  fxRates?: WealthFxRates | null;
+}): PreferredClosureVisibleBlockSubtotals => {
+  const fxRates = input.fxRates || input.closure.fxRates || defaultFxRates;
+  const summaryResolved = resolveClosureSectionAmounts({
+    summary: input.closure.summary,
+    fxRates,
+    includeRiskCapitalInTotals: false,
+  });
+  const recordsSummary =
+    input.closure.records?.length ? buildCanonicalClosureSummary(dedupeLatestByAsset(input.closure.records), fxRates) : null;
+  const recordsBankClp = Number(recordsSummary?.bankClp || 0);
+  const summaryBankClp = Number(summaryResolved.bankClp || 0);
+  const recordsDebtClp = Number(recordsSummary?.nonMortgageDebtClp || 0);
+  const summaryDebtClp = Number(summaryResolved.nonMortgageDebtClp || 0);
+
+  const bankClp = Math.max(recordsBankClp, summaryBankClp);
+  const nonMortgageDebtClp = Math.max(recordsDebtClp, summaryDebtClp);
+
+  return {
+    bankClp,
+    nonMortgageDebtClp,
+    bankSource:
+      recordsBankClp > 0 && summaryBankClp > 0
+        ? recordsBankClp === summaryBankClp
+          ? 'records_and_summary_match'
+          : summaryBankClp > recordsBankClp
+            ? 'summary_richer_than_records'
+            : 'records'
+        : summaryBankClp > 0
+          ? 'summary'
+          : 'records',
+    debtSource:
+      recordsDebtClp > 0 && summaryDebtClp > 0
+        ? recordsDebtClp === summaryDebtClp
+          ? 'records_and_summary_match'
+          : summaryDebtClp > recordsDebtClp
+            ? 'summary_richer_than_records'
+            : 'records'
+        : summaryDebtClp > 0
+          ? 'summary'
+          : 'records',
+  };
+};
+
+export const reconcileClosureBlockDetails = (input: {
+  block: 'bank' | 'debt';
+  visibleSubtotalClp: number;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  monthKey: string;
+  createdAt?: string;
+  allowLegacySyntheticReconciliation?: boolean;
+}): ClosureBlockReconciliationResult => {
+  const toleranceClp = 50_000;
+  const visibleSubtotalClp = Math.max(0, Math.round(Number(input.visibleSubtotalClp) || 0));
+  const baseRecords = dedupeLatestByAsset(input.records).filter(
+    (record) => !isClosureReconciliationRecord(record, input.block),
+  );
+  const detailSubtotalClp = summarizeClosureBlockDetailClp(input.block, baseRecords, input.fxRates);
+  const deltaClp = visibleSubtotalClp - detailSubtotalClp;
+
+  if (Math.abs(deltaClp) <= toleranceClp) {
+    return {
+      block: input.block,
+      records: baseRecords,
+      visibleSubtotalClp,
+      detailSubtotalClp,
+      deltaClp,
+      status: 'ok',
+      reason: null,
+      reconciliationRecord: null,
+    };
+  }
+
+  if (deltaClp < 0) {
+    return {
+      block: input.block,
+      records: baseRecords,
+      visibleSubtotalClp,
+      detailSubtotalClp,
+      deltaClp,
+      status: 'blocked',
+      reason: `${input.block}_detail_exceeds_visible_subtotal`,
+      reconciliationRecord: null,
+    };
+  }
+
+  if (!input.allowLegacySyntheticReconciliation) {
+    return {
+      block: input.block,
+      records: baseRecords,
+      visibleSubtotalClp,
+      detailSubtotalClp,
+      deltaClp,
+      status: 'blocked',
+      reason:
+        input.block === 'bank'
+          ? 'bank_visible_subtotal_requires_breakdown'
+          : 'debt_visible_subtotal_requires_breakdown',
+      reconciliationRecord: null,
+    };
+  }
+
+  const existingReconciliation = input.records.find((record) =>
+    isClosureReconciliationRecord(record, input.block),
+  );
+  const reconciliationRecord: WealthRecord = {
+    id: existingReconciliation?.id || crypto.randomUUID(),
+    block: input.block,
+    source: CLOSURE_RECONCILIATION_SOURCE,
+    label:
+      input.block === 'bank' ? CLOSURE_RECONCILIATION_BANK_LABEL : CLOSURE_RECONCILIATION_DEBT_LABEL,
+    amount: deltaClp,
+    currency: 'CLP',
+    snapshotDate: `${input.monthKey}-01`,
+    createdAt: input.createdAt || existingReconciliation?.createdAt || nowIso(),
+    note: buildClosureReconciliationNote({
+      monthKey: input.monthKey,
+      block: input.block,
+      originalVisibleSubtotal: visibleSubtotalClp,
+      originalDetailSubtotal: detailSubtotalClp,
+      delta: deltaClp,
+    }),
+  };
+
+  return {
+    block: input.block,
+    records: dedupeLatestByAsset([...baseRecords, reconciliationRecord]),
+    visibleSubtotalClp,
+    detailSubtotalClp,
+    deltaClp,
+    status: 'reconciled',
+    reason:
+      input.block === 'bank'
+        ? 'bank_detail_reconciled_with_explicit_delta'
+        : 'debt_detail_reconciled_with_explicit_delta',
+    reconciliationRecord,
+  };
+};
+
+export const reconcileBankClosureDetails = (input: {
+  visibleSubtotalClp: number;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  monthKey: string;
+  createdAt?: string;
+  allowLegacySyntheticReconciliation?: boolean;
+}) =>
+  reconcileClosureBlockDetails({
+    ...input,
+    block: 'bank',
+  });
+
+export const reconcileNonMortgageDebtClosureDetails = (input: {
+  visibleSubtotalClp: number;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  monthKey: string;
+  createdAt?: string;
+  allowLegacySyntheticReconciliation?: boolean;
+}) =>
+  reconcileClosureBlockDetails({
+    ...input,
+    block: 'debt',
+  });
+
+export const reconcileClosureDetailRecords = (input: {
+  closure: WealthMonthlyClosure;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+  monthKey: string;
+  createdAt?: string;
+  allowLegacySyntheticReconciliation?: boolean;
+}): ClosureDetailReconciliationResult => {
+  const preferred = resolvePreferredClosureVisibleBlockSubtotals({
+    closure: input.closure,
+    fxRates: input.fxRates,
+  });
+  const bankResult = reconcileBankClosureDetails({
+    visibleSubtotalClp: preferred.bankClp,
+    records: input.records,
+    fxRates: input.fxRates,
+    monthKey: input.monthKey,
+    createdAt: input.createdAt,
+    allowLegacySyntheticReconciliation: input.allowLegacySyntheticReconciliation,
+  });
+  const debtResult = reconcileNonMortgageDebtClosureDetails({
+    visibleSubtotalClp: preferred.nonMortgageDebtClp,
+    records: bankResult.records,
+    fxRates: input.fxRates,
+    monthKey: input.monthKey,
+    createdAt: input.createdAt,
+    allowLegacySyntheticReconciliation: input.allowLegacySyntheticReconciliation,
+  });
+  const results = [bankResult, debtResult];
+  const reasons = results.map((result) => result.reason).filter((value): value is string => !!value);
+  const blocked = results.some((result) => result.status === 'blocked');
+  const reconciledBlocks = results
+    .filter((result) => result.status === 'reconciled')
+    .map((result) => result.block);
+
+  return {
+    records: debtResult.records,
+    status: blocked ? 'blocked' : reconciledBlocks.length ? 'reconciled' : 'ok',
+    results,
+    reconciledBlocks,
+    reasons,
+  };
+};
+
 const toComparableClosureSummary = (
   closure: WealthMonthlyClosure | null,
 ): ComparableClosureSummary | null => {
@@ -4846,7 +5123,16 @@ export const fillMissingWithPreviousClosure = (
     return built;
   };
   const previousSourceRecords = previous.records?.length
-    ? previous.records
+    ? (() => {
+        const reconciled = reconcileClosureDetailRecords({
+          closure: previous,
+          records: previous.records || [],
+          fxRates: previous.fxRates || defaultFxRates,
+          monthKey: targetMonthKey,
+          createdAt: nowIso(),
+        });
+        return reconciled.status === 'blocked' ? previous.records || [] : reconciled.records;
+      })()
     : sourceFromSummary();
   const currentKeys = new Set(latestRecordsForMonth(records, targetMonthKey).map((r) => makeAssetKey(r)));
 

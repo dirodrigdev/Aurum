@@ -2,7 +2,8 @@ import {
   buildCanonicalClosureSummary,
   dedupeLatestByAsset,
   makeAssetKey,
-  resolveClosureSectionAmounts,
+  reconcileClosureDetailRecords,
+  resolvePreferredClosureVisibleBlockSubtotals,
   type WealthFxRates,
   type WealthMonthlyClosure,
   type WealthRecord,
@@ -178,6 +179,19 @@ export interface ClosureBlockIntegrityAuditResult {
   reasons: string[];
 }
 
+export interface ClosureDetailRecoveryAuditResult {
+  visibleBankClp: number;
+  visibleDebtClp: number;
+  explainedBankClp: number;
+  explainedDebtClp: number;
+  bankDeltaClp: number;
+  debtDeltaClp: number;
+  recoverable: boolean;
+  requiresBreakdown: boolean;
+  reasons: string[];
+  sourcesReviewed: string[];
+}
+
 export const buildBankRefreshSafetyAudit = (
   input: BankRefreshSafetyAuditInput,
 ): BankRefreshSafetyAuditResult => {
@@ -209,7 +223,10 @@ export const buildBankRefreshSafetyAudit = (
 export const buildClosureBlockIntegrityAudit = (
   input: ClosureBlockIntegrityAuditInput,
 ): ClosureBlockIntegrityAuditResult => {
-  const visible = resolveClosureSectionAmounts({ closure: input.closure, fxRates: input.fxRates, includeRiskCapitalInTotals: false });
+  const visible = resolvePreferredClosureVisibleBlockSubtotals({
+    closure: input.closure,
+    fxRates: input.fxRates,
+  });
   const editableSummary = buildCanonicalClosureSummary(dedupeLatestByAsset(input.editableRecords), input.fxRates);
   const bankAudit = buildBankIntegrityAudit({
     visibleBankClp: visible.bankClp,
@@ -230,5 +247,44 @@ export const buildClosureBlockIntegrityAudit = (
     visibleDebtClp: visible.nonMortgageDebtClp,
     editableDebtClp: editableSummary.nonMortgageDebtClp || 0,
     reasons,
+  };
+};
+
+export const buildClosureDetailRecoveryAudit = (input: {
+  closure: WealthMonthlyClosure;
+  editableRecords: WealthRecord[];
+  fxRates: WealthFxRates;
+}): ClosureDetailRecoveryAuditResult => {
+  const visible = resolvePreferredClosureVisibleBlockSubtotals({
+    closure: input.closure,
+    fxRates: input.fxRates,
+  });
+  const explained = buildCanonicalClosureSummary(dedupeLatestByAsset(input.editableRecords), input.fxRates);
+  const reconciliationAudit = reconcileClosureDetailRecords({
+    closure: input.closure,
+    records: input.editableRecords,
+    fxRates: input.fxRates,
+    monthKey: input.closure.monthKey,
+    allowLegacySyntheticReconciliation: false,
+  });
+
+  return {
+    visibleBankClp: visible.bankClp,
+    visibleDebtClp: visible.nonMortgageDebtClp,
+    explainedBankClp: explained.bankClp || 0,
+    explainedDebtClp: explained.nonMortgageDebtClp || 0,
+    bankDeltaClp: visible.bankClp - (explained.bankClp || 0),
+    debtDeltaClp: visible.nonMortgageDebtClp - (explained.nonMortgageDebtClp || 0),
+    recoverable: reconciliationAudit.status !== 'blocked',
+    requiresBreakdown: reconciliationAudit.status === 'blocked',
+    reasons: reconciliationAudit.reasons,
+    sourcesReviewed: [
+      'closure.records',
+      'closure.summary',
+      'summary.byBlock',
+      'editable_records',
+      'provider_rows',
+      'aggregate_rows',
+    ],
   };
 };
