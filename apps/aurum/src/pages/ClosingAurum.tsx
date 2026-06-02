@@ -1985,37 +1985,27 @@ export const ClosingAurum: React.FC = () => {
       createdAt,
     });
 
-    const untouchedBankFields = !closureEditDirtyFields.bancosClp && !closureEditDirtyFields.bancosUsd;
-    const untouchedDebtFields = !closureEditDirtyFields.tarjetasClp && !closureEditDirtyFields.tarjetasUsd;
-    if (untouchedBankFields || untouchedDebtFields) {
-      const integrityAudit = buildClosureBlockIntegrityAuditReadOnly({
-        closure: selectedClosure,
-        editableRecords: normalizedNextRecords,
-        fxRates: nextFx,
-      });
-      const blockingReasons = integrityAudit.reasons.filter((reason) => {
-        if (!untouchedBankFields && reason.startsWith('editable_detail_diverges_from_visible_bank')) return false;
-        if (!untouchedBankFields && reason === 'multiple_active_bank_sources_disagree') return false;
-        if (!untouchedDebtFields && reason === 'editable_detail_diverges_from_visible_non_mortgage_debt') return false;
-        return true;
-      });
-      if (blockingReasons.length > 0) {
-        const readableReasons = [
-          blockingReasons.includes('editable_detail_diverges_from_visible_bank_total')
-            ? 'el detalle bancario no explica el subtotal visible'
-            : null,
-          blockingReasons.includes('editable_detail_diverges_from_visible_non_mortgage_debt')
-            ? 'la deuda no hipotecaria visible no cuadra con el detalle editable'
-            : null,
-          blockingReasons.includes('multiple_active_bank_sources_disagree')
-            ? 'existen fuentes bancarias activas que discrepan entre sí'
-            : null,
-        ].filter(Boolean);
-        setClosureEditError(
-          `Inconsistencia patrimonial en cierre: ${readableReasons.join('; ')}. Revisa Bancos/Deuda antes de guardar.`,
-        );
-        return;
-      }
+    const integrityAudit = buildClosureBlockIntegrityAuditReadOnly({
+      closure: selectedClosure,
+      editableRecords: normalizedNextRecords,
+      fxRates: nextFx,
+    });
+    if (integrityAudit.reasons.length > 0) {
+      const readableReasons = [
+        integrityAudit.reasons.includes('editable_detail_diverges_from_visible_bank_total')
+          ? 'el detalle bancario no explica el subtotal visible'
+          : null,
+        integrityAudit.reasons.includes('editable_detail_diverges_from_visible_non_mortgage_debt')
+          ? 'la deuda no hipotecaria visible no cuadra con el detalle editable'
+          : null,
+        integrityAudit.reasons.includes('multiple_active_bank_sources_disagree')
+          ? 'existen fuentes bancarias activas que discrepan entre sí'
+          : null,
+      ].filter(Boolean);
+      setClosureEditError(
+        `Inconsistencia patrimonial en cierre: ${readableReasons.join('; ')}. Revisa Bancos/Deuda antes de guardar.`,
+      );
+      return;
     }
 
     const expectedSummary = summarizeWealth(normalizedNextRecords, nextFx);

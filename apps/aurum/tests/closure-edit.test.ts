@@ -13,9 +13,11 @@ import {
   buildClosureAuditSnapshot,
   buildEditedClosureRecordsFromDraft,
 } from '../src/pages/ClosingAurum';
+import { buildClosureBlockIntegrityAudit } from '../src/services/wealthIntegrityAudit';
 import {
   BANK_BCHILE_CLP_LABEL,
   BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_USD_LABEL,
   BANK_SCOTIA_CLP_LABEL,
   DEBT_CARD_CLP_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
@@ -365,5 +367,159 @@ describe('closure edit record draft', () => {
     expect(repaired.summary.investmentClp).toBe(999_000);
     expect(persisted?.previousVersions?.[0]?.summary.bankClp).toBe(5_315_725);
     expect(persisted?.previousVersions?.[0]?.summary.nonMortgageDebtClp).toBe(93_256_478);
+  });
+
+  it('blocks inconsistent banks even when bank fields are dirty', () => {
+    const visibleClosure = createMonthlyClosure(baseRecords(), fxRates, new Date('2026-04-30T23:59:59.000Z'));
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: visibleClosure.records || [],
+      draft: {
+        ...emptyDraft,
+        bancosClp: '3659143',
+        bancosUsd: '4622.47',
+      },
+      dirtyFields: { bancosClp: true, bancosUsd: true },
+      monthKey: '2026-04',
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure,
+      editableRecords: records,
+      fxRates: { ...fxRates, usdClp: 893 },
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.reasons).toContain('editable_detail_diverges_from_visible_bank_total');
+  });
+
+  it('allows dirty bank edits when editable detail matches the visible subtotal', () => {
+    const visibleClosure = createMonthlyClosure(baseRecords(), fxRates, new Date('2026-04-30T23:59:59.000Z'));
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: visibleClosure.records || [],
+      draft: {
+        ...emptyDraft,
+        bancosClp: '31486718',
+      },
+      dirtyFields: { bancosClp: true },
+      monthKey: '2026-04',
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure,
+      editableRecords: records,
+      fxRates,
+    });
+
+    expect(audit.status).toBe('ok');
+    expect(audit.editableBankClp).toBe(31_486_718);
+  });
+
+  it('blocks inconsistent debt even when debt fields are dirty', () => {
+    const visibleClosure = createMonthlyClosure(baseRecords(), fxRates, new Date('2026-04-30T23:59:59.000Z'));
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: visibleClosure.records || [],
+      draft: {
+        ...emptyDraft,
+        tarjetasClp: '0',
+      },
+      dirtyFields: { tarjetasClp: true },
+      monthKey: '2026-04',
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure,
+      editableRecords: records,
+      fxRates,
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.reasons).toContain('editable_detail_diverges_from_visible_non_mortgage_debt');
+  });
+
+  it('allows dirty debt edits when editable detail matches the visible subtotal', () => {
+    const visibleClosure = createMonthlyClosure(baseRecords(), fxRates, new Date('2026-04-30T23:59:59.000Z'));
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: visibleClosure.records || [],
+      draft: {
+        ...emptyDraft,
+        tarjetasClp: '93256478',
+      },
+      dirtyFields: { tarjetasClp: true },
+      monthKey: '2026-04',
+      createdAt: '2026-04-30T23:59:59.000Z',
+    });
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure,
+      editableRecords: records,
+      fxRates,
+    });
+
+    expect(audit.status).toBe('ok');
+    expect(audit.editableDebtClp).toBe(93_256_478);
+  });
+
+  it('does not allow touching a bank cell to collapse a visible 21MM subtotal into ~7MM', () => {
+    const visibleClosure = {
+      id: 'visible-may',
+      monthKey: '2026-05',
+      closedAt: '2026-05-31T23:59:59.000Z',
+      fxRates: { ...fxRates, usdClp: 893 },
+      summary: {
+        netByCurrency: { CLP: 1_706_517_319, USD: 0, EUR: 0, UF: 0 },
+        assetsByCurrency: { CLP: 1_799_717_319, USD: 0, EUR: 0, UF: 0 },
+        debtsByCurrency: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        netConsolidatedClp: 1_706_517_319,
+        byBlock: {
+          bank: { CLP: 21_007_516, USD: 0, EUR: 0, UF: 0 },
+          investment: { CLP: 1_525_849_377, USD: 0, EUR: 0, UF: 0 },
+          real_estate: { CLP: 252_860_424, USD: 0, EUR: 0, UF: 0 },
+          debt: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+        },
+        bankClp: 21_007_516,
+        investmentClp: 1_525_849_377,
+        investmentClpWithRisk: 1_525_849_377,
+        realEstateAssetsClp: 252_860_424,
+        mortgageDebtClp: 0,
+        realEstateNetClp: 252_860_424,
+        nonMortgageDebtClp: 93_200_000,
+        netClp: 1_706_517_319,
+        netClpWithRisk: 1_706_517_319,
+        riskCapitalClp: 0,
+      },
+    };
+
+    const { records } = buildEditedClosureRecordsFromDraft({
+      records: [
+        makeRecord({ block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_CLP_LABEL, amount: 21_007_516, currency: 'CLP' }),
+        makeRecord({ block: 'bank', source: 'Edición cierre', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+        makeRecord({ block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_USD_LABEL, amount: 0, currency: 'USD' }),
+      ],
+      draft: {
+        ...emptyDraft,
+        bancosClp: '3659143',
+        bancosUsd: '4622.47',
+      },
+      dirtyFields: { bancosClp: true, bancosUsd: true },
+      monthKey: '2026-05',
+      createdAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure as any,
+      editableRecords: records,
+      fxRates: { ...fxRates, usdClp: 893 },
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.visibleBankClp).toBe(21_007_516);
+    expect(audit.editableBankClp).toBe(7_787_009);
   });
 });
