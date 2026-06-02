@@ -12,6 +12,7 @@ import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
 import {
   buildBankIntegrityAudit,
   buildBankRefreshSafetyAudit,
+  buildClosureBlockIntegrityAudit,
   buildMonthInitializationIntegrityAudit,
 } from '../src/services/wealthIntegrityAudit';
 import {
@@ -263,6 +264,49 @@ describe('wealth data lineage invariants', () => {
     expect(audit.reasons).toContain('editable_detail_diverges_from_visible_bank_total');
     expect(audit.reasons).toContain('operative_detail_diverges_from_visible_bank_total');
     expect(audit.reasons).toContain('multiple_active_bank_sources_disagree');
+  });
+
+  it('blocks closure edit when visible bank subtotal is richer than editable records and banks were not explicitly touched', () => {
+    const visibleClosure = closureFrom({
+      netByCurrency: { CLP: 1_706_517_319, USD: 0, EUR: 0, UF: 0 },
+      assetsByCurrency: { CLP: 1_799_717_319, USD: 0, EUR: 0, UF: 0 },
+      debtsByCurrency: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+      netConsolidatedClp: 1_706_517_319,
+      byBlock: {
+        bank: { CLP: 21_007_516, USD: 0, EUR: 0, UF: 0 },
+        investment: { CLP: 1_525_849_377, USD: 0, EUR: 0, UF: 0 },
+        real_estate: { CLP: 252_860_424, USD: 0, EUR: 0, UF: 0 },
+        debt: { CLP: 93_200_000, USD: 0, EUR: 0, UF: 0 },
+      },
+      bankClp: 21_007_516,
+      investmentClp: 1_525_849_377,
+      investmentClpWithRisk: 1_525_849_377,
+      realEstateAssetsClp: 252_860_424,
+      mortgageDebtClp: 0,
+      realEstateNetClp: 252_860_424,
+      nonMortgageDebtClp: 93_200_000,
+      netClp: 1_706_517_319,
+      netClpWithRisk: 1_706_517_319,
+      riskCapitalClp: 0,
+    });
+    const editableRecords = [
+      record({ id: 'edit-bank-clp', block: 'bank', source: 'Edición cierre', label: BANK_BALANCE_CLP_LABEL, amount: 3_659_143, currency: 'CLP' }),
+      record({ id: 'edit-bank-usd', block: 'bank', source: 'Edición cierre', label: 'Saldo bancos USD', amount: 4_622.47, currency: 'USD' }),
+      record({ id: 'edit-debt', block: 'bank', source: 'Edición cierre', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+      record({ id: 'edit-inv', block: 'investment', source: 'Edición cierre', label: 'BTG total valorizacion', amount: 1_525_849_377, currency: 'CLP' }),
+      record({ id: 'edit-re', block: 'real_estate', source: 'Edición cierre', label: 'Valor propiedad', amount: 252_860_424, currency: 'CLP' }),
+    ];
+
+    const audit = buildClosureBlockIntegrityAudit({
+      closure: visibleClosure,
+      editableRecords,
+      fxRates: { ...fx, usdClp: 893 },
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.visibleBankClp).toBe(21_007_516);
+    expect(audit.editableBankClp).toBe(7_787_009);
+    expect(audit.reasons).toContain('editable_detail_diverges_from_visible_bank_total');
   });
 
   it('audits month initialization as exact and idempotent copy of the last valid closure', () => {

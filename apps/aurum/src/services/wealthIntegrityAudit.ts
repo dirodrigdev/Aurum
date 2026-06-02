@@ -2,6 +2,7 @@ import {
   buildCanonicalClosureSummary,
   dedupeLatestByAsset,
   makeAssetKey,
+  resolveClosureSectionAmounts,
   type WealthFxRates,
   type WealthMonthlyClosure,
   type WealthRecord,
@@ -162,6 +163,21 @@ export interface BankRefreshSafetyAuditResult {
   reasons: string[];
 }
 
+export interface ClosureBlockIntegrityAuditInput {
+  closure: WealthMonthlyClosure;
+  editableRecords: WealthRecord[];
+  fxRates: WealthFxRates;
+}
+
+export interface ClosureBlockIntegrityAuditResult {
+  status: WealthIntegrityStatus;
+  visibleBankClp: number;
+  editableBankClp: number;
+  visibleDebtClp: number;
+  editableDebtClp: number;
+  reasons: string[];
+}
+
 export const buildBankRefreshSafetyAudit = (
   input: BankRefreshSafetyAuditInput,
 ): BankRefreshSafetyAuditResult => {
@@ -186,6 +202,33 @@ export const buildBankRefreshSafetyAudit = (
     refreshedDebtClp: refreshedSummary.nonMortgageDebtClp || 0,
     deltaBankClp: (refreshedSummary.bankClp || 0) - (previousSummary.bankClp || 0),
     deltaDebtClp: (refreshedSummary.nonMortgageDebtClp || 0) - (previousSummary.nonMortgageDebtClp || 0),
+    reasons,
+  };
+};
+
+export const buildClosureBlockIntegrityAudit = (
+  input: ClosureBlockIntegrityAuditInput,
+): ClosureBlockIntegrityAuditResult => {
+  const visible = resolveClosureSectionAmounts({ closure: input.closure, fxRates: input.fxRates, includeRiskCapitalInTotals: false });
+  const editableSummary = buildCanonicalClosureSummary(dedupeLatestByAsset(input.editableRecords), input.fxRates);
+  const bankAudit = buildBankIntegrityAudit({
+    visibleBankClp: visible.bankClp,
+    editableBankClp: editableSummary.bankClp || 0,
+    fx: { usdClp: input.fxRates.usdClp },
+    toleranceClp: 50_000,
+  });
+  const reasons = [...bankAudit.reasons];
+
+  if (Math.abs((visible.nonMortgageDebtClp || 0) - (editableSummary.nonMortgageDebtClp || 0)) > 50_000) {
+    reasons.push('editable_detail_diverges_from_visible_non_mortgage_debt');
+  }
+
+  return {
+    status: reasons.length ? 'blocked' : 'ok',
+    visibleBankClp: visible.bankClp,
+    editableBankClp: editableSummary.bankClp || 0,
+    visibleDebtClp: visible.nonMortgageDebtClp,
+    editableDebtClp: editableSummary.nonMortgageDebtClp || 0,
     reasons,
   };
 };

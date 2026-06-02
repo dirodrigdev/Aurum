@@ -2296,8 +2296,8 @@ export const buildCanonicalClosureSummary = (
     investmentClpWithRisk: withRiskBreakdown.investmentClp,
     netClp: withoutRiskBreakdown.netClp,
     netClpWithRisk: withRiskBreakdown.netClp,
-    bankClp: withRiskBreakdown.bankClp,
-    nonMortgageDebtClp: withRiskBreakdown.nonMortgageDebtClp,
+    bankClp: resolveCanonicalBankClp(deduped, fxRates),
+    nonMortgageDebtClp: resolveCanonicalNonMortgageDebtClp(deduped, fxRates),
     realEstateNetClp: withRiskBreakdown.realEstateNetClp,
     realEstateAssetsClp: withRiskBreakdown.realEstateAssetsClp,
     mortgageDebtClp: withRiskBreakdown.mortgageDebtClp,
@@ -2353,6 +2353,11 @@ export interface WealthNetBreakdownClp {
   realEstateNetClp: number;
   bankClp: number;
   nonMortgageDebtClp: number;
+}
+
+export interface CanonicalBankBreakdown {
+  bankClp: number;
+  bankUsd: number;
 }
 
 export interface WealthBankLiquiditySnapshot {
@@ -2507,6 +2512,27 @@ export const computeWealthBankLiquiditySnapshot = (
   };
 };
 
+export const resolveCanonicalBankBreakdown = (
+  records: WealthRecord[],
+  fxRates: Pick<WealthFxRates, 'usdClp'> = defaultFxRates,
+): CanonicalBankBreakdown => {
+  const snapshot = computeWealthBankLiquiditySnapshot(dedupeLatestByAsset(records));
+  return {
+    bankClp: Math.round(snapshot.bankClp + snapshot.bankUsd * (Number(fxRates?.usdClp) > 0 ? Number(fxRates.usdClp) : defaultFxRates.usdClp)),
+    bankUsd: snapshot.bankUsd,
+  };
+};
+
+export const resolveCanonicalBankClp = (
+  records: WealthRecord[],
+  fxRates: Pick<WealthFxRates, 'usdClp'> = defaultFxRates,
+): number => resolveCanonicalBankBreakdown(records, fxRates).bankClp;
+
+export const resolveCanonicalNonMortgageDebtClp = (
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+): number => buildWealthNetBreakdown(dedupeLatestByAsset(records), fxRates).nonMortgageDebtClp;
+
 export const computeWealthHomeSectionAmounts = (
   monthRecordsForTotals: WealthRecord[],
   fx: WealthFxRates,
@@ -2531,8 +2557,8 @@ export const computeWealthHomeSectionAmounts = (
   );
 
   const realEstateNetClp = hasProperty ? breakdown.realEstateNetClp : 0;
-  const bankClp = breakdown.bankClp;
-  const nonMortgageDebtClp = breakdown.nonMortgageDebtClp;
+  const bankClp = resolveCanonicalBankClp(dedupedMonthRecords, fx);
+  const nonMortgageDebtClp = resolveCanonicalNonMortgageDebtClp(dedupedMonthRecords, fx);
   const totalNetClp = breakdown.investmentClp + realEstateNetClp + bankClp - nonMortgageDebtClp;
   const hasRealEstateCoreData = hasProperty && hasMortgageDebt;
   const hasAllCoreSubtotalsData = hasInvestmentData && hasBankData && hasRealEstateCoreData;
