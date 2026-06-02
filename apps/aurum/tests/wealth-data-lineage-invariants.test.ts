@@ -10,6 +10,8 @@ vi.mock('../src/services/firebase', () => ({
 import { computeClosureSummary } from '../src/components/settings/ClosureReviewModal';
 import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
 import {
+  buildMonthStartConfirmationCopy,
+  buildMonthStartEligibility,
   buildMonthPreparationStepViews,
   buildMonthStartMortgageAudit,
   buildStartMonthBankErrorView,
@@ -759,6 +761,97 @@ describe('wealth data lineage invariants', () => {
 
     const banks = steps.find((step) => step.key === 'banks');
     expect(banks?.note).toContain('API bancaria experimental no aplicada');
+  });
+
+  it('only allows Iniciar mes when the selected month is open, copied from the immediate previous closure and mortgage is pending', () => {
+    const previous = closureFrom(buildCanonicalClosureSummary(baseBankDebtRecords(), fx), baseBankDebtRecords());
+    const eligibility = buildMonthStartEligibility({
+      monthKey: '2026-06',
+      activeClosure: null,
+      previousClosure: previous,
+      monthHasRecords: true,
+      copiedFromPrevious: true,
+      mortgageStatus: 'pending',
+    });
+
+    expect(eligibility.canStart).toBe(true);
+    expect(eligibility.reason).toBe('ready');
+  });
+
+  it('blocks Iniciar mes when hipoteca is already applied or requires review', () => {
+    const previous = closureFrom(buildCanonicalClosureSummary(baseBankDebtRecords(), fx), baseBankDebtRecords());
+
+    expect(
+      buildMonthStartEligibility({
+        monthKey: '2026-06',
+        activeClosure: null,
+        previousClosure: previous,
+        monthHasRecords: true,
+        copiedFromPrevious: true,
+        mortgageStatus: 'applied',
+      }),
+    ).toMatchObject({ canStart: false, reason: 'mortgage_applied' });
+
+    expect(
+      buildMonthStartEligibility({
+        monthKey: '2026-06',
+        activeClosure: null,
+        previousClosure: previous,
+        monthHasRecords: true,
+        copiedFromPrevious: true,
+        mortgageStatus: 'review',
+      }),
+    ).toMatchObject({ canStart: false, reason: 'mortgage_review' });
+  });
+
+  it('blocks Iniciar mes when the previous closure is missing, non-adjacent or the selected month was not copied', () => {
+    const mayClosure = closureFrom(buildCanonicalClosureSummary(baseBankDebtRecords(), fx), baseBankDebtRecords());
+
+    expect(
+      buildMonthStartEligibility({
+        monthKey: '2026-06',
+        activeClosure: null,
+        previousClosure: null,
+        monthHasRecords: true,
+        copiedFromPrevious: true,
+        mortgageStatus: 'pending',
+      }),
+    ).toMatchObject({ canStart: false, reason: 'missing_previous_closure' });
+
+    expect(
+      buildMonthStartEligibility({
+        monthKey: '2026-07',
+        activeClosure: null,
+        previousClosure: mayClosure,
+        monthHasRecords: true,
+        copiedFromPrevious: true,
+        mortgageStatus: 'pending',
+      }),
+    ).toMatchObject({ canStart: false, reason: 'non_adjacent_previous_closure' });
+
+    expect(
+      buildMonthStartEligibility({
+        monthKey: '2026-06',
+        activeClosure: null,
+        previousClosure: mayClosure,
+        monthHasRecords: false,
+        copiedFromPrevious: false,
+        mortgageStatus: 'pending',
+      }),
+    ).toMatchObject({ canStart: false, reason: 'month_not_copied_from_previous' });
+  });
+
+  it('builds month-start confirmation copy using the selected month and its previous closure', () => {
+    const copy = buildMonthStartConfirmationCopy({
+      monthKey: '2026-06',
+      previousClosureMonthKey: '2026-05',
+    });
+
+    expect(copy.title).toBe('Iniciar Junio de 2026');
+    expect(copy.message).toContain('JUNIO DE 2026');
+    expect(copy.message).toContain('MAYO DE 2026');
+    expect(copy.confirmText).toBe('Iniciar junio de 2026');
+    expect(copy.details).toContain('No se tocarán bancos');
   });
 
   it('marks the month as started only after explicit new-flow start is recorded', () => {

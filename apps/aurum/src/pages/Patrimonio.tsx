@@ -187,6 +187,52 @@ export type MonthStartMortgageAudit = {
   toleranceUf: number | null;
 };
 
+export type MonthStartEligibility = {
+  canStart: boolean;
+  reason:
+    | 'month_closed'
+    | 'missing_previous_closure'
+    | 'non_adjacent_previous_closure'
+    | 'month_not_copied_from_previous'
+    | 'mortgage_applied'
+    | 'mortgage_review'
+    | 'ready';
+};
+
+export const buildMonthStartEligibility = (input: {
+  monthKey: string;
+  activeClosure: WealthMonthlyClosure | null;
+  previousClosure: WealthMonthlyClosure | null;
+  monthHasRecords: boolean;
+  copiedFromPrevious: boolean;
+  mortgageStatus: MonthStartMortgageAudit['status'];
+}): MonthStartEligibility => {
+  if (input.activeClosure) return { canStart: false, reason: 'month_closed' };
+  if (!input.previousClosure) return { canStart: false, reason: 'missing_previous_closure' };
+  if (input.previousClosure.monthKey !== monthBeforeKey(input.monthKey)) {
+    return { canStart: false, reason: 'non_adjacent_previous_closure' };
+  }
+  if (input.mortgageStatus === 'applied') return { canStart: false, reason: 'mortgage_applied' };
+  if (input.mortgageStatus === 'review') return { canStart: false, reason: 'mortgage_review' };
+  if (!input.monthHasRecords || !input.copiedFromPrevious) {
+    return { canStart: false, reason: 'month_not_copied_from_previous' };
+  }
+  return { canStart: true, reason: 'ready' };
+};
+
+export const buildMonthStartConfirmationCopy = (input: {
+  monthKey: string;
+  previousClosureMonthKey: string;
+}) => ({
+  title: `Iniciar ${monthLabel(input.monthKey)}`,
+  message: `Vas a iniciar ${monthLabel(input.monthKey).toUpperCase()} usando como base el cierre de ${monthLabel(
+    input.previousClosureMonthKey,
+  ).toUpperCase()}.`,
+  details:
+    'Solo se aplicará el roll-forward hipotecario. No se tocarán bancos, USD manual, inversiones, TC/UF, deuda no hipotecaria, valor propiedad ni el cierre anterior.',
+  confirmText: `Iniciar ${monthLabel(input.monthKey).toLowerCase()}`,
+});
+
 const MORTGAGE_START_LABELS = [
   MORTGAGE_DEBT_BALANCE_LABEL,
   MORTGAGE_DIVIDEND_LABEL,
@@ -855,6 +901,14 @@ const monthAfterKey = (monthKey: string) => {
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextYear = month === 12 ? year + 1 : year;
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+};
+
+const monthBeforeKey = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  const previousMonth = month === 1 ? 12 : month - 1;
+  const previousYear = month === 1 ? year - 1 : year;
+  return `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
 };
 
 const deriveOperationalMonthKeyFromClosures = (
@@ -4453,6 +4507,7 @@ export const Patrimonio: React.FC = () => {
   const [startMonthActionStatus, setStartMonthActionStatus] = useState<StartMonthActionStatus>(
     START_MONTH_ACTION_STATUS_INITIAL,
   );
+  const [startMonthConfirmOpen, setStartMonthConfirmOpen] = useState(false);
   const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
   const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
   const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
@@ -4754,8 +4809,13 @@ export const Patrimonio: React.FC = () => {
   }, [hydrationReady, activeClosure, monthKey, monthRecords, previousClosureForAutoCarry]);
 
   useEffect(() => {
-    if (monthKey !== realCurrentMonthKey) return;
-    if (startMonthCheckpoint && startMonthCheckpoint.monthKey === realCurrentMonthKey) {
+    if (activeClosure) {
+      setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
+      setStartMonthFailedStep(null);
+      setStartMonthFlowError('');
+      return;
+    }
+    if (startMonthCheckpoint && startMonthCheckpoint.monthKey === monthKey) {
       setStartMonthActionStatus(startMonthCheckpoint.actions);
       setStartMonthFailedStep(startMonthCheckpoint.failedStep);
       setStartMonthFlowError(startMonthCheckpoint.lastError || '');
@@ -4764,15 +4824,15 @@ export const Patrimonio: React.FC = () => {
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-  }, [monthKey, realCurrentMonthKey, startMonthCheckpoint]);
+  }, [activeClosure, monthKey, startMonthCheckpoint]);
 
   useEffect(() => {
-    if (monthKey !== realCurrentMonthKey) return;
+    if (activeClosure) return;
     if (monthRecords.length > 0) return;
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
-  }, [monthKey, realCurrentMonthKey, monthRecords.length]);
+  }, [activeClosure, monthKey, monthRecords.length]);
 
   useEffect(() => {
     startMonthManualBankAttemptedRef.current = false;
@@ -5167,6 +5227,13 @@ export const Patrimonio: React.FC = () => {
         .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null,
     [closures, realCurrentMonthKey],
   );
+  const previousClosureForSelectedMonth = useMemo(
+    () =>
+      closures
+        .filter((closure) => closure.monthKey < monthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null,
+    [closures, monthKey],
+  );
 
   const pendingCloseAlert = useMemo(() => {
     if (!latestClosure) return null;
@@ -5174,23 +5241,41 @@ export const Patrimonio: React.FC = () => {
     if (calendarMonthKey <= realCurrentMonthKey) return null;
     return `Tienes el cierre de ${monthLabel(realCurrentMonthKey).toLowerCase()} pendiente`;
   }, [latestClosure, monthKey, realCurrentMonthKey, calendarMonthKey]);
-  const currentOperationalMonthRecords = useMemo(
-    () =>
-      latestRecordsForMonth(records, realCurrentMonthKey).filter(
-        (record) => !isStartMonthCheckpointRecord(record),
-      ),
-    [records, realCurrentMonthKey],
+  const selectedMonthRecords = useMemo(
+    () => latestRecordsForMonth(records, monthKey).filter((record) => !isStartMonthCheckpointRecord(record)),
+    [records, monthKey],
   );
-  const currentOperationalMonthHasRecords = currentOperationalMonthRecords.length > 0;
-  const monthStartMortgageAudit = useMemo(
+  const selectedMonthHasRecords = selectedMonthRecords.length > 0;
+  const selectedMonthCarryAudit = useMemo(() => {
+    if (!selectedMonthHasRecords || !previousClosureForSelectedMonth?.records?.length) return null;
+    if (previousClosureForSelectedMonth.monthKey !== monthBeforeKey(monthKey)) return null;
+    return buildMonthInitializationIntegrityAudit({
+      previousClosure: previousClosureForSelectedMonth,
+      initializedRecords: selectedMonthRecords,
+      fxRates: previousClosureForSelectedMonth.fxRates || loadFxRates(),
+    });
+  }, [monthKey, previousClosureForSelectedMonth, selectedMonthHasRecords, selectedMonthRecords]);
+  const selectedMonthMortgageAudit = useMemo(
     () =>
       buildMonthStartMortgageAudit({
-        monthKey: realCurrentMonthKey,
-        monthRecords: currentOperationalMonthRecords,
-        previousClosure: previousClosureForMonthStart,
+        monthKey,
+        monthRecords: selectedMonthRecords,
+        previousClosure: previousClosureForSelectedMonth,
         fxRates: loadFxRates(),
       }),
-    [currentOperationalMonthRecords, previousClosureForMonthStart, realCurrentMonthKey],
+    [monthKey, previousClosureForSelectedMonth, selectedMonthRecords],
+  );
+  const selectedMonthStartEligibility = useMemo(
+    () =>
+      buildMonthStartEligibility({
+        monthKey,
+        activeClosure,
+        previousClosure: previousClosureForSelectedMonth,
+        monthHasRecords: selectedMonthHasRecords,
+        copiedFromPrevious: selectedMonthCarryAudit?.status === 'ok',
+        mortgageStatus: selectedMonthMortgageAudit.status,
+      }),
+    [activeClosure, monthKey, previousClosureForSelectedMonth, selectedMonthCarryAudit?.status, selectedMonthHasRecords, selectedMonthMortgageAudit.status],
   );
   const startMonthBankErrorView = useMemo(
     () =>
@@ -5227,6 +5312,49 @@ export const Patrimonio: React.FC = () => {
     const tokens = loadBankTokens();
     return BANK_PROVIDERS.some((provider) => String(tokens[provider.id] || '').trim().length > 0);
   }, [records, closures, monthKey]);
+
+  const evaluateMonthStartRuntimeState = (targetMonthKey: string) => {
+    const runtimeClosures = loadClosures();
+    const targetClosure = runtimeClosures.find((closure) => closure.monthKey === targetMonthKey) || null;
+    const previousClosure =
+      runtimeClosures
+        .filter((closure) => closure.monthKey < targetMonthKey)
+        .sort((a, b) => b.monthKey.localeCompare(a.monthKey))[0] || null;
+    const runtimeMonthRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
+    const carryAudit =
+      runtimeMonthRecords.length > 0 &&
+      previousClosure?.records?.length &&
+      previousClosure.monthKey === monthBeforeKey(targetMonthKey)
+        ? buildMonthInitializationIntegrityAudit({
+            previousClosure,
+            initializedRecords: runtimeMonthRecords,
+            fxRates: previousClosure.fxRates || loadFxRates(),
+          })
+        : null;
+    const mortgageAudit = buildMonthStartMortgageAudit({
+      monthKey: targetMonthKey,
+      monthRecords: runtimeMonthRecords,
+      previousClosure,
+      fxRates: loadFxRates(),
+    });
+    const eligibility = buildMonthStartEligibility({
+      monthKey: targetMonthKey,
+      activeClosure: targetClosure,
+      previousClosure,
+      monthHasRecords: runtimeMonthRecords.length > 0,
+      copiedFromPrevious: carryAudit?.status === 'ok',
+      mortgageStatus: mortgageAudit.status,
+    });
+    return {
+      eligibility,
+      mortgageAudit,
+      previousClosure,
+      targetClosure,
+      monthHasRecords: runtimeMonthRecords.length > 0,
+    };
+  };
 
   const refreshBanksFromFintocForMonth = async (targetMonthKey: string) => {
     const tokens = loadBankTokens();
@@ -5426,7 +5554,7 @@ export const Patrimonio: React.FC = () => {
   ]);
 
   const skipStartMonthCarry = () => {
-    const monthToStart = realCurrentMonthKey;
+    const monthToStart = monthKey;
     setCarryConfirmOpen(false);
     setCarryMessage(`Arrastre omitido en ${monthLabel(monthToStart).toLowerCase()}. Puedes cargarlo manualmente después si lo necesitas.`);
     markStartMonthStepApplied(monthToStart, 'carry');
@@ -5451,14 +5579,14 @@ export const Patrimonio: React.FC = () => {
 
   const runStartMonthFlow = async () => {
     if (startMonthRunning) return;
-    const monthToStart = realCurrentMonthKey;
+    const monthToStart = monthKey;
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
     const recordsBeforeCarry = loadWealthRecords();
-    const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
+    const previousClosureNet = computeClosureNetForStart(previousClosureForSelectedMonth);
     try {
-      if (!(previousClosureForMonthStart?.records?.length)) {
+      if (!(previousClosureForSelectedMonth?.records?.length)) {
         throw new Error('No existe un cierre anterior con detalle suficiente para clonar el mes de forma segura.');
       }
       const existingMonthRecords = latestRecordsForMonth(recordsBeforeCarry, monthToStart).filter(
@@ -5473,7 +5601,7 @@ export const Patrimonio: React.FC = () => {
       }
       const expectedMortgageLabels = Array.from(
         new Set(
-          (previousClosureForMonthStart?.records || [])
+          (previousClosureForSelectedMonth?.records || [])
             .filter(
               (record) =>
                 record.block === 'debt' &&
@@ -5483,7 +5611,7 @@ export const Patrimonio: React.FC = () => {
         ),
       );
       const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
-      const expectedSourceMonth = previousClosureForMonthStart?.monthKey || null;
+      const expectedSourceMonth = previousClosureForSelectedMonth?.monthKey || null;
       const sourceMatches = !expectedSourceMonth || result.sourceMonth === expectedSourceMonth;
       if (!sourceMatches) {
         throw new Error(
@@ -5495,9 +5623,9 @@ export const Patrimonio: React.FC = () => {
         (record) => !isStartMonthCheckpointRecord(record),
       );
       const initializationAudit = buildMonthInitializationIntegrityAudit({
-        previousClosure: previousClosureForMonthStart,
+        previousClosure: previousClosureForSelectedMonth,
         initializedRecords: currentMonthRecordsAfterCarry,
-        fxRates: previousClosureForMonthStart.fxRates || loadFxRates(),
+        fxRates: previousClosureForSelectedMonth.fxRates || loadFxRates(),
       });
       if (initializationAudit.status === 'blocked') {
         throw new Error('La copia inicial no coincide exactamente con el último cierre válido.');
@@ -5537,7 +5665,7 @@ export const Patrimonio: React.FC = () => {
 
   const runStartMonthFxUpdate = async () => {
     if (startMonthRunning) return;
-    const monthToStart = realCurrentMonthKey;
+    const monthToStart = monthKey;
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
@@ -5557,7 +5685,7 @@ export const Patrimonio: React.FC = () => {
 
   const runStartMonthBanksUpdate = async () => {
     if (startMonthRunning) return;
-    const monthToStart = realCurrentMonthKey;
+    const monthToStart = monthKey;
     startMonthManualBankAttemptedRef.current = true;
     if (!startMonthBanksOptionEnabled) {
       setCarryMessage('Configura tokens en Ajustes para actualizar bancos vía Fintoc.');
@@ -5608,17 +5736,18 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
-  const runStartMonthRealEstateUpdate = () => {
+  const runStartMonthRealEstateUpdate = (targetMonthKey = monthKey) => {
     if (startMonthRunning) return;
-    const monthToStart = realCurrentMonthKey;
-    if (monthStartMortgageAudit.status === 'applied') {
+    const monthToStart = targetMonthKey;
+    const runtime = evaluateMonthStartRuntimeState(monthToStart);
+    if (runtime.mortgageAudit.status === 'applied') {
       const message = 'La hipoteca de este mes ya fue aplicada. No la volveré a iniciar.';
       setStartMonthFailedStep('realEstate');
       setStartMonthFlowError(message);
       setCarryMessage(message);
       return;
     }
-    if (monthStartMortgageAudit.status === 'review') {
+    if (runtime.mortgageAudit.status === 'review') {
       const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciarla.';
       setStartMonthFailedStep('realEstate');
       setStartMonthFlowError(message);
@@ -5645,25 +5774,39 @@ export const Patrimonio: React.FC = () => {
   };
 
   const runStartMonthInitialize = () => {
-    if (!currentOperationalMonthHasRecords) {
-      setCarryConfirmOpen(true);
-      return;
-    }
-    if (monthStartMortgageAudit.status === 'applied') {
-      const message = 'La hipoteca de este mes ya fue aplicada. No iniciaré el mes otra vez.';
-      setStartMonthFailedStep('realEstate');
+    const runtime = evaluateMonthStartRuntimeState(monthKey);
+    if (!runtime.eligibility.canStart) {
+      const message =
+        runtime.eligibility.reason === 'month_closed'
+          ? 'Ese mes ya está cerrado y no se puede iniciar de nuevo.'
+          : runtime.eligibility.reason === 'missing_previous_closure'
+            ? 'Falta un cierre anterior válido para iniciar este mes.'
+            : runtime.eligibility.reason === 'non_adjacent_previous_closure'
+              ? 'El cierre anterior no corresponde al mes inmediatamente anterior.'
+              : runtime.eligibility.reason === 'month_not_copied_from_previous'
+                ? 'Primero debes copiar el cierre anterior para iniciar este mes.'
+                : runtime.eligibility.reason === 'mortgage_applied'
+                  ? 'La hipoteca de este mes ya fue aplicada. No iniciaré el mes otra vez.'
+                  : runtime.eligibility.reason === 'mortgage_review'
+                    ? 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de iniciar el mes.'
+                    : 'Este mes no se puede iniciar todavía.';
+      setStartMonthFailedStep(runtime.eligibility.reason === 'month_not_copied_from_previous' ? 'carry' : 'realEstate');
       setStartMonthFlowError(message);
       setCarryMessage(message);
       return;
     }
-    if (monthStartMortgageAudit.status === 'review') {
-      const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de iniciar el mes.';
-      setStartMonthFailedStep('realEstate');
-      setStartMonthFlowError(message);
-      setCarryMessage(message);
+    setStartMonthConfirmOpen(true);
+  };
+
+  const confirmStartMonthInitialize = () => {
+    const runtime = evaluateMonthStartRuntimeState(monthKey);
+    if (!runtime.eligibility.canStart) {
+      setStartMonthConfirmOpen(false);
+      runStartMonthInitialize();
       return;
     }
-    runStartMonthRealEstateUpdate();
+    setStartMonthConfirmOpen(false);
+    runStartMonthRealEstateUpdate(monthKey);
   };
 
   const completeMonthlyClose = async (
@@ -6646,22 +6789,21 @@ export const Patrimonio: React.FC = () => {
     () =>
       buildMonthPreparationStepViews({
         monthKey,
-        realCurrentMonthKey,
-        monthHasRecords: currentOperationalMonthHasRecords,
+        realCurrentMonthKey: monthKey,
+        monthHasRecords: selectedMonthHasRecords,
         actionStatus: startMonthActionStatus,
         failedStep: startMonthFailedStep,
-        canCarryFromPrevious: !!previousClosureForMonthStart,
+        canCarryFromPrevious: !!previousClosureForSelectedMonth,
         banksEnabled: startMonthBanksOptionEnabled,
         explicitMonthStarted: !!startMonthCheckpoint?.explicitMonthStarted,
-        mortgageStatus: monthStartMortgageAudit.status,
+        mortgageStatus: selectedMonthMortgageAudit.status,
         bankInfoNote: startMonthBankErrorView.secondaryNote,
       }),
     [
-      currentOperationalMonthHasRecords,
       monthKey,
-      monthStartMortgageAudit.status,
-      previousClosureForMonthStart,
-      realCurrentMonthKey,
+      previousClosureForSelectedMonth,
+      selectedMonthHasRecords,
+      selectedMonthMortgageAudit.status,
       startMonthActionStatus,
       startMonthBankErrorView.secondaryNote,
       startMonthBanksOptionEnabled,
@@ -7035,7 +7177,7 @@ export const Patrimonio: React.FC = () => {
         </div>
       </Card>
 
-      {monthKey === realCurrentMonthKey && (
+      {!activeClosure && (
         <Card className="p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -7053,18 +7195,19 @@ export const Patrimonio: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={runStartMonthInitialize}
-              disabled={
-                startMonthRunning ||
-                (!currentOperationalMonthHasRecords && !previousClosureForMonthStart) ||
-                (currentOperationalMonthHasRecords &&
-                  (monthStartMortgageAudit.status === 'review' || monthStartMortgageAudit.status === 'applied'))
-              }
-            >
-              {currentOperationalMonthHasRecords ? 'Iniciar mes' : 'Copiar último cierre'}
-            </Button>
+            {selectedMonthStartEligibility.canStart ? (
+              <Button size="sm" onClick={runStartMonthInitialize} disabled={startMonthRunning}>
+                Iniciar mes
+              </Button>
+            ) : selectedMonthStartEligibility.reason === 'mortgage_applied' ? (
+              <Button size="sm" disabled>
+                Mes iniciado
+              </Button>
+            ) : selectedMonthStartEligibility.reason === 'mortgage_review' ? (
+              <Button size="sm" disabled>
+                Revisar hipoteca
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="outline"
@@ -7075,12 +7218,12 @@ export const Patrimonio: React.FC = () => {
             </Button>
           </div>
 
-          {currentOperationalMonthHasRecords && monthStartMortgageAudit.status === 'review' ? (
+          {selectedMonthHasRecords && selectedMonthMortgageAudit.status === 'review' ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciar el mes.
             </div>
           ) : null}
-          {currentOperationalMonthHasRecords && monthStartMortgageAudit.status === 'applied' ? (
+          {selectedMonthHasRecords && selectedMonthMortgageAudit.status === 'applied' ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
               La hipoteca ya fue aplicada para este mes y el delta de deuda cuadra con la amortización esperada.
             </div>
@@ -7297,6 +7440,49 @@ export const Patrimonio: React.FC = () => {
         }}
         onClose={() => setPostCloseSummary(null)}
       />
+
+      <ConfirmActionModal
+        open={startMonthConfirmOpen}
+        busy={startMonthRunning}
+        title={
+          previousClosureForSelectedMonth
+            ? buildMonthStartConfirmationCopy({
+                monthKey,
+                previousClosureMonthKey: previousClosureForSelectedMonth.monthKey,
+              }).title
+            : 'Iniciar mes'
+        }
+        message={
+          previousClosureForSelectedMonth
+            ? buildMonthStartConfirmationCopy({
+                monthKey,
+                previousClosureMonthKey: previousClosureForSelectedMonth.monthKey,
+              }).message
+            : 'No hay cierre anterior válido para iniciar este mes.'
+        }
+        confirmText={
+          previousClosureForSelectedMonth
+            ? buildMonthStartConfirmationCopy({
+                monthKey,
+                previousClosureMonthKey: previousClosureForSelectedMonth.monthKey,
+              }).confirmText
+            : 'Iniciar mes'
+        }
+        cancelText="Cancelar"
+        onConfirm={confirmStartMonthInitialize}
+        onCancel={() => setStartMonthConfirmOpen(false)}
+      >
+        {previousClosureForSelectedMonth ? (
+          <div className="text-xs text-slate-600">
+            {
+              buildMonthStartConfirmationCopy({
+                monthKey,
+                previousClosureMonthKey: previousClosureForSelectedMonth.monthKey,
+              }).details
+            }
+          </div>
+        ) : null}
+      </ConfirmActionModal>
 
       <ConfirmActionModal
         open={carryConfirmOpen}
