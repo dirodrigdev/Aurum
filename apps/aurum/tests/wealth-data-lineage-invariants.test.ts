@@ -9,7 +9,11 @@ vi.mock('../src/services/firebase', () => ({
 
 import { computeClosureSummary } from '../src/components/settings/ClosureReviewModal';
 import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
-import { buildMonthPreparationStepViews } from '../src/pages/Patrimonio';
+import {
+  buildMonthPreparationStepViews,
+  buildMonthStartMortgageAudit,
+  buildStartMonthBankErrorView,
+} from '../src/pages/Patrimonio';
 import {
   buildBankIntegrityAudit,
   buildBankRefreshSafetyAudit,
@@ -29,6 +33,11 @@ import {
   CLOSURE_RECONCILIATION_BANK_LABEL,
   CLOSURE_RECONCILIATION_DEBT_LABEL,
   DEBT_CARD_CLP_LABEL,
+  MORTGAGE_AMORTIZATION_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  MORTGAGE_DIVIDEND_LABEL,
+  MORTGAGE_INSURANCE_LABEL,
+  MORTGAGE_INTEREST_LABEL,
   RISK_CAPITAL_LABEL_CLP,
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
@@ -673,6 +682,20 @@ describe('wealth data lineage invariants', () => {
     expect(realEstate?.detail).toBe('Pendiente de iniciar');
   });
 
+  it('suppresses the main red banner and retry CTA for legacy bank failures', () => {
+    const errorView = buildStartMonthBankErrorView({
+      flowError:
+        'La actualización bancaria devolvió un resultado parcial que degradaba saldos válidos. Mantuvimos el estado anterior.',
+      failedStep: 'banks',
+      explicitMonthStarted: false,
+      manualBankAttempted: false,
+    });
+
+    expect(errorView.showMainBanner).toBe(false);
+    expect(errorView.showRetryButton).toBe(false);
+    expect(errorView.secondaryNote).toContain('API bancaria experimental no aplicada');
+  });
+
   it('keeps copy-last-close as fallback only when the current month is empty and previous closure exists', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
@@ -761,5 +784,141 @@ describe('wealth data lineage invariants', () => {
     const realEstate = steps.find((step) => step.key === 'realEstate');
     expect(carry?.detail).toBe('Mes iniciado');
     expect(realEstate?.detail).toBe('Hipoteca actualizada');
+  });
+
+  it('marks hipoteca as review-required when the current month mortgage balance already differs from previous closure', () => {
+    const previousRecords = [
+      record({
+        id: 'mortgage-balance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 2_800,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-dividend-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DIVIDEND_LABEL,
+        amount: 20,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-interest-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INTEREST_LABEL,
+        amount: 8,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-insurance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INSURANCE_LABEL,
+        amount: 2,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-amortization-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_AMORTIZATION_LABEL,
+        amount: 10,
+        currency: 'UF',
+      }),
+    ];
+    const currentRecords = previousRecords.map((item) =>
+      item.label === MORTGAGE_DEBT_BALANCE_LABEL
+        ? { ...item, id: 'mortgage-balance-current', snapshotDate: '2026-06-30', amount: 2_790 }
+        : { ...item, id: `${item.id}-current`, snapshotDate: '2026-06-30' },
+    );
+
+    const audit = buildMonthStartMortgageAudit({
+      monthKey: '2026-06',
+      monthRecords: currentRecords,
+      previousClosure: closureFrom(buildCanonicalClosureSummary(previousRecords, fx), previousRecords),
+      fxRates: fx,
+    });
+
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: false,
+      mortgageReviewRequired: audit.status === 'review',
+    });
+
+    const realEstate = steps.find((step) => step.key === 'realEstate');
+    expect(audit.status).toBe('review');
+    expect(audit.principalDeltaUf).toBe(-10);
+    expect(audit.principalDeltaClp).toBe(-390000);
+    expect(realEstate?.tone).toBe('error');
+    expect(realEstate?.detail).toBe('Hipoteca ya parece aplicada / revisar');
+  });
+
+  it('keeps iniciar mes available when the copied mortgage detail still matches the previous closure', () => {
+    const previousRecords = [
+      record({
+        id: 'mortgage-balance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 2_800,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-dividend-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DIVIDEND_LABEL,
+        amount: 20,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-interest-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INTEREST_LABEL,
+        amount: 8,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-insurance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INSURANCE_LABEL,
+        amount: 2,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-amortization-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_AMORTIZATION_LABEL,
+        amount: 10,
+        currency: 'UF',
+      }),
+    ];
+
+    const audit = buildMonthStartMortgageAudit({
+      monthKey: '2026-06',
+      monthRecords: previousRecords.map((item) => ({ ...item, id: `${item.id}-current`, snapshotDate: '2026-06-30' })),
+      previousClosure: closureFrom(buildCanonicalClosureSummary(previousRecords, fx), previousRecords),
+      fxRates: fx,
+    });
+
+    expect(audit.status).toBe('pending');
+    expect(audit.changedLabels).toEqual([]);
   });
 });
