@@ -740,6 +740,27 @@ describe('wealth data lineage invariants', () => {
     expect(banks?.actionLabel).toBe('Actualizar bancos desde API (experimental/manual)');
   });
 
+  it('keeps the bank API note as secondary info inside Estado del mes', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      bankInfoNote: 'API bancaria experimental no aplicada. Se mantienen bancos copiados/manuales.',
+    });
+
+    const banks = steps.find((step) => step.key === 'banks');
+    expect(banks?.note).toContain('API bancaria experimental no aplicada');
+  });
+
   it('marks the month as started only after explicit new-flow start is recorded', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
@@ -786,7 +807,7 @@ describe('wealth data lineage invariants', () => {
     expect(realEstate?.detail).toBe('Hipoteca actualizada');
   });
 
-  it('marks hipoteca as review-required when the current month mortgage balance already differs from previous closure', () => {
+  it('marks hipoteca as applied when debt delta matches expected amortization', () => {
     const previousRecords = [
       record({
         id: 'mortgage-balance-prev',
@@ -856,15 +877,99 @@ describe('wealth data lineage invariants', () => {
       canCarryFromPrevious: true,
       banksEnabled: true,
       explicitMonthStarted: false,
-      mortgageReviewRequired: audit.status === 'review',
+      mortgageStatus: audit.status,
+    });
+
+    const realEstate = steps.find((step) => step.key === 'realEstate');
+    expect(audit.status).toBe('applied');
+    expect(audit.principalDeltaUf).toBe(10);
+    expect(audit.amortizationExpectedUf).toBe(10);
+    expect(audit.differenceUf).toBe(0);
+    expect(audit.principalDeltaClp).toBe(390000);
+    expect(realEstate?.tone).toBe('ready');
+    expect(realEstate?.detail).toBe('Hipoteca aplicada');
+  });
+
+  it('marks hipoteca as review-required when debt delta does not match expected amortization', () => {
+    const previousRecords = [
+      record({
+        id: 'mortgage-balance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 2_800,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-dividend-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_DIVIDEND_LABEL,
+        amount: 20,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-interest-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INTEREST_LABEL,
+        amount: 8,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-insurance-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_INSURANCE_LABEL,
+        amount: 2,
+        currency: 'UF',
+      }),
+      record({
+        id: 'mortgage-amortization-prev',
+        block: 'debt',
+        source: 'Scotiabank',
+        label: MORTGAGE_AMORTIZATION_LABEL,
+        amount: 10,
+        currency: 'UF',
+      }),
+    ];
+    const currentRecords = previousRecords.map((item) =>
+      item.label === MORTGAGE_DEBT_BALANCE_LABEL
+        ? { ...item, id: 'mortgage-balance-current', snapshotDate: '2026-06-30', amount: 2_794 }
+        : { ...item, id: `${item.id}-current`, snapshotDate: '2026-06-30' },
+    );
+
+    const audit = buildMonthStartMortgageAudit({
+      monthKey: '2026-06',
+      monthRecords: currentRecords,
+      previousClosure: closureFrom(buildCanonicalClosureSummary(previousRecords, fx), previousRecords),
+      fxRates: fx,
+    });
+
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: false,
+      mortgageStatus: audit.status,
     });
 
     const realEstate = steps.find((step) => step.key === 'realEstate');
     expect(audit.status).toBe('review');
-    expect(audit.principalDeltaUf).toBe(-10);
-    expect(audit.principalDeltaClp).toBe(-390000);
-    expect(realEstate?.tone).toBe('error');
-    expect(realEstate?.detail).toBe('Hipoteca ya parece aplicada / revisar');
+    expect(audit.principalDeltaUf).toBe(6);
+    expect(audit.amortizationExpectedUf).toBe(10);
+    expect(audit.differenceUf).toBe(-4);
+    expect(realEstate?.tone).toBe('warning');
+    expect(realEstate?.detail).toBe('Hipoteca requiere revisión');
   });
 
   it('keeps iniciar mes available when the copied mortgage detail still matches the previous closure', () => {

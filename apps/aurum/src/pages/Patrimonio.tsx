@@ -167,19 +167,24 @@ const START_MONTH_ACTION_STATUS_INITIAL: StartMonthActionStatus = {
 type MonthPreparationStepView = {
   key: StartMonthActionKey;
   label: string;
-  tone: 'ready' | 'pending' | 'error';
+  tone: 'ready' | 'pending' | 'warning' | 'error';
   detail: string;
   showAction: boolean;
   actionLabel: string;
+  note?: string;
 };
 
 export type MonthStartMortgageAudit = {
-  status: 'pending' | 'review';
+  status: 'pending' | 'applied' | 'review';
   changedLabels: string[];
   missingLabels: string[];
   extraLabels: string[];
+  amortizationExpectedUf: number | null;
   principalDeltaUf: number | null;
   principalDeltaClp: number | null;
+  propertyDeltaClp: number | null;
+  differenceUf: number | null;
+  toleranceUf: number | null;
 };
 
 const MORTGAGE_START_LABELS = [
@@ -212,14 +217,26 @@ export const buildMonthStartMortgageAudit = (input: {
 
   const previousMap = toMap(previousClosureRecords);
   const currentMap = toMap(currentMonthRecords);
+  const previousProperty = previousClosureRecords.find(
+    (record) =>
+      record.block === 'real_estate' && sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
+  );
+  const currentProperty = currentMonthRecords.find(
+    (record) =>
+      record.block === 'real_estate' && sameCanonicalLabel(record.label, REAL_ESTATE_PROPERTY_VALUE_LABEL),
+  );
   if (!previousMap.size || !currentMap.size) {
     return {
       status: 'pending',
       changedLabels: [],
       missingLabels: [],
       extraLabels: [],
+      amortizationExpectedUf: null,
       principalDeltaUf: null,
       principalDeltaClp: null,
+      propertyDeltaClp: null,
+      differenceUf: null,
+      toleranceUf: null,
     };
   }
 
@@ -242,20 +259,57 @@ export const buildMonthStartMortgageAudit = (input: {
   const previousPrincipal = previousMap.get(labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL));
   const currentPrincipal = currentMap.get(labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL));
   const principalDeltaUf =
-    previousPrincipal && currentPrincipal ? Number(currentPrincipal.amount || 0) - Number(previousPrincipal.amount || 0) : null;
+    previousPrincipal && currentPrincipal ? Number(previousPrincipal.amount || 0) - Number(currentPrincipal.amount || 0) : null;
   const principalDeltaClp =
     principalDeltaUf == null ? null : Math.round(principalDeltaUf * Number(input.fxRates.ufClp || 0));
+  const amortizationExpectedRecord =
+    currentMap.get(labelMatchKey(MORTGAGE_AMORTIZATION_LABEL)) ||
+    previousMap.get(labelMatchKey(MORTGAGE_AMORTIZATION_LABEL));
+  const amortizationExpectedUf = amortizationExpectedRecord ? Number(amortizationExpectedRecord.amount || 0) : null;
+  const differenceUf =
+    principalDeltaUf == null || amortizationExpectedUf == null ? null : principalDeltaUf - amortizationExpectedUf;
+  const toleranceUf =
+    amortizationExpectedUf == null ? null : Math.max(0.05, Math.abs(amortizationExpectedUf) * 0.05);
+  const propertyDeltaClp =
+    previousProperty && currentProperty ? Math.round(Number(currentProperty.amount || 0) - Number(previousProperty.amount || 0)) : null;
+  const principalLooksApplied =
+    principalDeltaUf != null &&
+    amortizationExpectedUf != null &&
+    differenceUf != null &&
+    toleranceUf != null &&
+    Math.abs(differenceUf) <= toleranceUf;
 
-  const requiresReview =
-    changedLabels.length > 0 || missingLabels.length > 0 || extraLabels.length > 0;
+  const mortgageOnlyChangedLabels = changedLabels.filter(
+    (label) => labelMatchKey(label) !== labelMatchKey(MORTGAGE_DEBT_BALANCE_LABEL),
+  );
+  const propertyChanged = propertyDeltaClp != null && Math.abs(propertyDeltaClp) > 1;
+  const hasNoDelta =
+    principalDeltaUf == null ||
+    Math.abs(principalDeltaUf) <= 0.0001;
+  const appliedViaExpectedAmortization =
+    principalLooksApplied &&
+    missingLabels.length === 0 &&
+    extraLabels.length === 0 &&
+    mortgageOnlyChangedLabels.length === 0 &&
+    !propertyChanged;
+
+  const status: MonthStartMortgageAudit['status'] = hasNoDelta
+    ? 'pending'
+    : appliedViaExpectedAmortization
+      ? 'applied'
+      : 'review';
 
   return {
-    status: requiresReview ? 'review' : 'pending',
+    status,
     changedLabels,
     missingLabels,
     extraLabels,
+    amortizationExpectedUf,
     principalDeltaUf,
     principalDeltaClp,
+    propertyDeltaClp,
+    differenceUf,
+    toleranceUf,
   };
 };
 
@@ -289,7 +343,8 @@ export const buildMonthPreparationStepViews = (input: {
   canCarryFromPrevious: boolean;
   banksEnabled: boolean;
   explicitMonthStarted?: boolean;
-  mortgageReviewRequired?: boolean;
+  mortgageStatus?: MonthStartMortgageAudit['status'];
+  bankInfoNote?: string;
 }): MonthPreparationStepView[] => {
   const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
   const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
@@ -352,14 +407,22 @@ export const buildMonthPreparationStepViews = (input: {
               : 'Pendiente (manual/experimental)',
       showAction: isCurrentOperationalMonth && input.banksEnabled,
       actionLabel: 'Actualizar bancos desde API (experimental/manual)',
+      note: input.bankInfoNote,
     },
     {
       key: 'realEstate',
       label: 'Hipoteca',
-      tone: input.mortgageReviewRequired ? 'error' : toneFor('realEstate', monthStarted),
+      tone:
+        input.mortgageStatus === 'applied'
+          ? 'ready'
+          : input.mortgageStatus === 'review'
+            ? 'warning'
+            : toneFor('realEstate', monthStarted),
       detail:
-        input.mortgageReviewRequired
-          ? 'Hipoteca ya parece aplicada / revisar'
+        input.mortgageStatus === 'applied'
+          ? 'Hipoteca aplicada'
+          : input.mortgageStatus === 'review'
+          ? 'Hipoteca requiere revisión'
           : monthStarted
           ? 'Hipoteca actualizada'
           : !isCurrentOperationalMonth
@@ -5548,8 +5611,15 @@ export const Patrimonio: React.FC = () => {
   const runStartMonthRealEstateUpdate = () => {
     if (startMonthRunning) return;
     const monthToStart = realCurrentMonthKey;
+    if (monthStartMortgageAudit.status === 'applied') {
+      const message = 'La hipoteca de este mes ya fue aplicada. No la volveré a iniciar.';
+      setStartMonthFailedStep('realEstate');
+      setStartMonthFlowError(message);
+      setCarryMessage(message);
+      return;
+    }
     if (monthStartMortgageAudit.status === 'review') {
-      const message = 'La hipoteca de este mes ya parece modificada respecto del cierre anterior. Revisa antes de volver a iniciarla.';
+      const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciarla.';
       setStartMonthFailedStep('realEstate');
       setStartMonthFlowError(message);
       setCarryMessage(message);
@@ -5579,8 +5649,15 @@ export const Patrimonio: React.FC = () => {
       setCarryConfirmOpen(true);
       return;
     }
+    if (monthStartMortgageAudit.status === 'applied') {
+      const message = 'La hipoteca de este mes ya fue aplicada. No iniciaré el mes otra vez.';
+      setStartMonthFailedStep('realEstate');
+      setStartMonthFlowError(message);
+      setCarryMessage(message);
+      return;
+    }
     if (monthStartMortgageAudit.status === 'review') {
-      const message = 'La hipoteca de este mes ya parece aplicada o modificada. Revisa antes de iniciar el mes.';
+      const message = 'La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de iniciar el mes.';
       setStartMonthFailedStep('realEstate');
       setStartMonthFlowError(message);
       setCarryMessage(message);
@@ -6576,7 +6653,8 @@ export const Patrimonio: React.FC = () => {
         canCarryFromPrevious: !!previousClosureForMonthStart,
         banksEnabled: startMonthBanksOptionEnabled,
         explicitMonthStarted: !!startMonthCheckpoint?.explicitMonthStarted,
-        mortgageReviewRequired: monthStartMortgageAudit.status === 'review',
+        mortgageStatus: monthStartMortgageAudit.status,
+        bankInfoNote: startMonthBankErrorView.secondaryNote,
       }),
     [
       currentOperationalMonthHasRecords,
@@ -6585,6 +6663,7 @@ export const Patrimonio: React.FC = () => {
       previousClosureForMonthStart,
       realCurrentMonthKey,
       startMonthActionStatus,
+      startMonthBankErrorView.secondaryNote,
       startMonthBanksOptionEnabled,
       startMonthCheckpoint?.explicitMonthStarted,
       startMonthFailedStep,
@@ -6762,11 +6841,6 @@ export const Patrimonio: React.FC = () => {
           {pendingCloseAlert}
         </Card>
       )}
-      {startMonthBankErrorView.secondaryNote ? (
-        <Card className="border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          {startMonthBankErrorView.secondaryNote}
-        </Card>
-      ) : null}
       {startMonthBankErrorView.showMainBanner && !!startMonthFlowError && (
         <Card className="border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           <div>{startMonthFlowError}</div>
@@ -6985,7 +7059,8 @@ export const Patrimonio: React.FC = () => {
               disabled={
                 startMonthRunning ||
                 (!currentOperationalMonthHasRecords && !previousClosureForMonthStart) ||
-                (currentOperationalMonthHasRecords && monthStartMortgageAudit.status === 'review')
+                (currentOperationalMonthHasRecords &&
+                  (monthStartMortgageAudit.status === 'review' || monthStartMortgageAudit.status === 'applied'))
               }
             >
               {currentOperationalMonthHasRecords ? 'Iniciar mes' : 'Copiar último cierre'}
@@ -7002,7 +7077,12 @@ export const Patrimonio: React.FC = () => {
 
           {currentOperationalMonthHasRecords && monthStartMortgageAudit.status === 'review' ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              La hipoteca de este mes ya parece aplicada o modificada respecto del cierre anterior. Revisa antes de volver a iniciar el mes.
+              La hipoteca de este mes no cuadra completamente con la amortización esperada. Revisa antes de volver a iniciar el mes.
+            </div>
+          ) : null}
+          {currentOperationalMonthHasRecords && monthStartMortgageAudit.status === 'applied' ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              La hipoteca ya fue aplicada para este mes y el delta de deuda cuadra con la amortización esperada.
             </div>
           ) : null}
 
@@ -7014,6 +7094,8 @@ export const Patrimonio: React.FC = () => {
                   'flex items-center justify-between gap-3 rounded-xl border px-3 py-2',
                   step.tone === 'ready'
                     ? 'border-emerald-200 bg-emerald-50'
+                    : step.tone === 'warning'
+                      ? 'border-amber-200 bg-amber-50'
                     : step.tone === 'error'
                       ? 'border-red-200 bg-red-50'
                       : 'border-slate-200 bg-slate-50',
@@ -7026,6 +7108,8 @@ export const Patrimonio: React.FC = () => {
                       'text-xs',
                       step.tone === 'ready'
                         ? 'text-emerald-700'
+                        : step.tone === 'warning'
+                          ? 'text-amber-800'
                         : step.tone === 'error'
                           ? 'text-red-700'
                           : 'text-slate-600',
@@ -7033,18 +7117,27 @@ export const Patrimonio: React.FC = () => {
                   >
                     {step.detail}
                   </div>
+                  {step.note ? <div className="mt-1 text-[11px] text-slate-500">{step.note}</div> : null}
                 </div>
                 <div
                   className={cn(
                     'rounded-full px-2 py-1 text-[11px] font-semibold',
                     step.tone === 'ready'
                       ? 'bg-emerald-100 text-emerald-700'
+                      : step.tone === 'warning'
+                        ? 'bg-amber-100 text-amber-800'
                       : step.tone === 'error'
                         ? 'bg-red-100 text-red-700'
-                        : 'bg-slate-200 text-slate-700',
+                      : 'bg-slate-200 text-slate-700',
                   )}
                 >
-                  {step.tone === 'ready' ? 'Listo' : step.tone === 'error' ? 'Error' : 'Pendiente'}
+                  {step.tone === 'ready'
+                    ? 'Listo'
+                    : step.tone === 'warning'
+                      ? 'Revisar'
+                      : step.tone === 'error'
+                        ? 'Error'
+                        : 'Pendiente'}
                 </div>
               </div>
             ))}
