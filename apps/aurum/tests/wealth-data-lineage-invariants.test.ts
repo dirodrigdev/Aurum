@@ -646,6 +646,33 @@ describe('wealth data lineage invariants', () => {
     expect(carry?.showAction).toBe(false);
   });
 
+  it('normalizes legacy applied banks and failed badge into copied-from-close state before explicit start', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'applied',
+        banks: 'applied',
+        realEstate: 'applied',
+      },
+      failedStep: 'banks',
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: false,
+    });
+
+    const banks = steps.find((step) => step.key === 'banks');
+    const carry = steps.find((step) => step.key === 'carry');
+    const realEstate = steps.find((step) => step.key === 'realEstate');
+
+    expect(banks?.tone).toBe('ready');
+    expect(banks?.detail).toBe('Copiados desde cierre anterior');
+    expect(carry?.detail).toBe('Copiado desde cierre anterior · pendiente de iniciar');
+    expect(realEstate?.detail).toBe('Pendiente de iniciar');
+  });
+
   it('keeps copy-last-close as fallback only when the current month is empty and previous closure exists', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
@@ -685,12 +712,12 @@ describe('wealth data lineage invariants', () => {
     });
 
     const banks = steps.find((step) => step.key === 'banks');
-    expect(banks?.detail).toBe('Pendiente (manual/experimental)');
+    expect(banks?.detail).toBe('Copiados desde cierre anterior');
     expect(banks?.showAction).toBe(true);
     expect(banks?.actionLabel).toBe('Actualizar bancos desde API (experimental/manual)');
   });
 
-  it('marks the month as started only after hipoteca step is applied', () => {
+  it('marks the month as started only after explicit new-flow start is recorded', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
       realCurrentMonthKey: '2026-06',
@@ -704,6 +731,30 @@ describe('wealth data lineage invariants', () => {
       failedStep: null,
       canCarryFromPrevious: true,
       banksEnabled: true,
+      explicitMonthStarted: false,
+    });
+
+    const carry = steps.find((step) => step.key === 'carry');
+    const realEstate = steps.find((step) => step.key === 'realEstate');
+    expect(carry?.detail).toBe('Copiado desde cierre anterior · pendiente de iniciar');
+    expect(realEstate?.detail).toBe('Pendiente de iniciar');
+  });
+
+  it('shows the month as started only when the explicit start flag is present', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'applied',
+        banks: 'applied',
+        realEstate: 'applied',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: true,
     });
 
     const carry = steps.find((step) => step.key === 'carry');

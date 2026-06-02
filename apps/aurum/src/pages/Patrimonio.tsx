@@ -181,11 +181,16 @@ export const buildMonthPreparationStepViews = (input: {
   failedStep: StartMonthActionKey | null;
   canCarryFromPrevious: boolean;
   banksEnabled: boolean;
+  explicitMonthStarted?: boolean;
 }): MonthPreparationStepView[] => {
   const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
   const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
-  const monthStarted = input.actionStatus.realEstate === 'applied';
+  const monthStarted = !!input.explicitMonthStarted;
+  const normalizeLegacy = !monthStarted;
   const toneFor = (step: StartMonthActionKey, applied: boolean): MonthPreparationStepView['tone'] => {
+    if (normalizeLegacy && (step === 'fx' || step === 'banks' || step === 'realEstate')) {
+      return applied ? 'ready' : 'pending';
+    }
     if (input.failedStep === step) return 'error';
     if (applied) return 'ready';
     return 'pending';
@@ -213,25 +218,27 @@ export const buildMonthPreparationStepViews = (input: {
     {
       key: 'fx',
       label: 'TC/UF',
-      tone: toneFor('fx', input.actionStatus.fx === 'applied'),
+      tone: toneFor('fx', carryApplied),
       detail:
-        input.actionStatus.fx === 'applied'
-          ? 'Actualizado'
-          : !isCurrentOperationalMonth
-            ? 'Solo aplica al mes operativo'
-            : 'Pendiente',
+        !isCurrentOperationalMonth
+          ? 'Solo aplica al mes operativo'
+          : input.monthHasRecords || input.actionStatus.carry === 'applied'
+            ? 'Copiado desde cierre anterior'
+            : 'Pendiente de actualización manual',
       showAction: isCurrentOperationalMonth,
       actionLabel: 'Actualizar TC/UF',
     },
     {
       key: 'banks',
       label: 'Bancos',
-      tone: toneFor('banks', input.actionStatus.banks === 'applied'),
+      tone: toneFor('banks', input.monthHasRecords),
       detail:
         !input.banksEnabled
-          ? 'Tokens no configurados'
-          : input.actionStatus.banks === 'applied'
-            ? 'Actualizados'
+          ? input.monthHasRecords
+            ? 'Copiados desde cierre anterior'
+            : 'Tokens no configurados'
+          : input.monthHasRecords
+            ? 'Copiados desde cierre anterior'
             : !isCurrentOperationalMonth
               ? 'Solo aplica al mes operativo'
               : 'Pendiente (manual/experimental)',
@@ -241,14 +248,14 @@ export const buildMonthPreparationStepViews = (input: {
     {
       key: 'realEstate',
       label: 'Hipoteca',
-      tone: toneFor('realEstate', input.actionStatus.realEstate === 'applied'),
+      tone: toneFor('realEstate', monthStarted),
       detail:
-        input.actionStatus.realEstate === 'applied'
+        monthStarted
           ? 'Hipoteca actualizada'
           : !isCurrentOperationalMonth
             ? 'Solo aplica al mes operativo'
             : input.monthHasRecords || input.actionStatus.carry === 'applied'
-              ? 'Hipoteca pendiente de revisar'
+              ? 'Pendiente de iniciar'
               : 'Pendiente',
       showAction: isCurrentOperationalMonth,
       actionLabel: 'Recalcular hipoteca',
@@ -262,6 +269,7 @@ type StartMonthFlowCheckpoint = {
   failedStep: StartMonthActionKey | null;
   lastError: string;
   updatedAt: string;
+  explicitMonthStarted?: boolean;
 };
 
 const sectionLabel: Record<MainSection, string> = {
@@ -328,6 +336,7 @@ const parseStartMonthCheckpointNote = (note?: string): StartMonthFlowCheckpoint 
           : null,
       lastError: typeof parsed.lastError === 'string' ? parsed.lastError : '',
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+      explicitMonthStarted: parsed.explicitMonthStarted === true,
     };
   } catch {
     return null;
@@ -5097,6 +5106,7 @@ export const Patrimonio: React.FC = () => {
     actions: StartMonthActionStatus,
     failedStep: StartMonthActionKey | null,
     lastError: string,
+    options?: { explicitMonthStarted?: boolean },
   ) => {
     const existing = latestRecordsForMonth(loadWealthRecords(), targetMonthKey).find((record) =>
       isStartMonthCheckpointRecord(record),
@@ -5107,6 +5117,7 @@ export const Patrimonio: React.FC = () => {
       failedStep,
       lastError,
       updatedAt: new Date().toISOString(),
+      explicitMonthStarted: options?.explicitMonthStarted === true,
     };
     upsertWealthRecord({
       id: existing?.id,
@@ -5120,12 +5131,19 @@ export const Patrimonio: React.FC = () => {
     });
   };
 
-  const markStartMonthStepApplied = (targetMonthKey: string, step: StartMonthActionKey) => {
+  const markStartMonthStepApplied = (
+    targetMonthKey: string,
+    step: StartMonthActionKey,
+    options?: { explicitMonthStarted?: boolean },
+  ) => {
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
     setStartMonthActionStatus((prev) => {
       const next = { ...prev, [step]: 'applied' as const };
-      persistStartMonthCheckpoint(targetMonthKey, next, null, '');
+      persistStartMonthCheckpoint(targetMonthKey, next, null, '', {
+        explicitMonthStarted:
+          options?.explicitMonthStarted ?? startMonthCheckpoint?.explicitMonthStarted ?? false,
+      });
       return next;
     });
   };
@@ -5138,7 +5156,9 @@ export const Patrimonio: React.FC = () => {
     setStartMonthFailedStep(step);
     setStartMonthFlowError((prev) => (prev ? `${prev} · ${message}` : message));
     setStartMonthActionStatus((prev) => {
-      persistStartMonthCheckpoint(targetMonthKey, prev, step, message);
+      persistStartMonthCheckpoint(targetMonthKey, prev, step, message, {
+        explicitMonthStarted: startMonthCheckpoint?.explicitMonthStarted ?? false,
+      });
       return prev;
     });
   };
@@ -5398,7 +5418,7 @@ export const Patrimonio: React.FC = () => {
     refreshAllWealthState();
     if (auto.changed > 0) {
       setCarryMessage(`Bienes raíces recalculados ✓ (${auto.changed} ajuste(s)).`);
-      markStartMonthStepApplied(monthToStart, 'realEstate');
+      markStartMonthStepApplied(monthToStart, 'realEstate', { explicitMonthStarted: true });
       return;
     }
     if (auto.reason === 'missing_base_debt') {
@@ -5408,7 +5428,7 @@ export const Patrimonio: React.FC = () => {
       return;
     }
     setCarryMessage('Bienes raíces sin cambios.');
-    markStartMonthStepApplied(monthToStart, 'realEstate');
+    markStartMonthStepApplied(monthToStart, 'realEstate', { explicitMonthStarted: true });
   };
 
   const runStartMonthInitialize = () => {
@@ -6405,6 +6425,7 @@ export const Patrimonio: React.FC = () => {
         failedStep: startMonthFailedStep,
         canCarryFromPrevious: !!previousClosureForMonthStart,
         banksEnabled: startMonthBanksOptionEnabled,
+        explicitMonthStarted: !!startMonthCheckpoint?.explicitMonthStarted,
       }),
     [
       currentOperationalMonthHasRecords,
@@ -6413,6 +6434,7 @@ export const Patrimonio: React.FC = () => {
       realCurrentMonthKey,
       startMonthActionStatus,
       startMonthBanksOptionEnabled,
+      startMonthCheckpoint?.explicitMonthStarted,
       startMonthFailedStep,
     ],
   );
