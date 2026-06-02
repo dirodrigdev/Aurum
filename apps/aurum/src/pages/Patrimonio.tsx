@@ -64,6 +64,7 @@ import {
   loadBankTokens,
   loadInvestmentInstruments,
   loadWealthRecords,
+  refreshFxRatesDailyIfNeeded,
   refreshFxRatesFromLive,
   RISK_CAPITAL_LABEL_CLP,
   RISK_CAPITAL_LABEL_USD,
@@ -162,6 +163,93 @@ const START_MONTH_ACTION_STATUS_INITIAL: StartMonthActionStatus = {
   fx: 'pending',
   banks: 'pending',
   realEstate: 'pending',
+};
+
+type MonthPreparationStepView = {
+  key: StartMonthActionKey;
+  label: string;
+  tone: 'ready' | 'pending' | 'error';
+  detail: string;
+  showAction: boolean;
+  actionLabel: string;
+};
+
+export const buildMonthPreparationStepViews = (input: {
+  monthKey: string;
+  realCurrentMonthKey: string;
+  monthHasRecords: boolean;
+  actionStatus: StartMonthActionStatus;
+  failedStep: StartMonthActionKey | null;
+  canCarryFromPrevious: boolean;
+  banksEnabled: boolean;
+}): MonthPreparationStepView[] => {
+  const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
+  const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
+  const toneFor = (step: StartMonthActionKey, applied: boolean): MonthPreparationStepView['tone'] => {
+    if (input.failedStep === step) return 'error';
+    if (applied) return 'ready';
+    return 'pending';
+  };
+
+  const detailForCarry = () => {
+    if (input.monthHasRecords) return 'Mes ya iniciado';
+    if (input.actionStatus.carry === 'applied') return 'Mes iniciado';
+    if (!isCurrentOperationalMonth) return 'Solo aplica al mes operativo';
+    if (!input.canCarryFromPrevious) return 'Sin cierre anterior válido para copiar';
+    return 'Pendiente';
+  };
+
+  return [
+    {
+      key: 'carry',
+      label: 'Mes iniciado',
+      tone: toneFor('carry', carryApplied),
+      detail: detailForCarry(),
+      showAction: isCurrentOperationalMonth && !input.monthHasRecords && input.canCarryFromPrevious,
+      actionLabel: 'Copiar último cierre',
+    },
+    {
+      key: 'fx',
+      label: 'TC/UF',
+      tone: toneFor('fx', input.actionStatus.fx === 'applied'),
+      detail:
+        input.actionStatus.fx === 'applied'
+          ? 'Actualizado'
+          : !isCurrentOperationalMonth
+            ? 'Solo aplica al mes operativo'
+            : 'Pendiente',
+      showAction: isCurrentOperationalMonth,
+      actionLabel: 'Actualizar TC/UF',
+    },
+    {
+      key: 'banks',
+      label: 'Bancos',
+      tone: toneFor('banks', input.actionStatus.banks === 'applied'),
+      detail:
+        !input.banksEnabled
+          ? 'Tokens no configurados'
+          : input.actionStatus.banks === 'applied'
+            ? 'Actualizados'
+            : !isCurrentOperationalMonth
+              ? 'Solo aplica al mes operativo'
+              : 'Pendiente',
+      showAction: isCurrentOperationalMonth && input.banksEnabled,
+      actionLabel: 'Reintentar bancos',
+    },
+    {
+      key: 'realEstate',
+      label: 'Hipoteca',
+      tone: toneFor('realEstate', input.actionStatus.realEstate === 'applied'),
+      detail:
+        input.actionStatus.realEstate === 'applied'
+          ? 'Calculada'
+          : !isCurrentOperationalMonth
+            ? 'Solo aplica al mes operativo'
+            : 'Pendiente',
+      showAction: isCurrentOperationalMonth,
+      actionLabel: 'Recalcular hipoteca',
+    },
+  ];
 };
 
 type StartMonthFlowCheckpoint = {
@@ -4182,6 +4270,9 @@ export const Patrimonio: React.FC = () => {
   const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
   const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
   const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
+  const autoFxAttemptedMonthRef = useRef<string | null>(null);
+  const autoBanksAttemptedMonthRef = useRef<string | null>(null);
+  const autoRealEstateAttemptedMonthRef = useRef<string | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -4484,11 +4575,17 @@ export const Patrimonio: React.FC = () => {
       setStartMonthActionStatus(startMonthCheckpoint.actions);
       setStartMonthFailedStep(startMonthCheckpoint.failedStep);
       setStartMonthFlowError(startMonthCheckpoint.lastError || '');
+      autoFxAttemptedMonthRef.current = null;
+      autoBanksAttemptedMonthRef.current = null;
+      autoRealEstateAttemptedMonthRef.current = null;
       return;
     }
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
+    autoFxAttemptedMonthRef.current = null;
+    autoBanksAttemptedMonthRef.current = null;
+    autoRealEstateAttemptedMonthRef.current = null;
   }, [monthKey, realCurrentMonthKey, startMonthCheckpoint]);
 
   useEffect(() => {
@@ -4497,6 +4594,9 @@ export const Patrimonio: React.FC = () => {
     setStartMonthActionStatus(START_MONTH_ACTION_STATUS_INITIAL);
     setStartMonthFailedStep(null);
     setStartMonthFlowError('');
+    autoFxAttemptedMonthRef.current = null;
+    autoBanksAttemptedMonthRef.current = null;
+    autoRealEstateAttemptedMonthRef.current = null;
   }, [monthKey, realCurrentMonthKey, monthRecords.length]);
 
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
@@ -4895,6 +4995,14 @@ export const Patrimonio: React.FC = () => {
     if (calendarMonthKey <= realCurrentMonthKey) return null;
     return `Tienes el cierre de ${monthLabel(realCurrentMonthKey).toLowerCase()} pendiente`;
   }, [latestClosure, monthKey, realCurrentMonthKey, calendarMonthKey]);
+  const currentOperationalMonthRecords = useMemo(
+    () =>
+      latestRecordsForMonth(records, realCurrentMonthKey).filter(
+        (record) => !isStartMonthCheckpointRecord(record),
+      ),
+    [records, realCurrentMonthKey],
+  );
+  const currentOperationalMonthHasRecords = currentOperationalMonthRecords.length > 0;
 
   const computeMonthNetSnapshot = (targetMonthKey: string, fxOverride?: { usdClp: number; eurClp: number; ufClp: number }) => {
     const sourceRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
@@ -5274,6 +5382,7 @@ export const Patrimonio: React.FC = () => {
           'La actualización bancaria devolvió un resultado parcial que degradaba saldos válidos. Mantuvimos el estado anterior.',
         );
       }
+      writeBanksLastAutoSyncDay(localYmd());
       refreshAllWealthState();
       setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
       markStartMonthStepApplied(monthToStart, 'banks');
@@ -5309,6 +5418,80 @@ export const Patrimonio: React.FC = () => {
     setCarryMessage('Bienes raíces sin cambios.');
     markStartMonthStepApplied(monthToStart, 'realEstate');
   };
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (monthKey !== realCurrentMonthKey) return;
+    if (startMonthActionStatus.fx === 'applied') return;
+    if (startMonthRunning) return;
+    if (autoFxAttemptedMonthRef.current === realCurrentMonthKey) return;
+
+    autoFxAttemptedMonthRef.current = realCurrentMonthKey;
+    void (async () => {
+      const result = await refreshFxRatesDailyIfNeeded();
+      refreshAllWealthState();
+      if (result.ok) {
+        setCarryMessage(result.updated ? 'TC/UF actualizados ✓' : 'TC/UF al día.');
+        markStartMonthStepApplied(realCurrentMonthKey, 'fx');
+        return;
+      }
+      const message = String(result.message || 'No pude actualizar TC/UF.');
+      markStartMonthStepFailed(realCurrentMonthKey, 'fx', message);
+      setCarryMessage(`Error al actualizar TC/UF: ${message}`);
+    })();
+  }, [
+    hydrationReady,
+    monthKey,
+    realCurrentMonthKey,
+    startMonthActionStatus.fx,
+    startMonthRunning,
+  ]);
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (monthKey !== realCurrentMonthKey) return;
+    if (startMonthActionStatus.banks === 'applied') return;
+    if (startMonthRunning) return;
+    if (!startMonthBanksOptionEnabled) return;
+    if (!currentOperationalMonthHasRecords) return;
+    if (readBanksLastAutoSyncDay() === localYmd()) {
+      markStartMonthStepApplied(realCurrentMonthKey, 'banks');
+      return;
+    }
+    if (readBanksLastAutoAttemptDay() === localYmd()) return;
+    if (autoBanksAttemptedMonthRef.current === realCurrentMonthKey) return;
+
+    autoBanksAttemptedMonthRef.current = realCurrentMonthKey;
+    writeBanksLastAutoAttemptDay(localYmd());
+    void runStartMonthBanksUpdate();
+  }, [
+    currentOperationalMonthHasRecords,
+    hydrationReady,
+    monthKey,
+    realCurrentMonthKey,
+    startMonthActionStatus.banks,
+    startMonthBanksOptionEnabled,
+    startMonthRunning,
+  ]);
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    if (monthKey !== realCurrentMonthKey) return;
+    if (startMonthActionStatus.realEstate === 'applied') return;
+    if (startMonthRunning) return;
+    if (!currentOperationalMonthHasRecords) return;
+    if (autoRealEstateAttemptedMonthRef.current === realCurrentMonthKey) return;
+
+    autoRealEstateAttemptedMonthRef.current = realCurrentMonthKey;
+    runStartMonthRealEstateUpdate();
+  }, [
+    currentOperationalMonthHasRecords,
+    hydrationReady,
+    monthKey,
+    realCurrentMonthKey,
+    startMonthActionStatus.realEstate,
+    startMonthRunning,
+  ]);
 
   const completeMonthlyClose = async (
     targetMonthKey: string,
@@ -6283,15 +6466,30 @@ export const Patrimonio: React.FC = () => {
       startMonthCompletedNoticeTimerRef.current = null;
     }, 3000);
   }, [allStartMonthActionsApplied, monthKey, realCurrentMonthKey]);
-  const showCurrentMonthActionBar =
-    monthKey === realCurrentMonthKey && (!allStartMonthActionsApplied || startMonthCompletedNoticeVisible);
   const carrySourceMonthLabel = previousClosureForMonthStart
     ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
     : null;
-  const startMonthActionButtonClass = (action: StartMonthActionKey) =>
-    startMonthActionStatus[action] === 'applied'
-      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-      : 'border-slate-300 bg-slate-100 text-slate-700';
+  const monthPreparationStepViews = useMemo(
+    () =>
+      buildMonthPreparationStepViews({
+        monthKey,
+        realCurrentMonthKey,
+        monthHasRecords: currentOperationalMonthHasRecords,
+        actionStatus: startMonthActionStatus,
+        failedStep: startMonthFailedStep,
+        canCarryFromPrevious: !!previousClosureForMonthStart,
+        banksEnabled: startMonthBanksOptionEnabled,
+      }),
+    [
+      currentOperationalMonthHasRecords,
+      monthKey,
+      previousClosureForMonthStart,
+      realCurrentMonthKey,
+      startMonthActionStatus,
+      startMonthBanksOptionEnabled,
+      startMonthFailedStep,
+    ],
+  );
 
   if (activeSection) {
     return (
@@ -6328,7 +6526,7 @@ export const Patrimonio: React.FC = () => {
   }
 
   return (
-    <div className={cn('p-3 space-y-3', showCurrentMonthActionBar && 'pb-36')}>
+    <div className="p-3 space-y-3">
       <Card className="relative overflow-hidden border-0 p-4 bg-gradient-to-br from-[#103c35] via-[#165347] to-[#1f4a3a] text-white shadow-[0_16px_36px_rgba(11,38,34,0.55)]">
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#c59a6c_0%,_transparent_46%)]" />
         <div className="relative">
@@ -6658,6 +6856,106 @@ export const Patrimonio: React.FC = () => {
         </div>
       </Card>
 
+      {monthKey === realCurrentMonthKey && (
+        <Card className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Estado del mes</div>
+              <div className="mt-1 text-xs text-slate-500">
+                Preparación automática segura del mes operativo. Las acciones manuales quedan como fallback.
+              </div>
+            </div>
+            {allStartMonthActionsApplied || startMonthCompletedNoticeVisible ? (
+              <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                <CheckCircle2 size={13} />
+                Mes preparado
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            {monthPreparationStepViews.map((step) => (
+              <div
+                key={step.key}
+                className={cn(
+                  'flex items-center justify-between gap-3 rounded-xl border px-3 py-2',
+                  step.tone === 'ready'
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : step.tone === 'error'
+                      ? 'border-red-200 bg-red-50'
+                      : 'border-slate-200 bg-slate-50',
+                )}
+              >
+                <div>
+                  <div className="text-sm font-medium text-slate-900">{step.label}</div>
+                  <div
+                    className={cn(
+                      'text-xs',
+                      step.tone === 'ready'
+                        ? 'text-emerald-700'
+                        : step.tone === 'error'
+                          ? 'text-red-700'
+                          : 'text-slate-600',
+                    )}
+                  >
+                    {step.detail}
+                  </div>
+                </div>
+                <div
+                  className={cn(
+                    'rounded-full px-2 py-1 text-[11px] font-semibold',
+                    step.tone === 'ready'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : step.tone === 'error'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-slate-200 text-slate-700',
+                  )}
+                >
+                  {step.tone === 'ready' ? 'Listo' : step.tone === 'error' ? 'Error' : 'Pendiente'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {monthPreparationStepViews
+              .filter((step) => step.showAction)
+              .map((step) => {
+                const onClick =
+                  step.key === 'carry'
+                    ? () => setCarryConfirmOpen(true)
+                    : step.key === 'fx'
+                      ? () => {
+                          void runStartMonthFxUpdate();
+                        }
+                      : step.key === 'banks'
+                        ? () => {
+                            void runStartMonthBanksUpdate();
+                          }
+                        : () => runStartMonthRealEstateUpdate();
+
+                const disabled =
+                  startMonthRunning ||
+                  (step.key === 'carry' && !previousClosureForMonthStart) ||
+                  (step.key === 'banks' && !startMonthBanksOptionEnabled);
+
+                return (
+                  <Button
+                    key={step.key}
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-[11px]"
+                    onClick={onClick}
+                    disabled={disabled}
+                  >
+                    {step.actionLabel}
+                  </Button>
+                );
+              })}
+          </div>
+        </Card>
+      )}
+
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold">Cierre mensual manual</div>
@@ -6776,73 +7074,6 @@ export const Patrimonio: React.FC = () => {
         }}
         onClose={() => setPostCloseSummary(null)}
       />
-
-      {showCurrentMonthActionBar && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-20 z-40">
-          <div className="mx-auto w-full max-w-xl px-3">
-            <Card className="pointer-events-auto border border-slate-200 bg-white/95 p-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur">
-              {allStartMonthActionsApplied ? (
-                <div className="flex h-9 items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-700">
-                  Mes iniciado ✓
-                </div>
-              ) : (
-                <div className="grid grid-cols-4 gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('carry'))}
-                    onClick={() => setCarryConfirmOpen(true)}
-                    disabled={!previousClosureForMonthStart || startMonthRunning}
-                    title={
-                      previousClosureForMonthStart
-                        ? `Arrastrar valores desde ${monthLabel(previousClosureForMonthStart.monthKey)}`
-                        : 'No hay cierre anterior para arrastrar'
-                    }
-                  >
-                    Arrastrar
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('fx'))}
-                    onClick={() => {
-                      void runStartMonthFxUpdate();
-                    }}
-                    disabled={startMonthRunning}
-                  >
-                    TC/UF
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('banks'))}
-                    onClick={() => {
-                      void runStartMonthBanksUpdate();
-                    }}
-                    disabled={!startMonthBanksOptionEnabled || startMonthRunning}
-                    title={
-                      startMonthBanksOptionEnabled
-                        ? 'Actualizar saldos vía Fintoc'
-                        : 'Configura tokens en Ajustes'
-                    }
-                  >
-                    Bancos
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn('h-9 px-1 text-[11px]', startMonthActionButtonClass('realEstate'))}
-                    onClick={runStartMonthRealEstateUpdate}
-                    disabled={startMonthRunning}
-                  >
-                    Bienes raíces
-                  </Button>
-                </div>
-              )}
-            </Card>
-          </div>
-        </div>
-      )}
 
       <ConfirmActionModal
         open={carryConfirmOpen}

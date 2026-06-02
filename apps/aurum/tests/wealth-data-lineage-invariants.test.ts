@@ -9,6 +9,7 @@ vi.mock('../src/services/firebase', () => ({
 
 import { computeClosureSummary } from '../src/components/settings/ClosureReviewModal';
 import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
+import { buildMonthPreparationStepViews } from '../src/pages/Patrimonio';
 import {
   buildBankIntegrityAudit,
   buildBankRefreshSafetyAudit,
@@ -621,5 +622,71 @@ describe('wealth data lineage invariants', () => {
     expect(audit.status).toBe('blocked');
     expect(audit.refreshedBankClp).toBe(0);
     expect(audit.reasons).toContain('partial_refresh_reduced_bank_balance');
+  });
+
+  it('marks the month as already started and hides carry fallback when current month already has records', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'pending',
+        fx: 'applied',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+    });
+
+    const carry = steps.find((step) => step.key === 'carry');
+    expect(carry?.tone).toBe('ready');
+    expect(carry?.detail).toBe('Mes ya iniciado');
+    expect(carry?.showAction).toBe(false);
+  });
+
+  it('keeps copy-last-close as fallback only when the current month is empty and previous closure exists', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: false,
+      actionStatus: {
+        carry: 'pending',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+    });
+
+    const carry = steps.find((step) => step.key === 'carry');
+    expect(carry?.tone).toBe('pending');
+    expect(carry?.showAction).toBe(true);
+    expect(carry?.actionLabel).toBe('Copiar último cierre');
+  });
+
+  it('keeps banks as a secondary fallback and not as a primary toolbar action', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'applied',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+    });
+
+    const banks = steps.find((step) => step.key === 'banks');
+    expect(banks?.detail).toBe('Pendiente');
+    expect(banks?.showAction).toBe(true);
+    expect(banks?.actionLabel).toBe('Reintentar bancos');
   });
 });
