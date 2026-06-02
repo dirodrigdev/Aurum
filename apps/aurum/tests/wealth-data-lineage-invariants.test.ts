@@ -347,6 +347,55 @@ describe('wealth data lineage invariants', () => {
     expect(audit.initializedSummary.netClp).toBe(audit.previousSummary?.netClp);
   });
 
+  it('blocks month initialization when a synthetic aggregate tries to replace previous detailed bank assets', () => {
+    const previousRecords = baseBankDebtRecords();
+    const previousClosure = closureFrom(buildCanonicalClosureSummary(previousRecords, fx), previousRecords);
+    const initializedRecords = [
+      record({
+        id: 'bank-default',
+        block: 'bank',
+        source: 'cierre_resumen',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 21_007_516,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'debt-next',
+        block: 'bank',
+        source: 'cierre_resumen',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 93_200_000,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'inv-next',
+        block: 'investment',
+        source: 'cierre_resumen',
+        label: 'BTG total valorizacion',
+        amount: 1_525_849_377,
+        currency: 'CLP',
+      }),
+      record({
+        id: 're-next',
+        block: 'real_estate',
+        source: 'cierre_resumen',
+        label: 'Valor propiedad',
+        amount: 252_860_424,
+        currency: 'CLP',
+      }),
+    ];
+
+    const audit = buildMonthInitializationIntegrityAudit({
+      previousClosure,
+      initializedRecords,
+      fxRates: fx,
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.reasons).toContain('initialized_month_missing_previous_assets');
+    expect(audit.reasons).toContain('initialized_month_added_unexpected_assets');
+  });
+
   it('flags partial bank refresh as destructive when it would erase previous valid balances', () => {
     const previousRecords = [
       record({ id: 'prev-clp', block: 'bank', source: 'Fintoc', label: BANK_BCHILE_CLP_LABEL, amount: 21_007_516, currency: 'CLP' }),
@@ -371,5 +420,28 @@ describe('wealth data lineage invariants', () => {
     expect(audit.reasons).toContain('partial_refresh_reduced_bank_balance');
     expect(audit.previousDebtClp).toBe(93_200_000);
     expect(audit.refreshedDebtClp).toBe(93_200_000);
+  });
+
+  it('blocks failed bank refreshes that would replace previous valid balances with defaults or aggregates', () => {
+    const previousRecords = [
+      record({ id: 'prev-clp', block: 'bank', source: 'Fintoc', label: BANK_BCHILE_CLP_LABEL, amount: 21_007_516, currency: 'CLP' }),
+      record({ id: 'prev-debt', block: 'bank', source: 'Fintoc', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+    ];
+    const refreshedRecords = [
+      record({ id: 'aggregate-clp', block: 'bank', source: 'Calculado', label: BANK_BALANCE_CLP_LABEL, amount: 0, currency: 'CLP' }),
+      record({ id: 'aggregate-usd', block: 'bank', source: 'Calculado', label: 'Saldo bancos USD', amount: 0, currency: 'USD' }),
+      record({ id: 'debt-preserved', block: 'bank', source: 'Fintoc', label: DEBT_CARD_CLP_LABEL, amount: 93_200_000, currency: 'CLP' }),
+    ];
+
+    const audit = buildBankRefreshSafetyAudit({
+      previousRecords,
+      refreshedRecords,
+      fxRates: fx,
+      providerStatus: 'failed',
+    });
+
+    expect(audit.status).toBe('blocked');
+    expect(audit.refreshedBankClp).toBe(0);
+    expect(audit.reasons).toContain('partial_refresh_reduced_bank_balance');
   });
 });

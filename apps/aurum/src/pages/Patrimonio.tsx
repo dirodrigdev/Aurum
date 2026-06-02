@@ -27,6 +27,10 @@ import {
   getFintocRefreshStatus,
 } from '../services/bankApi';
 import {
+  buildBankRefreshSafetyAudit,
+  buildMonthInitializationIntegrityAudit,
+} from '../services/wealthIntegrityAudit';
+import {
   WealthBlock,
   WealthCurrency,
   WealthInvestmentInstrument,
@@ -36,6 +40,7 @@ import {
   currentMonthKey,
   defaultFxRates,
   applyMortgageAutoCalculation,
+  buildCanonicalClosureSummary,
   buildWealthNetBreakdown,
   resolveClosureNetClp,
   computeWealthBankLiquiditySnapshot,
@@ -5043,6 +5048,9 @@ export const Patrimonio: React.FC = () => {
     if (monthKey !== realCurrentMonthKey) return;
     if (activeClosure) return;
     if (!previousClosureForMonthStart) return;
+    if (!(previousClosureForMonthStart.records?.length)) {
+      return;
+    }
     if (
       startMonthCheckpoint &&
       startMonthCheckpoint.monthKey === realCurrentMonthKey &&
@@ -5054,10 +5062,34 @@ export const Patrimonio: React.FC = () => {
     if (autoCarryAttemptedMonthRef.current === realCurrentMonthKey) return;
     autoCarryAttemptedMonthRef.current = realCurrentMonthKey;
 
+    const currentMonthRecords = latestRecordsForMonth(loadWealthRecords(), realCurrentMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
+    if (currentMonthRecords.length > 0) {
+      return;
+    }
+
+    const recordsBeforeCarry = loadWealthRecords();
     const result = fillMissingWithPreviousClosure(
       realCurrentMonthKey,
       visualMonthSnapshotDate(realCurrentMonthKey),
     );
+    const carriedMonthRecords = latestRecordsForMonth(loadWealthRecords(), realCurrentMonthKey).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
+    const audit = buildMonthInitializationIntegrityAudit({
+      previousClosure: previousClosureForMonthStart,
+      initializedRecords: carriedMonthRecords,
+      fxRates: previousClosureForMonthStart.fxRates || loadFxRates(),
+    });
+    if (audit.status === 'blocked') {
+      saveWealthRecords(recordsBeforeCarry);
+      refreshAllWealthState();
+      setCarryMessage(
+        `Arrastre automático bloqueado en ${monthLabel(realCurrentMonthKey).toLowerCase()}: la copia no coincide exactamente con el último cierre válido.`,
+      );
+      return;
+    }
     refreshRecords();
     refreshInstruments();
     markStartMonthStepApplied(realCurrentMonthKey, 'carry');
@@ -5105,13 +5137,22 @@ export const Patrimonio: React.FC = () => {
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
+    const recordsBeforeCarry = loadWealthRecords();
     const previousClosureNet = computeClosureNetForStart(previousClosureForMonthStart);
     try {
+      if (!(previousClosureForMonthStart?.records?.length)) {
+        throw new Error('No existe un cierre anterior con detalle suficiente para clonar el mes de forma segura.');
+      }
+      const existingMonthRecords = latestRecordsForMonth(recordsBeforeCarry, monthToStart).filter(
+        (record) => !isStartMonthCheckpointRecord(record),
+      );
+      if (existingMonthRecords.length > 0) {
+        throw new Error('El mes ya tiene datos. No apliqué arrastre para evitar pisar información existente.');
+      }
       const backup = await createWealthBackupSnapshot(`Arranque de mes ${monthToStart}`);
       if (!backup.ok) {
         throw new Error(`No pude generar backup previo: ${backup.message}`);
       }
-      const beforeNet = computeMonthNetSnapshot(monthToStart);
       const expectedMortgageLabels = Array.from(
         new Set(
           (previousClosureForMonthStart?.records || [])
@@ -5123,13 +5164,6 @@ export const Patrimonio: React.FC = () => {
             .map((record) => labelMatchKey(record.label)),
         ),
       );
-      let fxSeeded = false;
-      const previousFx = previousClosureForMonthStart?.fxRates || null;
-      if (previousFx && previousFx.usdClp > 0 && previousFx.eurClp > 0 && previousFx.ufClp > 0) {
-        saveFxRates(previousFx);
-        setFx(loadFxRates());
-        fxSeeded = true;
-      }
       const result = fillMissingWithPreviousClosure(monthToStart, visualMonthSnapshotDate(monthToStart));
       const expectedSourceMonth = previousClosureForMonthStart?.monthKey || null;
       const sourceMatches = !expectedSourceMonth || result.sourceMonth === expectedSourceMonth;
@@ -5139,7 +5173,17 @@ export const Patrimonio: React.FC = () => {
         );
       }
       refreshAllWealthState();
-      const currentMonthRecordsAfterCarry = latestRecordsForMonth(loadWealthRecords(), monthToStart);
+      const currentMonthRecordsAfterCarry = latestRecordsForMonth(loadWealthRecords(), monthToStart).filter(
+        (record) => !isStartMonthCheckpointRecord(record),
+      );
+      const initializationAudit = buildMonthInitializationIntegrityAudit({
+        previousClosure: previousClosureForMonthStart,
+        initializedRecords: currentMonthRecordsAfterCarry,
+        fxRates: previousClosureForMonthStart.fxRates || loadFxRates(),
+      });
+      if (initializationAudit.status === 'blocked') {
+        throw new Error('La copia inicial no coincide exactamente con el último cierre válido.');
+      }
       const missingMortgageLabels = expectedMortgageLabels.filter((labelKey) =>
         !currentMonthRecordsAfterCarry.some(
           (record) =>
@@ -5163,6 +5207,8 @@ export const Patrimonio: React.FC = () => {
       markStartMonthStepApplied(monthToStart, 'carry');
     } catch (error: any) {
       const message = String(error?.message || 'No pude completar el arranque de mes.');
+      saveWealthRecords(recordsBeforeCarry);
+      refreshAllWealthState();
       markStartMonthStepFailed(monthToStart, 'carry', message);
       setCarryMessage(`No pude aplicar el arrastre: ${message}`);
     } finally {
@@ -5201,13 +5247,40 @@ export const Patrimonio: React.FC = () => {
     setStartMonthFlowError('');
     setStartMonthFailedStep(null);
     setStartMonthRunning(true);
+    const recordsBeforeRefresh = loadWealthRecords();
+    const previousMonthRecords = latestRecordsForMonth(recordsBeforeRefresh, monthToStart).filter(
+      (record) => !isStartMonthCheckpointRecord(record),
+    );
     try {
       const result = await refreshBanksFromFintocForMonth(monthToStart);
+      const refreshedMonthRecords = latestRecordsForMonth(loadWealthRecords(), monthToStart).filter(
+        (record) => !isStartMonthCheckpointRecord(record),
+      );
+      const previousSummary = buildCanonicalClosureSummary(previousMonthRecords, loadFxRates());
+      const refreshedSummary = buildCanonicalClosureSummary(refreshedMonthRecords, loadFxRates());
+      const refreshAudit = buildBankRefreshSafetyAudit({
+        previousRecords: previousMonthRecords,
+        refreshedRecords: refreshedMonthRecords,
+        fxRates: loadFxRates(),
+        providerStatus:
+          previousSummary.bankClp > 0 && refreshedSummary.bankClp + 1 < previousSummary.bankClp
+            ? 'partial'
+            : 'complete',
+      });
+      if (refreshAudit.status === 'blocked') {
+        saveWealthRecords(recordsBeforeRefresh);
+        refreshAllWealthState();
+        throw new Error(
+          'La actualización bancaria devolvió un resultado parcial que degradaba saldos válidos. Mantuvimos el estado anterior.',
+        );
+      }
       refreshAllWealthState();
       setCarryMessage(result.updated ? 'Bancos actualizados ✓' : result.message);
       markStartMonthStepApplied(monthToStart, 'banks');
     } catch (error: any) {
       const message = String(error?.message || 'No pude actualizar bancos vía Fintoc.');
+      saveWealthRecords(recordsBeforeRefresh);
+      refreshAllWealthState();
       markStartMonthStepFailed(monthToStart, 'banks', message);
       setCarryMessage(`Error al actualizar bancos: ${message}`);
     } finally {
