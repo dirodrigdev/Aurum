@@ -739,7 +739,7 @@ describe('wealth data lineage invariants', () => {
 
     const banks = steps.find((step) => step.key === 'banks');
     expect(banks?.detail).toBe('Copiados desde cierre anterior');
-    expect(banks?.showAction).toBe(true);
+    expect(banks?.showAction).toBe(false);
     expect(banks?.actionLabel).toBe('Actualizar bancos desde API (experimental/manual)');
   });
 

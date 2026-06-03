@@ -457,7 +457,7 @@ export const buildMonthPreparationStepViews = (input: {
             : !isCurrentOperationalMonth
               ? 'Solo aplica al mes operativo'
               : 'Pendiente (manual/experimental)',
-      showAction: isCurrentOperationalMonth && input.banksEnabled,
+      showAction: false,
       actionLabel: 'Actualizar bancos desde API (experimental/manual)',
       note: input.bankInfoNote,
     },
