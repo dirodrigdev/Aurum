@@ -396,6 +396,7 @@ export const buildMonthPreparationStepViews = (input: {
   explicitMonthStarted?: boolean;
   mortgageStatus?: MonthStartMortgageAudit['status'];
   bankInfoNote?: string;
+  fxActionVisible?: boolean;
 }): MonthPreparationStepView[] => {
   const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
   const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
@@ -411,7 +412,7 @@ export const buildMonthPreparationStepViews = (input: {
   };
 
   const detailForCarry = () => {
-    if (monthStarted) return 'Mes iniciado';
+    if (monthStarted) return 'Copiado desde cierre anterior · mes iniciado';
     if (input.monthHasRecords || input.actionStatus.carry === 'applied') {
       return 'Copiado desde cierre anterior · pendiente de iniciar';
     }
@@ -439,8 +440,8 @@ export const buildMonthPreparationStepViews = (input: {
           : input.monthHasRecords || input.actionStatus.carry === 'applied'
             ? 'Copiado desde cierre anterior'
             : 'Pendiente de actualización manual',
-      showAction: isCurrentOperationalMonth,
-      actionLabel: 'Actualizar TC/UF',
+      showAction: isCurrentOperationalMonth && !!input.fxActionVisible,
+      actionLabel: 'Reflejar cambio',
     },
     {
       key: 'banks',
@@ -6813,32 +6814,6 @@ export const Patrimonio: React.FC = () => {
   const carrySourceMonthLabel = previousClosureForMonthStart
     ? monthLabel(previousClosureForMonthStart.monthKey).toLowerCase()
     : null;
-  const monthPreparationStepViews = useMemo(
-    () =>
-      buildMonthPreparationStepViews({
-        monthKey,
-        realCurrentMonthKey: monthKey,
-        monthHasRecords: selectedMonthHasRecords,
-        actionStatus: startMonthActionStatus,
-        failedStep: startMonthFailedStep,
-        canCarryFromPrevious: !!previousClosureForSelectedMonth,
-        banksEnabled: startMonthBanksOptionEnabled,
-        explicitMonthStarted: !!startMonthCheckpoint?.explicitMonthStarted,
-        mortgageStatus: selectedMonthMortgageAudit.status,
-        bankInfoNote: startMonthBankErrorView.secondaryNote,
-      }),
-    [
-      monthKey,
-      previousClosureForSelectedMonth,
-      selectedMonthHasRecords,
-      selectedMonthMortgageAudit.status,
-      startMonthActionStatus,
-      startMonthBankErrorView.secondaryNote,
-      startMonthBanksOptionEnabled,
-      startMonthCheckpoint?.explicitMonthStarted,
-      startMonthFailedStep,
-    ],
-  );
   const fxReflectionNoticeVisible = useMemo(() => {
     if (!startMonthCheckpoint?.explicitMonthStarted) return false;
     if (!fxIndicatorPendingSnapshotExists) return false;
@@ -6856,6 +6831,34 @@ export const Patrimonio: React.FC = () => {
     }
     window.dispatchEvent(new Event('focus'));
   };
+  const monthPreparationStepViews = useMemo(
+    () =>
+      buildMonthPreparationStepViews({
+        monthKey,
+        realCurrentMonthKey: monthKey,
+        monthHasRecords: selectedMonthHasRecords,
+        actionStatus: startMonthActionStatus,
+        failedStep: startMonthFailedStep,
+        canCarryFromPrevious: !!previousClosureForSelectedMonth,
+        banksEnabled: startMonthBanksOptionEnabled,
+        explicitMonthStarted: !!startMonthCheckpoint?.explicitMonthStarted,
+        mortgageStatus: selectedMonthMortgageAudit.status,
+        bankInfoNote: startMonthBankErrorView.secondaryNote,
+        fxActionVisible: fxReflectionNoticeVisible,
+      }),
+    [
+      monthKey,
+      previousClosureForSelectedMonth,
+      selectedMonthHasRecords,
+      selectedMonthMortgageAudit.status,
+      startMonthActionStatus,
+      startMonthBankErrorView.secondaryNote,
+      startMonthBanksOptionEnabled,
+      startMonthCheckpoint?.explicitMonthStarted,
+      startMonthFailedStep,
+      fxReflectionNoticeVisible,
+    ],
+  );
 
   if (activeSection) {
     return (

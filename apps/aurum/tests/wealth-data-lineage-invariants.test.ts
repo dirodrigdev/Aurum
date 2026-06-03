@@ -935,8 +935,51 @@ describe('wealth data lineage invariants', () => {
 
     const carry = steps.find((step) => step.key === 'carry');
     const realEstate = steps.find((step) => step.key === 'realEstate');
-    expect(carry?.detail).toBe('Mes iniciado');
+    expect(carry?.detail).toBe('Copiado desde cierre anterior · mes iniciado');
     expect(realEstate?.detail).toBe('Hipoteca actualizada');
+  });
+
+  it('only exposes the FX/TC-UF action when a pending reflection exists', () => {
+    const withoutPending = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: true,
+      fxActionVisible: false,
+    });
+
+    const withPending = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'pending',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: true,
+      fxActionVisible: true,
+    });
+
+    const withoutFx = withoutPending.find((step) => step.key === 'fx');
+    const withFx = withPending.find((step) => step.key === 'fx');
+    expect(withoutFx?.showAction).toBe(false);
+    expect(withoutFx?.actionLabel).toBe('Reflejar cambio');
+    expect(withFx?.showAction).toBe(true);
+    expect(withFx?.actionLabel).toBe('Reflejar cambio');
   });
 
   it('marks hipoteca as applied when debt delta matches expected amortization', () => {
