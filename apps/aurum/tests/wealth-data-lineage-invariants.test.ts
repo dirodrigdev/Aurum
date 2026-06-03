@@ -16,6 +16,7 @@ import {
   buildMonthStartMortgageAudit,
   buildStartMonthBankErrorView,
 } from '../src/pages/Patrimonio';
+import { buildFxIndicatorGateState } from '../src/services/fxIndicatorFlow';
 import {
   buildBankIntegrityAudit,
   buildBankRefreshSafetyAudit,
@@ -852,6 +853,44 @@ describe('wealth data lineage invariants', () => {
     expect(copy.message).toContain('MAYO DE 2026');
     expect(copy.confirmText).toBe('Iniciar junio de 2026');
     expect(copy.details).toContain('No se tocarán bancos');
+  });
+
+  it('gates the FX reflection popup until the month has been explicitly started', () => {
+    expect(
+      buildFxIndicatorGateState({
+        monthStarted: false,
+        suppressAfterStart: false,
+        hasPendingPrompt: true,
+      }),
+    ).toMatchObject({
+      showPrompt: false,
+      showInlineNotice: false,
+      suppressAutoPrompt: true,
+    });
+
+    expect(
+      buildFxIndicatorGateState({
+        monthStarted: true,
+        suppressAfterStart: true,
+        hasPendingPrompt: true,
+      }),
+    ).toMatchObject({
+      showPrompt: false,
+      showInlineNotice: true,
+      suppressAutoPrompt: true,
+    });
+
+    expect(
+      buildFxIndicatorGateState({
+        monthStarted: true,
+        suppressAfterStart: false,
+        hasPendingPrompt: true,
+      }),
+    ).toMatchObject({
+      showPrompt: true,
+      showInlineNotice: true,
+      suppressAutoPrompt: false,
+    });
   });
 
   it('marks the month as started only after explicit new-flow start is recorded', () => {

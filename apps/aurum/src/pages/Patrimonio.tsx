@@ -31,6 +31,11 @@ import {
   buildMonthInitializationIntegrityAudit,
 } from '../services/wealthIntegrityAudit';
 import {
+  FX_INDICATOR_MONTH_STARTED_KEY,
+  FX_INDICATOR_PENDING_SNAPSHOT_KEY,
+  FX_INDICATOR_SUPPRESS_AFTER_START_KEY,
+} from '../services/fxIndicatorFlow';
+import {
   WealthBlock,
   WealthCurrency,
   WealthInvestmentInstrument,
@@ -4838,6 +4843,29 @@ export const Patrimonio: React.FC = () => {
     startMonthManualBankAttemptedRef.current = false;
   }, [realCurrentMonthKey]);
 
+  const fxIndicatorPendingSnapshotExists = useMemo(() => {
+    if (!startMonthCheckpoint?.explicitMonthStarted) return false;
+    try {
+      return !!window.localStorage.getItem(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
+    } catch {
+      return false;
+    }
+  }, [monthKey, startMonthCheckpoint?.explicitMonthStarted, startMonthActionStatus.fx]);
+
+  useEffect(() => {
+    try {
+      if (startMonthCheckpoint?.explicitMonthStarted) {
+        window.localStorage.setItem(FX_INDICATOR_MONTH_STARTED_KEY, '1');
+        window.sessionStorage.setItem(FX_INDICATOR_SUPPRESS_AFTER_START_KEY, '1');
+        return;
+      }
+      window.localStorage.removeItem(FX_INDICATOR_MONTH_STARTED_KEY);
+      window.sessionStorage.removeItem(FX_INDICATOR_SUPPRESS_AFTER_START_KEY);
+    } catch {
+      // ignore UI-only gate persistence issues
+    }
+  }, [monthKey, startMonthCheckpoint?.explicitMonthStarted]);
+
   const closureSummaryNetForMode = (closure: WealthMonthlyClosure) => {
     const hasRiskRecord = Array.isArray(closure.records)
       ? closure.records.some(
@@ -6811,6 +6839,23 @@ export const Patrimonio: React.FC = () => {
       startMonthFailedStep,
     ],
   );
+  const fxReflectionNoticeVisible = useMemo(() => {
+    if (!startMonthCheckpoint?.explicitMonthStarted) return false;
+    if (!fxIndicatorPendingSnapshotExists) return false;
+    try {
+      return String(window.sessionStorage.getItem(FX_INDICATOR_SUPPRESS_AFTER_START_KEY) || '') === '1';
+    } catch {
+      return false;
+    }
+  }, [fxIndicatorPendingSnapshotExists, startMonthCheckpoint?.explicitMonthStarted]);
+  const openFxReflectionFlow = () => {
+    try {
+      window.sessionStorage.removeItem(FX_INDICATOR_SUPPRESS_AFTER_START_KEY);
+    } catch {
+      // ignore UI-only gate issue
+    }
+    window.dispatchEvent(new Event('focus'));
+  };
 
   if (activeSection) {
     return (
@@ -7226,6 +7271,19 @@ export const Patrimonio: React.FC = () => {
           {selectedMonthHasRecords && selectedMonthMortgageAudit.status === 'applied' ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
               La hipoteca ya fue aplicada para este mes y el delta de deuda cuadra con la amortización esperada.
+            </div>
+          ) : null}
+          {fxReflectionNoticeVisible ? (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              <div className="font-medium">Hay cambios de TC/UF disponibles.</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-sky-700">
+                  El flujo existe, pero no se aplica automáticamente después de iniciar el mes.
+                </span>
+                <Button size="sm" variant="outline" className="h-7 border-sky-300 bg-white text-sky-700" onClick={openFxReflectionFlow}>
+                  Reflejar cambio
+                </Button>
+              </div>
             </div>
           ) : null}
 

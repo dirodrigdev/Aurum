@@ -10,6 +10,13 @@ import { DashboardAurum } from './pages/DashboardAurum';
 import { WEALTH_DELTA_TOAST_TRIGGER_EVENT } from './hooks/useWealthDelta';
 import { auth, ensureAuthPersistence, signInWithGoogle } from './services/firebase';
 import {
+  FX_INDICATOR_APPLIED_SNAPSHOT_KEY,
+  FX_INDICATOR_MONTH_STARTED_KEY,
+  FX_INDICATOR_PENDING_SNAPSHOT_KEY,
+  FX_INDICATOR_SUPPRESS_AFTER_START_KEY,
+  buildFxIndicatorGateState,
+} from './services/fxIndicatorFlow';
+import {
   WEALTH_DATA_UPDATED_EVENT,
   computeWealthHomeSectionAmounts,
   currentMonthKey,
@@ -31,8 +38,6 @@ import { hydrateWealthFromCloudShared } from './services/wealthHydration';
 
 const INCOMPLETE_CLOSURE_PROMPT_DAY_KEY = 'aurum.incomplete-closure.prompt.day.v1';
 const CLOSING_FOCUS_MONTH_KEY = 'aurum.closing.focus.month.v1';
-const FX_INDICATOR_APPLIED_SNAPSHOT_KEY = 'aurum.fx-indicators.applied.v1';
-const FX_INDICATOR_PENDING_SNAPSHOT_KEY = 'aurum.fx-indicators.pending.v1';
 
 type FxIndicatorSnapshot = {
   usdClp: number;
@@ -259,14 +264,22 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       return baseline;
     };
 
+    const readFxIndicatorGate = () =>
+      buildFxIndicatorGateState({
+        monthStarted: String(localStorage.getItem(FX_INDICATOR_MONTH_STARTED_KEY) || '') === '1',
+        suppressAfterStart: String(sessionStorage.getItem(FX_INDICATOR_SUPPRESS_AFTER_START_KEY) || '') === '1',
+        hasPendingPrompt: !!readSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY),
+      });
+
     const evaluateFxIndicatorPrompt = async () => {
       const applied = ensureAppliedSnapshot();
+      const gate = readFxIndicatorGate();
 
       const pending = readSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
       if (pending) {
         const promptFromPending = buildPromptFromSnapshots(applied, pending);
         if (promptFromPending) {
-          setFxIndicatorPrompt(promptFromPending);
+          setFxIndicatorPrompt(gate.showPrompt ? promptFromPending : null);
         } else {
           clearSnapshotFromStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY);
           setFxIndicatorPrompt(null);
@@ -284,7 +297,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           return;
         }
         saveSnapshotToStorage(FX_INDICATOR_PENDING_SNAPSHOT_KEY, detected);
-        setFxIndicatorPrompt(promptFromDetected);
+        setFxIndicatorPrompt(gate.showPrompt ? promptFromDetected : null);
       } catch {
         // keep previous pending snapshot if any
         return;
