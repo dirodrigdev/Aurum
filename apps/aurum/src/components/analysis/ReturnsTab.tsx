@@ -15,6 +15,7 @@ import type {
   ReturnCurveModel,
   ReturnCurvePoint,
 } from './types';
+import { buildSmartVisualDomain } from './chartVisuals';
 import { buildReturnSpendInsight, formatCompactCurrency, formatPct, xLabelFromMonthKey } from './shared';
 
 const MONTH_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'] as const;
@@ -681,11 +682,9 @@ const WealthUfChartCard: React.FC<{
   const pointX = (index: number) =>
     padding.left + (months.length <= 1 ? innerWidth / 2 : (innerWidth * index) / Math.max(1, months.length - 1));
   const allValues = visibleSeries.flatMap((series) => series.curve.points.map((point) => point.value));
-  const domainMin = Math.min(...allValues, 100);
-  const domainMax = Math.max(...allValues, 100);
+  const { domainMin, domainMax } = buildSmartVisualDomain(allValues);
   const pointY = (value: number) =>
     padding.top + ((domainMax - value) / Math.max(1e-6, domainMax - domainMin || 1)) * innerHeight;
-  const baseY = pointY(100);
 
   return (
     <Card className="border-slate-200 p-3">
@@ -835,10 +834,18 @@ const WealthBase100ComparisonCard: React.FC<{
             y1={baseY}
             y2={baseY}
             stroke="#94a3b8"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-            opacity="0.45"
+            strokeWidth="1.5"
+            strokeDasharray="6 4"
+            opacity="0.75"
           />
+          <text
+            x={padding.left + 6}
+            y={Math.max(padding.top + 10, baseY - 6)}
+            fontSize="9"
+            fill="#64748b"
+          >
+            Base 100
+          </text>
           {months.map((monthKey, index) => {
             const x = pointX(index);
             const base100AtMonth = visibleSeries
