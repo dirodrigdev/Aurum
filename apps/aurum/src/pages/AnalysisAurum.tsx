@@ -48,6 +48,7 @@ import {
 } from '../services/analysisSessionCache';
 import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+  getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
 
@@ -103,20 +104,20 @@ const buildAnalysisFingerprint = ({
   includeRiskCapitalInTotals,
   currency,
   includeEstimatedMonth,
-  gastosSourceVersion,
+  gastappSourceFingerprint,
 }: {
   closuresFingerprint: string;
   includeRiskCapitalInTotals: boolean;
   currency: WealthCurrency;
   includeEstimatedMonth: boolean;
-  gastosSourceVersion: number;
+  gastappSourceFingerprint: string;
 }) =>
   JSON.stringify({
     closuresFingerprint,
     includeRiskCapitalInTotals,
     currency,
     includeEstimatedMonth,
-    gastosSourceVersion,
+    gastappSourceFingerprint,
   });
 
 const formatAnalysisUpdatedAt = (iso: string) => {
@@ -233,6 +234,16 @@ export const AnalysisAurum: React.FC = () => {
   }, [refreshClosures]);
 
   const closuresFingerprint = useMemo(() => buildClosuresFingerprint(closures), [closures]);
+  const gastappSourceFingerprint = useMemo(() => {
+    const diagnostic = getGastappMonthlyRuntimeDiagnostic();
+    return JSON.stringify({
+      status: diagnostic.status,
+      mode: diagnostic.mode,
+      error: diagnostic.error,
+      docsLoaded: diagnostic.docsLoaded,
+      lastUpdatedAt: diagnostic.lastUpdatedAt,
+    });
+  }, [gastosSourceVersion]);
   const analysisFingerprint = useMemo(
     () =>
       buildAnalysisFingerprint({
@@ -240,9 +251,9 @@ export const AnalysisAurum: React.FC = () => {
         includeRiskCapitalInTotals,
         currency,
         includeEstimatedMonth,
-        gastosSourceVersion,
+        gastappSourceFingerprint,
       }),
-    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion],
+    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastappSourceFingerprint],
   );
   const analysisEntry = useMemo(
     () =>
@@ -366,6 +377,25 @@ export const AnalysisAurum: React.FC = () => {
           wealthLabModel,
           financialFreedomBase,
         };
+      }, (value) => {
+        const candidate = value as {
+          returnsSeriesView?: unknown;
+          wealthEvolutionModel?: unknown;
+          periodSummaries?: unknown;
+          yearlySummaries?: unknown;
+          financialFreedomBase?: unknown;
+          officialMonthlyRowsAsc?: unknown;
+        } | null;
+
+        return Boolean(
+          candidate &&
+          candidate.returnsSeriesView &&
+          candidate.wealthEvolutionModel &&
+          Array.isArray(candidate.periodSummaries) &&
+          Array.isArray(candidate.yearlySummaries) &&
+          candidate.financialFreedomBase &&
+          Array.isArray(candidate.officialMonthlyRowsAsc),
+        );
       }),
     [analysisFingerprint, analysisRefreshTick, closures, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion],
   );

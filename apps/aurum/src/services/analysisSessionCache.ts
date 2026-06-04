@@ -9,9 +9,10 @@ const analysisSessionCache = new Map<string, AnalysisSessionCacheEntry<unknown>>
 export const getOrBuildAnalysisSessionValue = <T>(
   fingerprint: string,
   builder: () => T,
+  isValid?: (value: T) => boolean,
 ): AnalysisSessionCacheEntry<T> => {
   const cached = analysisSessionCache.get(fingerprint) as AnalysisSessionCacheEntry<T> | undefined;
-  if (cached) return cached;
+  if (cached && (!isValid || isValid(cached.value))) return cached;
 
   const entry: AnalysisSessionCacheEntry<T> = {
     fingerprint,

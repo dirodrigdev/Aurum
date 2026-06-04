@@ -42,4 +42,18 @@ describe('analysis session cache', () => {
     expect(second.value).not.toBe(first.value);
     expect(second.value.value).not.toBe(first.value.value);
   });
+
+  it('treats an incomplete cache entry as a cache miss', () => {
+    clearAnalysisSessionCache();
+    const builder = vi.fn()
+      .mockImplementationOnce(() => ({ ready: false, rows: null }))
+      .mockImplementationOnce(() => ({ ready: true, rows: [] }));
+
+    const first = getOrBuildAnalysisSessionValue('incomplete', builder, (value) => Boolean(value?.ready));
+    const second = getOrBuildAnalysisSessionValue('incomplete', builder, (value) => Boolean(value?.ready));
+
+    expect(first.value.ready).toBe(false);
+    expect(second.value.ready).toBe(true);
+    expect(builder).toHaveBeenCalledTimes(2);
+  });
 });
