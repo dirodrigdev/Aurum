@@ -916,6 +916,28 @@ describe('wealth data lineage invariants', () => {
     expect(realEstate?.detail).toBe('Pendiente de iniciar');
   });
 
+  it('shows the month base as started for legacy months when mortgage is already applied', () => {
+    const steps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'pending',
+        realEstate: 'applied',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: false,
+      mortgageStatus: 'applied',
+    });
+
+    const carry = steps.find((step) => step.key === 'carry');
+    expect(carry?.detail).toBe('Copiado desde cierre anterior · mes iniciado');
+  });
+
   it('shows the month as started only when the explicit start flag is present', () => {
     const steps = buildMonthPreparationStepViews({
       monthKey: '2026-06',
@@ -931,12 +953,13 @@ describe('wealth data lineage invariants', () => {
       canCarryFromPrevious: true,
       banksEnabled: true,
       explicitMonthStarted: true,
+      mortgageStatus: 'applied',
     });
 
     const carry = steps.find((step) => step.key === 'carry');
     const realEstate = steps.find((step) => step.key === 'realEstate');
     expect(carry?.detail).toBe('Copiado desde cierre anterior · mes iniciado');
-    expect(realEstate?.detail).toBe('Hipoteca actualizada');
+    expect(realEstate?.detail).toBe('Hipoteca aplicada');
   });
 
   it('only exposes the FX/TC-UF action when a pending reflection exists', () => {

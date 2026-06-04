@@ -401,6 +401,7 @@ export const buildMonthPreparationStepViews = (input: {
   const isCurrentOperationalMonth = input.monthKey === input.realCurrentMonthKey;
   const carryApplied = input.monthHasRecords || input.actionStatus.carry === 'applied';
   const monthStarted = !!input.explicitMonthStarted;
+  const visibleMonthStarted = monthStarted || input.mortgageStatus === 'applied';
   const normalizeLegacy = !monthStarted;
   const toneFor = (step: StartMonthActionKey, applied: boolean): MonthPreparationStepView['tone'] => {
     if (normalizeLegacy && (step === 'fx' || step === 'banks' || step === 'realEstate')) {
@@ -412,7 +413,7 @@ export const buildMonthPreparationStepViews = (input: {
   };
 
   const detailForCarry = () => {
-    if (monthStarted) return 'Copiado desde cierre anterior · mes iniciado';
+    if (visibleMonthStarted) return 'Copiado desde cierre anterior · mes iniciado';
     if (input.monthHasRecords || input.actionStatus.carry === 'applied') {
       return 'Copiado desde cierre anterior · pendiente de iniciar';
     }
