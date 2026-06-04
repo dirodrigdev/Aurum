@@ -98,6 +98,8 @@ export type AggregateCoverage = {
 export type AggregatedSummary = {
   key: string;
   label: string;
+  periodStartMonthKey?: string | null;
+  periodEndMonthKey?: string | null;
   validMonths: number;
   coverage: AggregateCoverage;
   varPatrimonioAcumClp: number | null;

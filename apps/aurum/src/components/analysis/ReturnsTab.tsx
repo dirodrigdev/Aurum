@@ -28,6 +28,13 @@ const monthLabelShort = (monthKey: string) => {
   return `${MONTH_SHORT_ES[month - 1]} ${year}`;
 };
 
+const periodRangeLabel = (summary: AggregatedSummary | null | undefined) => {
+  const start = summary?.periodStartMonthKey ?? null;
+  const end = summary?.periodEndMonthKey ?? null;
+  if (!start || !end) return null;
+  return `Período: ${monthLabelShort(start)}–${monthLabelShort(end)}`;
+};
+
 type SpendTrustSeverity = 'ok' | 'warning' | 'alert';
 
 const humanizeDayToDaySource = (source: string | null) => {
@@ -196,6 +203,9 @@ const SummaryTable: React.FC<{
               <tr key={item.key} className="border-t border-slate-100">
                 <td className="py-1.5 pr-2 font-medium text-slate-700">
                   <div className="truncate">{item.label}</div>
+                  {periodRangeLabel(item) ? (
+                    <div className="mt-0.5 text-[10px] font-normal text-slate-500">{periodRangeLabel(item)}</div>
+                  ) : null}
                   <div className="mt-1">
                     <CoverageBadge item={item} />
                   </div>
@@ -367,6 +377,9 @@ const ReturnRealHero: React.FC<{
                         ? 'Desde enero · Tasa anual equivalente'
                         : 'Tasa anual equivalente'}
                   </div>
+                  {periodRangeLabel(row.value) ? (
+                    <div className="mt-0.5 text-[10px] text-slate-500">{periodRangeLabel(row.value)}</div>
+                  ) : null}
                   {row.value ? (
                     <div className="mt-1">
                       <CoverageBadge item={row.value} dark />

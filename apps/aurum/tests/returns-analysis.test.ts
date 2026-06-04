@@ -315,11 +315,10 @@ describe('returns analysis helpers', () => {
     expect(fromStart.validMonths).toBe(1);
     expect(trailing12?.validMonths).toBe(1);
     expect(ytd.validMonths).toBe(1);
-    expect(trailing12?.coverage.expectedMonths).toBe(11);
-    expect(trailing12?.coverage.status).toBe('insufficient');
-    expect(trailing12?.coverage.nonApplicableMonths).toEqual([
-      expect.objectContaining({ monthKey: '2026-01', reason: 'base_month' }),
-    ]);
+    expect(trailing12?.coverage.expectedMonths).toBe(1);
+    expect(trailing12?.coverage.status).toBe('complete');
+    expect(trailing12?.periodStartMonthKey).toBe('2026-02');
+    expect(trailing12?.periodEndMonthKey).toBe('2026-02');
     expect(fromStart.coverage.excludedMonths).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ monthKey: '2026-03', reason: 'stale_warning_error' }),
@@ -328,6 +327,95 @@ describe('returns analysis helpers', () => {
       ]),
     );
     expect(fromStart.gastosAcumClp).toBeCloseTo(TEST_GASTOS_EUR['2026-02'] * 1000, 6);
+  });
+
+  it('uses the last 12 valid months when the latest calendar month is still pending', () => {
+    const closures: WealthMonthlyClosure[] = [];
+    for (let year = 2025; year <= 2026; year += 1) {
+      const startMonth = year === 2025 ? 1 : 1;
+      const endMonth = year === 2025 ? 12 : 4;
+      for (let month = startMonth; month <= endMonth; month += 1) {
+        const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+        closures.push(makeClosure(monthKey, { netClp: 800_000_000 + closures.length * 10_000_000, eurClp: 1000 }));
+      }
+    }
+
+    const rows = computeMonthlyRows(closures, false, 'CLP');
+    const trailing12 = buildTrailingSummary(rows, 12, '12m', '12M');
+
+    expect(trailing12?.validMonths).toBe(12);
+    expect(trailing12?.coverage.expectedMonths).toBe(12);
+    expect(trailing12?.coverage.status).toBe('complete');
+    expect(trailing12?.periodStartMonthKey).toBe('2025-04');
+    expect(trailing12?.periodEndMonthKey).toBe('2026-03');
+    expect(trailing12?.coverage.excludedMonths).toEqual([]);
+    expect(trailing12?.coverage.nonApplicableMonths).toEqual([]);
+  });
+
+  it('uses the last 24 and 36 valid months instead of calendar windows when pending months exist', () => {
+    const closures: WealthMonthlyClosure[] = [];
+    for (let year = 2023; year <= 2026; year += 1) {
+      const endMonth = year === 2026 ? 5 : 12;
+      for (let month = 1; month <= endMonth; month += 1) {
+        const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+        closures.push(makeClosure(monthKey, { netClp: 700_000_000 + closures.length * 8_000_000, eurClp: 1000 }));
+      }
+    }
+
+    const rows = computeMonthlyRows(closures, false, 'CLP').map((row) => {
+      if ((row.monthKey.startsWith('2023-') || row.monthKey.startsWith('2024-')) && row.varPatrimonioClp !== null && row.varPatrimonioDisplay !== null) {
+        const gastosClp = 4_200 * row.fx.eurClp;
+        return {
+          ...row,
+          gastosStatus: 'complete' as const,
+          gastosSource: 'gastapp_firestore' as const,
+          gastosContractStatus: 'complete' as const,
+          gastosDataQuality: 'ok' as const,
+          gastosIsStale: false,
+          gastosClp,
+          gastosDisplay: gastosClp,
+          retornoRealClp: row.varPatrimonioClp + gastosClp,
+          retornoRealDisplay: row.varPatrimonioDisplay + gastosClp,
+          pct:
+            row.prevNetDisplay === null || row.prevNetDisplay === 0
+              ? null
+              : ((row.varPatrimonioDisplay + gastosClp) / row.prevNetDisplay) * 100,
+        };
+      }
+      return row;
+    });
+    const trailing24 = buildTrailingSummary(rows, 24, '24m', '24M');
+    const trailing36 = buildTrailingSummary(rows, 36, '36m', '36M');
+
+    expect(trailing24?.validMonths).toBe(24);
+    expect(trailing24?.periodStartMonthKey).toBe('2024-04');
+    expect(trailing24?.periodEndMonthKey).toBe('2026-03');
+    expect(trailing36?.validMonths).toBe(36);
+    expect(trailing36?.periodStartMonthKey).toBe('2023-04');
+    expect(trailing36?.periodEndMonthKey).toBe('2026-03');
+  });
+
+  it('uses available valid months without inventing missing ones when there are fewer than requested', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-12', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 920_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-05', { netClp: 1_000_000_000, eurClp: 1000 }),
+      ],
+      false,
+      'CLP',
+    );
+
+    const trailing12 = buildTrailingSummary(rows, 12, '12m', '12M');
+
+    expect(trailing12?.validMonths).toBe(3);
+    expect(trailing12?.coverage.expectedMonths).toBe(3);
+    expect(trailing12?.coverage.status).toBe('complete');
+    expect(trailing12?.periodStartMonthKey).toBe('2026-01');
+    expect(trailing12?.periodEndMonthKey).toBe('2026-03');
   });
 
   it('builds monthly source diagnostics with official inclusion and exclusion reasons', () => {

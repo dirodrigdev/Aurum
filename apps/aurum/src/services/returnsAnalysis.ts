@@ -437,6 +437,8 @@ const trailingExpectedMonthKeys = (endMonthKey: string, count: number) => {
 type AggregateRowsOptions = {
   expectedMonthKeys?: string[];
   expectedMonths?: number;
+  periodStartMonthKey?: string | null;
+  periodEndMonthKey?: string | null;
 };
 
 const buildAggregateCoverage = (
@@ -766,6 +768,8 @@ export const aggregateRows = (
   return {
     key,
     label,
+    periodStartMonthKey: options?.periodStartMonthKey ?? null,
+    periodEndMonthKey: options?.periodEndMonthKey ?? null,
     validMonths,
     coverage,
     varPatrimonioAcumClp,
@@ -1013,12 +1017,13 @@ export const buildTrailingSummary = (
   key: string,
   label: string,
 ): AggregatedSummary | null => {
-  const rows = monthlyRowsAsc.slice(Math.max(0, monthlyRowsAsc.length - count));
+  const validRowsAsc = monthlyRowsAsc.filter(hasOfficialAggregateInputs);
+  const rows = validRowsAsc.slice(Math.max(0, validRowsAsc.length - count));
   if (!rows.length) return null;
-  const endMonthKey = rows[rows.length - 1]?.monthKey ?? null;
-  const expectedMonthKeys = endMonthKey ? trailingExpectedMonthKeys(endMonthKey, count) : rows.map((row) => row.monthKey);
 
+  const expectedMonthKeys = rows.map((row) => row.monthKey);
   const firstMonthKey = rows[0]?.monthKey ?? null;
+  const endMonthKey = rows[rows.length - 1]?.monthKey ?? null;
   let baseNetDisplay: number | null = null;
 
   if (firstMonthKey) {
@@ -1036,7 +1041,11 @@ export const buildTrailingSummary = (
     baseNetDisplay = rows.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
   }
 
-  return aggregateRows(key, label, rows, baseNetDisplay, { expectedMonthKeys });
+  return aggregateRows(key, label, rows, baseNetDisplay, {
+    expectedMonthKeys,
+    periodStartMonthKey: firstMonthKey,
+    periodEndMonthKey: endMonthKey,
+  });
 };
 
 const buildCurveDomain = (values: number[]) => {
