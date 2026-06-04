@@ -48,6 +48,7 @@ import {
   reconcileBankClosureDetails,
   reconcileNonMortgageDebtClosureDetails,
   resolveClosureSectionAmounts,
+  resolveCanonicalNonMortgageDebtClp,
   type WealthFxRates,
   type WealthMonthlyClosure,
   type WealthRecord,
@@ -190,6 +191,21 @@ describe('wealth data lineage invariants', () => {
     expect(resolved.source).toBe('records_canonical');
     expect(resolved.bankClp).toBe(300_000);
     expect(resolved.nonMortgageDebtClp).toBe(50_000);
+  });
+
+  it('uses aggregate card debt only as legacy fallback when no richer debt records are present', () => {
+    const aggregateOnlyRecords = [
+      record({
+        id: 'card-aggregate-only',
+        block: 'bank',
+        source: 'Legacy aggregate',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 999_999,
+        currency: 'CLP',
+      }),
+    ];
+
+    expect(resolveCanonicalNonMortgageDebtClp(aggregateOnlyRecords, fx)).toBe(999_999);
   });
 
   it('keeps total patrimonio tied to canonical subtotals instead of stale netConsolidatedClp when records exist', () => {

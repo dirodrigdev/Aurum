@@ -2562,6 +2562,7 @@ export const resolveCanonicalBankClp = (
 export const resolveCanonicalNonMortgageDebtClp = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
+  // Aggregate debt is legacy fallback only; card-level detail is canonical when present.
 ): number => buildWealthNetBreakdown(dedupeLatestByAsset(records), fxRates).nonMortgageDebtClp;
 
 export const computeWealthHomeSectionAmounts = (
