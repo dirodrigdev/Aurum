@@ -1331,7 +1331,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           </div>
           <input
             type="checkbox"
-            className="mt-0.5 h-4 w-4 rounded border-slate-400 text-slate-700 focus:ring-slate-500"
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-slate-700 focus:ring-slate-500"
             checked={includeEstimatedMonth}
             onChange={onToggleIncludeEstimatedMonth}
           />

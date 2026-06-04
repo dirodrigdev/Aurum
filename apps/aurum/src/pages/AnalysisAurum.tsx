@@ -110,7 +110,7 @@ export const AnalysisAurum: React.FC = () => {
 
   useEffect(() => {
     refreshClosures();
-  }, [closures, refreshClosures]);
+  }, [refreshClosures]);
 
   useEffect(() => {
     let cancelled = false;
