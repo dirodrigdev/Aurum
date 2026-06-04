@@ -43,6 +43,10 @@ import {
 } from '../services/wealthLab';
 import { buildCrpContributionInsight } from '../services/returnsCrpInsight';
 import {
+  clearAnalysisSessionCache,
+  getOrBuildAnalysisSessionValue,
+} from '../services/analysisSessionCache';
+import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
@@ -75,6 +79,55 @@ const formatDraftMoney = (value: string) => {
   return Number(digits).toLocaleString('es-CL');
 };
 
+const sortClosuresAsc = (items: WealthMonthlyClosure[]) =>
+  [...items].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+const buildClosuresFingerprint = (closures: WealthMonthlyClosure[]) =>
+  closures
+    .map((closure) =>
+      [
+        closure.monthKey,
+        closure.closedAt || '',
+        Number(closure.summary?.netClp ?? ''),
+        Number(closure.summary?.netClpWithRisk ?? ''),
+        Number(closure.summary?.netConsolidatedClp ?? ''),
+        Number(closure.fxRates?.usdClp ?? ''),
+        Number(closure.fxRates?.eurClp ?? ''),
+        Number(closure.fxRates?.ufClp ?? ''),
+      ].join(':'),
+    )
+    .join('|');
+
+const buildAnalysisFingerprint = ({
+  closuresFingerprint,
+  includeRiskCapitalInTotals,
+  currency,
+  includeEstimatedMonth,
+  gastosSourceVersion,
+}: {
+  closuresFingerprint: string;
+  includeRiskCapitalInTotals: boolean;
+  currency: WealthCurrency;
+  includeEstimatedMonth: boolean;
+  gastosSourceVersion: number;
+}) =>
+  JSON.stringify({
+    closuresFingerprint,
+    includeRiskCapitalInTotals,
+    currency,
+    includeEstimatedMonth,
+    gastosSourceVersion,
+  });
+
+const formatAnalysisUpdatedAt = (iso: string) => {
+  const parsed = new Date(iso);
+  if (!Number.isFinite(parsed.getTime())) return '—';
+  return parsed.toLocaleTimeString('es-ES', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
 export const AnalysisAurum: React.FC = () => {
   const location = useLocation();
   const [tab, setTab] = useState<AnalysisTab>('returns');
@@ -83,11 +136,12 @@ export const AnalysisAurum: React.FC = () => {
     loadIncludeRiskCapitalInTotals(),
   );
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() =>
-    loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey)),
+    sortClosuresAsc(loadWealthClosures()),
   );
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
     annualRatePct: '5',
     horizonYears: '40',
@@ -103,8 +157,12 @@ export const AnalysisAurum: React.FC = () => {
   const [freedomParametersOpen, setFreedomParametersOpen] = useState(initialFreedomOpen);
 
   const refreshClosures = useCallback(() => {
-    const loaded = loadWealthClosures().sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-    setClosures(loaded);
+    const loaded = sortClosuresAsc(loadWealthClosures());
+    const loadedFingerprint = buildClosuresFingerprint(loaded);
+    setClosures((current) => {
+      const currentFingerprint = buildClosuresFingerprint(current);
+      return currentFingerprint === loadedFingerprint ? current : loaded;
+    });
     setErrorMessage('');
   }, []);
 
@@ -174,53 +232,168 @@ export const AnalysisAurum: React.FC = () => {
     };
   }, [refreshClosures]);
 
-  const officialMonthlyRowsAsc = useMemo(
-    () => computeMonthlyRows(closures, includeRiskCapitalInTotals, currency),
-    [closures, includeRiskCapitalInTotals, currency, gastosSourceVersion],
+  const closuresFingerprint = useMemo(() => buildClosuresFingerprint(closures), [closures]);
+  const analysisFingerprint = useMemo(
+    () =>
+      buildAnalysisFingerprint({
+        closuresFingerprint,
+        includeRiskCapitalInTotals,
+        currency,
+        includeEstimatedMonth,
+        gastosSourceVersion,
+      }),
+    [closuresFingerprint, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion],
   );
-  const monthlyRowsAscWithoutCrp = useMemo(
-    () => computeMonthlyRows(closures, false, currency),
-    [closures, currency, gastosSourceVersion],
+  const analysisEntry = useMemo(
+    () =>
+      getOrBuildAnalysisSessionValue(analysisFingerprint, () => {
+        const officialMonthlyRowsAsc = computeMonthlyRows(closures, includeRiskCapitalInTotals, currency);
+        const monthlyRowsAscWithoutCrp = computeMonthlyRows(closures, false, currency);
+        const returnsSeriesView = buildReturnsSeriesView(officialMonthlyRowsAsc);
+        const monthlyRowsAsc =
+          includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
+            ? returnsSeriesView.estimatedRows
+            : returnsSeriesView.officialRows;
+        const monthlyRowsDesc = [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+        const wealthEvolutionModel = buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals);
+        const crpContributionInsight = includeRiskCapitalInTotals
+          ? buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency)
+          : null;
+        const analysisDiagnostics = (() => {
+          const eurScaleOutliers = officialMonthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
+          const invalidNetMonths = officialMonthlyRowsAsc.filter((row) => row.invalidNet).map((row) => row.monthKey);
+          const anomalyRaw =
+            [...officialMonthlyRowsAsc]
+              .filter((row) => row.pct !== null)
+              .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
+          const missingSpendMonths = officialMonthlyRowsAsc
+            .filter((row) => row.gastosStatus === 'missing')
+            .map((row) => row.monthKey);
+          const fxExcludedMonths = officialMonthlyRowsAsc
+            .filter((row) => !row.fxAuditable)
+            .map((row) => row.monthKey);
+          return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths, fxExcludedMonths };
+        })();
+        const periodSummaries = (() => {
+          const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
+          const summaries: AggregatedSummary[] = [];
+          const p12 = buildTrailingSummary(monthlyRowsAsc, 12, 'period-12M', '12M');
+          if (p12) summaries.push(p12);
+          const p24 = buildTrailingSummary(monthlyRowsAsc, 24, 'period-24M', '24M');
+          if (p24) summaries.push(p24);
+          if (monthKeysAsc.length >= 36) {
+            const p36 = buildTrailingSummary(monthlyRowsAsc, 36, 'period-36M', '36M');
+            if (p36) summaries.push(p36);
+          }
+          if (monthKeysAsc.length) {
+            const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+            summaries.push(
+              aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
+                expectedMonthKeys: enumerateMonthKeys(monthKeysAsc[0], monthKeysAsc[monthKeysAsc.length - 1]),
+              }),
+            );
+          }
+          return summaries;
+        })();
+        const yearlySummaries = (() => {
+          const years = Array.from(new Set(monthlyRowsAsc.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
+          const latestYear = years[years.length - 1] ?? null;
+          return years.map((year) => {
+            const rows = monthlyRowsAsc.filter((row) => monthYear(row.monthKey) === year);
+            const lastYearMonthKey = year < (latestYear ?? year) ? `${year}-12` : rows[rows.length - 1]?.monthKey ?? `${year}-12`;
+            const previousYearBase = monthlyRowsAsc
+              .filter((row) => row.monthKey < `${year}-01`)
+              .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+            const previousYearBaseValid = previousYearBase.filter((row) => row.netDisplay !== null);
+            const baseNetDisplay = previousYearBaseValid.length
+              ? previousYearBaseValid[previousYearBaseValid.length - 1].netDisplay
+              : null;
+            return aggregateRows(`year-${year}`, String(year), rows, baseNetDisplay, {
+              expectedMonthKeys: enumerateMonthKeys(`${year}-01`, lastYearMonthKey),
+            });
+          });
+        })();
+        const heroSinceStart = (() => {
+          if (!monthlyRowsAsc.length) return null;
+          const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
+          return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
+            expectedMonthKeys: enumerateMonthKeys(monthlyRowsAsc[0].monthKey, monthlyRowsAsc[monthlyRowsAsc.length - 1].monthKey),
+          });
+        })();
+        const heroLast12 = buildTrailingSummary(monthlyRowsAsc, 12, 'hero-12m', 'Últ. 12M');
+        const heroYtd2026 = (() => {
+          const ytdRows = monthlyRowsAsc.filter((row) => row.monthKey >= '2026-01' && row.monthKey <= '2026-12');
+          if (!ytdRows.length) return null;
+          const baseRow = monthlyRowsAsc
+            .filter((row) => row.monthKey < '2026-01' && row.netDisplay !== null)
+            .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+            .at(-1);
+          return aggregateRows('hero-ytd-2026', 'YTD 2026', ytdRows, baseRow?.netDisplay ?? null, {
+            expectedMonthKeys: enumerateMonthKeys('2026-01', ytdRows[ytdRows.length - 1].monthKey),
+          });
+        })();
+        const heroLastMonth = (() => {
+          const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+          if (!row) return null;
+          return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay, {
+            expectedMonthKeys: [row.monthKey],
+          });
+        })();
+        const heroLastMonthPctMonthly =
+          [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
+        const heroLastMonthPctMonthlyReal =
+          [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
+        const wealthLabModel = buildWealthLabModel(closures, includeRiskCapitalInTotals);
+        const financialFreedomBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals);
+
+        return {
+          officialMonthlyRowsAsc,
+          monthlyRowsAscWithoutCrp,
+          returnsSeriesView,
+          monthlyRowsAsc,
+          monthlyRowsDesc,
+          wealthEvolutionModel,
+          crpContributionInsight,
+          analysisDiagnostics,
+          periodSummaries,
+          yearlySummaries,
+          heroSinceStart,
+          heroLast12,
+          heroYtd2026,
+          heroLastMonth,
+          heroLastMonthPctMonthly,
+          heroLastMonthPctMonthlyReal,
+          wealthLabModel,
+          financialFreedomBase,
+        };
+      }),
+    [analysisFingerprint, analysisRefreshTick, closures, includeRiskCapitalInTotals, currency, includeEstimatedMonth, gastosSourceVersion],
   );
-  const returnsSeriesView = useMemo(
-    () => buildReturnsSeriesView(officialMonthlyRowsAsc),
-    [officialMonthlyRowsAsc],
-  );
-  const monthlyRowsAsc = includeEstimatedMonth && returnsSeriesView.hasEstimatedMonth
-    ? returnsSeriesView.estimatedRows
-    : returnsSeriesView.officialRows;
-  const monthlyRowsDesc = useMemo(
-    () => [...monthlyRowsAsc].sort((a, b) => b.monthKey.localeCompare(a.monthKey)),
-    [monthlyRowsAsc],
-  );
+  const {
+    officialMonthlyRowsAsc,
+    monthlyRowsAscWithoutCrp,
+    returnsSeriesView,
+    monthlyRowsAsc,
+    monthlyRowsDesc,
+    wealthEvolutionModel,
+    crpContributionInsight,
+    analysisDiagnostics,
+    periodSummaries,
+    yearlySummaries,
+    heroSinceStart,
+    heroLast12,
+    heroYtd2026,
+    heroLastMonth,
+    heroLastMonthPctMonthly,
+    heroLastMonthPctMonthlyReal,
+    wealthLabModel,
+    financialFreedomBase,
+  } = analysisEntry.value;
   useEffect(() => {
     if (!returnsSeriesView.hasEstimatedMonth) {
       setIncludeEstimatedMonth(false);
     }
   }, [returnsSeriesView.hasEstimatedMonth]);
-  const wealthEvolutionModel = useMemo(
-    () => buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals),
-    [closures, includeRiskCapitalInTotals],
-  );
-  const crpContributionInsight = useMemo(() => {
-    if (!includeRiskCapitalInTotals) return null;
-    return buildCrpContributionInsight(monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency);
-  }, [includeRiskCapitalInTotals, monthlyRowsAsc, monthlyRowsAscWithoutCrp, currency]);
-
-  const analysisDiagnostics = useMemo(() => {
-    const eurScaleOutliers = officialMonthlyRowsAsc.filter((row) => row.rawEurClp > 10000);
-    const invalidNetMonths = officialMonthlyRowsAsc.filter((row) => row.invalidNet).map((row) => row.monthKey);
-    const anomalyRaw = [...officialMonthlyRowsAsc]
-      .filter((row) => row.pct !== null)
-      .sort((a, b) => Math.abs(Number(b.pct)) - Math.abs(Number(a.pct)))[0] || null;
-    const missingSpendMonths = officialMonthlyRowsAsc
-      .filter((row) => row.gastosStatus === 'missing')
-      .map((row) => row.monthKey);
-    const fxExcludedMonths = officialMonthlyRowsAsc
-      .filter((row) => !row.fxAuditable)
-      .map((row) => row.monthKey);
-    return { eurScaleOutliers, invalidNetMonths, anomalyRaw, missingSpendMonths, fxExcludedMonths };
-  }, [officialMonthlyRowsAsc]);
 
   useEffect(() => {
     if (analysisDiagnostics.invalidNetMonths.length > 0) {
@@ -259,99 +432,6 @@ export const AnalysisAurum: React.FC = () => {
     setErrorMessage('');
   }, [analysisDiagnostics, officialMonthlyRowsAsc]);
 
-  const periodSummaries = useMemo(() => {
-    const monthKeysAsc = monthlyRowsAsc.map((row) => row.monthKey);
-
-    const summaries: AggregatedSummary[] = [];
-    const p12 = buildTrailingSummary(monthlyRowsAsc, 12, 'period-12M', '12M');
-    if (p12) summaries.push(p12);
-    const p24 = buildTrailingSummary(monthlyRowsAsc, 24, 'period-24M', '24M');
-    if (p24) summaries.push(p24);
-    if (monthKeysAsc.length >= 36) {
-      const p36 = buildTrailingSummary(monthlyRowsAsc, 36, 'period-36M', '36M');
-      if (p36) summaries.push(p36);
-    }
-    if (monthKeysAsc.length) {
-      const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-      summaries.push(
-        aggregateRows('period-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
-          expectedMonthKeys: enumerateMonthKeys(monthKeysAsc[0], monthKeysAsc[monthKeysAsc.length - 1]),
-        }),
-      );
-    }
-    return summaries;
-  }, [monthlyRowsAsc]);
-
-  const yearlySummaries = useMemo(() => {
-    const years = Array.from(new Set(monthlyRowsAsc.map((row) => monthYear(row.monthKey)))).sort((a, b) => a - b);
-    const latestYear = years[years.length - 1] ?? null;
-    return years.map((year) => {
-      const rows = monthlyRowsAsc.filter((row) => monthYear(row.monthKey) === year);
-      const lastYearMonthKey = year < (latestYear ?? year) ? `${year}-12` : rows[rows.length - 1]?.monthKey ?? `${year}-12`;
-      const previousYearBase = monthlyRowsAsc
-        .filter((row) => row.monthKey < `${year}-01`)
-        .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-      const previousYearBaseValid = previousYearBase.filter((row) => row.netDisplay !== null);
-      const baseNetDisplay = previousYearBaseValid.length
-        ? previousYearBaseValid[previousYearBaseValid.length - 1].netDisplay
-        : null;
-      return aggregateRows(`year-${year}`, String(year), rows, baseNetDisplay, {
-        expectedMonthKeys: enumerateMonthKeys(`${year}-01`, lastYearMonthKey),
-      });
-    });
-  }, [monthlyRowsAsc]);
-
-  const heroSinceStart = useMemo(() => {
-    if (!monthlyRowsAsc.length) return null;
-    const baseNetDisplay = monthlyRowsAsc.find((row) => row.netDisplay !== null)?.netDisplay ?? null;
-    return aggregateRows('hero-inicio', 'Desde inicio', monthlyRowsAsc, baseNetDisplay, {
-      expectedMonthKeys: enumerateMonthKeys(monthlyRowsAsc[0].monthKey, monthlyRowsAsc[monthlyRowsAsc.length - 1].monthKey),
-    });
-  }, [monthlyRowsAsc]);
-
-  const heroLast12 = useMemo(() => {
-    return buildTrailingSummary(monthlyRowsAsc, 12, 'hero-12m', 'Últ. 12M');
-  }, [monthlyRowsAsc]);
-
-  const heroYtd2026 = useMemo(() => {
-    const ytdRows = monthlyRowsAsc.filter((row) => row.monthKey >= '2026-01' && row.monthKey <= '2026-12');
-    if (!ytdRows.length) return null;
-    const baseRow = monthlyRowsAsc
-      .filter((row) => row.monthKey < '2026-01' && row.netDisplay !== null)
-      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-      .at(-1);
-    return aggregateRows('hero-ytd-2026', 'YTD 2026', ytdRows, baseRow?.netDisplay ?? null, {
-      expectedMonthKeys: enumerateMonthKeys('2026-01', ytdRows[ytdRows.length - 1].monthKey),
-    });
-  }, [monthlyRowsAsc]);
-
-  const heroLastMonth = useMemo(() => {
-    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
-    if (!row) return null;
-    return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay, {
-      expectedMonthKeys: [row.monthKey],
-    });
-  }, [returnsSeriesView.officialRows]);
-
-  const heroLastMonthPctMonthly = useMemo(() => {
-    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
-    return row?.pct ?? null;
-  }, [returnsSeriesView.officialRows]);
-
-  const heroLastMonthPctMonthlyReal = useMemo(() => {
-    const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
-    return row?.pctReal ?? null;
-  }, [returnsSeriesView.officialRows]);
-
-  const wealthLabModel = useMemo(
-    () => buildWealthLabModel(closures, includeRiskCapitalInTotals),
-    [closures, includeRiskCapitalInTotals, gastosSourceVersion],
-  );
-
-  const financialFreedomBase = useMemo(
-    () => resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals),
-    [closures, includeRiskCapitalInTotals],
-  );
   const freedomAnnualRatePct = useMemo(() => parseNumericDraft(freedomDraft.annualRatePct) ?? NaN, [freedomDraft.annualRatePct]);
   const freedomHorizonYears = useMemo(() => parseNumericDraft(freedomDraft.horizonYears) ?? NaN, [freedomDraft.horizonYears]);
   const freedomMonthlySpendClp = useMemo(() => parseNumericDraft(freedomDraft.monthlySpendClp) ?? NaN, [freedomDraft.monthlySpendClp]);
@@ -386,6 +466,12 @@ export const AnalysisAurum: React.FC = () => {
     }
   }, [freedomInputsAreValid]);
 
+  const refreshAnalysisModels = useCallback(() => {
+    clearAnalysisSessionCache(analysisFingerprint);
+    refreshClosures();
+    setAnalysisRefreshTick((current) => current + 1);
+  }, [analysisFingerprint, refreshClosures]);
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
@@ -416,6 +502,16 @@ export const AnalysisAurum: React.FC = () => {
             </button>
           ))}
         </div>}
+        <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-500">
+          <span>{`Última actualización: ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
+          <button
+            type="button"
+            onClick={refreshAnalysisModels}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            Actualizar análisis
+          </button>
+        </div>
       </Card>
 
       {tab === 'lab' ? (
