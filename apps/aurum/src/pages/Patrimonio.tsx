@@ -489,6 +489,29 @@ export const buildMonthPreparationStepViews = (input: {
   ];
 };
 
+export const buildMonthStatusAccordionState = (input: {
+  steps: MonthPreparationStepView[];
+  fxReflectionNoticeVisible: boolean;
+}) => {
+  const allMonthStepsReady = input.steps.every((step) => step.tone === 'ready');
+  const hasMonthStatusAttention =
+    input.fxReflectionNoticeVisible || input.steps.some((step) => step.tone !== 'ready');
+  const carryStep = input.steps.find((step) => step.key === 'carry');
+  const realEstateStep = input.steps.find((step) => step.key === 'realEstate');
+  const summaryParts = [
+    carryStep?.detail.includes('mes iniciado') ? 'Mes iniciado' : null,
+    realEstateStep?.detail === 'Hipoteca aplicada' ? 'Hipoteca aplicada' : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return {
+    allMonthStepsReady,
+    hasMonthStatusAttention,
+    defaultCollapsed: allMonthStepsReady && !hasMonthStatusAttention,
+    summaryTitle: allMonthStepsReady ? 'Estado del mes · Listo' : 'Estado del mes',
+    summaryDetail: summaryParts.join(' · '),
+  };
+};
+
 type StartMonthFlowCheckpoint = {
   monthKey: string;
   actions: StartMonthActionStatus;
@@ -6860,6 +6883,19 @@ export const Patrimonio: React.FC = () => {
       fxReflectionNoticeVisible,
     ],
   );
+  const monthStatusAccordion = useMemo(
+    () =>
+      buildMonthStatusAccordionState({
+        steps: monthPreparationStepViews,
+        fxReflectionNoticeVisible,
+      }),
+    [monthPreparationStepViews, fxReflectionNoticeVisible],
+  );
+  const [monthStatusCollapsedOverride, setMonthStatusCollapsedOverride] = useState<boolean | null>(null);
+  useEffect(() => {
+    setMonthStatusCollapsedOverride(null);
+  }, [monthKey]);
+  const monthStatusCollapsed = monthStatusCollapsedOverride ?? monthStatusAccordion.defaultCollapsed;
 
   if (activeSection) {
     return (
@@ -7228,22 +7264,39 @@ export const Patrimonio: React.FC = () => {
 
       {!activeClosure && (
         <Card className="p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            className="flex w-full items-start justify-between gap-3 text-left"
+            onClick={() => setMonthStatusCollapsedOverride(!monthStatusCollapsed)}
+            aria-expanded={!monthStatusCollapsed}
+          >
             <div>
-              <div className="text-sm font-semibold text-slate-900">Estado del mes</div>
+              <div className="text-sm font-semibold text-slate-900">
+                {monthStatusCollapsed ? monthStatusAccordion.summaryTitle : 'Estado del mes'}
+              </div>
               <div className="mt-1 text-xs text-slate-500">
-                El mes se copia desde el último cierre válido. Las acciones externas quedan como fallback manual.
+                {monthStatusCollapsed
+                  ? monthStatusAccordion.summaryDetail || 'Mes preparado'
+                  : 'El mes se copia desde el último cierre válido. Las acciones externas quedan como fallback manual.'}
               </div>
             </div>
-            {allStartMonthActionsApplied || startMonthCompletedNoticeVisible ? (
-              <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                <CheckCircle2 size={13} />
-                Mes preparado
-              </div>
-            ) : null}
-          </div>
+            <div className="flex items-center gap-2">
+              {!monthStatusCollapsed && (allStartMonthActionsApplied || startMonthCompletedNoticeVisible) ? (
+                <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                  <CheckCircle2 size={13} />
+                  Mes preparado
+                </div>
+              ) : null}
+              <ChevronDown
+                size={18}
+                className={cn('shrink-0 text-slate-500 transition-transform', monthStatusCollapsed ? 'rotate-0' : 'rotate-180')}
+              />
+            </div>
+          </button>
 
-          <div className="flex flex-wrap gap-2">
+          {!monthStatusCollapsed ? (
+            <>
+              <div className="flex flex-wrap gap-2">
             {selectedMonthStartEligibility.canStart ? (
               <Button size="sm" onClick={runStartMonthInitialize} disabled={startMonthRunning}>
                 Iniciar mes
@@ -7381,6 +7434,8 @@ export const Patrimonio: React.FC = () => {
                 );
               })}
           </div>
+            </>
+          ) : null}
         </Card>
       )}
 

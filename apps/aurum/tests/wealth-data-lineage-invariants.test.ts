@@ -12,6 +12,7 @@ import { buildEditedClosureRecordsFromDraft } from '../src/pages/ClosingAurum';
 import {
   buildMonthStartConfirmationCopy,
   buildMonthStartEligibility,
+  buildMonthStatusAccordionState,
   buildMonthPreparationStepViews,
   buildMonthStartMortgageAudit,
   buildStartMonthBankErrorView,
@@ -1019,6 +1020,70 @@ describe('wealth data lineage invariants', () => {
     expect(withoutFx?.actionLabel).toBe('Reflejar cambio');
     expect(withFx?.showAction).toBe(true);
     expect(withFx?.actionLabel).toBe('Reflejar cambio');
+  });
+
+  it('collapses Estado del mes by default only when every step is ready and there is no TC/UF attention', () => {
+    const readySteps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'applied',
+        banks: 'applied',
+        realEstate: 'applied',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: true,
+      mortgageStatus: 'applied',
+      fxActionVisible: false,
+    });
+
+    expect(
+      buildMonthStatusAccordionState({
+        steps: readySteps,
+        fxReflectionNoticeVisible: false,
+      }),
+    ).toMatchObject({
+      allMonthStepsReady: true,
+      hasMonthStatusAttention: false,
+      defaultCollapsed: true,
+      summaryTitle: 'Estado del mes · Listo',
+      summaryDetail: 'Mes iniciado · Hipoteca aplicada',
+    });
+  });
+
+  it('keeps Estado del mes open by default when any step needs attention or TC/UF reflection is pending', () => {
+    const pendingSteps = buildMonthPreparationStepViews({
+      monthKey: '2026-06',
+      realCurrentMonthKey: '2026-06',
+      monthHasRecords: true,
+      actionStatus: {
+        carry: 'applied',
+        fx: 'pending',
+        banks: 'applied',
+        realEstate: 'applied',
+      },
+      failedStep: null,
+      canCarryFromPrevious: true,
+      banksEnabled: true,
+      explicitMonthStarted: true,
+      mortgageStatus: 'applied',
+      fxActionVisible: true,
+    });
+
+    expect(
+      buildMonthStatusAccordionState({
+        steps: pendingSteps,
+        fxReflectionNoticeVisible: true,
+      }),
+    ).toMatchObject({
+      allMonthStepsReady: true,
+      hasMonthStatusAttention: true,
+      defaultCollapsed: false,
+    });
   });
 
   it('marks hipoteca as applied when debt delta matches expected amortization', () => {
