@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, Download } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
@@ -51,6 +51,7 @@ import {
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
+import { exportFinancialDataRoomZip } from '../services/dataRoom/exportDataRoomZip';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -142,6 +143,8 @@ export const AnalysisAurum: React.FC = () => {
   const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [exportMessage, setExportMessage] = useState('');
+  const [exportingDataRoom, setExportingDataRoom] = useState(false);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
     annualRatePct: '5',
@@ -502,6 +505,44 @@ export const AnalysisAurum: React.FC = () => {
     setAnalysisRefreshTick((current) => current + 1);
   }, [analysisFingerprint, refreshClosures]);
 
+  const handleExportDataRoom = useCallback(async () => {
+    setExportingDataRoom(true);
+    setExportMessage('');
+    try {
+      const bundle = await exportFinancialDataRoomZip({
+        closures,
+        officialMonthlyRowsAsc: returnsSeriesView.officialRows,
+        wealthEvolutionModel,
+        periodSummaries,
+        yearlySummaries,
+        heroSinceStart,
+        heroLast12,
+        heroYtd2026,
+        heroLastMonth,
+      });
+      const gastappStatus = bundle.manifest.source_status.gastapp_status;
+      setExportMessage(
+        gastappStatus === 'ok'
+          ? `ZIP generado: ${bundle.filename}`
+          : `ZIP parcial generado: ${bundle.filename} · GastApp ${gastappStatus}`,
+      );
+    } catch (error: any) {
+      setExportMessage(String(error?.message || error || 'No pude generar el ZIP.'));
+    } finally {
+      setExportingDataRoom(false);
+    }
+  }, [
+    closures,
+    returnsSeriesView.officialRows,
+    wealthEvolutionModel,
+    periodSummaries,
+    yearlySummaries,
+    heroSinceStart,
+    heroLast12,
+    heroYtd2026,
+    heroLastMonth,
+  ]);
+
   return (
     <div className="space-y-3 p-3">
       <Card className="sticky top-[68px] z-20 border-slate-200 bg-white/95 p-2 backdrop-blur">
@@ -534,14 +575,26 @@ export const AnalysisAurum: React.FC = () => {
         </div>}
         <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-500">
           <span>{`Última actualización: ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
-          <button
-            type="button"
-            onClick={refreshAnalysisModels}
-            className="rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
-          >
-            Actualizar análisis
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportDataRoom}
+              disabled={exportingDataRoom}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              <Download size={12} />
+              {exportingDataRoom ? 'Generando…' : 'Descargar base financiera consolidada'}
+            </button>
+            <button
+              type="button"
+              onClick={refreshAnalysisModels}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              Actualizar análisis
+            </button>
+          </div>
         </div>
+        {!!exportMessage && <div className="mt-2 text-[10px] text-slate-500">{exportMessage}</div>}
       </Card>
 
       {tab === 'lab' ? (
