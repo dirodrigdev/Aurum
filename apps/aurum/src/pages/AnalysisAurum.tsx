@@ -521,10 +521,11 @@ export const AnalysisAurum: React.FC = () => {
         heroLastMonth,
       });
       const gastappStatus = bundle.manifest.source_status.gastapp_status;
+      const ledgerPreviewStatus = bundle.manifest.gastapp_ledger_preview_status;
       setExportMessage(
-        gastappStatus === 'ok'
-          ? `ZIP generado: ${bundle.filename}`
-          : `ZIP parcial generado: ${bundle.filename} · GastApp ${gastappStatus}`,
+        gastappStatus === 'ok' && (ledgerPreviewStatus === 'available' || ledgerPreviewStatus === 'missing_manifest')
+          ? `ZIP generado: ${bundle.filename} · Ledger preview ${ledgerPreviewStatus}`
+          : `ZIP parcial generado: ${bundle.filename} · GastApp ${gastappStatus} · Ledger preview ${ledgerPreviewStatus}`,
       );
     } catch (error: any) {
       setExportMessage(String(error?.message || error || 'No pude generar el ZIP.'));
@@ -595,6 +596,9 @@ export const AnalysisAurum: React.FC = () => {
           </div>
         </div>
         {!!exportMessage && <div className="mt-2 text-[10px] text-slate-500">{exportMessage}</div>}
+        <div className="mt-1 text-[10px] text-slate-500">
+          Si está disponible, el Data Room incluye el ledger preview transaccional de GastApp como anexo de validación.
+        </div>
       </Card>
 
       {tab === 'lab' ? (

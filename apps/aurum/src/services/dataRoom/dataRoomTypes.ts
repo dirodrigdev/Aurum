@@ -67,6 +67,78 @@ export type GastappMonthlyAdapterResult = {
   configuredProjectId: string | null;
 };
 
+export type GastappLedgerPreviewStatus =
+  | 'available'
+  | 'missing_manifest'
+  | 'missing_config'
+  | 'permission_denied'
+  | 'unavailable'
+  | 'mismatch'
+  | 'error';
+
+export type GastappLedgerPreviewManifest = {
+  id: string;
+  generatedAt: string | null;
+  schemaVersion: string | null;
+  calculationVersion: string | null;
+  periodRange: string | null;
+  rowCounts: Record<string, number>;
+  reconciliationStatus: string | null;
+  aurumReadinessStatus: string | null;
+  dataQuality: string | null;
+  warnings: string[];
+  knownLimitations: string[];
+  reconciliationToleranceEur: number | null;
+  maxAbsDiffEur: number | null;
+  roundingDiffCount: number | null;
+  needsReviewCount: number | null;
+  totalsByView: Record<string, number>;
+  totalsBySource: Record<string, number>;
+  raw: Record<string, unknown>;
+};
+
+export type GastappLedgerPreviewRow = {
+  ledger_id: string;
+  source_kind: string | null;
+  transaction_class: string | null;
+  project_name: string | null;
+  description: string | null;
+  transaction_date: string | null;
+  accounting_date: string | null;
+  period_key: string | null;
+  monthKey: string | null;
+  amount_eur: number | null;
+  hybrid_contable_eur: number | null;
+  lifestyle_eur: number | null;
+  aurum_eur: number | null;
+  affects_aurum: boolean | null;
+  affects_lifestyle: boolean | null;
+  inclusion_reason: string | null;
+  exclusion_reason: string | null;
+  duplication_risk: string | null;
+  omission_risk: string | null;
+  traceability_status: string | null;
+  raw: Record<string, unknown>;
+};
+
+export type GastappLedgerPreviewAdapterResult = {
+  status: GastappLedgerPreviewStatus;
+  included: boolean;
+  manifest: GastappLedgerPreviewManifest | null;
+  rows: GastappLedgerPreviewRow[];
+  warnings: string[];
+  errorMessage: string | null;
+  configuredProjectId: string | null;
+  collectionName: string;
+  manifestCollectionName: string;
+  reconciliationStatus: string | null;
+  aurumReadinessStatus: string | null;
+  periodRange: string | null;
+  rowCount: number;
+  warningsPayload: Record<string, unknown> | null;
+  reconciliationPayload: Record<string, unknown> | null;
+};
+
 export type MidasAdapterResult = {
   status: DataRoomSourceStatus;
   included: boolean;
@@ -172,6 +244,7 @@ export type FinancialDataRoomManifest = {
     aurum: true;
     midas: boolean;
     gastapp_monthly: boolean;
+    gastapp_ledger_preview: boolean;
     gastapp_categories: false;
     gastapp_transactions: false;
   };
@@ -179,6 +252,7 @@ export type FinancialDataRoomManifest = {
     aurum: 'ok';
     midas: DataRoomSourceStatus;
     gastapp_status: DataRoomSourceStatus;
+    gastapp_ledger_preview_status: GastappLedgerPreviewStatus;
   };
   missing_sources: string[];
   warnings: string[];
@@ -188,6 +262,17 @@ export type FinancialDataRoomManifest = {
     aurum_shared: string | null;
     gastapp_external: string | null;
   };
+  gastapp_ledger_preview_available: boolean;
+  gastapp_ledger_preview_status: GastappLedgerPreviewStatus;
+  gastapp_ledger_preview_collection: string;
+  gastapp_ledger_preview_manifest_collection: string;
+  gastapp_ledger_preview_period_range: string | null;
+  gastapp_ledger_preview_row_count: number;
+  gastapp_ledger_preview_reconciliation_status: string | null;
+  gastapp_ledger_preview_max_abs_diff_eur: number | null;
+  gastapp_ledger_preview_rounding_diff_count: number | null;
+  gastapp_ledger_preview_aurum_readiness_status: string | null;
+  gastapp_ledger_preview_is_official_source: false;
 };
 
 export type FinancialDataRoomBuildResult = {

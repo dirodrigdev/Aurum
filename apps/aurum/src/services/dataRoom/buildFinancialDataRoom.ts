@@ -1,11 +1,13 @@
 import { buildFinancialDataRoomManifest } from './buildManifest';
 import { buildFinancialDataRoomReadme } from './buildReadme';
 import { buildCsv } from './csv';
+import { buildGastappLedgerPreviewCsv } from './gastappLedgerPreviewAdapter';
 import type {
   AurumAdapterResult,
   DataRoomFile,
   FinancialDataRoomBuildResult,
   FinancialDataRoomManifest,
+  GastappLedgerPreviewAdapterResult,
   GastappMonthlyAdapterResult,
   MidasAdapterResult,
 } from './dataRoomTypes';
@@ -115,6 +117,7 @@ export const buildFinancialDataRoom = (input: {
   aurum: AurumAdapterResult;
   midas: MidasAdapterResult;
   gastapp: GastappMonthlyAdapterResult;
+  gastappLedgerPreview: GastappLedgerPreviewAdapterResult;
   aurumProjectId: string | null;
 }): FinancialDataRoomBuildResult => {
   const consolidatedRows = buildMonthlyConsolidatedRows(input.aurum, input.gastapp);
@@ -123,8 +126,10 @@ export const buildFinancialDataRoom = (input: {
     ...input.aurum.warnings,
     ...input.midas.warnings,
     ...input.gastapp.warnings,
+    ...input.gastappLedgerPreview.warnings,
     input.midas.errorMessage,
     input.gastapp.errorMessage,
+    input.gastappLedgerPreview.errorMessage,
   ]);
   const manifest: FinancialDataRoomManifest = buildFinancialDataRoomManifest({
     generated_at: input.generatedAt,
@@ -134,6 +139,7 @@ export const buildFinancialDataRoom = (input: {
       aurum: true,
       midas: input.midas.included,
       gastapp_monthly: input.gastapp.included,
+      gastapp_ledger_preview: input.gastappLedgerPreview.included,
       gastapp_categories: false,
       gastapp_transactions: false,
     },
@@ -141,18 +147,31 @@ export const buildFinancialDataRoom = (input: {
       aurum: 'ok',
       midas: input.midas.status,
       gastapp_status: input.gastapp.status,
+      gastapp_ledger_preview_status: input.gastappLedgerPreview.status,
     },
     missing_sources: [
       ...(!input.midas.included ? ['midas'] : []),
       ...(!input.gastapp.included ? ['gastapp_monthly'] : []),
+      ...(!input.gastappLedgerPreview.included ? ['gastapp_ledger_preview'] : []),
     ],
     warnings,
     row_counts: {},
     no_data_modified: true,
     firestore_projects: {
       aurum_shared: input.aurumProjectId,
-      gastapp_external: input.gastapp.configuredProjectId,
+      gastapp_external: input.gastapp.configuredProjectId || input.gastappLedgerPreview.configuredProjectId,
     },
+    gastapp_ledger_preview_available: input.gastappLedgerPreview.included,
+    gastapp_ledger_preview_status: input.gastappLedgerPreview.status,
+    gastapp_ledger_preview_collection: input.gastappLedgerPreview.collectionName,
+    gastapp_ledger_preview_manifest_collection: input.gastappLedgerPreview.manifestCollectionName,
+    gastapp_ledger_preview_period_range: input.gastappLedgerPreview.periodRange,
+    gastapp_ledger_preview_row_count: input.gastappLedgerPreview.rowCount,
+    gastapp_ledger_preview_reconciliation_status: input.gastappLedgerPreview.reconciliationStatus,
+    gastapp_ledger_preview_max_abs_diff_eur: input.gastappLedgerPreview.manifest?.maxAbsDiffEur ?? null,
+    gastapp_ledger_preview_rounding_diff_count: input.gastappLedgerPreview.manifest?.roundingDiffCount ?? null,
+    gastapp_ledger_preview_aurum_readiness_status: input.gastappLedgerPreview.aurumReadinessStatus,
+    gastapp_ledger_preview_is_official_source: false,
   });
 
   const files: DataRoomFile[] = [];
@@ -263,6 +282,44 @@ export const buildFinancialDataRoom = (input: {
     'day_to_day_source',
     'warnings',
   ], input.gastapp.rows));
+  if (input.gastappLedgerPreview.manifest) {
+    files.push({
+      name: 'gastapp_ledger_preview_manifest.json',
+      content: `${JSON.stringify(input.gastappLedgerPreview.manifest, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: 1,
+    });
+  }
+  if (input.gastappLedgerPreview.rows.length > 0) {
+    files.push({
+      name: 'gastapp_ledger_preview_rows.json',
+      content: `${JSON.stringify(input.gastappLedgerPreview.rows, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: input.gastappLedgerPreview.rows.length,
+    });
+    files.push({
+      name: 'gastapp_ledger_preview_rows.csv',
+      content: buildGastappLedgerPreviewCsv(input.gastappLedgerPreview.rows),
+      mimeType: 'text/csv;charset=utf-8;',
+      rowCount: input.gastappLedgerPreview.rows.length,
+    });
+  }
+  if (input.gastappLedgerPreview.warningsPayload) {
+    files.push({
+      name: 'gastapp_ledger_preview_warnings.json',
+      content: `${JSON.stringify(input.gastappLedgerPreview.warningsPayload, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: 1,
+    });
+  }
+  if (input.gastappLedgerPreview.reconciliationPayload) {
+    files.push({
+      name: 'gastapp_ledger_preview_reconciliation.json',
+      content: `${JSON.stringify(input.gastappLedgerPreview.reconciliationPayload, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: 1,
+    });
+  }
   files.push(toCsvFile('09_midas_inputs_resultados.csv', [
     'source_doc',
     'scenario_name',
@@ -292,6 +349,13 @@ export const buildFinancialDataRoom = (input: {
       status: input.gastapp.status,
       rows: input.gastapp.rows.length,
       latest_month: input.gastapp.rows.at(-1)?.monthKey || null,
+    },
+    gastapp_ledger_preview: {
+      status: input.gastappLedgerPreview.status,
+      rows: input.gastappLedgerPreview.rows.length,
+      period_range: input.gastappLedgerPreview.periodRange,
+      reconciliation_status: input.gastappLedgerPreview.reconciliationStatus,
+      aurum_readiness_status: input.gastappLedgerPreview.aurumReadinessStatus,
     },
   };
 

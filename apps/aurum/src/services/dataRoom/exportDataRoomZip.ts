@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import type { AnalysisExportContext, FinancialDataRoomBuildResult } from './dataRoomTypes';
 import { buildAurumDataRoomData } from './aurumDataRoomAdapter';
 import { buildFinancialDataRoom } from './buildFinancialDataRoom';
+import { loadGastappLedgerPreviewDataRoomData } from './gastappLedgerPreviewAdapter';
 import { loadGastappMonthlyDataRoomData } from './gastappMonthlyAdapter';
 import { loadMidasDataRoomData } from './midasDataRoomAdapter';
 
@@ -22,15 +23,17 @@ export const exportFinancialDataRoomZip = async (
 ): Promise<FinancialDataRoomBuildResult> => {
   const generatedAt = new Date().toISOString();
   const aurum = buildAurumDataRoomData(analysisContext);
-  const [midas, gastapp] = await Promise.all([
+  const [midas, gastapp, gastappLedgerPreview] = await Promise.all([
     loadMidasDataRoomData(),
     loadGastappMonthlyDataRoomData(),
+    loadGastappLedgerPreviewDataRoomData(),
   ]);
   const bundle = buildFinancialDataRoom({
     generatedAt,
     aurum,
     midas,
     gastapp,
+    gastappLedgerPreview,
     aurumProjectId: String(db.app.options.projectId || ''),
   });
 
