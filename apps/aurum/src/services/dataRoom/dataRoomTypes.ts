@@ -76,12 +76,20 @@ export type GastappLedgerPreviewStatus =
   | 'mismatch'
   | 'error';
 
+export type GastappLedgerPreviewPeriodRange = {
+  fromPeriod: string | null;
+  toPeriod: string | null;
+  fromMonthKey: string | null;
+  toMonthKey: string | null;
+  label: string | null;
+};
+
 export type GastappLedgerPreviewManifest = {
   id: string;
   generatedAt: string | null;
   schemaVersion: string | null;
   calculationVersion: string | null;
-  periodRange: string | null;
+  periodRange: GastappLedgerPreviewPeriodRange | null;
   rowCounts: Record<string, number>;
   reconciliationStatus: string | null;
   aurumReadinessStatus: string | null;
@@ -133,7 +141,7 @@ export type GastappLedgerPreviewAdapterResult = {
   manifestCollectionName: string;
   reconciliationStatus: string | null;
   aurumReadinessStatus: string | null;
-  periodRange: string | null;
+  periodRange: GastappLedgerPreviewPeriodRange | null;
   rowCount: number;
   warningsPayload: Record<string, unknown> | null;
   reconciliationPayload: Record<string, unknown> | null;
@@ -266,7 +274,7 @@ export type FinancialDataRoomManifest = {
   gastapp_ledger_preview_status: GastappLedgerPreviewStatus;
   gastapp_ledger_preview_collection: string;
   gastapp_ledger_preview_manifest_collection: string;
-  gastapp_ledger_preview_period_range: string | null;
+  gastapp_ledger_preview_period_range: GastappLedgerPreviewPeriodRange | null;
   gastapp_ledger_preview_row_count: number;
   gastapp_ledger_preview_reconciliation_status: string | null;
   gastapp_ledger_preview_max_abs_diff_eur: number | null;

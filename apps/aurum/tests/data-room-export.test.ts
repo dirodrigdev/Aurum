@@ -139,7 +139,13 @@ const gastappLedgerAvailable = (): GastappLedgerPreviewAdapterResult => ({
     generatedAt: '2026-06-04T12:00:00.000Z',
     schemaVersion: '1',
     calculationVersion: 'preview-v1',
-    periodRange: 'P29-P36',
+    periodRange: {
+      fromPeriod: 'P29',
+      toPeriod: 'P36',
+      fromMonthKey: '2025-09',
+      toMonthKey: '2026-04',
+      label: 'P29→P36 / 2025-09→2026-04',
+    },
     rowCounts: { rowsWritten: 37 },
     reconciliationStatus: 'matched_with_rounding_tolerance',
     aurumReadinessStatus: 'preview_only',
@@ -184,7 +190,13 @@ const gastappLedgerAvailable = (): GastappLedgerPreviewAdapterResult => ({
   manifestCollectionName: 'gastapp_transaction_ledger_preview_manifest_v1/current',
   reconciliationStatus: 'matched_with_rounding_tolerance',
   aurumReadinessStatus: 'preview_only',
-  periodRange: 'P29-P36',
+  periodRange: {
+    fromPeriod: 'P29',
+    toPeriod: 'P36',
+    fromMonthKey: '2025-09',
+    toMonthKey: '2026-04',
+    label: 'P29→P36 / 2025-09→2026-04',
+  },
   rowCount: 1,
   warningsPayload: { status: 'available', warnings: ['rounding_tolerance_applied'] },
   reconciliationPayload: { reconciliationStatus: 'matched_with_rounding_tolerance', maxAbsDiffEur: 0.01 },
@@ -251,7 +263,13 @@ describe('data room manifest', () => {
       gastapp_ledger_preview_status: 'available',
       gastapp_ledger_preview_collection: 'gastapp_transaction_ledger_preview_v1',
       gastapp_ledger_preview_manifest_collection: 'gastapp_transaction_ledger_preview_manifest_v1/current',
-      gastapp_ledger_preview_period_range: 'P29-P36',
+      gastapp_ledger_preview_period_range: {
+        fromPeriod: 'P29',
+        toPeriod: 'P36',
+        fromMonthKey: '2025-09',
+        toMonthKey: '2026-04',
+        label: 'P29→P36 / 2025-09→2026-04',
+      },
       gastapp_ledger_preview_row_count: 37,
       gastapp_ledger_preview_reconciliation_status: 'matched',
       gastapp_ledger_preview_max_abs_diff_eur: 0,
@@ -261,6 +279,7 @@ describe('data room manifest', () => {
     });
     expect(manifest.source_status.gastapp_status).toBe('ok');
     expect(manifest.gastapp_ledger_preview_status).toBe('available');
+    expect(manifest.gastapp_ledger_preview_period_range?.fromPeriod).toBe('P29');
   });
 
   it('keeps gastapp unavailable status', () => {
@@ -331,6 +350,13 @@ describe('buildFinancialDataRoom', () => {
     ]));
     expect(result.manifest.includes.gastapp_monthly).toBe(true);
     expect(result.manifest.gastapp_ledger_preview_status).toBe('available');
+    expect(result.manifest.gastapp_ledger_preview_period_range).toEqual({
+      fromPeriod: 'P29',
+      toPeriod: 'P36',
+      fromMonthKey: '2025-09',
+      toMonthKey: '2026-04',
+      label: 'P29→P36 / 2025-09→2026-04',
+    });
     expect(result.manifest.no_data_modified).toBe(true);
   });
 

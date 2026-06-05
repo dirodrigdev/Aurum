@@ -4,6 +4,7 @@ import { buildCsv } from './csv';
 import type {
   GastappLedgerPreviewAdapterResult,
   GastappLedgerPreviewManifest,
+  GastappLedgerPreviewPeriodRange,
   GastappLedgerPreviewRow,
   GastappLedgerPreviewStatus,
 } from './dataRoomTypes';
@@ -42,12 +43,43 @@ const readNumberMap = (value: unknown): Record<string, number> => {
   );
 };
 
+const readPeriodRange = (value: unknown): GastappLedgerPreviewPeriodRange | null => {
+  if (typeof value === 'string' && value.trim()) {
+    return {
+      fromPeriod: null,
+      toPeriod: null,
+      fromMonthKey: null,
+      toMonthKey: null,
+      label: value.trim(),
+    };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const fromPeriod = readString(raw.fromPeriod) || readString(raw.from_period);
+  const toPeriod = readString(raw.toPeriod) || readString(raw.to_period);
+  const fromMonthKey = readString(raw.fromMonthKey) || readString(raw.from_month_key);
+  const toMonthKey = readString(raw.toMonthKey) || readString(raw.to_month_key);
+  const label = readString(raw.label)
+    || readString(raw.summary)
+    || ((fromPeriod || toPeriod || fromMonthKey || toMonthKey)
+      ? [fromPeriod, toPeriod, fromMonthKey, toMonthKey].filter(Boolean).join(' | ')
+      : null);
+  if (!fromPeriod && !toPeriod && !fromMonthKey && !toMonthKey && !label) return null;
+  return {
+    fromPeriod,
+    toPeriod,
+    fromMonthKey,
+    toMonthKey,
+    label,
+  };
+};
+
 const normalizeManifest = (id: string, raw: Record<string, unknown>): GastappLedgerPreviewManifest => ({
   id,
   generatedAt: readString(raw.generatedAt) || readString(raw.publishedAt) || readString(raw.updatedAt),
   schemaVersion: readString(raw.schemaVersion),
   calculationVersion: readString(raw.calculationVersion),
-  periodRange: readString(raw.periodRange),
+  periodRange: readPeriodRange(raw.periodRange),
   rowCounts: readNumberMap(raw.rowCounts),
   reconciliationStatus: readString(raw.reconciliationStatus),
   aurumReadinessStatus: readString(raw.aurum_readiness_status) || readString(raw.aurumReadinessStatus),
