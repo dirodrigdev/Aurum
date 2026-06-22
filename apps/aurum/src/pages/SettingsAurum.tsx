@@ -11,6 +11,7 @@ import {
 } from '../components/settings/ClosureReviewModal';
 import { LabToolsSection } from '../components/settings/LabToolsSection';
 import { SyncStatusSection } from '../components/settings/SyncStatusSection';
+import type { GastappDataRoomV2DiagnosticViewState } from '../components/settings/SyncStatusSection';
 import { TypedConfirmModal } from '../components/settings/TypedConfirmModal';
 import { BOTTOM_NAV_RETAP_EVENT } from '../components/Layout';
 import { parseStrictNumber } from '../utils/numberUtils';
@@ -71,6 +72,11 @@ import {
   defaultBackupDecisionState,
   runDestructiveActionWithBackupGuard,
 } from '../services/settingsDestructiveGuard';
+import {
+  getGastappDataRoomV2Manifest,
+  getGastappDataRoomV2PeriodSummaries,
+  getGastappDataRoomV2RowsPage,
+} from '../services/dataRoom/gastappDataRoomV2Adapter';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
@@ -78,6 +84,14 @@ const HIDE_SENSITIVE_AMOUNTS_PREF_KEY = 'aurum.hide-sensitive-amounts.v1';
 const HIDE_SENSITIVE_AMOUNTS_UPDATED_EVENT = 'aurum:hide-sensitive-amounts-updated';
 const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
+const DEFAULT_GASTAPP_V2_DIAGNOSTIC: GastappDataRoomV2DiagnosticViewState = {
+  status: 'idle',
+  sourceStatus: null,
+  message: 'Abre esta sección para probar lectura read-only del Data Room v2.',
+  manifest: null,
+  summariesSample: [],
+  rowsSample: [],
+};
 
 interface ClosureReviewPendingEntry {
   status: 'complete' | 'pending';
@@ -300,6 +314,9 @@ export const SettingsAurum: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const [fsDebug, setFsDebug] = useState('');
   const [fsStatus, setFsStatus] = useState(() => getFirestoreStatus());
+  const [gastappDataRoomV2Diagnostic, setGastappDataRoomV2Diagnostic] = useState<GastappDataRoomV2DiagnosticViewState>(
+    DEFAULT_GASTAPP_V2_DIAGNOSTIC,
+  );
   const [backupMessage, setBackupMessage] = useState('');
   const [backupDecisionState, setBackupDecisionState] = useState<BackupDecisionState>(defaultBackupDecisionState);
   const [availableClosures, setAvailableClosures] = useState(() =>
@@ -893,6 +910,12 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     void refreshBackupSnapshots();
   }, [openSection]);
 
+  useEffect(() => {
+    if (openSection !== 'sync') return;
+    if (gastappDataRoomV2Diagnostic.status !== 'idle') return;
+    void loadGastappDataRoomV2Diagnostic();
+  }, [openSection, gastappDataRoomV2Diagnostic.status]);
+
   const scrollToSettingsElement = (element: HTMLElement | null) => {
     if (!element) return;
     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -928,6 +951,70 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     setBanksUpdateMode(mode);
     writeBanksUpdateMode(mode);
     window.dispatchEvent(new Event(BANKS_UPDATE_MODE_CHANGED_EVENT));
+  };
+
+  const loadGastappDataRoomV2Diagnostic = async () => {
+    setGastappDataRoomV2Diagnostic((current) => ({
+      ...current,
+      status: 'loading',
+      message: 'Probando lectura read-only de GastApp Data Room v2...',
+    }));
+    try {
+      const manifestResult = await getGastappDataRoomV2Manifest();
+      if (!manifestResult.manifest) {
+        const message =
+          manifestResult.status === 'missing_config'
+            ? 'Faltan VITE_GASTAPP_FIREBASE_* en este entorno.'
+            : manifestResult.status === 'permission_denied'
+              ? 'Firestore rules o permisos bloquean la lectura de current.'
+              : manifestResult.errorMessage || 'No se pudo leer el manifest current.';
+        setGastappDataRoomV2Diagnostic({
+          status: 'error',
+          sourceStatus: manifestResult.status,
+          message,
+          manifest: null,
+          summariesSample: [],
+          rowsSample: [],
+        });
+        return;
+      }
+
+      const [periodSummariesResult, rowsPageResult] = await Promise.all([
+        getGastappDataRoomV2PeriodSummaries(),
+        getGastappDataRoomV2RowsPage({ pageSize: 5 }),
+      ]);
+
+      const sourceStatus = rowsPageResult.status || periodSummariesResult.status || manifestResult.status;
+      const hasPermissionBlock =
+        manifestResult.status === 'permission_denied' ||
+        periodSummariesResult.status === 'permission_denied' ||
+        rowsPageResult.status === 'permission_denied';
+      const message = hasPermissionBlock
+        ? 'Firestore rules o permisos bloquean la lectura de GastApp Data Room v2.'
+        : sourceStatus === 'missing_config'
+          ? 'Faltan VITE_GASTAPP_FIREBASE_* en este entorno.'
+          : sourceStatus === 'usable'
+            ? 'Lectura read-only OK.'
+            : rowsPageResult.errorMessage || periodSummariesResult.errorMessage || manifestResult.errorMessage || 'Lectura parcial o no usable.';
+
+      setGastappDataRoomV2Diagnostic({
+        status: sourceStatus === 'usable' ? 'ok' : 'error',
+        sourceStatus,
+        message,
+        manifest: manifestResult.manifest,
+        summariesSample: periodSummariesResult.summaries.slice(0, 3),
+        rowsSample: rowsPageResult.page.rows,
+      });
+    } catch (error: any) {
+      setGastappDataRoomV2Diagnostic({
+        status: 'error',
+        sourceStatus: 'error',
+        message: String(error?.message || error || 'No se pudo completar el diagnóstico v2.'),
+        manifest: null,
+        summariesSample: [],
+        rowsSample: [],
+      });
+    }
   };
 
   const openClosureReview = (monthKeys: string[], source: ClosureReviewSource) => {
@@ -1828,6 +1915,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         fsStatus={fsStatus}
         syncMessage={syncMessage}
         fsDebug={fsDebug}
+        gastappDataRoomV2={gastappDataRoomV2Diagnostic}
         onToggle={() => toggleSection('sync')}
         onSyncNow={() => {
           void (async () => {
@@ -1839,6 +1927,9 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
           })();
         }}
         onSignOut={signOutUser}
+        onRefreshGastappDataRoomV2={() => {
+          void loadGastappDataRoomV2Diagnostic();
+        }}
       />
 
       <Card className="border border-slate-200 bg-white p-3">
