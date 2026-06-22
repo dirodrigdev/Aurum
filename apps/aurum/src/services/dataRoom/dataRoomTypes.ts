@@ -147,6 +147,109 @@ export type GastappLedgerPreviewAdapterResult = {
   reconciliationPayload: Record<string, unknown> | null;
 };
 
+export type GastappDataRoomV2Status =
+  | 'usable'
+  | 'not_usable'
+  | 'missing_current'
+  | 'missing_run'
+  | 'missing_config'
+  | 'permission_denied'
+  | 'unavailable'
+  | 'error';
+
+export type GastappDataRoomV2Manifest = {
+  id: string;
+  runId: string | null;
+  schemaVersion: string | null;
+  calculationVersion: string | null;
+  dataHash: string | null;
+  sourceCommit: string | null;
+  readinessStatus: 'ok' | 'warning' | 'blocked' | string | null;
+  officialRefreshAllowed: boolean | null;
+  consumerRefreshRequired: boolean | null;
+  blockers: string[];
+  warnings: string[];
+  rowCount: number | null;
+  periodSummariesCount: number | null;
+  generatedAt: string | null;
+  raw: Record<string, unknown>;
+};
+
+export type GastappDataRoomV2PeriodSummary = {
+  id: string;
+  period: string;
+  periodPolicy: string | null;
+  readinessStatus: string | null;
+  officialAmountEur: number | null;
+  canonicalRowCount: number | null;
+  rowCount: number | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  warnings: string[];
+  blockers: string[];
+  raw: Record<string, unknown>;
+};
+
+export type GastappDataRoomV2Row = {
+  id: string;
+  sourceKind: string | null;
+  sourceId: string | null;
+  period: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  bucket: string | null;
+  category: string | null;
+  subcategory: string | null;
+  label: string | null;
+  description: string | null;
+  amountEur: number | null;
+  isCanonical: boolean | null;
+  affectsAurum: boolean | null;
+  affectsDataRoomOfficial: boolean | null;
+  blocksReadiness: boolean | null;
+  requiresReview: boolean | null;
+  raw: Record<string, unknown>;
+};
+
+export type GastappDataRoomV2RowsPage = {
+  rows: GastappDataRoomV2Row[];
+  pageSize: number;
+  nextCursor: string | null;
+};
+
+export type GastappDataRoomV2ManifestResult = {
+  status: GastappDataRoomV2Status;
+  usable: boolean;
+  manifest: GastappDataRoomV2Manifest | null;
+  warnings: string[];
+  errorMessage: string | null;
+  configuredProjectId: string | null;
+  rootCollection: string;
+  currentDocumentPath: string;
+};
+
+export type GastappDataRoomV2PeriodSummariesResult = {
+  status: GastappDataRoomV2Status;
+  usable: boolean;
+  manifest: GastappDataRoomV2Manifest | null;
+  summaries: GastappDataRoomV2PeriodSummary[];
+  warnings: string[];
+  errorMessage: string | null;
+  configuredProjectId: string | null;
+  collectionPath: string | null;
+};
+
+export type GastappDataRoomV2RowsPageResult = {
+  status: GastappDataRoomV2Status;
+  usable: boolean;
+  manifest: GastappDataRoomV2Manifest | null;
+  page: GastappDataRoomV2RowsPage;
+  warnings: string[];
+  errorMessage: string | null;
+  configuredProjectId: string | null;
+  collectionPath: string | null;
+};
+
 export type MidasAdapterResult = {
   status: DataRoomSourceStatus;
   included: boolean;
