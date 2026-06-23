@@ -124,6 +124,7 @@ const gastappMonthlyRuntime: {
   map: Record<string, GastappMonthlyContableEntry>;
   loadPromise: Promise<void> | null;
   error: string | null;
+  errorCode: string | null;
   lastUpdatedAt: string | null;
   configuredProjectId: string;
 } = {
@@ -132,6 +133,7 @@ const gastappMonthlyRuntime: {
   map: {},
   loadPromise: null,
   error: null,
+  errorCode: null,
   lastUpdatedAt: null,
   configuredProjectId: '',
 };
@@ -157,6 +159,7 @@ const loadGastappFirebaseBridge = async (): Promise<GastappFirebaseBridge | null
     };
   } catch (error: any) {
     gastappMonthlyRuntime.error = `gastapp_firebase_bridge_unavailable:${String(error?.message || error || 'unknown_error')}`;
+    gastappMonthlyRuntime.errorCode = String(error?.code || 'bridge_unavailable');
     return null;
   }
 };
@@ -367,6 +370,7 @@ const loadGastappMonthlyContable = async () => {
 
   gastappMonthlyRuntime.status = 'loading';
   gastappMonthlyRuntime.error = null;
+  gastappMonthlyRuntime.errorCode = null;
   gastappMonthlyRuntime.loadPromise = (async () => {
     const firebaseBridge = await loadGastappFirebaseBridge();
     if (!firebaseBridge) {
@@ -388,6 +392,7 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_not_configured';
+      gastappMonthlyRuntime.errorCode = 'missing_config';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
         `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_not_configured projectId_configured=${configuredProjectIdForLogs()}`,
@@ -402,6 +407,7 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'legacy';
       gastappMonthlyRuntime.error = 'gastapp_firestore_unavailable';
+      gastappMonthlyRuntime.errorCode = 'unavailable';
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
         `${GASTAPP_DIAG_PREFIX} source=legacy_fallback reason=gastapp_firestore_unavailable projectId_configured=${configuredProjectIdForLogs()}`,
@@ -485,6 +491,7 @@ const loadGastappMonthlyContable = async () => {
       gastappMonthlyRuntime.map = loaded;
       gastappMonthlyRuntime.status = 'ready';
       gastappMonthlyRuntime.mode = 'firestore';
+      gastappMonthlyRuntime.errorCode = null;
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       logSourceModeOnce();
       const march = loaded['2026-03'] || null;
@@ -505,6 +512,7 @@ const loadGastappMonthlyContable = async () => {
     } catch (error: any) {
       gastappMonthlyRuntime.status = 'error';
       gastappMonthlyRuntime.mode = 'legacy';
+      gastappMonthlyRuntime.errorCode = String(error?.code || '');
       gastappMonthlyRuntime.error = String(error?.message || error || 'unknown_error');
       gastappMonthlyRuntime.lastUpdatedAt = new Date().toISOString();
       console.error(
@@ -530,6 +538,7 @@ export type GastappMonthlyRuntimeDiagnostic = {
   mode: 'firestore' | 'legacy' | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
+  errorCode: string | null;
   docsLoaded: number;
   configuredProjectId: string;
   lastUpdatedAt: string | null;
@@ -540,6 +549,7 @@ export const getGastappMonthlyRuntimeDiagnostic = (): GastappMonthlyRuntimeDiagn
   mode: gastappMonthlyRuntime.mode,
   status: gastappMonthlyRuntime.status,
   error: gastappMonthlyRuntime.error,
+  errorCode: gastappMonthlyRuntime.errorCode,
   docsLoaded: Object.keys(gastappMonthlyRuntime.map).length,
   configuredProjectId: gastappMonthlyRuntime.configuredProjectId,
   lastUpdatedAt: gastappMonthlyRuntime.lastUpdatedAt,

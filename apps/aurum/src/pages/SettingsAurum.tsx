@@ -77,6 +77,7 @@ import {
   getGastappDataRoomV2PeriodSummaries,
   getGastappDataRoomV2RowsPage,
 } from '../services/dataRoom/gastappDataRoomV2Adapter';
+import { describeGastappDataRoomV2Status } from '../services/dataRoom/gastappAccessGuidance';
 
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
 const CLOSURE_REVIEW_PENDING_STORAGE_KEY = 'aurum.closure.review.pending.v1';
@@ -962,12 +963,11 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     try {
       const manifestResult = await getGastappDataRoomV2Manifest();
       if (!manifestResult.manifest) {
-        const message =
-          manifestResult.status === 'missing_config'
-            ? 'Faltan VITE_GASTAPP_FIREBASE_* en este entorno.'
-            : manifestResult.status === 'permission_denied'
-              ? 'Firestore rules o permisos bloquean la lectura de current.'
-              : manifestResult.errorMessage || 'No se pudo leer el manifest current.';
+        const message = describeGastappDataRoomV2Status({
+          status: manifestResult.status,
+          errorMessage: manifestResult.errorMessage,
+          technicalDetail: `status=${manifestResult.status} · path=${manifestResult.currentDocumentPath}`,
+        });
         setGastappDataRoomV2Diagnostic({
           status: 'error',
           sourceStatus: manifestResult.status,
@@ -989,13 +989,14 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         manifestResult.status === 'permission_denied' ||
         periodSummariesResult.status === 'permission_denied' ||
         rowsPageResult.status === 'permission_denied';
-      const message = hasPermissionBlock
-        ? 'Firestore rules o permisos bloquean la lectura de GastApp Data Room v2.'
-        : sourceStatus === 'missing_config'
-          ? 'Faltan VITE_GASTAPP_FIREBASE_* en este entorno.'
-          : sourceStatus === 'usable'
-            ? 'Lectura read-only OK.'
-            : rowsPageResult.errorMessage || periodSummariesResult.errorMessage || manifestResult.errorMessage || 'Lectura parcial o no usable.';
+      const technicalDetail = hasPermissionBlock
+        ? `status=current:${manifestResult.status} summaries:${periodSummariesResult.status} rows:${rowsPageResult.status}`
+        : null;
+      const message = describeGastappDataRoomV2Status({
+        status: sourceStatus,
+        errorMessage: rowsPageResult.errorMessage || periodSummariesResult.errorMessage || manifestResult.errorMessage,
+        technicalDetail,
+      });
 
       setGastappDataRoomV2Diagnostic({
         status: sourceStatus === 'usable' ? 'ok' : 'error',

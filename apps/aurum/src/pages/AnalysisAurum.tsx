@@ -51,6 +51,10 @@ import {
   getGastappMonthlyRuntimeDiagnostic,
   warmGastappMonthlyContable,
 } from '../services/gastosMonthly';
+import {
+  describeGastappAnalysisAccessIssue,
+  describeGastappZipExportStatus,
+} from '../services/dataRoom/gastappAccessGuidance';
 import { exportFinancialDataRoomZip } from '../services/dataRoom/exportDataRoomZip';
 
 const loadWealthClosures = () => loadClosures();
@@ -247,6 +251,7 @@ export const AnalysisAurum: React.FC = () => {
       lastUpdatedAt: diagnostic.lastUpdatedAt,
     });
   }, [gastosSourceVersion]);
+  const gastappRuntimeDiagnostic = useMemo(() => getGastappMonthlyRuntimeDiagnostic(), [gastosSourceVersion]);
   const analysisFingerprint = useMemo(
     () =>
       buildAnalysisFingerprint({
@@ -446,6 +451,17 @@ export const AnalysisAurum: React.FC = () => {
     }
 
     if (analysisDiagnostics.missingSpendMonths.length > 0) {
+      const gastappAccessIssue = describeGastappAnalysisAccessIssue({
+        status: gastappRuntimeDiagnostic.status,
+        mode: gastappRuntimeDiagnostic.mode,
+        errorCode: gastappRuntimeDiagnostic.errorCode,
+        errorMessage: gastappRuntimeDiagnostic.error,
+        missingMonths: analysisDiagnostics.missingSpendMonths,
+      });
+      if (gastappAccessIssue) {
+        setErrorMessage(gastappAccessIssue);
+        return;
+      }
       setErrorMessage(
         `Faltan gastos contables cerrados en: ${analysisDiagnostics.missingSpendMonths.join(', ')}. Esos meses no se incluyen en agregados.`,
       );
@@ -463,7 +479,7 @@ export const AnalysisAurum: React.FC = () => {
     }
 
     setErrorMessage('');
-  }, [analysisDiagnostics, officialMonthlyRowsAsc]);
+  }, [analysisDiagnostics, gastappRuntimeDiagnostic, officialMonthlyRowsAsc]);
 
   const freedomAnnualRatePct = useMemo(() => parseNumericDraft(freedomDraft.annualRatePct) ?? NaN, [freedomDraft.annualRatePct]);
   const freedomHorizonYears = useMemo(() => parseNumericDraft(freedomDraft.horizonYears) ?? NaN, [freedomDraft.horizonYears]);
@@ -522,11 +538,11 @@ export const AnalysisAurum: React.FC = () => {
       });
       const gastappStatus = bundle.manifest.source_status.gastapp_status;
       const ledgerPreviewStatus = bundle.manifest.gastapp_ledger_preview_status;
-      setExportMessage(
-        gastappStatus === 'ok' && (ledgerPreviewStatus === 'available' || ledgerPreviewStatus === 'missing_manifest')
-          ? `ZIP generado: ${bundle.filename} · Ledger preview ${ledgerPreviewStatus}`
-          : `ZIP parcial generado: ${bundle.filename} · GastApp ${gastappStatus} · Ledger preview ${ledgerPreviewStatus}`,
-      );
+      setExportMessage(describeGastappZipExportStatus({
+        filename: bundle.filename,
+        gastappStatus,
+        ledgerPreviewStatus,
+      }));
     } catch (error: any) {
       setExportMessage(String(error?.message || error || 'No pude generar el ZIP.'));
     } finally {
@@ -595,7 +611,7 @@ export const AnalysisAurum: React.FC = () => {
             </button>
           </div>
         </div>
-        {!!exportMessage && <div className="mt-2 text-[10px] text-slate-500">{exportMessage}</div>}
+        {!!exportMessage && <div className="mt-2 whitespace-pre-line text-[10px] text-slate-500">{exportMessage}</div>}
         <div className="mt-1 text-[10px] text-slate-500">
           Si está disponible, el Data Room incluye el ledger preview transaccional de GastApp como anexo de validación.
         </div>
@@ -659,7 +675,7 @@ export const AnalysisAurum: React.FC = () => {
       )}
 
       {!!errorMessage && (
-        <Card className="border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{errorMessage}</Card>
+        <Card className="whitespace-pre-line border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{errorMessage}</Card>
       )}
 
       <Card className="border-slate-200 bg-slate-50 p-3">

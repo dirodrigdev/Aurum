@@ -102,7 +102,7 @@ export const SyncStatusSection: React.FC<SyncStatusSectionProps> = ({
             <div className="text-[11px] text-slate-700">
               Estado de lectura: <span className="font-semibold">{v2StatusLabel}</span>
             </div>
-            <div className="text-[11px] text-slate-600">{gastappDataRoomV2.message}</div>
+            <div className="whitespace-pre-line text-[11px] text-slate-600">{gastappDataRoomV2.message}</div>
             <div className="grid grid-cols-1 gap-1 text-[11px] text-slate-700 sm:grid-cols-2">
               <div>Manifest leído: <span className="font-semibold">{gastappDataRoomV2.manifest ? 'sí' : 'no'}</span></div>
               <div>dataHash: <span className="font-semibold">{gastappDataRoomV2.manifest?.dataHash || '—'}</span></div>
