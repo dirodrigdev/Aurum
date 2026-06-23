@@ -62,11 +62,12 @@ export const describeGastappDataRoomV2Status = (input: {
   status: GastappDataRoomV2Status | null | undefined;
   errorMessage?: string | null;
   technicalDetail?: string | null;
+  retryActionLabel?: string | null;
 }) => {
-  const { status, errorMessage, technicalDetail } = input;
+  const { status, errorMessage, technicalDetail, retryActionLabel } = input;
   if (isGastappPermissionDenied(status, errorMessage)) {
     return buildGastappAccessGuidanceMessage(
-      '4. Vuelve a Aurum y presiona “Reintentar” o “Actualizar análisis”.',
+      `4. Vuelve a Aurum y presiona “${retryActionLabel || 'Reintentar'}”.`,
       technicalDetail || 'permission_denied al leer GastApp Data Room v2.',
     );
   }

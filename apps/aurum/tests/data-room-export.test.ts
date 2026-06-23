@@ -1,13 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { escapeCsvValue, buildCsv } from '../src/services/dataRoom/csv';
 import { buildFinancialDataRoomManifest } from '../src/services/dataRoom/buildManifest';
 import { buildFinancialDataRoom } from '../src/services/dataRoom/buildFinancialDataRoom';
 import type {
   AurumAdapterResult,
+  GastappDataRoomV2ManifestResult,
+  GastappDataRoomV2PeriodSummary,
+  GastappDataRoomV2Row,
   GastappLedgerPreviewAdapterResult,
   GastappMonthlyAdapterResult,
   MidasAdapterResult,
 } from '../src/services/dataRoom/dataRoomTypes';
+
+vi.mock('../src/services/firebase', () => ({
+  db: { app: { options: { projectId: 'aurum-project' } } },
+}));
 
 const baseAurum = (): AurumAdapterResult => ({
   included: true,
@@ -229,6 +236,73 @@ const gastappLedgerMismatch = (): GastappLedgerPreviewAdapterResult => ({
   warningsPayload: { status: 'mismatch', warnings: ['preview_only'] },
 });
 
+const gastappDataRoomV2Manifest = (): GastappDataRoomV2ManifestResult => ({
+  status: 'usable',
+  usable: true,
+  manifest: {
+    id: 'current',
+    runId: 'fnv1a64_22f103202e980cfc',
+    schemaVersion: '2',
+    calculationVersion: 'data-room-v2',
+    dataHash: 'fnv1a64:22f103202e980cfc',
+    sourceCommit: 'd24402d',
+    readinessStatus: 'warning',
+    officialRefreshAllowed: true,
+    consumerRefreshRequired: false,
+    blockers: [],
+    warnings: ['reviewed_warning'],
+    rowCount: 2295,
+    periodSummariesCount: 37,
+    generatedAt: '2026-06-23T10:00:00.000Z',
+    raw: { source: 'firestore' },
+  },
+  warnings: ['reviewed_warning'],
+  errorMessage: null,
+  configuredProjectId: 'gastapp-project',
+  rootCollection: 'gastapp_data_room_v2',
+  currentDocumentPath: 'gastapp_data_room_v2/current',
+});
+
+const gastappDataRoomV2PeriodSummaries = (): GastappDataRoomV2PeriodSummary[] => ([
+  {
+    id: '2026-04',
+    period: '2026-04',
+    periodPolicy: 'monthly',
+    readinessStatus: 'warning',
+    officialAmountEur: 123.45,
+    canonicalRowCount: 10,
+    rowCount: 12,
+    periodStart: '2026-04-01',
+    periodEnd: '2026-04-30',
+    warnings: ['reviewed_warning'],
+    blockers: [],
+    raw: { source: 'summary' },
+  },
+]);
+
+const gastappDataRoomV2Rows = (): GastappDataRoomV2Row[] => ([
+  {
+    id: 'row-1',
+    sourceKind: 'expense',
+    sourceId: 'exp-1',
+    period: '2026-04',
+    periodStart: '2026-04-01',
+    periodEnd: '2026-04-30',
+    bucket: 'day_to_day',
+    category: 'food',
+    subcategory: 'groceries',
+    label: 'Groceries',
+    description: 'Compra supermercado',
+    amountEur: 42.5,
+    isCanonical: true,
+    affectsAurum: true,
+    affectsDataRoomOfficial: true,
+    blocksReadiness: false,
+    requiresReview: false,
+    raw: { source: 'row' },
+  },
+]);
+
 describe('data room csv', () => {
   it('escapes commas, quotes and newlines', () => {
     expect(escapeCsvValue('hola')).toBe('hola');
@@ -249,9 +323,9 @@ describe('data room manifest', () => {
         aurum: true,
         midas: true,
         gastapp_monthly: true,
-        gastapp_ledger_preview: true,
-        gastapp_categories: false,
-        gastapp_transactions: false,
+      gastapp_ledger_preview: true,
+      gastapp_categories: false,
+      gastapp_transactions: false,
       },
       source_status: { aurum: 'ok', midas: 'ok', gastapp_status: 'ok', gastapp_ledger_preview_status: 'available' },
       missing_sources: [],
@@ -276,6 +350,7 @@ describe('data room manifest', () => {
       gastapp_ledger_preview_rounding_diff_count: 0,
       gastapp_ledger_preview_aurum_readiness_status: 'preview_only',
       gastapp_ledger_preview_is_official_source: false,
+      gastapp_data_room_v2: null,
     });
     expect(manifest.source_status.gastapp_status).toBe('ok');
     expect(manifest.gastapp_ledger_preview_status).toBe('available');
@@ -291,9 +366,9 @@ describe('data room manifest', () => {
         aurum: true,
         midas: true,
         gastapp_monthly: false,
-        gastapp_ledger_preview: false,
-        gastapp_categories: false,
-        gastapp_transactions: false,
+      gastapp_ledger_preview: false,
+      gastapp_categories: false,
+      gastapp_transactions: false,
       },
       source_status: { aurum: 'ok', midas: 'ok', gastapp_status: 'unavailable', gastapp_ledger_preview_status: 'missing_manifest' },
       missing_sources: ['gastapp_monthly'],
@@ -312,6 +387,7 @@ describe('data room manifest', () => {
       gastapp_ledger_preview_rounding_diff_count: null,
       gastapp_ledger_preview_aurum_readiness_status: null,
       gastapp_ledger_preview_is_official_source: false,
+      gastapp_data_room_v2: null,
     });
     expect(manifest.includes.gastapp_monthly).toBe(false);
     expect(manifest.source_status.gastapp_status).toBe('unavailable');
@@ -388,6 +464,36 @@ describe('buildFinancialDataRoom', () => {
     expect(result.manifest.gastapp_ledger_preview_status).toBe('mismatch');
     expect(result.files.map((file) => file.name)).toContain('gastapp_ledger_preview_manifest.json');
     expect(result.files.map((file) => file.name)).not.toContain('gastapp_ledger_preview_rows.csv');
+  });
+
+  it('builds the transaction bundle with manifest, summaries and rows', () => {
+    const result = buildFinancialDataRoom({
+      generatedAt: '2026-06-23T10:00:00.000Z',
+      aurum: baseAurum(),
+      midas: baseMidas(),
+      gastapp: gastappOk(),
+      gastappLedgerPreview: gastappLedgerAvailable(),
+      aurumProjectId: 'aurum-project',
+      gastappDataRoomV2: {
+        manifestResult: gastappDataRoomV2Manifest(),
+        periodSummaries: gastappDataRoomV2PeriodSummaries(),
+        rows: gastappDataRoomV2Rows(),
+        periodSummariesCollectionPath: 'gastapp_data_room_v2/fnv1a64_22f103202e980cfc/period_summaries',
+        rowsCollectionPath: 'gastapp_data_room_v2/fnv1a64_22f103202e980cfc/rows',
+      },
+    });
+
+    expect(result.filename).toBe('financial_data_room_with_transactions_2026-06-23.zip');
+    expect(result.manifest.includes.gastapp_transactions).toBe(true);
+    expect(result.manifest.source_status.gastapp_data_room_v2_status).toBe('usable');
+    expect(result.manifest.gastapp_data_room_v2?.data_hash).toBe('fnv1a64:22f103202e980cfc');
+    expect(result.files.map((file) => file.name)).toEqual(expect.arrayContaining([
+      'gastapp_data_room_v2_manifest.json',
+      'gastapp_data_room_v2_period_summaries.json',
+      'gastapp_data_room_v2_period_summaries.csv',
+      'gastapp_data_room_v2_rows.json',
+      'gastapp_data_room_v2_rows.csv',
+    ]));
   });
 });
 

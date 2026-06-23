@@ -349,7 +349,7 @@ export type AurumAdapterResult = {
 
 export type FinancialDataRoomManifest = {
   generated_at: string;
-  bundle_version: 'financial_data_room_mvp1';
+  bundle_version: 'financial_data_room_mvp1' | 'financial_data_room_with_transactions_v1';
   source_app: 'aurum';
   includes: {
     aurum: true;
@@ -357,13 +357,14 @@ export type FinancialDataRoomManifest = {
     gastapp_monthly: boolean;
     gastapp_ledger_preview: boolean;
     gastapp_categories: false;
-    gastapp_transactions: false;
+    gastapp_transactions: boolean;
   };
   source_status: {
     aurum: 'ok';
     midas: DataRoomSourceStatus;
     gastapp_status: DataRoomSourceStatus;
     gastapp_ledger_preview_status: GastappLedgerPreviewStatus;
+    gastapp_data_room_v2_status?: GastappDataRoomV2Status | null;
   };
   missing_sources: string[];
   warnings: string[];
@@ -384,6 +385,24 @@ export type FinancialDataRoomManifest = {
   gastapp_ledger_preview_rounding_diff_count: number | null;
   gastapp_ledger_preview_aurum_readiness_status: string | null;
   gastapp_ledger_preview_is_official_source: false;
+  gastapp_data_room_v2?: {
+    current_document_path: string;
+    root_collection: string;
+    run_id: string | null;
+    status: GastappDataRoomV2Status | null;
+    data_hash: string | null;
+    source_commit: string | null;
+    readiness_status: string | null;
+    official_refresh_allowed: boolean | null;
+    consumer_refresh_required: boolean | null;
+    blockers: string[];
+    warnings: string[];
+    generated_at: string | null;
+    row_count: number;
+    period_summaries_count: number;
+    period_summaries_collection_path: string | null;
+    rows_collection_path: string | null;
+  } | null;
 };
 
 export type FinancialDataRoomBuildResult = {

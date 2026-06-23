@@ -32,6 +32,15 @@ describe('gastappAccessGuidance', () => {
     expect(message).toContain('permission_denied · gastapp_data_room_v2/current');
   });
 
+  it('allows a custom retry action label for transaction exports', () => {
+    const message = describeGastappDataRoomV2Status({
+      status: 'permission_denied',
+      technicalDetail: 'permission_denied · gastapp_data_room_v2/current',
+      retryActionLabel: 'Descargar base financiera con transacciones',
+    });
+    expect(message).toContain('Descargar base financiera con transacciones');
+  });
+
   it('maps analysis missing months plus permission denied runtime to the actionable flow', () => {
     const message = describeGastappAnalysisAccessIssue({
       status: 'error',

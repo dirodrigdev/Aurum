@@ -7,6 +7,9 @@ import type {
   DataRoomFile,
   FinancialDataRoomBuildResult,
   FinancialDataRoomManifest,
+  GastappDataRoomV2ManifestResult,
+  GastappDataRoomV2PeriodSummary,
+  GastappDataRoomV2Row,
   GastappLedgerPreviewAdapterResult,
   GastappMonthlyAdapterResult,
   MidasAdapterResult,
@@ -112,6 +115,42 @@ const toCsvFile = (name: string, headers: string[], rows: Record<string, unknown
   rowCount: rows.length,
 });
 
+const buildGastappDataRoomV2PeriodSummaryRows = (rows: GastappDataRoomV2PeriodSummary[]) =>
+  rows.map((row) => ({
+    id: row.id,
+    period: row.period,
+    periodPolicy: row.periodPolicy,
+    readinessStatus: row.readinessStatus,
+    officialAmountEur: row.officialAmountEur,
+    canonicalRowCount: row.canonicalRowCount,
+    rowCount: row.rowCount,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    warnings: row.warnings.join(' | '),
+    blockers: row.blockers.join(' | '),
+  }));
+
+const buildGastappDataRoomV2RowCsvRows = (rows: GastappDataRoomV2Row[]) =>
+  rows.map((row) => ({
+    id: row.id,
+    sourceKind: row.sourceKind,
+    sourceId: row.sourceId,
+    period: row.period,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    bucket: row.bucket,
+    category: row.category,
+    subcategory: row.subcategory,
+    label: row.label,
+    description: row.description,
+    amountEur: row.amountEur,
+    isCanonical: row.isCanonical,
+    affectsAurum: row.affectsAurum,
+    affectsDataRoomOfficial: row.affectsDataRoomOfficial,
+    blocksReadiness: row.blocksReadiness,
+    requiresReview: row.requiresReview,
+  }));
+
 export const buildFinancialDataRoom = (input: {
   generatedAt: string;
   aurum: AurumAdapterResult;
@@ -119,6 +158,13 @@ export const buildFinancialDataRoom = (input: {
   gastapp: GastappMonthlyAdapterResult;
   gastappLedgerPreview: GastappLedgerPreviewAdapterResult;
   aurumProjectId: string | null;
+  gastappDataRoomV2?: {
+    manifestResult: GastappDataRoomV2ManifestResult;
+    periodSummaries: GastappDataRoomV2PeriodSummary[];
+    rows: GastappDataRoomV2Row[];
+    periodSummariesCollectionPath: string | null;
+    rowsCollectionPath: string | null;
+  } | null;
 }): FinancialDataRoomBuildResult => {
   const consolidatedRows = buildMonthlyConsolidatedRows(input.aurum, input.gastapp);
   const crossRows = buildCrossRows(input.aurum, input.gastapp);
@@ -133,7 +179,7 @@ export const buildFinancialDataRoom = (input: {
   ]);
   const manifest: FinancialDataRoomManifest = buildFinancialDataRoomManifest({
     generated_at: input.generatedAt,
-    bundle_version: 'financial_data_room_mvp1',
+    bundle_version: input.gastappDataRoomV2 ? 'financial_data_room_with_transactions_v1' : 'financial_data_room_mvp1',
     source_app: 'aurum',
     includes: {
       aurum: true,
@@ -141,13 +187,14 @@ export const buildFinancialDataRoom = (input: {
       gastapp_monthly: input.gastapp.included,
       gastapp_ledger_preview: input.gastappLedgerPreview.included,
       gastapp_categories: false,
-      gastapp_transactions: false,
+      gastapp_transactions: Boolean(input.gastappDataRoomV2),
     },
     source_status: {
       aurum: 'ok',
       midas: input.midas.status,
       gastapp_status: input.gastapp.status,
       gastapp_ledger_preview_status: input.gastappLedgerPreview.status,
+      gastapp_data_room_v2_status: input.gastappDataRoomV2?.manifestResult.status || null,
     },
     missing_sources: [
       ...(!input.midas.included ? ['midas'] : []),
@@ -172,6 +219,24 @@ export const buildFinancialDataRoom = (input: {
     gastapp_ledger_preview_rounding_diff_count: input.gastappLedgerPreview.manifest?.roundingDiffCount ?? null,
     gastapp_ledger_preview_aurum_readiness_status: input.gastappLedgerPreview.aurumReadinessStatus,
     gastapp_ledger_preview_is_official_source: false,
+    gastapp_data_room_v2: input.gastappDataRoomV2 ? {
+      current_document_path: input.gastappDataRoomV2.manifestResult.currentDocumentPath,
+      root_collection: input.gastappDataRoomV2.manifestResult.rootCollection,
+      run_id: input.gastappDataRoomV2.manifestResult.manifest?.runId || null,
+      status: input.gastappDataRoomV2.manifestResult.status,
+      data_hash: input.gastappDataRoomV2.manifestResult.manifest?.dataHash || null,
+      source_commit: input.gastappDataRoomV2.manifestResult.manifest?.sourceCommit || null,
+      readiness_status: input.gastappDataRoomV2.manifestResult.manifest?.readinessStatus || null,
+      official_refresh_allowed: input.gastappDataRoomV2.manifestResult.manifest?.officialRefreshAllowed ?? null,
+      consumer_refresh_required: input.gastappDataRoomV2.manifestResult.manifest?.consumerRefreshRequired ?? null,
+      blockers: input.gastappDataRoomV2.manifestResult.manifest?.blockers || [],
+      warnings: input.gastappDataRoomV2.manifestResult.manifest?.warnings || [],
+      generated_at: input.gastappDataRoomV2.manifestResult.manifest?.generatedAt || null,
+      row_count: input.gastappDataRoomV2.rows.length,
+      period_summaries_count: input.gastappDataRoomV2.periodSummaries.length,
+      period_summaries_collection_path: input.gastappDataRoomV2.periodSummariesCollectionPath,
+      rows_collection_path: input.gastappDataRoomV2.rowsCollectionPath,
+    } : null,
   });
 
   const files: DataRoomFile[] = [];
@@ -341,6 +406,66 @@ export const buildFinancialDataRoom = (input: {
     'notes',
   ], crossRows));
 
+  if (input.gastappDataRoomV2) {
+    files.push({
+      name: 'gastapp_data_room_v2_manifest.json',
+      content: `${JSON.stringify({
+        exportedAt: input.generatedAt,
+        currentDocumentPath: input.gastappDataRoomV2.manifestResult.currentDocumentPath,
+        rootCollection: input.gastappDataRoomV2.manifestResult.rootCollection,
+        status: input.gastappDataRoomV2.manifestResult.status,
+        manifest: input.gastappDataRoomV2.manifestResult.manifest,
+        warnings: input.gastappDataRoomV2.manifestResult.warnings,
+      }, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: 1,
+    });
+    files.push({
+      name: 'gastapp_data_room_v2_period_summaries.json',
+      content: `${JSON.stringify(input.gastappDataRoomV2.periodSummaries, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: input.gastappDataRoomV2.periodSummaries.length,
+    });
+    files.push(toCsvFile('gastapp_data_room_v2_period_summaries.csv', [
+      'id',
+      'period',
+      'periodPolicy',
+      'readinessStatus',
+      'officialAmountEur',
+      'canonicalRowCount',
+      'rowCount',
+      'periodStart',
+      'periodEnd',
+      'warnings',
+      'blockers',
+    ], buildGastappDataRoomV2PeriodSummaryRows(input.gastappDataRoomV2.periodSummaries)));
+    files.push({
+      name: 'gastapp_data_room_v2_rows.json',
+      content: `${JSON.stringify(input.gastappDataRoomV2.rows, null, 2)}\n`,
+      mimeType: 'application/json;charset=utf-8;',
+      rowCount: input.gastappDataRoomV2.rows.length,
+    });
+    files.push(toCsvFile('gastapp_data_room_v2_rows.csv', [
+      'id',
+      'sourceKind',
+      'sourceId',
+      'period',
+      'periodStart',
+      'periodEnd',
+      'bucket',
+      'category',
+      'subcategory',
+      'label',
+      'description',
+      'amountEur',
+      'isCanonical',
+      'affectsAurum',
+      'affectsDataRoomOfficial',
+      'blocksReadiness',
+      'requiresReview',
+    ], buildGastappDataRoomV2RowCsvRows(input.gastappDataRoomV2.rows)));
+  }
+
   const rawMinimal = {
     generated_at: input.generatedAt,
     aurum: input.aurum.rawMinimal,
@@ -357,6 +482,17 @@ export const buildFinancialDataRoom = (input: {
       reconciliation_status: input.gastappLedgerPreview.reconciliationStatus,
       aurum_readiness_status: input.gastappLedgerPreview.aurumReadinessStatus,
     },
+    gastapp_data_room_v2: input.gastappDataRoomV2 ? {
+      status: input.gastappDataRoomV2.manifestResult.status,
+      data_hash: input.gastappDataRoomV2.manifestResult.manifest?.dataHash || null,
+      source_commit: input.gastappDataRoomV2.manifestResult.manifest?.sourceCommit || null,
+      readiness_status: input.gastappDataRoomV2.manifestResult.manifest?.readinessStatus || null,
+      official_refresh_allowed: input.gastappDataRoomV2.manifestResult.manifest?.officialRefreshAllowed ?? null,
+      blockers: input.gastappDataRoomV2.manifestResult.manifest?.blockers || [],
+      warnings: input.gastappDataRoomV2.manifestResult.manifest?.warnings || [],
+      period_summaries: input.gastappDataRoomV2.periodSummaries.length,
+      rows: input.gastappDataRoomV2.rows.length,
+    } : null,
   };
 
   const rawMinimalContent = `${JSON.stringify(rawMinimal, null, 2)}\n`;
@@ -368,7 +504,9 @@ export const buildFinancialDataRoom = (input: {
   files.push({ name: 'manifest.json', content: manifestContent, mimeType: 'application/json;charset=utf-8;', rowCount: 1 });
 
   return {
-    filename: `financial_data_room_${todayYmd(input.generatedAt)}.zip`,
+    filename: input.gastappDataRoomV2
+      ? `financial_data_room_with_transactions_${todayYmd(input.generatedAt)}.zip`
+      : `financial_data_room_${todayYmd(input.generatedAt)}.zip`,
     files,
     manifest,
     rawMinimal,

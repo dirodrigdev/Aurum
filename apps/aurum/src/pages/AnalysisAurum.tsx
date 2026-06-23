@@ -55,7 +55,10 @@ import {
   describeGastappAnalysisAccessIssue,
   describeGastappZipExportStatus,
 } from '../services/dataRoom/gastappAccessGuidance';
-import { exportFinancialDataRoomZip } from '../services/dataRoom/exportDataRoomZip';
+import {
+  exportFinancialDataRoomWithTransactionsZip,
+  exportFinancialDataRoomZip,
+} from '../services/dataRoom/exportDataRoomZip';
 
 const loadWealthClosures = () => loadClosures();
 
@@ -148,7 +151,7 @@ export const AnalysisAurum: React.FC = () => {
   const [includeEstimatedMonth, setIncludeEstimatedMonth] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [exportMessage, setExportMessage] = useState('');
-  const [exportingDataRoom, setExportingDataRoom] = useState(false);
+  const [exportingDataRoomKind, setExportingDataRoomKind] = useState<'consolidated' | 'transactions' | null>(null);
   const [analysisRefreshTick, setAnalysisRefreshTick] = useState(0);
   const [freedomDraft, setFreedomDraft] = useState<FreedomControlDraft>({
     annualRatePct: '5',
@@ -522,7 +525,7 @@ export const AnalysisAurum: React.FC = () => {
   }, [analysisFingerprint, refreshClosures]);
 
   const handleExportDataRoom = useCallback(async () => {
-    setExportingDataRoom(true);
+    setExportingDataRoomKind('consolidated');
     setExportMessage('');
     try {
       const bundle = await exportFinancialDataRoomZip({
@@ -546,7 +549,42 @@ export const AnalysisAurum: React.FC = () => {
     } catch (error: any) {
       setExportMessage(String(error?.message || error || 'No pude generar el ZIP.'));
     } finally {
-      setExportingDataRoom(false);
+      setExportingDataRoomKind(null);
+    }
+  }, [
+    closures,
+    returnsSeriesView.officialRows,
+    wealthEvolutionModel,
+    periodSummaries,
+    yearlySummaries,
+    heroSinceStart,
+    heroLast12,
+    heroYtd2026,
+    heroLastMonth,
+  ]);
+
+  const handleExportDataRoomWithTransactions = useCallback(async () => {
+    setExportingDataRoomKind('transactions');
+    setExportMessage('');
+    try {
+      const bundle = await exportFinancialDataRoomWithTransactionsZip({
+        closures,
+        officialMonthlyRowsAsc: returnsSeriesView.officialRows,
+        wealthEvolutionModel,
+        periodSummaries,
+        yearlySummaries,
+        heroSinceStart,
+        heroLast12,
+        heroYtd2026,
+        heroLastMonth,
+      }, {
+        onProgress: setExportMessage,
+      });
+      setExportMessage(`ZIP generado: ${bundle.filename} · Incluye manifest, period summaries y rows de GastApp Data Room v2.`);
+    } catch (error: any) {
+      setExportMessage(String(error?.message || error || 'No pude generar el ZIP con transacciones.'));
+    } finally {
+      setExportingDataRoomKind(null);
     }
   }, [
     closures,
@@ -659,8 +697,10 @@ export const AnalysisAurum: React.FC = () => {
           yearlySummaries={yearlySummaries}
           wealthEvolutionModel={wealthEvolutionModel}
           onExportConsolidatedDataRoom={handleExportDataRoom}
+          onExportTransactionalDataRoom={handleExportDataRoomWithTransactions}
           exportMessage={exportMessage}
-          exportingDataRoom={exportingDataRoom}
+          exportingConsolidatedDataRoom={exportingDataRoomKind === 'consolidated'}
+          exportingTransactionalDataRoom={exportingDataRoomKind === 'transactions'}
         />
       )}
 
