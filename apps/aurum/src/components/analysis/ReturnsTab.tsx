@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, ChevronDown, LineChart, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, Download, LineChart, Zap } from 'lucide-react';
 import { Card, cn } from '../Components';
 import type { WealthCurrency } from '../../services/wealthStorage';
 import { formatCurrency, formatIsoDateTime, formatMonthLabel as monthLabel } from '../../utils/wealthFormat';
@@ -174,6 +174,9 @@ type ReturnsTabProps = {
   periodSummaries: AggregatedSummary[];
   yearlySummaries: AggregatedSummary[];
   wealthEvolutionModel: WealthEvolutionComparisonModel;
+  onExportConsolidatedDataRoom: () => void;
+  exportMessage: string;
+  exportingDataRoom: boolean;
 };
 
 const SummaryTable: React.FC<{
@@ -959,6 +962,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   periodSummaries,
   yearlySummaries,
   wealthEvolutionModel,
+  onExportConsolidatedDataRoom,
+  exportMessage,
+  exportingDataRoom,
 }) => {
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
@@ -1574,6 +1580,63 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             )}
           </tbody>
         </table>
+      </div>
+    </Card>
+
+    <Card className="border-slate-200 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data Room / Exportaciones</div>
+      <div className="mt-0.5 text-[11px] text-slate-500">
+        Descargas profundas separadas del cálculo mensual de Retornos. Requieren ventana temporal de GastApp para anexos/lecturas profundas.
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <div className="text-sm font-semibold text-slate-900">Descargar base financiera consolidada</div>
+          <div className="mt-1 text-[11px] text-slate-600">
+            Resumen consolidado y anexos disponibles.
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">
+            Incluye hoy: vista mensual oficial de GastApp (`aurum_monthly_from_periods_v1`) y ledger preview si está disponible.
+          </div>
+          <button
+            type="button"
+            onClick={onExportConsolidatedDataRoom}
+            disabled={exportingDataRoom}
+            className="mt-3 inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Download size={13} />
+            {exportingDataRoom ? 'Generando…' : 'Descargar base financiera consolidada'}
+          </button>
+        </div>
+        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/40 p-3">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-slate-900">Descargar base financiera con transacciones</div>
+            <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              Próximamente
+            </span>
+          </div>
+          <div className="mt-1 text-[11px] text-slate-600">
+            Incluye detalle transaccional disponible.
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">
+            Aún no existe una exportación separada para Data Room v2 con `rows` y `period_summaries`. El ZIP actual no descarga esa capa granular como exportación independiente.
+          </div>
+          <button
+            type="button"
+            disabled
+            className="mt-3 inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-400 opacity-70"
+          >
+            <Download size={13} />
+            Descargar base financiera con transacciones
+          </button>
+        </div>
+      </div>
+      {!!exportMessage && (
+        <div className="mt-3 whitespace-pre-line rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+          {exportMessage}
+        </div>
+      )}
+      <div className="mt-2 text-[10px] text-slate-500">
+        Retornos y gasto mensual oficial siguen funcionando sin abrir GastApp. La ventana temporal aplica solo para Data Room profundo, ZIP detallado y anexos transaccionales.
       </div>
     </Card>
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, Download } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { Button, Card } from '../components/Components';
 import { FreedomTab } from '../components/analysis/FreedomTab';
@@ -595,25 +595,12 @@ export const AnalysisAurum: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleExportDataRoom}
-              disabled={exportingDataRoom}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <Download size={12} />
-              {exportingDataRoom ? 'Generando…' : 'Descargar base financiera consolidada'}
-            </button>
-            <button
-              type="button"
               onClick={refreshAnalysisModels}
               className="rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
             >
               Actualizar análisis
             </button>
           </div>
-        </div>
-        {!!exportMessage && <div className="mt-2 whitespace-pre-line text-[10px] text-slate-500">{exportMessage}</div>}
-        <div className="mt-1 text-[10px] text-slate-500">
-          Si está disponible, el Data Room incluye el ledger preview transaccional de GastApp como anexo de validación.
         </div>
       </Card>
 
@@ -671,6 +658,9 @@ export const AnalysisAurum: React.FC = () => {
           periodSummaries={periodSummaries}
           yearlySummaries={yearlySummaries}
           wealthEvolutionModel={wealthEvolutionModel}
+          onExportConsolidatedDataRoom={handleExportDataRoom}
+          exportMessage={exportMessage}
+          exportingDataRoom={exportingDataRoom}
         />
       )}
 
