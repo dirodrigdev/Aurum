@@ -13,6 +13,7 @@ const base = (status: GastappDataRoomV2DiagnosticViewState['status']): GastappDa
   status,
   sourceStatus: null,
   message: '',
+  technicalDetail: null,
   manifest: null,
   summariesSample: [],
   rowsSample: [],

@@ -89,6 +89,7 @@ const DEFAULT_GASTAPP_V2_DIAGNOSTIC: GastappDataRoomV2DiagnosticViewState = {
   status: 'idle',
   sourceStatus: null,
   message: 'Abre esta sección para probar lectura read-only del Data Room v2.',
+  technicalDetail: null,
   manifest: null,
   summariesSample: [],
   rowsSample: [],
@@ -959,19 +960,22 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
       ...current,
       status: 'loading',
       message: 'Probando lectura read-only de GastApp Data Room v2...',
+      technicalDetail: null,
     }));
     try {
       const manifestResult = await getGastappDataRoomV2Manifest();
+      const manifestTechnicalDetail = `permission_denied · ${manifestResult.currentDocumentPath}`;
       if (!manifestResult.manifest) {
         const message = describeGastappDataRoomV2Status({
           status: manifestResult.status,
           errorMessage: manifestResult.errorMessage,
-          technicalDetail: `status=${manifestResult.status} · path=${manifestResult.currentDocumentPath}`,
+          technicalDetail: manifestResult.status === 'permission_denied' ? manifestTechnicalDetail : `status=${manifestResult.status} · path=${manifestResult.currentDocumentPath}`,
         });
         setGastappDataRoomV2Diagnostic({
           status: 'error',
           sourceStatus: manifestResult.status,
           message,
+          technicalDetail: manifestResult.status === 'permission_denied' ? manifestTechnicalDetail : null,
           manifest: null,
           summariesSample: [],
           rowsSample: [],
@@ -990,7 +994,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         periodSummariesResult.status === 'permission_denied' ||
         rowsPageResult.status === 'permission_denied';
       const technicalDetail = hasPermissionBlock
-        ? `status=current:${manifestResult.status} summaries:${periodSummariesResult.status} rows:${rowsPageResult.status}`
+        ? `permission_denied · ${manifestResult.currentDocumentPath}`
         : null;
       const message = describeGastappDataRoomV2Status({
         status: sourceStatus,
@@ -1002,6 +1006,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         status: sourceStatus === 'usable' ? 'ok' : 'error',
         sourceStatus,
         message,
+        technicalDetail,
         manifest: manifestResult.manifest,
         summariesSample: periodSummariesResult.summaries.slice(0, 3),
         rowsSample: rowsPageResult.page.rows,
@@ -1011,6 +1016,7 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
         status: 'error',
         sourceStatus: 'error',
         message: String(error?.message || error || 'No se pudo completar el diagnóstico v2.'),
+        technicalDetail: null,
         manifest: null,
         summariesSample: [],
         rowsSample: [],

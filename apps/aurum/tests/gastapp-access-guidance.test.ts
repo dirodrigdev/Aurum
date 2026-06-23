@@ -16,19 +16,20 @@ describe('gastappAccessGuidance', () => {
 
   it('builds the shared actionable guidance copy', () => {
     const message = buildGastappAccessGuidanceMessage();
-    expect(message).toContain('No hay acceso activo al Data Room de GastApp.');
+    expect(message).toContain('Acceso GastApp cerrado');
     expect(message).toContain('Abre GastApp.');
+    expect(message).toContain('Ajustes → Diagnóstico Aurum/Data Room → Data Room para Aurum');
     expect(message).toContain('Abrir Data Room para Aurum por 30 min');
   });
 
   it('maps permission denied in settings diagnostic to the GastApp access flow', () => {
     const message = describeGastappDataRoomV2Status({
       status: 'permission_denied',
-      technicalDetail: 'status=permission_denied',
+      technicalDetail: 'permission_denied · gastapp_data_room_v2/current',
     });
-    expect(message).toContain('No hay acceso activo al Data Room de GastApp.');
+    expect(message).toContain('Acceso GastApp cerrado');
     expect(message).toContain('Reintentar');
-    expect(message).toContain('status=permission_denied');
+    expect(message).toContain('permission_denied · gastapp_data_room_v2/current');
   });
 
   it('maps analysis missing months plus permission denied runtime to the actionable flow', () => {

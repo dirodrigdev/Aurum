@@ -12,13 +12,19 @@ type GastappPermissionLikeStatus =
   | null
   | undefined;
 
-const GASTAPP_ACCESS_GUIDANCE_HEADER = 'No hay acceso activo al Data Room de GastApp.';
+export const GASTAPP_ACCESS_GUIDANCE_HEADER = 'Acceso GastApp cerrado';
 
-const GASTAPP_ACCESS_GUIDANCE_STEPS = [
+export const GASTAPP_ACCESS_GUIDANCE_STEPS = [
   '1. Abre GastApp.',
-  '2. Ve a Ajustes / Data Room.',
+  '2. Ve a Ajustes → Diagnóstico Aurum/Data Room → Data Room para Aurum.',
   '3. Toca “Abrir Data Room para Aurum por 30 min”.',
 ];
+
+export const GASTAPP_ACCESS_GUIDANCE_INTRO = 'Para leer el Data Room:';
+
+export const buildGastappAccessTechnicalDetail = (
+  technicalDetail?: string | null,
+) => technicalDetail || 'permission_denied';
 
 const normalizeMessage = (value: string | null | undefined) => String(value || '').toLowerCase();
 
@@ -42,7 +48,7 @@ export const buildGastappAccessGuidanceMessage = (
 ) => {
   const lines = [
     GASTAPP_ACCESS_GUIDANCE_HEADER,
-    'Para actualizar esta información:',
+    GASTAPP_ACCESS_GUIDANCE_INTRO,
     ...GASTAPP_ACCESS_GUIDANCE_STEPS,
     finalStep,
   ];
