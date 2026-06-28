@@ -55,7 +55,6 @@ import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/mida
 import {
   createSimulationConfigCloudDiagnostics,
   LEGACY_SIMULATION_CONFIG_PATH,
-  loadLegacyGlobalSimulationConfigFromFirestore,
   loadActiveSimulationConfigFromFirestore,
   persistActiveSimulationConfigToFirestore,
   type SimulationConfigCloudDiagnostics,
@@ -64,7 +63,6 @@ import {
   buildSimulationConfigHash,
   getUserScopedSimulationConfigPath,
   hashSimulationConfigString,
-  shouldSeedUserScopedSimulationConfig,
   shouldPersistActiveSimulationConfig,
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
@@ -1382,103 +1380,6 @@ export default function App() {
           setSimulationConfigHydrationStatus(loaded.reason === 'active_not_found' ? 'missing' : 'error');
           setSimulationConfigDiagnostics(loaded.diagnostics);
           return;
-        }
-
-        const canSeedFromLocal = shouldSeedUserScopedSimulationConfig({
-          readStatus: loaded.diagnostics.readStatus,
-          isCanonicalUserSession,
-          hasLocalCandidate: Boolean(initialPersistedBaseRef.current),
-          cloudExists: loaded.diagnostics.exists,
-        });
-
-        if (
-          loaded.reason === 'active_not_found' &&
-          !hasSeededUserScopedConfigRef.current &&
-          isCanonicalUserSession
-        ) {
-          const legacyLoaded = await loadLegacyGlobalSimulationConfigFromFirestore();
-          if (cancelled) return;
-          if (legacyLoaded.ok) {
-            const seeded = await persistActiveSimulationConfigToFirestore({
-              params: legacyLoaded.params,
-              source: 'seed_legacy_global',
-            });
-            if (cancelled) return;
-            if (seeded.ok) {
-              hasSeededUserScopedConfigRef.current = true;
-              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(legacyLoaded.params), activeWeightsRef.current);
-              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
-                activeWeights: activeWeightsRef.current,
-                diagnosticsLabel: 'cloud/seed-legacy',
-              });
-              cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
-              setBaseParams(cloudParams);
-              setSimParams(cloudParams);
-              setSimulationConfigSource('cloud');
-              setSimulationConfigSavedAt(seeded.active.savedAt ?? null);
-              setSimulationConfigHash(seeded.active.hash ?? null);
-              setSimulationConfigHydrationStatus('cloud');
-              setSimulationConfigDiagnostics({
-                ...loaded.diagnostics,
-                readStatus: 'loaded',
-                errorMessage: null,
-                exists: true,
-                activeHash: seeded.active.hash ?? null,
-                activeSavedAt: seeded.active.savedAt ?? null,
-                activeParamsJsonExists: true,
-                activeSpendingPhasesExists: true,
-                activeSeedExists: true,
-                activeNSimExists: true,
-                activeBucketMonthsExists: true,
-                legacyGlobalReadStatus: legacyLoaded.diagnostics.readStatus,
-                legacyGlobalErrorMessage: legacyLoaded.diagnostics.errorMessage,
-                legacyGlobalExists: legacyLoaded.diagnostics.exists,
-                legacyGlobalHash: legacyLoaded.diagnostics.activeHash,
-                missingFields: [],
-              });
-              setCloudSimulationHydrated(true);
-              return;
-            }
-          }
-
-          if (canSeedFromLocal && initialPersistedBaseRef.current) {
-            const seeded = await persistActiveSimulationConfigToFirestore({
-              params: cloneParams(initialPersistedBaseRef.current),
-              source: 'seed_local_cache_initial',
-            });
-            if (cancelled) return;
-            if (seeded.ok) {
-              hasSeededUserScopedConfigRef.current = true;
-              const cloudParamsRaw = applyActiveDistributionToParams(cloneParams(initialPersistedBaseRef.current), activeWeightsRef.current);
-              const cloudParams = buildCanonicalBaseSimulationParams(cloudParamsRaw, {
-                activeWeights: activeWeightsRef.current,
-                diagnosticsLabel: 'cloud/seed-local-cache',
-              });
-              cloudSimulationConfigHashRef.current = seeded.active.hash ?? null;
-              setBaseParams(cloudParams);
-              setSimParams(cloudParams);
-              setSimulationConfigSource('cloud');
-              setSimulationConfigSavedAt(seeded.active.savedAt ?? null);
-              setSimulationConfigHash(seeded.active.hash ?? null);
-              setSimulationConfigHydrationStatus('cloud');
-              setSimulationConfigDiagnostics({
-                ...loaded.diagnostics,
-                readStatus: 'loaded',
-                errorMessage: null,
-                exists: true,
-                activeHash: seeded.active.hash ?? null,
-                activeSavedAt: seeded.active.savedAt ?? null,
-                activeParamsJsonExists: true,
-                activeSpendingPhasesExists: true,
-                activeSeedExists: true,
-                activeNSimExists: true,
-                activeBucketMonthsExists: true,
-                missingFields: [],
-              });
-              setCloudSimulationHydrated(true);
-              return;
-            }
-          }
         }
 
         if (!loaded.ok) {

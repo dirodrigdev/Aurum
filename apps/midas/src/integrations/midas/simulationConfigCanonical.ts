@@ -41,7 +41,7 @@ export function buildSimulationConfigHash(params: ModelParameters): string {
 export function shouldPersistActiveSimulationConfig(input: PersistSimulationConfigDecisionInput): boolean {
   if (input.hydrationStatus === 'loading' || input.hydrationStatus === 'error') return false;
   if (input.hydrationStatus === 'cloud') return input.nextHash !== input.cloudHash;
-  return input.hydrationStatus === 'missing';
+  return false;
 }
 
 export function getUserScopedSimulationConfigPath(uid: string): string {
