@@ -3,6 +3,10 @@ import { Button, Card, Input } from '../Components';
 import { parseStrictNumber } from '../../utils/numberUtils';
 import { formatCurrency, formatMonthLabel, formatRateInt } from '../../utils/wealthFormat';
 import {
+  classifyHistoricalClosureReviewStatus,
+  isClosureReviewCompletionCandidate,
+} from '../../services/closureReviewStatus';
+import {
   defaultFxRates,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
   resolveClosureSectionAmounts,
@@ -118,6 +122,10 @@ export const ClosureReviewModal: React.FC<ClosureReviewModalProps> = ({
     () => (currentClosure ? computeClosureSummary(currentClosure) : null),
     [currentClosure],
   );
+  const currentReviewStatus = useMemo(
+    () => (currentClosure ? classifyHistoricalClosureReviewStatus(currentClosure) : null),
+    [currentClosure],
+  );
 
   useEffect(() => {
     if (!currentClosure) return;
@@ -199,8 +207,8 @@ export const ClosureReviewModal: React.FC<ClosureReviewModalProps> = ({
       prev.map((closure) => (closure.id === updated.id ? updated : closure)),
     );
 
-    const nextSummary = computeClosureSummary(updated);
-    const isComplete = !nextSummary.hasMissingFx && nextSummary.hasRecords;
+    const nextStatus = classifyHistoricalClosureReviewStatus(updated);
+    const isComplete = isClosureReviewCompletionCandidate(nextStatus);
     if (isComplete) markComplete(updated.monthKey);
     else markPending(updated.monthKey);
 
@@ -266,16 +274,23 @@ export const ClosureReviewModal: React.FC<ClosureReviewModalProps> = ({
               </div>
             </div>
 
-            {currentClosure && currentSummary && (
+            {currentClosure && currentSummary && currentReviewStatus && (
               <div className="mt-4 space-y-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                  {currentSummary.isSummaryOnly ? (
+                  {currentReviewStatus.isHistoricalSummaryOnly ? (
+                    <span className="font-medium text-amber-700">
+                      Hist&oacute;rico agregado sin detalle: usable para c&aacute;lculo agregado, pero sin records por instrumento.
+                    </span>
+                  ) : currentSummary.isSummaryOnly ? (
                     <span className="font-medium text-amber-700">Datos resumidos: este cierre no tiene records de detalle.</span>
                   ) : (
                     <span className="font-medium text-emerald-700">Datos con detalle disponibles.</span>
                   )}
                   {currentSummary.hasMissingFx && (
                     <span className="ml-2 font-medium text-amber-700">Faltan indicadores USD/CLP y/o UF/CLP.</span>
+                  )}
+                  {!currentReviewStatus.hasNetClpOrUsablePatrimony && (
+                    <span className="ml-2 font-medium text-rose-700">Falta patrimonio utilizable en el resumen del cierre.</span>
                   )}
                 </div>
 
