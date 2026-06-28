@@ -4929,6 +4929,9 @@ export default function App() {
           simulationActive={simulationActive}
           simulationLabel={stateLabel}
           simulationSnapshot={simulationOptimizerSnapshot}
+          canonicalInputReady={canonicalInputReadiness.ready}
+          canonicalInputBlockedReason={canonicalInputBlockedReason}
+          m8InputFingerprint={m8InputFingerprint}
         />
       )}
     </SectionSuspense>

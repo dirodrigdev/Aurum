@@ -28,4 +28,10 @@ assert.match(
   'runtime diagnostics must expose canonical readiness, pending source, and user-facing status message',
 );
 
+assert.match(
+  appSource,
+  /<OptimizationLightPageLazy[\s\S]*?canonicalInputReady=\{canonicalInputReadiness\.ready\}[\s\S]*?canonicalInputBlockedReason=\{canonicalInputBlockedReason\}[\s\S]*?m8InputFingerprint=\{m8InputFingerprint\}/,
+  'optimizer must receive canonical readiness and the applied M8 fingerprint',
+);
+
 console.log('App canonical gate tests passed');

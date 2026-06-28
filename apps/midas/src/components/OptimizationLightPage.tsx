@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelParameters, PortfolioWeights, ScenarioVariantId, SimulationResults } from '../domain/model/types';
+import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
+import type { SimulationRunBlockedReason } from '../domain/model/simulationRunGate';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import { loadInstrumentImplementationUniverse } from '../domain/instrumentImplementationLoader';
 import type { PlanVitalCuenta2LoaderDiagnostic } from '../domain/instrumentImplementationLoader';
@@ -34,6 +36,7 @@ import {
   type RvRfDecisionCandidateAnnotated,
   type RvRfDecisionProfiles,
 } from '../domain/optimizer/rvRfDecisionProfiles';
+import { evaluateOptimizerCanonicalGate } from '../domain/optimizer/optimizerCanonicalGate';
 import { optimizerPolicyConfig, REALISTIC_VALIDATION_GAP_THRESHOLD_RV_PP } from '../domain/optimizerPolicyConfig';
 import { T } from './theme';
 
@@ -2116,12 +2119,18 @@ export function OptimizationLightPage({
   simulationActive,
   simulationLabel,
   simulationSnapshot = null,
+  canonicalInputReady = true,
+  canonicalInputBlockedReason = null,
+  m8InputFingerprint = null,
 }: {
   baseParams: ModelParameters;
   simulationParams: ModelParameters;
   simulationActive: boolean;
   simulationLabel?: string;
   simulationSnapshot?: OptimizationSimulationSnapshot;
+  canonicalInputReady?: boolean;
+  canonicalInputBlockedReason?: SimulationRunBlockedReason | null;
+  m8InputFingerprint?: M8InputFingerprint | null;
 }) {
   const [mode, setMode] = useState<OptimizationMode>('light');
   const [sourceMode, setSourceMode] = useState<SourceMode>(simulationActive ? 'simulation' : 'base');
@@ -2186,6 +2195,16 @@ export function OptimizationLightPage({
   const decisionResumeActionRef = React.useRef<'profiles' | 'confirmation' | null>(null);
   const decisionRunTokenRef = React.useRef(0);
   const activeDecisionFingerprintRef = React.useRef<string>('');
+  const optimizerCanonicalGate = useMemo(
+    () => evaluateOptimizerCanonicalGate({
+      canonicalInputReady,
+      canonicalInputBlockedReason,
+      m8InputFingerprint,
+    }),
+    [canonicalInputBlockedReason, canonicalInputReady, m8InputFingerprint],
+  );
+  const optimizerBlockedMessage = optimizerCanonicalGate.ready ? null : optimizerCanonicalGate.message;
+  const optimizerActionsBlocked = !optimizerCanonicalGate.ready;
 
   const decisionYield = useCallback(async () => {
     if (typeof window === 'undefined') return;
@@ -2310,6 +2329,17 @@ export function OptimizationLightPage({
     setDecisionBackgroundHint(null);
     setDecisionFlowWarning(null);
   }, []);
+
+  const blockOptimizerRunIfNeeded = useCallback((setSpecificError?: (message: string) => void): boolean => {
+    if (optimizerCanonicalGate.ready) return false;
+    setPipelineIntent('idle');
+    setDecisionExecutionState('interrupted');
+    setDecisionBackgroundHint(null);
+    setDecisionFlowWarning(optimizerCanonicalGate.message);
+    setDecisionProfilesError(optimizerCanonicalGate.message);
+    setSpecificError?.(optimizerCanonicalGate.message);
+    return true;
+  }, [optimizerCanonicalGate]);
 
   const buildDecisionRunContext = useCallback((): DecisionRunContext => {
     const runToken = decisionRunTokenRef.current + 1;
@@ -2451,6 +2481,7 @@ export function OptimizationLightPage({
 
   const runPhase1 = useCallback(async () => {
     if (phase1Running) return;
+    if (blockOptimizerRunIfNeeded(setStaleNotice)) return;
     const runId = (phase1Diagnostics?.runId ?? 0) + 1;
     const startedAt = performance.now();
     let slowTimer: number | null = null;
@@ -2583,10 +2614,11 @@ export function OptimizationLightPage({
       if (slowTimer !== null) window.clearTimeout(slowTimer);
       setPhase1Running(false);
     }
-  }, [activeParams, activeSourceLabel, phase1Diagnostics?.runId, phase1Running]);
+  }, [activeParams, activeSourceLabel, blockOptimizerRunIfNeeded, phase1Diagnostics?.runId, phase1Running]);
 
   const runPhase2 = useCallback(async () => {
     if (phase2Running || !phase1Points.length) return;
+    if (blockOptimizerRunIfNeeded(setStaleNotice)) return;
     setPhase2Running(true);
     setStaleNotice(null);
     setPhase2Rows([]);
@@ -2634,10 +2666,11 @@ export function OptimizationLightPage({
     } finally {
       setPhase2Running(false);
     }
-  }, [activeParams, activeSourceLabel, phase1Points, phase2Running]);
+  }, [activeParams, activeSourceLabel, blockOptimizerRunIfNeeded, phase1Points, phase2Running]);
 
   const runSensitivity = useCallback(async () => {
     if (sensitivityRunning || !phase2Rows.length) return;
+    if (blockOptimizerRunIfNeeded(setSensitivityError)) return;
     setSensitivityRunning(true);
     setSensitivityError(null);
     setSensitivityResults([]);
@@ -2692,11 +2725,12 @@ export function OptimizationLightPage({
     } finally {
       setSensitivityRunning(false);
     }
-  }, [activeParams, phase2Rows, sensitivityRunning]);
+  }, [activeParams, blockOptimizerRunIfNeeded, phase2Rows, sensitivityRunning]);
 
   async function runSpendingHeadroom() {
     const mixes = buildSpendingHeadroomCandidates(phase2Rows, phase2CurrentRow, phase2QualityWinner);
     if (spendingHeadroomRunning || !mixes.length) return;
+    if (blockOptimizerRunIfNeeded(setSpendingHeadroomError)) return;
     setSpendingHeadroomRunning(true);
     setSpendingHeadroomError(null);
     setSpendingHeadroomResults([]);
@@ -2984,6 +3018,7 @@ export function OptimizationLightPage({
 
   async function runDecisionProfiles() {
     if (decisionProfilesRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     const runContext = buildDecisionRunContext();
     decisionResumeActionRef.current = 'profiles';
     resetDecisionFlowArtifacts();
@@ -3171,6 +3206,7 @@ export function OptimizationLightPage({
 
   async function runDecisionConfirmation() {
     if (decisionProfilesRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     const runContext = buildDecisionRunContext();
     decisionResumeActionRef.current = 'confirmation';
     const preliminaryMain = actionableRecommendationCandidate;
@@ -3285,6 +3321,7 @@ export function OptimizationLightPage({
 
   const resumeDecisionRun = useCallback(() => {
     if (decisionProfilesRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     setDecisionExecutionState('restarting');
     setDecisionFlowWarning('Reanudando cálculo desde la etapa actual…');
     decisionForceInterruptRef.current = false;
@@ -3295,19 +3332,21 @@ export function OptimizationLightPage({
       return;
     }
     void runDecisionProfiles();
-  }, [decisionProfilesRunning]);
+  }, [blockOptimizerRunIfNeeded, decisionProfilesRunning]);
 
   const runExpressSimulation = useCallback(() => {
     if (decisionProfilesRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     setPipelineIntent('express');
     void runDecisionProfiles();
-  }, [decisionProfilesRunning]);
+  }, [blockOptimizerRunIfNeeded, decisionProfilesRunning]);
 
   const runCompleteRecommendation = useCallback(() => {
     if (decisionProfilesRunning || implementationRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     setPipelineIntent('full');
     void runDecisionProfiles();
-  }, [decisionProfilesRunning, implementationRunning]);
+  }, [blockOptimizerRunIfNeeded, decisionProfilesRunning, implementationRunning]);
 
 
   const modeCards = useMemo(
@@ -3939,6 +3978,7 @@ export function OptimizationLightPage({
 
   const runFinalImplementation = useCallback(async () => {
     if (finalImplementationRunning) return;
+    if (blockOptimizerRunIfNeeded(setFinalImplementationError)) return;
     if (!finalPolicyWinnerRow) {
       setFinalImplementationError('Primero ejecuta Fase 3 para definir un ganador POLICY final.');
       return;
@@ -3989,10 +4029,11 @@ export function OptimizationLightPage({
     } finally {
       setFinalImplementationRunning(false);
     }
-  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, finalImplementationRunning, finalPolicyWinnerRow, finalPolicyMatchesIntermediateTarget, implementationPlan]);
+  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, blockOptimizerRunIfNeeded, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, finalImplementationRunning, finalPolicyWinnerRow, finalPolicyMatchesIntermediateTarget, implementationPlan]);
 
   const runImplementation = useCallback(async () => {
     if (implementationRunning) return;
+    if (blockOptimizerRunIfNeeded(setImplementationError)) return;
     if (!decisionImplementationReady) {
       setImplementationError('Confirma con simulación completa antes de implementar.');
       return;
@@ -4046,17 +4087,18 @@ export function OptimizationLightPage({
     } finally {
       setImplementationRunning(false);
     }
-  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, decisionImplementationReady, effectiveSourceMode, implementationRunning, phase2ImplementationSelectedRow]);
+  }, [activeOptimizationInputFingerprint, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, blockOptimizerRunIfNeeded, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, decisionImplementationReady, effectiveSourceMode, implementationRunning, phase2ImplementationSelectedRow]);
 
   const runConfirmAndImplementation = useCallback(() => {
     if (decisionProfilesRunning || implementationRunning) return;
+    if (blockOptimizerRunIfNeeded(setDecisionProfilesError)) return;
     setPipelineIntent('confirm_implementation');
     if (decisionFlowStatus?.stage === 'confirmed') {
       void runImplementation();
       return;
     }
     void runDecisionConfirmation();
-  }, [decisionFlowStatus?.stage, decisionProfilesRunning, implementationRunning, runDecisionConfirmation, runImplementation]);
+  }, [blockOptimizerRunIfNeeded, decisionFlowStatus?.stage, decisionProfilesRunning, implementationRunning, runDecisionConfirmation, runImplementation]);
   React.useEffect(() => {
     if (pipelineIntent === 'idle') return;
     if (decisionProfilesRunning || implementationRunning) return;
@@ -4103,6 +4145,7 @@ export function OptimizationLightPage({
 
   const runRealisticValidation = useCallback(async () => {
     if (realisticValidationRunning) return;
+    if (blockOptimizerRunIfNeeded(setRealisticValidationError)) return;
     const idealRow = phase2ImplementationSelectedRow;
     if (!implementationPlan || !idealRow || !implementationResultIsCurrent) {
       setRealisticValidationError('Primero ejecuta Implementación para validar el mix alcanzable.');
@@ -4159,11 +4202,12 @@ export function OptimizationLightPage({
     } finally {
       setRealisticValidationRunning(false);
     }
-  }, [activeOptimizationInputFingerprint, activeParams, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, implementationPlan, implementationResultIsCurrent, phase2ImplementationSelectedRow, realisticValidationRunning]);
+  }, [activeOptimizationInputFingerprint, activeParams, activeParams.simulation.nSim, activeParams.simulation.seed, activeScenarioLabel, activeSourceLabel, blockOptimizerRunIfNeeded, decisionFlowStatus?.nSim, decisionFlowStatus?.seed, effectiveSourceMode, implementationPlan, implementationResultIsCurrent, phase2ImplementationSelectedRow, realisticValidationRunning]);
 
   const runLongevityPlus5 = useCallback(async () => {
     const selectedRow = phase2LongevitySelectedRow.row;
     if (!selectedRow || longevityRunning) return;
+    if (blockOptimizerRunIfNeeded(setLongevityError)) return;
     setLongevityRunning(true);
     setLongevityError(null);
     try {
@@ -4187,10 +4231,11 @@ export function OptimizationLightPage({
     } finally {
       setLongevityRunning(false);
     }
-  }, [activeParams, longevityRunning, phase2LongevitySelectedRow]);
+  }, [activeParams, blockOptimizerRunIfNeeded, longevityRunning, phase2LongevitySelectedRow]);
 
   const runPhase3 = useCallback(async () => {
     if (phase3Running || !phase3InputRows.length) return;
+    if (blockOptimizerRunIfNeeded(setPhase3Error)) return;
     setPhase3Running(true);
     setPhase3Error(null);
     setPhase3Result(null);
@@ -4285,7 +4330,7 @@ export function OptimizationLightPage({
     } finally {
       setPhase3Running(false);
     }
-  }, [activeParams, phase3Input.poolBand, phase3InputRows, phase3Running]);
+  }, [activeParams, blockOptimizerRunIfNeeded, phase3Input.poolBand, phase3InputRows, phase3Running]);
 
   const classifyRescueDependency = useCallback((row: Phase2Point): string => {
     const house = row.houseSalePct;
@@ -4396,22 +4441,27 @@ export function OptimizationLightPage({
           <div style={{ color: T.textMuted, fontSize: 10, lineHeight: 1.45 }}>
             Ejecuta una simulación express para explorar o corre el flujo completo para obtener un candidato confirmado para validar y sus movimientos concretos.
           </div>
+          {optimizerBlockedMessage ? (
+            <div style={{ background: 'rgba(255, 176, 32, 0.12)', border: `1px solid ${T.warning}`, borderRadius: 10, padding: '8px 10px', color: T.warning, fontSize: 11, fontWeight: 800 }}>
+              {optimizerBlockedMessage}
+            </div>
+          ) : null}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             type="button"
             onClick={runCompleteRecommendation}
-            disabled={decisionProfilesRunning || mode !== 'light'}
+            disabled={optimizerActionsBlocked || decisionProfilesRunning || mode !== 'light'}
             style={{
-              background: decisionProfilesRunning ? T.surfaceEl : T.primary,
-              border: `1px solid ${decisionProfilesRunning ? T.border : T.primary}`,
-              color: decisionProfilesRunning ? T.textMuted : '#fff',
+              background: optimizerActionsBlocked || decisionProfilesRunning ? T.surfaceEl : T.primary,
+              border: `1px solid ${optimizerActionsBlocked || decisionProfilesRunning ? T.border : T.primary}`,
+              color: optimizerActionsBlocked || decisionProfilesRunning ? T.textMuted : '#fff',
               borderRadius: 999,
               padding: '8px 13px',
               fontSize: 12,
               fontWeight: 800,
-              cursor: decisionProfilesRunning || mode !== 'light' ? 'not-allowed' : 'pointer',
-              opacity: mode !== 'light' ? 0.65 : 1,
+              cursor: optimizerActionsBlocked || decisionProfilesRunning || mode !== 'light' ? 'not-allowed' : 'pointer',
+              opacity: optimizerActionsBlocked || mode !== 'light' ? 0.65 : 1,
             }}
           >
             {fullFlowStatusLabel}
@@ -4419,17 +4469,17 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runExpressSimulation}
-            disabled={decisionProfilesRunning || implementationRunning}
+            disabled={optimizerActionsBlocked || decisionProfilesRunning || implementationRunning}
             style={{
-              background: decisionProfilesRunning || implementationRunning ? T.surface : T.surfaceEl,
+              background: optimizerActionsBlocked || decisionProfilesRunning || implementationRunning ? T.surface : T.surfaceEl,
               border: `1px solid ${T.border}`,
-              color: decisionProfilesRunning || implementationRunning ? T.textMuted : T.textPrimary,
+              color: optimizerActionsBlocked || decisionProfilesRunning || implementationRunning ? T.textMuted : T.textPrimary,
               borderRadius: 999,
               padding: '8px 13px',
               fontSize: 12,
               fontWeight: 800,
-              cursor: decisionProfilesRunning || implementationRunning ? 'not-allowed' : 'pointer',
-              opacity: decisionProfilesRunning || implementationRunning ? 0.7 : 1,
+              cursor: optimizerActionsBlocked || decisionProfilesRunning || implementationRunning ? 'not-allowed' : 'pointer',
+              opacity: optimizerActionsBlocked || decisionProfilesRunning || implementationRunning ? 0.7 : 1,
             }}
           >
             {expressStatusLabel}
@@ -4438,15 +4488,17 @@ export function OptimizationLightPage({
             <button
               type="button"
               onClick={runConfirmAndImplementation}
+              disabled={optimizerActionsBlocked}
               style={{
                 background: T.surfaceEl,
                 border: `1px solid ${T.border}`,
-                color: T.textPrimary,
+                color: optimizerActionsBlocked ? T.textMuted : T.textPrimary,
                 borderRadius: 999,
                 padding: '8px 13px',
                 fontSize: 12,
                 fontWeight: 800,
-                cursor: 'pointer',
+                cursor: optimizerActionsBlocked ? 'not-allowed' : 'pointer',
+                opacity: optimizerActionsBlocked ? 0.7 : 1,
               }}
             >
               Confirmar y calcular implementación
@@ -4477,15 +4529,16 @@ export function OptimizationLightPage({
             <button
               type="button"
               onClick={resumeDecisionRun}
+              disabled={optimizerActionsBlocked}
               style={{
                 background: T.surface,
                 border: `1px solid ${T.border}`,
-                color: T.textPrimary,
+                color: optimizerActionsBlocked ? T.textMuted : T.textPrimary,
                 borderRadius: 999,
                 padding: '8px 13px',
                 fontSize: 12,
                 fontWeight: 800,
-                cursor: 'pointer',
+                cursor: optimizerActionsBlocked ? 'not-allowed' : 'pointer',
               }}
             >
               Reanudar cálculo
@@ -4495,6 +4548,7 @@ export function OptimizationLightPage({
             <button
               type="button"
               onClick={runDecisionProfiles}
+              disabled={optimizerActionsBlocked}
               style={{
                 background: T.surface,
                 border: `1px solid ${T.border}`,
@@ -4503,7 +4557,7 @@ export function OptimizationLightPage({
                 padding: '8px 13px',
                 fontSize: 12,
                 fontWeight: 800,
-                cursor: 'pointer',
+                cursor: optimizerActionsBlocked ? 'not-allowed' : 'pointer',
               }}
             >
               Reiniciar cálculo
@@ -4870,7 +4924,7 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runImplementation}
-            disabled={implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
+            disabled={optimizerActionsBlocked || implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
             style={{
               background: implementationRunning ? T.surface : T.primary,
               border: `1px solid ${implementationRunning ? T.border : T.primary}`,
@@ -4888,7 +4942,7 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runRealisticValidation}
-            disabled={realisticValidationRunning || !implementationPlan || !implementationResultIsCurrent || implementationPlan.equivalentToIdeal}
+            disabled={optimizerActionsBlocked || realisticValidationRunning || !implementationPlan || !implementationResultIsCurrent || implementationPlan.equivalentToIdeal}
             style={{
               background: realisticValidationRunning ? T.surface : T.surfaceEl,
               border: `1px solid ${T.border}`,
@@ -5313,7 +5367,7 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runPhase1}
-            disabled={phase1Running || mode !== 'light'}
+            disabled={optimizerActionsBlocked || phase1Running || mode !== 'light'}
             style={{
               background: phase1Running ? T.surfaceEl : T.primary,
               border: `1px solid ${phase1Running ? T.border : T.primary}`,
@@ -5511,7 +5565,7 @@ export function OptimizationLightPage({
           <button
             type="button"
             onClick={runPhase2}
-            disabled={phase2Running || !phase1Points.length || mode !== 'light'}
+            disabled={optimizerActionsBlocked || phase2Running || !phase1Points.length || mode !== 'light'}
             style={{
               background: phase2Running ? T.surfaceEl : T.primary,
               border: `1px solid ${phase2Running ? T.border : T.primary}`,
@@ -5595,7 +5649,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runSensitivity}
-                disabled={sensitivityRunning || !phase2Rows.length}
+                disabled={optimizerActionsBlocked || sensitivityRunning || !phase2Rows.length}
                 style={{
                   background: sensitivityRunning ? T.surface : T.primary,
                   border: `1px solid ${sensitivityRunning ? T.border : T.primary}`,
@@ -5673,7 +5727,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runSpendingHeadroom}
-                disabled={spendingHeadroomRunning || !spendingHeadroomCandidates.length}
+                disabled={optimizerActionsBlocked || spendingHeadroomRunning || !spendingHeadroomCandidates.length}
                 style={{
                   background: spendingHeadroomRunning ? T.surface : T.primary,
                   border: `1px solid ${spendingHeadroomRunning ? T.border : T.primary}`,
@@ -5765,7 +5819,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runDecisionProfiles}
-                disabled={decisionProfilesRunning}
+                disabled={optimizerActionsBlocked || decisionProfilesRunning}
                 style={{
                   background: decisionProfilesRunning ? T.surface : T.primary,
                   border: `1px solid ${decisionProfilesRunning ? T.border : T.primary}`,
@@ -5782,7 +5836,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runDecisionConfirmation}
-                disabled={decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
+                disabled={optimizerActionsBlocked || decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed'}
                 style={{
                   background: decisionProfilesRunning || !actionableRecommendationCandidate || decisionFlowStatus?.stage === 'confirmed' ? T.surface : T.surfaceEl,
                   border: `1px solid ${T.border}`,
@@ -6099,7 +6153,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runImplementation}
-                disabled={implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
+                disabled={optimizerActionsBlocked || implementationRunning || !phase2ImplementationSelectedRow || !decisionImplementationReady}
                 style={{
                   background: implementationRunning ? T.surface : T.primary,
                   border: `1px solid ${implementationRunning ? T.border : T.primary}`,
@@ -6117,7 +6171,7 @@ export function OptimizationLightPage({
               <button
                 type="button"
                 onClick={runRealisticValidation}
-                disabled={realisticValidationRunning || !implementationPlan || !implementationResultIsCurrent || implementationPlan.equivalentToIdeal}
+                disabled={optimizerActionsBlocked || realisticValidationRunning || !implementationPlan || !implementationResultIsCurrent || implementationPlan.equivalentToIdeal}
                 style={{
                   background: realisticValidationRunning ? T.surface : T.primary,
                   border: `1px solid ${realisticValidationRunning ? T.border : T.primary}`,
@@ -6339,7 +6393,7 @@ export function OptimizationLightPage({
                   <button
                     type="button"
                     onClick={runLongevityPlus5}
-                    disabled={!phase2LongevitySelectedRow.row || longevityRunning}
+                    disabled={optimizerActionsBlocked || !phase2LongevitySelectedRow.row || longevityRunning}
                     style={{
                       background: longevityRunning ? T.surface : T.primary,
                       border: `1px solid ${longevityRunning ? T.border : T.primary}`,
