@@ -546,6 +546,7 @@ assert(appSource.includes('() => computeEffectiveEngineInputHashForParams(simPar
 assert(appSource.includes('effectiveEngineInputHash: effectiveRunInputHash'));
 assert(appSource.includes('setLastRunInputHash(runInputHash)'));
 assert(appSource.includes('setLastRenderedResultHash(runInputHash)'));
+assert(appSource.includes('aurumSnapshotMonth'));
 assert(appSource.includes("const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine"));
 assert(appSource.includes("? 'error'"));
 assert(appSource.includes("? 'local'"));
@@ -589,6 +590,9 @@ assert(source.includes('const isRecalculating = !localReadOnlyVisualOnly'));
 assert(source.includes('Hidratando Modelo Base…'));
 assert(source.includes('Esperando input canónico.'));
 assert(source.includes('Simulación: esperando input canónico'));
+assert(source.includes('Trace replay:'));
+assert(source.includes('replayTrace,'));
+assert(source.includes("m8InputFingerprint.diagnosticInput.replayTrace"));
 assert(appSource.includes('QA visual: los montos pueden no coincidir con Aurum productivo'));
 assert(bucketLabSource.includes('Array.from(new Set([24, 36, activeExpectedCostAnalysis.currentBucketMonths]))'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));

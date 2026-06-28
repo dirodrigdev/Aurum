@@ -734,6 +734,8 @@ export function SimulationPage({
   const isRecalculating = !localReadOnlyVisualOnly && simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
   const runtimeDiagnostics =
     (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+  const replayTrace =
+    (m8InputFingerprint.diagnosticInput.replayTrace as Record<string, unknown> | undefined) ?? null;
   const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
   const canonicalInputReady = runtimeDiagnostics.canonicalInputReady !== false;
   const canonicalInputBlockedReason = String(
@@ -2072,6 +2074,8 @@ export function SimulationPage({
               (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
             const instrumentUniverseDiagnostics =
               (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
+            const replayTrace =
+              (m8InputFingerprint.diagnosticInput.replayTrace as Record<string, unknown> | undefined) ?? null;
             const simulationRunDiagnostics = {
               simulationRunStatus: runtimeDiagnostics.simulationRunStatus ?? null,
               simulationRunStartedAt: runtimeDiagnostics.simulationRunStartedAt ?? null,
@@ -2097,6 +2101,7 @@ export function SimulationPage({
               createdAt: m8InputFingerprint.createdAt,
               sources: m8InputFingerprint.sources,
               warnings: m8InputFingerprint.warnings,
+              replayTrace,
               normalizedInput: m8InputFingerprint.normalizedInput,
               diagnosticInput: m8InputFingerprint.diagnosticInput,
               instrumentUniverseDiagnostics,
@@ -2129,6 +2134,13 @@ export function SimulationPage({
         Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
         {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
       </div>
+      {replayTrace && (
+        <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+          Trace replay: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{String((replayTrace.fingerprints as Record<string, unknown> | undefined)?.effectiveEngineInputFingerprint ?? '—')}</span>
+          {' · '}
+          estado <span style={{ color: T.textPrimary, fontWeight: 700 }}>{String((replayTrace.readiness as Record<string, unknown> | undefined)?.state ?? 'unknown')}</span>
+        </div>
+      )}
       {!cloudHydrationReady && (
         <div style={{ color: T.warning, fontSize: 10 }}>
           Sincronizando fuentes canónicas... resultado provisional desde cache local.

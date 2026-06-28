@@ -19,7 +19,9 @@ const baseInput = (): M8InputFingerprintInput => {
   return {
     params,
     effectiveEngineInput: {
+      years: Number((params.simulation.horizonMonths ?? 0) / 12),
       capital_initial_clp: Number(params.capitalInitial ?? 0),
+      simulation_base_month: '2026-04',
       seed: Number(params.simulation.seed ?? 0),
       n_paths: Number(params.simulation.nSim ?? 0),
       bucket: { bucket_months: Number(params.bucketMonths ?? 0) },
@@ -38,6 +40,7 @@ const baseInput = (): M8InputFingerprintInput => {
     riskCapitalEffective: true,
     weightsSourceMode: 'instrument-universe',
     universeSourceOrigin: 'firestore' as const,
+    aurumSnapshotMonth: '2026-04',
     aurumSnapshotLabel: '2026-04',
     aurumSnapshotPublishedAt: '2026-05-07T10:00:00.000Z',
     aurumSnapshotSignature: 'snap-abc',
@@ -316,9 +319,12 @@ const baseInput = (): M8InputFingerprintInput => {
   };
   const fingerprint = buildM8InputFingerprint(input);
   const runtimeDiagnostics = fingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown>;
+  const replayTrace = fingerprint.diagnosticInput.replayTrace;
   assert.equal(runtimeDiagnostics.simulationRunStatus, 'completed');
   assert.equal(runtimeDiagnostics.resultMetricsAvailable, true);
   assert.equal(runtimeDiagnostics.heroMetricsSource, 'simResult');
+  assert.equal(replayTrace.readiness.state, 'ready');
+  assert.equal(replayTrace.canonicalInput.simulationBaseMonth, '2026-04');
 })();
 
 (() => {

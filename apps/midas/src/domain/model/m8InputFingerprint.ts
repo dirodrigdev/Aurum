@@ -1,5 +1,6 @@
 import type { ModelParameters } from './types';
 import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/simulationConfigPersistence';
+import { buildM8ReplayTrace, type M8ReplayTrace } from './m8ReplayTrace';
 
 export type M8InputFingerprintSource = {
   source: 'cloud' | 'bundled' | 'local_cache' | 'fallback' | 'mixed' | 'unknown';
@@ -23,6 +24,7 @@ export type M8InputFingerprintInput = {
   riskCapitalEffective: boolean;
   weightsSourceMode: string;
   universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
+  aurumSnapshotMonth: string | null;
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
   aurumSnapshotSignature: string | null;
@@ -47,7 +49,7 @@ export type M8InputFingerprint = {
   hashIncludesDiagnostics: false;
   manualLocalAdjustmentsAffectEngine: boolean;
   normalizedInput: Record<string, unknown>;
-  diagnosticInput: Record<string, unknown>;
+  diagnosticInput: Record<string, unknown> & { replayTrace: M8ReplayTrace };
   sources: M8InputFingerprintSources;
   warnings: string[];
   createdAt: string;
@@ -245,6 +247,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   const manualLocalAdjustmentsAffectEngine = Boolean(
     input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine,
   );
+  const effectiveEngineInputHash = hashString(stableSerialize(normalizedInput));
   const diagnosticInput: Record<string, unknown> = {
     flags: {
       weightsSourceMode: input.weightsSourceMode,
@@ -297,7 +300,31 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     warnings.push('Snapshot Aurum sin firma cloud aplicada.');
   }
 
-  const effectiveEngineInputHash = hashString(stableSerialize(normalizedInput));
+  const replayTrace = buildM8ReplayTrace({
+    paramsLabel: input.params.label ?? null,
+    effectiveEngineInput: normalizedInput,
+    effectiveEngineInputFingerprint: effectiveEngineInputHash,
+    m8Fingerprint: effectiveEngineInputHash,
+    diagnosticFingerprint: null,
+    simulationConfigSource: input.simulationConfigSource,
+    simulationConfigSavedAt: input.simulationConfigSavedAt,
+    simulationConfigHash: input.simulationConfigHash,
+    simulationConfigDiagnostics: input.simulationConfigDiagnostics,
+    weightsSourceMode: input.weightsSourceMode,
+    universeSourceOrigin: input.universeSourceOrigin,
+    instrumentUniverseSavedAt: input.instrumentUniverseSavedAt,
+    instrumentUniverseHash: input.instrumentUniverseHash,
+    instrumentUniverseDiagnostics: input.instrumentUniverseDiagnostics,
+    aurumSnapshotMonth: input.aurumSnapshotMonth,
+    aurumSnapshotLabel: input.aurumSnapshotLabel,
+    aurumSnapshotPublishedAt: input.aurumSnapshotPublishedAt,
+    aurumSnapshotSignature: input.aurumSnapshotSignature,
+    runtimeDiagnostics: input.runtimeDiagnostics,
+    fieldSources: input.fieldSources,
+    capitalDerivationDiagnostics: input.capitalDerivationDiagnostics,
+    warnings,
+  });
+  diagnosticInput.replayTrace = replayTrace;
   const diagnosticHash = hashString(stableSerialize(diagnosticInput));
   return {
     hash: effectiveEngineInputHash,
@@ -306,7 +333,16 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     hashIncludesDiagnostics: false,
     manualLocalAdjustmentsAffectEngine,
     normalizedInput,
-    diagnosticInput,
+    diagnosticInput: {
+      ...diagnosticInput,
+      replayTrace: {
+        ...replayTrace,
+        fingerprints: {
+          ...replayTrace.fingerprints,
+          diagnosticFingerprint: diagnosticHash,
+        },
+      },
+    },
     sources,
     warnings,
     createdAt: new Date().toISOString(),
