@@ -289,9 +289,9 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   }
   const manualAdjustmentsCount = Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0);
   if (manualLocalAdjustmentsAffectEngine) {
-    warnings.push('Capital incluye ajustes manuales locales: valida sincronización antes de comparar dispositivos.');
+    warnings.push('Ajustes manuales locales siguen contaminando el input canónico: revisar antes de comparar dispositivos.');
   } else if (manualAdjustmentsCount > 0) {
-    warnings.push('Hay ajustes manuales locales residuales, pero no están afectando el input efectivo del motor.');
+    warnings.push('Hay ajustes manuales locales fuera del modo canónico: no cambian el input M8 comparable.');
   }
   if (!input.aurumSnapshotSignature) {
     warnings.push('Snapshot Aurum sin firma cloud aplicada.');

@@ -2398,18 +2398,27 @@ export default function App() {
       },
     ): ModelParameters => {
       const applyCapital = options?.applyCapital ?? true;
-      const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
+      const canonicalBaseParamsCurrent = stripManualAdjustmentImpactFromParams(
+        baseParamsCurrent,
+        manualAdjustmentImpact,
+      );
+      const canonicalCurrentSimParams = stripManualAdjustmentImpactFromParams(
+        currentSimParams,
+        manualAdjustmentImpact,
+      );
+      // Local manual adjustments stay visible as diagnostics only; canonical M8 runs must ignore them.
+      const manualImpact = EMPTY_MANUAL_ADJUSTMENT_IMPACT;
       const riskEnabled = options?.riskCapitalEnabled ?? riskCapitalEnabled;
       const mergedEvents = [
-        ...(baseParamsCurrent.cashflowEvents ?? []),
+        ...(canonicalBaseParamsCurrent.cashflowEvents ?? []),
         ...manualImpact.futureEvents,
       ];
       const mergedFutureCapitalEvents = (() => {
         const map = new Map<string, FutureCapitalEvent>();
-        for (const event of baseParamsCurrent.futureCapitalEvents ?? []) {
+        for (const event of canonicalBaseParamsCurrent.futureCapitalEvents ?? []) {
           map.set(event.id, event);
         }
-        for (const event of currentSimParams.futureCapitalEvents ?? []) {
+        for (const event of canonicalCurrentSimParams.futureCapitalEvents ?? []) {
           map.set(event.id, event);
         }
         for (const event of manualImpact.futureCapitalEvents ?? []) {
@@ -2421,19 +2430,19 @@ export default function App() {
           return a.id.localeCompare(b.id);
         });
       })();
-      const blocksMode = isBlocksCompositionMode(baseParamsCurrent);
+      const blocksMode = isBlocksCompositionMode(canonicalBaseParamsCurrent);
       let next: ModelParameters = {
-        ...currentSimParams,
+        ...canonicalCurrentSimParams,
         cashflowEvents: mergedEvents,
         futureCapitalEvents: mergedFutureCapitalEvents,
-        simulationBaseMonth: currentSimParams.simulationBaseMonth
-          ?? baseParamsCurrent.simulationBaseMonth
-          ?? resolveSimulationBaseMonth(currentSimParams),
+        simulationBaseMonth: canonicalCurrentSimParams.simulationBaseMonth
+          ?? canonicalBaseParamsCurrent.simulationBaseMonth
+          ?? resolveSimulationBaseMonth(canonicalCurrentSimParams),
       };
 
-      if (blocksMode && baseParamsCurrent.simulationComposition) {
+      if (blocksMode && canonicalBaseParamsCurrent.simulationComposition) {
         const baseComposition = JSON.parse(
-          JSON.stringify(baseParamsCurrent.simulationComposition),
+          JSON.stringify(canonicalBaseParamsCurrent.simulationComposition),
         ) as SimulationCompositionInput;
         let nextOptimizable = Math.max(
           0,
@@ -2497,17 +2506,17 @@ export default function App() {
         next = {
           ...next,
           simulationComposition: nextComposition,
-          capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : currentSimParams.capitalInitial,
+          capitalInitial: applyCapital ? Math.max(1, targetVisibleCapital) : canonicalCurrentSimParams.capitalInitial,
         };
       } else {
         const riskDelta = riskEnabled
           ? manualImpact.currentRiskDelta + riskCapitalCLP
           : 0;
         const nextDelta = manualImpact.currentBanksDelta + manualImpact.currentInvestmentsDelta + riskDelta;
-        const targetCapital = Math.max(1, baseParamsCurrent.capitalInitial + nextDelta);
+        const targetCapital = Math.max(1, canonicalBaseParamsCurrent.capitalInitial + nextDelta);
         next = {
           ...next,
-          capitalInitial: applyCapital ? targetCapital : currentSimParams.capitalInitial,
+          capitalInitial: applyCapital ? targetCapital : canonicalCurrentSimParams.capitalInitial,
         };
       }
 
@@ -4473,11 +4482,11 @@ export default function App() {
             ? 'provisional'
             : 'missing';
     const hasManualAdjustments = manualCapitalAdjustments.length > 0;
-    const manualAdjustmentsAppliedToInput =
-      !hasManualAdjustments || engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine;
-    const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments
-      ? (manualAdjustmentsAppliedToInput ? 'canonical' : 'error')
-      : 'canonical';
+    const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
+      ? 'error'
+      : hasManualAdjustments
+        ? 'local'
+        : 'canonical';
 
     return buildResultConfidence({
       criticalSources: {

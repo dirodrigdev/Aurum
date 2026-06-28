@@ -244,6 +244,63 @@ const baseInput = (): M8InputFingerprintInput => {
 })();
 
 (() => {
+  const canonical = buildM8InputFingerprint(baseInput());
+  const input = baseInput();
+  input.capitalDerivationDiagnostics = {
+    capitalInitialClp: Number(input.params.capitalInitial ?? 0),
+    capitalFromAurumClp: Number(input.params.capitalInitial ?? 0),
+    manualCapitalAdjustmentsClp: 25_000_000,
+    capitalAfterManualAdjustmentsClp: Number(input.params.capitalInitial ?? 0),
+    source: 'aurum_snapshot_cloud',
+    enabled: false,
+    manualLocalAdjustmentsAffectEngine: false,
+    manualCurrentBanksDeltaClp: 25_000_000,
+    manualCurrentInvestmentsDeltaClp: 0,
+    manualCurrentRiskDeltaClp: 0,
+    manualCurrentTotalDeltaClp: 25_000_000,
+    manualAdjustmentsCount: 1,
+    manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+  };
+  const fingerprint = buildM8InputFingerprint(input);
+  assert.equal(
+    canonical.effectiveEngineInputHash,
+    fingerprint.effectiveEngineInputHash,
+    'local manual adjustments must not change the canonical comparable input hash',
+  );
+  assert.notEqual(
+    canonical.diagnosticHash,
+    fingerprint.diagnosticHash,
+    'diagnostics should still reveal local-only adjustment state',
+  );
+  assert.ok(
+    fingerprint.warnings.some((warning) => warning.includes('fuera del modo canónico')),
+    'fingerprint must warn when local manual adjustments are excluded from canonical runs',
+  );
+})();
+
+(() => {
+  const sessionA = baseInput();
+  sessionA.capitalDerivationDiagnostics = {
+    manualLocalAdjustmentsAffectEngine: false,
+    manualAdjustmentsCount: 1,
+    manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+  };
+  const sessionB = baseInput();
+  sessionB.capitalDerivationDiagnostics = {
+    manualLocalAdjustmentsAffectEngine: false,
+    manualAdjustmentsCount: 3,
+    manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+  };
+  const fingerprintA = buildM8InputFingerprint(sessionA);
+  const fingerprintB = buildM8InputFingerprint(sessionB);
+  assert.equal(
+    fingerprintA.effectiveEngineInputHash,
+    fingerprintB.effectiveEngineInputHash,
+    'two sessions with different local-only adjustments must keep the same canonical input hash',
+  );
+})();
+
+(() => {
   const input = baseInput();
   input.runtimeDiagnostics = {
     simulationRunStatus: 'completed',
@@ -274,7 +331,7 @@ const baseInput = (): M8InputFingerprintInput => {
   };
   const fingerprint = buildM8InputFingerprint(input);
   assert.equal(fingerprint.manualLocalAdjustmentsAffectEngine, false);
-  assert.ok(fingerprint.warnings.some((warning) => warning.includes('residuales')));
+  assert.ok(fingerprint.warnings.some((warning) => warning.includes('fuera del modo canónico')));
 })();
 
 (() => {
@@ -305,7 +362,7 @@ const baseInput = (): M8InputFingerprintInput => {
   (input.effectiveEngineInput as any).capital_initial_clp = 1_550_974_913;
   const fingerprint = buildM8InputFingerprint(input);
   assert.equal(fingerprint.manualLocalAdjustmentsAffectEngine, true);
-  assert.ok(fingerprint.warnings.some((warning) => warning.includes('ajustes manuales locales')));
+  assert.ok(fingerprint.warnings.some((warning) => warning.includes('contaminando el input canónico')));
 })();
 
 console.log('m8InputFingerprint tests passed');
