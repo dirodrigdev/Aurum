@@ -585,6 +585,9 @@ assert(source.includes('No disponible en modo local: falta configuración/snapsh
 assert(source.includes('Sin capital de riesgo disponible en modo local; ON/OFF no modifica recursos.'));
 assert(source.includes('const localReadOnlyVisualOnly = localReadOnlyFallbackActive && !workerRecalcActive;'));
 assert(source.includes('const isRecalculating = !localReadOnlyVisualOnly'));
+assert(source.includes('Hidratando Modelo Base…'));
+assert(source.includes('Esperando input canónico.'));
+assert(source.includes('Simulación: esperando input canónico'));
 assert(appSource.includes('QA visual: los montos pueden no coincidir con Aurum productivo'));
 assert(bucketLabSource.includes('Array.from(new Set([24, 36, activeExpectedCostAnalysis.currentBucketMonths]))'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));

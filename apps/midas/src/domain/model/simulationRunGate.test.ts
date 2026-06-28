@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { evaluateSimulationRunGate } from './simulationRunGate';
+import { evaluateCanonicalInputReadiness, evaluateSimulationRunGate } from './simulationRunGate';
 
 const base = () => ({
+  authResolved: true,
   isCanonicalUserSession: true,
   hasEffectiveInput: true,
   cloudHydrationReady: true,
   simulationConfigHydrationStatus: 'cloud' as const,
   aurumIntegrationStatus: 'available' as const,
   aurumSnapshotAvailable: true,
+  cloudUniverseReadStatus: 'loaded' as const,
   universeSourceOrigin: 'cache-local' as const,
   simWorking: false,
   recalcWorkerStatus: 'idle' as const,
@@ -56,6 +58,19 @@ const base = () => ({
 })();
 
 (() => {
+  const result = evaluateCanonicalInputReadiness({ ...base() });
+  assert.deepEqual(result, { ready: true });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    authResolved: false,
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'auth_loading' });
+})();
+
+(() => {
   const result = evaluateSimulationRunGate({
     ...base(),
     cloudHydrationReady: false,
@@ -77,12 +92,28 @@ const base = () => ({
 })();
 
 (() => {
-  const result = evaluateSimulationRunGate({
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    simulationConfigHydrationStatus: 'missing',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'config_missing' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
     ...base(),
     cloudHydrationReady: false,
     universeSourceOrigin: 'cache-local',
   });
-  assert.equal(result.status, 'should_run');
+  assert.deepEqual(result, { ready: false, blockedReason: 'cloud_hydration_incomplete' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    cloudUniverseReadStatus: 'loading',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'instrument_universe_loading' });
 })();
 
 (() => {
@@ -90,6 +121,7 @@ const base = () => ({
     ...base(),
     cloudHydrationReady: false,
     universeSourceOrigin: 'none',
+    cloudUniverseReadStatus: 'missing',
   });
   assert.equal(result.status, 'blocked');
   if (result.status === 'blocked') assert.equal(result.blockedReason, 'instrument_universe_missing');

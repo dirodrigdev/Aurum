@@ -732,8 +732,22 @@ export function SimulationPage({
   const workerRecalcActive = simWorking || recalcWorkerStatus === 'queued' || recalcWorkerStatus === 'running';
   const localReadOnlyVisualOnly = localReadOnlyFallbackActive && !workerRecalcActive;
   const isRecalculating = !localReadOnlyVisualOnly && simUiState !== 'error' && (heroPhase === 'boot' || heroPhase === 'stale');
+  const runtimeDiagnostics =
+    (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
+  const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
+  const canonicalInputReady = runtimeDiagnostics.canonicalInputReady !== false;
+  const canonicalInputBlockedReason = String(
+    runtimeDiagnostics.canonicalInputBlockedReason
+    ?? runtimeDiagnostics.blockedReason
+    ?? '',
+  ).trim();
+  const canonicalInputStatusMessage = String(runtimeDiagnostics.canonicalInputStatusMessage ?? '').trim();
+  const canonicalInputPendingSource = String(runtimeDiagnostics.canonicalInputPendingSource ?? '').trim();
+  const canonicalInputBlocked = !canonicalInputReady && canonicalInputBlockedReason.length > 0;
   const simTechnicalLabel = isRecalculating
     ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
+    : canonicalInputBlocked
+      ? `Simulación: esperando input canónico (${canonicalInputBlockedReason})`
     : simUiState === 'ready'
       ? 'Simulación: lista'
       : simUiState === 'error'
@@ -1046,9 +1060,6 @@ export function SimulationPage({
           }
         : { label: 'Cuts', detail: 'No se activan' }
       : { label: 'Cuts', detail: 'No disponible' };
-  const runtimeDiagnostics =
-    (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
-  const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
   const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
   const heroShowsRunActive = isRunActive && !localReadOnlyVisualOnly;
   const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
@@ -1089,6 +1100,17 @@ export function SimulationPage({
     return 'Falta: Resolver la salvedad principal para llegar a OK.';
   }, [primaryReasonCode]);
   const heroPrimaryState = useMemo(() => {
+    if (canonicalInputBlocked) {
+      return {
+        label: 'Hidratando',
+        tone: T.warning,
+        headline: 'Hidratando Modelo Base…',
+        explanation: canonicalInputStatusMessage || 'Esperando input canónico.',
+        gap: canonicalInputPendingSource
+          ? `Falta: resolver ${canonicalInputPendingSource}.`
+          : 'Falta: cerrar input canónico antes de correr.',
+      };
+    }
     if (heroShowsRunActive) {
       return {
         label: 'Calculando',
@@ -1156,7 +1178,23 @@ export function SimulationPage({
       explanation: 'Resultado canónico.',
       gap: null as string | null,
     };
-  }, [T.negative, T.positive, T.warning, hasOnlyRunResultBlockingReasons, heroPhase, heroResult, heroShowsRunActive, localReadOnlyFallbackActive, resultConfidence.status, reviewCause, reviewGap, showGhostResult]);
+  }, [
+    T.negative,
+    T.positive,
+    T.warning,
+    canonicalInputBlocked,
+    canonicalInputPendingSource,
+    canonicalInputStatusMessage,
+    hasOnlyRunResultBlockingReasons,
+    heroPhase,
+    heroResult,
+    heroShowsRunActive,
+    localReadOnlyFallbackActive,
+    resultConfidence.status,
+    reviewCause,
+    reviewGap,
+    showGhostResult,
+  ]);
   const heroConfidenceBlock = useMemo(
     () => (
       <span style={{ display: 'grid', gap: 4 }}>

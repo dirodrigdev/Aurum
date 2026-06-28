@@ -71,7 +71,11 @@ import {
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
 import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
-import { evaluateSimulationRunGate } from './domain/model/simulationRunGate';
+import {
+  evaluateCanonicalInputReadiness,
+  evaluateSimulationRunGate,
+  type SimulationRunBlockedReason,
+} from './domain/model/simulationRunGate';
 import {
   buildSimulationResultDiagnostics,
   type SimulationResultDiagnostics,
@@ -626,6 +630,116 @@ function sourceStatusFromFx(resolution: OperativeFxResolution): SourceStatus {
   return 'fallback';
 }
 
+function resolveCanonicalCloudHydrationReady(input: {
+  isCanonicalUserSession: boolean;
+  simulationConfigHydrationStatus: SimulationConfigHydrationStatus;
+  simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
+  simulationConfigHash: string | null;
+  aurumIntegrationStatus: AurumIntegrationStatus;
+  aurumSnapshotAvailable: boolean;
+  effectiveEngineInputHash: string | null;
+}): boolean {
+  if (!input.isCanonicalUserSession) return false;
+  const configReady =
+    input.simulationConfigHydrationStatus === 'cloud'
+    && input.simulationConfigSource === 'cloud'
+    && Boolean(input.simulationConfigHash);
+  const aurumReady =
+    input.aurumIntegrationStatus === 'unconfigured'
+    || input.aurumSnapshotAvailable
+    || (input.aurumIntegrationStatus !== 'loading' && input.aurumIntegrationStatus !== 'refreshing');
+  return configReady && aurumReady && Boolean(input.effectiveEngineInputHash);
+}
+
+function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason | null): {
+  metricText: string;
+  confidenceLabel: string;
+  explanation: string;
+  pendingSource: string | null;
+} | null {
+  switch (blockedReason) {
+    case 'auth_loading':
+      return {
+        metricText: 'Hidratando Modelo Base…',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Esperando autenticación/sesión canónica.',
+        pendingSource: 'auth/user',
+      };
+    case 'auth_not_canonical':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'La sesión actual no permite cargar la configuración oficial.',
+        pendingSource: 'auth/user',
+      };
+    case 'config_loading':
+      return {
+        metricText: 'Hidratando Modelo Base…',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Cargando config cloud simulationActiveV1.',
+        pendingSource: 'config cloud',
+      };
+    case 'config_missing':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Falta la config cloud oficial de simulación.',
+        pendingSource: 'config cloud',
+      };
+    case 'config_error':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'No se pudo resolver la config cloud oficial.',
+        pendingSource: 'config cloud',
+      };
+    case 'instrument_universe_loading':
+      return {
+        metricText: 'Hidratando Modelo Base…',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Cargando Instrument Universe activo.',
+        pendingSource: 'instrument universe',
+      };
+    case 'instrument_universe_missing':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Falta Instrument Universe activo o ausencia segura.',
+        pendingSource: 'instrument universe',
+      };
+    case 'aurum_snapshot_missing':
+      return {
+        metricText: 'Hidratando Modelo Base…',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Esperando snapshot Aurum aplicado o ausencia segura.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'aurum_snapshot_error':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'El snapshot Aurum no quedó resuelto de forma segura.',
+        pendingSource: 'snapshot Aurum',
+      };
+    case 'effective_input_missing':
+      return {
+        metricText: 'Esperando input canónico',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'Aún no es calculable el fingerprint/input efectivo M8.',
+        pendingSource: 'fingerprint M8',
+      };
+    case 'cloud_hydration_incomplete':
+      return {
+        metricText: 'Hidratando Modelo Base…',
+        confidenceLabel: 'Esperando input canónico',
+        explanation: 'La hidratación canónica aún no está cerrada.',
+        pendingSource: 'cloud hydration',
+      };
+    default:
+      return null;
+  }
+}
+
 function deriveVisibleCapitalFromComposition(
   composition?: SimulationCompositionInput,
   includeRiskCapital = false,
@@ -809,6 +923,9 @@ export default function App() {
   const [pendingSnapshotApplying, setPendingSnapshotApplying] = useState(false);
   const [baseUpdatePending, setBaseUpdatePending] = useState(false);
   const [snapshotApplied, setSnapshotApplied] = useState(false);
+  const [aurumIntegrationStatus, setAurumIntegrationStatus] = useState<AurumIntegrationStatus>(
+    aurumIntegrationConfigured ? 'loading' : 'unconfigured',
+  );
   const [lastAppliedAurumSnapshotSignature, setLastAppliedAurumSnapshotSignature] = useState<string | null>(
     () => (initialModelParams.capitalSource === 'aurum' ? loadLastAppliedAurumSnapshotSignature() : null),
   );
@@ -2520,6 +2637,61 @@ export default function App() {
     buildCanonicalSimParamsRef.current = buildCanonicalSimParams;
   }, [buildCanonicalSimParams]);
 
+  const evaluateCanonicalInputReadinessForParams = useCallback((
+    params: ModelParameters,
+    overrides?: Partial<{
+      authResolved: boolean;
+      isCanonicalUserSession: boolean;
+      simulationConfigHydrationStatus: SimulationConfigHydrationStatus;
+      simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
+      aurumIntegrationStatus: AurumIntegrationStatus;
+      aurumSnapshotAvailable: boolean;
+      cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'error';
+      universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
+    }>,
+  ) => {
+    const effectiveEngineInputHash = computeEffectiveEngineInputHashForParams(params);
+    const resolvedIsCanonicalUserSession = overrides?.isCanonicalUserSession ?? isCanonicalUserSession;
+    const resolvedSimulationConfigHydrationStatus =
+      overrides?.simulationConfigHydrationStatus ?? simulationConfigHydrationStatus;
+    const resolvedSimulationConfigSource = overrides?.simulationConfigSource ?? simulationConfigSource;
+    const resolvedAurumIntegrationStatus = overrides?.aurumIntegrationStatus ?? aurumIntegrationStatus;
+    const resolvedAurumSnapshotAvailable =
+      overrides?.aurumSnapshotAvailable ?? Boolean(lastAppliedSnapshotSignatureRef.current);
+    const resolvedCloudUniverseReadStatus = overrides?.cloudUniverseReadStatus ?? cloudUniverseReadStatus;
+    const resolvedUniverseSourceOrigin = overrides?.universeSourceOrigin ?? universeSourceOrigin;
+    const readiness = evaluateCanonicalInputReadiness({
+      authResolved: overrides?.authResolved ?? authResolved,
+      isCanonicalUserSession: resolvedIsCanonicalUserSession,
+      hasEffectiveInput: Boolean(effectiveEngineInputHash),
+      cloudHydrationReady: resolveCanonicalCloudHydrationReady({
+        isCanonicalUserSession: resolvedIsCanonicalUserSession,
+        simulationConfigHydrationStatus: resolvedSimulationConfigHydrationStatus,
+        simulationConfigSource: resolvedSimulationConfigSource,
+        simulationConfigHash,
+        aurumIntegrationStatus: resolvedAurumIntegrationStatus,
+        aurumSnapshotAvailable: resolvedAurumSnapshotAvailable,
+        effectiveEngineInputHash,
+      }),
+      simulationConfigHydrationStatus: resolvedSimulationConfigHydrationStatus,
+      aurumIntegrationStatus: resolvedAurumIntegrationStatus,
+      aurumSnapshotAvailable: resolvedAurumSnapshotAvailable,
+      cloudUniverseReadStatus: resolvedCloudUniverseReadStatus,
+      universeSourceOrigin: resolvedUniverseSourceOrigin,
+      effectiveEngineInputHash,
+    });
+    return { readiness, effectiveEngineInputHash };
+  }, [
+    authResolved,
+    aurumIntegrationStatus,
+    cloudUniverseReadStatus,
+    isCanonicalUserSession,
+    simulationConfigHash,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+    universeSourceOrigin,
+  ]);
+
   const beginRecalculationVisual = useCallback((cause: RecalcCause) => {
     setLastRecalcCause(cause);
     setSimWorking(true);
@@ -2538,12 +2710,54 @@ export default function App() {
     setHeroPhase(shouldStale ? 'stale' : 'boot');
   }, []);
 
-  const startRecalculation = useCallback((cause: RecalcCause, run: () => ModelParameters) => {
+  const applyBlockedSimulationRunState = useCallback((
+    cause: RecalcCause,
+    blockedReason: SimulationRunBlockedReason,
+  ) => {
+    clearCalculationTimer();
+    clearRecalcWatchdog();
+    cancelActiveRecalcWorker('canonical_input_not_ready', 'applyBlockedSimulationRunState');
+    setLastRecalcCause(cause);
+    setSimWorking(false);
+    setRecalcWorkerStatus('idle');
+    setSimulationRunStatus('blocked');
+    setSimulationRunStartedAt(null);
+    setSimulationRunCompletedAt(null);
+    setSimulationRunError(null);
+    setSimulationRunBlockedReason(blockedReason);
+    setSimulationRunTimedOut(false);
+    setBootReadyPending(false);
+    setSimUiError(null);
+    setSimUiState('boot');
+    setHeroPhase('boot');
+    appendRuntimeTimeline('simulation_run_blocked', {
+      cause,
+      blockedReason,
+      pendingSource: describeCanonicalInputBlock(blockedReason)?.pendingSource ?? null,
+    });
+  }, [
+    appendRuntimeTimeline,
+    cancelActiveRecalcWorker,
+    clearCalculationTimer,
+    clearRecalcWatchdog,
+  ]);
+
+  const startRecalculation = useCallback((
+    cause: RecalcCause,
+    run: () => ModelParameters,
+    readinessOverrides?: Parameters<typeof evaluateCanonicalInputReadinessForParams>[1],
+  ) => {
     if (activeRecalcOwnerRef.current === 'apply-aurum' && cause !== 'apply-aurum') {
       appendRuntimeTimeline('start_recalculation_blocked', {
         cause,
         owner: activeRecalcOwnerRef.current,
       });
+      return;
+    }
+    const paramsBaseForGate = run();
+    const { readiness } = evaluateCanonicalInputReadinessForParams(paramsBaseForGate, readinessOverrides);
+    if (!readiness.ready) {
+      applyBlockedSimulationRunState(cause, readiness.blockedReason);
       return;
     }
     const ownerForRun: RecalcOwner = cause === 'apply-aurum' ? 'apply-aurum' : null;
@@ -2580,7 +2794,7 @@ export default function App() {
       try {
         setRecalcWorkerStatus('running');
         setSimulationRunStatus('running');
-        const paramsBase = run();
+        const paramsBase = paramsBaseForGate;
         const simulationSeed = selectRunSeed(
           paramsBase.simulation?.seed,
           fallbackSeed,
@@ -2666,8 +2880,10 @@ export default function App() {
   }, [
     appendRuntimeTimeline,
     beginRecalculationVisual,
+    applyBlockedSimulationRunState,
     clearCalculationTimer,
     auditPreviewMode,
+    evaluateCanonicalInputReadinessForParams,
     runPrimaryRecalcWorker,
     summarizeParams,
     summarizeResult,
@@ -2866,7 +3082,10 @@ export default function App() {
       setAurumSyncState('synced');
       if (shouldRecalculate) {
         setBaseUpdatePending(false);
-        startRecalculation('apply-aurum', () => nextSimParamsFinal);
+        startRecalculation('apply-aurum', () => nextSimParamsFinal, {
+          aurumIntegrationStatus: isPartialComposition ? 'partial' : 'available',
+          aurumSnapshotAvailable: Boolean(appliedSnapshotSignature),
+        });
       } else if (!sameSimSignature) {
         setBaseUpdatePending(true);
       }
@@ -3598,9 +3817,6 @@ export default function App() {
       amountClp: Math.max(0, optimizableBaseReference.amountClp + manualOptimizableDelta),
     };
   }, [manualOptimizableDelta, optimizableBaseReference]);
-  const [aurumIntegrationStatus, setAurumIntegrationStatus] = useState<AurumIntegrationStatus>(
-    aurumIntegrationConfigured ? 'loading' : 'unconfigured',
-  );
   const [aurumSnapshotLabel, setAurumSnapshotLabel] = useState<string | null>(null);
 
   useEffect(() => {
@@ -3985,7 +4201,86 @@ export default function App() {
       buildTime: env.VITE_BUILD_TIME ?? null,
     };
   }, []);
+  const strippedManualParamsForFingerprint = useMemo(
+    () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
+    [manualAdjustmentImpact, simParams],
+  );
+  const engineFingerprintDiagnostics = useMemo(() => {
+    try {
+      const effectiveCapitalResolution = resolveCapital({ params: simParams });
+      const effectiveEngineInput = toM8Input(simParams, effectiveCapitalResolution);
+      const baseCapitalResolution = resolveCapital({ params: strippedManualParamsForFingerprint });
+      const baseEngineInput = toM8Input(strippedManualParamsForFingerprint, baseCapitalResolution);
+      const manualCapitalAdjustmentsClp =
+        Number(effectiveEngineInput.capital_initial_clp ?? 0) - Number(baseEngineInput.capital_initial_clp ?? 0);
+      const effectiveManualFutureEvents = Array.isArray(effectiveEngineInput.future_events)
+        ? effectiveEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const baseManualFutureEvents = Array.isArray(baseEngineInput.future_events)
+        ? baseEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
+        : [];
+      const manualLocalAdjustmentsAffectEngine = (
+        JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput)
+        || Math.abs(manualCapitalAdjustmentsClp) > 0.5
+        || effectiveManualFutureEvents.length !== baseManualFutureEvents.length
+        || effectiveManualFutureEvents.length > 0
+      );
+      return {
+        effectiveEngineInput,
+        manualLocalAdjustmentsAffectEngine,
+        capitalFromAurumClp: Number(baseEngineInput.capital_initial_clp ?? 0),
+        manualCapitalAdjustmentsClp,
+        capitalAfterManualAdjustmentsClp: Number(effectiveEngineInput.capital_initial_clp ?? 0),
+      };
+    } catch {
+      return {
+        effectiveEngineInput: null,
+        manualLocalAdjustmentsAffectEngine: false,
+        capitalFromAurumClp: Number(simParams.capitalInitial ?? 0),
+        manualCapitalAdjustmentsClp: 0,
+        capitalAfterManualAdjustmentsClp: Number(simParams.capitalInitial ?? 0),
+      };
+    }
+  }, [manualAdjustmentImpact, simParams, strippedManualParamsForFingerprint]);
+  const effectiveRunInputHash = useMemo(
+    () => computeEffectiveEngineInputHashForParams(simParams),
+    [simParams],
+  );
+  const cloudHydrationReady = useMemo(() => {
+    return resolveCanonicalCloudHydrationReady({
+      isCanonicalUserSession,
+      simulationConfigHydrationStatus,
+      simulationConfigSource,
+      simulationConfigHash,
+      aurumIntegrationStatus,
+      aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
+      effectiveEngineInputHash: effectiveRunInputHash,
+    });
+  }, [
+    aurumIntegrationStatus,
+    effectiveRunInputHash,
+    isCanonicalUserSession,
+    lastAppliedAurumSnapshotSignature,
+    simulationConfigHash,
+    simulationConfigHydrationStatus,
+    simulationConfigSource,
+  ]);
+  const canonicalInputReadiness = useMemo(
+    () => evaluateCanonicalInputReadinessForParams(simParams).readiness,
+    [evaluateCanonicalInputReadinessForParams, simParams],
+  );
+  const canonicalInputBlockedReason = canonicalInputReadiness.ready
+    ? null
+    : canonicalInputReadiness.blockedReason;
+  const canonicalInputBlockDisplay = useMemo(
+    () => describeCanonicalInputBlock(canonicalInputBlockedReason),
+    [canonicalInputBlockedReason],
+  );
   const simulationRunDiagnostics = useMemo(() => ({
+    canonicalInputReady: canonicalInputReadiness.ready,
+    canonicalInputBlockedReason: canonicalInputBlockedReason,
+    canonicalInputPendingSource: canonicalInputBlockDisplay?.pendingSource ?? null,
+    canonicalInputStatusMessage: canonicalInputBlockDisplay?.explanation ?? null,
     currentRunId: activeRecalcRequestId,
     currentRunInputHash: simulationRunStatus === 'queued' || simulationRunStatus === 'running'
       ? lastRunInputHash
@@ -4034,6 +4329,9 @@ export default function App() {
     activeRecalcRequestId,
     activeSnapshotListenersCount,
     aurumIntegrationStatus,
+    canonicalInputBlockDisplay,
+    canonicalInputBlockedReason,
+    canonicalInputReadiness,
     duplicateRunSkippedCount,
     duplicateSnapshotSkippedCount,
     heroVisibleResult,
@@ -4057,67 +4355,6 @@ export default function App() {
     simulationRunStatus,
     snapshotEventCount,
     snapshotSubscribeCount,
-  ]);
-  const strippedManualParamsForFingerprint = useMemo(
-    () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
-    [manualAdjustmentImpact, simParams],
-  );
-  const engineFingerprintDiagnostics = useMemo(() => {
-    try {
-      const effectiveCapitalResolution = resolveCapital({ params: simParams });
-      const effectiveEngineInput = toM8Input(simParams, effectiveCapitalResolution);
-      const baseCapitalResolution = resolveCapital({ params: strippedManualParamsForFingerprint });
-      const baseEngineInput = toM8Input(strippedManualParamsForFingerprint, baseCapitalResolution);
-      const manualCapitalAdjustmentsClp =
-        Number(effectiveEngineInput.capital_initial_clp ?? 0) - Number(baseEngineInput.capital_initial_clp ?? 0);
-      const effectiveManualFutureEvents = Array.isArray(effectiveEngineInput.future_events)
-        ? effectiveEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
-        : [];
-      const baseManualFutureEvents = Array.isArray(baseEngineInput.future_events)
-        ? baseEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
-        : [];
-      const manualLocalAdjustmentsAffectEngine = (
-        JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput)
-        || Math.abs(manualCapitalAdjustmentsClp) > 0.5
-        || effectiveManualFutureEvents.length !== baseManualFutureEvents.length
-        || effectiveManualFutureEvents.length > 0
-      );
-      return {
-        effectiveEngineInput,
-        manualLocalAdjustmentsAffectEngine,
-        capitalFromAurumClp: Number(baseEngineInput.capital_initial_clp ?? 0),
-        manualCapitalAdjustmentsClp,
-        capitalAfterManualAdjustmentsClp: Number(effectiveEngineInput.capital_initial_clp ?? 0),
-      };
-    } catch {
-      return {
-        effectiveEngineInput: null,
-        manualLocalAdjustmentsAffectEngine: false,
-        capitalFromAurumClp: Number(simParams.capitalInitial ?? 0),
-        manualCapitalAdjustmentsClp: 0,
-        capitalAfterManualAdjustmentsClp: Number(simParams.capitalInitial ?? 0),
-      };
-    }
-  }, [manualAdjustmentImpact, simParams, strippedManualParamsForFingerprint]);
-  const cloudHydrationReady = useMemo(() => {
-    if (!isCanonicalUserSession) return false;
-    const configReady =
-      simulationConfigHydrationStatus === 'cloud' &&
-      simulationConfigSource === 'cloud' &&
-      Boolean(simulationConfigHash);
-    const aurumReady =
-      aurumIntegrationStatus === 'unconfigured' ||
-      Boolean(lastAppliedAurumSnapshotSignature) ||
-      (aurumIntegrationStatus !== 'loading' && aurumIntegrationStatus !== 'refreshing');
-    return configReady && aurumReady && Boolean(engineFingerprintDiagnostics.effectiveEngineInput);
-  }, [
-    aurumIntegrationStatus,
-    engineFingerprintDiagnostics.effectiveEngineInput,
-    isCanonicalUserSession,
-    lastAppliedAurumSnapshotSignature,
-    simulationConfigHash,
-    simulationConfigHydrationStatus,
-    simulationConfigSource,
   ]);
   const m8InputFingerprint = useMemo<M8InputFingerprint>(() => buildM8InputFingerprint({
     params: simParams,
@@ -4262,11 +4499,6 @@ export default function App() {
     cloudHydrationReady,
     simulationConfigDiagnostics.projectId,
   ]);
-  const effectiveRunInputHash = useMemo(
-    () => computeEffectiveEngineInputHashForParams(simParams),
-    [simParams],
-  );
-
   const simulationResultDiagnostics = useMemo<SimulationResultDiagnostics>(() => {
     const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
     const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
@@ -4404,21 +4636,27 @@ export default function App() {
   const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
   const headerShowsStaleResult = heroPhase === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
-  const headerMetricText = headerShowsStaleResult
+  const headerMetricText = canonicalInputBlockDisplay
+    ? canonicalInputBlockDisplay.metricText
+    : headerShowsStaleResult
     ? headerSuccess40 !== null && Number.isFinite(headerSuccess40)
       ? `Resultado anterior: ${formatSuccessPct(headerSuccess40)}`
       : 'Pendiente de recalcular'
     : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
       ? 'Modo local'
-    : headerShowsDefinitiveNumber
+      : headerShowsDefinitiveNumber
       ? `Éxito ${formatSuccessPct(headerSuccess40)}`
       : 'Calculando…';
-  const headerConfidenceLabel = headerShowsStaleResult
+  const headerConfidenceLabel = canonicalInputBlockDisplay
+    ? canonicalInputBlockDisplay.confidenceLabel
+    : headerShowsStaleResult
     ? 'Recalcular'
     : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
       ? 'Revisión local'
     : resultConfidence.label;
-  const headerStatusColor = headerShowsStaleResult
+  const headerStatusColor = canonicalInputBlockDisplay
+    ? T.warning
+    : headerShowsStaleResult
     ? T.warning
     : resultConfidence.status === 'canonical'
       ? T.positive
@@ -4429,12 +4667,14 @@ export default function App() {
   useEffect(() => {
     const effectiveHash = effectiveRunInputHash;
     const gate = evaluateSimulationRunGate({
+      authResolved,
       isCanonicalUserSession,
       hasEffectiveInput: Boolean(engineFingerprintDiagnostics.effectiveEngineInput),
       cloudHydrationReady,
       simulationConfigHydrationStatus,
       aurumIntegrationStatus,
       aurumSnapshotAvailable: Boolean(lastAppliedAurumSnapshotSignature),
+      cloudUniverseReadStatus,
       universeSourceOrigin,
       simWorking,
       recalcWorkerStatus,
@@ -4444,8 +4684,7 @@ export default function App() {
       lastRequestedRunHash: lastRunInputHash,
     });
     if (gate.status === 'blocked') {
-      setSimulationRunStatus('blocked');
-      setSimulationRunBlockedReason(gate.blockedReason);
+      applyBlockedSimulationRunState(simResult ? 'params-change' : 'boot-init', gate.blockedReason);
       return;
     }
     if (gate.status === 'running') return;
@@ -4474,7 +4713,10 @@ export default function App() {
     const base = applySimulationOverrides(simParams, sanitizedOverrides);
     startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
   }, [
+    applyBlockedSimulationRunState,
     aurumIntegrationStatus,
+    authResolved,
+    cloudUniverseReadStatus,
     cloudHydrationReady,
     engineFingerprintDiagnostics.effectiveEngineInput,
     isCanonicalUserSession,
