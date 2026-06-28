@@ -546,8 +546,9 @@ assert(appSource.includes('() => computeEffectiveEngineInputHashForParams(simPar
 assert(appSource.includes('effectiveEngineInputHash: effectiveRunInputHash'));
 assert(appSource.includes('setLastRunInputHash(runInputHash)'));
 assert(appSource.includes('setLastRenderedResultHash(runInputHash)'));
-assert(appSource.includes('const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments'));
-assert(appSource.includes("? (manualAdjustmentsAppliedToInput ? 'canonical' : 'error')"));
+assert(appSource.includes("const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine"));
+assert(appSource.includes("? 'error'"));
+assert(appSource.includes("? 'local'"));
 assert(appSource.includes('buildCanonicalBaseSimulationParams('));
 assert(appSource.includes("diagnosticsLabel: 'cloud/active'"));
 assert(appSource.includes("diagnosticsLabel: 'reset-session'"));
