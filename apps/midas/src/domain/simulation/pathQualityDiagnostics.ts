@@ -1,4 +1,9 @@
-import type { PathQualityDiagnosticsV1, PathQualityPathDiagnosticsV1 } from '../model/types';
+import type {
+  PathQualityDiagnosticsV1,
+  PathQualityPathDiagnosticsV1,
+  PathQualityPhaseStressV1,
+} from '../model/types';
+import { buildFixedSpendingDurations } from '../model/spendingPhases';
 
 export type M8PathQualityRuntimeSummary = {
   pathId: number;
@@ -13,6 +18,9 @@ export type M8PathQualityRuntimeSummary = {
 };
 
 const QASR_ALPHA = 1.5 as const;
+const SEVERE_RATIO_THRESHOLD = 0.85 as const;
+const MODERATE_RATIO_THRESHOLD = 0.9 as const;
+const EARLY_STRESS_WINDOW_MONTHS = 60 as const;
 
 const finiteOrNull = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -39,6 +47,9 @@ const meanShortfallPenalty = (ratios: number[]): number | null => {
   return mean(penalties);
 };
 
+const countBelowThreshold = (ratios: number[], threshold: number): number =>
+  ratios.filter((ratio) => ratio < threshold).length;
+
 const maxConsecutive = (states: number[], predicate: (state: number) => boolean): number => {
   let current = 0;
   let best = 0;
@@ -53,6 +64,9 @@ const maxConsecutive = (states: number[], predicate: (state: number) => boolean)
   return best;
 };
 
+const maxConsecutiveBelowThreshold = (ratios: number[], threshold: number): number =>
+  maxConsecutive(ratios, (ratio) => Number.isFinite(ratio) && ratio < threshold);
+
 const minAnnualConsumptionRatio = (monthlyRatios: number[]): number | null => {
   const clean = monthlyRatios.filter(Number.isFinite);
   if (clean.length === 0) return null;
@@ -63,6 +77,40 @@ const minAnnualConsumptionRatio = (monthlyRatios: number[]): number | null => {
     if (chunkMean !== null) annual.push(chunkMean);
   }
   return annual.length ? Math.min(...annual) : null;
+};
+
+const buildPhaseStress = (
+  monthlyRatios: number[],
+  horizonMonths: number,
+): PathQualityPhaseStressV1[] => {
+  if (monthlyRatios.length === 0 || horizonMonths <= 0) return [];
+
+  let durations: [number, number, number, number];
+  try {
+    durations = buildFixedSpendingDurations(horizonMonths);
+  } catch {
+    return [];
+  }
+  const phases: PathQualityPhaseStressV1[] = [];
+  let phaseStartMonth = 1;
+
+  for (const [index, durationMonths] of durations.entries()) {
+    const phaseEndMonth = phaseStartMonth + durationMonths - 1;
+    const phaseRatios = monthlyRatios.slice(phaseStartMonth - 1, phaseEndMonth);
+    phases.push({
+      phaseIndex: index + 1,
+      startMonth: phaseStartMonth,
+      endMonth: phaseEndMonth,
+      monthsObserved: phaseRatios.length,
+      monthsBelow85: countBelowThreshold(phaseRatios, SEVERE_RATIO_THRESHOLD),
+      monthsBelow90: countBelowThreshold(phaseRatios, MODERATE_RATIO_THRESHOLD),
+      maxConsecutiveMonthsBelow85: maxConsecutiveBelowThreshold(phaseRatios, SEVERE_RATIO_THRESHOLD),
+      maxConsecutiveMonthsBelow90: maxConsecutiveBelowThreshold(phaseRatios, MODERATE_RATIO_THRESHOLD),
+    });
+    phaseStartMonth = phaseEndMonth + 1;
+  }
+
+  return phases;
 };
 
 export function buildPathQualityDiagnosticsFromM8Output(args: {
@@ -102,6 +150,14 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
       ? null
       : Math.max(0, Math.min(1, 1 - meanShortfallPenaltyAlpha15));
     const observedConsumptionMonths = ratios.length;
+    const monthsBelow85 = ratios.length ? countBelowThreshold(ratios, SEVERE_RATIO_THRESHOLD) : null;
+    const maxConsecutiveMonthsBelow85 = ratios.length ? maxConsecutiveBelowThreshold(ratios, SEVERE_RATIO_THRESHOLD) : null;
+    const monthsBelow90 = ratios.length ? countBelowThreshold(ratios, MODERATE_RATIO_THRESHOLD) : null;
+    const maxConsecutiveMonthsBelow90 = ratios.length ? maxConsecutiveBelowThreshold(ratios, MODERATE_RATIO_THRESHOLD) : null;
+    const earlyStressMonthsBelow85 = ratios.length
+      ? countBelowThreshold(ratios.slice(0, Math.min(EARLY_STRESS_WINDOW_MONTHS, horizonMonths)), SEVERE_RATIO_THRESHOLD)
+      : null;
+    const phaseStress = buildPhaseStress(ratios, horizonMonths);
     const postRuinMonths = ruinMonth === null
       ? 0
       : Math.max(0, horizonMonths - ruinMonth);
@@ -138,6 +194,12 @@ export function buildPathQualityDiagnosticsFromM8Output(args: {
       minAnnualConsumptionRatio: minAnnualConsumptionRatio(ratios),
       p10MonthlyConsumptionRatio: percentile(ratios, 10),
       p25MonthlyConsumptionRatio: percentile(ratios, 25),
+      monthsBelow85,
+      maxConsecutiveMonthsBelow85,
+      monthsBelow90,
+      maxConsecutiveMonthsBelow90,
+      earlyStressMonthsBelow85,
+      phaseStress,
       monthsInCut: cutStates.length ? cutStates.filter((state) => state >= 1).length : null,
       monthsInSevereCut: cutStates.length ? cutStates.filter((state) => state >= 2).length : null,
       maxConsecutiveCutMonths: cutStates.length ? maxConsecutive(cutStates, (state) => state >= 1) : null,

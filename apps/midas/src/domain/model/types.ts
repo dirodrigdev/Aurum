@@ -311,6 +311,17 @@ export interface SimulationResults {
   params:                      ModelParameters;
 }
 
+export interface PathQualityPhaseStressV1 {
+  phaseIndex: number;
+  startMonth: number;
+  endMonth: number;
+  monthsObserved: number;
+  monthsBelow85: number;
+  monthsBelow90: number;
+  maxConsecutiveMonthsBelow85: number;
+  maxConsecutiveMonthsBelow90: number;
+}
+
 export interface PathQualityPathDiagnosticsV1 {
   pathId: number;
   ruined: boolean;
@@ -327,6 +338,12 @@ export interface PathQualityPathDiagnosticsV1 {
   minAnnualConsumptionRatio: number | null;
   p10MonthlyConsumptionRatio: number | null;
   p25MonthlyConsumptionRatio: number | null;
+  monthsBelow85: number | null;
+  maxConsecutiveMonthsBelow85: number | null;
+  monthsBelow90: number | null;
+  maxConsecutiveMonthsBelow90: number | null;
+  earlyStressMonthsBelow85: number | null;
+  phaseStress: PathQualityPhaseStressV1[];
   monthsInCut: number | null;
   monthsInSevereCut: number | null;
   maxConsecutiveCutMonths: number | null;
@@ -354,6 +371,15 @@ export interface PathQualityDiagnosticsV1 {
   paths: PathQualityPathDiagnosticsV1[];
 }
 
+export interface QualityOfLifePhaseStressV1 {
+  phaseIndex: number;
+  label: string;
+  startMonth: number;
+  endMonth: number;
+  monthsBelow85: number | null;
+  monthsBelow90: number | null;
+}
+
 export interface QualityOfLifeMetricsV1 {
   schemaVersion: 1;
   source: 'path_quality_diagnostics_v1';
@@ -378,10 +404,24 @@ export interface QualityOfLifeMetricsV1 {
   averageConsumptionRatioMean: number | null;
   averageConsumptionRatioP25: number | null;
   averageConsumptionRatioP50: number | null;
+  averageEffectiveSpendingRatio: number | null;
   minMonthlyConsumptionRatioP10: number | null;
   minMonthlyConsumptionRatioP25: number | null;
   minAnnualConsumptionRatioP10: number | null;
   minAnnualConsumptionRatioP25: number | null;
+  monthsBelow85: number | null;
+  maxConsecutiveMonthsBelow85: number | null;
+  monthsBelow90: number | null;
+  maxConsecutiveMonthsBelow90: number | null;
+  earlyStressMonths: number | null;
+  phaseStress: QualityOfLifePhaseStressV1[];
+  qualitySurvivalRate: number | null;
+  qualitySurvivalPassingPathCount: number;
+  qualitySurvivalThresholds: {
+    minAverageConsumptionRatio: 0.9;
+    maxConsecutiveMonthsBelow85: 6;
+    maxTotalMonthsBelow85: 24;
+  };
   monthsInCutMean: number | null;
   monthsInCutP50: number | null;
   monthsInSevereCutMean: number | null;
@@ -405,10 +445,12 @@ export interface QualityOfLifeMetricsV1 {
   monthsInSevereCutBeforeHouseSaleMean: number | null;
   liquidWealthAfterHouseSaleP25: number | null;
   liquidWealthAfterHouseSaleP50: number | null;
+  houseSaleIncidence: number | null;
   terminalWealthP10: number | null;
   terminalWealthP25: number | null;
   terminalWealthP50: number | null;
   terminalWealthP75: number | null;
+  terminalWealthRatio: number | null;
 }
 
 export interface SensitivityParameter {

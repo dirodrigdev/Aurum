@@ -2107,6 +2107,7 @@ export function SimulationPage({
               instrumentUniverseDiagnostics,
               simulationRunDiagnostics,
               simulationResultDiagnostics,
+              qualityOfLifeMetrics: resultCentral?.qualityOfLifeMetrics ?? null,
               resultConfidence,
               assumptionModeDiagnostics,
             }, null, 2);

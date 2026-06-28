@@ -40,6 +40,11 @@ const formatQasr = (value: number | null | undefined): string =>
     ? 'No disponible'
     : `${Math.round(value * 100)}/100`;
 
+const formatRatio = (value: number | null | undefined): string =>
+  value === null || value === undefined || !Number.isFinite(value)
+    ? 'No disponible'
+    : `${value.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
+
 const formatMonths = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'No disponible';
   if (Math.abs(value) <= 6) return `${Math.round(value)} meses`;
@@ -57,6 +62,15 @@ const formatMoney = (value: number | null | undefined): string => {
     return `$${(value / 1_000_000).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}MM`;
   }
   return `$${value.toLocaleString('es-CL', { maximumFractionDigits: 0 })}`;
+};
+
+const formatPhaseStress = (
+  phases: QualityOfLifeMetricsV1['phaseStress'] | null | undefined,
+): string => {
+  if (!phases || phases.length === 0) return 'No disponible';
+  return phases
+    .map((phase) => `${phase.label} ${formatMonths(phase.monthsBelow85)}`)
+    .join(' · ');
 };
 
 const metricInfo = {
@@ -151,6 +165,42 @@ const metricInfo = {
     'Ejemplo aplicado:',
     'Si el P25 terminal es positivo, significa que en al menos 75% de los escenarios queda patrimonio al final. No significa que debas maximizarlo a costa de calidad de vida.',
   ].join('\n'),
+  qualitySurvival: [
+    'Supervivencia con calidad',
+    '',
+    'Que mide:',
+    'Mide el porcentaje de escenarios que no caen en ruina, mantienen gasto promedio sobre 90% y no acumulan ni rachas ni meses severos por encima del umbral técnico.',
+    '',
+    'Cómo leerlo:',
+    'Mientras más alto, mejor. Es una lectura preliminar y descriptiva; no es el MIDAS Score final.',
+  ].join('\n'),
+  stress85: [
+    'Meses bajo 85%',
+    '',
+    'Que mide:',
+    'Mide cuántos meses promedio por escenario quedan bajo 85% del gasto objetivo.',
+    '',
+    'Cómo leerlo:',
+    'Mientras más bajo, mejor. Ayuda a distinguir simulaciones sin ruina pero con deterioro sostenido de calidad de vida.',
+  ].join('\n'),
+  earlyStress: [
+    'Estrés temprano',
+    '',
+    'Que mide:',
+    'Cuenta los meses bajo 85% durante los primeros 5 años de la simulación.',
+    '',
+    'Cómo leerlo:',
+    'Mientras más bajo, mejor. Penaliza recortes que aparecen demasiado pronto.',
+  ].join('\n'),
+  terminalRatio: [
+    'Terminal wealth ratio',
+    '',
+    'Que mide:',
+    'Compara el patrimonio terminal mediano contra el capital inicial simulable.',
+    '',
+    'Cómo leerlo:',
+    'Un ratio muy alto con mucho estrés puede sugerir subuso del patrimonio; uno muy bajo puede señalar poca holgura.',
+  ].join('\n'),
 };
 
 function MetricRow({
@@ -224,6 +274,10 @@ export function QualityOfLifeMetricsBlock({
   const csrTraffic = pickTraffic(qualityOfLifeMetrics.csr85_4, { greenMin: 0.85, yellowMin: 0.7 });
   const qasrTraffic = pickTraffic(qualityOfLifeMetrics.qasrStrict, { greenMin: 0.8, yellowMin: 0.65 });
   const qualityMeanTraffic = pickTraffic(qualityOfLifeMetrics.qualityScoreMean, { greenMin: 0.85, yellowMin: 0.75 });
+  const qualitySurvivalTraffic = pickTraffic(qualityOfLifeMetrics.qualitySurvivalRate, { greenMin: 0.8, yellowMin: 0.65 });
+  const stress85Traffic = pickTraffic(qualityOfLifeMetrics.monthsBelow85, { greenMax: 6, yellowMax: 24 });
+  const streak85Traffic = pickTraffic(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85, { greenMax: 3, yellowMax: 6 });
+  const earlyStressTraffic = pickTraffic(qualityOfLifeMetrics.earlyStressMonths, { greenMax: 3, yellowMax: 12 });
   const severeCutMeanTraffic = pickTraffic(qualityOfLifeMetrics.monthsInSevereCutMean, { greenMax: 12, yellowMax: 48 });
   const severeCutP75Traffic = pickTraffic(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75, { greenMax: 12, yellowMax: 48 });
   const severeCutDuringSale = qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMedian
@@ -257,11 +311,15 @@ export function QualityOfLifeMetricsBlock({
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
         <Group title="Lectura principal">
           <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
+          <MetricRow label="Quality survival rate" info={metricInfo.qualitySurvival} value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)} traffic={qualitySurvivalTraffic} />
           <MetricRow label="Calidad ajustada estricta (QASR)" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
           <MetricRow label="Calidad media observada" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
         </Group>
 
         <Group title="Recortes">
+          <MetricRow label="Meses bajo 85%" info={metricInfo.stress85} value={formatMonths(qualityOfLifeMetrics.monthsBelow85)} traffic={stress85Traffic} />
+          <MetricRow label="Racha bajo 85% P75" value={formatMonths(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85)} traffic={streak85Traffic} />
+          <MetricRow label="Estrés temprano (años 1-5)" info={metricInfo.earlyStress} value={formatMonths(qualityOfLifeMetrics.earlyStressMonths)} traffic={earlyStressTraffic} />
           <MetricRow label="Recorte severo promedio" info={metricInfo.severeCutMean} value={formatMonths(qualityOfLifeMetrics.monthsInSevereCutMean)} traffic={severeCutMeanTraffic} />
           <MetricRow label="Racha severa P75" info={metricInfo.severeCutP75} value={formatMonths(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75)} traffic={severeCutP75Traffic} />
           <MetricRow
@@ -269,6 +327,7 @@ export function QualityOfLifeMetricsBlock({
             value={`${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP25)} · ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP50)}`}
             traffic="neutral"
           />
+          <MetricRow label="Estrés por fase (<85%)" value={formatPhaseStress(qualityOfLifeMetrics.phaseStress)} traffic="neutral" />
         </Group>
 
         <Group title="Casa">
@@ -280,6 +339,7 @@ export function QualityOfLifeMetricsBlock({
         <Group title="Margen terminal">
           <MetricRow label="Patrimonio final P25" info={metricInfo.terminal} value={formatMoney(qualityOfLifeMetrics.terminalWealthP25)} traffic="neutral" />
           <MetricRow label="Patrimonio final P50" value={formatMoney(qualityOfLifeMetrics.terminalWealthP50)} traffic="neutral" />
+          <MetricRow label="Terminal wealth ratio" info={metricInfo.terminalRatio} value={formatRatio(qualityOfLifeMetrics.terminalWealthRatio)} traffic="neutral" />
           <div style={{ color: T.textMuted, fontSize: 10 }}>Referencia, no objetivo principal.</div>
         </Group>
       </div>

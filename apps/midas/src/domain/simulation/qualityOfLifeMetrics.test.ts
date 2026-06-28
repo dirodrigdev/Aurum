@@ -23,6 +23,15 @@ const makePath = (overrides: Partial<PathQualityPathDiagnosticsV1>): PathQuality
   minAnnualConsumptionRatio: 0.85,
   p10MonthlyConsumptionRatio: 0.82,
   p25MonthlyConsumptionRatio: 0.86,
+  monthsBelow85: 12,
+  maxConsecutiveMonthsBelow85: 6,
+  monthsBelow90: 18,
+  maxConsecutiveMonthsBelow90: 8,
+  earlyStressMonthsBelow85: 4,
+  phaseStress: [
+    { phaseIndex: 1, startMonth: 1, endMonth: 48, monthsObserved: 48, monthsBelow85: 4, monthsBelow90: 6, maxConsecutiveMonthsBelow85: 2, maxConsecutiveMonthsBelow90: 3 },
+    { phaseIndex: 2, startMonth: 49, endMonth: 120, monthsObserved: 72, monthsBelow85: 8, monthsBelow90: 12, maxConsecutiveMonthsBelow85: 4, maxConsecutiveMonthsBelow90: 5 },
+  ],
   monthsInCut: 12,
   monthsInSevereCut: 24,
   maxConsecutiveCutMonths: 8,
@@ -50,7 +59,7 @@ const build = (paths: PathQualityPathDiagnosticsV1[], horizonMonths = 120): Qual
     pathCount: paths.length,
     horizonMonths,
     paths,
-  });
+  }, { initialSimulableCapitalClp: 200 });
 
 type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostics>;
 
@@ -58,6 +67,12 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
   const metrics = build([makePath({})]);
   assert.equal(metrics.csr85_4, 1);
   assert.equal(metrics.csrPassingPathCount, 1);
+  assert.equal(metrics.averageEffectiveSpendingRatio, 0.9);
+  assert.equal(metrics.monthsBelow85, 12);
+  assert.equal(metrics.maxConsecutiveMonthsBelow85, 6);
+  assert.equal(metrics.earlyStressMonths, 4);
+  assert.equal(metrics.qualitySurvivalRate, 1);
+  assert.equal(metrics.terminalWealthRatio, 0.5);
 }
 
 {
@@ -69,11 +84,22 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
 {
   const metrics = build([makePath({ averageConsumptionRatio: 0.84 })]);
   assert.equal(metrics.csr85_4, 0);
+  assert.equal(metrics.qualitySurvivalRate, 0);
 }
 
 {
   const metrics = build([makePath({ monthsInSevereCut: 49 })]);
   assert.equal(metrics.csr85_4, 0);
+}
+
+{
+  const metrics = build([makePath({ maxConsecutiveMonthsBelow85: 7 })]);
+  assert.equal(metrics.qualitySurvivalRate, 0);
+}
+
+{
+  const metrics = build([makePath({ monthsBelow85: 25 })]);
+  assert.equal(metrics.qualitySurvivalRate, 0);
 }
 
 {
@@ -131,6 +157,7 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
   assertNear(metrics.terminalWealthP25, 175);
   assertNear(metrics.terminalWealthP50, 250);
   assertNear(metrics.terminalWealthP75, 325);
+  assertNear(metrics.terminalWealthRatio, 1.25);
   assertNear(metrics.qualityScoreP25, 0.55);
   assertNear(metrics.qualityScoreP50, 0.7);
 }
@@ -174,11 +201,39 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
 {
   const metrics = build([
     makePath({
+      phaseStress: [
+        { phaseIndex: 1, startMonth: 1, endMonth: 48, monthsObserved: 48, monthsBelow85: 2, monthsBelow90: 4, maxConsecutiveMonthsBelow85: 2, maxConsecutiveMonthsBelow90: 3 },
+        { phaseIndex: 2, startMonth: 49, endMonth: 120, monthsObserved: 72, monthsBelow85: 10, monthsBelow90: 12, maxConsecutiveMonthsBelow85: 5, maxConsecutiveMonthsBelow90: 6 },
+      ],
+    }),
+    makePath({
+      pathId: 1,
+      phaseStress: [
+        { phaseIndex: 1, startMonth: 1, endMonth: 48, monthsObserved: 48, monthsBelow85: 4, monthsBelow90: 8, maxConsecutiveMonthsBelow85: 3, maxConsecutiveMonthsBelow90: 4 },
+        { phaseIndex: 2, startMonth: 49, endMonth: 120, monthsObserved: 72, monthsBelow85: 8, monthsBelow90: 10, maxConsecutiveMonthsBelow85: 4, maxConsecutiveMonthsBelow90: 5 },
+      ],
+    }),
+  ]);
+  assert.equal(metrics.phaseStress.length, 2);
+  assert.equal(metrics.phaseStress[0]?.label, 'F1');
+  assertNear(metrics.phaseStress[0]?.monthsBelow85 ?? null, 3);
+  assertNear(metrics.phaseStress[1]?.monthsBelow90 ?? null, 11);
+}
+
+{
+  const metrics = build([
+    makePath({
       qualityScoreAlpha15: null,
       meanShortfallPenaltyAlpha15: null,
       averageConsumptionRatio: null,
       minMonthlyConsumptionRatio: null,
       minAnnualConsumptionRatio: null,
+      monthsBelow85: null,
+      maxConsecutiveMonthsBelow85: null,
+      monthsBelow90: null,
+      maxConsecutiveMonthsBelow90: null,
+      earlyStressMonthsBelow85: null,
+      phaseStress: [],
       terminalWealthClp: null,
       observedConsumptionMonths: 0,
       monthsInCut: null,
@@ -190,9 +245,13 @@ type QualityCase = ReturnType<typeof buildQualityOfLifeMetricsFromPathDiagnostic
   assert.equal(metrics.qualityScoreMean, null);
   assert.equal(metrics.qasrStrict, null);
   assert.equal(metrics.terminalWealthP50, null);
+  assert.equal(metrics.terminalWealthRatio, null);
+  assert.equal(metrics.qualitySurvivalRate, 0);
   assert.ok(metrics.warnings.includes('quality_score_missing'));
   assert.ok(metrics.warnings.includes('average_consumption_ratio_missing'));
   assert.ok(metrics.warnings.includes('terminal_wealth_missing'));
+  assert.ok(metrics.warnings.includes('months_below_85_missing'));
+  assert.ok(metrics.warnings.includes('phase_stress_missing'));
 }
 
 console.log('qualityOfLifeMetrics tests passed');

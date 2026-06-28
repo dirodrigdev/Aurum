@@ -564,7 +564,9 @@ export const fromM8Output = (
     cut1TimeShare: output.Cut1TimeShare,
     cut2TimeShare: output.Cut2TimeShare,
     pathQualityDiagnostics: output.pathQualityDiagnostics,
-    qualityOfLifeMetrics: buildQualityOfLifeMetricsFromPathDiagnostics(output.pathQualityDiagnostics),
+    qualityOfLifeMetrics: buildQualityOfLifeMetricsFromPathDiagnostics(output.pathQualityDiagnostics, {
+      initialSimulableCapitalClp: params.capitalInitial,
+    }),
     computedAt: new Date(),
     durationMs,
     params,

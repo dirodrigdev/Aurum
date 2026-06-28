@@ -74,6 +74,12 @@ assert.equal(ruined.liquidWealthAfterHouseSaleClp, 120_000_000);
 assert.equal(ruined.minMonthlyConsumptionRatio, 0.7);
 assertNear(ruined.minAnnualConsumptionRatio, 0.8583333333333334);
 assert.equal(ruined.p25MonthlyConsumptionRatio, 0.7625);
+assert.equal(ruined.monthsBelow85, 3);
+assert.equal(ruined.maxConsecutiveMonthsBelow85, 3);
+assert.equal(ruined.monthsBelow90, 3);
+assert.equal(ruined.maxConsecutiveMonthsBelow90, 3);
+assert.equal(ruined.earlyStressMonthsBelow85, 3);
+assert.equal(ruined.phaseStress.length, 0);
 
 const incomplete = diagnostics.paths[1];
 assert.equal(incomplete.ruined, false);
@@ -87,6 +93,9 @@ assert.equal(incomplete.qualityScoreAlpha15, null);
 assert.equal(incomplete.observedConsumptionMonths, 0);
 assert.equal(incomplete.postRuinMonths, 0);
 assert.equal(incomplete.averageConsumptionRatio, null);
+assert.equal(incomplete.monthsBelow85, null);
+assert.equal(incomplete.maxConsecutiveMonthsBelow85, null);
+assert.deepEqual(incomplete.phaseStress, []);
 assert.deepEqual(incomplete.warnings, ['consumption_ratios_missing', 'cut_states_missing']);
 
 const mismatch = buildPathQualityDiagnosticsFromM8Output({
@@ -246,6 +255,62 @@ assert.ok((ruinedButScored.qualityScoreAlpha15 ?? 0) > 0);
 assert.equal(ruinedButScored.postRuinMonths, 2);
 assert.ok(ruinedButScored.warnings.includes('observed_consumption_months_incomplete'));
 assert.ok(ruinedButScored.warnings.includes('post_ruin_months_unobserved'));
+
+const isolatedCut = buildPathQualityDiagnosticsFromM8Output({
+  pathCount: 1,
+  horizonMonths: 12,
+  pathSummaries: [
+    {
+      pathId: 0,
+      ruined: false,
+      ruinMonth: null,
+      terminalWealthClp: 10,
+      monthlyConsumptionRatios: [1, 1, 0.84, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      cutStates: [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      houseSaleTriggerMonth: null,
+      houseSaleMonth: null,
+      liquidWealthAfterHouseSaleClp: null,
+    },
+  ],
+}).paths[0];
+assert.equal(isolatedCut.monthsBelow85, 1);
+assert.equal(isolatedCut.maxConsecutiveMonthsBelow85, 1);
+assert.equal(isolatedCut.monthsBelow90, 1);
+assert.equal(isolatedCut.maxConsecutiveMonthsBelow90, 1);
+
+const continuousStress = buildPathQualityDiagnosticsFromM8Output({
+  pathCount: 1,
+  horizonMonths: 84,
+  pathSummaries: [
+    {
+      pathId: 0,
+      ruined: false,
+      ruinMonth: null,
+      terminalWealthClp: 10,
+      monthlyConsumptionRatios: [
+        ...new Array(6).fill(0.82),
+        ...new Array(54).fill(1),
+        ...new Array(6).fill(0.82),
+        ...new Array(18).fill(1),
+      ],
+      cutStates: [
+        ...new Array(6).fill(2),
+        ...new Array(54).fill(0),
+        ...new Array(6).fill(2),
+        ...new Array(18).fill(0),
+      ],
+      houseSaleTriggerMonth: null,
+      houseSaleMonth: null,
+      liquidWealthAfterHouseSaleClp: null,
+    },
+  ],
+}).paths[0];
+assert.equal(continuousStress.monthsBelow85, 12);
+assert.equal(continuousStress.maxConsecutiveMonthsBelow85, 6);
+assert.equal(continuousStress.earlyStressMonthsBelow85, 6);
+assert.equal(continuousStress.phaseStress[0]?.monthsBelow85, 6);
+assert.equal(continuousStress.phaseStress[1]?.monthsBelow85, 0);
+assert.equal(continuousStress.phaseStress[2]?.monthsBelow85, 6);
 
 const saleMissingTrigger = buildPathQualityDiagnosticsFromM8Output({
   pathCount: 1,

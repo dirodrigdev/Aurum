@@ -593,6 +593,7 @@ assert(source.includes('Simulación: esperando input canónico'));
 assert(source.includes('Trace replay:'));
 assert(source.includes('replayTrace,'));
 assert(source.includes("m8InputFingerprint.diagnosticInput.replayTrace"));
+assert(source.includes('qualityOfLifeMetrics: resultCentral?.qualityOfLifeMetrics ?? null,'));
 assert(appSource.includes('QA visual: los montos pueden no coincidir con Aurum productivo'));
 assert(bucketLabSource.includes('Array.from(new Set([24, 36, activeExpectedCostAnalysis.currentBucketMonths]))'));
 assert(adaptersSource.includes('resolveAurumEurUsdForMidas(fxReference.usdEur).eurUsdForMidas'));
