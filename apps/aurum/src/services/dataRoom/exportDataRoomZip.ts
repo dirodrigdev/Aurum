@@ -115,7 +115,13 @@ const loadGastappDataRoomV2RowsForExport = async (input?: {
   }
 };
 
-const buildBaseBundle = async (analysisContext: AnalysisExportContext) => {
+const buildBaseBundle = async (
+  analysisContext: AnalysisExportContext,
+  input?: {
+    onProgress?: (message: string) => void;
+  },
+) => {
+  input?.onProgress?.('Leyendo Aurum, GastApp mensual oficial y MIDAS…');
   const generatedAt = new Date().toISOString();
   const aurum = buildAurumDataRoomData(analysisContext);
   const [midas, gastapp, gastappLedgerPreview] = await Promise.all([
@@ -134,12 +140,17 @@ const buildBaseBundle = async (analysisContext: AnalysisExportContext) => {
 
 export const exportFinancialDataRoomZip = async (
   analysisContext: AnalysisExportContext,
+  options?: {
+    onProgress?: (message: string) => void;
+  },
 ): Promise<FinancialDataRoomBuildResult> => {
-  const base = await buildBaseBundle(analysisContext);
+  options?.onProgress?.('Preparando base financiera consolidada…');
+  const base = await buildBaseBundle(analysisContext, options);
   const bundle = buildFinancialDataRoom({
     ...base,
     aurumProjectId: String(db.app.options.projectId || ''),
   });
+  options?.onProgress?.('Generando ZIP consolidado…');
   return downloadBundle(bundle);
 };
 
@@ -150,7 +161,7 @@ export const exportFinancialDataRoomWithTransactionsZip = async (
   },
 ): Promise<FinancialDataRoomBuildResult> => {
   options?.onProgress?.('Preparando base financiera con transacciones…');
-  const base = await buildBaseBundle(analysisContext);
+  const base = await buildBaseBundle(analysisContext, options);
   const manifestResult = await getGastappDataRoomV2Manifest();
   assertDataRoomV2ReadyForExport(manifestResult);
 

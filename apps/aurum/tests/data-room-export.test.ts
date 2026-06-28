@@ -495,6 +495,41 @@ describe('buildFinancialDataRoom', () => {
       'gastapp_data_room_v2_rows.csv',
     ]));
   });
+
+  it('uses the real ledger preview range in the README instead of a hardcoded window', () => {
+    const result = buildFinancialDataRoom({
+      generatedAt: '2026-06-23T10:00:00.000Z',
+      aurum: baseAurum(),
+      midas: baseMidas(),
+      gastapp: gastappOk(),
+      gastappLedgerPreview: {
+        ...gastappLedgerAvailable(),
+        periodRange: {
+          fromPeriod: 'P40',
+          toPeriod: 'P41',
+          fromMonthKey: '2026-05',
+          toMonthKey: '2026-06',
+          label: 'P40→P41 / 2026-05→2026-06',
+        },
+        manifest: {
+          ...gastappLedgerAvailable().manifest!,
+          periodRange: {
+            fromPeriod: 'P40',
+            toPeriod: 'P41',
+            fromMonthKey: '2026-05',
+            toMonthKey: '2026-06',
+            label: 'P40→P41 / 2026-05→2026-06',
+          },
+        },
+      },
+      aurumProjectId: 'aurum-project',
+    });
+
+    const readme = result.files.find((file) => file.name === '00_README_IA.md')?.content || '';
+
+    expect(readme).toContain('P40→P41 / 2026-05→2026-06');
+    expect(readme).not.toContain('actualmente P29–P36');
+  });
 });
 
 describe('gastapp ledger preview csv', () => {

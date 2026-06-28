@@ -538,6 +538,8 @@ export const AnalysisAurum: React.FC = () => {
         heroLast12,
         heroYtd2026,
         heroLastMonth,
+      }, {
+        onProgress: setExportMessage,
       });
       const gastappStatus = bundle.manifest.source_status.gastapp_status;
       const ledgerPreviewStatus = bundle.manifest.gastapp_ledger_preview_status;

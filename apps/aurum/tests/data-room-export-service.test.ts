@@ -91,10 +91,17 @@ beforeEach(() => {
 });
 
 describe('data room export service', () => {
-  it('does not load v2 rows for the consolidated zip', async () => {
-    await exportFinancialDataRoomZip(baseAnalysisContext);
+  it('does not load v2 manifest, summaries or rows for the consolidated zip', async () => {
+    const onProgress = vi.fn();
+
+    await exportFinancialDataRoomZip(baseAnalysisContext, { onProgress });
+
     expect(getGastappDataRoomV2ManifestMock).not.toHaveBeenCalled();
+    expect(getGastappDataRoomV2PeriodSummariesMock).not.toHaveBeenCalled();
     expect(getGastappDataRoomV2RowsPageMock).not.toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith('Preparando base financiera consolidada…');
+    expect(onProgress).toHaveBeenCalledWith('Leyendo Aurum, GastApp mensual oficial y MIDAS…');
+    expect(onProgress).toHaveBeenCalledWith('Generando ZIP consolidado…');
   });
 
   it('loads v2 rows only during the explicit transaction export', async () => {

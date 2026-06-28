@@ -10,6 +10,7 @@ const formatLedgerPreviewPeriodRange = (value: FinancialDataRoomManifest['gastap
 
 export const buildFinancialDataRoomReadme = (manifest: FinancialDataRoomManifest) => {
   const includesTransactions = manifest.includes.gastapp_transactions;
+  const ledgerPreviewRangeLabel = formatLedgerPreviewPeriodRange(manifest.gastapp_ledger_preview_period_range);
   const gastappLine = manifest.includes.gastapp_monthly
     ? '- GastApp: incluida solo la vista mensual `aurum_monthly_from_periods_v1`.'
     : `- GastApp: no disponible en este ZIP (${manifest.source_status.gastapp_status}).`;
@@ -43,7 +44,7 @@ ${gastappTransactionsLine}
 - No entra a Retorno Económico.
 - No alimenta MIDAS.
 - No cambia patrimonio.
-- Por ahora cubre solo los períodos publicados en preview, actualmente P29–P36.
+- Por ahora cubre solo los períodos publicados en preview (${ledgerPreviewRangeLabel}).
 
 ## GastApp Data Room v2
 - La capa profunda se descarga solo cuando el usuario la pide explícitamente.
