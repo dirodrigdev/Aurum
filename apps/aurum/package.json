@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "lint": "eslint src tests --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "npm run lint:src && npm run lint:tests",
+    "lint:src": "eslint src --ext ts,tsx --cache --cache-location node_modules/.cache/eslint/src --report-unused-disable-directives --max-warnings 0",
+    "lint:tests": "eslint tests --ext ts,tsx --cache --cache-location node_modules/.cache/eslint/tests --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run --exclude tests/**/*.integration.test.ts",
     "test:integration": "RUN_CLOUD_TESTS=1 vitest run tests/**/*.integration.test.ts"

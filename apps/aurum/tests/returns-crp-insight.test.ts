@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WealthMonthlyClosure } from '../src/services/wealthStorage';
 
+vi.mock('../src/services/firebase', () => ({
+  db: {},
+  auth: { currentUser: null },
+  ensureAuthPersistence: vi.fn(async () => undefined),
+  getCurrentUid: vi.fn(() => null),
+}));
+
 vi.mock('../src/services/gastosMonthly', () => ({
   resolveGastappMonthlySpend: (monthKey: string) => ({
     monthKey,
