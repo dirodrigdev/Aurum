@@ -67,6 +67,12 @@ import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { auth, signOutUser } from '../services/firebase';
 import { getFirestoreStatus } from '../services/firestoreStatus';
 import {
+  buildHistoricalClosureReviewBuckets,
+  describeHistoricalClosureReviewStatus,
+  groupClosureMonthKeysByYear,
+  type ClosureReviewPendingStatus,
+} from '../services/closureReviewStatus';
+import {
   BackupDecisionState,
   defaultBackupDecisionState,
   runDestructiveActionWithBackupGuard,
@@ -518,47 +524,50 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
     const existingMonthKeys = new Set(availableClosures.map((closure) => closure.monthKey));
     return Array.from(new Set(csvPreview.monthKeys.filter((monthKey) => existingMonthKeys.has(monthKey)))).sort();
   }, [availableClosures, csvPreview.monthKeys]);
-  const closureHasMissingFx = (closure: WealthMonthlyClosure) => {
-    const fxRates = closure.fxRates;
-    if (!fxRates) return true;
-    if (Array.isArray(closure.fxMissing) && closure.fxMissing.length > 0) return true;
-    return !(fxRates.usdClp > 0 && fxRates.eurClp > 0 && fxRates.ufClp > 0);
-  };
-  const closureDataPendingMonthKeys = useMemo(
+  const closureReviewPendingStatusesByMonthKey = useMemo(
     () =>
-      availableClosures
-        .filter((closure) => closureHasMissingFx(closure) || !(closure.records && closure.records.length > 0))
-        .map((closure) => closure.monthKey),
-    [availableClosures],
+      Object.fromEntries(
+        Object.entries(closureReviewPending).map(([monthKey, entry]) => [
+          monthKey,
+          entry.status as ClosureReviewPendingStatus,
+        ]),
+      ),
+    [closureReviewPending],
   );
-  const closureReviewPendingMonthKeys = useMemo(
-    () =>
-      Object.entries(closureReviewPending)
-        .filter(([, entry]) => entry.status === 'pending')
-        .map(([monthKey]) => monthKey)
-        .filter((monthKey) => availableClosures.some((closure) => closure.monthKey === monthKey)),
-    [closureReviewPending, availableClosures],
+  const historicalClosureReviewBuckets = useMemo(
+    () => buildHistoricalClosureReviewBuckets(availableClosures, closureReviewPendingStatusesByMonthKey),
+    [availableClosures, closureReviewPendingStatusesByMonthKey],
+  );
+  const criticalPendingMonthKeys = useMemo(
+    () => historicalClosureReviewBuckets.critical.map((item) => item.monthKey),
+    [historicalClosureReviewBuckets],
+  );
+  const historicalSummaryOnlyMonthKeys = useMemo(
+    () => historicalClosureReviewBuckets.historicalSummaryOnly.map((item) => item.monthKey),
+    [historicalClosureReviewBuckets],
+  );
+  const administrativePendingMonthKeys = useMemo(
+    () => historicalClosureReviewBuckets.administrative.map((item) => item.monthKey),
+    [historicalClosureReviewBuckets],
   );
   const historicalPendingMonthKeys = useMemo(
-    () => Array.from(new Set([...closureDataPendingMonthKeys, ...closureReviewPendingMonthKeys])).sort(),
-    [closureDataPendingMonthKeys, closureReviewPendingMonthKeys],
+    () => historicalClosureReviewBuckets.actionable.map((item) => item.monthKey),
+    [historicalClosureReviewBuckets],
+  );
+  const historicalSummaryOnlyYearGroups = useMemo(
+    () => groupClosureMonthKeysByYear(historicalSummaryOnlyMonthKeys),
+    [historicalSummaryOnlyMonthKeys],
   );
   const monthRecords = useMemo(
     () => allRecords.filter((record) => String(record.snapshotDate || '').startsWith(`${checklistMonthKey}-`)),
     [allRecords, checklistMonthKey],
   );
   const historicalStatus = useMemo(() => {
-    const count = availableClosures.length;
-    if (!count) return { icon: '❌', tone: 'error' as const, text: 'Sin cierres guardados' };
-    if (historicalPendingMonthKeys.length > 0) {
-      return {
-        icon: '⚠️',
-        tone: 'warn' as const,
-        text: `Hay ${historicalPendingMonthKeys.length} cierre(s) pendiente(s) de revisión`,
-      };
-    }
-    return { icon: '✅', tone: 'ok' as const, text: 'Cierres históricos completos' };
-  }, [availableClosures, historicalPendingMonthKeys]);
+    return describeHistoricalClosureReviewStatus(
+      availableClosures.length,
+      historicalClosureReviewBuckets,
+    );
+  }, [availableClosures.length, historicalClosureReviewBuckets]);
   const monthChecklist = useMemo(
     () => [
       {
@@ -1597,13 +1606,37 @@ month_key,closed_at,usd_clp,eur_clp,uf_clp,sura_fin_clp,sura_prev_clp,btg_clp,pl
                 <span>{historicalStatus.icon}</span>
               </div>
               <div className="mt-1">Cierres: <span className="font-semibold">{availableClosures.length}</span> · {historicalStatus.text}</div>
-              {!!historicalPendingMonthKeys.length && (
-                <div className="mt-1 text-amber-700">Pendientes: {historicalPendingMonthKeys.join(', ')}</div>
+              {!!criticalPendingMonthKeys.length && (
+                <div className="mt-1 text-amber-700">Pendientes cr&iacute;ticos: {criticalPendingMonthKeys.join(', ')}</div>
+              )}
+              {!!historicalSummaryOnlyMonthKeys.length && (
+                <div className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-slate-600">
+                  <div className="font-medium text-slate-700">
+                    {historicalSummaryOnlyMonthKeys.length} cierres hist&oacute;ricos agregados sin detalle por instrumento
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    No bloquean Retornos ni Data Room. Sirven para c&aacute;lculo agregado, pero no tienen records detallados.
+                  </div>
+                  {!!historicalSummaryOnlyYearGroups.length && (
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {historicalSummaryOnlyYearGroups.join(' · ')}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!!administrativePendingMonthKeys.length && (
+                <div className="mt-2 text-[11px] text-slate-500">
+                  {administrativePendingMonthKeys.length} cierre(s) con revisi&oacute;n administrativa pendiente.
+                </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={goToCsvImportSection}>Ir a importación</Button>
                 <Button variant="outline" size="sm" onClick={openManualClosureReview} disabled={!availableClosures.length}>
-                  {historicalPendingMonthKeys.length ? `Revisar pendientes (${historicalPendingMonthKeys.length})` : 'Revisar cierre'}
+                  {historicalPendingMonthKeys.length
+                    ? criticalPendingMonthKeys.length > 0
+                      ? `Revisar pendientes (${historicalPendingMonthKeys.length})`
+                      : `Revisar historial (${historicalPendingMonthKeys.length})`
+                    : 'Revisar cierre'}
                 </Button>
               </div>
             </div>
