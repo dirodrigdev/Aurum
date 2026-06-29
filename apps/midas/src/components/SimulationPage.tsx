@@ -508,6 +508,53 @@ function SourcePolicyStatusBadge({ sourcePolicy }: { sourcePolicy: SourceFreshne
   );
 }
 
+function SurfaceSemanticBadge({
+  label,
+  tone = 'neutral',
+}: {
+  label: string;
+  tone?: 'neutral' | 'accent' | 'warning';
+}) {
+  const palette = tone === 'accent'
+    ? { color: T.primary, bg: 'rgba(91, 140, 255, 0.14)', border: 'rgba(91, 140, 255, 0.35)' }
+    : tone === 'warning'
+      ? { color: T.warning, bg: 'rgba(255, 176, 32, 0.14)', border: 'rgba(255, 176, 32, 0.35)' }
+      : { color: T.textMuted, bg: 'rgba(148, 163, 184, 0.12)', border: 'rgba(148, 163, 184, 0.28)' };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        color: palette.color,
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        borderRadius: 999,
+        padding: '2px 7px',
+        fontSize: 10,
+        fontWeight: 800,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function SurfaceSemanticRow({
+  items,
+}: {
+  items: Array<{ label: string; tone?: 'neutral' | 'accent' | 'warning' }>;
+}) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {items.map((item) => (
+        <SurfaceSemanticBadge key={item.label} label={item.label} tone={item.tone} />
+      ))}
+    </div>
+  );
+}
+
 export function SimulationPage({
   resultCentral,
   params,
@@ -1012,6 +1059,10 @@ export function SimulationPage({
   const manualNetClp = useMemo(
     () => draftManualSummaryT0.netClp,
     [draftManualSummaryT0.netClp],
+  );
+  const hasManualDraftChanges = useMemo(
+    () => JSON.stringify(draftManualAdjustments) !== JSON.stringify(manualCapitalAdjustments),
+    [draftManualAdjustments, manualCapitalAdjustments],
   );
   const resetMovementForm = useCallback(() => {
     setEditingMovementId(null);
@@ -2340,6 +2391,13 @@ export function SimulationPage({
           Copiar input M8 aplicado
         </button>
       </div>
+      <SurfaceSemanticRow
+        items={[
+          { label: 'Diagnóstico', tone: 'neutral' },
+          { label: 'Copiar no modifica cálculo', tone: 'neutral' },
+          { label: 'Traza del input vigente', tone: 'accent' },
+        ]}
+      />
       <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
         Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
         {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
@@ -2791,6 +2849,13 @@ export function SimulationPage({
             Fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'local cache' : 'fallback'}</span>
           </div>
         </div>
+        <SurfaceSemanticRow
+          items={[
+            { label: 'Solo lectura', tone: 'neutral' },
+            { label: 'Diagnóstico', tone: 'neutral' },
+            { label: 'No modifica cálculo', tone: 'neutral' },
+          ]}
+        />
         {isMobileViewport ? (
           <details>
             <summary
@@ -2961,6 +3026,16 @@ export function SimulationPage({
         </summary>
         <div style={{ marginTop: 8, color: T.textMuted, fontSize: 10 }}>
           Edita los supuestos oficiales guardados. La simulación temporal no modifica este modelo.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <SurfaceSemanticRow
+            items={[
+              { label: 'Control decisional canónico', tone: 'accent' },
+              { label: 'Recalcula automático', tone: 'accent' },
+              { label: 'Cambia fingerprint', tone: 'accent' },
+              { label: 'Afecta resultado canónico', tone: 'warning' },
+            ]}
+          />
         </div>
         {simActive && (
           <div
@@ -3203,6 +3278,13 @@ export function SimulationPage({
               <div style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Barra de decisión
               </div>
+              <SurfaceSemanticRow
+                items={[
+                  { label: 'Controles express', tone: 'accent' },
+                  { label: 'Recalcula automático', tone: 'accent' },
+                  { label: 'Afecta resultado vigente', tone: 'warning' },
+                ]}
+              />
               <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.35fr 0.9fr 0.9fr 1.25fr 1.2fr 1.1fr', gap: 6 }}>
                 <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 4 }}>
                   <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Patrimonio total hoy</div>
@@ -3535,6 +3617,15 @@ export function SimulationPage({
             <span>Lectura ampliada</span>
             <span style={{ color: T.textMuted }}>{keyMetricsOpen ? '▴' : '▾'}</span>
           </summary>
+          <div style={{ marginTop: 8 }}>
+            <SurfaceSemanticRow
+              items={[
+                { label: 'Métrica solo lectura', tone: 'neutral' },
+                { label: 'Resultado actual', tone: 'neutral' },
+                { label: 'Ligado al fingerprint vigente', tone: 'accent' },
+              ]}
+            />
+          </div>
           <div
             style={{
               marginTop: 8,
@@ -3734,6 +3825,13 @@ export function SimulationPage({
           </summary>
           {longevityOpen ? (
             <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+              <SurfaceSemanticRow
+                items={[
+                  { label: 'Exploratorio', tone: 'accent' },
+                  { label: 'No decisional', tone: 'warning' },
+                  { label: 'No cambia resultado oficial', tone: 'neutral' },
+                ]}
+              />
               <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.35 }}>
                 Explora cuánto aguanta este escenario si necesitara durar cinco años más. Esta métrica no cambia el resultado oficial a 40 años.
               </div>
@@ -3817,6 +3915,14 @@ export function SimulationPage({
             <div style={{ color: T.textMuted, fontSize: 11, lineHeight: 1.45 }}>
               Estos cambios son temporales. No modifican el Modelo Base.
             </div>
+            <SurfaceSemanticRow
+              items={[
+                { label: 'Exploratorio', tone: 'accent' },
+                { label: 'Recalcula automático', tone: 'accent' },
+                { label: 'Cambia fingerprint temporal', tone: 'accent' },
+                { label: 'No modifica Modelo Base', tone: 'neutral' },
+              ]}
+            />
 
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : 'repeat(3, minmax(0,1fr))' }}>
               <div style={{ display: 'grid', gap: 6 }}>
@@ -4441,6 +4547,31 @@ export function SimulationPage({
                 Próximo evento: {formatMonthYearLabel(draftManualSummaryFuture.firstFutureDate)}
               </div>
             </div>
+            <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+              <SurfaceSemanticRow
+                items={[
+                  { label: 'Grupo con confirmación', tone: 'accent' },
+                  { label: 'No recalcula hasta guardar', tone: 'accent' },
+                  { label: 'Cambia fingerprint al guardar', tone: 'accent' },
+                  { label: 'Afecta resultado canónico', tone: 'warning' },
+                ]}
+              />
+              {hasManualDraftChanges ? (
+                <div
+                  style={{
+                    background: 'rgba(91, 140, 255, 0.10)',
+                    border: '1px solid rgba(91, 140, 255, 0.35)',
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                    color: T.primary,
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  Cambios pendientes · Guardar y salir para recalcular y actualizar fingerprint.
+                </div>
+              ) : null}
+            </div>
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto', paddingRight: 2 }}>
               <div style={{ marginTop: 2, color: T.textMuted, fontSize: 11 }}>
                 Neto acumulado: {formatCLP(Math.round(manualNetClp))} CLP
@@ -4676,7 +4807,7 @@ export function SimulationPage({
                   opacity: savingMovement ? 0.7 : 1,
                 }}
               >
-                {savingMovement ? 'Guardando...' : 'Guardar y salir'}
+                {savingMovement ? 'Guardando...' : 'Guardar y recalcular'}
               </button>
             </div>
           </div>
