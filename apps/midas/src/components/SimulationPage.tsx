@@ -13,6 +13,7 @@ import { buildSpendingPhaseUiLabels, normalizeModelSpendingPhases } from '../dom
 import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
+import { buildMidasEvaluation } from '../domain/model/midasEvaluation';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
@@ -1366,6 +1367,22 @@ export function SimulationPage({
       .join(' · '),
     [spendingPhases],
   );
+  const midasEvaluation = useMemo(() => {
+    const replayTrace =
+      (m8InputFingerprint.diagnosticInput.replayTrace as Record<string, unknown> | undefined) ?? null;
+    return buildMidasEvaluation({
+      qualityOfLifeMetrics: resultCentral?.qualityOfLifeMetrics ?? null,
+      inputAuditable: Boolean(replayTrace && m8InputFingerprint.hash && m8InputFingerprint.effectiveEngineInputHash),
+      canUseForDecision: resultConfidence.canUseForDecision,
+      decisionStatus: resultConfidence.status,
+      comparabilityWarnings: [
+        ...m8InputFingerprint.warnings,
+        ...resultConfidence.reasons
+          .filter((reason) => reason.severity !== 'info')
+          .map((reason) => reason.code),
+      ],
+    });
+  }, [m8InputFingerprint, resultCentral?.qualityOfLifeMetrics, resultConfidence]);
   const lastTimelineAtMs = runtimeTimeline.length > 0
     ? runtimeTimeline[runtimeTimeline.length - 1].atMs
     : null;
@@ -2108,6 +2125,7 @@ export function SimulationPage({
               simulationRunDiagnostics,
               simulationResultDiagnostics,
               qualityOfLifeMetrics: resultCentral?.qualityOfLifeMetrics ?? null,
+              midasEvaluation: midasEvaluation ?? null,
               resultConfidence,
               assumptionModeDiagnostics,
             }, null, 2);
@@ -2691,6 +2709,7 @@ export function SimulationPage({
       </details>
       <QualityOfLifeMetricsBlock
         qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
+        midasEvaluation={midasEvaluation}
         isMobile={isMobileViewport}
       />
       <details

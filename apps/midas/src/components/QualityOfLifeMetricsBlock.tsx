@@ -1,5 +1,5 @@
 import React from 'react';
-import type { QualityOfLifeMetricsV1 } from '../domain/model/types';
+import type { MidasEvaluationV1, QualityOfLifeMetricsV1 } from '../domain/model/types';
 import { T, css } from './theme';
 import { InfoHint } from './InfoHint';
 
@@ -40,6 +40,11 @@ const formatQasr = (value: number | null | undefined): string =>
     ? 'No disponible'
     : `${Math.round(value * 100)}/100`;
 
+const formatScore = (value: number | null | undefined): string =>
+  value === null || value === undefined || !Number.isFinite(value)
+    ? 'No disponible'
+    : `${Math.round(value)}/100`;
+
 const formatRatio = (value: number | null | undefined): string =>
   value === null || value === undefined || !Number.isFinite(value)
     ? 'No disponible'
@@ -74,6 +79,15 @@ const formatPhaseStress = (
 };
 
 const metricInfo = {
+  evaluation: [
+    'Evaluación MIDAS preliminar',
+    '',
+    'Que mide:',
+    'Resume no-ruina, calidad de vida, estrés temprano, continuidad del estrés y margen terminal usando solo métricas ya auditadas.',
+    '',
+    'Cómo leerlo:',
+    'Es una clasificación descriptiva y auditable. No reemplaza el análisis técnico ni el MIDAS Score final.',
+  ].join('\n'),
   csr: [
     'Éxito con calidad de vida (CSR-85/4)',
     '',
@@ -203,6 +217,13 @@ const metricInfo = {
   ].join('\n'),
 };
 
+const evaluationTraffic = (label: MidasEvaluationV1['label'] | undefined): TrafficLight => {
+  if (label === 'Muy sólido') return 'green';
+  if (label === 'Bueno alto' || label === 'Bueno') return 'yellow';
+  if (label === 'Exigido' || label === 'Frágil') return 'red';
+  return 'neutral';
+};
+
 function MetricRow({
   label,
   info,
@@ -257,9 +278,11 @@ function Group({
 
 export function QualityOfLifeMetricsBlock({
   qualityOfLifeMetrics,
+  midasEvaluation,
   isMobile,
 }: {
   qualityOfLifeMetrics?: QualityOfLifeMetricsV1;
+  midasEvaluation?: MidasEvaluationV1 | null;
   isMobile: boolean;
 }) {
   if (!qualityOfLifeMetrics) {
@@ -309,6 +332,36 @@ export function QualityOfLifeMetricsBlock({
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+        <Group title="Evaluación MIDAS preliminar">
+          <MetricRow
+            label="Clasificación"
+            info={metricInfo.evaluation}
+            value={midasEvaluation?.label ?? 'No disponible'}
+            traffic={evaluationTraffic(midasEvaluation?.label)}
+            subtle={midasEvaluation?.capsApplied[0] ?? midasEvaluation?.alerts[0]}
+          />
+          <MetricRow
+            label="Score preliminar"
+            value={formatScore(midasEvaluation?.cappedScore ?? midasEvaluation?.rawScore)}
+            traffic={evaluationTraffic(midasEvaluation?.label)}
+            subtle={midasEvaluation?.rawScore != null && midasEvaluation?.cappedScore != null
+              ? `raw ${formatScore(midasEvaluation.rawScore)}`
+              : undefined}
+          />
+          <MetricRow
+            label="Comparabilidad"
+            value={
+              !midasEvaluation
+                ? 'No disponible'
+                : midasEvaluation.isComparable
+                  ? `Comparable · ${midasEvaluation.confidenceBand}`
+                  : 'No comparable'
+            }
+            traffic={!midasEvaluation ? 'neutral' : midasEvaluation.isComparable ? 'green' : 'red'}
+            subtle={midasEvaluation?.warnings[0]}
+          />
+        </Group>
+
         <Group title="Lectura principal">
           <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
           <MetricRow label="Quality survival rate" info={metricInfo.qualitySurvival} value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)} traffic={qualitySurvivalTraffic} />

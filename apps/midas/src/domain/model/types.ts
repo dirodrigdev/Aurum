@@ -453,6 +453,35 @@ export interface QualityOfLifeMetricsV1 {
   terminalWealthRatio: number | null;
 }
 
+export type MidasEvaluationLabel =
+  | 'Muy sólido'
+  | 'Bueno alto'
+  | 'Bueno'
+  | 'Exigido'
+  | 'Frágil'
+  | 'No comparable';
+
+export type MidasEvaluationConfidenceBand = 'high' | 'medium' | 'low';
+
+export interface MidasEvaluationV1 {
+  schemaVersion: 1;
+  source: 'quality_of_life_metrics_v1';
+  label: MidasEvaluationLabel;
+  rawScore: number | null;
+  cappedScore: number | null;
+  confidenceBand: MidasEvaluationConfidenceBand;
+  noRuinAssessment: string;
+  qualityAssessment: string;
+  earlyStressAssessment: string;
+  tailStressAssessment: string;
+  terminalWealthAssessment: string;
+  houseSaleAssessment: string;
+  capsApplied: string[];
+  alerts: string[];
+  warnings: string[];
+  isComparable: boolean;
+}
+
 export interface SensitivityParameter {
   id:          string;
   label:       string;
