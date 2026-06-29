@@ -76,6 +76,7 @@ type AppliedTraceRow = {
 };
 
 type FreshnessStatus = 'fresh' | 'aging' | 'stale' | 'unknown';
+type CanonicalInputDisplayState = 'hydrating' | 'ready' | 'blocked' | 'missingCanonicalConfig' | 'timeout' | 'error';
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
 
@@ -137,6 +138,31 @@ const formatSessionMoment = (atMs: number | null) => {
   if (seconds < 60) return `t+${seconds.toFixed(1)}s`;
   return `t+${(seconds / 60).toFixed(1)}min`;
 };
+
+const CANONICAL_HYDRATION_TIMEOUT_MS = 12_000;
+const HYDRATING_CANONICAL_BLOCK_REASONS = new Set([
+  'auth_loading',
+  'config_loading',
+  'instrument_universe_loading',
+  'aurum_snapshot_missing',
+]);
+
+function isCanonicalHydrationInProgress(blockedReason: string): boolean {
+  return HYDRATING_CANONICAL_BLOCK_REASONS.has(blockedReason);
+}
+
+function resolveCanonicalInputDisplayState(input: {
+  blocked: boolean;
+  blockedReason: string;
+  hydrationTimedOut: boolean;
+}): CanonicalInputDisplayState {
+  if (!input.blocked) return 'ready';
+  if (input.blockedReason === 'config_missing') return 'missingCanonicalConfig';
+  if (input.blockedReason === 'config_error' || input.blockedReason === 'aurum_snapshot_error') return 'error';
+  if (input.hydrationTimedOut && isCanonicalHydrationInProgress(input.blockedReason)) return 'timeout';
+  if (isCanonicalHydrationInProgress(input.blockedReason)) return 'hydrating';
+  return 'blocked';
+}
 
 const parseIsoTimestamp = (value: string | null | undefined): number | null => {
   if (!value) return null;
@@ -610,7 +636,9 @@ export function SimulationPage({
   const [showSimToast, setShowSimToast] = useState(false);
   const simulationPanelRef = useRef<HTMLDivElement | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [simulationDataOpen, setSimulationDataOpen] = useState(true);
+  const [simulationDataOpen, setSimulationDataOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth > 760 : true
+  );
   const [keyMetricsOpen, setKeyMetricsOpen] = useState(true);
   const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -632,6 +660,7 @@ export function SimulationPage({
   const draftManualAdjustmentsRef = useRef<ManualCapitalAdjustment[]>(manualCapitalAdjustments);
   const [spendingDraftByIndex, setSpendingDraftByIndex] = useState<Record<number, string>>({});
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [canonicalHydrationTimedOut, setCanonicalHydrationTimedOut] = useState(false);
   const [movementForm, setMovementForm] = useState({
     direction: 'add' as 'add' | 'remove',
     amount: '',
@@ -747,10 +776,30 @@ export function SimulationPage({
   const canonicalInputStatusMessage = String(runtimeDiagnostics.canonicalInputStatusMessage ?? '').trim();
   const canonicalInputPendingSource = String(runtimeDiagnostics.canonicalInputPendingSource ?? '').trim();
   const canonicalInputBlocked = !canonicalInputReady && canonicalInputBlockedReason.length > 0;
+  useEffect(() => {
+    if (!canonicalInputBlocked || !isCanonicalHydrationInProgress(canonicalInputBlockedReason)) {
+      setCanonicalHydrationTimedOut(false);
+      return;
+    }
+
+    setCanonicalHydrationTimedOut(false);
+    const timeout = window.setTimeout(() => {
+      setCanonicalHydrationTimedOut(true);
+    }, CANONICAL_HYDRATION_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [canonicalInputBlocked, canonicalInputBlockedReason]);
+  useEffect(() => {
+    setSimulationDataOpen(!isMobileViewport);
+  }, [isMobileViewport]);
+  const canonicalInputDisplayState = resolveCanonicalInputDisplayState({
+    blocked: canonicalInputBlocked,
+    blockedReason: canonicalInputBlockedReason,
+    hydrationTimedOut: canonicalHydrationTimedOut,
+  });
   const simTechnicalLabel = isRecalculating
     ? `Simulación: recalculando${lastRecalcCause ? ` (${lastRecalcCause})` : ''}`
     : canonicalInputBlocked
-      ? `Simulación: esperando input canónico (${canonicalInputBlockedReason})`
+      ? `Simulación: ${canonicalInputDisplayState} (${canonicalInputBlockedReason})`
     : simUiState === 'ready'
       ? 'Simulación: lista'
       : simUiState === 'error'
@@ -1104,14 +1153,51 @@ export function SimulationPage({
   }, [primaryReasonCode]);
   const heroPrimaryState = useMemo(() => {
     if (canonicalInputBlocked) {
+      const pendingSourceCopy = canonicalInputPendingSource
+        ? `Fuente pendiente: ${canonicalInputPendingSource}.`
+        : 'Fuente pendiente: input canónico.';
+      if (canonicalInputDisplayState === 'hydrating') {
+        return {
+          label: 'Hidratando',
+          tone: T.warning,
+          headline: 'Hidratando Modelo Base…',
+          explanation: canonicalInputStatusMessage || 'Carga canónica en curso.',
+          gap: pendingSourceCopy,
+        };
+      }
+      if (canonicalInputDisplayState === 'missingCanonicalConfig') {
+        return {
+          label: 'Bloqueado',
+          tone: T.negative,
+          headline: 'Falta Modelo Base canónico',
+          explanation: canonicalInputStatusMessage || 'No hay Modelo Base canónico guardado en cloud. Por seguridad, MIDAS no lo crea automáticamente desde cache local.',
+          gap: `${pendingSourceCopy} Revisa Modelo Base antes de ejecutar simulación.`,
+        };
+      }
+      if (canonicalInputDisplayState === 'timeout') {
+        return {
+          label: 'Timeout',
+          tone: T.negative,
+          headline: 'No se pudo completar la hidratación',
+          explanation: canonicalInputStatusMessage || 'La carga canónica excedió el umbral seguro de espera.',
+          gap: `${pendingSourceCopy} Razón técnica: ${canonicalInputBlockedReason}.`,
+        };
+      }
+      if (canonicalInputDisplayState === 'error') {
+        return {
+          label: 'Error',
+          tone: T.negative,
+          headline: 'No se pudo completar la hidratación',
+          explanation: canonicalInputStatusMessage || 'Una fuente canónica devolvió error.',
+          gap: `${pendingSourceCopy} Razón técnica: ${canonicalInputBlockedReason}.`,
+        };
+      }
       return {
-        label: 'Hidratando',
-        tone: T.warning,
-        headline: 'Hidratando Modelo Base…',
-        explanation: canonicalInputStatusMessage || 'Esperando input canónico.',
-        gap: canonicalInputPendingSource
-          ? `Falta: resolver ${canonicalInputPendingSource}.`
-          : 'Falta: cerrar input canónico antes de correr.',
+        label: 'Bloqueado',
+        tone: T.negative,
+        headline: 'Input canónico incompleto',
+        explanation: canonicalInputStatusMessage || 'Aún no hay simulación válida para el input canónico.',
+        gap: `${pendingSourceCopy} Razón técnica: ${canonicalInputBlockedReason}.`,
       };
     }
     if (heroShowsRunActive) {
@@ -1186,6 +1272,8 @@ export function SimulationPage({
     T.positive,
     T.warning,
     canonicalInputBlocked,
+    canonicalInputBlockedReason,
+    canonicalInputDisplayState,
     canonicalInputPendingSource,
     canonicalInputStatusMessage,
     hasOnlyRunResultBlockingReasons,
@@ -2287,7 +2375,7 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div style={{ position: 'relative', order: 2 }}>
+      <div style={{ position: 'relative', order: isMobileViewport ? 1 : 2 }}>
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -2372,7 +2460,46 @@ export function SimulationPage({
                       </span>
                     </span>
                   )
-                  : 'Corre una simulación para ver resultados'
+                  : (
+                    <span style={{ display: 'grid', gap: 8 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={canonicalInputBlocked ? openDiagnosticsFromHero : onRunSimulation}
+                          title={canonicalInputBlocked ? 'Revisar detalle técnico' : 'Ejecutar simulación'}
+                          style={{
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            border: `1px solid ${heroPrimaryState.tone}`,
+                            color: heroPrimaryState.tone,
+                            borderRadius: 999,
+                            padding: '2px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {canonicalInputBlocked ? heroPrimaryState.label : 'Ejecutar simulación'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={canonicalInputBlocked ? openDiagnosticsFromHero : onRunSimulation}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            padding: 0,
+                            color: T.textSecondary,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Aún no hay simulación válida
+                        </button>
+                      </span>
+                      {heroConfidenceBlock}
+                    </span>
+                  )
             }
             footerContent={null}
             mode={simActive ? 'sim' : 'real'}
@@ -2707,11 +2834,13 @@ export function SimulationPage({
       </div>
       </div>
       </details>
-      <QualityOfLifeMetricsBlock
-        qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
-        midasEvaluation={midasEvaluation}
-        isMobile={isMobileViewport}
-      />
+      <div style={{ order: isMobileViewport ? 2 : 0 }}>
+        <QualityOfLifeMetricsBlock
+          qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
+          midasEvaluation={midasEvaluation}
+          isMobile={isMobileViewport}
+        />
+      </div>
       <details
         open={modelBaseOpen}
         onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}
@@ -2947,7 +3076,7 @@ export function SimulationPage({
       <details
         open={simulationDataOpen}
         onToggle={(e) => setSimulationDataOpen((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ order: 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
+        style={{ order: isMobileViewport ? 4 : 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
       >
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800, listStyle: 'none' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

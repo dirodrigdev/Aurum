@@ -665,8 +665,8 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
       };
     case 'auth_not_canonical':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
+        metricText: 'Input canónico incompleto',
+        confidenceLabel: 'Sesión no canónica',
         explanation: 'La sesión actual no permite cargar la configuración oficial.',
         pendingSource: 'auth/user',
       };
@@ -679,15 +679,15 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
       };
     case 'config_missing':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
-        explanation: 'Falta la config cloud oficial de simulación.',
-        pendingSource: 'config cloud',
+        metricText: 'Falta Modelo Base canónico',
+        confidenceLabel: 'simulationActiveV1 ausente',
+        explanation: 'No hay Modelo Base canónico guardado en cloud. Por seguridad, MIDAS no lo crea desde cache local.',
+        pendingSource: 'config cloud simulationActiveV1',
       };
     case 'config_error':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
+        metricText: 'No se pudo completar la hidratación',
+        confidenceLabel: 'Error config cloud',
         explanation: 'No se pudo resolver la config cloud oficial.',
         pendingSource: 'config cloud',
       };
@@ -700,8 +700,8 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
       };
     case 'instrument_universe_missing':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
+        metricText: 'Input canónico incompleto',
+        confidenceLabel: 'Falta universe activo',
         explanation: 'Falta Instrument Universe activo o ausencia segura.',
         pendingSource: 'instrument universe',
       };
@@ -714,23 +714,23 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
       };
     case 'aurum_snapshot_error':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
+        metricText: 'No se pudo completar la hidratación',
+        confidenceLabel: 'Error snapshot Aurum',
         explanation: 'El snapshot Aurum no quedó resuelto de forma segura.',
         pendingSource: 'snapshot Aurum',
       };
     case 'effective_input_missing':
       return {
-        metricText: 'Esperando input canónico',
-        confidenceLabel: 'Esperando input canónico',
+        metricText: 'Input canónico incompleto',
+        confidenceLabel: 'Fingerprint M8 pendiente',
         explanation: 'Aún no es calculable el fingerprint/input efectivo M8.',
         pendingSource: 'fingerprint M8',
       };
     case 'cloud_hydration_incomplete':
       return {
-        metricText: 'Hidratando Modelo Base…',
-        confidenceLabel: 'Esperando input canónico',
-        explanation: 'La hidratación canónica aún no está cerrada.',
+        metricText: 'Input canónico incompleto',
+        confidenceLabel: 'Hidratación cloud incompleta',
+        explanation: 'La hidratación canónica no cerró: falta config cloud, snapshot Aurum, universe activo o fingerprint M8.',
         pendingSource: 'cloud hydration',
       };
     default:
