@@ -38,6 +38,12 @@ export type SourcePolicyEntry = {
   warning: string | null;
 };
 
+export type SourcePolicyNotice = {
+  code: string;
+  label: string;
+  sourceId: string | null;
+};
+
 export type SourceFreshnessPolicy = {
   status: SourcePolicyStatus;
   label: string;
@@ -49,6 +55,8 @@ export type SourceFreshnessPolicy = {
   freshness: SourcePolicyFreshness;
   sources: SourcePolicyEntry[];
   warnings: string[];
+  decisionWarnings: SourcePolicyNotice[];
+  technicalNotes: SourcePolicyNotice[];
   blockingReasons: string[];
   forbiddenSourcesUsed: string[];
 };
@@ -108,6 +116,12 @@ const RECENT_FALLBACK_MAX_AGE_DAYS = 14;
 const INSTRUMENT_UNIVERSE_MAX_AGE_DAYS = 60;
 const CURRENT_SNAPSHOT_MAX_AGE_DAYS = 45;
 const RECENT_SNAPSHOT_MAX_AGE_DAYS = 120;
+const TECHNICAL_NOTE_LABELS: Record<string, string> = {
+  local_base_draft_present_not_used: 'Existe borrador local no usado',
+  instrument_universe_local_cache_present_not_used: 'Existe cache local no usado',
+  manual_local_adjustments_stripped: 'Ajustes manuales locales excluidos de esta corrida',
+  local_read_only_fallback_active: 'Modo local de solo lectura activo para revisión',
+};
 
 const stringOrNull = (value: unknown): string | null =>
   typeof value === 'string' && value.trim().length > 0 ? value : null;
@@ -125,6 +139,12 @@ const formatMonthShort = (value: string | null | undefined): string | null => {
   const parsed = parseIso(value);
   if (parsed === null) return null;
   return new Date(parsed).toLocaleDateString('es-CL', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+};
+
+const formatAgeDaysLabel = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return 'fecha no disponible';
+  const roundedDays = Math.max(0, Math.round(value));
+  return `${roundedDays} ${roundedDays === 1 ? 'día' : 'días'}`;
 };
 
 function addExpiredEffectiveSourceWarning(entry: SourcePolicyEntry): SourcePolicyEntry {
@@ -186,6 +206,44 @@ function photoStatusLabel(status: SourcePolicyPhotoStatus, publishedAt: string |
   if (status === 'stale_snapshot') return month ? `Foto ${month}` : 'Foto antigua';
   if (status === 'missing_snapshot') return 'Sin foto';
   return 'Foto sin fecha';
+}
+
+function buildDecisionWarningNotice(entry: SourcePolicyEntry): SourcePolicyNotice | null {
+  if (!entry.usedForRun || !entry.freshness.expired) return null;
+  if (entry.id === 'instrumentUniverse') {
+    return {
+      code: EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS.instrumentUniverse,
+      label: `Mix oficial · ${formatAgeDaysLabel(entry.freshness.ageDays)} · actualizar`,
+      sourceId: entry.id,
+    };
+  }
+  if (entry.id === 'aurumSnapshot') {
+    return {
+      code: EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS.aurumSnapshot,
+      label: 'Foto Aurum antigua',
+      sourceId: entry.id,
+    };
+  }
+  if (entry.id === 'simulationActiveV1') {
+    return {
+      code: EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS.simulationActiveV1,
+      label: 'Modelo Base oficial vencido · revisar',
+      sourceId: entry.id,
+    };
+  }
+  return {
+    code: EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS[entry.id] ?? `${entry.id}_effective_source_expired`,
+    label: `${entry.label} oficial vencido · revisar`,
+    sourceId: entry.id,
+  };
+}
+
+function buildTechnicalNoteNotice(code: string): SourcePolicyNotice {
+  return {
+    code,
+    label: TECHNICAL_NOTE_LABELS[code] ?? code,
+    sourceId: null,
+  };
 }
 
 export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInput): SourceFreshnessPolicy {
@@ -326,11 +384,25 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     input.simulationActiveV1.legacyGlobalExists ? 'legacy_global_config_detected' : null,
   ]);
 
-  const warnings = dedupe([
+  const decisionWarnings: SourcePolicyNotice[] = dedupe([
     ...baseWarnings,
     ...effectiveSources
-      .filter((entry) => entry.usedForRun && entry.freshness.expired)
-      .map((entry) => EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS[entry.id] ?? `${entry.id}_effective_source_expired`),
+      .map((entry) => buildDecisionWarningNotice(entry)?.code ?? null),
+    photoStatus === 'recent_snapshot' ? 'aurum_snapshot_recent_not_current' : null,
+    photoStatus === 'unknown' ? 'aurum_snapshot_unknown_age' : null,
+  ]).map((code) => {
+    if (code === 'aurum_snapshot_recent_not_current') {
+      return { code, label: 'Foto Aurum reciente · revisar', sourceId: 'aurumSnapshot' };
+    }
+    if (code === 'aurum_snapshot_unknown_age') {
+      return { code, label: 'Foto Aurum sin fecha · revisar', sourceId: 'aurumSnapshot' };
+    }
+    return effectiveSources
+      .map((entry) => buildDecisionWarningNotice(entry))
+      .find((notice) => notice?.code === code) ?? { code, label: code, sourceId: null };
+  });
+
+  const technicalNotes = dedupe([
     localDraftExists ? 'local_base_draft_present_not_used' : null,
     localReadOnlyFallbackActive ? 'local_read_only_fallback_active' : null,
     input.instrumentUniverse.localCacheAvailable && input.instrumentUniverse.source !== 'local_cache'
@@ -338,8 +410,11 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       : null,
     manualAdjustmentsCount > 0 && !manualAdjustmentsAffectEngine ? 'manual_local_adjustments_stripped' : null,
     input.simulationActiveV1.legacyGlobalReadStatus ? `legacy_global_${input.simulationActiveV1.legacyGlobalReadStatus}` : null,
-    photoStatus === 'recent_snapshot' ? 'aurum_snapshot_recent_not_current' : null,
-    photoStatus === 'unknown' ? 'aurum_snapshot_unknown_age' : null,
+  ]).map((code) => buildTechnicalNoteNotice(code));
+
+  const warnings = dedupe([
+    ...decisionWarnings.map((notice) => notice.code),
+    ...technicalNotes.map((notice) => notice.code),
   ]);
 
   const effectiveFallbacks = effectiveSources.filter((entry) => entry.usedForRun && entry.role === 'effective_fallback');
@@ -354,7 +429,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     status = 'not_comparable';
   } else if (hasRecentTraceableFallback) {
     status = 'using_recent_fallback';
-  } else if (warnings.length > 0) {
+  } else if (decisionWarnings.length > 0) {
     status = 'canonical_with_warnings';
   } else {
     status = 'canonical_pure';
@@ -401,6 +476,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     freshness: snapshotFreshness,
     sources: effectiveSources,
     warnings,
+    decisionWarnings,
+    technicalNotes,
     blockingReasons,
     forbiddenSourcesUsed,
   };

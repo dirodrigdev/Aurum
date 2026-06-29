@@ -19,7 +19,7 @@ import type { M8Input } from './m8.types';
 
 const FIXED_NOW_MS = Date.parse('2026-06-29T12:00:00.000Z');
 const EXPECTED_EFFECTIVE_HASH = 'fnv1a-3563c1a7';
-const EXPECTED_DIAGNOSTIC_HASH = 'fnv1a-5a0738f7';
+const EXPECTED_DIAGNOSTIC_HASH = 'fnv1a-9068de8b';
 const EXPECTED_RESULT_DIGEST = 'c38b5dca53b5305be78d32a879b5543b774db8d2918485545efe8bd6cc5137da';
 
 const EXPECTED_METRICS = {

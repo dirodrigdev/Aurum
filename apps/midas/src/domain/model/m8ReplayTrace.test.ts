@@ -105,6 +105,7 @@ const base = () => buildM8ReplayTrace({
   const second = base();
   assert.deepEqual(first, second, 'same effective input and metadata must produce the same replay trace');
   assert.equal(first.sourcePolicy.status, 'canonical_with_warnings');
+  assert.ok(first.sourcePolicy.decisionWarnings.some((notice) => notice.code === 'aurum_snapshot_recent_not_current'));
 })();
 
 (() => {
@@ -399,6 +400,7 @@ const base = () => buildM8ReplayTrace({
   assert.ok(trace.warnings.some((warning) => warning.includes('modo canónico')));
   assert.equal(trace.canonicalInput.effectiveCapitalInitialClp, 1_530_974_913);
   assert.equal(trace.sourcePolicy.status, 'canonical_with_warnings');
+  assert.ok(trace.sourcePolicy.decisionWarnings.some((notice) => notice.code === 'aurum_snapshot_recent_not_current'));
 })();
 
 (() => {

@@ -107,6 +107,8 @@ const baseFingerprint = (overrides: Partial<M8InputFingerprint> = {}): M8InputFi
         },
         sources: [],
         warnings: [],
+        decisionWarnings: [],
+        technicalNotes: [],
         blockingReasons: [],
         forbiddenSourcesUsed: [],
       },

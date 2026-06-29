@@ -60,8 +60,10 @@ const base = () => ({
     ...base(),
     localDiagnostics: { persistedBaseExists: true, localReadOnlyFallbackActive: false },
   });
-  assert.equal(policy.status, 'canonical_with_warnings');
+  assert.equal(policy.status, 'canonical_pure');
   assert.ok(policy.warnings.includes('local_base_draft_present_not_used'));
+  assert.equal(policy.decisionWarnings.length, 0);
+  assert.ok(policy.technicalNotes.some((notice) => notice.code === 'local_base_draft_present_not_used'));
 }
 
 {
@@ -69,8 +71,10 @@ const base = () => ({
     ...base(),
     instrumentUniverse: { ...base().instrumentUniverse, localCacheAvailable: true },
   });
-  assert.equal(policy.status, 'canonical_with_warnings');
+  assert.equal(policy.status, 'canonical_pure');
   assert.ok(policy.warnings.includes('instrument_universe_local_cache_present_not_used'));
+  assert.equal(policy.decisionWarnings.length, 0);
+  assert.ok(policy.technicalNotes.some((notice) => notice.code === 'instrument_universe_local_cache_present_not_used'));
 }
 
 {
@@ -88,6 +92,7 @@ const base = () => ({
   assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
   assert.equal(effectiveUniverse?.freshness.expired, false);
   assert.equal(effectiveUniverse?.warning, null);
+  assert.equal(policy.decisionWarnings.length, 0);
 }
 
 {
@@ -105,6 +110,7 @@ const base = () => ({
   assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
   assert.equal(effectiveUniverse?.freshness.expired, true);
   assert.ok(effectiveUniverse?.warning?.includes('esta vencido segun politica de frescura'));
+  assert.ok(policy.decisionWarnings.some((notice) => notice.code === 'instrument_universe_effective_source_expired'));
 }
 
 {
@@ -151,8 +157,10 @@ const base = () => ({
       manualLocalAdjustmentsAffectEngine: false,
     },
   });
-  assert.equal(policy.status, 'canonical_with_warnings');
+  assert.equal(policy.status, 'canonical_pure');
   assert.ok(policy.warnings.includes('manual_local_adjustments_stripped'));
+  assert.equal(policy.decisionWarnings.length, 0);
+  assert.ok(policy.technicalNotes.some((notice) => notice.code === 'manual_local_adjustments_stripped'));
 }
 
 {

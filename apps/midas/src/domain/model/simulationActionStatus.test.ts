@@ -107,6 +107,8 @@ const baseFingerprint: M8InputFingerprint = {
         },
         sources: [],
         warnings: [],
+        decisionWarnings: [],
+        technicalNotes: [],
         blockingReasons: [],
         forbiddenSourcesUsed: [],
       },

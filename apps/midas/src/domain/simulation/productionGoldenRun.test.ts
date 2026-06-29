@@ -297,7 +297,7 @@ assert.equal(fixture.simulationResultDiagnostics.resultDigest, EXPECTED_RESULT_D
 
 const currentSourcePolicy = buildCurrentSourcePolicy();
 const currentInstrumentUniverseSource = currentSourcePolicy.sources.find((entry) => entry.id === 'instrumentUniverse');
-assert.equal(currentSourcePolicy.status, 'canonical_with_warnings');
+assert.equal(currentSourcePolicy.status, 'canonical_pure');
 assert.equal(currentSourcePolicy.isComparable, true);
 assert.deepEqual(currentSourcePolicy.forbiddenSourcesUsed, []);
 assert.deepEqual(currentSourcePolicy.blockingReasons, []);
@@ -306,6 +306,9 @@ assert.equal(currentInstrumentUniverseSource?.freshness.maxAcceptedAgeDays, 60);
 assert.equal(currentInstrumentUniverseSource?.freshness.expired, false);
 assert.equal(currentInstrumentUniverseSource?.warning, null);
 assert.ok(currentSourcePolicy.warnings.includes('instrument_universe_local_cache_present_not_used'));
+assert.equal(currentSourcePolicy.decisionWarnings.length, 0);
+assert.ok(currentSourcePolicy.technicalNotes.some((notice) => notice.code === 'local_base_draft_present_not_used'));
+assert.ok(currentSourcePolicy.technicalNotes.some((notice) => notice.code === 'instrument_universe_local_cache_present_not_used'));
 
 const currentMidasEvaluation = buildMidasEvaluation({
   qualityOfLifeMetrics,

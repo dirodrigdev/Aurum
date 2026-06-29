@@ -142,15 +142,23 @@ export function buildMixSourceCompactLabel(input: {
     if (instrumentUniverseCloudReadStatus === 'error') return 'Error Universe cloud';
     if (universeSourceOrigin === 'firestore') {
       const instrumentUniverseSource = sourcePolicy?.sources.find((entry) => entry.id === 'instrumentUniverse') ?? null;
-      if (!instrumentUniverseSource || instrumentUniverseSource.source !== 'cloud') return 'Mix cloud';
+      if (!instrumentUniverseSource || instrumentUniverseSource.source !== 'cloud') return 'Mix oficial';
       const freshnessStatus = instrumentUniverseSource.freshness.expired ? 'actualizar' : 'vigente';
-      return `Mix cloud · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;
+      return `Mix oficial · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;
     }
     if (universeSourceOrigin === 'bundled') return 'Mix respaldo';
     return 'Mix local';
   }
   if (weightsSourceMode === 'simulation') return 'Mix override';
   return 'Mix fallback';
+}
+
+export function buildSourcePolicyUserSummary(sourcePolicy: SourceFreshnessPolicy | null) {
+  if (!sourcePolicy) return 'Fuentes aplicadas y trazables.';
+  if (sourcePolicy.status === 'canonical_pure') return 'Fuente oficial trazable.';
+  if (sourcePolicy.status === 'canonical_with_warnings') return 'Fuente oficial con revisión visible.';
+  if (sourcePolicy.status === 'using_recent_fallback') return 'Reserva trazable aplicada.';
+  return 'Fuente no comparable para decisión.';
 }
 
 const formatMonthYearLabel = (value: string | null | undefined): string => {
@@ -470,6 +478,32 @@ function SourceBadge({
       }}
     >
       {label}
+    </span>
+  );
+}
+
+function SourcePolicyStatusBadge({ sourcePolicy }: { sourcePolicy: SourceFreshnessPolicy }) {
+  if (sourcePolicy.status !== 'canonical_with_warnings') {
+    return <SourceBadge label={sourcePolicy.shortLabel} tone={resolveSourcePolicyTone(sourcePolicy.status)} />;
+  }
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        borderRadius: 999,
+        padding: '2px 8px',
+        fontSize: 10,
+        fontWeight: 800,
+        whiteSpace: 'nowrap',
+        color: T.textPrimary,
+        background: 'rgba(91, 140, 255, 0.14)',
+        border: `1px solid rgba(91, 140, 255, 0.35)`,
+      }}
+    >
+      <span>Canónico</span>
+      <span style={{ color: T.primary }}>+ aviso</span>
     </span>
   );
 }
@@ -1516,7 +1550,7 @@ export function SimulationPage({
       decisionStatus: resultConfidence.status,
       comparabilityWarnings: [
         ...m8InputFingerprint.warnings,
-        ...(sourcePolicy?.warnings ?? []),
+        ...(sourcePolicy?.decisionWarnings.map((notice) => notice.code) ?? []),
         ...(sourcePolicy?.forbiddenSourcesUsed ?? []),
         ...(sourcePolicy && !sourcePolicy.isPureCanonical ? [`source_policy:${sourcePolicy.status}`] : []),
         ...resultConfidence.reasons
@@ -1817,9 +1851,9 @@ export function SimulationPage({
       ? 'Datos usables con advertencias de fuente.'
       : 'Inconsistencia o fallback crítico en fuentes.';
   const sourcePolicyTone: SourceBadgeTone = sourcePolicy ? resolveSourcePolicyTone(sourcePolicy.status) : dataSourceTone;
-  const sourcePolicySummary = sourcePolicy
-    ? `${sourcePolicy.label} · ${sourcePolicy.effectiveSourceSummary}`
-    : dataSourceStatusCopy;
+  const sourcePolicySummary = buildSourcePolicyUserSummary(sourcePolicy);
+  const sourcePolicyDecisionWarnings = sourcePolicy?.decisionWarnings ?? [];
+  const sourcePolicyTechnicalNotes = sourcePolicy?.technicalNotes ?? [];
   const mixSourceCompactLabel = buildMixSourceCompactLabel({
     weightsSourceMode,
     instrumentUniverseCloudReadStatus,
@@ -3379,7 +3413,11 @@ export function SimulationPage({
                   <span style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Fuente de datos
                   </span>
-                  <SourceBadge label={sourcePolicy?.shortLabel ?? dataSourceStatusLabel} tone={sourcePolicyTone} />
+                  {sourcePolicy ? (
+                    <SourcePolicyStatusBadge sourcePolicy={sourcePolicy} />
+                  ) : (
+                    <SourceBadge label={dataSourceStatusLabel} tone={sourcePolicyTone} />
+                  )}
                   {sourcePolicy ? (
                     <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{sourcePolicySummary}</span>
                   ) : null}
@@ -3397,6 +3435,28 @@ export function SimulationPage({
                   <SourceBadge label={eurFxSourceSummary} tone={eurFxTone} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 4, minHeight: isMobileViewport ? undefined : 18 }}>
+                  {sourcePolicyDecisionWarnings.length > 0 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', rowGap: 4 }}>
+                      <span style={{ color: T.primary, fontSize: 10, fontWeight: 800 }}>Avisos</span>
+                      {sourcePolicyDecisionWarnings.map((notice) => (
+                        <span
+                          key={`source-policy-warning-${notice.code}`}
+                          style={{
+                            color: T.primary,
+                            background: 'rgba(91, 140, 255, 0.14)',
+                            border: '1px solid rgba(91, 140, 255, 0.35)',
+                            borderRadius: 999,
+                            padding: '2px 7px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {notice.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   {usdFxWarning ? (
                     <span style={{ color: usdFxTone === 'alert' ? T.negative : T.warning, fontSize: 10 }}>
                       {usdFxWarning}
@@ -3407,7 +3467,7 @@ export function SimulationPage({
                       {eurFxWarning}
                     </span>
                   ) : null}
-                  {!usdFxWarning && !eurFxWarning ? (
+                  {!usdFxWarning && !eurFxWarning && sourcePolicyDecisionWarnings.length === 0 ? (
                     <span style={{ color: T.textMuted, fontSize: 10 }}>{sourcePolicy ? sourcePolicySummary : dataSourceStatusCopy}</span>
                   ) : null}
                   <details style={{ marginTop: 0 }}>
@@ -3418,6 +3478,16 @@ export function SimulationPage({
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
                       {sourcePolicy ? (
                         <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Política:</span> {sourcePolicy.label} · {sourcePolicy.effectiveSourceSummary}</div>
+                      ) : null}
+                      {sourcePolicyTechnicalNotes.length > 0 ? (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Notas técnicas:</span></div>
+                          {sourcePolicyTechnicalNotes.map((notice) => (
+                            <div key={`source-policy-note-${notice.code}`} style={{ color: T.textMuted }}>
+                              {notice.label}
+                            </div>
+                          ))}
+                        </div>
                       ) : null}
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Instrument Universe cloud:</span> {instrumentUniverseCloudReadStatus || 'sin estado'}</div>

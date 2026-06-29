@@ -10,6 +10,7 @@ import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
 import {
   buildMixSourceCompactLabel,
+  buildSourcePolicyUserSummary,
   buildEnabledResourcesSubcopy,
   computeEnabledResourcesForUi,
   computeMidasConsideredWealth,
@@ -657,7 +658,7 @@ assert(source.includes('Mix cloud pendiente'));
 assert(source.includes('Instrument Universe timeout'));
 assert(source.includes('Falta Universe cloud'));
 assert(source.includes('Error Universe cloud'));
-assert(source.includes("return `Mix cloud · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;"));
+assert(source.includes("return `Mix oficial · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;"));
 assert(source.includes('Instrument Universe cloud sigue cargando; no lo tratamos como fuente lista.'));
 assert(source.includes('Timeout de lectura cloud para Instrument Universe.'));
 assert(source.includes('Instrument Universe cloud:'));
@@ -714,7 +715,9 @@ assert(source.includes("style={{ order: 9"));
 assert(source.includes('ref={diagnosticsRef}'));
 assert(source.includes("style={{ order: 10 }}"));
 assert(source.includes('sourcePolicy'));
-assert(source.includes("sourcePolicy?.shortLabel ?? dataSourceStatusLabel"));
+assert(source.includes('SourcePolicyStatusBadge'));
+assert(source.includes('Avisos'));
+assert(source.includes('Notas técnicas:'));
 assert(source.includes('Política de fuente:'));
 assert(qualityOfLifeSource.includes('Calidad media en simulación'));
 assert(!qualityOfLifeSource.includes('Calidad media observada'));
@@ -724,13 +727,16 @@ assert.equal(buildMixSourceCompactLabel({
   instrumentUniverseCloudReadStatus: 'loaded',
   universeSourceOrigin: 'firestore',
   sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'),
-}), 'Mix cloud · 47 días · vigente');
+}), 'Mix oficial · 47 días · vigente');
 
 assert.equal(buildMixSourceCompactLabel({
   weightsSourceMode: 'instrument-universe',
   instrumentUniverseCloudReadStatus: 'loaded',
   universeSourceOrigin: 'firestore',
   sourcePolicy: buildMixSourcePolicy('2026-04-27T12:00:00.000Z'),
-}), 'Mix cloud · 63 días · actualizar');
+}), 'Mix oficial · 63 días · actualizar');
+
+assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-05-13T15:40:33.080Z')), 'Fuente oficial trazable.');
+assert.equal(buildSourcePolicyUserSummary(buildMixSourcePolicy('2026-04-27T12:00:00.000Z')), 'Fuente oficial con revisión visible.');
 
 console.log('SimulationPage tests passed');
