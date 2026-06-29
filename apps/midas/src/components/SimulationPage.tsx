@@ -122,6 +122,37 @@ const formatMoneyCompact = (value: number) => {
   return `$${value.toFixed(0)}`;
 };
 
+const formatAgeDaysCompact = (ageDays: number | null) => {
+  if (ageDays === null || !Number.isFinite(ageDays)) return 'fecha no disponible';
+  const roundedDays = Math.max(0, Math.round(ageDays));
+  return `${roundedDays} ${roundedDays === 1 ? 'día' : 'días'}`;
+};
+
+export function buildMixSourceCompactLabel(input: {
+  weightsSourceMode: WeightsSourceMode;
+  instrumentUniverseCloudReadStatus: string | null;
+  universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
+  sourcePolicy: SourceFreshnessPolicy | null;
+}) {
+  const { weightsSourceMode, instrumentUniverseCloudReadStatus, universeSourceOrigin, sourcePolicy } = input;
+  if (weightsSourceMode === 'instrument-universe') {
+    if (instrumentUniverseCloudReadStatus === 'loading') return 'Mix cloud pendiente';
+    if (instrumentUniverseCloudReadStatus === 'timeout') return 'Instrument Universe timeout';
+    if (instrumentUniverseCloudReadStatus === 'missing') return 'Falta Universe cloud';
+    if (instrumentUniverseCloudReadStatus === 'error') return 'Error Universe cloud';
+    if (universeSourceOrigin === 'firestore') {
+      const instrumentUniverseSource = sourcePolicy?.sources.find((entry) => entry.id === 'instrumentUniverse') ?? null;
+      if (!instrumentUniverseSource || instrumentUniverseSource.source !== 'cloud') return 'Mix cloud';
+      const freshnessStatus = instrumentUniverseSource.freshness.expired ? 'actualizar' : 'vigente';
+      return `Mix cloud · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;
+    }
+    if (universeSourceOrigin === 'bundled') return 'Mix respaldo';
+    return 'Mix local';
+  }
+  if (weightsSourceMode === 'simulation') return 'Mix override';
+  return 'Mix fallback';
+}
+
 const formatMonthYearLabel = (value: string | null | undefined): string => {
   if (!value) return 'Sin eventos futuros';
   const [yearRaw, monthRaw] = value.split('-');
@@ -1789,23 +1820,12 @@ export function SimulationPage({
   const sourcePolicySummary = sourcePolicy
     ? `${sourcePolicy.label} · ${sourcePolicy.effectiveSourceSummary}`
     : dataSourceStatusCopy;
-  const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
-    ? instrumentUniverseCloudReadStatus === 'loading'
-      ? 'Mix cloud pendiente'
-      : instrumentUniverseCloudReadStatus === 'timeout'
-        ? 'Instrument Universe timeout'
-        : instrumentUniverseCloudReadStatus === 'missing'
-          ? 'Falta Universe cloud'
-          : instrumentUniverseCloudReadStatus === 'error'
-            ? 'Error Universe cloud'
-            : universeSourceOrigin === 'firestore'
-              ? 'Mix cloud'
-              : universeSourceOrigin === 'bundled'
-                ? 'Mix respaldo'
-                : 'Mix local'
-    : weightsSourceMode === 'simulation'
-      ? 'Mix override'
-      : 'Mix fallback';
+  const mixSourceCompactLabel = buildMixSourceCompactLabel({
+    weightsSourceMode,
+    instrumentUniverseCloudReadStatus,
+    universeSourceOrigin,
+    sourcePolicy,
+  });
   const aurumDiffPct = Number.isFinite(aurumSyncLatestOpt) && aurumSyncLatestOpt !== null && aurumSyncLatestOpt > 0
     && Number.isFinite(aurumSyncBaseOpt) && aurumSyncBaseOpt !== null
     ? Math.abs(aurumSyncBaseOpt - aurumSyncLatestOpt) / aurumSyncLatestOpt

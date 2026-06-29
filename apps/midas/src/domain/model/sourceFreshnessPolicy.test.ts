@@ -78,13 +78,31 @@ const base = () => ({
     ...base(),
     instrumentUniverse: {
       ...base().instrumentUniverse,
-      savedAt: '2026-05-01T12:00:00.000Z',
+      savedAt: '2026-05-13T15:40:33.080Z',
+    },
+  });
+  assert.equal(policy.status, 'canonical_pure');
+  assert.ok(!policy.warnings.includes('instrument_universe_effective_source_expired'));
+  const effectiveUniverse = policy.sources.find((entry) => entry.id === 'instrumentUniverse');
+  assert.ok(effectiveUniverse);
+  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
+  assert.equal(effectiveUniverse?.freshness.expired, false);
+  assert.equal(effectiveUniverse?.warning, null);
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
+    instrumentUniverse: {
+      ...base().instrumentUniverse,
+      savedAt: '2026-04-29T12:00:00.000Z',
     },
   });
   assert.equal(policy.status, 'canonical_with_warnings');
   assert.ok(policy.warnings.includes('instrument_universe_effective_source_expired'));
   const effectiveUniverse = policy.sources.find((entry) => entry.id === 'instrumentUniverse');
   assert.ok(effectiveUniverse);
+  assert.equal(effectiveUniverse?.freshness.maxAcceptedAgeDays, 60);
   assert.equal(effectiveUniverse?.freshness.expired, true);
   assert.ok(effectiveUniverse?.warning?.includes('esta vencido segun politica de frescura'));
 }

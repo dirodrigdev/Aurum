@@ -105,6 +105,7 @@ const EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS: Record<string, string> = {
 };
 
 const RECENT_FALLBACK_MAX_AGE_DAYS = 14;
+const INSTRUMENT_UNIVERSE_MAX_AGE_DAYS = 60;
 const CURRENT_SNAPSHOT_MAX_AGE_DAYS = 45;
 const RECENT_SNAPSHOT_MAX_AGE_DAYS = 120;
 
@@ -198,7 +199,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
   ]);
 
   const simulationConfigFreshness = buildFreshness(input.simulationActiveV1.savedAt, nowMs, RECENT_FALLBACK_MAX_AGE_DAYS);
-  const instrumentUniverseFreshness = buildFreshness(input.instrumentUniverse.savedAt, nowMs, RECENT_FALLBACK_MAX_AGE_DAYS);
+  const instrumentUniverseFreshness = buildFreshness(input.instrumentUniverse.savedAt, nowMs, INSTRUMENT_UNIVERSE_MAX_AGE_DAYS);
   const snapshotFreshness = buildFreshness(input.aurumSnapshot.publishedAt, nowMs, RECENT_SNAPSHOT_MAX_AGE_DAYS);
   const photoStatus = resolvePhotoStatus(input, nowMs);
   const localDraftExists = Boolean(input.localDiagnostics?.persistedBaseExists);

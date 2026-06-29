@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildCanonicalBaseSimulationParams } from '../App';
 import { DEFAULT_PARAMETERS, SCENARIO_VARIANTS } from '../domain/model/defaults';
+import { buildSourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolicy';
 import { applyScenarioVariant } from '../domain/simulation/engine';
 import { resolveAurumEurUsdForMidas } from '../domain/model/operativeFx';
 import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy';
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
 import {
+  buildMixSourceCompactLabel,
   buildEnabledResourcesSubcopy,
   computeEnabledResourcesForUi,
   computeMidasConsideredWealth,
@@ -22,6 +24,51 @@ const palancasSource = readFileSync(new URL('./PalancasPage.tsx', import.meta.ur
 const bucketLabSource = readFileSync(new URL('./BucketLabPage.tsx', import.meta.url), 'utf8');
 const bottomNavSource = readFileSync(new URL('./BottomNav.tsx', import.meta.url), 'utf8');
 const qualityOfLifeSource = readFileSync(new URL('./QualityOfLifeMetricsBlock.tsx', import.meta.url), 'utf8');
+
+const buildMixSourcePolicy = (savedAt: string) => buildSourceFreshnessPolicy({
+  nowMs: Date.parse('2026-06-29T12:00:00.000Z'),
+  canonicalInputReady: true,
+  blockedReason: null,
+  hasReplayTrace: true,
+  m8Fingerprint: 'm8-123',
+  diagnosticFingerprint: 'diag-123',
+  simulationActiveV1: {
+    source: 'cloud',
+    savedAt: '2026-06-28T12:00:00.000Z',
+    hash: 'cfg-1',
+    readStatus: 'loaded',
+    exists: true,
+    missingFields: [],
+    legacyGlobalReadStatus: null,
+    legacyGlobalExists: null,
+  },
+  instrumentUniverse: {
+    source: 'cloud',
+    sourceOrigin: 'firestore',
+    weightsMode: 'instrument-universe',
+    savedAt,
+    hash: 'uni-1',
+    cloudReadStatus: 'loaded',
+    localCacheAvailable: false,
+  },
+  aurumSnapshot: {
+    source: 'cloud',
+    month: '2026-06',
+    label: '2026-06 cierre',
+    publishedAt: '2026-06-27T12:00:00.000Z',
+    hash: 'snap-1',
+  },
+  localDiagnostics: {
+    persistedBaseExists: false,
+    localReadOnlyFallbackActive: false,
+  },
+  capitalDerivation: {
+    manualAdjustmentsCount: 0,
+    manualAdjustmentsSource: null,
+    manualLocalAdjustmentsAffectEngine: false,
+  },
+  warnings: [],
+});
 
 const computeWeightedReturn = (p: typeof DEFAULT_PARAMETERS) => (
   p.weights.rvGlobal * p.returns.rvGlobalAnnual
@@ -610,6 +657,7 @@ assert(source.includes('Mix cloud pendiente'));
 assert(source.includes('Instrument Universe timeout'));
 assert(source.includes('Falta Universe cloud'));
 assert(source.includes('Error Universe cloud'));
+assert(source.includes("return `Mix cloud · ${formatAgeDaysCompact(instrumentUniverseSource.freshness.ageDays)} · ${freshnessStatus}`;"));
 assert(source.includes('Instrument Universe cloud sigue cargando; no lo tratamos como fuente lista.'));
 assert(source.includes('Timeout de lectura cloud para Instrument Universe.'));
 assert(source.includes('Instrument Universe cloud:'));
@@ -665,10 +713,24 @@ assert(source.includes('open={modelBaseOpen}'));
 assert(source.includes("style={{ order: 9"));
 assert(source.includes('ref={diagnosticsRef}'));
 assert(source.includes("style={{ order: 10 }}"));
-
-console.log('SimulationPage tests passed');
 assert(source.includes('sourcePolicy'));
 assert(source.includes("sourcePolicy?.shortLabel ?? dataSourceStatusLabel"));
 assert(source.includes('Política de fuente:'));
 assert(qualityOfLifeSource.includes('Calidad media en simulación'));
 assert(!qualityOfLifeSource.includes('Calidad media observada'));
+
+assert.equal(buildMixSourceCompactLabel({
+  weightsSourceMode: 'instrument-universe',
+  instrumentUniverseCloudReadStatus: 'loaded',
+  universeSourceOrigin: 'firestore',
+  sourcePolicy: buildMixSourcePolicy('2026-05-13T15:40:33.080Z'),
+}), 'Mix cloud · 47 días · vigente');
+
+assert.equal(buildMixSourceCompactLabel({
+  weightsSourceMode: 'instrument-universe',
+  instrumentUniverseCloudReadStatus: 'loaded',
+  universeSourceOrigin: 'firestore',
+  sourcePolicy: buildMixSourcePolicy('2026-04-27T12:00:00.000Z'),
+}), 'Mix cloud · 63 días · actualizar');
+
+console.log('SimulationPage tests passed');
