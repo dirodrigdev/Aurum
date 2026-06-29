@@ -1,9 +1,20 @@
-import type { SimulationResults } from '../model/types';
+import { buildMidasEvaluation } from '../model/midasEvaluation';
+import type { MidasEvaluationV1, QualityOfLifeMetricsV1, SimulationResults } from '../model/types';
+import { compareOptimizerEvaluationCandidates } from './optimizerCandidateRanking';
 
 export type QualityOptimizationCandidate = {
   id: string;
   rvWeight: number;
   rfWeight: number;
+  qualityOfLifeMetrics: QualityOfLifeMetricsV1 | null;
+  midasEvaluation: MidasEvaluationV1 | null;
+  isComparable: boolean;
+  evaluationScore: number | null;
+  qualitySurvivalRate: number | null;
+  monthsBelow85: number | null;
+  maxConsecutiveMonthsBelow85: number | null;
+  earlyStressMonths: number | null;
+  terminalWealthRatio: number | null;
   qasrStrict: number | null;
   csr85_4: number | null;
   classicSuccessRate: number | null;
@@ -15,39 +26,8 @@ export type QualityOptimizationCandidate = {
   warnings: string[];
 };
 
-const PRIMARY_TIE_TOLERANCE = 0.005;
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
-
-function compareDescWithTolerance(
-  left: number | null,
-  right: number | null,
-  tolerance = 0,
-): number {
-  const leftValid = isFiniteNumber(left);
-  const rightValid = isFiniteNumber(right);
-  if (leftValid && !rightValid) return -1;
-  if (!leftValid && rightValid) return 1;
-  if (!leftValid && !rightValid) return 0;
-  const delta = (right as number) - (left as number);
-  if (Math.abs(delta) <= tolerance) return 0;
-  return delta > 0 ? 1 : -1;
-}
-
-function compareAscWithTolerance(
-  left: number | null,
-  right: number | null,
-  tolerance = 0,
-): number {
-  const leftValid = isFiniteNumber(left);
-  const rightValid = isFiniteNumber(right);
-  if (leftValid && !rightValid) return -1;
-  if (!leftValid && rightValid) return 1;
-  if (!leftValid && !rightValid) return 0;
-  const delta = (left as number) - (right as number);
-  if (Math.abs(delta) <= tolerance) return 0;
-  return delta > 0 ? 1 : -1;
-}
 
 export function buildQualityOptimizationCandidate(input: {
   id: string;
@@ -57,7 +37,14 @@ export function buildQualityOptimizationCandidate(input: {
 }): QualityOptimizationCandidate {
   const { id, rvWeight, rfWeight, result } = input;
   const metrics = result.qualityOfLifeMetrics;
-  const warnings = [...(metrics?.warnings ?? [])];
+  const midasEvaluation = buildMidasEvaluation({
+    qualityOfLifeMetrics: metrics,
+    inputAuditable: true,
+    canUseForDecision: true,
+    decisionStatus: 'canonical',
+    comparabilityWarnings: metrics?.warnings ?? [],
+  });
+  const warnings = [...(metrics?.warnings ?? []), ...(midasEvaluation.warnings ?? [])];
 
   if (!metrics) {
     warnings.push('quality_of_life_metrics_missing');
@@ -70,6 +57,15 @@ export function buildQualityOptimizationCandidate(input: {
     id,
     rvWeight,
     rfWeight,
+    qualityOfLifeMetrics: metrics ?? null,
+    midasEvaluation,
+    isComparable: midasEvaluation.isComparable,
+    evaluationScore: midasEvaluation.cappedScore ?? midasEvaluation.rawScore,
+    qualitySurvivalRate: metrics?.qualitySurvivalRate ?? null,
+    monthsBelow85: metrics?.monthsBelow85 ?? null,
+    maxConsecutiveMonthsBelow85: metrics?.maxConsecutiveMonthsBelow85 ?? null,
+    earlyStressMonths: metrics?.earlyStressMonths ?? null,
+    terminalWealthRatio: metrics?.terminalWealthRatio ?? null,
     qasrStrict: metrics?.qasrStrict ?? null,
     csr85_4: metrics?.csr85_4 ?? null,
     classicSuccessRate: metrics?.classicSuccessRate ?? null,
@@ -86,37 +82,7 @@ export function compareQualityOptimizationCandidates(
   left: QualityOptimizationCandidate,
   right: QualityOptimizationCandidate,
 ): number {
-  const rankableComparison = compareDescWithTolerance(left.qasrStrict, right.qasrStrict, PRIMARY_TIE_TOLERANCE);
-  if (rankableComparison !== 0) return rankableComparison;
-
-  const qasrLeftValid = isFiniteNumber(left.qasrStrict);
-  const qasrRightValid = isFiniteNumber(right.qasrStrict);
-  if (!qasrLeftValid && !qasrRightValid) {
-    return 0;
-  }
-
-  const csrComparison = compareDescWithTolerance(left.csr85_4, right.csr85_4, PRIMARY_TIE_TOLERANCE);
-  if (csrComparison !== 0) return csrComparison;
-
-  const successComparison = compareDescWithTolerance(left.classicSuccessRate, right.classicSuccessRate, PRIMARY_TIE_TOLERANCE);
-  if (successComparison !== 0) return successComparison;
-
-  const severeCutComparison = compareAscWithTolerance(left.monthsInSevereCutMean, right.monthsInSevereCutMean);
-  if (severeCutComparison !== 0) return severeCutComparison;
-
-  const severeStreakComparison = compareAscWithTolerance(
-    left.maxConsecutiveSevereCutMonthsP75,
-    right.maxConsecutiveSevereCutMonthsP75,
-  );
-  if (severeStreakComparison !== 0) return severeStreakComparison;
-
-  const terminalP25Comparison = compareDescWithTolerance(left.terminalWealthP25, right.terminalWealthP25);
-  if (terminalP25Comparison !== 0) return terminalP25Comparison;
-
-  const terminalP50Comparison = compareDescWithTolerance(left.terminalWealthP50, right.terminalWealthP50);
-  if (terminalP50Comparison !== 0) return terminalP50Comparison;
-
-  return 0;
+  return compareOptimizerEvaluationCandidates(left, right);
 }
 
 export function rankQualityOptimizationCandidates(

@@ -36,6 +36,7 @@ const base = {
   assert.equal(applyHardGuardrails({ ...base, ruinRate: 0.12 }).passesHardGuardrails, false);
   assert.equal(applyHardGuardrails({ ...base, monthsInSevereCutMean: 52 }).passesHardGuardrails, false);
   assert.equal(applyHardGuardrails({ ...base, maxConsecutiveSevereCutMonthsP75: 34 }).passesHardGuardrails, false);
+  assert.equal(applyHardGuardrails({ ...base, midasEvaluationComparable: false }).passesHardGuardrails, false);
   assert.equal(applyHardGuardrails({ ...base, qasrBase: 0.89, csrBase: 0.6 }).passesHardGuardrails, true);
 }
 

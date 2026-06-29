@@ -7,6 +7,15 @@ function makeCandidate(overrides: Partial<QualityOptimizationCandidate>): Qualit
     id: 'candidate',
     rvWeight: 0.5,
     rfWeight: 0.5,
+    qualityOfLifeMetrics: null,
+    midasEvaluation: null,
+    isComparable: true,
+    evaluationScore: 80,
+    qualitySurvivalRate: 0.8,
+    monthsBelow85: 6,
+    maxConsecutiveMonthsBelow85: 3,
+    earlyStressMonths: 1,
+    terminalWealthRatio: 0.5,
     qasrStrict: 0.8,
     csr85_4: 0.75,
     classicSuccessRate: 0.9,
@@ -52,12 +61,12 @@ function makeCandidate(overrides: Partial<QualityOptimizationCandidate>): Qualit
   const lowHouseSale = makeCandidate({ id: 'a', houseSaleRate: 0.05 });
   const highHouseSale = makeCandidate({ id: 'b', houseSaleRate: 0.95 });
   const comparison = compareQualityOptimizationCandidates(lowHouseSale, highHouseSale);
-  assert.equal(comparison, 0);
+  assert.equal(comparison < 0, true);
 }
 
 {
   const valid = makeCandidate({ id: 'a', qasrStrict: 0.8 });
-  const invalid = makeCandidate({ id: 'b', qasrStrict: null });
+  const invalid = makeCandidate({ id: 'b', qasrStrict: null, isComparable: false, evaluationScore: null });
   const ranked = rankQualityOptimizationCandidates([invalid, valid]);
   assert.equal(ranked[0].id, 'a');
   assert.equal(ranked[1].id, 'b');

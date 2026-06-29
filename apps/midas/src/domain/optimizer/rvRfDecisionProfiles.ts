@@ -1,3 +1,5 @@
+import type { MidasEvaluationLabel } from '../model/types';
+
 export const GUARDRAIL_QASR_MIN = 87;
 export const GUARDRAIL_RUIN_MAX = 0.10;
 export const GUARDRAIL_SEVERE_CUT_MONTHS_MAX = 48;
@@ -32,6 +34,16 @@ export type RvRfDecisionCandidate = {
   houseSaleRate: number | null;
   severeCutDuringSaleMonths: number | null;
   recSevPctBase: number | null;
+  qualitySurvivalRate?: number | null;
+  monthsBelow85?: number | null;
+  maxConsecutiveMonthsBelow85?: number | null;
+  earlyStressMonths?: number | null;
+  terminalWealthRatio?: number | null;
+  midasEvaluationLabel?: MidasEvaluationLabel | null;
+  midasEvaluationScore?: number | null;
+  midasEvaluationComparable?: boolean;
+  midasEvaluationCapsApplied?: string[];
+  midasEvaluationAlerts?: string[];
 };
 
 export type RvRfDecisionCandidateAnnotated = RvRfDecisionCandidate & {
@@ -152,7 +164,9 @@ function fallbackCandidateDominates(
 function fallbackRankingScore(a: RvRfDecisionCandidateAnnotated, b: RvRfDecisionCandidateAnnotated): number {
   const safeMetric = (value: number | null, fallback: number) => (value === null || Number.isNaN(value) ? fallback : value);
   return (
-    (a.failedGuardrails.length - b.failedGuardrails.length)
+    ((b.midasEvaluationComparable === true ? 1 : 0) - (a.midasEvaluationComparable === true ? 1 : 0))
+    || (safeMetric(b.midasEvaluationScore ?? null, Number.NEGATIVE_INFINITY) - safeMetric(a.midasEvaluationScore ?? null, Number.NEGATIVE_INFINITY))
+    || (a.failedGuardrails.length - b.failedGuardrails.length)
     || (safeMetric(b.qasrBase, Number.NEGATIVE_INFINITY) - safeMetric(a.qasrBase, Number.NEGATIVE_INFINITY))
     || (safeMetric(a.ruinRate, Number.POSITIVE_INFINITY) - safeMetric(b.ruinRate, Number.POSITIVE_INFINITY))
     || (safeMetric(a.monthsInSevereCutMean, Number.POSITIVE_INFINITY) - safeMetric(b.monthsInSevereCutMean, Number.POSITIVE_INFINITY))
@@ -284,6 +298,7 @@ export function applyHardGuardrails(candidate: RvRfDecisionCandidate): {
   failedGuardrails: string[];
 } {
   const failures: string[] = [];
+  if (candidate.midasEvaluationComparable === false) failures.push('midas_evaluation_not_comparable');
   const qasr = toScore100(candidate.qasrBase);
   if (qasr === null || qasr < GUARDRAIL_QASR_MIN) failures.push('qasr_base_below_min');
   if (candidate.ruinRate === null || candidate.ruinRate > GUARDRAIL_RUIN_MAX) failures.push('ruin_rate_above_max');

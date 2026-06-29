@@ -14,6 +14,7 @@ import {
 import { buildRvRfCandidateWeights } from '../domain/optimizer/rvRfCandidateMapping';
 import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
 import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
+import { rankOptimizerCandidates } from '../domain/optimizer/optimizerCandidateRanking';
 import {
   RV_RF_PREMIUM_SENSITIVITY_SCENARIOS,
   applyRvRfPremiumSensitivity,
@@ -206,8 +207,18 @@ type SpendingHeadroomEvaluationResult = {
   maxConsecutiveSevereCutMonthsP75: number | null;
   terminalWealthP25: number | null;
   terminalWealthP50: number | null;
+  qualitySurvivalRate: number | null;
+  monthsBelow85: number | null;
+  maxConsecutiveMonthsBelow85: number | null;
+  earlyStressMonths: number | null;
+  terminalWealthRatio: number | null;
   houseSaleRate: number | null;
   severeCutMonthsDuringHouseSaleMedian: number | null;
+  midasEvaluationLabel: RvRfDecisionCandidate['midasEvaluationLabel'];
+  midasEvaluationScore: number | null;
+  midasEvaluationComparable: boolean;
+  midasEvaluationCapsApplied: string[];
+  midasEvaluationAlerts: string[];
 };
 
 type SpendingHeadroomMixResult = {
@@ -279,6 +290,11 @@ type OptimizationResultMeta = {
 
 type OptimizationDecisionTraceCandidate = {
   mix: string;
+  evaluationLabel: string | null;
+  evaluationScore: number | null;
+  isComparable: boolean;
+  rankingReason: string | null;
+  primaryAlerts: string[];
   qasrBase: number | null;
   qasrPlus20: number | null;
   qasrPlus30: number | null;
@@ -826,6 +842,35 @@ export function selectBestAvailableFallbackCandidate(
   return selectBestAvailableFallbackCandidateFromDomain(rows, baselineCandidate);
 }
 
+function toOptimizerRankingCandidate(candidate: RvRfDecisionCandidateAnnotated | RvRfDecisionCandidate) {
+  return {
+    id: candidate.candidateId,
+    isComparable: candidate.midasEvaluationComparable ?? false,
+    evaluationScore: candidate.midasEvaluationScore ?? null,
+    qasrStrict: candidate.qasrBase,
+    csr85_4: candidate.csrBase,
+    classicSuccessRate: candidate.ruinRate === null ? null : 1 - candidate.ruinRate,
+    qualitySurvivalRate: candidate.qualitySurvivalRate ?? null,
+    monthsBelow85: candidate.monthsBelow85 ?? null,
+    maxConsecutiveMonthsBelow85: candidate.maxConsecutiveMonthsBelow85 ?? null,
+    earlyStressMonths: candidate.earlyStressMonths ?? null,
+    terminalWealthRatio: candidate.terminalWealthRatio ?? null,
+    houseSaleRate: candidate.houseSaleRate,
+    warnings: 'failedGuardrails' in candidate ? candidate.failedGuardrails : [],
+    midasEvaluation: candidate.midasEvaluationLabel
+      ? {
+        label: candidate.midasEvaluationLabel,
+        rawScore: candidate.midasEvaluationScore ?? null,
+        cappedScore: candidate.midasEvaluationScore ?? null,
+        capsApplied: candidate.midasEvaluationCapsApplied ?? [],
+        alerts: candidate.midasEvaluationAlerts ?? [],
+        warnings: 'failedGuardrails' in candidate ? candidate.failedGuardrails : [],
+        isComparable: candidate.midasEvaluationComparable ?? false,
+      }
+      : null,
+  };
+}
+
 function buildDecisionTraceStage(input: {
   nSim: number;
   candidateCount: number;
@@ -837,14 +882,22 @@ function buildDecisionTraceStage(input: {
   if (!input.profiles) return null;
   const fallbackTrace = diagnoseFallbackSelection(input.profiles.rows, input.baselineCandidate);
   const fallbackById = new Map(fallbackTrace.diagnostics.map((row) => [row.candidateId, row]));
+  const evaluationRanking = rankOptimizerCandidates(input.profiles.rows.map(toOptimizerRankingCandidate));
+  const rankingById = new Map(evaluationRanking.ranked.map((row) => [row.candidateId, row]));
   return {
     nSim: input.nSim,
     candidateCount: input.candidateCount,
     shortlistSource: input.shortlistSource,
     candidates: input.profiles.rows.map((candidate) => {
       const fallback = fallbackById.get(candidate.candidateId) ?? null;
+      const ranking = rankingById.get(candidate.candidateId) ?? null;
       return {
         mix: candidate.mixLabel,
+        evaluationLabel: candidate.midasEvaluationLabel ?? null,
+        evaluationScore: candidate.midasEvaluationScore ?? null,
+        isComparable: candidate.midasEvaluationComparable ?? false,
+        rankingReason: ranking?.rankingReason ?? null,
+        primaryAlerts: ranking?.primaryAlerts ?? [],
         qasrBase: candidate.qasrBase,
         qasrPlus20: candidate.qasrAt120,
         qasrPlus30: candidate.qasrAt130,
@@ -1593,6 +1646,34 @@ function toPhase2PointFromDecisionCandidate(candidate: RvRfDecisionCandidate, we
       id: candidate.candidateId,
       rvWeight: candidate.rvPct / 100,
       rfWeight: candidate.rfPct / 100,
+      qualityOfLifeMetrics: null,
+      midasEvaluation: candidate.midasEvaluationLabel
+        ? {
+          schemaVersion: 1,
+          source: 'quality_of_life_metrics_v1',
+          label: candidate.midasEvaluationLabel,
+          rawScore: candidate.midasEvaluationScore ?? null,
+          cappedScore: candidate.midasEvaluationScore ?? null,
+          confidenceBand: 'medium',
+          noRuinAssessment: 'Derivado desde decisión del optimizer.',
+          qualityAssessment: 'Derivado desde decisión del optimizer.',
+          earlyStressAssessment: 'Derivado desde decisión del optimizer.',
+          tailStressAssessment: 'Derivado desde decisión del optimizer.',
+          terminalWealthAssessment: 'Derivado desde decisión del optimizer.',
+          houseSaleAssessment: 'Derivado desde decisión del optimizer.',
+          capsApplied: candidate.midasEvaluationCapsApplied ?? [],
+          alerts: candidate.midasEvaluationAlerts ?? [],
+          warnings: [],
+          isComparable: candidate.midasEvaluationComparable ?? false,
+        }
+        : null,
+      isComparable: candidate.midasEvaluationComparable ?? false,
+      evaluationScore: candidate.midasEvaluationScore ?? null,
+      qualitySurvivalRate: candidate.qualitySurvivalRate ?? null,
+      monthsBelow85: candidate.monthsBelow85 ?? null,
+      maxConsecutiveMonthsBelow85: candidate.maxConsecutiveMonthsBelow85 ?? null,
+      earlyStressMonths: candidate.earlyStressMonths ?? null,
+      terminalWealthRatio: candidate.terminalWealthRatio ?? null,
       qasrStrict: candidate.qasrBase,
       csr85_4: candidate.csrBase,
       classicSuccessRate: candidate.ruinRate === null ? null : 1 - candidate.ruinRate,
@@ -2775,8 +2856,18 @@ export function OptimizationLightPage({
             maxConsecutiveSevereCutMonthsP75: candidate.maxConsecutiveSevereCutMonthsP75,
             terminalWealthP25: candidate.terminalWealthP25,
             terminalWealthP50: candidate.terminalWealthP50,
+            qualitySurvivalRate: candidate.qualitySurvivalRate,
+            monthsBelow85: candidate.monthsBelow85,
+            maxConsecutiveMonthsBelow85: candidate.maxConsecutiveMonthsBelow85,
+            earlyStressMonths: candidate.earlyStressMonths,
+            terminalWealthRatio: candidate.terminalWealthRatio,
             houseSaleRate: candidate.houseSaleRate,
             severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? null,
+            midasEvaluationLabel: candidate.midasEvaluation?.label ?? null,
+            midasEvaluationScore: candidate.evaluationScore ?? null,
+            midasEvaluationComparable: candidate.isComparable,
+            midasEvaluationCapsApplied: candidate.midasEvaluation?.capsApplied ?? [],
+            midasEvaluationAlerts: candidate.midasEvaluation?.alerts ?? [],
           });
           await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         }
@@ -2913,8 +3004,18 @@ export function OptimizationLightPage({
             maxConsecutiveSevereCutMonthsP75: quality.maxConsecutiveSevereCutMonthsP75,
             terminalWealthP25: quality.terminalWealthP25,
             terminalWealthP50: quality.terminalWealthP50,
+            qualitySurvivalRate: quality.qualitySurvivalRate,
+            monthsBelow85: quality.monthsBelow85,
+            maxConsecutiveMonthsBelow85: quality.maxConsecutiveMonthsBelow85,
+            earlyStressMonths: quality.earlyStressMonths,
+            terminalWealthRatio: quality.terminalWealthRatio,
             houseSaleRate: quality.houseSaleRate,
             severeCutMonthsDuringHouseSaleMedian: sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMedian ?? sim.qualityOfLifeMetrics?.severeCutMonthsDuringHouseSaleMean ?? null,
+            midasEvaluationLabel: quality.midasEvaluation?.label ?? null,
+            midasEvaluationScore: quality.evaluationScore ?? null,
+            midasEvaluationComparable: quality.isComparable,
+            midasEvaluationCapsApplied: quality.midasEvaluation?.capsApplied ?? [],
+            midasEvaluationAlerts: quality.midasEvaluation?.alerts ?? [],
           });
           evaluated += 1;
           setDecisionProgress({
@@ -2954,11 +3055,21 @@ export function OptimizationLightPage({
           maxConsecutiveSevereCutMonthsP75: baseEval.maxConsecutiveSevereCutMonthsP75,
           terminalWealthP25: baseEval.terminalWealthP25,
           terminalWealthP50: baseEval.terminalWealthP50,
+          qualitySurvivalRate: baseEval.qualitySurvivalRate,
+          monthsBelow85: baseEval.monthsBelow85,
+          maxConsecutiveMonthsBelow85: baseEval.maxConsecutiveMonthsBelow85,
+          earlyStressMonths: baseEval.earlyStressMonths,
+          terminalWealthRatio: baseEval.terminalWealthRatio,
           houseSaleRate: baseEval.houseSaleRate,
           severeCutDuringSaleMonths: baseEval.severeCutMonthsDuringHouseSaleMedian,
           recSevPctBase: baseEval.monthsInSevereCutMean === null
             ? null
             : baseEval.monthsInSevereCutMean / Math.max(1, activeParams.simulation.horizonMonths),
+          midasEvaluationLabel: baseEval.midasEvaluationLabel ?? null,
+          midasEvaluationScore: baseEval.midasEvaluationScore ?? null,
+          midasEvaluationComparable: baseEval.midasEvaluationComparable,
+          midasEvaluationCapsApplied: baseEval.midasEvaluationCapsApplied,
+          midasEvaluationAlerts: baseEval.midasEvaluationAlerts,
         };
         if (candidateIsOfficial) rows.push(candidate);
         if (Math.abs(rvPct - currentRvExact) <= 0.0001) currentCandidate = candidate;
@@ -3464,6 +3575,14 @@ export function OptimizationLightPage({
   const baseDecisionProfiles = useMemo(
     () => decisionProfilesTables.find((table) => table.scenarioId === 'base')?.profiles ?? null,
     [decisionProfilesTables],
+  );
+  const baseDecisionEvaluationRanking = useMemo(
+    () => (baseDecisionProfiles ? rankOptimizerCandidates(baseDecisionProfiles.rows.map(toOptimizerRankingCandidate)) : null),
+    [baseDecisionProfiles],
+  );
+  const baseDecisionEvaluationRankingById = useMemo(
+    () => new Map((baseDecisionEvaluationRanking?.ranked ?? []).map((row) => [row.candidateId, row])),
+    [baseDecisionEvaluationRanking],
   );
   const baseDecisionTable = useMemo(
     () => decisionProfilesTables.find((table) => table.scenarioId === 'base') ?? null,
@@ -4752,7 +4871,9 @@ export function OptimizationLightPage({
                       extra: null as string | null,
                     } : null
                   ),
-                ].filter((item): item is { key: string; title: string; copy: string; candidate: RvRfDecisionCandidate; extra: string | null } => Boolean(item)).map((item) => (
+                ].filter((item): item is { key: string; title: string; copy: string; candidate: RvRfDecisionCandidate; extra: string | null } => Boolean(item)).map((item) => {
+                  const evaluation = baseDecisionEvaluationRankingById.get(item.candidate.candidateId) ?? null;
+                  return (
                   <div key={item.key} style={{ border: `1px solid ${item.key === 'main' ? T.primary : T.border}`, borderRadius: 9, padding: 9, background: T.surface, display: 'grid', gap: 5 }}>
                     <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 900 }}>{item.title}</div>
                     <div style={{ color: T.textPrimary, fontSize: 15, fontWeight: 900 }}>{item.candidate.mixLabel}</div>
@@ -4760,6 +4881,19 @@ export function OptimizationLightPage({
                       candidateId {item.candidate.candidateId} · input {shortOptimizationHash(decisionFlowStatus?.inputFingerprint ?? decisionResultMeta?.inputFingerprint ?? activeOptimizationInputFingerprint)}
                     </div>
                     <div style={{ color: T.textMuted, fontSize: 10 }}>{item.copy}</div>
+                    <div style={{ color: evaluation?.isComparable === false ? T.warning : T.textSecondary, fontSize: 10 }}>
+                      Evaluación MIDAS {item.candidate.midasEvaluationLabel ?? 'No comparable'} · score {item.candidate.midasEvaluationScore !== null && item.candidate.midasEvaluationScore !== undefined ? item.candidate.midasEvaluationScore.toFixed(1) : '—'} · {evaluation?.isComparable === false ? 'No comparable' : 'Comparable'}
+                    </div>
+                    {evaluation?.rankingReason ? (
+                      <div style={{ color: T.textMuted, fontSize: 10 }}>
+                        Motivo ranking: {evaluation.rankingReason}
+                      </div>
+                    ) : null}
+                    {((evaluation?.primaryAlerts.length ?? 0) > 0 || (evaluation?.capsApplied.length ?? 0) > 0) ? (
+                      <div style={{ color: T.warning, fontSize: 10 }}>
+                        Alerta principal: {evaluation?.primaryAlerts[0] ?? evaluation?.capsApplied[0] ?? 'Sin alerta'}
+                      </div>
+                    ) : null}
                     <div style={{ color: T.textSecondary, fontSize: 10 }}>
                       QASR base {formatScore100(item.candidate.qasrBase)} · QASR +20 {formatScore100(item.candidate.qasrAt120)} · CSR {formatPctOrNA(item.candidate.csrBase)}
                     </div>
@@ -4769,7 +4903,7 @@ export function OptimizationLightPage({
                     <div style={{ color: T.textSecondary, fontSize: 10 }}>P50 final {formatClpShort(item.candidate.terminalWealthP50)}</div>
                     {item.extra ? <div style={{ color: T.textMuted, fontSize: 10 }}>{item.extra}</div> : null}
                   </div>
-                ))}
+                )})}
               </div>
             </div>
 
