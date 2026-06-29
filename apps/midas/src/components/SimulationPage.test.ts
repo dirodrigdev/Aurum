@@ -666,3 +666,6 @@ assert(source.includes('ref={diagnosticsRef}'));
 assert(source.includes("style={{ order: 10 }}"));
 
 console.log('SimulationPage tests passed');
+assert(source.includes('sourcePolicy'));
+assert(source.includes("sourcePolicy?.shortLabel ?? dataSourceStatusLabel"));
+assert(source.includes('Política de fuente:'));

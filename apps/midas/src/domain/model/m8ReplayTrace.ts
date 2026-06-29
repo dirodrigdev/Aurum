@@ -1,4 +1,5 @@
 import type { SimulationConfigCloudDiagnostics } from '../../integrations/midas/simulationConfigPersistence';
+import { buildSourceFreshnessPolicy, type SourceFreshnessPolicy } from './sourceFreshnessPolicy';
 
 export type M8ReplayTraceInput = {
   paramsLabel: string | null;
@@ -110,6 +111,7 @@ export type M8ReplayTrace = {
     instrumentUniverseFingerprint: string | null;
     aurumSnapshotFingerprint: string | null;
   };
+  sourcePolicy: SourceFreshnessPolicy;
   warnings: string[];
 };
 
@@ -233,6 +235,49 @@ export function buildM8ReplayTrace(input: M8ReplayTraceInput): M8ReplayTrace {
       instrumentUniverseFingerprint: input.instrumentUniverseHash,
       aurumSnapshotFingerprint: input.aurumSnapshotSignature,
     },
+    sourcePolicy: buildSourceFreshnessPolicy({
+      canonicalInputReady,
+      blockedReason: stringOrNull(runtime.canonicalInputBlockedReason ?? runtime.blockedReason),
+      hasReplayTrace: true,
+      m8Fingerprint: input.m8Fingerprint,
+      diagnosticFingerprint: input.diagnosticFingerprint,
+      simulationActiveV1: {
+        source: input.simulationConfigSource,
+        savedAt: input.simulationConfigSavedAt,
+        hash: input.simulationConfigHash,
+        readStatus: input.simulationConfigDiagnostics?.readStatus ?? null,
+        exists: input.simulationConfigDiagnostics?.exists ?? null,
+        missingFields: input.simulationConfigDiagnostics?.missingFields ?? [],
+        legacyGlobalReadStatus: input.simulationConfigDiagnostics?.legacyGlobalReadStatus ?? null,
+        legacyGlobalExists: input.simulationConfigDiagnostics?.legacyGlobalExists ?? null,
+      },
+      instrumentUniverse: {
+        source: resolveInstrumentUniverseSource(input.universeSourceOrigin, input.weightsSourceMode),
+        sourceOrigin: input.universeSourceOrigin,
+        weightsMode: input.weightsSourceMode,
+        savedAt: input.instrumentUniverseSavedAt,
+        hash: input.instrumentUniverseHash,
+        cloudReadStatus: stringOrNull(input.instrumentUniverseDiagnostics?.cloudReadStatus),
+        localCacheAvailable: Boolean(input.instrumentUniverseDiagnostics?.localCacheAvailable),
+      },
+      aurumSnapshot: {
+        source: input.aurumSnapshotSignature ? 'cloud' : 'fallback',
+        month: input.aurumSnapshotMonth,
+        label: input.aurumSnapshotLabel,
+        publishedAt: input.aurumSnapshotPublishedAt,
+        hash: input.aurumSnapshotSignature,
+      },
+      localDiagnostics: {
+        persistedBaseExists: Boolean(runtime.localPersistedBaseExists),
+        localReadOnlyFallbackActive: Boolean(runtime.localReadOnlyFallbackActive),
+      },
+      capitalDerivation: {
+        manualAdjustmentsCount: Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0),
+        manualAdjustmentsSource: stringOrNull(input.capitalDerivationDiagnostics?.manualAdjustmentsSource),
+        manualLocalAdjustmentsAffectEngine: Boolean(input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine),
+      },
+      warnings: input.warnings ?? [],
+    }),
     warnings: [...(input.warnings ?? [])],
   };
 }

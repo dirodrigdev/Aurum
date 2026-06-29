@@ -325,6 +325,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     warnings,
   });
   diagnosticInput.replayTrace = replayTrace;
+  diagnosticInput.sourcePolicy = replayTrace.sourcePolicy;
   const diagnosticHash = hashString(stableSerialize(diagnosticInput));
   return {
     hash: effectiveEngineInputHash,

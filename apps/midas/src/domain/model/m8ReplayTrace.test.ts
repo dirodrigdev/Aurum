@@ -104,6 +104,7 @@ const base = () => buildM8ReplayTrace({
   const first = base();
   const second = base();
   assert.deepEqual(first, second, 'same effective input and metadata must produce the same replay trace');
+  assert.equal(first.sourcePolicy.status, 'canonical_with_warnings');
 })();
 
 (() => {
@@ -304,6 +305,7 @@ const base = () => buildM8ReplayTrace({
   assert.equal(blocked.readiness.state, 'blocked');
   assert.equal(blocked.readiness.pendingSource, 'config cloud');
   assert.equal(blocked.readiness.simulated, false);
+  assert.equal(blocked.sourcePolicy.status, 'not_comparable');
 })();
 
 (() => {
@@ -396,6 +398,7 @@ const base = () => buildM8ReplayTrace({
   });
   assert.ok(trace.warnings.some((warning) => warning.includes('modo canónico')));
   assert.equal(trace.canonicalInput.effectiveCapitalInitialClp, 1_530_974_913);
+  assert.equal(trace.sourcePolicy.status, 'canonical_with_warnings');
 })();
 
 (() => {

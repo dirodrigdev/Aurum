@@ -14,6 +14,7 @@ import type { WeightsSourceMode } from '../domain/model/officialDistribution';
 import type { OperativeFxResolution } from '../domain/model/operativeFx';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import { buildMidasEvaluation } from '../domain/model/midasEvaluation';
+import type { SourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolicy';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
@@ -254,6 +255,13 @@ const sourceBadgeTonePresentation = (tone: SourceBadgeTone) => {
   if (tone === 'warning') return { color: T.warning, bg: 'rgba(255, 176, 32, 0.14)', border: 'rgba(255, 176, 32, 0.35)' };
   if (tone === 'alert') return { color: T.negative, bg: 'rgba(255, 106, 106, 0.14)', border: 'rgba(255, 106, 106, 0.35)' };
   return { color: T.textMuted, bg: 'rgba(148, 163, 184, 0.14)', border: 'rgba(148, 163, 184, 0.35)' };
+};
+
+const resolveSourcePolicyTone = (status: SourceFreshnessPolicy['status']): SourceBadgeTone => {
+  if (status === 'canonical_pure') return 'ok';
+  if (status === 'canonical_with_warnings') return 'warning';
+  if (status === 'using_recent_fallback') return 'warning';
+  return 'alert';
 };
 
 const formatRiskCapitalInBaseLabel = (status: 'yes' | 'no' | 'unknown') => {
@@ -783,6 +791,11 @@ export function SimulationPage({
   const instrumentUniverseCloudReadStatus = String(instrumentUniverseDiagnostics.cloudReadStatus ?? '').trim();
   const instrumentUniverseCloudPath = String(instrumentUniverseDiagnostics.cloudPath ?? '').trim();
   const instrumentUniverseCloudErrorMessage = String(instrumentUniverseDiagnostics.cloudErrorMessage ?? '').trim();
+  const sourcePolicy = (
+    (m8InputFingerprint.diagnosticInput.sourcePolicy as SourceFreshnessPolicy | undefined)
+    ?? ((m8InputFingerprint.diagnosticInput.replayTrace as { sourcePolicy?: SourceFreshnessPolicy } | undefined)?.sourcePolicy)
+    ?? null
+  );
   useEffect(() => {
     if (!canonicalInputBlocked || !isCanonicalHydrationInProgress(canonicalInputBlockedReason)) {
       setCanonicalHydrationTimedOut(false);
@@ -1468,16 +1481,19 @@ export function SimulationPage({
     return buildMidasEvaluation({
       qualityOfLifeMetrics: resultCentral?.qualityOfLifeMetrics ?? null,
       inputAuditable: Boolean(replayTrace && m8InputFingerprint.hash && m8InputFingerprint.effectiveEngineInputHash),
-      canUseForDecision: resultConfidence.canUseForDecision,
+      canUseForDecision: resultConfidence.canUseForDecision && (sourcePolicy?.isComparable ?? true),
       decisionStatus: resultConfidence.status,
       comparabilityWarnings: [
         ...m8InputFingerprint.warnings,
+        ...(sourcePolicy?.warnings ?? []),
+        ...(sourcePolicy?.forbiddenSourcesUsed ?? []),
+        ...(sourcePolicy && !sourcePolicy.isPureCanonical ? [`source_policy:${sourcePolicy.status}`] : []),
         ...resultConfidence.reasons
           .filter((reason) => reason.severity !== 'info')
           .map((reason) => reason.code),
       ],
     });
-  }, [m8InputFingerprint, resultCentral?.qualityOfLifeMetrics, resultConfidence]);
+  }, [m8InputFingerprint, resultCentral?.qualityOfLifeMetrics, resultConfidence, sourcePolicy]);
   const lastTimelineAtMs = runtimeTimeline.length > 0
     ? runtimeTimeline[runtimeTimeline.length - 1].atMs
     : null;
@@ -1769,6 +1785,10 @@ export function SimulationPage({
     : dataSourceTone === 'warning'
       ? 'Datos usables con advertencias de fuente.'
       : 'Inconsistencia o fallback crítico en fuentes.';
+  const sourcePolicyTone: SourceBadgeTone = sourcePolicy ? resolveSourcePolicyTone(sourcePolicy.status) : dataSourceTone;
+  const sourcePolicySummary = sourcePolicy
+    ? `${sourcePolicy.label} · ${sourcePolicy.effectiveSourceSummary}`
+    : dataSourceStatusCopy;
   const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
     ? instrumentUniverseCloudReadStatus === 'loading'
       ? 'Mix cloud pendiente'
@@ -2234,6 +2254,7 @@ export function SimulationPage({
               createdAt: m8InputFingerprint.createdAt,
               sources: m8InputFingerprint.sources,
               warnings: m8InputFingerprint.warnings,
+              sourcePolicy,
               replayTrace,
               normalizedInput: m8InputFingerprint.normalizedInput,
               diagnosticInput: m8InputFingerprint.diagnosticInput,
@@ -2269,6 +2290,13 @@ export function SimulationPage({
         Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
         {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
       </div>
+      {sourcePolicy && (
+        <div style={{ color: sourcePolicyTone === 'alert' ? T.negative : sourcePolicyTone === 'warning' ? T.warning : T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+          Política de fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{sourcePolicy.label}</span>
+          {' · '}
+          {sourcePolicy.effectiveSourceSummary}
+        </div>
+      )}
       {replayTrace && (
         <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
           Trace replay: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{String((replayTrace.fingerprints as Record<string, unknown> | undefined)?.effectiveEngineInputFingerprint ?? '—')}</span>
@@ -3331,7 +3359,10 @@ export function SimulationPage({
                   <span style={{ color: T.textMuted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Fuente de datos
                   </span>
-                  <SourceBadge label={dataSourceStatusLabel} tone={dataSourceTone} />
+                  <SourceBadge label={sourcePolicy?.shortLabel ?? dataSourceStatusLabel} tone={sourcePolicyTone} />
+                  {sourcePolicy ? (
+                    <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{sourcePolicySummary}</span>
+                  ) : null}
                   <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>{snapshotApplied ? 'Snapshot Aurum aplicado' : 'Snapshot Aurum no aplicado'}</span>
                   <SourceBadge label={mixSourceCompactLabel} tone={mixSourceTone} />
                   <span style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>
@@ -3357,7 +3388,7 @@ export function SimulationPage({
                     </span>
                   ) : null}
                   {!usdFxWarning && !eurFxWarning ? (
-                    <span style={{ color: T.textMuted, fontSize: 10 }}>{dataSourceStatusCopy}</span>
+                    <span style={{ color: T.textMuted, fontSize: 10 }}>{sourcePolicy ? sourcePolicySummary : dataSourceStatusCopy}</span>
                   ) : null}
                   <details style={{ marginTop: 0 }}>
                     <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
@@ -3365,6 +3396,9 @@ export function SimulationPage({
                     </summary>
                     <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
+                      {sourcePolicy ? (
+                        <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Política:</span> {sourcePolicy.label} · {sourcePolicy.effectiveSourceSummary}</div>
+                      ) : null}
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Instrument Universe cloud:</span> {instrumentUniverseCloudReadStatus || 'sin estado'}</div>
                       {instrumentUniverseCloudPath ? (

@@ -4156,8 +4156,10 @@ export default function App() {
       gitCommit: env.VITE_GIT_COMMIT ?? env.VITE_COMMIT_SHA ?? null,
       buildId: env.VITE_BUILD_ID ?? null,
       buildTime: env.VITE_BUILD_TIME ?? null,
+      localPersistedBaseExists: Boolean(initialPersistedBaseRef.current),
+      localReadOnlyFallbackActive: localReadOnlyCloudFallbackEnabled,
     };
-  }, []);
+  }, [localReadOnlyCloudFallbackEnabled]);
   const strippedManualParamsForFingerprint = useMemo(
     () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
     [manualAdjustmentImpact, simParams],
