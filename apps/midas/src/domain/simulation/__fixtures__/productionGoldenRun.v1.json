@@ -1,0 +1,954 @@
+{
+  "fixtureVersion": 1,
+  "fixtureKind": "production_golden_run",
+  "fixtureNote": "Sanitized production export from Copiar input M8 aplicado.",
+  "createdAt": "2026-06-29T18:00:33.125Z",
+  "fingerprint": "fnv1a-959dded4",
+  "effectiveEngineInputHash": "fnv1a-959dded4",
+  "diagnosticHash": "fnv1a-85c19bce",
+  "hashIncludesDiagnostics": false,
+  "normalizedInput": {
+    "years": 40,
+    "n_paths": 1000,
+    "seed": 42,
+    "simulation_frequency": "monthly",
+    "use_real_terms": true,
+    "simulation_base_month": "2026-04",
+    "capital_initial_clp": 1546856895,
+    "capital_source": "aurum",
+    "capital_source_label": "Aurum · Desde Aurum · Cierre Mayo de 2026",
+    "feeAnnual": 0,
+    "risk_capital_clp": 0,
+    "portfolio_mix": {
+      "eq_global": 0.44307641571383105,
+      "eq_chile": 0.1494056309041223,
+      "fi_global": 0.23807209905926394,
+      "fi_chile": 0.16944585432278267,
+      "usd_liquidity": 0,
+      "clp_cash": 0
+    },
+    "phase1MonthlyClp": 6000000,
+    "phase2MonthlyClp": 6000000,
+    "phase3MonthlyClp": 3900000,
+    "phase4MonthlyClp": 5400000,
+    "phase1EndYear": 4,
+    "phase2EndYear": 20,
+    "phase3EndYear": 35,
+    "return_assumptions": {
+      "eq_global_real_annual": 0.069,
+      "eq_chile_real_annual": 0.074,
+      "fi_global_real_annual": 0.024,
+      "fi_chile_real_annual": 0.019,
+      "usd_liquidity_real_annual": 0.018,
+      "clp_cash_real_annual": 0.0025
+    },
+    "generator_type": "student_t",
+    "generator_params": {
+      "distribution": "student_t",
+      "degrees_of_freedom": 7,
+      "sleeves": {
+        "eq_global": {
+          "mean_annual": 0.069,
+          "vol_annual": 0.15
+        },
+        "eq_chile": {
+          "mean_annual": 0.074,
+          "vol_annual": 0.19
+        },
+        "fi_global": {
+          "mean_annual": 0.024,
+          "vol_annual": 0.045
+        },
+        "fi_chile": {
+          "mean_annual": 0.019,
+          "vol_annual": 0.035
+        },
+        "usd_liquidity": {
+          "mean_annual": 0.018,
+          "vol_annual": 0.015
+        },
+        "clp_cash": {
+          "mean_annual": 0.0025,
+          "vol_annual": 0.002
+        }
+      },
+      "correlation_matrix": [
+        [
+          1,
+          0.65,
+          0.05,
+          0,
+          0.05,
+          0
+        ],
+        [
+          0.65,
+          1,
+          0.05,
+          0.1,
+          0.05,
+          0
+        ],
+        [
+          0.05,
+          0.05,
+          1,
+          0.2,
+          0.5,
+          0.2
+        ],
+        [
+          0,
+          0.1,
+          0.2,
+          1,
+          0.2,
+          0.5
+        ],
+        [
+          0.05,
+          0.05,
+          0.5,
+          0.2,
+          1,
+          0.3
+        ],
+        [
+          0,
+          0,
+          0.2,
+          0.5,
+          0.3,
+          1
+        ]
+      ]
+    },
+    "scenario_overrides": {
+      "scenario_id": "base"
+    },
+    "bucket": {
+      "bucket_mode": "operational_simple",
+      "bucket_months": 24
+    },
+    "cuts": {
+      "cut1_floor": 0.9,
+      "cut2_floor": 0.8,
+      "recovery_cut2_to_cut1_months": 4,
+      "recovery_cut1_to_normal_months": 6,
+      "adjustment_alpha": 0.2,
+      "dd15_threshold": 0.15,
+      "dd25_threshold": 0.25,
+      "consecutive_months": 3
+    },
+    "house": {
+      "include_house": true,
+      "houseValueUf": 15000,
+      "mortgageBalanceUfNow": 8776.202988087034,
+      "monthlyAmortizationUf": 53.24539726297135,
+      "ufClpStart": 40628,
+      "house_sale_trigger_years_of_spend": 3,
+      "house_sale_lag_months": 12
+    },
+    "future_events": []
+  },
+  "sources": {
+    "aurumSnapshot": {
+      "source": "cloud",
+      "savedAt": "2026-06-29T13:49:51.021Z",
+      "hash": "2|2026-05|Cierre Mayo de 2026|1706460841|1525849378|40628|279822000|133698000|164000|891|0.8584",
+      "detail": "Cierre Mayo de 2026"
+    },
+    "instrumentUniverse": {
+      "source": "cloud",
+      "savedAt": "2026-05-13T21:40:33.080Z",
+      "hash": "fnv1a-eb2af3c5",
+      "detail": "instrument-universe"
+    },
+    "simulationParams": {
+      "source": "cloud",
+      "savedAt": "2026-06-29T15:41:28.862Z",
+      "hash": "fnv1a-a17721a8",
+      "detail": "loaded:ok"
+    },
+    "spendingPhases": {
+      "source": "cloud",
+      "savedAt": "2026-06-29T15:41:28.862Z",
+      "hash": "fnv1a-e42e3c6b",
+      "detail": "4 fases"
+    },
+    "fx": {
+      "source": "mixed",
+      "hash": "fnv1a-d637c94c",
+      "detail": "USD/CLP 891"
+    }
+  },
+  "warnings": [],
+  "sourcePolicy": {
+    "status": "canonical_with_warnings",
+    "label": "Canónico con aviso",
+    "shortLabel": "Canónico + aviso",
+    "isComparable": true,
+    "isPureCanonical": false,
+    "effectiveSourceSummary": "Modelo Base cloud · Universe cloud · Foto jun. 2026",
+    "photoStatus": "current_snapshot",
+    "freshness": {
+      "observedAt": "2026-06-29T13:49:51.021Z",
+      "ageDays": 0.174,
+      "freshness": "fresh",
+      "maxAcceptedAgeDays": 120,
+      "expired": false
+    },
+    "sources": [
+      {
+        "id": "simulationActiveV1",
+        "label": "Modelo Base",
+        "source": "cloud",
+        "role": "effective_primary",
+        "usedForRun": true,
+        "savedAt": "2026-06-29T15:41:28.862Z",
+        "hash": "fnv1a-a17721a8",
+        "freshness": {
+          "observedAt": "2026-06-29T15:41:28.862Z",
+          "ageDays": 0.097,
+          "freshness": "fresh",
+          "maxAcceptedAgeDays": 14,
+          "expired": false
+        },
+        "warning": null
+      },
+      {
+        "id": "instrumentUniverse",
+        "label": "Instrument Universe",
+        "source": "cloud",
+        "role": "effective_primary",
+        "usedForRun": true,
+        "savedAt": "2026-05-13T21:40:33.080Z",
+        "hash": "fnv1a-eb2af3c5",
+        "freshness": {
+          "observedAt": "2026-05-13T21:40:33.080Z",
+          "ageDays": 46.847,
+          "freshness": "recent",
+          "maxAcceptedAgeDays": 14,
+          "expired": true
+        },
+        "warning": null
+      },
+      {
+        "id": "aurumSnapshot",
+        "label": "Snapshot Aurum",
+        "source": "cloud",
+        "role": "effective_primary",
+        "usedForRun": true,
+        "savedAt": "2026-06-29T13:49:51.021Z",
+        "hash": "2|2026-05|Cierre Mayo de 2026|1706460841|1525849378|40628|279822000|133698000|164000|891|0.8584",
+        "freshness": {
+          "observedAt": "2026-06-29T13:49:51.021Z",
+          "ageDays": 0.174,
+          "freshness": "fresh",
+          "maxAcceptedAgeDays": 120,
+          "expired": false
+        },
+        "warning": null
+      },
+      {
+        "id": "local_base_draft",
+        "label": "Borrador local",
+        "source": "localStorage:midas:base-vigente.v1",
+        "role": "draft_only",
+        "usedForRun": false,
+        "savedAt": null,
+        "hash": null,
+        "freshness": {
+          "observedAt": null,
+          "ageDays": null,
+          "freshness": "unknown",
+          "maxAcceptedAgeDays": null,
+          "expired": false
+        },
+        "warning": "Existe borrador local no usado como fuente canónica"
+      },
+      {
+        "id": "instrument_universe_local_cache",
+        "label": "Instrument Universe cache local",
+        "source": "cache-local",
+        "role": "display_cache",
+        "usedForRun": false,
+        "savedAt": "2026-05-13T21:40:33.080Z",
+        "hash": "fnv1a-eb2af3c5",
+        "freshness": {
+          "observedAt": "2026-05-13T21:40:33.080Z",
+          "ageDays": 46.847,
+          "freshness": "recent",
+          "maxAcceptedAgeDays": 14,
+          "expired": true
+        },
+        "warning": "Existe cache local, pero no es la fuente efectiva de la corrida"
+      }
+    ],
+    "warnings": [
+      "local_base_draft_present_not_used",
+      "instrument_universe_local_cache_present_not_used"
+    ],
+    "blockingReasons": [],
+    "forbiddenSourcesUsed": []
+  },
+  "replayTrace": {
+    "traceVersion": 1,
+    "canonicalInput": {
+      "label": "Desde Aurum · Cierre Mayo de 2026",
+      "baseLabel": null,
+      "m8Input": {
+        "years": 40,
+        "n_paths": 1000,
+        "seed": 42,
+        "simulation_frequency": "monthly",
+        "use_real_terms": true,
+        "simulation_base_month": "2026-04",
+        "capital_initial_clp": 1546856895,
+        "capital_source": "aurum",
+        "capital_source_label": "Aurum · Desde Aurum · Cierre Mayo de 2026",
+        "feeAnnual": 0,
+        "risk_capital_clp": 0,
+        "portfolio_mix": {
+          "eq_global": 0.44307641571383105,
+          "eq_chile": 0.1494056309041223,
+          "fi_global": 0.23807209905926394,
+          "fi_chile": 0.16944585432278267,
+          "usd_liquidity": 0,
+          "clp_cash": 0
+        },
+        "phase1MonthlyClp": 6000000,
+        "phase2MonthlyClp": 6000000,
+        "phase3MonthlyClp": 3900000,
+        "phase4MonthlyClp": 5400000,
+        "phase1EndYear": 4,
+        "phase2EndYear": 20,
+        "phase3EndYear": 35,
+        "return_assumptions": {
+          "eq_global_real_annual": 0.069,
+          "eq_chile_real_annual": 0.074,
+          "fi_global_real_annual": 0.024,
+          "fi_chile_real_annual": 0.019,
+          "usd_liquidity_real_annual": 0.018,
+          "clp_cash_real_annual": 0.0025
+        },
+        "generator_type": "student_t",
+        "generator_params": {
+          "distribution": "student_t",
+          "degrees_of_freedom": 7,
+          "sleeves": {
+            "eq_global": {
+              "mean_annual": 0.069,
+              "vol_annual": 0.15
+            },
+            "eq_chile": {
+              "mean_annual": 0.074,
+              "vol_annual": 0.19
+            },
+            "fi_global": {
+              "mean_annual": 0.024,
+              "vol_annual": 0.045
+            },
+            "fi_chile": {
+              "mean_annual": 0.019,
+              "vol_annual": 0.035
+            },
+            "usd_liquidity": {
+              "mean_annual": 0.018,
+              "vol_annual": 0.015
+            },
+            "clp_cash": {
+              "mean_annual": 0.0025,
+              "vol_annual": 0.002
+            }
+          },
+          "correlation_matrix": [
+            [
+              1,
+              0.65,
+              0.05,
+              0,
+              0.05,
+              0
+            ],
+            [
+              0.65,
+              1,
+              0.05,
+              0.1,
+              0.05,
+              0
+            ],
+            [
+              0.05,
+              0.05,
+              1,
+              0.2,
+              0.5,
+              0.2
+            ],
+            [
+              0,
+              0.1,
+              0.2,
+              1,
+              0.2,
+              0.5
+            ],
+            [
+              0.05,
+              0.05,
+              0.5,
+              0.2,
+              1,
+              0.3
+            ],
+            [
+              0,
+              0,
+              0.2,
+              0.5,
+              0.3,
+              1
+            ]
+          ]
+        },
+        "scenario_overrides": {
+          "scenario_id": "base"
+        },
+        "bucket": {
+          "bucket_mode": "operational_simple",
+          "bucket_months": 24
+        },
+        "cuts": {
+          "cut1_floor": 0.9,
+          "cut2_floor": 0.8,
+          "recovery_cut2_to_cut1_months": 4,
+          "recovery_cut1_to_normal_months": 6,
+          "adjustment_alpha": 0.2,
+          "dd15_threshold": 0.15,
+          "dd25_threshold": 0.25,
+          "consecutive_months": 3
+        },
+        "house": {
+          "include_house": true,
+          "houseValueUf": 15000,
+          "mortgageBalanceUfNow": 8776.202988087034,
+          "monthlyAmortizationUf": 53.24539726297135,
+          "ufClpStart": 40628,
+          "house_sale_trigger_years_of_spend": 3,
+          "house_sale_lag_months": 12
+        },
+        "future_events": []
+      },
+      "simulationBaseMonth": "2026-04",
+      "effectiveCapitalInitialClp": 1546856895,
+      "spendingPhases": {
+        "F1": 6000000,
+        "F2": 6000000,
+        "F3": 3900000,
+        "F4": 5400000
+      },
+      "portfolioMix": {
+        "eq_global": 0.44307641571383105,
+        "eq_chile": 0.1494056309041223,
+        "fi_global": 0.23807209905926394,
+        "fi_chile": 0.16944585432278267,
+        "usd_liquidity": 0,
+        "clp_cash": 0
+      },
+      "houseConfig": {
+        "include_house": true,
+        "houseValueUf": 15000,
+        "mortgageBalanceUfNow": 8776.202988087034,
+        "monthlyAmortizationUf": 53.24539726297135,
+        "ufClpStart": 40628,
+        "house_sale_trigger_years_of_spend": 3,
+        "house_sale_lag_months": 12
+      },
+      "riskConfig": {
+        "riskCapitalClp": 0,
+        "riskCapitalPolicy": null,
+        "riskCapitalBtcDriver": null
+      },
+      "cutsConfig": {
+        "cut1_floor": 0.9,
+        "cut2_floor": 0.8,
+        "recovery_cut2_to_cut1_months": 4,
+        "recovery_cut1_to_normal_months": 6,
+        "adjustment_alpha": 0.2,
+        "dd15_threshold": 0.15,
+        "dd25_threshold": 0.25,
+        "consecutive_months": 3
+      },
+      "bucketConfig": {
+        "bucket_mode": "operational_simple",
+        "bucket_months": 24
+      },
+      "futureEvents": []
+    },
+    "sourceMetadata": {
+      "simulationActiveV1": {
+        "pathLogical": "users/{uid}/midas_config/simulationActiveV1",
+        "source": "cloud",
+        "savedAt": "2026-06-29T15:41:28.862Z",
+        "hash": "fnv1a-a17721a8",
+        "label": "Desde Aurum · Cierre Mayo de 2026",
+        "baseLabel": null,
+        "readStatus": "loaded",
+        "exists": true,
+        "missingFields": []
+      },
+      "instrumentUniverse": {
+        "source": "cloud",
+        "sourceOrigin": "firestore",
+        "weightsMode": "instrument-universe",
+        "savedAt": "2026-05-13T21:40:33.080Z",
+        "hash": "fnv1a-eb2af3c5",
+        "cloudReadStatus": "loaded",
+        "detail": null
+      },
+      "aurumSnapshot": {
+        "source": "cloud",
+        "month": null,
+        "label": "Cierre Mayo de 2026",
+        "publishedAt": "2026-06-29T13:49:51.021Z",
+        "hash": "2|2026-05|Cierre Mayo de 2026|1706460841|1525849378|40628|279822000|133698000|164000|891|0.8584"
+      },
+      "fieldSources": {
+        "F1": "cloud",
+        "F2": "cloud",
+        "F3": "cloud",
+        "F4": "cloud",
+        "seed": "cloud",
+        "nSim": "cloud",
+        "bucketMonths": "cloud",
+        "feeAnnual": "cloud",
+        "generatorType": "cloud",
+        "returns": "cloud",
+        "correlationMatrix": "cloud",
+        "activeScenario": "cloud",
+        "capitalInitialClp": "aurum_snapshot_cloud",
+        "instrumentUniverse": "cloud",
+        "aurumSnapshot": "cloud",
+        "fx": "aurum-current"
+      },
+      "capitalDerivation": {
+        "capitalInitialClp": 1546856895,
+        "capitalFromAurumClp": 1546856895,
+        "manualCapitalAdjustmentsClp": 0,
+        "capitalAfterManualAdjustmentsClp": 1546856895,
+        "source": "aurum_snapshot_cloud",
+        "enabled": false,
+        "manualLocalAdjustmentsAffectEngine": false,
+        "compositionOptimizableClp": 1525849378,
+        "compositionBanksClp": 21007517,
+        "compositionRiskCapitalClp": 279822000,
+        "manualCurrentBanksDeltaClp": 0,
+        "manualCurrentInvestmentsDeltaClp": 0,
+        "manualCurrentRiskDeltaClp": 0,
+        "manualCurrentTotalDeltaClp": 0,
+        "manualAdjustmentsCount": 0,
+        "manualAdjustmentsSource": null
+      }
+    },
+    "readiness": {
+      "canonicalInputReady": true,
+      "state": "ready",
+      "pendingSource": null,
+      "blockedReason": null,
+      "statusMessage": null,
+      "simulationRunStatus": "completed",
+      "simulated": true,
+      "resultMetricsAvailable": true
+    },
+    "engineSettings": {
+      "years": 40,
+      "nPaths": 1000,
+      "seed": 42,
+      "simulationFrequency": "monthly",
+      "useRealTerms": true,
+      "generatorType": "student_t",
+      "generatorParams": {
+        "distribution": "student_t",
+        "degrees_of_freedom": 7,
+        "sleeves": {
+          "eq_global": {
+            "mean_annual": 0.069,
+            "vol_annual": 0.15
+          },
+          "eq_chile": {
+            "mean_annual": 0.074,
+            "vol_annual": 0.19
+          },
+          "fi_global": {
+            "mean_annual": 0.024,
+            "vol_annual": 0.045
+          },
+          "fi_chile": {
+            "mean_annual": 0.019,
+            "vol_annual": 0.035
+          },
+          "usd_liquidity": {
+            "mean_annual": 0.018,
+            "vol_annual": 0.015
+          },
+          "clp_cash": {
+            "mean_annual": 0.0025,
+            "vol_annual": 0.002
+          }
+        },
+        "correlation_matrix": [
+          [
+            1,
+            0.65,
+            0.05,
+            0,
+            0.05,
+            0
+          ],
+          [
+            0.65,
+            1,
+            0.05,
+            0.1,
+            0.05,
+            0
+          ],
+          [
+            0.05,
+            0.05,
+            1,
+            0.2,
+            0.5,
+            0.2
+          ],
+          [
+            0,
+            0.1,
+            0.2,
+            1,
+            0.2,
+            0.5
+          ],
+          [
+            0.05,
+            0.05,
+            0.5,
+            0.2,
+            1,
+            0.3
+          ],
+          [
+            0,
+            0,
+            0.2,
+            0.5,
+            0.3,
+            1
+          ]
+        ]
+      },
+      "studentTdf": null,
+      "bucketMonths": 24
+    },
+    "fingerprints": {
+      "effectiveEngineInputFingerprint": "fnv1a-959dded4",
+      "m8Fingerprint": "fnv1a-959dded4",
+      "diagnosticFingerprint": "fnv1a-85c19bce",
+      "simulationConfigHash": "fnv1a-a17721a8",
+      "instrumentUniverseFingerprint": "fnv1a-eb2af3c5",
+      "aurumSnapshotFingerprint": "2|2026-05|Cierre Mayo de 2026|1706460841|1525849378|40628|279822000|133698000|164000|891|0.8584"
+    },
+    "sourcePolicy": {
+      "status": "canonical_with_warnings",
+      "label": "Canónico con aviso",
+      "shortLabel": "Canónico + aviso",
+      "isComparable": true,
+      "isPureCanonical": false,
+      "effectiveSourceSummary": "Modelo Base cloud · Universe cloud · Foto jun. 2026",
+      "photoStatus": "current_snapshot",
+      "freshness": {
+        "observedAt": "2026-06-29T13:49:51.021Z",
+        "ageDays": 0.174,
+        "freshness": "fresh",
+        "maxAcceptedAgeDays": 120,
+        "expired": false
+      },
+      "sources": [
+        {
+          "id": "simulationActiveV1",
+          "label": "Modelo Base",
+          "source": "cloud",
+          "role": "effective_primary",
+          "usedForRun": true,
+          "savedAt": "2026-06-29T15:41:28.862Z",
+          "hash": "fnv1a-a17721a8",
+          "freshness": {
+            "observedAt": "2026-06-29T15:41:28.862Z",
+            "ageDays": 0.097,
+            "freshness": "fresh",
+            "maxAcceptedAgeDays": 14,
+            "expired": false
+          },
+          "warning": null
+        },
+        {
+          "id": "instrumentUniverse",
+          "label": "Instrument Universe",
+          "source": "cloud",
+          "role": "effective_primary",
+          "usedForRun": true,
+          "savedAt": "2026-05-13T21:40:33.080Z",
+          "hash": "fnv1a-eb2af3c5",
+          "freshness": {
+            "observedAt": "2026-05-13T21:40:33.080Z",
+            "ageDays": 46.847,
+            "freshness": "recent",
+            "maxAcceptedAgeDays": 14,
+            "expired": true
+          },
+          "warning": null
+        },
+        {
+          "id": "aurumSnapshot",
+          "label": "Snapshot Aurum",
+          "source": "cloud",
+          "role": "effective_primary",
+          "usedForRun": true,
+          "savedAt": "2026-06-29T13:49:51.021Z",
+          "hash": "2|2026-05|Cierre Mayo de 2026|1706460841|1525849378|40628|279822000|133698000|164000|891|0.8584",
+          "freshness": {
+            "observedAt": "2026-06-29T13:49:51.021Z",
+            "ageDays": 0.174,
+            "freshness": "fresh",
+            "maxAcceptedAgeDays": 120,
+            "expired": false
+          },
+          "warning": null
+        },
+        {
+          "id": "local_base_draft",
+          "label": "Borrador local",
+          "source": "localStorage:midas:base-vigente.v1",
+          "role": "draft_only",
+          "usedForRun": false,
+          "savedAt": null,
+          "hash": null,
+          "freshness": {
+            "observedAt": null,
+            "ageDays": null,
+            "freshness": "unknown",
+            "maxAcceptedAgeDays": null,
+            "expired": false
+          },
+          "warning": "Existe borrador local no usado como fuente canónica"
+        },
+        {
+          "id": "instrument_universe_local_cache",
+          "label": "Instrument Universe cache local",
+          "source": "cache-local",
+          "role": "display_cache",
+          "usedForRun": false,
+          "savedAt": "2026-05-13T21:40:33.080Z",
+          "hash": "fnv1a-eb2af3c5",
+          "freshness": {
+            "observedAt": "2026-05-13T21:40:33.080Z",
+            "ageDays": 46.847,
+            "freshness": "recent",
+            "maxAcceptedAgeDays": 14,
+            "expired": true
+          },
+          "warning": "Existe cache local, pero no es la fuente efectiva de la corrida"
+        }
+      ],
+      "warnings": [
+        "local_base_draft_present_not_used",
+        "instrument_universe_local_cache_present_not_used"
+      ],
+      "blockingReasons": [],
+      "forbiddenSourcesUsed": []
+    },
+    "warnings": []
+  },
+  "simulationResultDiagnostics": {
+    "resultDigest": "be5994b1164d990a0790f22a269d9e23e63475b5047e32d8c5685e002990d607",
+    "resultInputHash": "fnv1a-959dded4",
+    "resultSeed": 42,
+    "resultNSim": 1000,
+    "success40": 0.916,
+    "ruin40": 0.084,
+    "houseSalePct": 0.246,
+    "maxDrawdownP50": 0.497876860415,
+    "completedAt": "2026-06-29T18:00:32.999Z",
+    "engineVersion": "m8-central-wrapper",
+    "workerVersion": "primary-recalc-worker",
+    "resultPathCount": 1000,
+    "isFinalForCurrentInput": true,
+    "previousResultDigest": null,
+    "previousResultInputHash": null,
+    "provisionalResultShownBeforeFinal": false
+  },
+  "qualityOfLifeMetrics": {
+    "schemaVersion": 1,
+    "source": "path_quality_diagnostics_v1",
+    "warnings": [
+      "observed_consumption_months_incomplete",
+      "post_ruin_months_present"
+    ],
+    "pathCount": 1000,
+    "horizonMonths": 480,
+    "horizonYears": 40,
+    "classicSuccessRate": 0.916,
+    "ruinRate": 0.084,
+    "ruinedPathCount": 84,
+    "csr85_4": 0.737,
+    "csrPassingPathCount": 737,
+    "csrThresholds": {
+      "minAverageConsumptionRatio": 0.85,
+      "maxSevereCutMonths": 48
+    },
+    "qasrAlpha": 1.5,
+    "qasrStrict": 0.904468228955278,
+    "qualityScoreMean": 0.9852943243367633,
+    "qualityScoreP25": 0.9808194251360285,
+    "qualityScoreP50": 0.9879121784426508,
+    "averageConsumptionRatioMean": 0.9600833061762758,
+    "averageConsumptionRatioP25": 0.9474999999999978,
+    "averageConsumptionRatioP50": 0.9662499999999986,
+    "averageEffectiveSpendingRatio": 0.9600833061762758,
+    "minMonthlyConsumptionRatioP10": 0.8,
+    "minMonthlyConsumptionRatioP25": 0.8,
+    "minAnnualConsumptionRatioP10": 0.7999999999999999,
+    "minAnnualConsumptionRatioP25": 0.7999999999999999,
+    "monthsBelow85": 34.907,
+    "maxConsecutiveMonthsBelow85": 22,
+    "monthsBelow90": 34.907,
+    "maxConsecutiveMonthsBelow90": 22,
+    "earlyStressMonths": 0.757,
+    "phaseStress": [
+      {
+        "phaseIndex": 1,
+        "label": "F1",
+        "startMonth": 1,
+        "endMonth": 48,
+        "monthsBelow85": 0.572,
+        "monthsBelow90": 0.572
+      },
+      {
+        "phaseIndex": 2,
+        "label": "F2",
+        "startMonth": 49,
+        "endMonth": 240,
+        "monthsBelow85": 12.633,
+        "monthsBelow90": 12.633
+      },
+      {
+        "phaseIndex": 3,
+        "label": "F3",
+        "startMonth": 241,
+        "endMonth": 420,
+        "monthsBelow85": 15.575575575575575,
+        "monthsBelow90": 15.575575575575575
+      },
+      {
+        "phaseIndex": 4,
+        "label": "F4",
+        "startMonth": 421,
+        "endMonth": 480,
+        "monthsBelow85": 6.451680672268908,
+        "monthsBelow90": 6.451680672268908
+      }
+    ],
+    "qualitySurvivalRate": 0.154,
+    "qualitySurvivalPassingPathCount": 154,
+    "qualitySurvivalThresholds": {
+      "minAverageConsumptionRatio": 0.9,
+      "maxConsecutiveMonthsBelow85": 6,
+      "maxTotalMonthsBelow85": 24
+    },
+    "monthsInCutMean": 149.154,
+    "monthsInCutP50": 138,
+    "monthsInSevereCutMean": 34.907,
+    "monthsInSevereCutP50": 25,
+    "maxConsecutiveSevereCutMonthsP50": 13,
+    "maxConsecutiveSevereCutMonthsP75": 22,
+    "severeCutYearsMean": 2.9089166666666646,
+    "severeCutYearsP50": 2.0833333333333335,
+    "houseSaleRate": 0.246,
+    "houseSoldPathCount": 246,
+    "houseSaleYearMedian": 24.708333333333336,
+    "houseSaleYearP10": 15.666666666666666,
+    "houseSaleYearP90": 36.29166666666667,
+    "houseSaleTriggerToSaleMonthsMedian": 12,
+    "houseSaleTriggerToSaleMonthsMean": 12,
+    "houseSaleTriggerToSaleMonthsP75": 12,
+    "severeCutMonthsDuringHouseSaleMean": 7.9105691056910565,
+    "severeCutMonthsDuringHouseSaleMedian": 9.5,
+    "severeCutMonthsDuringHouseSaleP75": 12,
+    "monthsInCutBeforeHouseSaleMean": 152.3617886178862,
+    "monthsInSevereCutBeforeHouseSaleMean": 44.58943089430894,
+    "liquidWealthAfterHouseSaleP25": 768982050.3663654,
+    "liquidWealthAfterHouseSaleP50": 796007324.6407351,
+    "houseSaleIncidence": 0.246,
+    "terminalWealthP10": 126072150.80050696,
+    "terminalWealthP25": 1030503112.3702545,
+    "terminalWealthP50": 3374316532.767579,
+    "terminalWealthP75": 9117405994.224749,
+    "terminalWealthRatio": 2.181401876071787
+  },
+  "midasEvaluation": {
+    "schemaVersion": 1,
+    "source": "quality_of_life_metrics_v1",
+    "label": "Frágil",
+    "rawScore": 52.3,
+    "cappedScore": 52,
+    "confidenceBand": "low",
+    "noRuinAssessment": "No ruina fuerte.",
+    "qualityAssessment": "Calidad frágil.",
+    "earlyStressAssessment": "Sin estrés temprano relevante.",
+    "tailStressAssessment": "Estrés acumulado frágil.",
+    "terminalWealthAssessment": "Patrimonio final alto pese a recortes: posible subuso.",
+    "houseSaleAssessment": "La venta de casa aparece bajo estrés operativo.",
+    "capsApplied": [
+      "qualitySurvivalRate bajo"
+    ],
+    "alerts": [
+      "Patrimonio terminal >100% del capital inicial pese a recortes.",
+      "La liquidez vía venta de casa aparece con estrés operativo relevante."
+    ],
+    "warnings": [
+      "observed_consumption_months_incomplete",
+      "post_ruin_months_present",
+      "local_base_draft_present_not_used",
+      "instrument_universe_local_cache_present_not_used",
+      "source_policy:canonical_with_warnings"
+    ],
+    "isComparable": true
+  },
+  "resultConfidence": {
+    "status": "canonical",
+    "label": "OK",
+    "headline": "Resultado canónico",
+    "message": "Todas las fuentes críticas están sincronizadas y el resultado final corresponde al input M8 actual.",
+    "reasons": [
+      {
+        "code": "all_sources_canonical",
+        "severity": "info",
+        "source": "resultConfidence",
+        "message": "Todas las fuentes críticas están en estado canónico."
+      }
+    ],
+    "criticalSources": {
+      "aurumSnapshot": "canonical",
+      "simulationConfig": "canonical",
+      "instrumentUniverse": "canonical",
+      "fx": "canonical",
+      "capitalAdjustments": "canonical",
+      "runResult": "canonical",
+      "sandbox": "canonical"
+    },
+    "canUseForDecision": true,
+    "isCanonicalForDecision": true
+  }
+}
