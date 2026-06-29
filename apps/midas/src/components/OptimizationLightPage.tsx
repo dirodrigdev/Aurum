@@ -15,6 +15,7 @@ import { buildRvRfCandidateWeights } from '../domain/optimizer/rvRfCandidateMapp
 import type { QualityOptimizationCandidate } from '../domain/optimizer/qualityRanking';
 import { buildQualityOptimizationCandidate, compareQualityOptimizationCandidates } from '../domain/optimizer/qualityRanking';
 import { rankOptimizerCandidates } from '../domain/optimizer/optimizerCandidateRanking';
+import { buildOptimizerDecisionBrief, type OptimizerDecisionBrief } from '../domain/optimizer/optimizerDecisionBrief';
 import {
   RV_RF_PREMIUM_SENSITIVITY_SCENARIOS,
   applyRvRfPremiumSensitivity,
@@ -322,6 +323,7 @@ type OptimizationDecisionTrace = {
   inputFingerprint: string;
   sourceMode: SourceMode;
   seed: number;
+  decisionBrief: OptimizerDecisionBrief | null;
   stages: {
     express: OptimizationDecisionTraceStage | null;
     zoom: OptimizationDecisionTraceStage | null;
@@ -336,6 +338,61 @@ type OptimizationDecisionTrace = {
   };
   notes: string[];
 };
+
+function DecisionBriefPanel(input: {
+  brief: OptimizerDecisionBrief;
+  emphasisColor: string;
+}) {
+  const { brief, emphasisColor } = input;
+  return (
+    <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 6 }}>
+      <div style={{ color: T.textPrimary, fontSize: 13, fontWeight: 900 }}>Lectura MIDAS</div>
+      <div style={{ color: brief.recommendationLevel === 'not_comparable' ? T.warning : emphasisColor, fontSize: 12, fontWeight: 800 }}>
+        {brief.headline}
+      </div>
+      <div style={{ color: T.textMuted, fontSize: 10 }}>
+        Auditabilidad: {brief.auditability.summary}
+      </div>
+      <div style={{ display: 'grid', gap: 4, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+          <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Por qué gana</div>
+          {(brief.whyThisWins.length ? brief.whyThisWins : ['Sin razón concluyente con los datos disponibles.']).map((item) => (
+            <div key={`brief-win-${item}`} style={{ color: T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+          ))}
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+          <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Tradeoffs</div>
+          {(brief.keyTradeoffs.length ? brief.keyTradeoffs : ['No aparece un tradeoff material claro con los datos disponibles.']).map((item) => (
+            <div key={`brief-tradeoff-${item}`} style={{ color: T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+          ))}
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+          <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Alertas</div>
+          {(brief.riskWarnings.length ? brief.riskWarnings : ['Sin alerta principal adicional.']).map((item) => (
+            <div key={`brief-warning-${item}`} style={{ color: brief.riskWarnings.length ? T.warning : T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+          ))}
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 8, background: T.surface }}>
+          <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 900 }}>Qué revisar</div>
+          {(brief.nextReviewTriggers.length ? brief.nextReviewTriggers : brief.implementationNotes).map((item) => (
+            <div key={`brief-review-${item}`} style={{ color: T.textSecondary, fontSize: 10, marginTop: 4 }}>{item}</div>
+          ))}
+        </div>
+      </div>
+      {brief.qualityOfLifeSummary.length ? (
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Calidad de vida sostenible: {brief.qualityOfLifeSummary.join(' · ')}
+        </div>
+      ) : null}
+      {brief.baselineComparison ? (
+        <div style={{ color: T.textMuted, fontSize: 10 }}>
+          Baseline: {brief.baselineComparison.summary}
+          {brief.baselineComparison.deltas.length ? ` · ${brief.baselineComparison.deltas.join(' · ')}` : ''}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 type DecisionRunContext = {
   runToken: number;
@@ -3146,6 +3203,7 @@ export function OptimizationLightPage({
       inputFingerprint: runContext.inputFingerprint,
       sourceMode: runContext.sourceMode,
       seed: activeParams.simulation.seed ?? 0,
+      decisionBrief: null,
       stages: {
         express: null,
         zoom: null,
@@ -3643,6 +3701,21 @@ export function OptimizationLightPage({
   const recommendedDecisionWeights = useMemo(
     () => (actionableRecommendationCandidate ? buildRvRfCandidateWeights(activeParams.weights, actionableRecommendationCandidate.rvPct) : null),
     [actionableRecommendationCandidate, activeParams.weights],
+  );
+  const optimizerDecisionBrief = useMemo(
+    () => buildOptimizerDecisionBrief({
+      recommendedCandidate: actionableRecommendationCandidate,
+      rankedCandidates: baseDecisionEvaluationRanking?.ranked ?? [],
+      baselineCandidate: currentDecisionCandidate,
+      inputFingerprint: decisionResultMeta?.inputFingerprint ?? decisionFlowStatus?.inputFingerprint ?? null,
+      traceFingerprint: decisionDiagnosticTrace?.inputFingerprint ?? null,
+      recommendationKind,
+    }),
+    [actionableRecommendationCandidate, baseDecisionEvaluationRanking?.ranked, currentDecisionCandidate, decisionDiagnosticTrace?.inputFingerprint, decisionFlowStatus?.inputFingerprint, decisionResultMeta?.inputFingerprint, recommendationKind],
+  );
+  const decisionDiagnosticTracePayload = useMemo(
+    () => (decisionDiagnosticTrace ? { ...decisionDiagnosticTrace, decisionBrief: optimizerDecisionBrief } : null),
+    [decisionDiagnosticTrace, optimizerDecisionBrief],
   );
   const closestDiscardedCompetitor = useMemo(
     () => selectClosestDiscardedCompetitor({
@@ -4818,6 +4891,10 @@ export function OptimizationLightPage({
               {decisionFlowWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{decisionFlowWarning}</div> : null}
               {officialRecommendationWarning ? <div style={{ color: T.warning, fontSize: 10 }}>{officialRecommendationWarning}</div> : null}
             </div>
+            <DecisionBriefPanel
+              brief={optimizerDecisionBrief}
+              emphasisColor={decisionFlowStatus?.stage === 'confirmed' ? '#fff' : T.textPrimary}
+            />
 
             {financialOptimum ? (
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, background: T.surfaceEl, display: 'grid', gap: 6 }}>
@@ -4972,6 +5049,10 @@ export function OptimizationLightPage({
                 Ruina {formatPctOrNA(bestAvailableRecommendation.ruinRate)} · Recorte severo {formatMonthsHuman(bestAvailableRecommendation.monthsInSevereCutMean)} · Racha severa P75 {formatMonthsHuman(bestAvailableRecommendation.maxConsecutiveSevereCutMonthsP75)}
               </div>
             </div>
+            <DecisionBriefPanel
+              brief={optimizerDecisionBrief}
+              emphasisColor={T.textPrimary}
+            />
             {fallbackGuardrailSummary ? (
               <details style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', background: T.surfaceEl }}>
                 <summary style={{ cursor: 'pointer', color: T.textSecondary, fontSize: 10, fontWeight: 700 }}>
@@ -5485,7 +5566,7 @@ export function OptimizationLightPage({
             JSON read-only del flujo Express → Zoom → Confirmación → Implementación para auditar shortlist, fallback y target final.
           </div>
           <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: T.textSecondary, fontSize: 10, background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 8, padding: 10 }}>
-            {JSON.stringify(decisionDiagnosticTrace, null, 2)}
+            {JSON.stringify(decisionDiagnosticTracePayload, null, 2)}
           </pre>
         </div>
       ) : null}
