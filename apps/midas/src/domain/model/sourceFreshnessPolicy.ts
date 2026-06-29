@@ -98,6 +98,12 @@ export type BuildSourceFreshnessPolicyInput = {
   warnings?: string[];
 };
 
+const EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS: Record<string, string> = {
+  simulationActiveV1: 'simulation_config_effective_source_expired',
+  instrumentUniverse: 'instrument_universe_effective_source_expired',
+  aurumSnapshot: 'aurum_snapshot_effective_source_expired',
+};
+
 const RECENT_FALLBACK_MAX_AGE_DAYS = 14;
 const CURRENT_SNAPSHOT_MAX_AGE_DAYS = 45;
 const RECENT_SNAPSHOT_MAX_AGE_DAYS = 120;
@@ -119,6 +125,15 @@ const formatMonthShort = (value: string | null | undefined): string | null => {
   if (parsed === null) return null;
   return new Date(parsed).toLocaleDateString('es-CL', { month: 'short', year: 'numeric', timeZone: 'UTC' });
 };
+
+function addExpiredEffectiveSourceWarning(entry: SourcePolicyEntry): SourcePolicyEntry {
+  if (!entry.usedForRun || !entry.freshness.expired) return entry;
+  const expiryWarning = `${entry.label}${entry.source === 'cloud' ? ' cloud' : ''} esta vencido segun politica de frescura; sigue siendo fuente efectiva ${entry.source}, pero requiere revision.`;
+  return {
+    ...entry,
+    warning: entry.warning ? `${entry.warning} · ${expiryWarning}` : expiryWarning,
+  };
+}
 
 function buildFreshness(
   savedAt: string | null,
@@ -289,6 +304,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     });
   }
 
+  const effectiveSources = sources.map(addExpiredEffectiveSourceWarning);
+
   const forbiddenSourcesUsed = dedupe([
     input.simulationActiveV1.source === 'local_cache' && simulationConfigFreshness.expired ? 'simulation_config_local_cache_stale' : null,
     input.simulationActiveV1.source === 'local_cache' && !input.simulationActiveV1.hash ? 'simulation_config_local_cache_without_hash' : null,
@@ -310,6 +327,9 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
 
   const warnings = dedupe([
     ...baseWarnings,
+    ...effectiveSources
+      .filter((entry) => entry.usedForRun && entry.freshness.expired)
+      .map((entry) => EXPIRED_EFFECTIVE_SOURCE_WARNING_LABELS[entry.id] ?? `${entry.id}_effective_source_expired`),
     localDraftExists ? 'local_base_draft_present_not_used' : null,
     localReadOnlyFallbackActive ? 'local_read_only_fallback_active' : null,
     input.instrumentUniverse.localCacheAvailable && input.instrumentUniverse.source !== 'local_cache'
@@ -321,7 +341,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     photoStatus === 'unknown' ? 'aurum_snapshot_unknown_age' : null,
   ]);
 
-  const effectiveFallbacks = sources.filter((entry) => entry.usedForRun && entry.role === 'effective_fallback');
+  const effectiveFallbacks = effectiveSources.filter((entry) => entry.usedForRun && entry.role === 'effective_fallback');
   const hasRecentTraceableFallback = effectiveFallbacks.length === 1
     && forbiddenSourcesUsed.length === 0
     && Boolean(effectiveFallbacks[0].hash)
@@ -378,7 +398,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     ].join(' · '),
     photoStatus,
     freshness: snapshotFreshness,
-    sources,
+    sources: effectiveSources,
     warnings,
     blockingReasons,
     forbiddenSourcesUsed,
