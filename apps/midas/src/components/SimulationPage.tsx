@@ -2543,7 +2543,7 @@ export function SimulationPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 10 : 14 }}>
-      <div style={{ position: 'relative', order: isMobileViewport ? 1 : 2 }}>
+      <div style={{ position: 'relative', order: 1 }} data-simulation-section="hero-result">
         <style>{`
           @keyframes midasPulse {
             0%, 100% { transform: scale(1); opacity: 0.5; }
@@ -2751,10 +2751,162 @@ export function SimulationPage({
           </div>
         )}
       </div>
+      <section
+        data-simulation-section="hero-express-controls"
+        style={{
+          order: 2,
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          padding: isMobileViewport ? '8px 10px' : '10px 12px',
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 2 }}>
+            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Controles express</div>
+            <div style={{ color: T.textMuted, fontSize: 11 }}>
+              Accesos rápidos para ajustes frecuentes. Recalculan y actualizan el resultado vigente.
+            </div>
+          </div>
+          {isRecalculating ? (
+            <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
+              Recalculando simulación...
+            </span>
+          ) : null}
+        </div>
+        <SurfaceSemanticRow
+          items={[
+            { label: 'Controles express', tone: 'accent' },
+            { label: 'Recalcula automático', tone: 'accent' },
+            { label: 'Afecta resultado vigente', tone: 'warning' },
+          ]}
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.05fr 1.05fr 1.5fr 1.1fr', gap: 8 }}>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 10, padding: '8px 9px', display: 'grid', gap: 5 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
+            <button
+              type="button"
+              onClick={toggleLiquidarDepto}
+              disabled={isRecalculating || !hasEffectiveRealEstate}
+              title={localReadOnlyDeptoUnavailable ? 'No disponible en modo local: falta configuración/snapshot cloud.' : undefined}
+              style={{
+                background: liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.16)' : T.surface,
+                border: `1px solid ${liquidarDeptoEnabled ? 'rgba(61, 212, 141, 0.55)' : T.border}`,
+                color: liquidarDeptoEnabled ? T.positive : T.textSecondary,
+                borderRadius: 999,
+                padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                fontSize: isMobileViewport ? 10 : 11,
+                fontWeight: 700,
+                cursor: isRecalculating || !hasEffectiveRealEstate ? 'not-allowed' : 'pointer',
+                opacity: isRecalculating || !hasEffectiveRealEstate ? 0.65 : 1,
+              }}
+            >
+              {liquidarDeptoEnabled ? 'ON' : hasEffectiveRealEstate ? 'OFF' : 'NO DISP'}
+            </button>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              {localReadOnlyDeptoUnavailable
+                ? 'No disponible en modo local: falta configuración/snapshot cloud.'
+                : liquidarDeptoEnabled
+                  ? 'Respaldo habilitado.'
+                  : 'No se usa como respaldo.'}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 10, padding: '8px 9px', display: 'grid', gap: 5 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Capital de riesgo</div>
+            <button
+              type="button"
+              onClick={onToggleRiskCapital}
+              disabled={riskCapitalToggleDisabled}
+              title={localReadOnlyRiskUnavailable ? 'Sin capital de riesgo disponible en modo local.' : undefined}
+              style={{
+                background: riskCapitalEnabled ? 'rgba(255, 176, 32, 0.18)' : T.surface,
+                border: `1px solid ${riskCapitalEnabled ? 'rgba(255, 176, 32, 0.55)' : T.border}`,
+                color: riskCapitalEnabled ? '#f6d38d' : T.textSecondary,
+                borderRadius: 999,
+                padding: isMobileViewport ? '6px 8px' : '6px 10px',
+                fontSize: isMobileViewport ? 10 : 11,
+                fontWeight: 700,
+                cursor: riskCapitalToggleDisabled ? 'not-allowed' : 'pointer',
+                opacity: riskCapitalToggleDisabled ? 0.65 : 1,
+              }}
+            >
+              {riskToggleCopy}
+            </button>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              {riskCapitalToggleHelp}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 10, padding: '8px 9px', display: 'grid', gap: 5 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Escenario express</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {[SCENARIO_VARIANTS[1], SCENARIO_VARIANTS[0], SCENARIO_VARIANTS[2]].map((variant) => {
+                const active = activeScenarioForUi === variant.id;
+                return (
+                  <button
+                    key={`hero-express-scenario-${variant.id}`}
+                    type="button"
+                    onClick={() => onScenarioChange(variant.id)}
+                    disabled={isRecalculating}
+                    style={{
+                      background: active ? T.primary : T.surface,
+                      border: `1px solid ${active ? T.primary : T.border}`,
+                      color: active ? '#fff' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                    }}
+                  >
+                    {variant.id === 'base' ? 'Neutro' : variant.id === 'pessimistic' ? 'Pesimista' : 'Optimista'}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>
+              {isScenarioAdjusted ? 'Ajustada sobre preset base.' : 'Preset activo.'}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 10, padding: '8px 9px', display: 'grid', gap: 5 }}>
+            <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Monte Carlo</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {nSimOptions.map((nSimOption) => {
+                const active = currentNSim === nSimOption;
+                return (
+                  <button
+                    key={`hero-express-nsim-${nSimOption}`}
+                    type="button"
+                    onClick={() => setNSim(nSimOption)}
+                    disabled={isRecalculating}
+                    style={{
+                      background: active ? T.primary : T.surface,
+                      border: `1px solid ${active ? T.primary : T.border}`,
+                      color: active ? '#fff' : T.textSecondary,
+                      borderRadius: 999,
+                      padding: isMobileViewport ? '5px 8px' : '5px 9px',
+                      fontSize: isMobileViewport ? 10 : 11,
+                      fontWeight: 700,
+                      cursor: isRecalculating ? 'not-allowed' : 'pointer',
+                      opacity: isRecalculating ? 0.65 : 1,
+                      minWidth: isMobileViewport ? 52 : 60,
+                    }}
+                  >
+                    {nSimOption}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ color: T.textMuted, fontSize: 10 }}>Trayectorias de esta corrida.</div>
+          </div>
+        </div>
+      </section>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
           style={{
-            order: 4,
+            order: 3,
             background: 'rgba(91, 140, 255, 0.10)',
             border: '1px solid rgba(91, 140, 255, 0.45)',
             borderRadius: 10,
@@ -2794,7 +2946,7 @@ export function SimulationPage({
       {hasSyncBanner && (
         <div
           style={{
-            order: 4,
+            order: 3,
             background: 'rgba(46, 204, 113, 0.12)',
             border: '1px solid rgba(46, 204, 113, 0.45)',
             borderRadius: 10,
@@ -2819,7 +2971,7 @@ export function SimulationPage({
         ref={diagnosticsRef}
         open={diagnosticsOpen}
         onToggle={(e) => setDiagnosticsOpen((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ order: 10 }}
+        style={{ order: 11 }}
       >
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>
           Ver detalle técnico
@@ -3009,7 +3161,7 @@ export function SimulationPage({
       </div>
       </div>
       </details>
-      <div style={{ order: isMobileViewport ? 2 : 0 }}>
+      <div style={{ order: 4 }} data-simulation-section="quality-of-life">
         <QualityOfLifeMetricsBlock
           qualityOfLifeMetrics={resultCentral?.qualityOfLifeMetrics}
           midasEvaluation={midasEvaluation}
@@ -3261,7 +3413,8 @@ export function SimulationPage({
       <details
         open={simulationDataOpen}
         onToggle={(e) => setSimulationDataOpen((e.currentTarget as HTMLDetailsElement).open)}
-        style={{ order: isMobileViewport ? 4 : 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
+        style={{ order: 5, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: isMobileViewport ? '7px 8px' : '9px 10px' }}
+        data-simulation-section="simulation-data"
       >
         <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800, listStyle: 'none' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -3776,7 +3929,7 @@ export function SimulationPage({
           </details>
         </details>
       )}
-      <div style={{ order: 5, display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ order: 6, display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={onOpenOptimization}
@@ -3800,7 +3953,7 @@ export function SimulationPage({
           open={longevityOpen}
           onToggle={(e) => setLongevityOpen((e.currentTarget as HTMLDetailsElement).open)}
           style={{
-            order: 6,
+            order: 7,
             background: T.surface,
             border: `1px solid ${T.border}`,
             borderRadius: 12,
@@ -3891,7 +4044,7 @@ export function SimulationPage({
         </details>
       )}
 
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 3 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, order: 8 }}>
         <button
           onClick={() => setAdvancedOpen((prev) => !prev)}
           style={{

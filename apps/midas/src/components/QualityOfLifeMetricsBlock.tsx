@@ -276,6 +276,44 @@ function Group({
   );
 }
 
+function PrimaryKpiCard({
+  eyebrow,
+  label,
+  value,
+  subtle,
+  traffic,
+}: {
+  eyebrow?: string;
+  label: string;
+  value: string;
+  subtle?: string;
+  traffic?: TrafficLight;
+}) {
+  const tone = TRAFFIC_COLORS[traffic ?? 'neutral'];
+  return (
+    <div
+      style={{
+        border: `1px solid ${tone}33`,
+        borderRadius: 12,
+        background: `linear-gradient(180deg, ${tone}12 0%, ${T.surfaceEl} 100%)`,
+        padding: '12px 13px',
+        display: 'grid',
+        gap: 5,
+        alignContent: 'start',
+      }}
+    >
+      {eyebrow ? (
+        <div style={{ color: tone, fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          {eyebrow}
+        </div>
+      ) : null}
+      <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>{label}</div>
+      <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900, lineHeight: 1.05 }}>{value}</div>
+      {subtle ? <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.35 }}>{subtle}</div> : null}
+    </div>
+  );
+}
+
 export function QualityOfLifeMetricsBlock({
   qualityOfLifeMetrics,
   midasEvaluation,
@@ -298,11 +336,13 @@ export function QualityOfLifeMetricsBlock({
   const qasrTraffic = pickTraffic(qualityOfLifeMetrics.qasrStrict, { greenMin: 0.8, yellowMin: 0.65 });
   const qualityMeanTraffic = pickTraffic(qualityOfLifeMetrics.qualityScoreMean, { greenMin: 0.85, yellowMin: 0.75 });
   const qualitySurvivalTraffic = pickTraffic(qualityOfLifeMetrics.qualitySurvivalRate, { greenMin: 0.8, yellowMin: 0.65 });
+  const effectiveSpendingTraffic = pickTraffic(qualityOfLifeMetrics.averageEffectiveSpendingRatio, { greenMin: 0.95, yellowMin: 0.85 });
   const stress85Traffic = pickTraffic(qualityOfLifeMetrics.monthsBelow85, { greenMax: 6, yellowMax: 24 });
   const streak85Traffic = pickTraffic(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85, { greenMax: 3, yellowMax: 6 });
   const earlyStressTraffic = pickTraffic(qualityOfLifeMetrics.earlyStressMonths, { greenMax: 3, yellowMax: 12 });
   const severeCutMeanTraffic = pickTraffic(qualityOfLifeMetrics.monthsInSevereCutMean, { greenMax: 12, yellowMax: 48 });
   const severeCutP75Traffic = pickTraffic(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75, { greenMax: 12, yellowMax: 48 });
+  const severeCutYearsTraffic = pickTraffic(qualityOfLifeMetrics.severeCutYearsMean, { greenMax: 1, yellowMax: 4 });
   const severeCutDuringSale = qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMedian
     ?? qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMean;
   const severeCutDuringSaleTraffic = pickTraffic(severeCutDuringSale, { greenMax: 1, yellowMax: 6 });
@@ -331,8 +371,59 @@ export function QualityOfLifeMetricsBlock({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-        <Group title="Evaluación MIDAS preliminar">
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Qué mirar primero</div>
+          <div style={{ color: T.textMuted, fontSize: 11 }}>
+            Estos son los indicadores principales para leer calidad de vida antes de entrar al detalle técnico.
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(5, minmax(0,1fr))', gap: 8 }}>
+          <PrimaryKpiCard
+            eyebrow="KPI principal"
+            label="Éxito con calidad de vida"
+            value={formatPercent(qualityOfLifeMetrics.csr85_4)}
+            subtle="CSR-85/4"
+            traffic={csrTraffic}
+          />
+          <PrimaryKpiCard
+            label="Supervivencia con calidad estricta"
+            value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)}
+            subtle="Escenarios sin ruina y sin deterioro prolongado."
+            traffic={qualitySurvivalTraffic}
+          />
+          <PrimaryKpiCard
+            label="Consumo efectivo promedio"
+            value={formatPercent(qualityOfLifeMetrics.averageEffectiveSpendingRatio)}
+            subtle={`P25 / P50 ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP25)} · ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP50)}`}
+            traffic={effectiveSpendingTraffic}
+          />
+          <PrimaryKpiCard
+            label="Tiempo en recorte severo"
+            value={qualityOfLifeMetrics.severeCutYearsMean === null || qualityOfLifeMetrics.severeCutYearsMean === undefined || !Number.isFinite(qualityOfLifeMetrics.severeCutYearsMean)
+              ? 'No disponible'
+              : `${qualityOfLifeMetrics.severeCutYearsMean.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} años`}
+            subtle={`Meses bajo 85%: ${formatMonths(qualityOfLifeMetrics.monthsBelow85)}`}
+            traffic={severeCutYearsTraffic}
+          />
+          <PrimaryKpiCard
+            label="Patrimonio final mediano"
+            value={formatRatio(qualityOfLifeMetrics.terminalWealthRatio)}
+            subtle="Patrimonio final mediano / capital inicial."
+            traffic="neutral"
+          />
+        </div>
+      </div>
+
+      <details
+        style={{ border: `1px solid ${T.border}`, borderRadius: 12, background: T.surfaceEl, padding: isMobile ? '8px 10px' : '10px 12px' }}
+      >
+        <summary style={{ cursor: 'pointer', color: T.textPrimary, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <span>Detalle de recortes y fases</span>
+          <span style={{ color: T.textMuted, fontSize: 11 }}>Abrir detalle</span>
+        </summary>
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+          <Group title="Evaluación MIDAS preliminar">
           <MetricRow
             label="Clasificación"
             info={metricInfo.evaluation}
@@ -360,42 +451,48 @@ export function QualityOfLifeMetricsBlock({
             traffic={!midasEvaluation ? 'neutral' : midasEvaluation.isComparable ? 'green' : 'red'}
             subtle={midasEvaluation?.warnings[0]}
           />
-        </Group>
+          </Group>
 
-        <Group title="Lectura principal">
-          <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
-          <MetricRow label="Quality survival rate" info={metricInfo.qualitySurvival} value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)} traffic={qualitySurvivalTraffic} />
-          <MetricRow label="Calidad ajustada estricta (QASR)" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
-          <MetricRow label="Calidad media en simulación" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
-        </Group>
+          <Group title="Lectura principal">
+            <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
+            <MetricRow label="Supervivencia con calidad estricta" info={metricInfo.qualitySurvival} value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)} traffic={qualitySurvivalTraffic} />
+            <MetricRow label="Calidad ajustada estricta (QASR)" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
+            <MetricRow label="Calidad media en simulación" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
+          </Group>
 
-        <Group title="Recortes">
-          <MetricRow label="Meses bajo 85%" info={metricInfo.stress85} value={formatMonths(qualityOfLifeMetrics.monthsBelow85)} traffic={stress85Traffic} />
-          <MetricRow label="Racha bajo 85% P75" value={formatMonths(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85)} traffic={streak85Traffic} />
-          <MetricRow label="Estrés temprano (años 1-5)" info={metricInfo.earlyStress} value={formatMonths(qualityOfLifeMetrics.earlyStressMonths)} traffic={earlyStressTraffic} />
-          <MetricRow label="Recorte severo promedio" info={metricInfo.severeCutMean} value={formatMonths(qualityOfLifeMetrics.monthsInSevereCutMean)} traffic={severeCutMeanTraffic} />
-          <MetricRow label="Racha severa P75" info={metricInfo.severeCutP75} value={formatMonths(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75)} traffic={severeCutP75Traffic} />
-          <MetricRow
-            label="Consumo promedio P25 / P50"
-            value={`${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP25)} · ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP50)}`}
-            traffic="neutral"
-          />
-          <MetricRow label="Estrés por fase (<85%)" value={formatPhaseStress(qualityOfLifeMetrics.phaseStress)} traffic="neutral" />
-        </Group>
+          <Group title="Recortes">
+            <MetricRow label="Meses bajo 85%" info={metricInfo.stress85} value={formatMonths(qualityOfLifeMetrics.monthsBelow85)} traffic={stress85Traffic} />
+            <MetricRow label="Racha bajo 85% P75" value={formatMonths(qualityOfLifeMetrics.maxConsecutiveMonthsBelow85)} traffic={streak85Traffic} />
+            <MetricRow label="Estrés temprano (años 1-5)" info={metricInfo.earlyStress} value={formatMonths(qualityOfLifeMetrics.earlyStressMonths)} traffic={earlyStressTraffic} />
+            <MetricRow label="Recorte severo promedio" info={metricInfo.severeCutMean} value={formatMonths(qualityOfLifeMetrics.monthsInSevereCutMean)} traffic={severeCutMeanTraffic} />
+            <MetricRow label="Racha severa P75" info={metricInfo.severeCutP75} value={formatMonths(qualityOfLifeMetrics.maxConsecutiveSevereCutMonthsP75)} traffic={severeCutP75Traffic} />
+            <MetricRow
+              label="Consumo efectivo promedio"
+              value={formatPercent(qualityOfLifeMetrics.averageEffectiveSpendingRatio)}
+              traffic={effectiveSpendingTraffic}
+            />
+            <MetricRow
+              label="Consumo promedio P25 / P50"
+              value={`${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP25)} · ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP50)}`}
+              traffic="neutral"
+            />
+            <MetricRow label="Estrés por fase (<85%)" value={formatPhaseStress(qualityOfLifeMetrics.phaseStress)} traffic="neutral" />
+          </Group>
 
-        <Group title="Casa">
-          <MetricRow label="Probabilidad de venta de casa" info={metricInfo.houseSale} value={formatPercent(qualityOfLifeMetrics.houseSaleRate)} traffic={salesNeutral} />
-          <MetricRow label="Venta mediana" value={qualityOfLifeMetrics.houseSaleYearMedian === null ? 'No disponible' : `año ${qualityOfLifeMetrics.houseSaleYearMedian.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} traffic={salesNeutral} />
-          <MetricRow label="Recorte severo mientras se vende" info={metricInfo.cutBeforeSale} value={formatMonths(severeCutDuringSale)} traffic={severeCutDuringSaleTraffic} />
-        </Group>
+          <Group title="Casa">
+            <MetricRow label="Probabilidad de venta de casa" info={metricInfo.houseSale} value={formatPercent(qualityOfLifeMetrics.houseSaleRate)} traffic={salesNeutral} />
+            <MetricRow label="Venta mediana" value={qualityOfLifeMetrics.houseSaleYearMedian === null ? 'No disponible' : `año ${qualityOfLifeMetrics.houseSaleYearMedian.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`} traffic={salesNeutral} />
+            <MetricRow label="Recorte severo mientras se vende" info={metricInfo.cutBeforeSale} value={formatMonths(severeCutDuringSale)} traffic={severeCutDuringSaleTraffic} />
+          </Group>
 
-        <Group title="Margen terminal">
-          <MetricRow label="Patrimonio final P25" info={metricInfo.terminal} value={formatMoney(qualityOfLifeMetrics.terminalWealthP25)} traffic="neutral" />
-          <MetricRow label="Patrimonio final P50" value={formatMoney(qualityOfLifeMetrics.terminalWealthP50)} traffic="neutral" />
-          <MetricRow label="Terminal wealth ratio" info={metricInfo.terminalRatio} value={formatRatio(qualityOfLifeMetrics.terminalWealthRatio)} traffic="neutral" />
-          <div style={{ color: T.textMuted, fontSize: 10 }}>Referencia, no objetivo principal.</div>
-        </Group>
-      </div>
+          <Group title="Margen terminal">
+            <MetricRow label="Patrimonio final P25" info={metricInfo.terminal} value={formatMoney(qualityOfLifeMetrics.terminalWealthP25)} traffic="neutral" />
+            <MetricRow label="Patrimonio final P50" value={formatMoney(qualityOfLifeMetrics.terminalWealthP50)} traffic="neutral" />
+            <MetricRow label="Patrimonio final mediano / capital inicial" info={metricInfo.terminalRatio} value={formatRatio(qualityOfLifeMetrics.terminalWealthRatio)} traffic="neutral" />
+            <div style={{ color: T.textMuted, fontSize: 10 }}>Referencia, no objetivo principal.</div>
+          </Group>
+        </div>
+      </details>
 
       {shownWarnings.length > 0 ? (
         <div style={{ color: T.textMuted, fontSize: 10 }}>
