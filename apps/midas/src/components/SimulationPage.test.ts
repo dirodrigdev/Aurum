@@ -21,6 +21,7 @@ const adaptersSource = readFileSync(new URL('../integrations/aurum/adapters.ts',
 const palancasSource = readFileSync(new URL('./PalancasPage.tsx', import.meta.url), 'utf8');
 const bucketLabSource = readFileSync(new URL('./BucketLabPage.tsx', import.meta.url), 'utf8');
 const bottomNavSource = readFileSync(new URL('./BottomNav.tsx', import.meta.url), 'utf8');
+const qualityOfLifeSource = readFileSync(new URL('./QualityOfLifeMetricsBlock.tsx', import.meta.url), 'utf8');
 
 const computeWeightedReturn = (p: typeof DEFAULT_PARAMETERS) => (
   p.weights.rvGlobal * p.returns.rvGlobalAnnual
@@ -669,3 +670,5 @@ console.log('SimulationPage tests passed');
 assert(source.includes('sourcePolicy'));
 assert(source.includes("sourcePolicy?.shortLabel ?? dataSourceStatusLabel"));
 assert(source.includes('Política de fuente:'));
+assert(qualityOfLifeSource.includes('Calidad media en simulación'));
+assert(!qualityOfLifeSource.includes('Calidad media observada'));

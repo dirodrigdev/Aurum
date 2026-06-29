@@ -305,7 +305,7 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     effectiveEngineInput: normalizedInput,
     effectiveEngineInputFingerprint: effectiveEngineInputHash,
     m8Fingerprint: effectiveEngineInputHash,
-    diagnosticFingerprint: null,
+    diagnosticFingerprint: 'pending-diagnostic-fingerprint',
     simulationConfigSource: input.simulationConfigSource,
     simulationConfigSavedAt: input.simulationConfigSavedAt,
     simulationConfigHash: input.simulationConfigHash,
@@ -327,6 +327,30 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
   diagnosticInput.replayTrace = replayTrace;
   diagnosticInput.sourcePolicy = replayTrace.sourcePolicy;
   const diagnosticHash = hashString(stableSerialize(diagnosticInput));
+  const finalReplayTrace = buildM8ReplayTrace({
+    paramsLabel: input.params.label ?? null,
+    effectiveEngineInput: normalizedInput,
+    effectiveEngineInputFingerprint: effectiveEngineInputHash,
+    m8Fingerprint: effectiveEngineInputHash,
+    diagnosticFingerprint: diagnosticHash,
+    simulationConfigSource: input.simulationConfigSource,
+    simulationConfigSavedAt: input.simulationConfigSavedAt,
+    simulationConfigHash: input.simulationConfigHash,
+    simulationConfigDiagnostics: input.simulationConfigDiagnostics,
+    weightsSourceMode: input.weightsSourceMode,
+    universeSourceOrigin: input.universeSourceOrigin,
+    instrumentUniverseSavedAt: input.instrumentUniverseSavedAt,
+    instrumentUniverseHash: input.instrumentUniverseHash,
+    instrumentUniverseDiagnostics: input.instrumentUniverseDiagnostics,
+    aurumSnapshotMonth: input.aurumSnapshotMonth,
+    aurumSnapshotLabel: input.aurumSnapshotLabel,
+    aurumSnapshotPublishedAt: input.aurumSnapshotPublishedAt,
+    aurumSnapshotSignature: input.aurumSnapshotSignature,
+    runtimeDiagnostics: input.runtimeDiagnostics,
+    fieldSources: input.fieldSources,
+    capitalDerivationDiagnostics: input.capitalDerivationDiagnostics,
+    warnings,
+  });
   return {
     hash: effectiveEngineInputHash,
     effectiveEngineInputHash,
@@ -336,13 +360,8 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     normalizedInput,
     diagnosticInput: {
       ...diagnosticInput,
-      replayTrace: {
-        ...replayTrace,
-        fingerprints: {
-          ...replayTrace.fingerprints,
-          diagnosticFingerprint: diagnosticHash,
-        },
-      },
+      replayTrace: finalReplayTrace,
+      sourcePolicy: finalReplayTrace.sourcePolicy,
     },
     sources,
     warnings,

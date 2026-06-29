@@ -113,7 +113,7 @@ const metricInfo = {
     'Si marca 78/100, significa que la simulación sostiene una calidad de consumo razonable, pero con fragilidad suficiente como para no considerarla plenamente robusta.',
   ].join('\n'),
   qualityMean: [
-    'Calidad media observada',
+    'Calidad media en simulación',
     '',
     'Que mide:',
     'Mide la calidad de consumo observada antes del castigo estricto por ruina.',
@@ -366,7 +366,7 @@ export function QualityOfLifeMetricsBlock({
           <MetricRow label="Éxito con calidad de vida (CSR-85/4)" info={metricInfo.csr} value={formatPercent(qualityOfLifeMetrics.csr85_4)} traffic={csrTraffic} />
           <MetricRow label="Quality survival rate" info={metricInfo.qualitySurvival} value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)} traffic={qualitySurvivalTraffic} />
           <MetricRow label="Calidad ajustada estricta (QASR)" info={metricInfo.qasrStrict} value={formatQasr(qualityOfLifeMetrics.qasrStrict)} traffic={qasrTraffic} />
-          <MetricRow label="Calidad media observada" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
+          <MetricRow label="Calidad media en simulación" info={metricInfo.qualityMean} value={formatQasr(qualityOfLifeMetrics.qualityScoreMean)} traffic={qualityMeanTraffic} />
         </Group>
 
         <Group title="Recortes">
