@@ -79,6 +79,10 @@ import {
   type SimulationRunBlockedReason,
 } from './domain/model/simulationRunGate';
 import {
+  shouldStartInstrumentUniverseHydration,
+  type InstrumentUniverseReadStatus,
+} from './domain/model/instrumentUniverseHydration';
+import {
   buildSimulationResultDiagnostics,
   type SimulationResultDiagnostics,
 } from './domain/model/simulationResultDigest';
@@ -1100,6 +1104,10 @@ export default function App() {
   const activeWeightsRef = useRef<PortfolioWeights>(activeWeights);
   const weightsSourceModeRef = useRef<WeightsSourceMode>(weightsSourceMode);
   const instrumentUniverseHydratedFromFirestoreRef = useRef(false);
+  const instrumentUniverseHydrationRequestIdRef = useRef(0);
+  const instrumentUniverseHydrationInFlightKeyRef = useRef<string | null>(null);
+  const instrumentUniverseHydrationLastSettledKeyRef = useRef<string | null>(null);
+  const cloudUniverseReadStatusRef = useRef<InstrumentUniverseReadStatus>(cloudUniverseReadStatus);
   const cloudSimulationConfigHashRef = useRef<string | null>(null);
   const cloudConfigRecalcHashRef = useRef<string | null>(null);
   const recalcRequestIdRef = useRef(0);
@@ -1124,6 +1132,11 @@ export default function App() {
       ?? (authUser.isAnonymous ? 'anonymous' : null);
   }, [authUser]);
   const isCanonicalUserSession = !aurumIntegrationConfigured || Boolean(authUser && !authUser.isAnonymous);
+  const instrumentUniverseHydrationKey = useMemo(() => {
+    if (!authResolved) return 'auth:pending';
+    if (!isCanonicalUserSession) return `auth:non-canonical:${authUser?.uid ?? 'none'}`;
+    return `auth:canonical:${authUser?.uid ? getUserScopedInstrumentUniversePath(authUser.uid) : 'missing-uid'}`;
+  }, [authResolved, authUser?.uid, isCanonicalUserSession]);
   const loginRequired = aurumIntegrationConfigured && authResolved && !isCanonicalUserSession;
   const localReadOnlyCloudFallbackEnabled = useMemo(() => shouldEnableLocalReadOnlyCloudFallback({
     aurumIntegrationConfigured,
@@ -1191,6 +1204,89 @@ export default function App() {
     setWeightsFallbackReason(resolved.fallbackReason);
     setActiveWeightsSavedAt(resolved.activeWeightsSavedAt);
   }, [cloudUniverseMetadata, cloudUniverseSnapshot]);
+
+  const applyInstrumentUniverseHydrationResult = useCallback((
+    result:
+      | Awaited<ReturnType<typeof hydrateInstrumentUniverseCacheFromFirestore>>
+      | { ok: false; reason: string },
+  ) => {
+    if (result.ok) {
+      instrumentUniverseHydratedFromFirestoreRef.current = true;
+      setCloudUniverseHydrated(true);
+      setCloudUniverseSnapshot(result.snapshot);
+      setCloudUniverseMetadata(loadInstrumentUniverseSnapshotMetadata());
+      setCloudUniverseReadStatus('loaded');
+      setCloudUniverseErrorMessage(null);
+      return;
+    }
+    instrumentUniverseHydratedFromFirestoreRef.current = false;
+    setCloudUniverseHydrated(false);
+    setCloudUniverseSnapshot(null);
+    setCloudUniverseMetadata(null);
+    setCloudUniverseReadStatus(
+      result.reason === 'active_not_found'
+        ? 'missing'
+        : result.reason === 'instrument_universe_timeout'
+          ? 'timeout'
+          : 'error',
+    );
+    setCloudUniverseErrorMessage(result.reason);
+  }, []);
+
+  const runInstrumentUniverseHydration = useCallback((options?: { force?: boolean }) => {
+    if (!isCanonicalUserSession) {
+      instrumentUniverseHydrationInFlightKeyRef.current = null;
+      instrumentUniverseHydrationLastSettledKeyRef.current = instrumentUniverseHydrationKey;
+      instrumentUniverseHydratedFromFirestoreRef.current = false;
+      setCloudUniverseHydrated(false);
+      setCloudUniverseSnapshot(null);
+      setCloudUniverseMetadata(null);
+      setCloudUniverseReadStatus('error');
+      setCloudUniverseErrorMessage('google_auth_required');
+      return () => {};
+    }
+
+    const shouldStart = shouldStartInstrumentUniverseHydration({
+      hydrationKey: instrumentUniverseHydrationKey,
+      force: options?.force,
+      inFlightKey: instrumentUniverseHydrationInFlightKeyRef.current,
+      lastSettledKey: instrumentUniverseHydrationLastSettledKeyRef.current,
+      readStatus: cloudUniverseReadStatusRef.current,
+    });
+    if (!shouldStart) return () => {};
+
+    const requestId = instrumentUniverseHydrationRequestIdRef.current + 1;
+    instrumentUniverseHydrationRequestIdRef.current = requestId;
+    instrumentUniverseHydrationInFlightKeyRef.current = instrumentUniverseHydrationKey;
+    setCloudUniverseReadStatus('loading');
+    setCloudUniverseErrorMessage(null);
+
+    let cancelled = false;
+    void hydrateInstrumentUniverseCacheFromFirestore()
+      .then((result) => {
+        if (cancelled || requestId !== instrumentUniverseHydrationRequestIdRef.current) return;
+        instrumentUniverseHydrationInFlightKeyRef.current = null;
+        instrumentUniverseHydrationLastSettledKeyRef.current = instrumentUniverseHydrationKey;
+        applyInstrumentUniverseHydrationResult(result);
+      })
+      .catch((error: unknown) => {
+        if (cancelled || requestId !== instrumentUniverseHydrationRequestIdRef.current) return;
+        instrumentUniverseHydrationInFlightKeyRef.current = null;
+        instrumentUniverseHydrationLastSettledKeyRef.current = instrumentUniverseHydrationKey;
+        applyInstrumentUniverseHydrationResult({
+          ok: false,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    applyInstrumentUniverseHydrationResult,
+    instrumentUniverseHydrationKey,
+    isCanonicalUserSession,
+  ]);
 
   useEffect(() => {
     if (!aurumIntegrationConfigured) {
@@ -1291,59 +1387,7 @@ export default function App() {
     };
   }, [authBootstrapNonce]);
 
-  useEffect(() => {
-    if (!isCanonicalUserSession) {
-      instrumentUniverseHydratedFromFirestoreRef.current = false;
-      setCloudUniverseHydrated(false);
-      setCloudUniverseSnapshot(null);
-      setCloudUniverseMetadata(null);
-      setCloudUniverseReadStatus('error');
-      setCloudUniverseErrorMessage('google_auth_required');
-      return;
-    }
-    let cancelled = false;
-    setCloudUniverseReadStatus('loading');
-    setCloudUniverseErrorMessage(null);
-    void hydrateInstrumentUniverseCacheFromFirestore()
-      .then((result) => {
-        if (cancelled) return;
-        if (result.ok) {
-          instrumentUniverseHydratedFromFirestoreRef.current = true;
-          setCloudUniverseHydrated(true);
-          const metadata = loadInstrumentUniverseSnapshotMetadata();
-          setCloudUniverseSnapshot(result.snapshot);
-          setCloudUniverseMetadata(metadata);
-          setCloudUniverseReadStatus('loaded');
-          setCloudUniverseErrorMessage(null);
-          refreshOfficialDistribution();
-          window.dispatchEvent(new CustomEvent('midas:instrument-universe-updated'));
-          return;
-        }
-        instrumentUniverseHydratedFromFirestoreRef.current = false;
-        setCloudUniverseHydrated(false);
-        setCloudUniverseSnapshot(null);
-        setCloudUniverseMetadata(null);
-        setCloudUniverseReadStatus(
-          result.reason === 'active_not_found'
-            ? 'missing'
-            : result.reason === 'instrument_universe_timeout'
-              ? 'timeout'
-              : 'error',
-        );
-        setCloudUniverseErrorMessage(result.reason);
-      })
-      .catch((error: unknown) => {
-        instrumentUniverseHydratedFromFirestoreRef.current = false;
-        setCloudUniverseHydrated(false);
-        setCloudUniverseSnapshot(null);
-        setCloudUniverseMetadata(null);
-        setCloudUniverseReadStatus('error');
-        setCloudUniverseErrorMessage(error instanceof Error ? error.message : String(error));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isCanonicalUserSession, refreshOfficialDistribution]);
+  useEffect(() => runInstrumentUniverseHydration(), [instrumentUniverseHydrationKey, runInstrumentUniverseHydration]);
 
   useEffect(() => {
     if (!authResolved) {
@@ -1451,46 +1495,13 @@ export default function App() {
         refreshOfficialDistribution();
         return;
       }
-      void hydrateInstrumentUniverseCacheFromFirestore()
-        .then((result) => {
-          if (result.ok) {
-            instrumentUniverseHydratedFromFirestoreRef.current = true;
-            setCloudUniverseHydrated(true);
-            setCloudUniverseSnapshot(result.snapshot);
-            setCloudUniverseMetadata(loadInstrumentUniverseSnapshotMetadata());
-            setCloudUniverseReadStatus('loaded');
-            setCloudUniverseErrorMessage(null);
-          } else {
-            instrumentUniverseHydratedFromFirestoreRef.current = false;
-            setCloudUniverseHydrated(false);
-            setCloudUniverseSnapshot(null);
-            setCloudUniverseMetadata(null);
-            setCloudUniverseReadStatus(
-              result.reason === 'active_not_found'
-                ? 'missing'
-                : result.reason === 'instrument_universe_timeout'
-                  ? 'timeout'
-                  : 'error',
-            );
-            setCloudUniverseErrorMessage(result.reason);
-          }
-          refreshOfficialDistribution();
-        })
-        .catch((error: unknown) => {
-          instrumentUniverseHydratedFromFirestoreRef.current = false;
-          setCloudUniverseHydrated(false);
-          setCloudUniverseSnapshot(null);
-          setCloudUniverseMetadata(null);
-          setCloudUniverseReadStatus('error');
-          setCloudUniverseErrorMessage(error instanceof Error ? error.message : String(error));
-          refreshOfficialDistribution();
-        });
+      runInstrumentUniverseHydration({ force: true });
     };
     window.addEventListener('midas:instrument-universe-updated', handleUniverseUpdated as EventListener);
     return () => {
       window.removeEventListener('midas:instrument-universe-updated', handleUniverseUpdated as EventListener);
     };
-  }, [isCanonicalUserSession, refreshOfficialDistribution]);
+  }, [isCanonicalUserSession, refreshOfficialDistribution, runInstrumentUniverseHydration]);
 
   const applyActiveDistribution = useCallback(
     (params: ModelParameters, weightsOverride?: PortfolioWeights): ModelParameters =>
@@ -1541,6 +1552,10 @@ export default function App() {
   useEffect(() => {
     weightsSourceModeRef.current = weightsSourceMode;
   }, [weightsSourceMode]);
+
+  useEffect(() => {
+    cloudUniverseReadStatusRef.current = cloudUniverseReadStatus;
+  }, [cloudUniverseReadStatus]);
 
   useEffect(() => {
     if (weightsSourceModeRef.current !== 'simulation') {
