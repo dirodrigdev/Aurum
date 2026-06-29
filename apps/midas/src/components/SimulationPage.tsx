@@ -78,6 +78,7 @@ type AppliedTraceRow = {
 
 type FreshnessStatus = 'fresh' | 'aging' | 'stale' | 'unknown';
 type CanonicalInputDisplayState = 'hydrating' | 'ready' | 'blocked' | 'missingCanonicalConfig' | 'timeout' | 'error';
+type HeroQuickEditMode = 'scenario' | 'return' | 'years' | 'nSim';
 
 export type SimulationPreset = ScenarioVariantId | 'custom';
 
@@ -758,6 +759,12 @@ export function SimulationPage({
   const [showSimToast, setShowSimToast] = useState(false);
   const simulationPanelRef = useRef<HTMLDivElement | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [heroExpressOpen, setHeroExpressOpen] = useState(false);
+  const [heroQuickEditMode, setHeroQuickEditMode] = useState<HeroQuickEditMode | null>(null);
+  const [heroQuickEditDraftScenario, setHeroQuickEditDraftScenario] = useState<ScenarioVariantId>('base');
+  const [heroQuickEditDraftYears, setHeroQuickEditDraftYears] = useState(40);
+  const [heroQuickEditDraftReturnPct, setHeroQuickEditDraftReturnPct] = useState(0);
+  const [heroQuickEditDraftNSim, setHeroQuickEditDraftNSim] = useState(1000);
   const [simulationDataOpen, setSimulationDataOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth > 760 : true
   );
@@ -1515,14 +1522,6 @@ export function SimulationPage({
   const successAxisSpan = Math.max(1, successAxisMax - successAxisMin);
   const mapSuccessPct = (value: number) =>
     Math.min(100, Math.max(0, ((value - successAxisMin) / successAxisSpan) * 100));
-  const openSimulationPanelShortcut = () => {
-    onSimulationTouch('custom');
-    setAdvancedOpen(true);
-    window.setTimeout(() => {
-      simulationPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 0);
-  };
-
   const updateTemporaryReturnPct = useCallback((nextPct: number) => {
     const clamped = Math.max(-10, Math.min(30, nextPct));
     const next: SimulationOverrides = {
@@ -2507,6 +2506,48 @@ export function SimulationPage({
       },
     }));
   };
+  const openHeroQuickEdit = useCallback((mode: HeroQuickEditMode) => {
+    setHeroQuickEditMode(mode);
+    setHeroQuickEditDraftScenario(activeScenarioForUi);
+    setHeroQuickEditDraftYears(effectiveYears);
+    setHeroQuickEditDraftReturnPct(Number((effectiveReturn * 100).toFixed(2)));
+    setHeroQuickEditDraftNSim(currentNSim);
+  }, [activeScenarioForUi, currentNSim, effectiveReturn, effectiveYears]);
+  const closeHeroQuickEdit = useCallback(() => {
+    setHeroQuickEditMode(null);
+  }, []);
+  const applyHeroQuickEdit = useCallback(() => {
+    if (heroQuickEditMode === 'scenario') {
+      onScenarioChange(heroQuickEditDraftScenario);
+      closeHeroQuickEdit();
+      return;
+    }
+    if (heroQuickEditMode === 'years') {
+      updateTemporaryHorizonYears(heroQuickEditDraftYears);
+      closeHeroQuickEdit();
+      return;
+    }
+    if (heroQuickEditMode === 'return') {
+      updateTemporaryReturnPct(heroQuickEditDraftReturnPct);
+      closeHeroQuickEdit();
+      return;
+    }
+    if (heroQuickEditMode === 'nSim') {
+      setNSim(heroQuickEditDraftNSim);
+      closeHeroQuickEdit();
+    }
+  }, [
+    closeHeroQuickEdit,
+    heroQuickEditDraftNSim,
+    heroQuickEditDraftReturnPct,
+    heroQuickEditDraftScenario,
+    heroQuickEditDraftYears,
+    heroQuickEditMode,
+    onScenarioChange,
+    setNSim,
+    updateTemporaryHorizonYears,
+    updateTemporaryReturnPct,
+  ]);
   const currentRvTotalPct = Math.round((params.weights.rvGlobal + params.weights.rvChile) * 1000) / 10;
   const currentRfTotalPct = Math.round((params.weights.rfGlobal + params.weights.rfChile) * 1000) / 10;
   const updateTemporaryRvTotalPct = (rvPct: number) => {
@@ -2683,13 +2724,14 @@ export function SimulationPage({
                   : undefined,
                 disabled: !canResetToBase,
               },
-              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: openSimulationPanelShortcut },
-              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: openSimulationPanelShortcut },
+              { id: 'scenario', value: scenarioUiLabel, onClick: () => openHeroQuickEdit('scenario') },
+              { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openHeroQuickEdit('return') },
+              { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openHeroQuickEdit('years') },
+              { id: 'nSim', value: `${currentNSim} sim`, onClick: () => openHeroQuickEdit('nSim') },
               {
                 id: 'capital',
                 value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
                 note: heroWealthChipNote,
-                onClick: openSimulationPanelShortcut,
                 accessory: (
                   <button
                     type="button"
@@ -2763,27 +2805,51 @@ export function SimulationPage({
           gap: 8,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: 'grid', gap: 2 }}>
-            <div style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Controles express</div>
-            <div style={{ color: T.textMuted, fontSize: 11 }}>
-              Accesos rápidos para ajustes frecuentes. Recalculan y actualizan el resultado vigente.
-            </div>
-          </div>
-          {isRecalculating ? (
-            <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
-              Recalculando simulación...
+        <button
+          type="button"
+          onClick={() => setHeroExpressOpen((prev) => !prev)}
+          aria-expanded={heroExpressOpen}
+          aria-controls="hero-express-controls-panel"
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 8,
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
+        >
+          <span style={{ display: 'grid', gap: 2 }}>
+            <span style={{ color: T.textPrimary, fontSize: 12, fontWeight: 800 }}>Controles express</span>
+            <span style={{ color: T.textMuted, fontSize: 11 }}>
+              Depto · Riesgo · Escenario · Monte Carlo
             </span>
-          ) : null}
-        </div>
-        <SurfaceSemanticRow
-          items={[
-            { label: 'Controles express', tone: 'accent' },
-            { label: 'Recalcula automático', tone: 'accent' },
-            { label: 'Afecta resultado vigente', tone: 'warning' },
-          ]}
-        />
-        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.05fr 1.05fr 1.5fr 1.1fr', gap: 8 }}>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            {isRecalculating ? (
+              <span style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
+                Recalculando simulación...
+              </span>
+            ) : null}
+            <span style={{ color: T.textMuted, fontSize: 16, lineHeight: 1 }}>
+              {heroExpressOpen ? '▾' : '▸'}
+            </span>
+          </span>
+        </button>
+        {heroExpressOpen ? (
+          <div id="hero-express-controls-panel" style={{ display: 'grid', gap: 8 }}>
+            <SurfaceSemanticRow
+              items={[
+                { label: 'Controles express', tone: 'accent' },
+                { label: 'Recalcula automático', tone: 'accent' },
+                { label: 'Afecta resultado vigente', tone: 'warning' },
+              ]}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0,1fr))' : '1.05fr 1.05fr 1.5fr 1.1fr', gap: 8 }}>
           <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 10, padding: '8px 9px', display: 'grid', gap: 5 }}>
             <div style={{ color: T.textMuted, fontSize: 10, fontWeight: 700 }}>Depto</div>
             <button
@@ -2901,7 +2967,9 @@ export function SimulationPage({
             </div>
             <div style={{ color: T.textMuted, fontSize: 10 }}>Trayectorias de esta corrida.</div>
           </div>
-        </div>
+            </div>
+          </div>
+        ) : null}
       </section>
       {hasPendingSnapshot && pendingSnapshotLabel && (
         <div
@@ -3168,6 +3236,166 @@ export function SimulationPage({
           isMobile={isMobileViewport}
         />
       </div>
+      {heroQuickEditMode ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edicion rapida del hero"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(13, 20, 33, 0.62)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            zIndex: 50,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(460px, 100%)',
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              borderRadius: 16,
+              padding: isMobileViewport ? '14px 14px' : '16px 18px',
+              display: 'grid',
+              gap: 12,
+              boxShadow: '0 24px 80px rgba(0, 0, 0, 0.28)',
+            }}
+          >
+            <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ color: T.textPrimary, fontSize: 14, fontWeight: 800 }}>Edicion rapida del hero</div>
+              <div style={{ color: T.textMuted, fontSize: 11 }}>
+                Ajuste express. Al aplicar, MIDAS recalcula y actualiza el resultado vigente.
+              </div>
+            </div>
+            {heroQuickEditMode === 'scenario' ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ color: T.textMuted, fontSize: 11 }}>Escenario</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'pessimistic' as const, label: 'Pesimista' },
+                    { id: 'base' as const, label: 'Neutro' },
+                    { id: 'optimistic' as const, label: 'Optimista' },
+                  ].map((item) => (
+                    <button
+                      key={`hero-quick-scenario-${item.id}`}
+                      type="button"
+                      onClick={() => setHeroQuickEditDraftScenario(item.id)}
+                      style={{
+                        background: heroQuickEditDraftScenario === item.id ? T.primary : T.surfaceEl,
+                        border: `1px solid ${heroQuickEditDraftScenario === item.id ? T.primary : T.border}`,
+                        color: heroQuickEditDraftScenario === item.id ? '#fff' : T.textSecondary,
+                        borderRadius: 999,
+                        padding: '6px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {heroQuickEditMode === 'years' ? (
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Horizonte (anos)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={heroQuickEditDraftYears}
+                  onChange={(e) => setHeroQuickEditDraftYears(Math.max(1, Math.round(Number(e.target.value) || 1)))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            ) : null}
+            {heroQuickEditMode === 'return' ? (
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Retorno (%)</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  value={heroQuickEditDraftReturnPct}
+                  onChange={(e) => setHeroQuickEditDraftReturnPct(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            ) : null}
+            {heroQuickEditMode === 'nSim' ? (
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ color: T.textMuted, fontSize: 11 }}>Monte Carlo</span>
+                <select
+                  value={heroQuickEditDraftNSim}
+                  onChange={(e) => setHeroQuickEditDraftNSim(Number(e.target.value))}
+                  style={{
+                    background: T.surfaceEl,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                    color: T.textPrimary,
+                    fontSize: 12,
+                  }}
+                >
+                  {nSimOptions.map((option) => (
+                    <option key={`hero-quick-nsim-${option}`} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                onClick={closeHeroQuickEdit}
+                style={{
+                  background: T.surfaceEl,
+                  border: `1px solid ${T.border}`,
+                  color: T.textSecondary,
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={applyHeroQuickEdit}
+                style={{
+                  background: T.primary,
+                  border: `1px solid ${T.primary}`,
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '7px 12px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <details
         open={modelBaseOpen}
         onToggle={(e) => setModelBaseOpen((e.currentTarget as HTMLDetailsElement).open)}

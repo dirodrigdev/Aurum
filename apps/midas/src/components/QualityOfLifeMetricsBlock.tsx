@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MidasEvaluationV1, QualityOfLifeMetricsV1 } from '../domain/model/types';
+import { resolveQualityOfLifeKpiThreshold } from '../domain/model/qualityOfLifeKpiThresholds';
 import { T, css } from './theme';
 import { InfoHint } from './InfoHint';
 
@@ -282,12 +283,16 @@ function PrimaryKpiCard({
   value,
   subtle,
   traffic,
+  statusLabel,
+  explanation,
 }: {
   eyebrow?: string;
   label: string;
   value: string;
   subtle?: string;
   traffic?: TrafficLight;
+  statusLabel: string;
+  explanation: string;
 }) {
   const tone = TRAFFIC_COLORS[traffic ?? 'neutral'];
   return (
@@ -307,9 +312,27 @@ function PrimaryKpiCard({
           {eyebrow}
         </div>
       ) : null}
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifySelf: 'start',
+          color: tone,
+          background: `${tone}12`,
+          border: `1px solid ${tone}33`,
+          borderRadius: 999,
+          padding: '3px 8px',
+          fontSize: 10,
+          fontWeight: 800,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {statusLabel}
+      </div>
       <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>{label}</div>
       <div style={{ color: T.textPrimary, fontSize: 24, fontWeight: 900, lineHeight: 1.05 }}>{value}</div>
       {subtle ? <div style={{ color: T.textSecondary, fontSize: 11, lineHeight: 1.35 }}>{subtle}</div> : null}
+      <div style={{ color: T.textMuted, fontSize: 10, lineHeight: 1.35 }}>{explanation}</div>
     </div>
   );
 }
@@ -346,6 +369,11 @@ export function QualityOfLifeMetricsBlock({
   const severeCutDuringSale = qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMedian
     ?? qualityOfLifeMetrics.severeCutMonthsDuringHouseSaleMean;
   const severeCutDuringSaleTraffic = pickTraffic(severeCutDuringSale, { greenMax: 1, yellowMax: 6 });
+  const csrThreshold = resolveQualityOfLifeKpiThreshold('csr85_4', qualityOfLifeMetrics);
+  const strictSurvivalThreshold = resolveQualityOfLifeKpiThreshold('qualitySurvivalRate', qualityOfLifeMetrics);
+  const effectiveSpendingThreshold = resolveQualityOfLifeKpiThreshold('averageEffectiveSpendingRatio', qualityOfLifeMetrics);
+  const severeCutThreshold = resolveQualityOfLifeKpiThreshold('severeCutYearsMean', qualityOfLifeMetrics);
+  const terminalThreshold = resolveQualityOfLifeKpiThreshold('terminalWealthRatio', qualityOfLifeMetrics);
 
   const shownWarnings = qualityOfLifeMetrics.warnings.slice(0, 3);
   const salesNeutral = 'neutral' as const;
@@ -384,19 +412,25 @@ export function QualityOfLifeMetricsBlock({
             label="Éxito con calidad de vida"
             value={formatPercent(qualityOfLifeMetrics.csr85_4)}
             subtle="CSR-85/4"
-            traffic={csrTraffic}
+            traffic={csrThreshold.status}
+            statusLabel={csrThreshold.label}
+            explanation={csrThreshold.explanation}
           />
           <PrimaryKpiCard
             label="Supervivencia con calidad estricta"
             value={formatPercent(qualityOfLifeMetrics.qualitySurvivalRate)}
             subtle="Escenarios sin ruina y sin deterioro prolongado."
-            traffic={qualitySurvivalTraffic}
+            traffic={strictSurvivalThreshold.status}
+            statusLabel={strictSurvivalThreshold.label}
+            explanation={strictSurvivalThreshold.explanation}
           />
           <PrimaryKpiCard
             label="Consumo efectivo promedio"
             value={formatPercent(qualityOfLifeMetrics.averageEffectiveSpendingRatio)}
             subtle={`P25 / P50 ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP25)} · ${formatPercent(qualityOfLifeMetrics.averageConsumptionRatioP50)}`}
-            traffic={effectiveSpendingTraffic}
+            traffic={effectiveSpendingThreshold.status}
+            statusLabel={effectiveSpendingThreshold.label}
+            explanation={effectiveSpendingThreshold.explanation}
           />
           <PrimaryKpiCard
             label="Tiempo en recorte severo"
@@ -404,13 +438,17 @@ export function QualityOfLifeMetricsBlock({
               ? 'No disponible'
               : `${qualityOfLifeMetrics.severeCutYearsMean.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} años`}
             subtle={`Meses bajo 85%: ${formatMonths(qualityOfLifeMetrics.monthsBelow85)}`}
-            traffic={severeCutYearsTraffic}
+            traffic={severeCutThreshold.status}
+            statusLabel={severeCutThreshold.label}
+            explanation={severeCutThreshold.explanation}
           />
           <PrimaryKpiCard
             label="Patrimonio final mediano"
             value={formatRatio(qualityOfLifeMetrics.terminalWealthRatio)}
             subtle="Patrimonio final mediano / capital inicial."
-            traffic="neutral"
+            traffic={terminalThreshold.status}
+            statusLabel={terminalThreshold.label}
+            explanation={terminalThreshold.explanation}
           />
         </div>
       </div>
