@@ -51,7 +51,11 @@ import {
   type AurumIntegrationAuthBootstrapDiagnostics,
   type AurumIntegrationAuthStatus,
 } from './integrations/aurum/firebase';
-import { hydrateInstrumentUniverseCacheFromFirestore } from './integrations/midas/instrumentUniversePersistence';
+import {
+  getUserScopedInstrumentUniversePath,
+  hydrateInstrumentUniverseCacheFromFirestore,
+  INSTRUMENT_UNIVERSE_READ_TIMEOUT_MS,
+} from './integrations/midas/instrumentUniversePersistence';
 import {
   createSimulationConfigCloudDiagnostics,
   LEGACY_SIMULATION_CONFIG_PATH,
@@ -698,6 +702,20 @@ function describeCanonicalInputBlock(blockedReason: SimulationRunBlockedReason |
         explanation: 'Cargando Instrument Universe activo.',
         pendingSource: 'instrument universe',
       };
+    case 'instrument_universe_timeout':
+      return {
+        metricText: 'No se pudo completar la hidratación',
+        confidenceLabel: 'Timeout Instrument Universe',
+        explanation: 'La lectura cloud de Instrument Universe excedió el tiempo de espera seguro.',
+        pendingSource: 'instrument universe',
+      };
+    case 'instrument_universe_error':
+      return {
+        metricText: 'No se pudo completar la hidratación',
+        confidenceLabel: 'Error Instrument Universe',
+        explanation: 'Falló la lectura cloud de Instrument Universe.',
+        pendingSource: 'instrument universe',
+      };
     case 'instrument_universe_missing':
       return {
         metricText: 'Input canónico incompleto',
@@ -992,7 +1010,7 @@ export default function App() {
   );
   const [cloudUniverseSnapshot, setCloudUniverseSnapshot] = useState<ReturnType<typeof getBundledInstrumentUniverseSnapshot> | null>(null);
   const [cloudUniverseMetadata, setCloudUniverseMetadata] = useState<ReturnType<typeof getBundledInstrumentUniverseMetadata> | null>(null);
-  const [cloudUniverseReadStatus, setCloudUniverseReadStatus] = useState<'loading' | 'loaded' | 'missing' | 'error'>('loading');
+  const [cloudUniverseReadStatus, setCloudUniverseReadStatus] = useState<'loading' | 'loaded' | 'missing' | 'timeout' | 'error'>('loading');
   const [cloudUniverseErrorMessage, setCloudUniverseErrorMessage] = useState<string | null>(null);
   const [simulationConfigSource, setSimulationConfigSource] = useState<'cloud' | 'local_cache' | 'fallback'>('local_cache');
   const [simulationConfigSavedAt, setSimulationConfigSavedAt] = useState<string | null>(null);
@@ -1305,7 +1323,13 @@ export default function App() {
         setCloudUniverseHydrated(false);
         setCloudUniverseSnapshot(null);
         setCloudUniverseMetadata(null);
-        setCloudUniverseReadStatus(result.reason === 'active_not_found' ? 'missing' : 'error');
+        setCloudUniverseReadStatus(
+          result.reason === 'active_not_found'
+            ? 'missing'
+            : result.reason === 'instrument_universe_timeout'
+              ? 'timeout'
+              : 'error',
+        );
         setCloudUniverseErrorMessage(result.reason);
       })
       .catch((error: unknown) => {
@@ -1441,7 +1465,13 @@ export default function App() {
             setCloudUniverseHydrated(false);
             setCloudUniverseSnapshot(null);
             setCloudUniverseMetadata(null);
-            setCloudUniverseReadStatus(result.reason === 'active_not_found' ? 'missing' : 'error');
+            setCloudUniverseReadStatus(
+              result.reason === 'active_not_found'
+                ? 'missing'
+                : result.reason === 'instrument_universe_timeout'
+                  ? 'timeout'
+                  : 'error',
+            );
             setCloudUniverseErrorMessage(result.reason);
           }
           refreshOfficialDistribution();
@@ -2556,7 +2586,7 @@ export default function App() {
       simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
       aurumIntegrationStatus: AurumIntegrationStatus;
       aurumSnapshotAvailable: boolean;
-      cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'error';
+      cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'timeout' | 'error';
       universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
     }>,
   ) => {
@@ -4096,8 +4126,10 @@ export default function App() {
       ...instrumentUniverseDiagnostics,
       cloudReadStatus: cloudUniverseReadStatus,
       cloudErrorMessage: cloudUniverseErrorMessage,
+      cloudPath: authUser?.uid ? getUserScopedInstrumentUniversePath(authUser.uid) : null,
+      cloudTimeoutMs: INSTRUMENT_UNIVERSE_READ_TIMEOUT_MS,
     }),
-    [cloudUniverseErrorMessage, cloudUniverseReadStatus, instrumentUniverseDiagnostics],
+    [authUser?.uid, cloudUniverseErrorMessage, cloudUniverseReadStatus, instrumentUniverseDiagnostics],
   );
   const runtimeEnvDiagnostics = useMemo(() => {
     const env = import.meta.env as Record<string, string | undefined>;

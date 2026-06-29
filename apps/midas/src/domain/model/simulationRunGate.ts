@@ -8,6 +8,8 @@ export type SimulationRunBlockedReason =
   | 'aurum_snapshot_missing'
   | 'aurum_snapshot_error'
   | 'instrument_universe_loading'
+  | 'instrument_universe_timeout'
+  | 'instrument_universe_error'
   | 'instrument_universe_missing'
   | 'cloud_hydration_incomplete';
 
@@ -19,7 +21,7 @@ export type EvaluateSimulationRunGateInput = {
   simulationConfigHydrationStatus: 'loading' | 'cloud' | 'missing' | 'error';
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotAvailable: boolean;
-  cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'error';
+  cloudUniverseReadStatus: 'loading' | 'loaded' | 'missing' | 'timeout' | 'error';
   universeSourceOrigin: 'firestore' | 'bundled' | 'cache-local' | 'none';
   simWorking: boolean;
   recalcWorkerStatus: 'idle' | 'queued' | 'running' | 'done' | 'error';
@@ -62,10 +64,15 @@ export function evaluateCanonicalInputReadiness(
   if (input.cloudUniverseReadStatus === 'loading') {
     return { ready: false, blockedReason: 'instrument_universe_loading' };
   }
+  if (input.cloudUniverseReadStatus === 'timeout') {
+    return { ready: false, blockedReason: 'instrument_universe_timeout' };
+  }
+  if (input.cloudUniverseReadStatus === 'error') {
+    return { ready: false, blockedReason: 'instrument_universe_error' };
+  }
   if (
     input.universeSourceOrigin === 'none'
     || input.cloudUniverseReadStatus === 'missing'
-    || input.cloudUniverseReadStatus === 'error'
   ) {
     return { ready: false, blockedReason: 'instrument_universe_missing' };
   }

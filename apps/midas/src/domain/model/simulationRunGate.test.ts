@@ -117,6 +117,22 @@ const base = () => ({
 })();
 
 (() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    cloudUniverseReadStatus: 'timeout',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'instrument_universe_timeout' });
+})();
+
+(() => {
+  const result = evaluateCanonicalInputReadiness({
+    ...base(),
+    cloudUniverseReadStatus: 'error',
+  });
+  assert.deepEqual(result, { ready: false, blockedReason: 'instrument_universe_error' });
+})();
+
+(() => {
   const result = evaluateSimulationRunGate({
     ...base(),
     cloudHydrationReady: false,

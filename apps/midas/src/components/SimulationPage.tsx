@@ -158,7 +158,9 @@ function resolveCanonicalInputDisplayState(input: {
 }): CanonicalInputDisplayState {
   if (!input.blocked) return 'ready';
   if (input.blockedReason === 'config_missing') return 'missingCanonicalConfig';
+  if (input.blockedReason === 'instrument_universe_timeout') return 'timeout';
   if (input.blockedReason === 'config_error' || input.blockedReason === 'aurum_snapshot_error') return 'error';
+  if (input.blockedReason === 'instrument_universe_error') return 'error';
   if (input.hydrationTimedOut && isCanonicalHydrationInProgress(input.blockedReason)) return 'timeout';
   if (isCanonicalHydrationInProgress(input.blockedReason)) return 'hydrating';
   return 'blocked';
@@ -766,6 +768,8 @@ export function SimulationPage({
     (m8InputFingerprint.diagnosticInput.runtimeDiagnostics as Record<string, unknown> | undefined) ?? {};
   const replayTrace =
     (m8InputFingerprint.diagnosticInput.replayTrace as Record<string, unknown> | undefined) ?? null;
+  const instrumentUniverseDiagnostics =
+    (m8InputFingerprint.diagnosticInput.instrumentUniverseDiagnostics as Record<string, unknown> | undefined) ?? {};
   const simulationRunStatus = String(runtimeDiagnostics.simulationRunStatus ?? '').toLowerCase();
   const canonicalInputReady = runtimeDiagnostics.canonicalInputReady !== false;
   const canonicalInputBlockedReason = String(
@@ -776,6 +780,9 @@ export function SimulationPage({
   const canonicalInputStatusMessage = String(runtimeDiagnostics.canonicalInputStatusMessage ?? '').trim();
   const canonicalInputPendingSource = String(runtimeDiagnostics.canonicalInputPendingSource ?? '').trim();
   const canonicalInputBlocked = !canonicalInputReady && canonicalInputBlockedReason.length > 0;
+  const instrumentUniverseCloudReadStatus = String(instrumentUniverseDiagnostics.cloudReadStatus ?? '').trim();
+  const instrumentUniverseCloudPath = String(instrumentUniverseDiagnostics.cloudPath ?? '').trim();
+  const instrumentUniverseCloudErrorMessage = String(instrumentUniverseDiagnostics.cloudErrorMessage ?? '').trim();
   useEffect(() => {
     if (!canonicalInputBlocked || !isCanonicalHydrationInProgress(canonicalInputBlockedReason)) {
       setCanonicalHydrationTimedOut(false);
@@ -1691,14 +1698,26 @@ export function SimulationPage({
       ? 'Hay un snapshot Aurum detectado pendiente de aplicar.'
       : 'Esta corrida usa base local; puede diferir de Aurum.';
   const mixSourceTone: SourceBadgeTone = weightsSourceMode === 'instrument-universe'
-    ? (universeSourceOrigin === 'firestore' ? 'ok' : universeSourceOrigin === 'bundled' ? 'warning' : 'warning')
+    ? instrumentUniverseCloudReadStatus === 'loaded'
+      ? (universeSourceOrigin === 'firestore' ? 'ok' : universeSourceOrigin === 'bundled' ? 'warning' : 'warning')
+      : instrumentUniverseCloudReadStatus === 'loading'
+        ? 'warning'
+        : 'alert'
     : 'alert';
   const mixSourceWarning = weightsSourceMode === 'instrument-universe'
-    ? universeSourceOrigin === 'cache-local'
-      ? 'El mix aperturado por instrumento está usando copia local.'
-      : universeSourceOrigin === 'bundled'
-        ? 'El mix aperturado por instrumento está usando versión interna de respaldo.'
-        : null
+    ? instrumentUniverseCloudReadStatus === 'loading'
+      ? 'Instrument Universe cloud sigue cargando; no lo tratamos como fuente lista.'
+      : instrumentUniverseCloudReadStatus === 'timeout'
+        ? 'Timeout de lectura cloud para Instrument Universe.'
+        : instrumentUniverseCloudReadStatus === 'missing'
+          ? 'Falta Instrument Universe cloud.'
+          : instrumentUniverseCloudReadStatus === 'error'
+            ? 'Error leyendo Instrument Universe cloud.'
+            : universeSourceOrigin === 'cache-local'
+              ? 'El mix aperturado por instrumento está usando copia local.'
+              : universeSourceOrigin === 'bundled'
+                ? 'El mix aperturado por instrumento está usando versión interna de respaldo.'
+                : null
     : 'El mix aperturado por instrumento no está disponible y se está usando un respaldo.';
   const usdFxSourceSummary = usingPrimaryFx
     ? 'Aurum current'
@@ -1751,11 +1770,19 @@ export function SimulationPage({
       ? 'Datos usables con advertencias de fuente.'
       : 'Inconsistencia o fallback crítico en fuentes.';
   const mixSourceCompactLabel = weightsSourceMode === 'instrument-universe'
-    ? universeSourceOrigin === 'firestore'
-      ? 'Mix cloud'
-      : universeSourceOrigin === 'bundled'
-        ? 'Mix respaldo'
-        : 'Mix local'
+    ? instrumentUniverseCloudReadStatus === 'loading'
+      ? 'Mix cloud pendiente'
+      : instrumentUniverseCloudReadStatus === 'timeout'
+        ? 'Instrument Universe timeout'
+        : instrumentUniverseCloudReadStatus === 'missing'
+          ? 'Falta Universe cloud'
+          : instrumentUniverseCloudReadStatus === 'error'
+            ? 'Error Universe cloud'
+            : universeSourceOrigin === 'firestore'
+              ? 'Mix cloud'
+              : universeSourceOrigin === 'bundled'
+                ? 'Mix respaldo'
+                : 'Mix local'
     : weightsSourceMode === 'simulation'
       ? 'Mix override'
       : 'Mix fallback';
@@ -1999,7 +2026,7 @@ export function SimulationPage({
       : operativeFxResolution.reasonCode === 'aurum_current_available_but_not_applied' || snapshotFreshness === 'stale'
         ? 'alert'
         : 'warning';
-    const mixLevel = weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled')
+    const mixLevel = weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled')
       ? 'ok'
       : weightsSourceMode === 'instrument-universe'
         ? 'warning'
@@ -2020,6 +2047,7 @@ export function SimulationPage({
     riskCapitalUsdSnapshotCLP,
     riskFxMismatchPct,
     snapshotFreshness,
+    instrumentUniverseCloudReadStatus,
     universeSourceOrigin,
     weightsSourceMode,
   ]);
@@ -2745,8 +2773,8 @@ export function SimulationPage({
               <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
-                  <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                    {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                  <span style={{ color: weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                    {instrumentUniverseCloudReadStatus === 'loading' ? 'Cargando' : instrumentUniverseCloudReadStatus === 'timeout' ? 'Timeout' : instrumentUniverseCloudReadStatus === 'missing' ? 'Falta' : weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                   </span>
                 </div>
                 <div style={{ color: T.textMuted, fontSize: 10 }}>
@@ -2811,8 +2839,8 @@ export function SimulationPage({
             <div style={{ border: `1px solid ${T.border}`, background: T.surfaceEl, borderRadius: 8, padding: '7px 8px', display: 'grid', gap: 3 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ color: T.textPrimary, fontSize: 11, fontWeight: 800 }}>Mix agregado M8</div>
-                <span style={{ color: weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
-                  {weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
+                <span style={{ color: weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative, border: `1px solid ${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}33`, background: `${weightsSourceMode === 'instrument-universe' && instrumentUniverseCloudReadStatus === 'loaded' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? T.positive : weightsSourceMode === 'instrument-universe' ? T.warning : T.negative}14`, borderRadius: 999, padding: '2px 7px', fontSize: 10, fontWeight: 800 }}>
+                  {instrumentUniverseCloudReadStatus === 'loading' ? 'Cargando' : instrumentUniverseCloudReadStatus === 'timeout' ? 'Timeout' : instrumentUniverseCloudReadStatus === 'missing' ? 'Falta' : weightsSourceMode === 'instrument-universe' && (universeSourceOrigin === 'firestore' || universeSourceOrigin === 'bundled') ? 'OK' : weightsSourceMode === 'instrument-universe' ? 'Copia local' : 'Respaldo'}
                 </span>
               </div>
               <div style={{ color: T.textMuted, fontSize: 10 }}>
@@ -3338,6 +3366,13 @@ export function SimulationPage({
                     <div style={{ marginTop: 6, display: 'grid', gap: 5, color: T.textMuted, fontSize: 10 }}>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Patrimonio:</span> {patrimonioSourceTechnical}</div>
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Mix:</span> {distributionSourceTechnical}</div>
+                      <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Instrument Universe cloud:</span> {instrumentUniverseCloudReadStatus || 'sin estado'}</div>
+                      {instrumentUniverseCloudPath ? (
+                        <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Path esperado:</span> {instrumentUniverseCloudPath}</div>
+                      ) : null}
+                      {instrumentUniverseCloudErrorMessage ? (
+                        <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>Razón técnica universe:</span> {instrumentUniverseCloudErrorMessage}</div>
+                      ) : null}
                       <div><span style={{ color: T.textSecondary, fontWeight: 700 }}>USD/CLP:</span> {fxSpotSourceTechnical}</div>
                       <div>
                         <span style={{ color: T.textSecondary, fontWeight: 700 }}>EUR/USD:</span>{' '}

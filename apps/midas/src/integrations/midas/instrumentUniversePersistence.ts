@@ -12,6 +12,7 @@ import { aurumAuth, aurumDb, aurumIntegrationConfigured, ensureAurumIntegrationA
 export const INSTRUMENT_UNIVERSE_COLLECTION = 'midas_config';
 export const INSTRUMENT_UNIVERSE_DOC_ID = 'instrumentUniverseV1';
 export const LEGACY_INSTRUMENT_UNIVERSE_PATH = `${INSTRUMENT_UNIVERSE_COLLECTION}/${INSTRUMENT_UNIVERSE_DOC_ID}`;
+export const INSTRUMENT_UNIVERSE_READ_TIMEOUT_MS = 12_000;
 
 export const getUserScopedInstrumentUniversePath = (uid: string) =>
   `users/${uid}/${INSTRUMENT_UNIVERSE_COLLECTION}/${INSTRUMENT_UNIVERSE_DOC_ID}`;
@@ -182,7 +183,21 @@ export async function persistInstrumentUniverseActiveToFirestore(input: {
 }
 
 export async function hydrateInstrumentUniverseCacheFromFirestore(): Promise<LoadPersistedInstrumentUniverseResult> {
-  const loaded = await loadActiveInstrumentUniverseFromFirestore();
+  return hydrateInstrumentUniverseCacheFromFirestoreWithTimeout();
+}
+
+export async function hydrateInstrumentUniverseCacheFromFirestoreWithTimeout(input?: {
+  timeoutMs?: number;
+  load?: () => Promise<LoadPersistedInstrumentUniverseResult>;
+}): Promise<LoadPersistedInstrumentUniverseResult> {
+  const timeoutMs = input?.timeoutMs ?? INSTRUMENT_UNIVERSE_READ_TIMEOUT_MS;
+  const load = input?.load ?? loadActiveInstrumentUniverseFromFirestore;
+  const loaded = await Promise.race<LoadPersistedInstrumentUniverseResult>([
+    load(),
+    new Promise<LoadPersistedInstrumentUniverseResult>((resolve) => {
+      setTimeout(() => resolve({ ok: false, reason: 'instrument_universe_timeout' }), timeoutMs);
+    }),
+  ]);
   if (loaded.ok) {
     const validation = validateInstrumentUniverseSnapshot(loaded.snapshot);
     const metadata = buildInstrumentUniverseSnapshotMetadata(loaded.snapshot, validation, {
