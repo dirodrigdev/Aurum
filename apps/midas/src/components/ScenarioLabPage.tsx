@@ -4,7 +4,13 @@ import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { SimulationRunBlockedReason } from '../domain/model/simulationRunGate';
 import type { SimulationResults } from '../domain/model/types';
+import type { M8Input } from '../domain/simulation/m8.types';
 import { validateCandidateSet, type CandidateSetValidationResult } from '../domain/optimization/candidateSet';
+import {
+  evaluateCandidateSetWithM8,
+  type ScenarioLabCandidateSetM8Evaluation,
+  type ScenarioLabM8Metrics,
+} from '../domain/optimization/evaluateCandidateSetWithM8';
 import { buildOptimizationPack, type OptimizationPack } from '../domain/optimization/optimizationPack';
 import { T } from './theme';
 
@@ -18,6 +24,11 @@ type ScenarioLabPageProps = {
 };
 
 type ScenarioLabExportState = {
+  enabled: boolean;
+  reason: string | null;
+};
+
+type ScenarioLabEvaluationState = {
   enabled: boolean;
   reason: string | null;
 };
@@ -40,6 +51,32 @@ const BLOCK_REASON_LABELS: Record<SimulationRunBlockedReason, string> = {
 
 function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function finiteOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatPercent(value: number | null): string {
+  return value === null ? '—' : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatRatio(value: number | null): string {
+  return value === null ? '—' : `${value.toFixed(2)}x`;
+}
+
+function formatNumber(value: number | null, digits = 1): string {
+  return value === null ? '—' : value.toFixed(digits);
+}
+
+function formatDelta(value: number | null, kind: 'percent' | 'score' | 'ratio' | 'years'): string {
+  if (value === null) return '—';
+  const sign = value > 0 ? '+' : '';
+  if (kind === 'percent') return `${sign}${(value * 100).toFixed(1)} pp`;
+  if (kind === 'ratio') return `${sign}${value.toFixed(2)}x`;
+  if (kind === 'years') return `${sign}${value.toFixed(1)}a`;
+  return `${sign}${value.toFixed(1)}`;
 }
 
 function buildCandidateValidationSummary(validation: CandidateSetValidationResult | null) {
@@ -99,6 +136,26 @@ export function validateScenarioLabCandidateSetText(
   return validateCandidateSet(rawText, { expectedPackFingerprint });
 }
 
+export function buildScenarioLabM8EvaluationState(params: {
+  exportState: ScenarioLabExportState;
+  optimizationPack: OptimizationPack | null;
+  candidateValidation: CandidateSetValidationResult | null;
+}): ScenarioLabEvaluationState {
+  if (!params.exportState.enabled) {
+    return { enabled: false, reason: params.exportState.reason ?? 'Falta baseline canónico para evaluar candidatos.' };
+  }
+  if (!params.optimizationPack) {
+    return { enabled: false, reason: 'Falta Optimization Pack vigente.' };
+  }
+  if (!params.candidateValidation?.ok) {
+    return { enabled: false, reason: 'Valida un Candidate Set compatible antes de correr M8.' };
+  }
+  if (params.candidateValidation.value.candidates.length === 0) {
+    return { enabled: false, reason: 'El Candidate Set no trae candidatos para evaluar.' };
+  }
+  return { enabled: true, reason: null };
+}
+
 function buildScenarioLabPack(params: ScenarioLabPageProps): OptimizationPack | null {
   if (!params.simResult) return null;
   return buildOptimizationPack({
@@ -113,6 +170,10 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [candidateText, setCandidateText] = useState('');
   const [candidateValidation, setCandidateValidation] = useState<CandidateSetValidationResult | null>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [evaluationResults, setEvaluationResults] = useState<ScenarioLabCandidateSetM8Evaluation | null>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [evaluationCopyFeedback, setEvaluationCopyFeedback] = useState<string | null>(null);
 
   const exportState = useMemo(
     () => buildScenarioLabExportState({
@@ -138,6 +199,25 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
   ), [exportState.enabled, props]);
 
   const expectedPackFingerprint = optimizationPack?.baseline.fingerprint ?? null;
+  const baselineMetrics = evaluationResults?.baseline.metrics ?? {
+    success40: finiteOrNull(optimizationPack?.baseline.success40),
+    ruin40: finiteOrNull(optimizationPack?.baseline.ruin40),
+    nRuin: finiteOrNull(props.simResult?.nRuin),
+    houseSalePct: finiteOrNull(optimizationPack?.baseline.houseSalePct),
+    houseSaleYearMedian: finiteOrNull(props.simResult?.saleYearMedian),
+    terminalWealthRatio: finiteOrNull(optimizationPack?.baseline.terminalWealthRatio),
+    qolScore: finiteOrNull(optimizationPack?.baseline.qolScore),
+    qolLabel: optimizationPack?.baseline.qolLabel ?? null,
+    csr85_4: finiteOrNull(optimizationPack?.baseline.csr85_4),
+    qualitySurvivalRate: finiteOrNull(optimizationPack?.baseline.qualitySurvivalRate),
+    averageEffectiveSpendingRatio: finiteOrNull(props.simResult?.qualityOfLifeMetrics?.averageEffectiveSpendingRatio),
+    severeCutYearsMean: finiteOrNull(props.simResult?.qualityOfLifeMetrics?.severeCutYearsMean),
+  } satisfies ScenarioLabM8Metrics;
+  const evaluationState = useMemo(() => buildScenarioLabM8EvaluationState({
+    exportState,
+    optimizationPack,
+    candidateValidation,
+  }), [candidateValidation, exportState, optimizationPack]);
 
   const handleCopyPack = async () => {
     if (!optimizationPack || !exportState.enabled) return;
@@ -151,6 +231,41 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
 
   const handleValidateCandidateSet = () => {
     setCandidateValidation(validateScenarioLabCandidateSetText(candidateText, expectedPackFingerprint));
+    setEvaluationResults(null);
+    setEvaluationError(null);
+    setEvaluationCopyFeedback(null);
+  };
+
+  const handleEvaluateCandidates = async () => {
+    if (!evaluationState.enabled || !candidateValidation?.ok || !props.simResult || !expectedPackFingerprint) return;
+    setIsEvaluating(true);
+    setEvaluationError(null);
+    setEvaluationCopyFeedback(null);
+    setEvaluationResults(null);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    try {
+      const results = evaluateCandidateSetWithM8({
+        baseInput: props.m8InputFingerprint.normalizedInput as unknown as M8Input,
+        baselineFingerprint: expectedPackFingerprint,
+        baselineResult: props.simResult,
+        candidateSet: candidateValidation.value,
+      });
+      setEvaluationResults(results);
+    } catch (error) {
+      setEvaluationError(error instanceof Error ? error.message : 'No se pudo ejecutar la evaluación oficial M8.');
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  const handleCopyEvaluationResults = async () => {
+    if (!evaluationResults) return;
+    try {
+      await navigator.clipboard.writeText(prettyJson(evaluationResults));
+      setEvaluationCopyFeedback('Resultados M8 exploratorios copiados.');
+    } catch {
+      setEvaluationCopyFeedback('No se pudo copiar automáticamente. Puedes copiar el JSON desde el preview.');
+    }
   };
 
   const validatedCandidates = candidateValidation?.ok ? candidateValidation.value.candidates : [];
@@ -272,6 +387,32 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
         </div>
       </section>
 
+      {optimizationPack ? (
+        <section style={{ border: `1px solid ${T.border}`, borderRadius: 20, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
+          <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Baseline M8 sellado</div>
+          <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.6 }}>
+            Este baseline es el punto de comparación oficial del Laboratorio. La evaluación de candidatos es exploratoria y no muta el Modelo Base.
+          </div>
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+            {[
+              ['Success40', formatPercent(baselineMetrics.success40)],
+              ['QoL', baselineMetrics.qolLabel ? `${baselineMetrics.qolLabel} · ${formatNumber(baselineMetrics.qolScore)}` : '—'],
+              ['CSR-85/4', formatPercent(baselineMetrics.csr85_4)],
+              ['Venta casa', formatPercent(baselineMetrics.houseSalePct)],
+              ['Terminal ratio', formatRatio(baselineMetrics.terminalWealthRatio)],
+              ['Fingerprint', expectedPackFingerprint ?? '—'],
+            ].map(([label, value]) => (
+              <div key={label} style={{ border: `1px solid ${T.border}`, borderRadius: 14, padding: 12, background: T.surfaceEl }}>
+                <div style={{ color: T.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+                <div style={{ color: T.textPrimary, fontSize: label === 'Fingerprint' ? 12 : 18, fontWeight: 800, marginTop: 6, wordBreak: 'break-word' }}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 20, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Importar Candidate Set</div>
         <textarea
@@ -309,23 +450,36 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
           </button>
           <button
             type="button"
-            disabled
+            onClick={() => {
+              void handleEvaluateCandidates();
+            }}
+            disabled={!evaluationState.enabled || isEvaluating}
             style={{
-              border: `1px solid ${T.border}`,
-              background: T.surfaceEl,
-              color: T.textMuted,
+              border: `1px solid ${evaluationState.enabled && !isEvaluating ? T.primary : T.border}`,
+              background: evaluationState.enabled && !isEvaluating ? T.primary : T.surfaceEl,
+              color: evaluationState.enabled && !isEvaluating ? '#0D1425' : T.textMuted,
               borderRadius: 14,
               padding: '12px 14px',
               fontWeight: 800,
-              cursor: 'default',
+              cursor: evaluationState.enabled && !isEvaluating ? 'pointer' : 'default',
             }}
           >
-            Evaluación M8 pendiente
+            {isEvaluating ? 'Evaluando candidatos con M8…' : 'Evaluar candidatos con M8'}
           </button>
         </div>
-        <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.5 }}>
-          La evaluación M8 oficial queda pendiente en este slice. No se ejecuta motor automáticamente desde Laboratorio.
+        <div style={{ color: evaluationState.reason ? T.warning : T.textMuted, fontSize: 13, lineHeight: 1.5 }}>
+          {evaluationState.reason ?? 'La evaluación corre M8 oficial de forma exploratoria. No guarda candidatos, no muta el baseline y no escribe en cloud.'}
         </div>
+        {isEvaluating ? (
+          <div style={{ color: '#F3D38A', fontSize: 13, lineHeight: 1.5 }}>
+            Ejecutando {validatedCandidates.length} candidatos con M8 oficial sobre el input canónico vigente…
+          </div>
+        ) : null}
+        {evaluationError ? (
+          <div style={{ color: T.negative, fontSize: 13, lineHeight: 1.5 }}>
+            Error al evaluar candidatos: {evaluationError}
+          </div>
+        ) : null}
 
         {candidateValidation?.ok === false ? (
           <div style={{ border: `1px solid ${T.negative}`, borderRadius: 14, padding: 12, background: 'rgba(255,92,92,0.10)' }}>
@@ -412,6 +566,166 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
                 </tbody>
               </table>
             </div>
+          </div>
+        ) : null}
+
+        {evaluationResults ? (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ color: '#A8D5A2', fontSize: 13, fontWeight: 800 }}>
+                Evaluación oficial completada: {evaluationResults.candidates.filter((candidate) => candidate.status === 'evaluated').length}/{evaluationResults.candidates.length} candidatos evaluados por M8.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleCopyEvaluationResults();
+                }}
+                style={{
+                  border: `1px solid ${T.border}`,
+                  background: T.surfaceEl,
+                  color: T.textPrimary,
+                  borderRadius: 14,
+                  padding: '10px 12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Copiar resultados M8
+              </button>
+            </div>
+            {evaluationCopyFeedback ? (
+              <div style={{ color: '#A8D5A2', fontSize: 13, lineHeight: 1.5 }}>{evaluationCopyFeedback}</div>
+            ) : null}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1160 }}>
+                <thead>
+                  <tr>
+                    {['candidate', 'family', 'hypothesis', 'proxy IA', 'éxito M8', 'QoL M8', 'CSR-85/4', 'venta casa', 'recortes', 'terminal ratio', 'delta vs baseline', 'estado'].map((label) => (
+                      <th
+                        key={label}
+                        style={{
+                          textAlign: 'left',
+                          padding: '8px 10px',
+                          color: T.textMuted,
+                          fontSize: 11,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.1em',
+                          borderBottom: `1px solid ${T.border}`,
+                        }}
+                      >
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {evaluationResults.candidates.map((candidate) => (
+                    <tr key={candidate.candidateId}>
+                      <td style={{ padding: '10px', color: T.textPrimary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div style={{ fontWeight: 800 }}>{candidate.label ?? candidate.candidateId}</div>
+                          <div style={{ color: T.textMuted, fontSize: 12 }}>{candidate.candidateId}</div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>{candidate.candidateFamily ?? '—'}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>{candidate.hypothesis ?? '—'}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              width: 'fit-content',
+                              alignItems: 'center',
+                              gap: 6,
+                              border: `1px solid rgba(208,168,92,0.35)`,
+                              borderRadius: 999,
+                              padding: '4px 8px',
+                              color: '#F3D38A',
+                              fontSize: 11,
+                              fontWeight: 800,
+                              background: 'rgba(208,168,92,0.12)',
+                            }}
+                          >
+                            Proxy IA
+                          </div>
+                          <div>{candidate.proxy.preM8Score !== null ? `${candidate.proxy.preM8Score}/100` : '—'}</div>
+                          <div style={{ fontSize: 12, lineHeight: 1.5 }}>{candidate.proxy.preM8ScoreExplanation ?? 'Sin score heurístico.'}</div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>{formatPercent(candidate.metrics?.success40 ?? null)}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        {candidate.metrics ? `${candidate.metrics.qolLabel ?? '—'} · ${formatNumber(candidate.metrics.qolScore)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>{formatPercent(candidate.metrics?.csr85_4 ?? null)}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        {candidate.metrics ? `${formatPercent(candidate.metrics.houseSalePct)} · año ${formatNumber(candidate.metrics.houseSaleYearMedian)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        {candidate.metrics ? `Severe ${formatNumber(candidate.metrics.severeCutYearsMean)}a · Spend ${formatPercent(candidate.metrics.averageEffectiveSpendingRatio)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>{formatRatio(candidate.metrics?.terminalWealthRatio ?? null)}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        {candidate.deltaVsBaseline ? (
+                          <div style={{ display: 'grid', gap: 4, fontSize: 12, lineHeight: 1.4 }}>
+                            <div>Success {formatDelta(candidate.deltaVsBaseline.success40, 'percent')}</div>
+                            <div>QoL {formatDelta(candidate.deltaVsBaseline.qolScore, 'score')}</div>
+                            <div>CSR {formatDelta(candidate.deltaVsBaseline.csr85_4, 'percent')}</div>
+                            <div>Casa {formatDelta(candidate.deltaVsBaseline.houseSalePct, 'percent')}</div>
+                            <div>Terminal {formatDelta(candidate.deltaVsBaseline.terminalWealthRatio, 'ratio')}</div>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}`, verticalAlign: 'top' }}>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              width: 'fit-content',
+                              alignItems: 'center',
+                              gap: 6,
+                              border: `1px solid ${candidate.status === 'evaluated' ? 'rgba(168,213,162,0.35)' : candidate.status === 'invalid' ? 'rgba(255,92,92,0.35)' : 'rgba(243,211,138,0.35)'}`,
+                              borderRadius: 999,
+                              padding: '4px 8px',
+                              color: candidate.status === 'evaluated' ? '#A8D5A2' : candidate.status === 'invalid' ? T.negative : '#F3D38A',
+                              fontSize: 11,
+                              fontWeight: 800,
+                              background: candidate.status === 'evaluated' ? 'rgba(168,213,162,0.12)' : candidate.status === 'invalid' ? 'rgba(255,92,92,0.12)' : 'rgba(243,211,138,0.12)',
+                            }}
+                          >
+                            {candidate.status === 'evaluated' ? 'Exploratorio evaluado por M8' : candidate.status === 'invalid' ? 'Bloqueado por mapping' : 'Error al correr M8'}
+                          </div>
+                          {candidate.warnings.length > 0 ? (
+                            <div style={{ color: '#F3D38A', fontSize: 12, lineHeight: 1.4 }}>
+                              {candidate.warnings.join(' · ')}
+                            </div>
+                          ) : null}
+                          {candidate.errors.length > 0 ? (
+                            <div style={{ color: T.negative, fontSize: 12, lineHeight: 1.4 }}>
+                              {candidate.errors.join(' · ')}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <details style={{ border: `1px solid ${T.border}`, borderRadius: 14, padding: '10px 12px', background: T.surfaceEl }}>
+              <summary style={{ color: T.textPrimary, cursor: 'pointer', fontWeight: 700 }}>Preview JSON resultados exploratorios</summary>
+              <pre
+                style={{
+                  marginTop: 10,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  color: T.textSecondary,
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}
+              >
+                {prettyJson(evaluationResults)}
+              </pre>
+            </details>
           </div>
         ) : null}
       </section>

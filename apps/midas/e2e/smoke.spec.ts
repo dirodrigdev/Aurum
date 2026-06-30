@@ -68,6 +68,14 @@ test.skip('optimization tab loads from the bottom nav', async ({ page }) => {
   await openTab(page, 'Optimización', 'Optimización MIDAS · Candidatos', 15000);
 });
 
+test.skip('scenario lab tab loads official exploratory evaluation shell', async ({ page }) => {
+  await openApp(page);
+  await openTab(page, 'Laboratorio', 'Laboratorio de Escenarios', 15000);
+  await expect(page.getByText('Exploratorio · no decisional', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Evaluar candidatos con M8' })).toBeVisible();
+  await expect(page.locator('body')).toContainText('Baseline M8 sellado');
+});
+
 test('settings tab stays read-only in local fallback', async ({ page }) => {
   await openApp(page);
   await openTab(page, 'Ajustes', /Guardar \/ reemplazar base/);

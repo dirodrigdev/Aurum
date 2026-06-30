@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ScenarioLabPage, buildScenarioLabExportState, validateScenarioLabCandidateSetText } from './ScenarioLabPage';
+import {
+  ScenarioLabPage,
+  buildScenarioLabExportState,
+  buildScenarioLabM8EvaluationState,
+  validateScenarioLabCandidateSetText,
+} from './ScenarioLabPage';
 import type { M8InputFingerprint } from '../domain/model/m8InputFingerprint';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
@@ -140,7 +145,8 @@ assert(readyMarkup.includes('Exploratorio · no decisional'));
 assert(readyMarkup.includes('La IA genera candidatos. MIDAS calcula resultados. Tú decides.'));
 assert(readyMarkup.includes('La IA externa puede hacer pre-screening heurístico.'));
 assert(readyMarkup.includes('Puede calcular scores proxy, pero no resultados M8.'));
-assert(readyMarkup.includes('Evaluación M8 pendiente'));
+assert(readyMarkup.includes('Evaluar candidatos con M8'));
+assert(readyMarkup.includes('Baseline M8 sellado'));
 
 const blockedProps = buildProps(true);
 const blockedState = buildScenarioLabExportState({
@@ -152,6 +158,12 @@ const blockedState = buildScenarioLabExportState({
   simResult: blockedProps.simResult,
 });
 assert.equal(blockedState.enabled, false);
+const blockedEvaluationState = buildScenarioLabM8EvaluationState({
+  exportState: blockedState,
+  optimizationPack: null,
+  candidateValidation: null,
+});
+assert.equal(blockedEvaluationState.enabled, false);
 
 const validCandidateSet = validateScenarioLabCandidateSetText(JSON.stringify({
   type: 'midas_candidate_set',
@@ -183,6 +195,21 @@ const validCandidateSet = validateScenarioLabCandidateSetText(JSON.stringify({
   ],
 }), 'fnv1a-959dded4');
 assert.equal(validCandidateSet.ok, true);
+const enabledEvaluationState = buildScenarioLabM8EvaluationState({
+  exportState: buildScenarioLabExportState({
+    canonicalInputReady: true,
+    canonicalInputBlockedReason: null,
+    fingerprint: buildProps(false).m8InputFingerprint,
+    simulationResultDiagnostics: buildProps(false).simulationResultDiagnostics,
+    resultConfidence: buildProps(false).resultConfidence,
+    simResult: buildProps(false).simResult,
+  }),
+  optimizationPack: {
+    baseline: { fingerprint: 'fnv1a-959dded4' },
+  } as any,
+  candidateValidation: validCandidateSet,
+});
+assert.equal(enabledEvaluationState.enabled, true);
 
 const validMarkup = renderToStaticMarkup(React.createElement(ScenarioLabPage, {
   ...buildProps(false),
@@ -229,5 +256,7 @@ assert.equal(source.includes('runSimulationCentral('), false);
 assert.equal(source.includes('persistActiveSimulationConfig'), false);
 assert.equal(source.includes('Proxy IA · no M8'), true);
 assert.equal(source.includes('Este score es preliminar. M8 todavía no evaluó el candidato.'), true);
+assert.equal(source.includes('Evaluar candidatos con M8'), true);
+assert.equal(source.includes('Exploratorio evaluado por M8'), true);
 
 console.log('ScenarioLabPage tests passed');
