@@ -79,12 +79,29 @@ export const CANDIDATE_FORBIDDEN_FINAL_METRICS = [
   'ruin40',
   'qolScore',
   'houseSalePct',
+  'terminalWealthRatio',
   'terminalWealth',
   'ranking',
+  'officialSuccess40',
+  'officialRuin40',
+  'm8Success40',
+  'm8Ruin40',
   'recommendationFinal',
 ] as const;
 
-export const MAX_CANDIDATES_PER_SET = 50;
+export const MAX_CANDIDATES_PER_SET = 15;
+export const TARGET_CANDIDATES_PER_SET = 12;
+export const HEURISTIC_PRIORITY_VALUES = ['high', 'medium', 'low'] as const;
+export const DIRECTIONAL_EFFECT_VALUES = [
+  'likely_improve',
+  'likely_worsen',
+  'likely_up',
+  'likely_down',
+  'uncertain',
+  'uncertain_or_slightly_up',
+  'uncertain_or_slightly_down',
+  'neutral',
+] as const;
 
 export type OptimizationGoalId = (typeof OPTIMIZATION_MENU)[number]['id'];
 export type AllowedOptimizationVariable = (typeof OPTIMIZATION_ALLOWED_VARIABLES)[number];
@@ -120,6 +137,8 @@ export type OptimizationPack = {
   allowedVariables: ReadonlyArray<AllowedOptimizationVariable>;
   forbiddenVariables: ReadonlyArray<ForbiddenOptimizationVariable>;
   conversationProtocol: Record<string, unknown>;
+  externalAiInstructions: Record<string, unknown>;
+  candidatePreScreeningPolicy: Record<string, unknown>;
   candidateSetSchema: Record<string, unknown>;
   engineGuidance: Record<string, unknown>;
 };
@@ -169,9 +188,11 @@ function buildConversationProtocol() {
     flow: [
       'Recibe el Optimization Pack completo antes de proponer cambios.',
       'Pregunta por objetivos y restricciones usando solo variables permitidas.',
-      'Después de cada objetivo o restricción, pregunta: ¿Quieres seguir agregando objetivos/restricciones o terminaste?',
+      'Después de cada objetivo o restricción, pregunta: ¿Quieres seguir agregando objetivos/restricciones o terminaste? Responde seguir o terminé.',
       'Si el usuario responde seguir, continúa capturando objetivos o restricciones.',
-      'Si el usuario responde terminé, devuelve solo el JSON final midas_candidate_set.',
+      'Si el usuario responde terminé, no generes JSON todavía: primero haz preselección heurística.',
+      'Luego pregunta: Tengo una preselección de candidatos. ¿Quieres depurar antes de generar el JSON final?',
+      'Solo cuando el usuario diga generar JSON, devuelve exclusivamente el JSON final midas_candidate_set.',
     ],
     rules: {
       askToContinueAfterEachConstraint: true,
@@ -183,18 +204,95 @@ function buildConversationProtocol() {
   };
 }
 
+function buildExternalAiInstructions() {
+  return {
+    context: 'El usuario copiará este pack en una IA externa para conversación guiada y pre-screening heurístico.',
+    interactionRules: [
+      'Guía la conversación usando solo variables permitidas.',
+      'Después de cada objetivo o restricción, pregunta: ¿Quieres seguir agregando objetivos/restricciones o terminaste? Responde seguir o terminé.',
+      'Cuando el usuario diga terminé, NO generes JSON inmediatamente.',
+      'Primero genera candidatos internamente, aplica heurística o proxy scoring, agrupa por familias y descarta candidatos redundantes o débiles.',
+      `Propón una preselección de ${TARGET_CANDIDATES_PER_SET}-${MAX_CANDIDATES_PER_SET} candidatos como máximo.`,
+      'Luego pregunta: Tengo una preselección de candidatos. ¿Quieres depurar antes de generar el JSON final?',
+      'Si el usuario responde sí, muestra familias o candidatos y permite eliminar antes del JSON final.',
+      'Si responde no, genera el JSON final.',
+      'Cuando el usuario diga generar JSON, devuelve exclusivamente midas_candidate_set.',
+    ],
+    aiCanDo: [
+      'Calcular scores heurísticos o proxy.',
+      'Priorizar y agrupar candidatos.',
+      'Pedir confirmación o depuración antes del JSON final.',
+      'Descartar candidatos débiles antes de emitir el Candidate Set.',
+    ],
+    aiCannotDo: [
+      'Presentar métricas oficiales M8.',
+      'Afirmar éxito, ruina, QoL u otros resultados finales como cálculo oficial.',
+      'Entregar recomendación final sin evaluación M8 oficial.',
+    ],
+  };
+}
+
+function buildCandidatePreScreeningPolicy() {
+  return {
+    mode: 'ai_proxy_prescreening',
+    internalCandidateGeneration: true,
+    allowHeuristicCalculations: true,
+    allowProxyScores: true,
+    proxyScoresAreNotM8Results: true,
+    targetCandidateCount: TARGET_CANDIDATES_PER_SET,
+    maxCandidateCount: MAX_CANDIDATES_PER_SET,
+    requirePreJsonReviewPrompt: true,
+    reviewPrompt: 'Tengo una preselección de candidatos. ¿Quieres depurar antes de generar el JSON final?',
+    allowedReviewAnswers: ['sí', 'no'],
+    ifReviewYes: 'Show grouped candidate families and let the user remove candidates or families before final JSON.',
+    ifReviewNo: 'Generate the final midas_candidate_set JSON.',
+    forbiddenClaims: [
+      'official_success40',
+      'official_ruin40',
+      'official_qol_score',
+      'official_house_sale_pct',
+      'official_terminal_wealth',
+      'final_recommendation_without_m8',
+    ],
+  };
+}
+
 function buildCandidateSetSchema() {
   return {
     type: 'midas_candidate_set',
     version: '1.0',
     required: ['type', 'version', 'packFingerprint', 'selectedGoals', 'customGoals', 'constraints', 'candidates'],
+    optionalRootFields: ['generationSummary', 'discardedIdeas'],
     allowedVariables: OPTIMIZATION_ALLOWED_VARIABLES,
     forbiddenVariables: OPTIMIZATION_FORBIDDEN_VARIABLES,
     forbiddenFinalMetrics: CANDIDATE_FORBIDDEN_FINAL_METRICS,
     maxCandidates: MAX_CANDIDATES_PER_SET,
+    targetCandidates: TARGET_CANDIDATES_PER_SET,
+    heuristicFields: {
+      candidateFamily: 'string',
+      heuristicPriority: HEURISTIC_PRIORITY_VALUES,
+      preM8Score: 'number(0..100)',
+      preM8ScoreExplanation: 'required when preM8Score exists',
+      expectedDirectionalEffects: {
+        qualityOfLife: DIRECTIONAL_EFFECT_VALUES,
+        success40: DIRECTIONAL_EFFECT_VALUES,
+        houseSalePct: DIRECTIONAL_EFFECT_VALUES,
+        terminalWealth: DIRECTIONAL_EFFECT_VALUES,
+      },
+      proxyScoresAreNotM8Results: true,
+    },
     candidateShape: {
       required: ['candidateId', 'changes'],
-      optional: ['label', 'hypothesis', 'riskNotes'],
+      optional: [
+        'label',
+        'hypothesis',
+        'riskNotes',
+        'candidateFamily',
+        'heuristicPriority',
+        'preM8Score',
+        'preM8ScoreExplanation',
+        'expectedDirectionalEffects',
+      ],
       changes: 'Record<allowedVariable, unknown>',
     },
   };
@@ -265,6 +363,8 @@ export function buildOptimizationPack(params: {
     allowedVariables: OPTIMIZATION_ALLOWED_VARIABLES,
     forbiddenVariables: OPTIMIZATION_FORBIDDEN_VARIABLES,
     conversationProtocol: buildConversationProtocol(),
+    externalAiInstructions: buildExternalAiInstructions(),
+    candidatePreScreeningPolicy: buildCandidatePreScreeningPolicy(),
     candidateSetSchema: buildCandidateSetSchema(),
     engineGuidance: buildEngineGuidance(),
   };

@@ -42,6 +42,19 @@ function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function buildCandidateValidationSummary(validation: CandidateSetValidationResult | null) {
+  if (!validation?.ok) return [];
+  return validation.value.candidates.map((candidate) => ({
+    candidateId: candidate.candidateId,
+    label: candidate.label ?? '—',
+    variables: Object.keys(candidate.changes).join(', '),
+    hypothesis: candidate.hypothesis ?? '—',
+    riskNotes: candidate.riskNotes?.length ? candidate.riskNotes.join(' · ') : '—',
+    proxyScore: typeof candidate.preM8Score === 'number' ? candidate.preM8Score : null,
+    proxyExplanation: candidate.preM8ScoreExplanation ?? null,
+  }));
+}
+
 export function buildScenarioLabExportState(params: {
   canonicalInputReady: boolean;
   canonicalInputBlockedReason: SimulationRunBlockedReason | null;
@@ -141,6 +154,7 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
   };
 
   const validatedCandidates = candidateValidation?.ok ? candidateValidation.value.candidates : [];
+  const candidateRows = buildCandidateValidationSummary(candidateValidation);
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -183,6 +197,10 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
         </div>
         <div style={{ color: T.textPrimary, fontSize: 16, fontWeight: 700 }}>
           La IA genera candidatos. MIDAS calcula resultados. Tú decides.
+        </div>
+        <div style={{ color: T.textSecondary, fontSize: 14, lineHeight: 1.6 }}>
+          La IA externa puede hacer pre-screening heurístico. Puede calcular scores proxy, pero no resultados M8.
+          Pídele que te muestre una preselección antes del JSON final y que te deje depurar candidatos si hace falta.
         </div>
       </section>
 
@@ -242,12 +260,16 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
         <div style={{ color: T.textPrimary, fontSize: 18, fontWeight: 800 }}>Instrucciones para el chat</div>
         <ol style={{ margin: 0, paddingLeft: 18, color: T.textSecondary, lineHeight: 1.7, fontSize: 14 }}>
           <li>Copia el Optimization Pack.</li>
-          <li>Pégalo en un chat de IA.</li>
-          <li>Elige objetivos.</li>
-          <li>Responde seguir o terminé.</li>
-          <li>Cuando termines, la IA debe devolver un <code>midas_candidate_set.json</code>.</li>
-          <li>Pega ese JSON aquí para validarlo o correrlo después.</li>
+          <li>Pégalo en una IA externa.</li>
+          <li>Elige objetivos y restricciones.</li>
+          <li>Cuando termines, la IA debe preseleccionar candidatos.</li>
+          <li>Revisa si quieres depurar.</li>
+          <li>Luego pide “generar JSON”.</li>
+          <li>Pega aquí el Candidate Set.</li>
         </ol>
+        <div style={{ color: T.textMuted, fontSize: 13, lineHeight: 1.6 }}>
+          Flujo recomendado: la IA puede calcular para pensar, pero todavía no puede calcular resultados oficiales M8.
+        </div>
       </section>
 
       <section style={{ border: `1px solid ${T.border}`, borderRadius: 20, padding: 18, background: T.surface, display: 'grid', gap: 12 }}>
@@ -325,7 +347,7 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
                 <thead>
                   <tr>
-                    {['candidateId', 'label', 'variables modificadas', 'hypothesis', 'riskNotes'].map((label) => (
+                    {['candidateId', 'label', 'variables modificadas', 'hypothesis', 'riskNotes', 'proxy IA'].map((label) => (
                       <th
                         key={label}
                         style={{
@@ -344,14 +366,46 @@ export function ScenarioLabPage(props: ScenarioLabPageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {validatedCandidates.map((candidate) => (
+                  {candidateRows.map((candidate) => (
                     <tr key={candidate.candidateId}>
                       <td style={{ padding: '10px', color: T.textPrimary, borderBottom: `1px solid ${T.border}` }}>{candidate.candidateId}</td>
-                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{candidate.label ?? '—'}</td>
-                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{Object.keys(candidate.changes).join(', ')}</td>
-                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{candidate.hypothesis ?? '—'}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{candidate.label}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{candidate.variables}</td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>{candidate.hypothesis}</td>
                       <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>
-                        {candidate.riskNotes?.length ? candidate.riskNotes.join(' · ') : '—'}
+                        {candidate.riskNotes}
+                      </td>
+                      <td style={{ padding: '10px', color: T.textSecondary, borderBottom: `1px solid ${T.border}` }}>
+                        {candidate.proxyScore !== null ? (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            <div
+                              style={{
+                                display: 'inline-flex',
+                                width: 'fit-content',
+                                alignItems: 'center',
+                                gap: 6,
+                                border: `1px solid rgba(208,168,92,0.35)`,
+                                borderRadius: 999,
+                                padding: '4px 8px',
+                                color: '#F3D38A',
+                                fontSize: 11,
+                                fontWeight: 800,
+                                background: 'rgba(208,168,92,0.12)',
+                              }}
+                            >
+                              Proxy IA · no M8
+                            </div>
+                            <div style={{ color: T.textPrimary, fontWeight: 700 }}>{candidate.proxyScore}/100</div>
+                            <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                              {candidate.proxyExplanation}
+                            </div>
+                            <div style={{ color: T.warning, fontSize: 11, lineHeight: 1.5 }}>
+                              Este score es preliminar. M8 todavía no evaluó el candidato.
+                            </div>
+                          </div>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   ))}

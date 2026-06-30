@@ -14,10 +14,30 @@ const validCandidateSet = {
     maxHouseSalePct: 0.25,
     doNotReduceF1Spending: true,
   },
+  generationSummary: {
+    approach: 'ai_proxy_prescreening',
+    internalCandidatesConsidered: 40,
+    candidateCountBeforeUserReview: 15,
+    candidateCountAfterUserReview: 10,
+    screeningCriteria: ['liquidez', 'redundancia'],
+    userReviewedBeforeJson: true,
+    notes: ['Proxy heurístico, no resultado oficial.'],
+  },
+  discardedIdeas: ['subir riesgo extremo'],
   candidates: [
     {
       candidateId: 'qol_001',
       label: 'Suavizar recortes',
+      candidateFamily: 'qol_liquidity',
+      heuristicPriority: 'high',
+      preM8Score: 82,
+      preM8ScoreExplanation: 'Proxy heurístico, no resultado oficial.',
+      expectedDirectionalEffects: {
+        qualityOfLife: 'likely_improve',
+        success40: 'uncertain_or_slightly_down',
+        houseSalePct: 'likely_up',
+        terminalWealth: 'likely_down',
+      },
       changes: {
         cutRules: {
           cut1: 0.92,
@@ -65,9 +85,53 @@ const inventedMetrics = validateCandidateSet({
 }, { expectedPackFingerprint });
 assert.equal(inventedMetrics.ok, false);
 
+const missingProxyExplanation = validateCandidateSet({
+  ...validCandidateSet,
+  candidates: [
+    {
+      ...validCandidateSet.candidates[0],
+      preM8ScoreExplanation: undefined,
+    },
+  ],
+}, { expectedPackFingerprint });
+assert.equal(missingProxyExplanation.ok, false);
+
+const invalidProxyRange = validateCandidateSet({
+  ...validCandidateSet,
+  candidates: [
+    {
+      ...validCandidateSet.candidates[0],
+      preM8Score: 120,
+    },
+  ],
+}, { expectedPackFingerprint });
+assert.equal(invalidProxyRange.ok, false);
+
+const estimatedMetricsRejected = validateCandidateSet({
+  ...validCandidateSet,
+  candidates: [
+    {
+      ...validCandidateSet.candidates[0],
+      estimatedSuccess: 0.91,
+    },
+  ],
+}, { expectedPackFingerprint });
+assert.equal(estimatedMetricsRejected.ok, false);
+
+const m8MetricRejected = validateCandidateSet({
+  ...validCandidateSet,
+  candidates: [
+    {
+      ...validCandidateSet.candidates[0],
+      m8Success40: 0.91,
+    },
+  ],
+}, { expectedPackFingerprint });
+assert.equal(m8MetricRejected.ok, false);
+
 const tooManyCandidates = validateCandidateSet({
   ...validCandidateSet,
-  candidates: Array.from({ length: 51 }, (_, index) => ({
+  candidates: Array.from({ length: 16 }, (_, index) => ({
     candidateId: `cand_${index}`,
     changes: { nSim: 1000 + index },
   })),

@@ -138,6 +138,8 @@ const readyMarkup = renderToStaticMarkup(React.createElement(ScenarioLabPage, bu
 assert(readyMarkup.includes('Laboratorio de Escenarios'));
 assert(readyMarkup.includes('Exploratorio · no decisional'));
 assert(readyMarkup.includes('La IA genera candidatos. MIDAS calcula resultados. Tú decides.'));
+assert(readyMarkup.includes('La IA externa puede hacer pre-screening heurístico.'));
+assert(readyMarkup.includes('Puede calcular scores proxy, pero no resultados M8.'));
 assert(readyMarkup.includes('Evaluación M8 pendiente'));
 
 const blockedProps = buildProps(true);
@@ -158,14 +160,34 @@ const validCandidateSet = validateScenarioLabCandidateSetText(JSON.stringify({
   selectedGoals: ['improve_quality_of_life'],
   customGoals: [],
   constraints: {},
+  generationSummary: {
+    approach: 'ai_proxy_prescreening',
+    internalCandidatesConsidered: 22,
+    candidateCountBeforeUserReview: 12,
+    candidateCountAfterUserReview: 8,
+    screeningCriteria: ['liquidez'],
+    userReviewedBeforeJson: true,
+    notes: ['Proxy heurístico, no resultado oficial.'],
+  },
   candidates: [
     {
       candidateId: 'qol_001',
+      heuristicPriority: 'high',
+      preM8Score: 82,
+      preM8ScoreExplanation: 'Proxy heurístico, no resultado oficial.',
+      expectedDirectionalEffects: {
+        qualityOfLife: 'likely_improve',
+      },
       changes: { cutRules: { cut1: 0.92 } },
     },
   ],
 }), 'fnv1a-959dded4');
 assert.equal(validCandidateSet.ok, true);
+
+const validMarkup = renderToStaticMarkup(React.createElement(ScenarioLabPage, {
+  ...buildProps(false),
+}));
+assert(validMarkup.includes('Pégalo en una IA externa.'));
 
 const invalidJson = validateScenarioLabCandidateSetText('{', 'fnv1a-959dded4');
 assert.equal(invalidJson.ok, false);
@@ -186,7 +208,26 @@ const forbiddenVariables = validateScenarioLabCandidateSetText(JSON.stringify({
 }), 'fnv1a-959dded4');
 assert.equal(forbiddenVariables.ok, false);
 
+const forbiddenOfficialMetric = validateScenarioLabCandidateSetText(JSON.stringify({
+  type: 'midas_candidate_set',
+  version: '1.0',
+  packFingerprint: 'fnv1a-959dded4',
+  selectedGoals: ['improve_quality_of_life'],
+  customGoals: [],
+  constraints: {},
+  candidates: [
+    {
+      candidateId: 'qol_001',
+      success40: 0.91,
+      changes: { cutRules: { cut1: 0.92 } },
+    },
+  ],
+}), 'fnv1a-959dded4');
+assert.equal(forbiddenOfficialMetric.ok, false);
+
 assert.equal(source.includes('runSimulationCentral('), false);
 assert.equal(source.includes('persistActiveSimulationConfig'), false);
+assert.equal(source.includes('Proxy IA · no M8'), true);
+assert.equal(source.includes('Este score es preliminar. M8 todavía no evaluó el candidato.'), true);
 
 console.log('ScenarioLabPage tests passed');

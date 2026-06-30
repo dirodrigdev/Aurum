@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildOptimizationPack, OPTIMIZATION_FORBIDDEN_VARIABLES, OPTIMIZATION_MENU, OPTIMIZATION_PACK_TYPE } from './optimizationPack';
+import {
+  buildOptimizationPack,
+  MAX_CANDIDATES_PER_SET,
+  OPTIMIZATION_FORBIDDEN_VARIABLES,
+  OPTIMIZATION_MENU,
+  OPTIMIZATION_PACK_TYPE,
+  TARGET_CANDIDATES_PER_SET,
+} from './optimizationPack';
 import type { M8InputFingerprint } from '../model/m8InputFingerprint';
 import { buildResultConfidence } from '../model/resultConfidence';
 import { buildSimulationResultDiagnostics } from '../model/simulationResultDigest';
@@ -280,9 +287,20 @@ assert.equal(pack.packType, OPTIMIZATION_PACK_TYPE);
 assert.equal(pack.baseline.fingerprint, fixture.fingerprint);
 assert.equal(pack.optimizationMenu.some((item) => item.id === 'custom'), true);
 assert.ok(pack.conversationProtocol);
+assert.ok(pack.externalAiInstructions);
+assert.ok(pack.candidatePreScreeningPolicy);
 assert.ok(pack.candidateSetSchema);
 assert.deepEqual(pack.forbiddenVariables, OPTIMIZATION_FORBIDDEN_VARIABLES);
-const serializedPack = JSON.stringify(pack);
+assert.equal(pack.candidatePreScreeningPolicy.mode, 'ai_proxy_prescreening');
+assert.equal(pack.candidatePreScreeningPolicy.allowProxyScores, true);
+assert.equal(pack.candidatePreScreeningPolicy.requirePreJsonReviewPrompt, true);
+assert.equal(pack.candidatePreScreeningPolicy.targetCandidateCount, TARGET_CANDIDATES_PER_SET);
+assert.equal(pack.candidatePreScreeningPolicy.maxCandidateCount, MAX_CANDIDATES_PER_SET);
+const interactionRules = (pack.externalAiInstructions as { interactionRules: string[] }).interactionRules;
+assert.equal(
+  interactionRules.some((item) => item.includes('preselección de candidatos')),
+  true,
+);
 const serializedLineage = JSON.stringify(pack.sourceLineage);
 assert.equal(serializedLineage.includes('authDiagnostics'), false);
 assert.equal(serializedLineage.includes('authEmail'), false);
