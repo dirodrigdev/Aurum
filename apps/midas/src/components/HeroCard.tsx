@@ -56,22 +56,22 @@ export function HeroCard({
       style={{
         background: simMode ? 'rgba(91, 140, 255, 0.08)' : T.surface,
         border: simMode ? `1px solid ${T.primary}` : `1px solid ${T.border}`,
-        borderRadius: 16,
-        padding: isMobileViewport ? 12 : 16,
+        borderRadius: 14,
+        padding: isMobileViewport ? 10 : 14,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <div style={{ color: T.textMuted, fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+        <div style={{ color: T.textMuted, fontSize: 11, fontWeight: 700 }}>
           {label}
         </div>
         {labelAccessory}
       </div>
 
-      <div style={{ display: 'flex', gap: isMobileViewport ? 8 : 12, marginTop: 6, alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+      <div style={{ display: 'flex', gap: isMobileViewport ? 8 : 10, marginTop: 4, alignItems: 'flex-start', flexWrap: 'nowrap' }}>
         <div
           style={{
             ...css.mono,
-            fontSize: isMobileViewport ? 'clamp(42px, 16vw, 60px)' : 'clamp(48px, 18vw, 72px)',
+            fontSize: isMobileViewport ? 'clamp(40px, 15vw, 56px)' : 'clamp(44px, 16vw, 64px)',
             fontWeight: 700,
             lineHeight: 1,
             color: valueTone,
@@ -83,7 +83,7 @@ export function HeroCard({
           {pct === null ? '—' : `${pct.toFixed(1)}%`}
         </div>
         {chips && chips.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 6 : 8, width: isMobileViewport ? (isCompactViewport ? 128 : 138) : 172, flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobileViewport ? 5 : 6, width: isMobileViewport ? (isCompactViewport ? 116 : 126) : 144, flexShrink: 0 }}>
             {chips.map((chip) => (
               <div key={chip.id} style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
                 {chip.accessory ? <span style={{ display: 'inline-flex', alignItems: 'center' }}>{chip.accessory}</span> : null}
@@ -96,13 +96,13 @@ export function HeroCard({
                       background: T.surfaceEl,
                       border: `1px solid ${T.border}`,
                       color: chip.disabled ? T.textMuted : T.textSecondary,
-                      fontSize: isMobileViewport ? 11 : 12,
+                      fontSize: isMobileViewport ? 10 : 11,
                       fontWeight: 700,
-                      padding: isMobileViewport ? '5px 8px' : '6px 10px',
+                      padding: isMobileViewport ? '4px 8px' : '5px 9px',
                       borderRadius: 999,
                       cursor: chip.disabled ? 'default' : 'pointer',
                       opacity: chip.disabled ? 0.72 : 1,
-                      minWidth: isMobileViewport ? 84 : 96,
+                      minWidth: isMobileViewport ? 78 : 88,
                       textAlign: 'center',
                       whiteSpace: 'nowrap',
                     }}
@@ -119,7 +119,7 @@ export function HeroCard({
         )}
       </div>
       {subtitle && (
-        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 13, marginTop: 4, lineHeight: 1.3 }}>
+        <div style={{ color: T.textSecondary, fontSize: isMobileViewport ? 11 : 12, marginTop: 3, lineHeight: 1.25 }}>
           {subtitle}
         </div>
       )}

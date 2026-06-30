@@ -9,8 +9,10 @@ import { buildRunCapitalBreakdown } from '../domain/simulation/runCapitalPolicy'
 import { resolveCapital } from '../domain/simulation/capitalResolver';
 import { toM8Input } from '../domain/simulation/m8Adapter';
 import {
+  buildHeroTargetAgeQuestion,
   buildMixSourceCompactLabel,
   buildSourcePolicyUserSummary,
+  computeCurrentAgeFromBirthDate,
   buildEnabledResourcesSubcopy,
   computeEnabledResourcesForUi,
   computeMidasConsideredWealth,
@@ -478,6 +480,19 @@ assert.equal(buildEnabledResourcesSubcopy({
   hasFutureAdjustments: true,
 }), 'Core + Aj. futuros');
 
+assert.equal(computeCurrentAgeFromBirthDate('1978-07-11', new Date('2026-06-30T12:00:00.000Z')), 47);
+assert.equal(computeCurrentAgeFromBirthDate('1978-07-11', new Date('2026-07-12T12:00:00.000Z')), 48);
+assert.equal(buildHeroTargetAgeQuestion({
+  birthDateIso: '1978-07-11',
+  horizonYears: 40,
+  now: new Date('2026-06-30T12:00:00.000Z'),
+}), '¿Llegarás a los 87 años?');
+assert.equal(buildHeroTargetAgeQuestion({
+  birthDateIso: '1978-07-11',
+  horizonYears: 30,
+  now: new Date('2026-06-30T12:00:00.000Z'),
+}), '¿Llegarás a los 77 años?');
+
 assert(source.includes('Patrimonio total hoy'));
 assert(source.includes('Patrimonio total hoy (Aurum + capital de riesgo)'));
 assert(!source.includes('Patrimonio total Aurum'));
@@ -583,10 +598,8 @@ assert(source.includes('aria-controls="hero-express-controls-panel"'));
 assert(source.includes('Depto · Riesgo · Escenario · Monte Carlo'));
 assert(source.includes("key={`hero-express-scenario-${variant.id}`}"));
 assert(source.includes("key={`hero-express-nsim-${nSimOption}`}"));
-assert(source.includes("id: 'scenario', value: scenarioUiLabel, onClick: () => openHeroQuickEdit('scenario')"));
 assert(source.includes("id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openHeroQuickEdit('return')"));
 assert(source.includes("id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openHeroQuickEdit('years')"));
-assert(source.includes("id: 'nSim', value: `${currentNSim} sim`, onClick: () => openHeroQuickEdit('nSim')"));
 assert(source.includes('aria-label="Edicion rapida del hero"'));
 assert(source.includes('Ajuste express. Al aplicar, MIDAS recalcula y actualiza el resultado vigente.'));
 assert(source.includes('Cancelar'));
@@ -596,6 +609,10 @@ assert(source.includes('const [heroQuickEditMode, setHeroQuickEditMode] = useSta
 assert(source.includes('const openHeroQuickEdit = useCallback((mode: HeroQuickEditMode) => {'));
 assert(source.includes('const applyHeroQuickEdit = useCallback(() => {'));
 assert(!source.includes("onClick: openSimulationPanelShortcut"));
+assert(source.includes("const USER_BIRTH_DATE_ISO = '1978-07-11';"));
+assert(source.includes("return `¿Llegarás a los ${age + Math.round(horizonYears)} años?`;"));
+assert(source.includes("label={heroQuestion}"));
+assert(!source.includes("label={heroQuestion.toUpperCase()}"));
 assert(!source.includes(': () => {},'));
 assert(!source.includes('onClick={() => {}}'));
 assert(!source.includes("{simActive && (\n          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>"));
@@ -686,6 +703,19 @@ assert(heroSectionStart !== -1 && heroExpressStart !== -1 && qualitySectionStart
 assert(heroSectionStart < heroExpressStart);
 assert(heroExpressStart < qualitySectionStart);
 assert(qualitySectionStart < simulationDataSectionStart);
+
+const heroChipsStart = source.indexOf('chips={[');
+const heroChipsEnd = source.indexOf(']}', heroChipsStart);
+assert(heroChipsStart !== -1 && heroChipsEnd !== -1 && heroChipsEnd > heroChipsStart);
+const heroChipsSlice = source.slice(heroChipsStart, heroChipsEnd);
+assert(!heroChipsSlice.includes("id: 'scenario'"));
+assert(!heroChipsSlice.includes("id: 'nSim'"));
+assert(heroChipsSlice.includes("id: 'return'"));
+assert(heroChipsSlice.includes("id: 'years'"));
+assert(heroChipsSlice.includes("id: 'capital'"));
+assert(source.includes('84 de 1000 trayectorias terminaron en ruina.') || source.includes('trayectorias terminaron en ruina.'));
+assert(source.includes("explanation: null as string | null"));
+assert.equal((source.match(/Resultado canónico\./g) ?? []).length, 1);
 assert(source.includes('Mix cloud pendiente'));
 assert(source.includes('Instrument Universe timeout'));
 assert(source.includes('Falta Universe cloud'));

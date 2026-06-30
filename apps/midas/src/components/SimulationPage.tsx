@@ -181,12 +181,41 @@ const formatSessionMoment = (atMs: number | null) => {
 };
 
 const CANONICAL_HYDRATION_TIMEOUT_MS = 12_000;
+const USER_BIRTH_DATE_ISO = '1978-07-11';
 const HYDRATING_CANONICAL_BLOCK_REASONS = new Set([
   'auth_loading',
   'config_loading',
   'instrument_universe_loading',
   'aurum_snapshot_missing',
 ]);
+
+export function computeCurrentAgeFromBirthDate(birthDateIso: string, now: Date = new Date()): number | null {
+  const [yearRaw, monthRaw, dayRaw] = birthDateIso.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const nowYear = now.getUTCFullYear();
+  const nowMonth = now.getUTCMonth() + 1;
+  const nowDay = now.getUTCDate();
+  let age = nowYear - year;
+  if (nowMonth < month || (nowMonth === month && nowDay < day)) age -= 1;
+  return age >= 0 ? age : null;
+}
+
+export function buildHeroTargetAgeQuestion(input: {
+  birthDateIso: string;
+  horizonYears: number | null;
+  now?: Date;
+}): string {
+  const age = computeCurrentAgeFromBirthDate(input.birthDateIso, input.now);
+  const horizonYears = input.horizonYears;
+  if (age === null || horizonYears === null || !Number.isFinite(horizonYears) || horizonYears <= 0) {
+    return '¿Llegarás al horizonte objetivo?';
+  }
+  return `¿Llegarás a los ${age + Math.round(horizonYears)} años?`;
+}
 
 function isCanonicalHydrationInProgress(blockedReason: string): boolean {
   return HYDRATING_CANONICAL_BLOCK_REASONS.has(blockedReason);
@@ -1407,7 +1436,7 @@ export function SimulationPage({
       label: 'OK',
       tone: T.positive,
       headline: 'Resultado canónico.',
-      explanation: 'Resultado canónico.',
+      explanation: null as string | null,
       gap: null as string | null,
     };
   }, [
@@ -1432,7 +1461,9 @@ export function SimulationPage({
   const heroConfidenceBlock = useMemo(
     () => (
       <span style={{ display: 'grid', gap: 4 }}>
-        <span style={{ color: T.textSecondary, fontSize: 12 }}>{heroPrimaryState.explanation}</span>
+        {heroPrimaryState.explanation && (
+          <span style={{ color: T.textSecondary, fontSize: 12 }}>{heroPrimaryState.explanation}</span>
+        )}
         {heroPrimaryState.gap && (
           <span style={{ color: T.textSecondary, fontSize: 11 }}>
             {heroPrimaryState.gap}
@@ -2178,18 +2209,10 @@ export function SimulationPage({
   const toggleTraceRow = useCallback((id: string) => {
     setOpenTraceRows((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
-  const heroHorizonYears = useMemo(() => {
-    const normalized = (m8InputFingerprint.normalizedInput ?? {}) as Record<string, unknown>;
-    const years = Number(normalized.years ?? NaN);
-    if (Number.isFinite(years) && years > 0) return Math.round(years);
-    const simulation = normalized.simulation as Record<string, unknown> | undefined;
-    const horizonMonths = Number(simulation?.horizonMonths ?? NaN);
-    if (Number.isFinite(horizonMonths) && horizonMonths > 0) return Math.round(horizonMonths / 12);
-    return null;
-  }, [m8InputFingerprint.normalizedInput]);
-  const heroQuestion = heroHorizonYears !== null
-    ? `¿Llegarás a ${heroHorizonYears} años?`
-    : '¿Llegarás al horizonte objetivo?';
+  const heroQuestion = useMemo(() => buildHeroTargetAgeQuestion({
+    birthDateIso: USER_BIRTH_DATE_ISO,
+    horizonYears: Number.isFinite(effectiveYears) ? effectiveYears : null,
+  }), [effectiveYears]);
   const appliedDataTechnicalBlock = (
     <div
       style={{
@@ -2593,7 +2616,7 @@ export function SimulationPage({
         `}</style>
         <div style={{ opacity: heroPrimaryState.label === 'No usar' ? 0.72 : 1 }}>
           <HeroCard
-            label={heroQuestion.toUpperCase()}
+            label={heroQuestion}
             valuePct={showBootPlaceholder ? null : heroProbSuccess}
             stale={showGhostResult || heroShowsRunActive}
             subtitle={
@@ -2603,7 +2626,7 @@ export function SimulationPage({
                 ? 'Calculando resultado final.'
                 : displayResult
                   ? (
-                    <span style={{ display: 'grid', gap: 8 }}>
+                    <span style={{ display: 'grid', gap: 6 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <button
                           type="button"
@@ -2640,11 +2663,11 @@ export function SimulationPage({
                         </button>
                       </span>
                       {heroConfidenceBlock}
-                      <span>{`${Math.round(displayResult.nRuin)}/${displayResult.nTotal} dieron ruina`}</span>
+                      <span>{`${Math.round(displayResult.nRuin)} de ${displayResult.nTotal} trayectorias terminaron en ruina.`}</span>
                       <span
                         style={{
                           display: 'grid',
-                          gap: 3,
+                          gap: 2,
                           gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(3, minmax(0, 1fr))',
                         }}
                       >
@@ -2654,7 +2677,7 @@ export function SimulationPage({
                             style={{
                               display: 'grid',
                               gap: 1,
-                              padding: '4px 6px',
+                              padding: '3px 6px',
                               borderRadius: 8,
                               background: T.surfaceEl,
                               border: `1px solid ${T.border}`,
@@ -2724,10 +2747,8 @@ export function SimulationPage({
                   : undefined,
                 disabled: !canResetToBase,
               },
-              { id: 'scenario', value: scenarioUiLabel, onClick: () => openHeroQuickEdit('scenario') },
               { id: 'return', value: `${(effectiveReturn * 100).toFixed(1)}%`, onClick: () => openHeroQuickEdit('return') },
               { id: 'years', value: `${formatNumber(effectiveYears)} años`, onClick: () => openHeroQuickEdit('years') },
-              { id: 'nSim', value: `${currentNSim} sim`, onClick: () => openHeroQuickEdit('nSim') },
               {
                 id: 'capital',
                 value: patrimonioMidasHoyAjustadoT0Clp !== null ? formatCapital(patrimonioMidasHoyAjustadoT0Clp) : formatCapital(effectiveCapital),
