@@ -1,7 +1,7 @@
 import React from 'react';
 import { T } from './theme';
 
-type TabId = 'sim' | 'assist' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
+type TabId = 'sim' | 'assist' | 'lab' | 'sens' | 'stress' | 'bucketlab' | 'optv0' | 'opt' | 'settings';
 
 const icons: Record<TabId, JSX.Element> = {
   sim: (
@@ -17,6 +17,12 @@ const icons: Record<TabId, JSX.Element> = {
       <circle cx="8.7" cy="9.7" r="1" fill="currentColor" />
       <circle cx="10.7" cy="11.4" r="1" fill="currentColor" />
       <circle cx="14" cy="8.2" r="1" fill="currentColor" />
+    </svg>
+  ),
+  lab: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="3.3" y="3.3" width="13.4" height="13.4" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M6.2 7.1h7.6M6.2 10h5.2M6.2 12.9h6.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   ),
   sens: (
@@ -66,6 +72,7 @@ export function BottomNav({
   const items: Array<{ id: TabId; label: string; legacy?: boolean }> = [
     { id: 'sim', label: 'Simulación' },
     { id: 'assist', label: 'Asistida' },
+    { id: 'lab', label: 'Laboratorio' },
     { id: 'sens', label: 'Palancas' },
     { id: 'bucketlab', label: 'Lab técnico' },
     { id: 'opt', label: 'Optimización' },
