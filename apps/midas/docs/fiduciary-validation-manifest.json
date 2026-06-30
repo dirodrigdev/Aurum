@@ -1,0 +1,36 @@
+{
+  "app": "midas",
+  "validationScope": "fiduciary-simulation",
+  "validatedSurface": "simulation",
+  "engine": "M8",
+  "status": "production_golden_validated",
+  "productionGoldenStatus": "validated",
+  "productionFingerprint": "fnv1a-959dded4",
+  "productionResultDigest": "be5994b1164d990a0790f22a269d9e23e63475b5047e32d8c5685e002990d607",
+  "certifiedSuccess40": 0.916,
+  "certifiedRuin40": 0.084,
+  "mixFreshnessDays": 60,
+  "simulationControlsAudit": "completed",
+  "warningTraceability": "completed",
+  "qolThresholds": "completed",
+  "heroExpressControls": "completed",
+  "dynamicTargetAgeHero": "completed",
+  "criticalTests": [
+    "goldenCanonicalRun.test.ts",
+    "productionGoldenRun.test.ts",
+    "sourceFreshnessPolicy.test.ts",
+    "m8InputFingerprint.test.ts",
+    "m8ReplayTrace.test.ts",
+    "motorInvariants.test.ts",
+    "SimulationPage.test.ts",
+    "qualityOfLifeKpiThresholds.test.ts"
+  ],
+  "nonValidatedClaims": [
+    "future market outcomes",
+    "financial assumptions correctness",
+    "auxiliary tabs as decisional surfaces",
+    "guarantee of 91.6% real-world success",
+    "hero quick edit for spending",
+    "assisted optimization laboratory"
+  ]
+}
