@@ -125,6 +125,7 @@ import {
   shouldKeepMonthlyCloseDebtGuardError,
   shouldBlockMonthlyCloseForDebtMismatch,
 } from '../services/monthlyCloseDebtGuard';
+import { buildMonthlyClosePreflightDiagnostic } from '../services/monthlyClosePreflight';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -4530,6 +4531,7 @@ export const Patrimonio: React.FC = () => {
   } | null>(null);
   const [postCloseSummary, setPostCloseSummary] = useState<PostCloseSummaryState | null>(null);
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
+  const [closePreflightVisible, setClosePreflightVisible] = useState(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [startMonthFailedStep, setStartMonthFailedStep] = useState<StartMonthActionKey | null>(null);
@@ -6526,6 +6528,29 @@ export const Patrimonio: React.FC = () => {
     closePreview.propertyNet,
     closePreview.totalNetClp,
   ]);
+  const closePreflightDiagnostic = useMemo(() => {
+    if (!closePreflightVisible) return null;
+    return buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures,
+      fxForClose: closeFxValues,
+      includeRiskCapitalInTotals,
+      uiMonthKey: monthKey,
+      targetMonthKey: closeMonthDraft,
+      calendarMonthKey,
+      investmentInstruments,
+    });
+  }, [
+    closePreflightVisible,
+    records,
+    closures,
+    closeFxValues,
+    includeRiskCapitalInTotals,
+    monthKey,
+    closeMonthDraft,
+    calendarMonthKey,
+    investmentInstruments,
+  ]);
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
@@ -7442,12 +7467,24 @@ export const Patrimonio: React.FC = () => {
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold">Cierre mensual manual</div>
-          <Button size="sm" onClick={runMonthlyClose}>
-            Cerrar mes
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setClosePreflightVisible((value) => !value)}
+            >
+              {closePreflightVisible ? 'Ocultar preflight' : 'Simular cierre / Preflight'}
+            </Button>
+            <Button size="sm" onClick={runMonthlyClose}>
+              Cerrar mes
+            </Button>
+          </div>
         </div>
         {!!closeInfo && <div className="text-xs text-emerald-700">{closeInfo}</div>}
         {!closeConfirmOpen && !!closeError && <div className="text-xs text-red-700">{closeError}</div>}
+        <div className="text-[11px] text-slate-500">
+          Diagnóstico read-only. No escribe en localStorage, no escribe en Firestore y no ejecuta el cierre.
+        </div>
 
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
@@ -7471,6 +7508,195 @@ export const Patrimonio: React.FC = () => {
                 {growthVsPrevClosureDisplay.pct !== null ? ` (${growthVsPrevClosureDisplay.pct.toFixed(2)}%)` : ''}
               </div>
             )}
+          </div>
+        )}
+
+        {closePreflightDiagnostic && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">Preflight read-only</div>
+                <div className="text-xs text-slate-600">
+                  UI visible: {monthLabel(closePreflightDiagnostic.uiMonthKey).toLowerCase()} · objetivo de cierre:{' '}
+                  {monthLabel(closePreflightDiagnostic.candidateMonthKey).toLowerCase()}
+                </div>
+              </div>
+              <div
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-semibold',
+                  closePreflightDiagnostic.decision === 'GO_PARA_CERRAR'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : closePreflightDiagnostic.decision === 'NO_GO_DATA_QUALITY'
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-amber-100 text-amber-800',
+                )}
+              >
+                {closePreflightDiagnostic.decision === 'GO_PARA_CERRAR'
+                  ? 'GO PARA CERRAR'
+                  : closePreflightDiagnostic.decision === 'NO_GO_DATA_QUALITY'
+                    ? 'NO-GO: calidad de datos'
+                    : 'NO-GO: fuentes no reconciliadas'}
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                <div className="text-slate-500">Mes candidato</div>
+                <div className="font-semibold text-slate-900">{monthLabel(closePreflightDiagnostic.candidateMonthKey)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                <div className="text-slate-500">Overwrite</div>
+                <div className="font-semibold text-slate-900">
+                  {closePreflightDiagnostic.wouldOverwrite ? 'Sí, reemplazaría un cierre existente' : 'No'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                <div className="text-slate-500">Frescura</div>
+                <div className="font-semibold text-slate-900">
+                  {closePreflightDiagnostic.freshness.status === 'ok' && closePreflightDiagnostic.freshness.fresh7dPct !== null
+                    ? `${Math.round(closePreflightDiagnostic.freshness.fresh7dPct * 100)}% fresh`
+                    : 'Sin base'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                <div className="text-slate-500">Checkpoint / undo</div>
+                <div className="font-semibold text-slate-900">
+                  {closePreflightDiagnostic.hasExistingClosure ? 'Warn por overwrite' : 'Esperable'}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold text-slate-800">Checks criticos</div>
+                <div className="mt-2 space-y-1 text-xs">
+                  {closePreflightDiagnostic.checks.slice(0, 8).map((check) => (
+                    <div key={check.key} className="flex items-start justify-between gap-2">
+                      <span className="text-slate-700">{check.label}</span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded-full px-2 py-0.5 font-semibold',
+                          check.status === 'ok'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : check.status === 'warn'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-red-100 text-red-700',
+                        )}
+                      >
+                        {check.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold text-slate-800">Warnings principales</div>
+                <div className="mt-2 space-y-1 text-xs text-slate-700">
+                  {closePreflightDiagnostic.warnings.length ? (
+                    closePreflightDiagnostic.warnings.slice(0, 6).map((warning, index) => (
+                      <div key={`preflight-warning-${index}`}>{warning}</div>
+                    ))
+                  ) : (
+                    <div className="text-emerald-700">Sin warnings relevantes.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold text-slate-800">Resumen por bloque</div>
+              <div className="mt-2 overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Bloque</th>
+                      <th className="px-2 py-1 text-right">UI</th>
+                      <th className="px-2 py-1 text-right">Freshness</th>
+                      <th className="px-2 py-1 text-right">Cierre</th>
+                      <th className="px-2 py-1 text-right">UI vs cierre</th>
+                      <th className="px-2 py-1 text-left">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closePreflightDiagnostic.blockRows.slice(0, 8).map((row) => (
+                      <tr key={`preflight-block-${row.block}`} className="border-t border-slate-100">
+                        <td className="px-2 py-1 text-slate-800">{row.block}</td>
+                        <td className="px-2 py-1 text-right text-slate-700">{row.valuePatrimonioUI === null ? '—' : formatCurrency(row.valuePatrimonioUI, 'CLP')}</td>
+                        <td className="px-2 py-1 text-right text-slate-700">{row.valueFreshness === null ? '—' : formatCurrency(row.valueFreshness, 'CLP')}</td>
+                        <td className="px-2 py-1 text-right text-slate-700">{row.valueCloseTarget === null ? '—' : formatCurrency(row.valueCloseTarget, 'CLP')}</td>
+                        <td className="px-2 py-1 text-right text-slate-700">{row.diffUiVsClose === null ? '—' : formatCurrency(row.diffUiVsClose, 'CLP')}</td>
+                        <td className="px-2 py-1">
+                          <span
+                            className={cn(
+                              'rounded-full px-2 py-0.5 font-semibold',
+                              row.status === 'ok'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : row.status === 'warn'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-red-100 text-red-700',
+                            )}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-800">
+                Detalle tecnico por asset
+              </summary>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Asset</th>
+                      <th className="px-2 py-1 text-right">UI</th>
+                      <th className="px-2 py-1 text-right">Freshness</th>
+                      <th className="px-2 py-1 text-right">Cierre</th>
+                      <th className="px-2 py-1 text-left">Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closePreflightDiagnostic.assetRows.slice(0, 20).map((row) => (
+                      <tr key={row.assetId} className="border-t border-slate-100 align-top">
+                        <td className="px-2 py-1 text-slate-800">
+                          <div className="font-medium">{row.label}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {row.assetType} · {row.currency}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 text-right text-slate-700">
+                          {row.amountClpPatrimonioUI === null ? '—' : formatCurrency(row.amountClpPatrimonioUI, 'CLP')}
+                        </td>
+                        <td className="px-2 py-1 text-right text-slate-700">
+                          {row.amountClpFreshness === null ? '—' : formatCurrency(row.amountClpFreshness, 'CLP')}
+                        </td>
+                        <td className="px-2 py-1 text-right text-slate-700">
+                          {row.amountClpCloseTarget === null ? '—' : formatCurrency(row.amountClpCloseTarget, 'CLP')}
+                        </td>
+                        <td className="px-2 py-1 text-slate-700">
+                          {[
+                            row.missingInClose ? 'missingInClose' : '',
+                            row.missingInUI ? 'missingInUI' : '',
+                            row.timestampMismatch ? 'timestampMismatch' : '',
+                            row.sourceMismatch ? 'sourceMismatch' : '',
+                            row.duplicateRisk ? 'duplicateRisk' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || 'ok'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         )}
 
