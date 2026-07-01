@@ -71,7 +71,7 @@ import {
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
-import { buildSimulationActionStatus } from './domain/model/simulationActionStatus';
+import { buildSimulationActionStatus, buildSimulationInputSyncState } from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
 import {
   evaluateCanonicalInputReadiness,
@@ -3427,28 +3427,11 @@ export default function App() {
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
-    const previousImpact = manualAdjustmentImpact;
     setManualCapitalAdjustments(next);
     markSimulationInteraction();
-    const impact = computeManualAdjustmentImpact(next);
     manualCommitInFlightRef.current = true;
-    const cleanBaseParams = stripManualAdjustmentImpactFromParams(simParamsRef.current, previousImpact);
-    const nextParams = buildCanonicalSimParams(cleanBaseParams, cleanBaseParams, {
-      applyCapital: true,
-      manualImpact: impact,
-    });
-    setBaseParams(cleanBaseParams);
-    setSimParams(nextParams);
-    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
-    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
-    startRecalculation('ledger-commit', () => base);
   }, [
-    buildCanonicalSimParams,
-    computeManualAdjustmentImpact,
-    manualAdjustmentImpact,
     markSimulationInteraction,
-    simOverrides,
-    startRecalculation,
   ]);
 
   useEffect(() => {
@@ -4167,6 +4150,14 @@ export default function App() {
     () => stripManualAdjustmentImpactFromParams(simParams, manualAdjustmentImpact),
     [manualAdjustmentImpact, simParams],
   );
+  const sanitizedVisibleOverrides = useMemo(
+    () => sanitizeSimulationOverridesForParams(simParams, simOverrides),
+    [simOverrides, simParams],
+  );
+  const visibleSimParams = useMemo(
+    () => applySimulationOverrides(simParams, sanitizedVisibleOverrides),
+    [sanitizedVisibleOverrides, simParams],
+  );
   const engineFingerprintDiagnostics = useMemo(() => {
     try {
       const effectiveCapitalResolution = resolveCapital({ params: simParams });
@@ -4205,8 +4196,8 @@ export default function App() {
     }
   }, [manualAdjustmentImpact, simParams, strippedManualParamsForFingerprint]);
   const effectiveRunInputHash = useMemo(
-    () => computeEffectiveEngineInputHashForParams(simParams),
-    [simParams],
+    () => computeEffectiveEngineInputHashForParams(visibleSimParams),
+    [visibleSimParams],
   );
   const cloudHydrationReady = useMemo(() => {
     return resolveCanonicalCloudHydrationReady({
@@ -4464,16 +4455,11 @@ export default function App() {
     simulationConfigDiagnostics.projectId,
   ]);
   const simulationResultDiagnostics = useMemo<SimulationResultDiagnostics>(() => {
-    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
-    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
-    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
-    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const expectedSeed = finiteNumberOrNull(visibleSimParams.simulation?.seed);
+    const expectedNSim = finiteNumberOrNull(visibleSimParams.simulation?.nSim);
     const resultSeed = finiteNumberOrNull(simResult?.params?.simulation?.seed ?? appliedRecalcSeed);
     const resultNSim = finiteNumberOrNull(simResult?.params?.simulation?.nSim ?? null);
-    const resultInputHash =
-      simResult && lastRenderedResultHash === effectiveRunInputHash
-        ? effectiveRunInputHash
-        : lastRenderedResultHash;
+    const resultInputHash = lastRenderedResultHash;
 
     return buildSimulationResultDiagnostics({
       result: heroVisibleResult,
@@ -4501,10 +4487,11 @@ export default function App() {
     lastRenderedResultHash,
     lastRunInputHash,
     effectiveRunInputHash,
-    m8InputFingerprint.normalizedInput,
     simResult,
     simulationRunCompletedAt,
 	    simulationRunStatus,
+    visibleSimParams.simulation?.nSim,
+    visibleSimParams.simulation?.seed,
 	  ]);
 
   const assumptionModeDiagnostics = useMemo(() => buildAssumptionModeDiagnostics({
@@ -4515,10 +4502,8 @@ export default function App() {
   }), [manualCapitalAdjustments.length]);
 
   const resultConfidence = useMemo<ResultConfidence>(() => {
-    const normalizedInput = m8InputFingerprint.normalizedInput as Record<string, unknown>;
-    const normalizedSimulation = normalizedInput.simulation as Record<string, unknown> | undefined;
-    const expectedSeed = finiteNumberOrNull(normalizedInput.seed ?? normalizedSimulation?.seed);
-    const expectedNSim = finiteNumberOrNull(normalizedInput.n_paths ?? normalizedSimulation?.nSim);
+    const expectedSeed = finiteNumberOrNull(visibleSimParams.simulation?.seed);
+    const expectedNSim = finiteNumberOrNull(visibleSimParams.simulation?.nSim);
     const aurumSnapshotStatus: SourceStatus =
       lastAppliedAurumSnapshotSignature
         ? 'canonical'
@@ -4577,7 +4562,6 @@ export default function App() {
     lastRenderedResultHash,
     lastRunInputHash,
     effectiveRunInputHash,
-    m8InputFingerprint.normalizedInput,
     operativeFxResolution,
     simulationConfigHydrationStatus,
     simulationConfigSource,
@@ -4585,6 +4569,8 @@ export default function App() {
     simulationRunDiagnostics.resultMetricsAvailable,
     simulationRunStatus,
     universeSourceOrigin,
+    visibleSimParams.simulation?.nSim,
+    visibleSimParams.simulation?.seed,
   ]);
   const headerSuccess40 = useMemo(() => {
     if (!heroVisibleResult) return null;
@@ -4597,9 +4583,14 @@ export default function App() {
     && typeof headerSuccess40 === 'number'
     && Number.isFinite(headerSuccess40)
   );
+  const simulationInputSync = useMemo(() => buildSimulationInputSyncState({
+    visibleInputFingerprint: effectiveRunInputHash,
+    lastEvaluatedInputFingerprint: lastRenderedResultHash,
+    resultFingerprint: simulationResultDiagnostics.resultInputHash,
+  }), [effectiveRunInputHash, lastRenderedResultHash, simulationResultDiagnostics.resultInputHash]);
   const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
-  const headerShowsStaleResult = heroPhase === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
+  const headerShowsStaleResult = heroPhase === 'stale' || simulationInputSync.status === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
   const headerMetricText = canonicalInputBlockDisplay
     ? canonicalInputBlockDisplay.metricText
     : headerShowsStaleResult
@@ -4673,8 +4664,7 @@ export default function App() {
     cloudConfigRecalcHashRef.current = effectiveHash;
     setRunAttemptCount((prev) => prev + 1);
     setSimulationRunTimedOut(false);
-    const sanitizedOverrides = sanitizeSimulationOverridesForParams(simParams, simOverrides);
-    const base = applySimulationOverrides(simParams, sanitizedOverrides);
+    const base = visibleSimParams;
     startRecalculation(simResult ? 'params-change' : 'boot-init', () => base);
   }, [
     applyBlockedSimulationRunState,
@@ -4688,13 +4678,12 @@ export default function App() {
     effectiveRunInputHash,
     recalcWorkerStatus,
     simulationRunStatus,
-    simOverrides,
     simResult,
     simWorking,
-    simParams,
     simulationConfigHydrationStatus,
     lastAppliedAurumSnapshotSignature,
     startRecalculation,
+    visibleSimParams,
     universeSourceOrigin,
   ]);
   useEffect(() => {
@@ -4922,6 +4911,9 @@ export default function App() {
       cloudHydrationReady={cloudHydrationReady}
       simulationConfigSource={simulationConfigSource}
       simulationConfigSavedAt={simulationConfigSavedAt}
+      visibleInputFingerprint={effectiveRunInputHash}
+      lastEvaluatedInputFingerprint={lastRenderedResultHash}
+      resultFingerprint={simulationResultDiagnostics.resultInputHash}
       m8InputFingerprint={m8InputFingerprint}
       simulationResultDiagnostics={simulationResultDiagnostics}
       resultConfidence={resultConfidence}

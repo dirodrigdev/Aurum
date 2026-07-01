@@ -18,6 +18,10 @@ import type { SourceFreshnessPolicy } from '../domain/model/sourceFreshnessPolic
 import type { SimulationResultDiagnostics } from '../domain/model/simulationResultDigest';
 import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
+import {
+  buildSimulationInputSyncState,
+  type SimulationInputSyncState,
+} from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
 import { runSimulationCentral } from '../domain/simulation/engineCentral';
 import {
@@ -215,6 +219,30 @@ export function buildHeroTargetAgeQuestion(input: {
     return '¿Llegarás al horizonte objetivo?';
   }
   return `¿Llegarás a los ${age + Math.round(horizonYears)} años?`;
+}
+
+export function parseHeroQuickEditReturnInput(raw: string): number | null {
+  const normalized = raw.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < -10 || parsed > 30) return null;
+  return parsed;
+}
+
+export function parseHeroQuickEditYearsInput(raw: string): number | null {
+  const normalized = raw.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+}
+
+export function parseEditableMoneyInput(raw: string): number | null {
+  const normalized = raw.trim().replace(/\s+/g, '').replace(/\./g, '').replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function isCanonicalHydrationInProgress(blockedReason: string): boolean {
@@ -640,6 +668,9 @@ export function SimulationPage({
   cloudHydrationReady,
   simulationConfigSource,
   simulationConfigSavedAt,
+  visibleInputFingerprint,
+  lastEvaluatedInputFingerprint,
+  resultFingerprint,
   m8InputFingerprint,
   simulationResultDiagnostics,
   resultConfidence,
@@ -728,6 +759,9 @@ export function SimulationPage({
   cloudHydrationReady: boolean;
   simulationConfigSource: 'cloud' | 'local_cache' | 'fallback';
   simulationConfigSavedAt: string | null;
+  visibleInputFingerprint: string | null;
+  lastEvaluatedInputFingerprint: string | null;
+  resultFingerprint: string | null;
   m8InputFingerprint: M8InputFingerprint;
   simulationResultDiagnostics: SimulationResultDiagnostics;
   resultConfidence: ResultConfidence;
@@ -791,9 +825,10 @@ export function SimulationPage({
   const [heroExpressOpen, setHeroExpressOpen] = useState(false);
   const [heroQuickEditMode, setHeroQuickEditMode] = useState<HeroQuickEditMode | null>(null);
   const [heroQuickEditDraftScenario, setHeroQuickEditDraftScenario] = useState<ScenarioVariantId>('base');
-  const [heroQuickEditDraftYears, setHeroQuickEditDraftYears] = useState(40);
-  const [heroQuickEditDraftReturnPct, setHeroQuickEditDraftReturnPct] = useState(0);
+  const [heroQuickEditDraftYears, setHeroQuickEditDraftYears] = useState('40');
+  const [heroQuickEditDraftReturnPct, setHeroQuickEditDraftReturnPct] = useState('0');
   const [heroQuickEditDraftNSim, setHeroQuickEditDraftNSim] = useState(1000);
+  const [heroQuickEditError, setHeroQuickEditError] = useState<string | null>(null);
   const [simulationDataOpen, setSimulationDataOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth > 760 : true
   );
@@ -1123,8 +1158,8 @@ export function SimulationPage({
     });
   }, []);
   const handleSaveMovement = useCallback(() => {
-    const amount = Number(movementForm.amount);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    const amount = parseEditableMoneyInput(movementForm.amount);
+    if (amount === null || !Number.isFinite(amount) || amount <= 0) return;
     const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
     const next: ManualCapitalAdjustment = {
       id: editingMovementId ?? `manual-${Date.now()}`,
@@ -1148,10 +1183,10 @@ export function SimulationPage({
     resetMovementForm();
   }, [editingMovementId, movementForm, resetMovementForm]);
   const handleSaveAndClose = useCallback(() => {
-    const amount = Number(movementForm.amount);
+    const amount = parseEditableMoneyInput(movementForm.amount);
     setSavingMovement(true);
     window.setTimeout(() => {
-      const ledgerToCommit = Number.isFinite(amount) && amount > 0
+      const ledgerToCommit = amount !== null && Number.isFinite(amount) && amount > 0
         ? (() => {
             const effectiveDate = movementForm.effectiveDate || new Date().toISOString().slice(0, 7);
             const next: ManualCapitalAdjustment = {
@@ -1286,6 +1321,12 @@ export function SimulationPage({
       : { label: 'Cuts', detail: 'No disponible' };
   const isRunActive = simulationRunStatus === 'queued' || simulationRunStatus === 'running';
   const heroShowsRunActive = isRunActive && !localReadOnlyVisualOnly;
+  const simulationInputSync = useMemo<SimulationInputSyncState>(() => buildSimulationInputSyncState({
+    visibleInputFingerprint,
+    lastEvaluatedInputFingerprint,
+    resultFingerprint,
+  }), [lastEvaluatedInputFingerprint, resultFingerprint, visibleInputFingerprint]);
+  const hasPendingLocalCapitalAdjustments = manualCapitalAdjustments.length > 0;
   const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
   const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
@@ -1295,7 +1336,7 @@ export function SimulationPage({
       return 'Resultado usable con salvedades.';
     }
     if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Hay ajustes locales de capital no sincronizados.';
+      return 'Hay ajustes locales pendientes. El resultado visible no los incorpora al motor M8 canónico.';
     }
     if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
       return 'Estás viendo una simulación temporal, no el Modelo Base.';
@@ -1310,7 +1351,7 @@ export function SimulationPage({
       return 'Falta: Sincronizar el mix aperturado por instrumento para llegar a OK.';
     }
     if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Falta: Sincronizar o descartar los ajustes locales de capital.';
+      return 'Falta: Guardarlos en el Modelo Base o descartarlos; mientras tanto quedan como pendientes no evaluados por M8.';
     }
     if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
       return 'Falta: Volver al Modelo Base o guardar el escenario temporal.';
@@ -1394,6 +1435,17 @@ export function SimulationPage({
         gap: 'Ejecuta simulación para validar Depto ON/OFF + Capital de riesgo ON/OFF.',
       };
     }
+    if (simulationInputSync.status === 'stale') {
+      return {
+        label: heroResult ? 'Resultado anterior' : 'Pendiente',
+        tone: T.warning,
+        headline: heroResult ? 'Resultado anterior · recalcular.' : 'Pendiente de recalcular.',
+        explanation: heroResult
+          ? 'La configuración visible actual no coincide con el fingerprint del resultado mostrado.'
+          : 'No hay resultado actualizado para esta configuración.',
+        gap: 'Configuración actual pendiente de recalcular. Ejecuta simulación para validar los cambios.',
+      };
+    }
     if (resultConfidence.status === 'not_decisional' && hasOnlyRunResultBlockingReasons) {
       return {
         label: heroResult ? 'Resultado anterior' : 'Pendiente',
@@ -1403,6 +1455,15 @@ export function SimulationPage({
           : 'Pendiente de recalcular.',
         explanation: 'No hay resultado actualizado para esta configuración.',
         gap: 'Ejecuta simulación para validar los cambios.',
+      };
+    }
+    if (hasPendingLocalCapitalAdjustments && simulationInputSync.isResultCurrent) {
+      return {
+        label: 'Revisar',
+        tone: T.warning,
+        headline: 'Resultado vigente para el input evaluado.',
+        explanation: 'Hay ajustes locales pendientes visibles, pero no entran automáticamente al motor M8 canónico.',
+        gap: 'Ajuste local pendiente: guarda esos cambios en el Modelo Base o descártalos antes de interpretar el resultado como definitivo.',
       };
     }
     if (resultConfidence.status === 'not_decisional') {
@@ -1456,7 +1517,10 @@ export function SimulationPage({
     resultConfidence.status,
     reviewCause,
     reviewGap,
+    simulationInputSync.isResultCurrent,
+    simulationInputSync.status,
     showGhostResult,
+    hasPendingLocalCapitalAdjustments,
   ]);
   const heroConfidenceBlock = useMemo(
     () => (
@@ -1847,10 +1911,10 @@ export function SimulationPage({
     ? `Recursos habilitados hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
     : 'Recursos habilitados hoy';
   const heroFutureAdjustmentsNote = committedManualSummaryFuture.count > 0
-    ? `Ajustes futuros: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
+    ? `Ajustes futuros pendientes: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
     : null;
   const heroWealthChipNote = heroFutureAdjustmentsNote
-    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}`
+    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}\nNo entran automaticamente al motor M8 canonico.`
     : heroResourcesTodayNote;
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
@@ -2424,6 +2488,21 @@ export function SimulationPage({
         Parámetros simulación: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationConfigSource === 'cloud' ? 'cloud' : simulationConfigSource === 'local_cache' ? 'cache local' : 'fallback'}</span>
         {simulationConfigSavedAt ? <> · actualizado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{formatRelativePublishedAt(simulationConfigSavedAt)}</span></> : null}
       </div>
+      <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+        Fingerprint visible: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationInputSync.visibleInputFingerprint ?? '—'}</span>
+      </div>
+      <div style={{ color: T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
+        Ultimo fingerprint evaluado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationInputSync.lastEvaluatedInputFingerprint ?? '—'}</span>
+        {' · '}
+        resultado: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{simulationInputSync.resultFingerprint ?? '—'}</span>
+      </div>
+      <div style={{ color: simulationInputSync.isResultCurrent ? T.positive : T.warning, fontSize: isMobileViewport ? 10 : 11, fontWeight: 700 }}>
+        Estado input/resultado: {simulationInputSync.status === 'current'
+          ? 'alineado'
+          : simulationInputSync.status === 'stale'
+            ? 'desalineado'
+            : 'sin resultado vigente'}
+      </div>
       {sourcePolicy && (
         <div style={{ color: sourcePolicyTone === 'alert' ? T.negative : sourcePolicyTone === 'warning' ? T.warning : T.textMuted, fontSize: isMobileViewport ? 10 : 11 }}>
           Política de fuente: <span style={{ color: T.textPrimary, fontWeight: 700 }}>{sourcePolicy.label}</span>
@@ -2531,13 +2610,15 @@ export function SimulationPage({
   };
   const openHeroQuickEdit = useCallback((mode: HeroQuickEditMode) => {
     setHeroQuickEditMode(mode);
+    setHeroQuickEditError(null);
     setHeroQuickEditDraftScenario(activeScenarioForUi);
-    setHeroQuickEditDraftYears(effectiveYears);
-    setHeroQuickEditDraftReturnPct(Number((effectiveReturn * 100).toFixed(2)));
+    setHeroQuickEditDraftYears(String(effectiveYears));
+    setHeroQuickEditDraftReturnPct((effectiveReturn * 100).toFixed(2));
     setHeroQuickEditDraftNSim(currentNSim);
   }, [activeScenarioForUi, currentNSim, effectiveReturn, effectiveYears]);
   const closeHeroQuickEdit = useCallback(() => {
     setHeroQuickEditMode(null);
+    setHeroQuickEditError(null);
   }, []);
   const applyHeroQuickEdit = useCallback(() => {
     if (heroQuickEditMode === 'scenario') {
@@ -2546,12 +2627,22 @@ export function SimulationPage({
       return;
     }
     if (heroQuickEditMode === 'years') {
-      updateTemporaryHorizonYears(heroQuickEditDraftYears);
+      const parsedYears = parseHeroQuickEditYearsInput(heroQuickEditDraftYears);
+      if (parsedYears === null) {
+        setHeroQuickEditError('Ingresa un horizonte entero positivo antes de aplicar.');
+        return;
+      }
+      updateTemporaryHorizonYears(parsedYears);
       closeHeroQuickEdit();
       return;
     }
     if (heroQuickEditMode === 'return') {
-      updateTemporaryReturnPct(heroQuickEditDraftReturnPct);
+      const parsedReturn = parseHeroQuickEditReturnInput(heroQuickEditDraftReturnPct);
+      if (parsedReturn === null) {
+        setHeroQuickEditError('Ingresa un retorno válido. Acepta 4, 4,0 o 4.0.');
+        return;
+      }
+      updateTemporaryReturnPct(parsedReturn);
       closeHeroQuickEdit();
       return;
     }
@@ -3325,10 +3416,13 @@ export function SimulationPage({
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Horizonte (anos)</span>
                 <input
-                  type="number"
-                  min={1}
+                  type="text"
+                  inputMode="numeric"
                   value={heroQuickEditDraftYears}
-                  onChange={(e) => setHeroQuickEditDraftYears(Math.max(1, Math.round(Number(e.target.value) || 1)))}
+                  onChange={(e) => {
+                    setHeroQuickEditDraftYears(e.target.value);
+                    setHeroQuickEditError(null);
+                  }}
                   style={{
                     background: T.surfaceEl,
                     border: `1px solid ${T.border}`,
@@ -3344,10 +3438,13 @@ export function SimulationPage({
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: T.textMuted, fontSize: 11 }}>Retorno (%)</span>
                 <input
-                  type="number"
-                  step={0.1}
+                  type="text"
+                  inputMode="decimal"
                   value={heroQuickEditDraftReturnPct}
-                  onChange={(e) => setHeroQuickEditDraftReturnPct(Number(e.target.value))}
+                  onChange={(e) => {
+                    setHeroQuickEditDraftReturnPct(e.target.value);
+                    setHeroQuickEditError(null);
+                  }}
                   style={{
                     background: T.surfaceEl,
                     border: `1px solid ${T.border}`,
@@ -3358,6 +3455,11 @@ export function SimulationPage({
                   }}
                 />
               </label>
+            ) : null}
+            {heroQuickEditError ? (
+              <div style={{ color: T.negative, fontSize: 11, lineHeight: 1.4 }}>
+                {heroQuickEditError}
+              </div>
             ) : null}
             {heroQuickEditMode === 'nSim' ? (
               <label style={{ display: 'grid', gap: 6 }}>
@@ -4913,12 +5015,12 @@ export function SimulationPage({
             }}
           >
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-              <div>
-                <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes de capital</div>
-                <div style={{ color: T.textMuted, fontSize: 12, marginTop: 4 }}>
-                  Agrega entradas o salidas T0/futuras para esta corrida.
+                <div>
+                  <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes de capital</div>
+                  <div style={{ color: T.textMuted, fontSize: 12, marginTop: 4 }}>
+                  Agrega entradas o salidas T0/futuras como borrador local visible. No entran al motor M8 canónico hasta llevarlas al Modelo Base.
+                  </div>
                 </div>
-              </div>
               <button
                 type="button"
                 onClick={closeCapitalLedger}
@@ -4952,10 +5054,10 @@ export function SimulationPage({
             <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
               <SurfaceSemanticRow
                 items={[
-                  { label: 'Grupo con confirmación', tone: 'accent' },
-                  { label: 'No recalcula hasta guardar', tone: 'accent' },
-                  { label: 'Cambia fingerprint al guardar', tone: 'accent' },
-                  { label: 'Afecta resultado canónico', tone: 'warning' },
+                  { label: 'Borrador local', tone: 'accent' },
+                  { label: 'No recalcula al guardar', tone: 'accent' },
+                  { label: 'No cambia fingerprint canónico', tone: 'accent' },
+                  { label: 'No afecta resultado vigente', tone: 'warning' },
                 ]}
               />
               {hasManualDraftChanges ? (
@@ -4970,7 +5072,7 @@ export function SimulationPage({
                     fontWeight: 700,
                   }}
                 >
-                  Cambios pendientes · Guardar y salir para recalcular y actualizar fingerprint.
+                  Cambios pendientes · Guardar y salir conserva este borrador local, pero no recalcula ni actualiza el fingerprint canónico.
                 </div>
               ) : null}
             </div>
@@ -4994,7 +5096,7 @@ export function SimulationPage({
                           {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                          Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
+                          Ajuste expresado en valor T0/plata de hoy. Queda como borrador local visible; no entra automáticamente a la simulación canónica.
                         </div>
                         {adj.note && (
                           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
@@ -5064,7 +5166,8 @@ export function SimulationPage({
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ color: T.textMuted, fontSize: 11 }}>Monto</span>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={movementForm.amount}
                     onChange={(e) => setMovementForm((prev) => ({ ...prev, amount: e.target.value }))}
                     style={{ background: T.surfaceEl, border: `1px solid ${T.border}`, borderRadius: 10, padding: '8px 10px', color: T.textPrimary }}
@@ -5171,7 +5274,7 @@ export function SimulationPage({
                   <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
                   <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
                   <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
-                  <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
+                  <div>Los ajustes futuros visibles no cambian los recursos habilitados hoy ni forman parte de la corrida canónica vigente hasta llevarlos al Modelo Base.</div>
                   <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
                 </div>
               </details>
@@ -5209,7 +5312,7 @@ export function SimulationPage({
                   opacity: savingMovement ? 0.7 : 1,
                 }}
               >
-                {savingMovement ? 'Guardando...' : 'Guardar y recalcular'}
+                {savingMovement ? 'Guardando...' : 'Guardar borrador local'}
               </button>
             </div>
           </div>
