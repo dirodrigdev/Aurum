@@ -15,10 +15,14 @@ import {
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
+  RISK_CAPITAL_LABEL_CLP,
   type WealthFxRates,
   type WealthRecord,
 } from '../src/services/wealthStorage';
-import { buildMonthlyClosePreflightDiagnostic } from '../src/services/monthlyClosePreflight';
+import {
+  buildMonthlyClosePreflightDiagnostic,
+  buildMonthlyClosePreflightReport,
+} from '../src/services/monthlyClosePreflight';
 
 const fx: WealthFxRates = { usdClp: 950, eurClp: 1030, ufClp: 39000 };
 
@@ -248,7 +252,7 @@ describe('monthly close preflight diagnostic', () => {
         id: 'card-aggregate-jun',
         block: 'debt',
         label: DEBT_CARD_CLP_LABEL,
-        amount: 93_200_000,
+        amount: 93_256_478,
         currency: 'CLP',
         snapshotDate: '2026-06-30',
         createdAt: '2026-06-30T10:05:00Z',
@@ -268,14 +272,66 @@ describe('monthly close preflight diagnostic', () => {
     });
 
     const debtRow = diagnostic.blockRows.find((row) => row.block === 'tarjetas/deudas');
+    const clpRow = diagnostic.blockRows.find((row) => row.block === 'CLP');
     const debtAssetRows = diagnostic.assetRows.filter((row) => row.assetType === 'card_debt');
     const aggregateUiRow = debtAssetRows.find((row) => row.label === DEBT_CARD_CLP_LABEL && row.includedInPatrimonioUI);
 
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
     expect(debtRow?.valuePatrimonioUI).toBe(93_200_000);
     expect(debtRow?.valueCloseTarget).toBe(93_200_000);
+    expect(clpRow?.status).toBe('ok');
     expect(debtAssetRows.reduce((sum, row) => sum + Math.abs(Number(row.amountClpCloseTarget || 0)), 0)).toBe(93_200_000);
     expect(aggregateUiRow).toBeUndefined();
     expect(diagnostic.checks.find((check) => check.key === 'debt_assets_match_blocks')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.aggregateCompetitionConflicts).toEqual([
+      expect.objectContaining({
+        family: 'non_mortgage_debt',
+        currency: 'CLP',
+        status: 'ignored_legacy',
+      }),
+    ]);
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('Agregados legacy ignorados');
+  });
+
+  it('keeps patrimonio con riesgo aligned even when includeRiskCapitalInTotals is false', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'bank-jun',
+        block: 'bank',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 120_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'risk-capital-jun',
+        block: 'investment',
+        label: RISK_CAPITAL_LABEL_CLP,
+        amount: 25_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+    });
+
+    const row = diagnostic.blockRows.find((item) => item.block === 'patrimonio con riesgo');
+
+    expect(row?.valuePatrimonioUI).toBe(145_000_000);
+    expect(row?.valueCloseTarget).toBe(145_000_000);
+    expect(row?.status).toBe('ok');
   });
 
   it('returns NO_GO_SOURCE_OF_TRUTH_UNCLEAR when bank aggregate competes with richer detail', () => {

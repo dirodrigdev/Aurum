@@ -6,6 +6,17 @@ vi.mock('../src/services/wealthStorage', () => ({
   isRiskCapitalInvestmentLabel: (label: string) => label === 'Capital de riesgo USD' || label === 'Capital de riesgo CLP',
 }));
 
+const resolveGastappMonthlySpendMock = vi.fn((monthKey: string) => ({
+  monthKey,
+  status: 'complete' as const,
+  gastosEur: 1000,
+  source: 'gastapp_firestore' as const,
+}));
+
+vi.mock('../src/services/gastosMonthly', () => ({
+  resolveGastappMonthlySpend: resolveGastappMonthlySpendMock,
+}));
+
 type TestSummary = {
   netByCurrency: { CLP: number; USD: number; EUR: number; UF: number };
   assetsByCurrency: { CLP: number; USD: number; EUR: number; UF: number };
@@ -142,6 +153,13 @@ const makeClosure = (
 describe('wealthLab model', () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
+    resolveGastappMonthlySpendMock.mockImplementation((monthKey: string) => ({
+      monthKey,
+      status: 'complete' as const,
+      gastosEur: 1000,
+      source: 'gastapp_firestore' as const,
+    }));
   });
 
   it('construye la serie con índices real y sin FX cuando hay exposición USD identificable', async () => {

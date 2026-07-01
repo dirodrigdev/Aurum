@@ -126,7 +126,10 @@ import {
   shouldKeepMonthlyCloseDebtGuardError,
   shouldBlockMonthlyCloseForDebtMismatch,
 } from '../services/monthlyCloseDebtGuard';
-import { buildMonthlyClosePreflightDiagnostic } from '../services/monthlyClosePreflight';
+import {
+  buildMonthlyClosePreflightDiagnostic,
+  buildMonthlyClosePreflightReport,
+} from '../services/monthlyClosePreflight';
 import { hydrateWealthFromCloudShared } from '../services/wealthHydration';
 import { parseStrictNumber } from '../utils/numberUtils';
 import { labelMatchKey, normalizeForMatch, sameCanonicalLabel } from '../utils/wealthLabels';
@@ -4533,6 +4536,7 @@ export const Patrimonio: React.FC = () => {
   const [postCloseSummary, setPostCloseSummary] = useState<PostCloseSummaryState | null>(null);
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
+  const [closePreflightCopied, setClosePreflightCopied] = useState(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [startMonthFailedStep, setStartMonthFailedStep] = useState<StartMonthActionKey | null>(null);
@@ -5989,8 +5993,11 @@ export const Patrimonio: React.FC = () => {
       fxForClose,
       includeRiskCapitalInTotals,
     );
-    if (aggregateCompetitionConflicts.length > 0) {
-      const message = `No se puede cerrar: hay agregados que compiten con detalle (${aggregateCompetitionConflicts
+    const blockedAggregateCompetitionConflicts = aggregateCompetitionConflicts.filter(
+      (conflict) => conflict.status === 'blocked',
+    );
+    if (blockedAggregateCompetitionConflicts.length > 0) {
+      const message = `No se puede cerrar: hay agregados que compiten con detalle (${blockedAggregateCompetitionConflicts
         .map((conflict) => `${conflict.family}/${conflict.currency}`)
         .join(', ')}).`;
       setCloseError(message);
@@ -6564,6 +6571,21 @@ export const Patrimonio: React.FC = () => {
     calendarMonthKey,
     investmentInstruments,
   ]);
+  const closePreflightReport = useMemo(
+    () => (closePreflightDiagnostic ? buildMonthlyClosePreflightReport(closePreflightDiagnostic) : ''),
+    [closePreflightDiagnostic],
+  );
+
+  const copyClosePreflightReport = async () => {
+    if (!closePreflightReport) return;
+    try {
+      await navigator.clipboard.writeText(closePreflightReport);
+      setClosePreflightCopied(true);
+      window.setTimeout(() => setClosePreflightCopied(false), 1800);
+    } catch {
+      setClosePreflightCopied(false);
+    }
+  };
 
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
@@ -7548,8 +7570,14 @@ export const Patrimonio: React.FC = () => {
                   ? 'GO PARA CERRAR'
                   : closePreflightDiagnostic.decision === 'NO_GO_DATA_QUALITY'
                     ? 'NO-GO: calidad de datos'
-                    : 'NO-GO: fuentes no reconciliadas'}
+                  : 'NO-GO: fuentes no reconciliadas'}
               </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => void copyClosePreflightReport()}>
+                {closePreflightCopied ? 'Informe copiado' : 'Copiar informe'}
+              </Button>
             </div>
 
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

@@ -224,6 +224,8 @@ export interface AggregateCompetitionConflict {
   deltaClp: number;
   aggregateLabels: string[];
   detailLabels: string[];
+  status: 'blocked' | 'ignored_legacy';
+  reason: string;
 }
 
 export type ClosureSectionAmountsSource =
@@ -2601,6 +2603,8 @@ const summarizeAggregateCompetition = (
   aggregateRecords: WealthRecord[],
   detailRecords: WealthRecord[],
   fxRates: WealthFxRates,
+  status: AggregateCompetitionConflict['status'] = 'blocked',
+  reason = 'aggregate_competes_with_detail',
 ): AggregateCompetitionConflict | null => {
   if (!aggregateRecords.length || !detailRecords.length) return null;
   const aggregateClp = Math.round(
@@ -2619,6 +2623,8 @@ const summarizeAggregateCompetition = (
     deltaClp,
     aggregateLabels: Array.from(new Set(aggregateRecords.map((record) => record.label))),
     detailLabels: Array.from(new Set(detailRecords.map((record) => record.label))),
+    status,
+    reason,
   };
 };
 
@@ -2629,6 +2635,7 @@ export const detectAggregateCompetitionConflicts = (
 ): AggregateCompetitionConflict[] => {
   const riskFiltered = filterRecordsByRiskCapitalPreference(records, includeRiskCapitalInTotals);
   const latest = dedupeLatestByAsset(riskFiltered).filter((record) => !isSyntheticAggregateRecord(record));
+  const canonicalExposure = selectCanonicalWealthExposureRecords(records, includeRiskCapitalInTotals);
   const conflicts: AggregateCompetitionConflict[] = [];
 
   (['CLP', 'USD'] as const).forEach((currency) => {
@@ -2658,12 +2665,25 @@ export const detectAggregateCompetitionConflicts = (
     );
     const debtAggregate = debtRecords.filter((record) => isAggregateNonMortgageDebtRecord(record));
     const debtDetail = debtRecords.filter((record) => !isAggregateNonMortgageDebtRecord(record));
+    const canonicalDebtEntries = canonicalExposure.filter(
+      (entry) => entry.group === 'non_mortgage_debt' && entry.record.currency === currency,
+    );
+    const canonicalDebtUsesAggregate = canonicalDebtEntries.some((entry) =>
+      isAggregateNonMortgageDebtRecord(entry.record),
+    );
+    const canonicalDebtUsesDetail = canonicalDebtEntries.some(
+      (entry) => !isAggregateNonMortgageDebtRecord(entry.record),
+    );
     const debtConflict = summarizeAggregateCompetition(
       'non_mortgage_debt',
       currency,
       debtAggregate,
       debtDetail,
       fxRates,
+      canonicalDebtUsesDetail && !canonicalDebtUsesAggregate ? 'ignored_legacy' : 'blocked',
+      canonicalDebtUsesDetail && !canonicalDebtUsesAggregate
+        ? 'canonical_detail_excludes_legacy_aggregate'
+        : 'aggregate_competes_with_detail',
     );
     if (debtConflict) conflicts.push(debtConflict);
   });

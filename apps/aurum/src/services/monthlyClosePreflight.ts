@@ -23,6 +23,7 @@ import {
   makeAssetKey,
   resolveRiskCapitalRecordsForTotals,
   selectCanonicalWealthExposureRecords,
+  type AggregateCompetitionConflict,
   type WealthCurrency,
   type WealthFxRates,
   type WealthInvestmentInstrument,
@@ -127,6 +128,7 @@ export interface MonthlyClosePreflightDiagnostic {
     liveDebtClp: number;
     closeDebtClp: number;
   };
+  aggregateCompetitionConflicts: AggregateCompetitionConflict[];
 }
 
 interface MonthlyClosePreflightInput {
@@ -410,6 +412,49 @@ const statusFromDiff = (diff: number | null, notes: string) => {
   return { status: 'fail' as const, notes };
 };
 
+const formatAggregateCompetitionConflict = (conflict: AggregateCompetitionConflict) =>
+  `${conflict.family}/${conflict.currency}: agregado ${conflict.aggregateClp.toLocaleString('es-CL')} vs detalle ${conflict.detailClp.toLocaleString('es-CL')}`;
+
+const formatPreflightDecision = (decision: MonthlyClosePreflightDecision) => {
+  if (decision === 'GO_PARA_CERRAR') return 'GO PARA CERRAR';
+  if (decision === 'NO_GO_DATA_QUALITY') return 'NO-GO: calidad de datos';
+  return 'NO-GO: fuentes no reconciliadas';
+};
+
+export const buildMonthlyClosePreflightReport = (diagnostic: MonthlyClosePreflightDiagnostic) => {
+  const blockedConflicts = diagnostic.aggregateCompetitionConflicts.filter((conflict) => conflict.status === 'blocked');
+  const ignoredLegacyConflicts = diagnostic.aggregateCompetitionConflicts.filter(
+    (conflict) => conflict.status === 'ignored_legacy',
+  );
+
+  return [
+    `Preflight cierre mensual (${diagnostic.candidateMonthKey})`,
+    `Decision: ${formatPreflightDecision(diagnostic.decision)}`,
+    `UI visible: ${diagnostic.uiMonthKey}`,
+    diagnostic.previousMonthKey ? `Cierre previo: ${diagnostic.previousMonthKey}` : 'Cierre previo: none',
+    `Overwrite: ${diagnostic.wouldOverwrite ? 'sí' : 'no'}`,
+    '',
+    'Checks:',
+    ...diagnostic.checks.map((check) => `- [${check.status}] ${check.label}: ${check.message}`),
+    '',
+    blockedConflicts.length
+      ? `Conflictos agregados bloqueantes: ${blockedConflicts.map(formatAggregateCompetitionConflict).join(' · ')}`
+      : 'Conflictos agregados bloqueantes: none',
+    ignoredLegacyConflicts.length
+      ? `Agregados legacy ignorados: ${ignoredLegacyConflicts.map(formatAggregateCompetitionConflict).join(' · ')}`
+      : 'Agregados legacy ignorados: none',
+    '',
+    'Resumen por bloque:',
+    ...diagnostic.blockRows.map(
+      (row) =>
+        `- ${row.block}: UI ${row.valuePatrimonioUI === null ? '—' : row.valuePatrimonioUI.toLocaleString('es-CL')} | cierre ${row.valueCloseTarget === null ? '—' : row.valueCloseTarget.toLocaleString('es-CL')} | estado ${row.status}`,
+    ),
+    '',
+    diagnostic.warnings.length ? 'Warnings:' : 'Warnings: none',
+    ...diagnostic.warnings.map((warning) => `- ${warning}`),
+  ].join('\n');
+};
+
 export const buildMonthlyClosePreflightDiagnostic = (
   input: MonthlyClosePreflightInput,
 ): MonthlyClosePreflightDiagnostic => {
@@ -440,6 +485,8 @@ export const buildMonthlyClosePreflightDiagnostic = (
     input.uiMonthKey,
     input.includeRiskCapitalInTotals,
   ).filter((record) => !isStartMonthCheckpointRecord(record));
+  const uiMonthRecords = buildCanonicalCloseTargetRecords(input.records, input.uiMonthKey);
+  const uiSummary = buildCanonicalClosureSummary(uiMonthRecords, safeFx);
   const closeTargetRecords = buildCanonicalCloseTargetRecords(input.records, targetMonthKey);
   const closeTargetForTotals = resolveRiskCapitalRecordsForTotals(
     closeTargetRecords,
@@ -736,26 +783,23 @@ export const buildMonthlyClosePreflightDiagnostic = (
     },
     {
       block: 'patrimonio con riesgo',
-      valuePatrimonioUI: buildCanonicalClosureSummary(uiRecordsEquivalent, safeFx).netClpWithRisk ?? null,
+      valuePatrimonioUI: uiSummary.netClpWithRisk ?? null,
       valueFreshness: freshness.riskCapitalIncluded ? freshness.totalExposureClp : null,
       valueCloseTarget: closeSummary.netClpWithRisk ?? null,
-      diffUiVsClose:
-        Number(buildCanonicalClosureSummary(uiRecordsEquivalent, safeFx).netClpWithRisk || 0) -
-        Number(closeSummary.netClpWithRisk || 0),
+      diffUiVsClose: Number(uiSummary.netClpWithRisk || 0) - Number(closeSummary.netClpWithRisk || 0),
       diffFreshnessVsClose: null,
       ...statusFromDiff(
-        Number(buildCanonicalClosureSummary(uiRecordsEquivalent, safeFx).netClpWithRisk || 0) -
-          Number(closeSummary.netClpWithRisk || 0),
+        Number(uiSummary.netClpWithRisk || 0) - Number(closeSummary.netClpWithRisk || 0),
         'Freshness no modela neto con riesgo.',
       ),
     },
   ];
 
   (['CLP', 'USD', 'EUR', 'UF'] as const).forEach((currency) => {
-    const uiValue = uiRecordsEquivalent
+    const uiValue = uiDiagnosticRecords
       .filter((record) => record.currency === currency)
       .reduce((sum, record) => sum + toClp(record, safeFx), 0);
-    const closeValue = closeTargetRecords
+    const closeValue = closeDiagnosticRecords
       .filter((record) => record.currency === currency)
       .reduce((sum, record) => sum + toClp(record, safeFx), 0);
     const freshnessValue = freshness.components
@@ -804,6 +848,12 @@ export const buildMonthlyClosePreflightDiagnostic = (
     closeTargetRecords,
     safeFx,
     input.includeRiskCapitalInTotals,
+  );
+  const blockedAggregateCompetitionConflicts = aggregateCompetitionConflicts.filter(
+    (conflict) => conflict.status === 'blocked',
+  );
+  const ignoredLegacyAggregateCompetitionConflicts = aggregateCompetitionConflicts.filter(
+    (conflict) => conflict.status === 'ignored_legacy',
   );
   const assetDebtUiClp = assetRows
     .filter((row) => row.assetType === 'card_debt' && row.includedInPatrimonioUI)
@@ -889,15 +939,18 @@ export const buildMonthlyClosePreflightDiagnostic = (
     buildCheck(
       'aggregate_conflicts',
       'agregados no compiten contra detalle',
-      aggregateCompetitionConflicts.length ? 'fail' : 'ok',
-      aggregateCompetitionConflicts.length
-        ? aggregateCompetitionConflicts
-            .map(
-              (conflict) =>
-                `${conflict.family}/${conflict.currency}: agregado ${conflict.aggregateClp.toLocaleString('es-CL')} vs detalle ${conflict.detailClp.toLocaleString('es-CL')}`,
-            )
-            .join(' · ')
-        : 'No hay conflictos materiales entre agregado y detalle.',
+      blockedAggregateCompetitionConflicts.length
+        ? 'fail'
+        : ignoredLegacyAggregateCompetitionConflicts.length
+          ? 'warn'
+          : 'ok',
+      blockedAggregateCompetitionConflicts.length
+        ? blockedAggregateCompetitionConflicts.map(formatAggregateCompetitionConflict).join(' · ')
+        : ignoredLegacyAggregateCompetitionConflicts.length
+          ? `Agregado legacy ignorado porque el detalle canonico ya es la fuente activa: ${ignoredLegacyAggregateCompetitionConflicts
+              .map(formatAggregateCompetitionConflict)
+              .join(' · ')}`
+          : 'No hay conflictos materiales entre agregado y detalle.',
     ),
     buildCheck(
       'fx_complete',
@@ -977,5 +1030,6 @@ export const buildMonthlyClosePreflightDiagnostic = (
       : 'Checkpoint cloud-first esperado antes del cierre; undo completo probable si el checkpoint guarda estado completo.',
     fillMissingWarning,
     debtAlignmentWarning,
+    aggregateCompetitionConflicts,
   };
 };
