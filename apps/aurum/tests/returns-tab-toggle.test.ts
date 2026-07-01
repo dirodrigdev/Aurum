@@ -3,6 +3,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, Root } from 'react-dom/client';
 import { act } from 'react';
+import userEvent from '@testing-library/user-event';
 
 vi.mock('../src/services/firebase', () => ({
   db: {},
@@ -97,7 +98,7 @@ describe('ReturnsTab estimated month toggle', () => {
     document.body.innerHTML = '';
   });
 
-  it('toggles when clicking the checkbox and its label row', async () => {
+  it('toggles on desktop by checkbox, label text, full card row, and keyboard', async () => {
     const Harness = () => {
       const [includeEstimatedMonth, setIncludeEstimatedMonth] = React.useState(false);
       return React.createElement(ReturnsTab, {
@@ -144,22 +145,44 @@ describe('ReturnsTab estimated month toggle', () => {
       root?.render(React.createElement(Harness));
     });
 
+    const user = userEvent.setup();
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
 
     await act(async () => {
-      checkbox?.click();
+      await user.click(checkbox!);
     });
     expect(checkbox?.checked).toBe(true);
 
-    const label = Array.from(container.querySelectorAll('label')).find((node) =>
+    const titleLabel = Array.from(container.querySelectorAll('label')).find((node) =>
       node.textContent?.includes('Incluir último mes estimado (E)'),
     ) as HTMLLabelElement | undefined;
-    expect(label).toBeTruthy();
+    expect(titleLabel).toBeTruthy();
 
     await act(async () => {
-      label?.click();
+      await user.click(titleLabel!);
+    });
+    expect(checkbox?.checked).toBe(false);
+
+    const eligibleText = Array.from(container.querySelectorAll('div')).find((node) =>
+      node.textContent?.includes('Mes elegible: Junio de 2026'),
+    );
+    const card = eligibleText?.closest('.rounded-2xl') as HTMLDivElement | null;
+    expect(card).not.toBeNull();
+
+    await act(async () => {
+      await user.click(card!);
+    });
+    expect(checkbox?.checked).toBe(true);
+
+    await act(async () => {
+      await user.tab();
+      await user.tab();
+    });
+    expect(document.activeElement).toBe(checkbox);
+    await act(async () => {
+      await user.keyboard('[Space]');
     });
     expect(checkbox?.checked).toBe(false);
   });
@@ -206,8 +229,9 @@ describe('ReturnsTab estimated month toggle', () => {
     expect(checkbox?.disabled).toBe(true);
     expect(container.textContent).toContain('No disponible todavía');
 
+    const user = userEvent.setup();
     await act(async () => {
-      checkbox?.click();
+      await user.click(checkbox!);
     });
     expect(onToggleIncludeEstimatedMonth).not.toHaveBeenCalled();
   });

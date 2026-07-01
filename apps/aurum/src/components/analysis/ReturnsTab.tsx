@@ -304,8 +304,8 @@ const ReturnRealHero: React.FC<{
     (value?.retornoRealAvgDisplay || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300';
 
   return (
-    <Card className="overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-3.5 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
+    <Card className="relative overflow-hidden border-slate-200 bg-gradient-to-br from-[#08152f] via-[#0d2146] to-[#0a1730] p-3.5 text-slate-100 shadow-[0_16px_40px_rgba(4,16,40,0.28)]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(110,231,183,0.14),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.12),_transparent_38%)]" />
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -1340,16 +1340,22 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     />
 
     {(estimatedToggleEnabled || pendingEstimateDetail) && (
-      <Card className="border-slate-200 bg-slate-50/70 p-2.5 text-xs text-slate-700 shadow-none">
-        <label
-          htmlFor={estimatedToggleId}
-          className={cn(
-            'flex items-start justify-between gap-3',
-            estimatedToggleEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-75',
-          )}
-        >
+      <Card
+        className={cn(
+          'border-slate-200 bg-slate-50/70 p-2.5 text-xs text-slate-700 shadow-none transition-colors',
+          estimatedToggleEnabled ? 'cursor-pointer hover:bg-slate-100/80' : 'cursor-not-allowed opacity-75',
+        )}
+        onClick={estimatedToggleEnabled ? handleEstimatedToggle : undefined}
+      >
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-semibold text-slate-900">Incluir último mes estimado (E)</div>
+            <label
+              htmlFor={estimatedToggleId}
+              className="font-semibold text-slate-900"
+              onClick={(event) => event.stopPropagation()}
+            >
+              Incluir último mes estimado (E)
+            </label>
             <div className="mt-0.5 text-[11px] text-slate-600">
               Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
             </div>
@@ -1377,8 +1383,9 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-slate-700 focus:ring-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
             checked={includeEstimatedMonth}
             onChange={handleEstimatedToggle}
+            onClick={(event) => event.stopPropagation()}
           />
-        </label>
+        </div>
         {!estimatedToggleEnabled && estimatedToggleReason ? (
           <div id={`${estimatedToggleId}-reason`} className="sr-only">
             {estimatedToggleReason}
