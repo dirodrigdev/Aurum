@@ -1326,7 +1326,6 @@ export function SimulationPage({
     lastEvaluatedInputFingerprint,
     resultFingerprint,
   }), [lastEvaluatedInputFingerprint, resultFingerprint, visibleInputFingerprint]);
-  const hasPendingLocalCapitalAdjustments = manualCapitalAdjustments.length > 0;
   const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
   const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
@@ -1336,7 +1335,7 @@ export function SimulationPage({
       return 'Resultado usable con salvedades.';
     }
     if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Hay ajustes locales pendientes. El resultado visible no los incorpora al motor M8 canónico.';
+      return 'Hay ajustes locales de capital incorporados al input evaluado.';
     }
     if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
       return 'Estás viendo una simulación temporal, no el Modelo Base.';
@@ -1351,7 +1350,7 @@ export function SimulationPage({
       return 'Falta: Sincronizar el mix aperturado por instrumento para llegar a OK.';
     }
     if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Falta: Guardarlos en el Modelo Base o descartarlos; mientras tanto quedan como pendientes no evaluados por M8.';
+      return 'Falta: Confirmar o descartar esos ajustes locales antes de tratar este resultado como base definitiva compartida.';
     }
     if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
       return 'Falta: Volver al Modelo Base o guardar el escenario temporal.';
@@ -1457,15 +1456,6 @@ export function SimulationPage({
         gap: 'Ejecuta simulación para validar los cambios.',
       };
     }
-    if (hasPendingLocalCapitalAdjustments && simulationInputSync.isResultCurrent) {
-      return {
-        label: 'Revisar',
-        tone: T.warning,
-        headline: 'Resultado vigente para el input evaluado.',
-        explanation: 'Hay ajustes locales pendientes visibles, pero no entran automáticamente al motor M8 canónico.',
-        gap: 'Ajuste local pendiente: guarda esos cambios en el Modelo Base o descártalos antes de interpretar el resultado como definitivo.',
-      };
-    }
     if (resultConfidence.status === 'not_decisional') {
       if (localReadOnlyFallbackActive) {
         return {
@@ -1517,10 +1507,8 @@ export function SimulationPage({
     resultConfidence.status,
     reviewCause,
     reviewGap,
-    simulationInputSync.isResultCurrent,
     simulationInputSync.status,
     showGhostResult,
-    hasPendingLocalCapitalAdjustments,
   ]);
   const heroConfidenceBlock = useMemo(
     () => (
@@ -1911,10 +1899,10 @@ export function SimulationPage({
     ? `Recursos habilitados hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
     : 'Recursos habilitados hoy';
   const heroFutureAdjustmentsNote = committedManualSummaryFuture.count > 0
-    ? `Ajustes futuros pendientes: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
+    ? `Ajustes futuros: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
     : null;
   const heroWealthChipNote = heroFutureAdjustmentsNote
-    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}\nNo entran automaticamente al motor M8 canonico.`
+    ? `${heroResourcesTodayNote}\n${heroFutureAdjustmentsNote}`
     : heroResourcesTodayNote;
   const patrimonioSourceSummary = snapshotApplied ? 'Snapshot Aurum aplicado' : 'Modelo base local';
   const patrimonioSourceTone: SourceBadgeTone = snapshotApplied ? 'ok' : hasPendingSnapshot ? 'warning' : 'alert';
@@ -5018,7 +5006,7 @@ export function SimulationPage({
                 <div>
                   <div style={{ color: T.textPrimary, fontWeight: 700 }}>Ajustes de capital</div>
                   <div style={{ color: T.textMuted, fontSize: 12, marginTop: 4 }}>
-                  Agrega entradas o salidas T0/futuras como borrador local visible. No entran al motor M8 canónico hasta llevarlas al Modelo Base.
+                  Agrega entradas o salidas T0/futuras para esta corrida.
                   </div>
                 </div>
               <button
@@ -5054,10 +5042,10 @@ export function SimulationPage({
             <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
               <SurfaceSemanticRow
                 items={[
-                  { label: 'Borrador local', tone: 'accent' },
-                  { label: 'No recalcula al guardar', tone: 'accent' },
-                  { label: 'No cambia fingerprint canónico', tone: 'accent' },
-                  { label: 'No afecta resultado vigente', tone: 'warning' },
+                  { label: 'Grupo con confirmación', tone: 'accent' },
+                  { label: 'No recalcula hasta guardar', tone: 'accent' },
+                  { label: 'Cambia fingerprint al guardar', tone: 'accent' },
+                  { label: 'Afecta resultado vigente', tone: 'warning' },
                 ]}
               />
               {hasManualDraftChanges ? (
@@ -5072,7 +5060,7 @@ export function SimulationPage({
                     fontWeight: 700,
                   }}
                 >
-                  Cambios pendientes · Guardar y salir conserva este borrador local, pero no recalcula ni actualiza el fingerprint canónico.
+                  Cambios pendientes · Guardar y salir para recalcular y actualizar fingerprint.
                 </div>
               ) : null}
             </div>
@@ -5096,7 +5084,7 @@ export function SimulationPage({
                           {adj.effectiveDate} · {sign}{formatMovementAmount(adj.amount, adj.currency)} · {destinationLabel}
                         </div>
                         <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
-                          Ajuste expresado en valor T0/plata de hoy. Queda como borrador local visible; no entra automáticamente a la simulación canónica.
+                          Ajuste expresado en valor T0/plata de hoy. Se aplica en simulación en la fecha configurada.
                         </div>
                         {adj.note && (
                           <div style={{ color: T.textMuted, fontSize: 11, marginTop: 4 }}>
@@ -5274,7 +5262,7 @@ export function SimulationPage({
                   <div>Capital inicial del motor: {Number.isFinite(params.capitalInitial) ? formatMoneyCompact(params.capitalInitial) : 'No disponible'}</div>
                   <div>Respaldo/depto habilitado: {liquidarDeptoEnabled ? 'Sí' : 'No'} · Capital de riesgo habilitado: {riskCapitalEnabled ? 'Sí' : 'No'}</div>
                   <div>Los ajustes manuales están expresados en valor T0/plata de hoy. Para la simulación se aplican en el momento configurado, según la lógica del modelo.</div>
-                  <div>Los ajustes futuros visibles no cambian los recursos habilitados hoy ni forman parte de la corrida canónica vigente hasta llevarlos al Modelo Base.</div>
+                  <div>Los ajustes futuros no cambian los recursos habilitados hoy, pero sí forman parte de la corrida.</div>
                   <div>El capital del motor y los recursos ampliados pueden diferir: casa y riesgo viajan por canales separados del input M8.</div>
                 </div>
               </details>
@@ -5312,7 +5300,7 @@ export function SimulationPage({
                   opacity: savingMovement ? 0.7 : 1,
                 }}
               >
-                {savingMovement ? 'Guardando...' : 'Guardar borrador local'}
+                {savingMovement ? 'Guardando...' : 'Guardar y recalcular'}
               </button>
             </div>
           </div>

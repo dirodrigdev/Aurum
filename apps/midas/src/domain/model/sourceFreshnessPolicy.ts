@@ -102,6 +102,8 @@ export type BuildSourceFreshnessPolicyInput = {
     manualAdjustmentsCount?: number | null;
     manualAdjustmentsSource?: string | null;
     manualLocalAdjustmentsAffectEngine?: boolean | null;
+    manualCurrentAdjustmentsAffectEngine?: boolean | null;
+    manualFutureAdjustmentsAffectEngine?: boolean | null;
   };
   warnings?: string[];
 };
@@ -265,6 +267,8 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
   const manualAdjustmentsCount = Number(input.capitalDerivation?.manualAdjustmentsCount ?? 0);
   const manualAdjustmentsSource = stringOrNull(input.capitalDerivation?.manualAdjustmentsSource);
   const manualAdjustmentsAffectEngine = Boolean(input.capitalDerivation?.manualLocalAdjustmentsAffectEngine);
+  const manualCurrentAdjustmentsAffectEngine = Boolean(input.capitalDerivation?.manualCurrentAdjustmentsAffectEngine);
+  const manualFutureAdjustmentsAffectEngine = Boolean(input.capitalDerivation?.manualFutureAdjustmentsAffectEngine);
 
   const sources: SourcePolicyEntry[] = [
     {
@@ -357,8 +361,10 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       savedAt: null,
       hash: null,
       freshness: buildFreshness(null, nowMs, null),
-      warning: manualAdjustmentsAffectEngine
+      warning: manualCurrentAdjustmentsAffectEngine
         ? 'Ajustes manuales locales alteran el input comparable'
+        : manualFutureAdjustmentsAffectEngine
+          ? 'Ajustes futuros locales incluidos en el input evaluado'
         : 'Hay ajustes manuales locales, pero fueron excluidos del input comparable',
     });
   }
@@ -380,7 +386,7 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
       : null,
     photoStatus === 'stale_snapshot' ? 'aurum_snapshot_stale' : null,
     photoStatus === 'missing_snapshot' ? 'aurum_snapshot_missing' : null,
-    manualAdjustmentsAffectEngine ? 'manual_local_adjustments_effective' : null,
+    manualCurrentAdjustmentsAffectEngine ? 'manual_local_adjustments_effective' : null,
     input.simulationActiveV1.legacyGlobalExists ? 'legacy_global_config_detected' : null,
   ]);
 
@@ -388,9 +394,13 @@ export function buildSourceFreshnessPolicy(input: BuildSourceFreshnessPolicyInpu
     ...baseWarnings,
     ...effectiveSources
       .map((entry) => buildDecisionWarningNotice(entry)?.code ?? null),
+    manualFutureAdjustmentsAffectEngine ? 'manual_future_adjustments_effective' : null,
     photoStatus === 'recent_snapshot' ? 'aurum_snapshot_recent_not_current' : null,
     photoStatus === 'unknown' ? 'aurum_snapshot_unknown_age' : null,
   ]).map((code) => {
+    if (code === 'manual_future_adjustments_effective') {
+      return { code, label: 'Ajustes futuros locales incluidos · revisar', sourceId: 'manual_capital_adjustments' };
+    }
     if (code === 'aurum_snapshot_recent_not_current') {
       return { code, label: 'Foto Aurum reciente · revisar', sourceId: 'aurumSnapshot' };
     }

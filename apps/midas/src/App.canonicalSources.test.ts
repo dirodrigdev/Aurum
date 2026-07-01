@@ -17,14 +17,20 @@ assert.match(
 
 assert.match(
   appSource,
-  /const canonicalBaseParamsCurrent = stripManualAdjustmentImpactFromParams\(\s*baseParamsCurrent,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const canonicalCurrentSimParams = stripManualAdjustmentImpactFromParams\(\s*currentSimParams,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const manualImpact = EMPTY_MANUAL_ADJUSTMENT_IMPACT;/,
-  'canonical simulation params must strip local manual adjustments before rebuilding the comparable M8 input',
+  /const canonicalBaseParamsCurrent = stripManualAdjustmentImpactFromParams\(\s*baseParamsCurrent,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const canonicalCurrentSimParams = stripManualAdjustmentImpactFromParams\(\s*currentSimParams,\s*manualAdjustmentImpact,\s*\);[\s\S]*?const manualImpact = options\?\.manualImpact \?\? manualAdjustmentImpact;/,
+  'canonical simulation params must rebuild the comparable M8 input using the effective manual/future flow impact',
 );
 
 assert.match(
   appSource,
-  /const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics\.manualLocalAdjustmentsAffectEngine\s*\?\s*'error'\s*:\s*hasManualAdjustments\s*\?\s*'local'\s*:\s*'canonical';/,
-  'local manual adjustments should surface as a review/local source unless they still contaminate the canonical input',
+  /const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics\.manualCurrentAdjustmentsAffectEngine\s*\?\s*'error'\s*:\s*hasManualAdjustments\s*\?\s*'local'\s*:\s*'canonical';/,
+  'future flows can be local/review, but only T0 manual contamination should block canonical confidence',
+);
+
+assert.match(
+  appSource,
+  /const commitManualCapitalAdjustments = useCallback\(\(next: ManualCapitalAdjustment\[]\) => \{[\s\S]*?const impact = computeManualAdjustmentImpact\(next\);[\s\S]*?const nextParams = buildCanonicalSimParams\(cleanBaseParams, cleanBaseParams, \{[\s\S]*?manualImpact: impact,[\s\S]*?\}\);[\s\S]*?startRecalculation\('ledger-commit', \(\) => base\);/,
+  'manual capital commit must rebuild params with future flows and trigger a recalculation',
 );
 
 console.log('App canonical sources tests passed');

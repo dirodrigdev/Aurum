@@ -2454,8 +2454,7 @@ export default function App() {
         currentSimParams,
         manualAdjustmentImpact,
       );
-      // Local manual adjustments stay visible as diagnostics only; canonical M8 runs must ignore them.
-      const manualImpact = EMPTY_MANUAL_ADJUSTMENT_IMPACT;
+      const manualImpact = options?.manualImpact ?? manualAdjustmentImpact;
       const riskEnabled = options?.riskCapitalEnabled ?? riskCapitalEnabled;
       const mergedEvents = [
         ...(canonicalBaseParamsCurrent.cashflowEvents ?? []),
@@ -3427,11 +3426,28 @@ export default function App() {
 
   const commitManualCapitalAdjustments = useCallback((next: ManualCapitalAdjustment[]) => {
     pendingRecalcCauseRef.current = 'ledger-commit';
+    const previousImpact = manualAdjustmentImpact;
     setManualCapitalAdjustments(next);
     markSimulationInteraction();
+    const impact = computeManualAdjustmentImpact(next);
     manualCommitInFlightRef.current = true;
+    const cleanBaseParams = stripManualAdjustmentImpactFromParams(simParamsRef.current, previousImpact);
+    const nextParams = buildCanonicalSimParams(cleanBaseParams, cleanBaseParams, {
+      applyCapital: true,
+      manualImpact: impact,
+    });
+    setBaseParams(cleanBaseParams);
+    setSimParams(nextParams);
+    const sanitizedOverrides = sanitizeSimulationOverridesForParams(nextParams, simOverrides);
+    const base = applySimulationOverrides(nextParams, sanitizedOverrides);
+    startRecalculation('ledger-commit', () => base);
   }, [
+    buildCanonicalSimParams,
+    computeManualAdjustmentImpact,
+    manualAdjustmentImpact,
     markSimulationInteraction,
+    simOverrides,
+    startRecalculation,
   ]);
 
   useEffect(() => {
@@ -4172,15 +4188,18 @@ export default function App() {
       const baseManualFutureEvents = Array.isArray(baseEngineInput.future_events)
         ? baseEngineInput.future_events.filter((event) => String(event?.id ?? '').startsWith('manual-'))
         : [];
+      const manualCurrentAdjustmentsAffectEngine = Math.abs(manualCapitalAdjustmentsClp) > 0.5;
+      const manualFutureAdjustmentsAffectEngine = JSON.stringify(effectiveManualFutureEvents) !== JSON.stringify(baseManualFutureEvents);
       const manualLocalAdjustmentsAffectEngine = (
         JSON.stringify(effectiveEngineInput) !== JSON.stringify(baseEngineInput)
-        || Math.abs(manualCapitalAdjustmentsClp) > 0.5
-        || effectiveManualFutureEvents.length !== baseManualFutureEvents.length
-        || effectiveManualFutureEvents.length > 0
+        || manualCurrentAdjustmentsAffectEngine
+        || manualFutureAdjustmentsAffectEngine
       );
       return {
         effectiveEngineInput,
         manualLocalAdjustmentsAffectEngine,
+        manualCurrentAdjustmentsAffectEngine,
+        manualFutureAdjustmentsAffectEngine,
         capitalFromAurumClp: Number(baseEngineInput.capital_initial_clp ?? 0),
         manualCapitalAdjustmentsClp,
         capitalAfterManualAdjustmentsClp: Number(effectiveEngineInput.capital_initial_clp ?? 0),
@@ -4189,6 +4208,8 @@ export default function App() {
       return {
         effectiveEngineInput: null,
         manualLocalAdjustmentsAffectEngine: false,
+        manualCurrentAdjustmentsAffectEngine: false,
+        manualFutureAdjustmentsAffectEngine: false,
         capitalFromAurumClp: Number(simParams.capitalInitial ?? 0),
         manualCapitalAdjustmentsClp: 0,
         capitalAfterManualAdjustmentsClp: Number(simParams.capitalInitial ?? 0),
@@ -4407,6 +4428,8 @@ export default function App() {
         : 'aurum_snapshot_cloud',
       enabled: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
       manualLocalAdjustmentsAffectEngine: engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+      manualCurrentAdjustmentsAffectEngine: engineFingerprintDiagnostics.manualCurrentAdjustmentsAffectEngine,
+      manualFutureAdjustmentsAffectEngine: engineFingerprintDiagnostics.manualFutureAdjustmentsAffectEngine,
       compositionOptimizableClp: Number(simParams.simulationComposition?.optimizableInvestmentsCLP ?? 0),
       compositionBanksClp: Number(simParams.simulationComposition?.nonOptimizable?.banksCLP ?? 0),
       compositionRiskCapitalClp: Number(simParams.simulationComposition?.nonOptimizable?.riskCapital?.totalCLP ?? 0),
@@ -4521,7 +4544,7 @@ export default function App() {
             ? 'provisional'
             : 'missing';
     const hasManualAdjustments = manualCapitalAdjustments.length > 0;
-    const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine
+    const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualCurrentAdjustmentsAffectEngine
       ? 'error'
       : hasManualAdjustments
         ? 'local'
@@ -4556,7 +4579,7 @@ export default function App() {
   }, [
     assumptionModeDiagnostics,
     aurumIntegrationStatus,
-    engineFingerprintDiagnostics.manualLocalAdjustmentsAffectEngine,
+    engineFingerprintDiagnostics.manualCurrentAdjustmentsAffectEngine,
     manualCapitalAdjustments.length,
     lastAppliedAurumSnapshotSignature,
     lastRenderedResultHash,

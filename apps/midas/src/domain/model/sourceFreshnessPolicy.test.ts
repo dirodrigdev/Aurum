@@ -169,6 +169,24 @@ const base = () => ({
     capitalDerivation: {
       manualAdjustmentsCount: 1,
       manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+      manualCurrentAdjustmentsAffectEngine: false,
+      manualFutureAdjustmentsAffectEngine: true,
+      manualLocalAdjustmentsAffectEngine: true,
+    },
+  });
+  assert.equal(policy.status, 'canonical_with_warnings');
+  assert.ok(!policy.forbiddenSourcesUsed.includes('manual_local_adjustments_effective'));
+  assert.ok(policy.sources.some((entry) => entry.id === 'manual_capital_adjustments' && entry.usedForRun));
+}
+
+{
+  const policy = buildSourceFreshnessPolicy({
+    ...base(),
+    capitalDerivation: {
+      manualAdjustmentsCount: 1,
+      manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+      manualCurrentAdjustmentsAffectEngine: true,
+      manualFutureAdjustmentsAffectEngine: false,
       manualLocalAdjustmentsAffectEngine: true,
     },
   });

@@ -330,6 +330,8 @@ const baseInput = (): M8InputFingerprintInput => {
 (() => {
   const input = baseInput();
   input.capitalDerivationDiagnostics = {
+    manualCurrentAdjustmentsAffectEngine: false,
+    manualFutureAdjustmentsAffectEngine: false,
     manualLocalAdjustmentsAffectEngine: false,
     manualAdjustmentsCount: 1,
     manualCurrentTotalDeltaClp: 20_000_000,
@@ -356,6 +358,25 @@ const baseInput = (): M8InputFingerprintInput => {
 
 (() => {
   const input = baseInput();
+  const original = buildM8InputFingerprint(input);
+  (input.effectiveEngineInput as any).future_events = [
+    { id: 'manual-future-2039', type: 'inflow', effective_month: 156, amount: 200_000_000, currency: 'CLP' },
+  ];
+  input.capitalDerivationDiagnostics = {
+    manualLocalAdjustmentsAffectEngine: true,
+    manualCurrentAdjustmentsAffectEngine: false,
+    manualFutureAdjustmentsAffectEngine: true,
+    manualAdjustmentsCount: 1,
+    manualAdjustmentsSource: 'localStorage:midas:manualCapitalAdjustments',
+  };
+  const changed = buildM8InputFingerprint(input);
+  assert.notEqual(original.effectiveEngineInputHash, changed.effectiveEngineInputHash, 'future flows must change the effective engine hash');
+  assert.ok(changed.warnings.some((warning) => warning.includes('incluidos en el input evaluado')));
+  assert.ok(!changed.warnings.some((warning) => warning.includes('contaminando el input canónico')));
+})();
+
+(() => {
+  const input = baseInput();
   input.capitalDerivationDiagnostics = {
     capitalFromAurumClp: 1_530_974_913,
     manualCapitalAdjustmentsClp: 20_000_000,
@@ -363,6 +384,8 @@ const baseInput = (): M8InputFingerprintInput => {
     source: 'aurum_snapshot_cloud_plus_manual_local_adjustments',
     enabled: true,
     manualLocalAdjustmentsAffectEngine: true,
+    manualCurrentAdjustmentsAffectEngine: true,
+    manualFutureAdjustmentsAffectEngine: false,
     manualAdjustmentsCount: 1,
   };
   (input.effectiveEngineInput as any).capital_initial_clp = 1_550_974_913;

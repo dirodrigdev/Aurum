@@ -244,9 +244,9 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
       simulationConfigHash: input.simulationConfigHash,
     },
   };
-  const manualLocalAdjustmentsAffectEngine = Boolean(
-    input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine,
-  );
+  const manualLocalAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualLocalAdjustmentsAffectEngine);
+  const manualCurrentAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualCurrentAdjustmentsAffectEngine);
+  const manualFutureAdjustmentsAffectEngine = Boolean(input.capitalDerivationDiagnostics?.manualFutureAdjustmentsAffectEngine);
   const effectiveEngineInputHash = hashString(stableSerialize(normalizedInput));
   const diagnosticInput: Record<string, unknown> = {
     flags: {
@@ -291,8 +291,10 @@ export function buildM8InputFingerprint(input: M8InputFingerprintInput): M8Input
     warnings.push('Instrument Universe usando versión bundled canónica; válido cross-browser mientras cloud no exista.');
   }
   const manualAdjustmentsCount = Number(input.capitalDerivationDiagnostics?.manualAdjustmentsCount ?? 0);
-  if (manualLocalAdjustmentsAffectEngine) {
+  if (manualCurrentAdjustmentsAffectEngine) {
     warnings.push('Ajustes manuales locales siguen contaminando el input canónico: revisar antes de comparar dispositivos.');
+  } else if (manualFutureAdjustmentsAffectEngine) {
+    warnings.push('Ajustes futuros locales incluidos en el input evaluado: cambian fingerprint y se aplican como flujos futuros, no como T0.');
   } else if (manualAdjustmentsCount > 0) {
     warnings.push('Hay ajustes manuales locales fuera del modo canónico: no cambian el input M8 comparable.');
   }
