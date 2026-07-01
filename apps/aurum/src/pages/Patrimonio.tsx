@@ -50,6 +50,7 @@ import {
   resolveClosureNetClp,
   computeWealthBankLiquiditySnapshot,
   computeWealthHomeSectionAmounts,
+  detectAggregateCompetitionConflicts,
   isAggregateNonMortgageDebtRecord,
   FX_RATES_UPDATED_EVENT,
   isSyntheticAggregateRecord,
@@ -5980,6 +5981,18 @@ export const Patrimonio: React.FC = () => {
         shouldBlock: true,
         timestampIso: new Date().toISOString(),
       });
+      setCloseError(message);
+      return { ok: false, errorMessage: message };
+    }
+    const aggregateCompetitionConflicts = detectAggregateCompetitionConflicts(
+      targetRecords,
+      fxForClose,
+      includeRiskCapitalInTotals,
+    );
+    if (aggregateCompetitionConflicts.length > 0) {
+      const message = `No se puede cerrar: hay agregados que compiten con detalle (${aggregateCompetitionConflicts
+        .map((conflict) => `${conflict.family}/${conflict.currency}`)
+        .join(', ')}).`;
       setCloseError(message);
       return { ok: false, errorMessage: message };
     }

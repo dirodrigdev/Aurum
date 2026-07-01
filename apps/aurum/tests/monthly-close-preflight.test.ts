@@ -8,7 +8,9 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import {
+  BANK_BALANCE_CLP_LABEL,
   BANK_BCHILE_CLP_LABEL,
+  BANK_SCOTIA_CLP_LABEL,
   CARD_MASTERCARD_SANTANDER_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
@@ -274,5 +276,51 @@ describe('monthly close preflight diagnostic', () => {
     expect(debtAssetRows.reduce((sum, row) => sum + Math.abs(Number(row.amountClpCloseTarget || 0)), 0)).toBe(93_200_000);
     expect(aggregateUiRow).toBeUndefined();
     expect(diagnostic.checks.find((check) => check.key === 'debt_assets_match_blocks')?.status).toBe('ok');
+  });
+
+  it('returns NO_GO_SOURCE_OF_TRUTH_UNCLEAR when bank aggregate competes with richer detail', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'bank-bchile-jun',
+        block: 'bank',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 10_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'bank-scotia-jun',
+        block: 'bank',
+        label: BANK_SCOTIA_CLP_LABEL,
+        amount: 5_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'bank-aggregate-jun',
+        block: 'bank',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 21_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:05:00Z',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.decision).toBe('NO_GO_SOURCE_OF_TRUTH_UNCLEAR');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('fail');
   });
 });

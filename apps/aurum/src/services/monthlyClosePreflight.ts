@@ -9,6 +9,7 @@ import {
   computeWealthHomeSectionAmounts,
   currentMonthKey,
   dedupeLatestByAsset,
+  detectAggregateCompetitionConflicts,
   defaultFxRates,
   filterRecordsByRiskCapitalPreference,
   isAggregateNonMortgageDebtRecord,
@@ -799,6 +800,11 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const freshnessMismatches = latestFreshnessMaterial.filter(
     (row) => row.missingInClose || Math.abs(Number(row.diffFreshnessVsClose || 0)) > MATERIALITY_CLP,
   );
+  const aggregateCompetitionConflicts = detectAggregateCompetitionConflicts(
+    closeTargetRecords,
+    safeFx,
+    input.includeRiskCapitalInTotals,
+  );
   const assetDebtUiClp = assetRows
     .filter((row) => row.assetType === 'card_debt' && row.includedInPatrimonioUI)
     .reduce((sum, row) => sum + Math.abs(Number(row.amountClpPatrimonioUI || 0)), 0);
@@ -881,6 +887,19 @@ export const buildMonthlyClosePreflightDiagnostic = (
         : 'No hay mezcla visible de deuda agregada y detallada en targetRecords.',
     ),
     buildCheck(
+      'aggregate_conflicts',
+      'agregados no compiten contra detalle',
+      aggregateCompetitionConflicts.length ? 'fail' : 'ok',
+      aggregateCompetitionConflicts.length
+        ? aggregateCompetitionConflicts
+            .map(
+              (conflict) =>
+                `${conflict.family}/${conflict.currency}: agregado ${conflict.aggregateClp.toLocaleString('es-CL')} vs detalle ${conflict.detailClp.toLocaleString('es-CL')}`,
+            )
+            .join(' · ')
+        : 'No hay conflictos materiales entre agregado y detalle.',
+    ),
+    buildCheck(
       'fx_complete',
       'FX completo',
       fxChecks.length === 0 ? 'ok' : 'fail',
@@ -927,7 +946,7 @@ export const buildMonthlyClosePreflightDiagnostic = (
     check.status === 'fail',
   );
   const hasSourceTruthFailure = checks.some((check) =>
-    ['ui_assets_vs_close', 'ui_amounts_vs_close'].includes(check.key) &&
+    ['ui_assets_vs_close', 'ui_amounts_vs_close', 'aggregate_conflicts'].includes(check.key) &&
     check.status === 'fail',
   );
 

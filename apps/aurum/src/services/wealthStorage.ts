@@ -214,6 +214,18 @@ export interface CanonicalWealthExposureRecord {
   isDebt: boolean;
 }
 
+export type AggregateCompetitionFamily = 'bank' | 'non_mortgage_debt';
+
+export interface AggregateCompetitionConflict {
+  family: AggregateCompetitionFamily;
+  currency: WealthCurrency;
+  aggregateClp: number;
+  detailClp: number;
+  deltaClp: number;
+  aggregateLabels: string[];
+  detailLabels: string[];
+}
+
 export type ClosureSectionAmountsSource =
   | 'records_canonical'
   | 'summary_extended'
@@ -2571,6 +2583,93 @@ export const resolveCanonicalBankClp = (
   records: WealthRecord[],
   fxRates: Pick<WealthFxRates, 'usdClp'> = defaultFxRates,
 ): number => resolveCanonicalBankBreakdown(records, fxRates).bankClp;
+
+const CANONICAL_AGGREGATE_COMPETITION_TOLERANCE_CLP = 50_000;
+
+const toCanonicalConflictClp = (record: WealthRecord, fxRates: WealthFxRates) => {
+  const normalizedAmount = maybeNormalizeMinorUnitAmount(record, record.amount);
+  const absoluteAmount = Math.abs(Number(normalizedAmount || 0));
+  if (record.currency === 'CLP') return absoluteAmount;
+  if (record.currency === 'USD') return absoluteAmount * (Number(fxRates?.usdClp) > 0 ? Number(fxRates.usdClp) : defaultFxRates.usdClp);
+  if (record.currency === 'EUR') return absoluteAmount * (Number(fxRates?.eurClp) > 0 ? Number(fxRates.eurClp) : defaultFxRates.eurClp);
+  return absoluteAmount * (Number(fxRates?.ufClp) > 0 ? Number(fxRates.ufClp) : defaultFxRates.ufClp);
+};
+
+const summarizeAggregateCompetition = (
+  family: AggregateCompetitionFamily,
+  currency: WealthCurrency,
+  aggregateRecords: WealthRecord[],
+  detailRecords: WealthRecord[],
+  fxRates: WealthFxRates,
+): AggregateCompetitionConflict | null => {
+  if (!aggregateRecords.length || !detailRecords.length) return null;
+  const aggregateClp = Math.round(
+    aggregateRecords.reduce((sum, record) => sum + toCanonicalConflictClp(record, fxRates), 0),
+  );
+  const detailClp = Math.round(
+    detailRecords.reduce((sum, record) => sum + toCanonicalConflictClp(record, fxRates), 0),
+  );
+  const deltaClp = aggregateClp - detailClp;
+  if (Math.abs(deltaClp) <= CANONICAL_AGGREGATE_COMPETITION_TOLERANCE_CLP) return null;
+  return {
+    family,
+    currency,
+    aggregateClp,
+    detailClp,
+    deltaClp,
+    aggregateLabels: Array.from(new Set(aggregateRecords.map((record) => record.label))),
+    detailLabels: Array.from(new Set(detailRecords.map((record) => record.label))),
+  };
+};
+
+export const detectAggregateCompetitionConflicts = (
+  records: WealthRecord[],
+  fxRates: WealthFxRates,
+  includeRiskCapitalInTotals = true,
+): AggregateCompetitionConflict[] => {
+  const riskFiltered = filterRecordsByRiskCapitalPreference(records, includeRiskCapitalInTotals);
+  const latest = dedupeLatestByAsset(riskFiltered).filter((record) => !isSyntheticAggregateRecord(record));
+  const conflicts: AggregateCompetitionConflict[] = [];
+
+  (['CLP', 'USD'] as const).forEach((currency) => {
+    const bankRecords = latest.filter(
+      (record) => record.block === 'bank' && record.currency === currency && !isNonMortgageDebtRecord(record),
+    );
+    const bankAggregate = bankRecords.filter((record) =>
+      currency === 'CLP'
+        ? AGGREGATE_BANK_LABELS_CLP.has(normalizeText(record.label))
+        : AGGREGATE_BANK_LABELS_USD.has(normalizeText(record.label)),
+    );
+    const bankDetail = bankRecords.filter((record) => {
+      const normalizedLabel = normalizeText(record.label);
+      return currency === 'CLP'
+        ? !AGGREGATE_BANK_LABELS_CLP.has(normalizedLabel)
+        : !AGGREGATE_BANK_LABELS_USD.has(normalizedLabel);
+    });
+    const bankConflict = summarizeAggregateCompetition('bank', currency, bankAggregate, bankDetail, fxRates);
+    if (bankConflict) conflicts.push(bankConflict);
+
+    const debtRecords = latest.filter(
+      (record) =>
+        record.currency === currency &&
+        isNonMortgageDebtRecord(record) &&
+        !isMortgagePrincipalDebtLabel(record.label) &&
+        !isMortgageMetaDebtLabel(record.label),
+    );
+    const debtAggregate = debtRecords.filter((record) => isAggregateNonMortgageDebtRecord(record));
+    const debtDetail = debtRecords.filter((record) => !isAggregateNonMortgageDebtRecord(record));
+    const debtConflict = summarizeAggregateCompetition(
+      'non_mortgage_debt',
+      currency,
+      debtAggregate,
+      debtDetail,
+      fxRates,
+    );
+    if (debtConflict) conflicts.push(debtConflict);
+  });
+
+  return conflicts;
+};
 
 export const selectCanonicalWealthExposureRecords = (
   records: WealthRecord[],

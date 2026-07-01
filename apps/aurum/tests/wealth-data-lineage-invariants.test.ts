@@ -46,10 +46,12 @@ import {
   buildCanonicalClosureSummary,
   computeWealthHomeSectionAmounts,
   createMonthlyClosure,
+  detectAggregateCompetitionConflicts,
   reconcileBankClosureDetails,
   reconcileNonMortgageDebtClosureDetails,
   resolveClosureSectionAmounts,
   resolveCanonicalNonMortgageDebtClp,
+  selectCanonicalWealthExposureRecords,
   type WealthFxRates,
   type WealthMonthlyClosure,
   type WealthRecord,
@@ -359,6 +361,59 @@ describe('wealth data lineage invariants', () => {
     const summary = buildCanonicalClosureSummary(records, { ...fx, usdClp: 891 });
 
     expect(summary.bankClp).toBe(21_007_517);
+  });
+
+  it('reports a structural conflict when bank aggregate and detail coexist but do not match', () => {
+    const records = [
+      record({
+        id: 'bank-bchile-clp',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 10_000_000,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-scotia-clp',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_CLP_LABEL,
+        amount: 5_000_000,
+        currency: 'CLP',
+      }),
+      record({
+        id: 'bank-aggregate-clp',
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 21_000_000,
+        currency: 'CLP',
+      }),
+    ];
+
+    const conflicts = detectAggregateCompetitionConflicts(records, fx);
+    const bankConflict = conflicts.find((conflict) => conflict.family === 'bank' && conflict.currency === 'CLP');
+
+    expect(bankConflict).toBeTruthy();
+    expect(bankConflict?.aggregateClp).toBe(21_000_000);
+    expect(bankConflict?.detailClp).toBe(15_000_000);
+    expect(selectCanonicalWealthExposureRecords(records, true).map((entry) => entry.record.label)).not.toContain(BANK_BALANCE_CLP_LABEL);
+  });
+
+  it('allows aggregateAsLeaf when only the bank aggregate exists', () => {
+    const records = [
+      record({
+        id: 'bank-aggregate-clp',
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_CLP_LABEL,
+        amount: 21_000_000,
+        currency: 'CLP',
+      }),
+    ];
+
+    expect(detectAggregateCompetitionConflicts(records, fx)).toEqual([]);
+    expect(selectCanonicalWealthExposureRecords(records, true).map((entry) => entry.record.label)).toContain(BANK_BALANCE_CLP_LABEL);
   });
 
   it('detects bank inconsistency when visible closure subtotal is richer than editable and operative detail', () => {
