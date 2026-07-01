@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button, Card, cn, Input, Select } from '../components/Components';
 import { CloseConfirmModal } from '../components/patrimonio/CloseConfirmModal';
+import { NextMonthStartReminder, type NextMonthStartReminderViewModel } from '../components/patrimonio/NextMonthStartReminder';
 import { ConfirmActionModal } from '../components/settings/ConfirmActionModal';
 import { runOcrFromFile } from '../services/ocr';
 import { parseWealthFromOcrText, ParsedWealthSuggestion } from '../services/wealthParsers';
@@ -153,6 +154,7 @@ const BANKS_LAST_AUTO_ATTEMPT_DAY_KEY = 'aurum:banks:last-auto-attempt-day:v1';
 const BANKS_UPDATE_MODE_KEY = 'aurum.banks.update.mode.v1';
 const BANKS_UPDATE_MODE_CHANGED_EVENT = 'aurum:banks:update-mode';
 const CLOSING_CONFIG_STORAGE_KEY = 'aurum.closing.config.v1';
+const NEXT_MONTH_START_REMINDER_SNOOZE_PREFIX = 'aurum.next-month-start-reminder.snooze.v1.';
 const DEFAULT_BASE_INVESTMENT_INSTRUMENTS: Array<{ label: string; currency: WealthCurrency }> = [
   { label: RISK_CAPITAL_LABEL_CLP, currency: 'CLP' },
   { label: RISK_CAPITAL_LABEL_USD, currency: 'USD' },
@@ -519,6 +521,124 @@ export const buildMonthStatusAccordionState = (input: {
   };
 };
 
+export type NextMonthStartReminderStatus =
+  | 'hidden'
+  | 'POST_CLOSE_NEXT_MONTH_READY_TO_START'
+  | 'NEXT_MONTH_STARTED'
+  | 'NEXT_MONTH_REQUIRES_REVIEW'
+  | 'REMIND_LATER';
+
+export type NextMonthStartReminderState = {
+  status: NextMonthStartReminderStatus;
+  monthKey: string | null;
+  latestClosedMonthKey: string | null;
+  title: string;
+  message: string;
+  primaryActionLabel: string | null;
+  primaryActionKind: 'start' | 'review' | null;
+  snoozeUntil: string | null;
+};
+
+const parseReminderSnoozeMs = (value: string | null | undefined) => {
+  const raw = String(value || '').trim();
+  if (!raw) return NaN;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+export const buildNextMonthStartReminderState = (input: {
+  monthKey: string;
+  realCurrentMonthKey: string;
+  latestClosedMonthKey: string | null;
+  activeClosure: WealthMonthlyClosure | null;
+  startEligibility: MonthStartEligibility;
+  mortgageStatus: MonthStartMortgageAudit['status'];
+  snoozeUntil?: string | null;
+  now?: Date;
+}): NextMonthStartReminderState => {
+  const latestClosedMonthKey = input.latestClosedMonthKey || null;
+  const monthKey = input.monthKey || null;
+  const previousOfSelected = monthKey ? monthBeforeKey(monthKey) : null;
+  const statusBase =
+    monthKey === input.realCurrentMonthKey &&
+    !input.activeClosure &&
+    latestClosedMonthKey &&
+    previousOfSelected === latestClosedMonthKey;
+
+  if (!statusBase) {
+    return {
+      status: 'hidden',
+      monthKey,
+      latestClosedMonthKey,
+      title: '',
+      message: '',
+      primaryActionLabel: null,
+      primaryActionKind: null,
+      snoozeUntil: input.snoozeUntil || null,
+    };
+  }
+
+  const nowMs = (input.now ?? new Date()).getTime();
+  const snoozeMs = parseReminderSnoozeMs(input.snoozeUntil);
+  const snoozed = Number.isFinite(snoozeMs) && snoozeMs > nowMs;
+
+  if (input.mortgageStatus === 'applied' || input.startEligibility.reason === 'mortgage_applied') {
+    return {
+      status: 'NEXT_MONTH_STARTED',
+      monthKey,
+      latestClosedMonthKey,
+      title: `${monthLabel(monthKey)} ya fue iniciado`,
+      message: `El mes vivo de ${monthLabel(monthKey).toLowerCase()} ya tiene la hipoteca aplicada.`,
+      primaryActionLabel: null,
+      primaryActionKind: null,
+      snoozeUntil: input.snoozeUntil || null,
+    };
+  }
+
+  if (input.mortgageStatus === 'review' || input.startEligibility.reason === 'mortgage_review') {
+    const title = `${monthLabel(monthKey)} requiere revisar hipoteca`;
+    const message = `${monthLabel(monthKey)} ya quedó abierto después del cierre de ${monthLabel(
+      latestClosedMonthKey,
+    ).toLowerCase()}, pero la hipoteca no cuadra con la amortización esperada. Revisa el estado del mes antes de considerarlo iniciado.`;
+    return {
+      status: snoozed ? 'REMIND_LATER' : 'NEXT_MONTH_REQUIRES_REVIEW',
+      monthKey,
+      latestClosedMonthKey,
+      title,
+      message,
+      primaryActionLabel: 'Ver estado del mes',
+      primaryActionKind: 'review',
+      snoozeUntil: input.snoozeUntil || null,
+    };
+  }
+
+  if (!input.startEligibility.canStart) {
+    return {
+      status: 'hidden',
+      monthKey,
+      latestClosedMonthKey,
+      title: '',
+      message: '',
+      primaryActionLabel: null,
+      primaryActionKind: null,
+      snoozeUntil: input.snoozeUntil || null,
+    };
+  }
+
+  return {
+    status: snoozed ? 'REMIND_LATER' : 'POST_CLOSE_NEXT_MONTH_READY_TO_START',
+    monthKey,
+    latestClosedMonthKey,
+    title: 'Mes cerrado correctamente',
+    message: `${monthLabel(latestClosedMonthKey)} quedó cerrado. Ahora puedes iniciar ${monthLabel(
+      monthKey,
+    ).toLowerCase()} para aplicar el roll-forward hipotecario y dejar el mes vivo preparado.`,
+    primaryActionLabel: `Iniciar ${monthLabel(monthKey).toLowerCase()}`,
+    primaryActionKind: 'start',
+    snoozeUntil: input.snoozeUntil || null,
+  };
+};
+
 type StartMonthFlowCheckpoint = {
   monthKey: string;
   actions: StartMonthActionStatus;
@@ -558,6 +678,32 @@ const readHideSensitiveAmountsEnabled = () => {
     return window.localStorage.getItem(HIDE_SENSITIVE_AMOUNTS_PREF_KEY) === '1';
   } catch {
     return false;
+  }
+};
+
+const nextMonthStartReminderSnoozeKey = (monthKey: string) => `${NEXT_MONTH_START_REMINDER_SNOOZE_PREFIX}${monthKey}`;
+
+const readNextMonthStartReminderSnoozeUntil = (monthKey: string) => {
+  try {
+    return String(window.localStorage.getItem(nextMonthStartReminderSnoozeKey(monthKey)) || '');
+  } catch {
+    return '';
+  }
+};
+
+const writeNextMonthStartReminderSnoozeUntil = (monthKey: string, iso: string) => {
+  try {
+    window.localStorage.setItem(nextMonthStartReminderSnoozeKey(monthKey), iso);
+  } catch {
+    // ignore ui-only persistence issues
+  }
+};
+
+const clearNextMonthStartReminderSnooze = (monthKey: string) => {
+  try {
+    window.localStorage.removeItem(nextMonthStartReminderSnoozeKey(monthKey));
+  } catch {
+    // ignore ui-only persistence issues
   }
 };
 
@@ -4550,9 +4696,16 @@ export const Patrimonio: React.FC = () => {
   );
   const [startMonthConfirmOpen, setStartMonthConfirmOpen] = useState(false);
   const [startMonthCompletedNoticeVisible, setStartMonthCompletedNoticeVisible] = useState(false);
+  const [nextMonthStartReminderModalOpen, setNextMonthStartReminderModalOpen] = useState(false);
+  const [nextMonthStartReminderSnoozeVersion, setNextMonthStartReminderSnoozeVersion] = useState(0);
+  const [postCloseNextMonthReminderContext, setPostCloseNextMonthReminderContext] = useState<{
+    closedMonthKey: string;
+    nextMonthKey: string;
+  } | null>(null);
   const startMonthCompletedNoticeTimerRef = useRef<number | null>(null);
   const startMonthCompletionShownForMonthRef = useRef<string | null>(null);
   const startMonthManualBankAttemptedRef = useRef(false);
+  const monthStatusCardRef = useRef<HTMLDivElement | null>(null);
 
   const [hideSensitiveAmountsEnabled, setHideSensitiveAmountsEnabled] = useState(() =>
     readHideSensitiveAmountsEnabled(),
@@ -5355,6 +5508,57 @@ export const Patrimonio: React.FC = () => {
       }),
     [startMonthCheckpoint?.explicitMonthStarted, startMonthFailedStep, startMonthFlowError],
   );
+  const latestClosedMonthKey = useMemo(
+    () =>
+      [...closures]
+        .map((closure) => closure.monthKey)
+        .sort((a, b) => b.localeCompare(a))[0] || null,
+    [closures],
+  );
+  const nextMonthStartReminderSnoozeUntil = useMemo(
+    () => readNextMonthStartReminderSnoozeUntil(monthKey),
+    [monthKey, nextMonthStartReminderSnoozeVersion],
+  );
+  const nextMonthStartReminderState = useMemo(
+    () =>
+      buildNextMonthStartReminderState({
+        monthKey,
+        realCurrentMonthKey,
+        latestClosedMonthKey,
+        activeClosure,
+        startEligibility: selectedMonthStartEligibility,
+        mortgageStatus: selectedMonthMortgageAudit.status,
+        snoozeUntil: nextMonthStartReminderSnoozeUntil,
+      }),
+    [
+      monthKey,
+      realCurrentMonthKey,
+      latestClosedMonthKey,
+      activeClosure,
+      selectedMonthStartEligibility,
+      selectedMonthMortgageAudit.status,
+      nextMonthStartReminderSnoozeUntil,
+    ],
+  );
+  const nextMonthStartReminderViewModel = useMemo<NextMonthStartReminderViewModel | null>(() => {
+    if (
+      nextMonthStartReminderState.status !== 'POST_CLOSE_NEXT_MONTH_READY_TO_START' &&
+      nextMonthStartReminderState.status !== 'NEXT_MONTH_REQUIRES_REVIEW'
+    ) {
+      return null;
+    }
+    if (!nextMonthStartReminderState.monthKey || !nextMonthStartReminderState.primaryActionLabel || !nextMonthStartReminderState.primaryActionKind) {
+      return null;
+    }
+    return {
+      status: nextMonthStartReminderState.status,
+      monthKey: nextMonthStartReminderState.monthKey,
+      title: nextMonthStartReminderState.title,
+      message: nextMonthStartReminderState.message,
+      primaryActionLabel: nextMonthStartReminderState.primaryActionLabel,
+      primaryActionKind: nextMonthStartReminderState.primaryActionKind,
+    };
+  }, [nextMonthStartReminderState]);
 
   const computeMonthNetSnapshot = (targetMonthKey: string, fxOverride?: { usdClp: number; eurClp: number; ufClp: number }) => {
     const sourceRecords = latestRecordsForMonth(loadWealthRecords(), targetMonthKey);
@@ -6060,6 +6264,10 @@ export const Patrimonio: React.FC = () => {
     }
     setMonthKey(nextVisualMonth);
     setCloseMonthDraft(nextVisualMonth);
+    setPostCloseNextMonthReminderContext({
+      closedMonthKey: targetMonthKey,
+      nextMonthKey: nextVisualMonth,
+    });
     const advanced = nextVisualMonth !== targetMonthKey;
     if (!advanced) {
       setCloseError('El cierre se guardó, pero no pude avanzar al siguiente mes en pantalla.');
@@ -6990,6 +7198,69 @@ export const Patrimonio: React.FC = () => {
     setMonthStatusCollapsedOverride(null);
   }, [monthKey]);
   const monthStatusCollapsed = monthStatusCollapsedOverride ?? monthStatusAccordion.defaultCollapsed;
+  useEffect(() => {
+    if (!postCloseNextMonthReminderContext) return;
+    if (postCloseSummary) return;
+    if (postCloseNextMonthReminderContext.nextMonthKey !== monthKey) return;
+    if (
+      nextMonthStartReminderState.status === 'POST_CLOSE_NEXT_MONTH_READY_TO_START' ||
+      nextMonthStartReminderState.status === 'NEXT_MONTH_REQUIRES_REVIEW'
+    ) {
+      setNextMonthStartReminderModalOpen(true);
+    }
+  }, [postCloseNextMonthReminderContext, postCloseSummary, monthKey, nextMonthStartReminderState.status]);
+  useEffect(() => {
+    if (
+      nextMonthStartReminderState.status === 'NEXT_MONTH_STARTED' ||
+      nextMonthStartReminderState.status === 'REMIND_LATER' ||
+      nextMonthStartReminderState.status === 'hidden'
+    ) {
+      setNextMonthStartReminderModalOpen(false);
+    }
+    if (
+      nextMonthStartReminderState.status === 'NEXT_MONTH_STARTED' &&
+      monthKey &&
+      nextMonthStartReminderSnoozeUntil
+    ) {
+      clearNextMonthStartReminderSnooze(monthKey);
+      setNextMonthStartReminderSnoozeVersion((value) => value + 1);
+      setPostCloseNextMonthReminderContext(null);
+    }
+  }, [nextMonthStartReminderState.status, monthKey, nextMonthStartReminderSnoozeUntil]);
+
+  const openMonthStatusFromReminder = () => {
+    setNextMonthStartReminderModalOpen(false);
+    setPostCloseNextMonthReminderContext(null);
+    setMonthStatusCollapsedOverride(false);
+    window.setTimeout(() => {
+      monthStatusCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
+
+  const handleNextMonthStartReminderPrimaryAction = () => {
+    if (!nextMonthStartReminderViewModel) return;
+    if (nextMonthStartReminderViewModel.primaryActionKind === 'review') {
+      openMonthStatusFromReminder();
+      return;
+    }
+    setNextMonthStartReminderModalOpen(false);
+    setPostCloseNextMonthReminderContext(null);
+    runStartMonthInitialize();
+  };
+
+  const handleNextMonthStartReminderSnooze = () => {
+    if (!monthKey) return;
+    const snoozeUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+    writeNextMonthStartReminderSnoozeUntil(monthKey, snoozeUntil);
+    setNextMonthStartReminderSnoozeVersion((value) => value + 1);
+    setNextMonthStartReminderModalOpen(false);
+    setPostCloseNextMonthReminderContext(null);
+  };
+
+  const handleNextMonthStartReminderClose = () => {
+    setNextMonthStartReminderModalOpen(false);
+    setPostCloseNextMonthReminderContext(null);
+  };
 
   if (activeSection) {
     return (
@@ -7181,6 +7452,14 @@ export const Patrimonio: React.FC = () => {
         </Card>
       )}
 
+      <NextMonthStartReminder
+        reminder={nextMonthStartReminderViewModel}
+        modalOpen={nextMonthStartReminderModalOpen}
+        onPrimaryAction={handleNextMonthStartReminderPrimaryAction}
+        onSnooze={handleNextMonthStartReminderSnooze}
+        onCloseModal={handleNextMonthStartReminderClose}
+      />
+
       <div className="space-y-2">
         <div
           role="button"
@@ -7357,7 +7636,7 @@ export const Patrimonio: React.FC = () => {
       </Card>
 
       {!activeClosure && (
-        <Card className="p-4 space-y-3">
+        <Card ref={monthStatusCardRef} className="p-4 space-y-3">
           <button
             type="button"
             className="flex w-full items-start justify-between gap-3 text-left"
