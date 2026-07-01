@@ -39,7 +39,9 @@ vi.mock('firebase/firestore', () => {
   });
   return {
     collection,
-    deleteDoc: vi.fn(async () => {}),
+    deleteDoc: vi.fn(async (ref: MockDoc) => {
+      cloudStore.delete(ref.__path);
+    }),
     doc,
     getDoc,
     getDocFromServer,
@@ -78,6 +80,7 @@ import {
   syncWealthNow,
   undoMonthlyCloseToCheckpoint,
   upsertMonthlyClosure,
+  verifyMonthlyCloseCheckpointReadiness,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
 import { getCurrentUid } from '../src/services/firebase';
@@ -187,6 +190,7 @@ const removeCheckpointState = (monthKey: string) => {
 describe('monthly close undo checkpoint', () => {
   beforeEach(() => {
     cloudStore.clear();
+    vi.clearAllMocks();
     vi.stubGlobal('localStorage', makeMemoryStorage());
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'test-project');
     vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-key');
@@ -206,6 +210,21 @@ describe('monthly close undo checkpoint', () => {
     expect(checkpoint?.monthKey).toBe(created.monthKey);
     expect(checkpoint?.hadPreviousClosure).toBe(false);
     expect(checkpoint?.previousClosure).toBeNull();
+  });
+
+  it('blocks close immediately when monthKey is invalid', async () => {
+    await expect(
+      closeMonthlyWithCheckpoint({
+        monthKey: '2026-99',
+        records: recordsForMonth('2026-04'),
+        fxRates,
+        closedAt: '2026-04-15T12:00:00.000Z',
+      }),
+    ).rejects.toThrow('Mes de cierre inválido. No se ejecutó el checkpoint ni el cierre.');
+
+    expect(loadClosures()).toHaveLength(0);
+    expect(getMonthlyCloseCheckpoint('2026-99')).toBeNull();
+    expect(vi.mocked(setDoc)).not.toHaveBeenCalled();
   });
 
   it('persists non-mortgage debt consistently in the saved close summary', async () => {
@@ -246,6 +265,7 @@ describe('monthly close undo checkpoint', () => {
         closedAt: '2026-05-31T23:59:59.000Z',
       }),
     ).rejects.toThrow('El cierre no quedó guardado. No se actualizó el historial.');
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-05')).toBe(false);
   });
 
   it('persists non-whitelisted debt block records in the saved close summary', async () => {
@@ -842,6 +862,76 @@ describe('monthly close undo checkpoint', () => {
     const preview = await previewUndoMonthlyClose('2026-04');
     expect(preview.ok).toBe(false);
     expect(preview.checkpointSource).toBeNull();
+  });
+
+  it('does not leave a local close applied when persistence fails after checkpoint', async () => {
+    const getDocFromServerMock = vi.mocked(getDocFromServer);
+    const originalGetDocFromServer = getDocFromServerMock.getMockImplementation();
+    getDocFromServerMock.mockImplementationOnce(async () => ({
+      exists: () => true,
+      data: () => ({
+        updatedAt: '2026-06-01T00:00:00.000Z',
+        records: [],
+        closures: [],
+        closureDeletionTombstones: [],
+        instruments: [],
+        bankTokens: {},
+        deletedRecordIds: [],
+        deletedRecordAssetMonthKeys: [],
+        fx: fxRates,
+      }),
+    }));
+
+    await expect(
+      closeMonthlyWithCheckpoint({
+        monthKey: '2026-06',
+        records: recordsForMonth('2026-06', 12_000_000, 93_200_000),
+        fxRates,
+        closedAt: '2026-06-30T23:59:59.000Z',
+      }),
+    ).rejects.toThrow('El cierre no quedó guardado. No se actualizó el historial.');
+
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
+
+    if (originalGetDocFromServer) {
+      getDocFromServerMock.mockImplementation(originalGetDocFromServer);
+    } else {
+      getDocFromServerMock.mockReset();
+    }
+  });
+
+  it('verifies checkpoint readiness without creating a monthly close and keeps schema v2', async () => {
+    const result = await verifyMonthlyCloseCheckpointReadiness({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 93_200_000),
+      fxRates,
+    });
+
+    expect(result.status).toBe('BACKUP_READY_FOR_JUNE_CLOSE');
+    expect(result.monthKey).toBe('2026-06');
+    expect(result.schemaVersion).toBe(2);
+    expect(result.cloudVerified).toBe(true);
+    expect(result.cleanupOk).toBe(true);
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
+    expect(getMonthlyCloseCheckpoint('2026-06')).toBeNull();
+    expect(
+      [...cloudStore.keys()].some((key) => key.includes('/monthly_close_checkpoints/probe_2026-06_')),
+    ).toBe(false);
+  });
+
+  it('reports external blocker when backup readiness cannot confirm cloud session', async () => {
+    const getUidMock = vi.mocked(getCurrentUid);
+    getUidMock.mockReturnValueOnce(null as unknown as string);
+
+    const result = await verifyMonthlyCloseCheckpointReadiness({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 93_200_000),
+      fxRates,
+    });
+
+    expect(result.status).toBe('EXTERNAL_BLOCKER_NEEDS_USER_ACTION');
+    expect(result.cloudVerified).toBe(false);
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
   });
 
   it('falls back to root doc cloud checkpoint when subcollection write is denied', async () => {

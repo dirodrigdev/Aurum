@@ -36,6 +36,7 @@ import {
   FX_INDICATOR_SUPPRESS_AFTER_START_KEY,
 } from '../services/fxIndicatorFlow';
 import {
+  MonthlyCloseCheckpointReadinessResult,
   WealthBlock,
   WealthCurrency,
   WealthInvestmentInstrument,
@@ -84,6 +85,7 @@ import {
   upsertInvestmentInstrument,
   upsertWealthRecord,
   validateFxRange,
+  verifyMonthlyCloseCheckpointReadiness,
   createWealthBackupSnapshot,
   BANK_BALANCE_CLP_LABEL,
   BANK_BALANCE_USD_LABEL,
@@ -4537,6 +4539,8 @@ export const Patrimonio: React.FC = () => {
   const [closeConfigSnapshot, setCloseConfigSnapshot] = useState<ClosingConfigState>(() => readClosingConfig());
   const [closePreflightVisible, setClosePreflightVisible] = useState(false);
   const [closePreflightCopied, setClosePreflightCopied] = useState(false);
+  const [closeBackupCheck, setCloseBackupCheck] = useState<MonthlyCloseCheckpointReadinessResult | null>(null);
+  const [closeBackupRunning, setCloseBackupRunning] = useState(false);
   const [startMonthRunning, setStartMonthRunning] = useState(false);
   const [startMonthFlowError, setStartMonthFlowError] = useState('');
   const [startMonthFailedStep, setStartMonthFailedStep] = useState<StartMonthActionKey | null>(null);
@@ -4569,6 +4573,10 @@ export const Patrimonio: React.FC = () => {
       setCloseMonthDraft(monthKey);
     }
   }, [monthKey, closeConfirmOpen]);
+
+  useEffect(() => {
+    setCloseBackupCheck(null);
+  }, [closeMonthDraft]);
 
   useEffect(() => {
     if (!closeConfirmOpen) return;
@@ -6587,6 +6595,32 @@ export const Patrimonio: React.FC = () => {
     }
   };
 
+  const verifyCloseBackup = async () => {
+    setCloseError('');
+    setCloseInfo('');
+    setCloseBackupRunning(true);
+    try {
+      const result = await verifyMonthlyCloseCheckpointReadiness({
+        monthKey: closeMonthDraft,
+        records: closeValidationDraft.targetRecords,
+        fxRates: closeFxValues,
+      });
+      setCloseBackupCheck(result);
+      if (result.status === 'BACKUP_READY_FOR_JUNE_CLOSE') {
+        setCloseInfo(`Backup verificado para ${monthLabel(closeMonthDraft).toLowerCase()}.`);
+        return;
+      }
+      setCloseError(result.message);
+    } finally {
+      setCloseBackupRunning(false);
+    }
+  };
+
+  const juneCloseReady =
+    closeMonthDraft === '2026-06' &&
+    closePreflightDiagnostic?.decision === 'GO_PARA_CERRAR' &&
+    closeBackupCheck?.status === 'BACKUP_READY_FOR_JUNE_CLOSE';
+
   const resolveCloseIssueWithPrevious = (issue: CloseValidationIssue) => {
     if (!issue.canResolveWithPrevious) return;
     const result = fillMissingWithPreviousClosure(
@@ -7510,6 +7544,9 @@ export const Patrimonio: React.FC = () => {
             >
               {closePreflightVisible ? 'Ocultar preflight' : 'Simular cierre / Preflight'}
             </Button>
+            <Button size="sm" variant="outline" onClick={() => void verifyCloseBackup()} disabled={closeBackupRunning}>
+              {closeBackupRunning ? 'Verificando backup...' : 'Verificar backup'}
+            </Button>
             <Button size="sm" onClick={runMonthlyClose}>
               Cerrar mes
             </Button>
@@ -7520,6 +7557,77 @@ export const Patrimonio: React.FC = () => {
         <div className="text-[11px] text-slate-500">
           Diagnóstico read-only. No escribe en localStorage, no escribe en Firestore y no ejecuta el cierre.
         </div>
+        {(closeBackupRunning || closeBackupCheck) && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">Verificación de backup</div>
+                <div className="text-xs text-slate-600">
+                  Usa el mismo camino cloud-first del checkpoint y no crea un cierre mensual real.
+                </div>
+              </div>
+              <div
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-semibold',
+                  closeBackupRunning
+                    ? 'bg-slate-200 text-slate-700'
+                    : closeBackupCheck?.status === 'BACKUP_READY_FOR_JUNE_CLOSE'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : closeBackupCheck?.status === 'EXTERNAL_BLOCKER_NEEDS_USER_ACTION'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-red-100 text-red-800',
+                )}
+              >
+                {closeBackupRunning ? 'Verificando...' : closeBackupCheck?.status}
+              </div>
+            </div>
+            {closeBackupCheck && (
+              <>
+                <div className="mt-2 text-xs text-slate-700">{closeBackupCheck.message}</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                    <div className="text-slate-500">Mes</div>
+                    <div className="font-semibold text-slate-900">
+                      {closeBackupCheck.monthKey ? monthLabel(closeBackupCheck.monthKey) : 'No válido'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                    <div className="text-slate-500">Schema checkpoint</div>
+                    <div className="font-semibold text-slate-900">
+                      {closeBackupCheck.schemaVersion ?? 'sin confirmar'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                    <div className="text-slate-500">Cloud verificado</div>
+                    <div className="font-semibold text-slate-900">
+                      {closeBackupCheck.cloudVerified ? 'Sí' : 'No'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                    <div className="text-slate-500">Cleanup temporal</div>
+                    <div className="font-semibold text-slate-900">
+                      {closeBackupCheck.cleanupOk ? 'OK' : 'Pendiente / falló'}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+            {closeMonthDraft === '2026-06' && (
+              <div
+                className={cn(
+                  'mt-3 rounded-lg border p-2 text-xs',
+                  juneCloseReady
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-slate-200 bg-white text-slate-700',
+                )}
+              >
+                {juneCloseReady
+                  ? 'Junio 2026: GO PARA CERRAR + BACKUP_READY_FOR_JUNE_CLOSE.'
+                  : 'Junio 2026 solo queda listo para cerrar cuando el preflight diga GO PARA CERRAR y el backup diga BACKUP_READY_FOR_JUNE_CLOSE.'}
+              </div>
+            )}
+          </div>
+        )}
 
         {latestClosure && (
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
