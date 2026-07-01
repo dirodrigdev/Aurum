@@ -970,6 +970,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   exportingConsolidatedDataRoom,
   exportingTransactionalDataRoom,
 }) => {
+  const estimatedToggleId = React.useId();
   const [isSpendTrustExpanded, setIsSpendTrustExpanded] = React.useState(false);
   const [isProvisionalExpanded, setIsProvisionalExpanded] = React.useState(false);
   const [isOfficialNoticeDismissed, setIsOfficialNoticeDismissed] = React.useState(false);
@@ -1129,6 +1130,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   );
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = pendingEstimateDetail;
+  const estimatedToggleEnabled = hasEstimatedMonth && !!estimatedMonthMeta;
+  const estimatedToggleReason = React.useMemo(() => {
+    if (estimatedToggleEnabled) return null;
+    if (!pendingEstimateDetail) return null;
+    if (!pendingEstimateDetail.scenarios.some((scenario) => scenario.key === 'closed_average')) {
+      return 'No disponible todavía: faltan al menos 2 meses cerrados con gasto oficial para estimar un promedio confiable.';
+    }
+    return 'No disponible: este mes ya no necesita estimación o le falta una base válida para activarla.';
+  }, [estimatedToggleEnabled, pendingEstimateDetail]);
+  const handleEstimatedToggle = React.useCallback(() => {
+    if (!estimatedToggleEnabled) return;
+    onToggleIncludeEstimatedMonth();
+  }, [estimatedToggleEnabled, onToggleIncludeEstimatedMonth]);
   const spendTrustCollapsedLine = React.useMemo(() => {
     if (mainPendingOfficial?.info?.availabilityLabel) {
       return `${monthLabel(mainPendingOfficial.row.monthKey)} pendiente de gasto · Oficial disponible ${mainPendingOfficial.info.availabilityLabel}`;
@@ -1325,27 +1339,51 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       crpContributionInsight={crpContributionInsight}
     />
 
-    {hasEstimatedMonth && estimatedMonthMeta && (
+    {(estimatedToggleEnabled || pendingEstimateDetail) && (
       <Card className="border-slate-200 bg-slate-50/70 p-2.5 text-xs text-slate-700 shadow-none">
-        <label className="flex cursor-pointer items-start justify-between gap-3">
+        <label
+          htmlFor={estimatedToggleId}
+          className={cn(
+            'flex items-start justify-between gap-3',
+            estimatedToggleEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-75',
+          )}
+        >
           <div className="min-w-0">
             <div className="font-semibold text-slate-900">Incluir último mes estimado (E)</div>
             <div className="mt-0.5 text-[11px] text-slate-600">
               Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
             </div>
-            {includeEstimatedMonth && (
+            {estimatedMonthMeta && (
+              <div className="mt-1 text-[11px] text-slate-600">
+                {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)}${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
+              </div>
+            )}
+            {includeEstimatedMonth && estimatedMonthMeta && (
               <div className="mt-1 text-[11px] font-medium text-slate-800">
                 {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} (E)${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
               </div>
             )}
+            {!estimatedToggleEnabled && estimatedToggleReason && (
+              <div className="mt-1 text-[11px] font-medium text-amber-700">
+                {estimatedToggleReason}
+              </div>
+            )}
           </div>
           <input
+            id={estimatedToggleId}
             type="checkbox"
-            className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-slate-700 focus:ring-slate-500"
+            aria-describedby={!estimatedToggleEnabled && estimatedToggleReason ? `${estimatedToggleId}-reason` : undefined}
+            disabled={!estimatedToggleEnabled}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-slate-700 focus:ring-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
             checked={includeEstimatedMonth}
-            onChange={onToggleIncludeEstimatedMonth}
+            onChange={handleEstimatedToggle}
           />
         </label>
+        {!estimatedToggleEnabled && estimatedToggleReason ? (
+          <div id={`${estimatedToggleId}-reason`} className="sr-only">
+            {estimatedToggleReason}
+          </div>
+        ) : null}
       </Card>
     )}
 
