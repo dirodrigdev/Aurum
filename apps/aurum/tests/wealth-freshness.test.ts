@@ -10,6 +10,7 @@ import {
   BANK_BALANCE_CLP_LABEL,
   BANK_BCHILE_CLP_LABEL,
   BANK_SCOTIA_CLP_LABEL,
+  CARD_MASTERCARD_SANTANDER_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   RISK_CAPITAL_LABEL_CLP,
@@ -105,6 +106,33 @@ describe('wealth freshness model', () => {
 
     expect(model.totalExposureClp).toBe(100);
     expect(model.components.map((item) => item.label).sort()).toEqual([BANK_BCHILE_CLP_LABEL, BANK_SCOTIA_CLP_LABEL].sort());
+  });
+
+  it('evita doble conteo entre deuda agregada y deuda detallada', () => {
+    const model = buildWealthFreshnessModel(
+      [
+        record({
+          id: 'debt-aggregate',
+          block: 'debt',
+          label: DEBT_CARD_CLP_LABEL,
+          amount: 93_200_000,
+          createdAt: '2026-04-30T09:00:00Z',
+        }),
+        record({
+          id: 'debt-detailed',
+          block: 'debt',
+          label: CARD_MASTERCARD_SANTANDER_LABEL,
+          amount: 93_200_000,
+          createdAt: '2026-04-30T09:01:00Z',
+        }),
+      ],
+      fx,
+      { includeRiskCapitalInTotals: false, now },
+    );
+
+    expect(model.totalExposureClp).toBe(93_200_000);
+    expect(model.components).toHaveLength(1);
+    expect(model.components[0].label).toBe(CARD_MASTERCARD_SANTANDER_LABEL);
   });
 
 

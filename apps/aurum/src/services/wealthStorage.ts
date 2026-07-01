@@ -201,6 +201,19 @@ export interface WealthClosureCompleteness {
   missingFx: boolean;
 }
 
+export type CanonicalWealthExposureGroup =
+  | 'investment'
+  | 'bank'
+  | 'real_estate'
+  | 'mortgage_debt'
+  | 'non_mortgage_debt';
+
+export interface CanonicalWealthExposureRecord {
+  record: WealthRecord;
+  group: CanonicalWealthExposureGroup;
+  isDebt: boolean;
+}
+
 export type ClosureSectionAmountsSource =
   | 'records_canonical'
   | 'summary_extended'
@@ -2559,6 +2572,104 @@ export const resolveCanonicalBankClp = (
   fxRates: Pick<WealthFxRates, 'usdClp'> = defaultFxRates,
 ): number => resolveCanonicalBankBreakdown(records, fxRates).bankClp;
 
+export const selectCanonicalWealthExposureRecords = (
+  records: WealthRecord[],
+  includeRiskCapitalInTotals: boolean,
+): CanonicalWealthExposureRecord[] => {
+  const riskFiltered = filterRecordsByRiskCapitalPreference(records, includeRiskCapitalInTotals);
+  const latest = dedupeLatestByAsset(riskFiltered).filter((record) => !isSyntheticAggregateRecord(record));
+
+  const bankCandidates = latest.filter((record) => record.block === 'bank' && !isNonMortgageDebtRecord(record));
+  const hasProviderBankClp = bankCandidates.some(
+    (record) => record.currency === 'CLP' && PROVIDER_BANK_LABELS_CLP.has(normalizeText(record.label)),
+  );
+  const hasProviderBankUsd = bankCandidates.some(
+    (record) => record.currency === 'USD' && PROVIDER_BANK_LABELS_USD.has(normalizeText(record.label)),
+  );
+  const hasDetailedBankClp = bankCandidates.some((record) => {
+    if (record.currency !== 'CLP') return false;
+    const label = normalizeText(record.label);
+    return !AGGREGATE_BANK_LABELS_CLP.has(label) && !PROVIDER_BANK_LABELS_CLP.has(label);
+  });
+  const hasDetailedBankUsd = bankCandidates.some((record) => {
+    if (record.currency !== 'USD') return false;
+    const label = normalizeText(record.label);
+    return !AGGREGATE_BANK_LABELS_USD.has(label) && !PROVIDER_BANK_LABELS_USD.has(label);
+  });
+
+  const debtCandidates = latest.filter(
+    (record) => isNonMortgageDebtRecord(record) && !isMortgagePrincipalDebtLabel(record.label),
+  );
+  const hasDetailedDebtClp = debtCandidates.some(
+    (record) => record.currency === 'CLP' && !AGGREGATE_DEBT_LABELS_CLP.has(normalizeText(record.label)),
+  );
+  const hasDetailedDebtUsd = debtCandidates.some(
+    (record) => record.currency === 'USD' && !AGGREGATE_DEBT_LABELS_USD.has(normalizeText(record.label)),
+  );
+  const hasAggregateDebtClp = debtCandidates.some(
+    (record) => record.currency === 'CLP' && AGGREGATE_DEBT_LABELS_CLP.has(normalizeText(record.label)),
+  );
+  const hasAggregateDebtUsd = debtCandidates.some(
+    (record) => record.currency === 'USD' && AGGREGATE_DEBT_LABELS_USD.has(normalizeText(record.label)),
+  );
+  let aggregateDebtClpCounted = false;
+  let aggregateDebtUsdCounted = false;
+
+  const selected: CanonicalWealthExposureRecord[] = [];
+
+  for (const record of latest) {
+    if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) continue;
+    const label = normalizeText(record.label);
+    const nonMortgageDebt = isNonMortgageDebtRecord(record);
+
+    if (record.block === 'investment') {
+      selected.push({ record, group: 'investment', isDebt: false });
+      continue;
+    }
+    if (record.block === 'real_estate') {
+      selected.push({ record, group: 'real_estate', isDebt: false });
+      continue;
+    }
+    if (isMortgagePrincipalDebtLabel(record.label)) {
+      selected.push({ record, group: 'mortgage_debt', isDebt: true });
+      continue;
+    }
+    if (record.block === 'bank' && !nonMortgageDebt) {
+      if (record.currency === 'CLP') {
+        if (hasProviderBankClp && !PROVIDER_BANK_LABELS_CLP.has(label)) continue;
+        if (!hasProviderBankClp && hasDetailedBankClp && AGGREGATE_BANK_LABELS_CLP.has(label)) continue;
+      }
+      if (record.currency === 'USD') {
+        if (hasProviderBankUsd && !PROVIDER_BANK_LABELS_USD.has(label)) continue;
+        if (!hasProviderBankUsd && hasDetailedBankUsd && AGGREGATE_BANK_LABELS_USD.has(label)) continue;
+      }
+      selected.push({ record, group: 'bank', isDebt: false });
+      continue;
+    }
+    if (!nonMortgageDebt) continue;
+
+    if (record.currency === 'CLP') {
+      if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(label)) continue;
+      if (!hasDetailedDebtClp && hasAggregateDebtClp) {
+        if (!AGGREGATE_DEBT_LABELS_CLP.has(label)) continue;
+        if (aggregateDebtClpCounted) continue;
+        aggregateDebtClpCounted = true;
+      }
+    }
+    if (record.currency === 'USD') {
+      if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(label)) continue;
+      if (!hasDetailedDebtUsd && hasAggregateDebtUsd) {
+        if (!AGGREGATE_DEBT_LABELS_USD.has(label)) continue;
+        if (aggregateDebtUsdCounted) continue;
+        aggregateDebtUsdCounted = true;
+      }
+    }
+    selected.push({ record, group: 'non_mortgage_debt', isDebt: true });
+  }
+
+  return selected;
+};
+
 export const resolveCanonicalNonMortgageDebtClp = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
@@ -2717,8 +2828,8 @@ export const buildWealthNetBreakdown = (
     }
     if (treatsAsNonMortgageDebt) {
       if (record.currency === 'CLP') {
-        if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) {
-          return;
+        if (hasDetailedDebtClp) {
+          if (AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;
         } else if (hasAggregateDebtClp) {
           if (!AGGREGATE_DEBT_LABELS_CLP.has(normalizedLabel)) return;
           if (aggregateDebtClpCounted) return;
@@ -2726,8 +2837,8 @@ export const buildWealthNetBreakdown = (
         }
       }
       if (record.currency === 'USD') {
-        if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) {
-          return;
+        if (hasDetailedDebtUsd) {
+          if (AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) return;
         } else if (hasAggregateDebtUsd) {
           if (!AGGREGATE_DEBT_LABELS_USD.has(normalizedLabel)) return;
           if (aggregateDebtUsdCounted) return;

@@ -1,26 +1,11 @@
 import { labelMatchKey } from '../utils/wealthLabels';
 import {
-  BANK_BALANCE_CLP_LABEL,
-  BANK_BALANCE_CLP_LEGACY_LABEL,
-  BANK_BALANCE_USD_LABEL,
-  BANK_BALANCE_USD_LEGACY_LABEL,
-  BANK_PROVIDER_CLP_LABELS,
-  BANK_PROVIDER_USD_LABELS,
-  DEBT_CARD_CLP_LABEL,
-  DEBT_CARD_CLP_LEGACY_LABEL,
-  DEBT_CARD_USD_LABEL,
-  DEBT_CARD_USD_LEGACY_LABEL,
-  MANUAL_CARD_LABELS,
-  dedupeLatestByAsset,
-  filterRecordsByRiskCapitalPreference,
-  isMortgageMetaDebtLabel,
-  isMortgagePrincipalDebtLabel,
-  isNonMortgageDebtRecord,
   isRiskCapitalInvestmentLabel,
-  isSyntheticAggregateRecord,
   makeAssetKey,
   maybeNormalizeMinorUnitAmount,
+  selectCanonicalWealthExposureRecords,
   TENENCIA_CXC_PREFIX_LABEL,
+  type CanonicalWealthExposureGroup,
   type WealthFxRates,
   type WealthRecord,
 } from './wealthStorage';
@@ -28,7 +13,7 @@ import {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export type WealthFreshnessBucket = 'fresh' | 'aging' | 'stale' | 'unknown';
-export type WealthFreshnessGroup = 'investment' | 'bank' | 'real_estate' | 'mortgage_debt' | 'non_mortgage_debt';
+export type WealthFreshnessGroup = CanonicalWealthExposureGroup;
 
 export interface WealthFreshnessComponent {
   id: string;
@@ -63,53 +48,11 @@ export interface WealthFreshnessOptions {
   now?: Date | number;
 }
 
-type CanonicalRecord = {
-  record: WealthRecord;
-  group: WealthFreshnessGroup;
-  isDebt: boolean;
-};
-
-const keySet = (labels: readonly string[]) => new Set(labels.map(labelMatchKey));
-
-const AGGREGATE_BANK_LABELS_CLP = keySet([BANK_BALANCE_CLP_LABEL, BANK_BALANCE_CLP_LEGACY_LABEL]);
-const AGGREGATE_BANK_LABELS_USD = keySet([BANK_BALANCE_USD_LABEL, BANK_BALANCE_USD_LEGACY_LABEL]);
-const PROVIDER_BANK_LABELS_CLP = keySet(BANK_PROVIDER_CLP_LABELS);
-const PROVIDER_BANK_LABELS_USD = keySet(BANK_PROVIDER_USD_LABELS);
-const AGGREGATE_DEBT_LABELS_CLP = keySet([DEBT_CARD_CLP_LABEL, DEBT_CARD_CLP_LEGACY_LABEL]);
-const AGGREGATE_DEBT_LABELS_USD = keySet([DEBT_CARD_USD_LABEL, DEBT_CARD_USD_LEGACY_LABEL]);
-const MANUAL_CARD_LABEL_KEYS = keySet(MANUAL_CARD_LABELS);
-
-const hasKey = (set: Set<string>, label: string) => set.has(labelMatchKey(label));
 const TENENCIA_BASE_KEY = labelMatchKey(TENENCIA_CXC_PREFIX_LABEL);
 const isTenenciaLabel = (label: string) => {
   const key = labelMatchKey(label);
   return key === TENENCIA_BASE_KEY || key.startsWith(`${TENENCIA_BASE_KEY} `);
 };
-
-const isAggregateBankLabel = (record: Pick<WealthRecord, 'label' | 'currency'>) => {
-  if (record.currency === 'CLP') return hasKey(AGGREGATE_BANK_LABELS_CLP, record.label);
-  if (record.currency === 'USD') return hasKey(AGGREGATE_BANK_LABELS_USD, record.label);
-  return false;
-};
-
-const isProviderBankLabel = (record: Pick<WealthRecord, 'label' | 'currency'>) => {
-  if (record.currency === 'CLP') return hasKey(PROVIDER_BANK_LABELS_CLP, record.label);
-  if (record.currency === 'USD') return hasKey(PROVIDER_BANK_LABELS_USD, record.label);
-  return false;
-};
-
-const isAggregateDebtLabel = (record: Pick<WealthRecord, 'label' | 'currency'>) => {
-  if (record.currency === 'CLP') return hasKey(AGGREGATE_DEBT_LABELS_CLP, record.label);
-  if (record.currency === 'USD') return hasKey(AGGREGATE_DEBT_LABELS_USD, record.label);
-  return false;
-};
-
-const isDetailedBankRecord = (record: WealthRecord) =>
-  record.block === 'bank' &&
-  !isNonMortgageDebtRecord(record) &&
-  !isSyntheticAggregateRecord(record) &&
-  !isAggregateBankLabel(record) &&
-  !isProviderBankLabel(record);
 
 const toClp = (record: WealthRecord, fx: WealthFxRates) => {
   const normalizedAmount = maybeNormalizeMinorUnitAmount(record, record.amount);
@@ -171,83 +114,6 @@ const bucketFromDays = (daysOld: number | null): WealthFreshnessBucket => {
   return 'stale';
 };
 
-const selectCanonicalRecords = (records: WealthRecord[], includeRiskCapitalInTotals: boolean): CanonicalRecord[] => {
-  const riskFiltered = filterRecordsByRiskCapitalPreference(records, includeRiskCapitalInTotals);
-  const latest = dedupeLatestByAsset(riskFiltered).filter((record) => !isSyntheticAggregateRecord(record));
-
-  const bankCandidates = latest.filter((record) => record.block === 'bank' && !isNonMortgageDebtRecord(record));
-  const hasProviderBankClp = bankCandidates.some((record) => record.currency === 'CLP' && isProviderBankLabel(record));
-  const hasProviderBankUsd = bankCandidates.some((record) => record.currency === 'USD' && isProviderBankLabel(record));
-  const hasDetailedBankClp = bankCandidates.some((record) => record.currency === 'CLP' && isDetailedBankRecord(record));
-  const hasDetailedBankUsd = bankCandidates.some((record) => record.currency === 'USD' && isDetailedBankRecord(record));
-
-  const debtCandidates = latest.filter(
-    (record) => isNonMortgageDebtRecord(record) && !isMortgagePrincipalDebtLabel(record.label),
-  );
-  const hasDetailedDebtClp = debtCandidates.some((record) => record.currency === 'CLP' && !isAggregateDebtLabel(record));
-  const hasDetailedDebtUsd = debtCandidates.some((record) => record.currency === 'USD' && !isAggregateDebtLabel(record));
-  const hasAggregateDebtClp = debtCandidates.some((record) => record.currency === 'CLP' && isAggregateDebtLabel(record));
-  const hasAggregateDebtUsd = debtCandidates.some((record) => record.currency === 'USD' && isAggregateDebtLabel(record));
-  let aggregateDebtClpCounted = false;
-  let aggregateDebtUsdCounted = false;
-
-  const selected: CanonicalRecord[] = [];
-
-  for (const record of latest) {
-    if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) continue;
-    const label = labelMatchKey(record.label);
-    const nonMortgageDebt = isNonMortgageDebtRecord(record);
-
-    if (record.block === 'investment') {
-      selected.push({ record, group: 'investment', isDebt: false });
-      continue;
-    }
-    if (record.block === 'real_estate') {
-      selected.push({ record, group: 'real_estate', isDebt: false });
-      continue;
-    }
-    if (isMortgagePrincipalDebtLabel(record.label)) {
-      selected.push({ record, group: 'mortgage_debt', isDebt: true });
-      continue;
-    }
-    if (record.block === 'bank' && !nonMortgageDebt) {
-      if (record.currency === 'CLP') {
-        if (hasProviderBankClp && !PROVIDER_BANK_LABELS_CLP.has(label)) continue;
-        if (!hasProviderBankClp && hasDetailedBankClp && AGGREGATE_BANK_LABELS_CLP.has(label)) continue;
-      }
-      if (record.currency === 'USD') {
-        if (hasProviderBankUsd && !PROVIDER_BANK_LABELS_USD.has(label)) continue;
-        if (!hasProviderBankUsd && hasDetailedBankUsd && AGGREGATE_BANK_LABELS_USD.has(label)) continue;
-      }
-      selected.push({ record, group: 'bank', isDebt: false });
-      continue;
-    }
-    if (nonMortgageDebt) {
-      if (record.currency === 'CLP') {
-        if (hasDetailedDebtClp && AGGREGATE_DEBT_LABELS_CLP.has(label)) continue;
-        if (!hasDetailedDebtClp && hasAggregateDebtClp) {
-          if (!AGGREGATE_DEBT_LABELS_CLP.has(label)) continue;
-          if (aggregateDebtClpCounted) continue;
-          aggregateDebtClpCounted = true;
-        }
-      }
-      if (record.currency === 'USD') {
-        if (hasDetailedDebtUsd && AGGREGATE_DEBT_LABELS_USD.has(label)) continue;
-        if (!hasDetailedDebtUsd && hasAggregateDebtUsd) {
-          if (!AGGREGATE_DEBT_LABELS_USD.has(label)) continue;
-          if (aggregateDebtUsdCounted) continue;
-          aggregateDebtUsdCounted = true;
-        }
-      }
-      if (MANUAL_CARD_LABEL_KEYS.has(label) || isAggregateDebtLabel(record) || record.block === 'debt' || record.block === 'bank') {
-        selected.push({ record, group: 'non_mortgage_debt', isDebt: true });
-      }
-    }
-  }
-
-  return selected;
-};
-
 export const buildWealthFreshnessModel = (
   records: WealthRecord[],
   fxRates: WealthFxRates,
@@ -256,7 +122,7 @@ export const buildWealthFreshnessModel = (
   const nowMs = options.now instanceof Date ? options.now.getTime() : Number(options.now ?? Date.now());
   const safeNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
   const hasRiskCapital = records.some((record) => record.block === 'investment' && isRiskCapitalInvestmentLabel(record.label));
-  const selected = selectCanonicalRecords(records, options.includeRiskCapitalInTotals);
+  const selected = selectCanonicalWealthExposureRecords(records, options.includeRiskCapitalInTotals);
 
   const rawComponents = selected
     .map(({ record, group, isDebt }) => {

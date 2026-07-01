@@ -21,6 +21,7 @@ import {
   loadInvestmentInstruments,
   makeAssetKey,
   resolveRiskCapitalRecordsForTotals,
+  selectCanonicalWealthExposureRecords,
   type WealthCurrency,
   type WealthFxRates,
   type WealthInvestmentInstrument,
@@ -451,9 +452,20 @@ export const buildMonthlyClosePreflightDiagnostic = (
     now: nowMs,
   });
 
-  const uiMap = aggregateRecordsByDiagnosticKey(uiRecordsEquivalent, safeFx, nowMs);
-  const closeMap = aggregateRecordsByDiagnosticKey(closeTargetRecords, safeFx, nowMs);
-  const closeMonthRawMap = aggregateRecordsByDiagnosticKey(latestRecordsForMonth(input.records, targetMonthKey), safeFx, nowMs);
+  const uiDiagnosticRecords = selectCanonicalWealthExposureRecords(
+    uiRecordsEquivalent,
+    input.includeRiskCapitalInTotals,
+  ).map((entry) => entry.record);
+  const closeDiagnosticRecords = selectCanonicalWealthExposureRecords(
+    closeTargetForTotals,
+    input.includeRiskCapitalInTotals,
+  ).map((entry) => entry.record);
+  const freshnessRecordById = new Map(
+    selectCanonicalWealthExposureRecords(input.records, input.includeRiskCapitalInTotals).map((entry) => [entry.record.id, entry.record]),
+  );
+
+  const uiMap = aggregateRecordsByDiagnosticKey(uiDiagnosticRecords, safeFx, nowMs);
+  const closeMap = aggregateRecordsByDiagnosticKey(closeDiagnosticRecords, safeFx, nowMs);
 
   const freshnessMap = new Map<
     string,
@@ -475,7 +487,20 @@ export const buildMonthlyClosePreflightDiagnostic = (
     const key =
       isTenenciaKey(component.label)
         ? `investment::${labelMatchKey(TENENCIA_CXC_PREFIX_LABEL)}::merged`
-        : `${component.group}::${labelMatchKey(component.label)}::${component.recordIds.join('|')}`;
+        : diagnosticAssetKey(
+            freshnessRecordById.get(component.recordIds[0]) || {
+              block:
+                component.group === 'real_estate'
+                  ? 'real_estate'
+                  : component.group === 'mortgage_debt' || component.group === 'non_mortgage_debt'
+                    ? 'debt'
+                    : component.group === 'bank'
+                      ? 'bank'
+                      : 'investment',
+              label: component.label,
+              currency: 'CLP',
+            },
+          );
     freshnessMap.set(key, {
       label: component.label,
       block:
@@ -507,13 +532,12 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const unionKeys = new Set<string>([
     ...uiMap.keys(),
     ...closeMap.keys(),
-    ...closeMonthRawMap.keys(),
     ...freshnessMap.keys(),
   ]);
 
   const assetRows = [...unionKeys]
     .map<MonthlyClosePreflightAssetRow>((key) => {
-      const ui = uiMap.get(key) || closeMonthRawMap.get(key) || null;
+      const ui = uiMap.get(key) || null;
       const close = closeMap.get(key) || null;
       const freshnessItem = freshnessMap.get(key) || null;
       const notes = Array.from(
@@ -775,6 +799,12 @@ export const buildMonthlyClosePreflightDiagnostic = (
   const freshnessMismatches = latestFreshnessMaterial.filter(
     (row) => row.missingInClose || Math.abs(Number(row.diffFreshnessVsClose || 0)) > MATERIALITY_CLP,
   );
+  const assetDebtUiClp = assetRows
+    .filter((row) => row.assetType === 'card_debt' && row.includedInPatrimonioUI)
+    .reduce((sum, row) => sum + Math.abs(Number(row.amountClpPatrimonioUI || 0)), 0);
+  const assetDebtCloseClp = assetRows
+    .filter((row) => row.assetType === 'card_debt' && row.includedInClose)
+    .reduce((sum, row) => sum + Math.abs(Number(row.amountClpCloseTarget || 0)), 0);
 
   const checks: MonthlyClosePreflightCheck[] = [
     buildCheck(
@@ -818,6 +848,15 @@ export const buildMonthlyClosePreflightDiagnostic = (
       'sum(targetRecords) == summary',
       Math.abs(Number(closeSummary.netClp || 0) - closeSectionAmounts.totalNetClp) <= DIFF_TOLERANCE_CLP ? 'ok' : 'fail',
       `Summary netClp ${Number(closeSummary.netClp || 0).toLocaleString('es-CL')} vs total canónico ${closeSectionAmounts.totalNetClp.toLocaleString('es-CL')}.`,
+    ),
+    buildCheck(
+      'debt_assets_match_blocks',
+      'tarjetas/deudas asset-level cuadra con subtotal canónico',
+      Math.abs(assetDebtUiClp - Math.abs(uiSectionAmounts.nonMortgageDebt)) <= DIFF_TOLERANCE_CLP &&
+        Math.abs(assetDebtCloseClp - Math.abs(closeSectionAmounts.nonMortgageDebt)) <= DIFF_TOLERANCE_CLP
+        ? 'ok'
+        : 'fail',
+      `Debt assets UI ${assetDebtUiClp.toLocaleString('es-CL')} vs subtotal UI ${Math.abs(uiSectionAmounts.nonMortgageDebt).toLocaleString('es-CL')} · cierre ${assetDebtCloseClp.toLocaleString('es-CL')} vs subtotal cierre ${Math.abs(closeSectionAmounts.nonMortgageDebt).toLocaleString('es-CL')}.`,
     ),
     buildCheck(
       'mortgage_sign',

@@ -9,6 +9,7 @@ vi.mock('../src/services/firebase', () => ({
 
 import {
   BANK_BCHILE_CLP_LABEL,
+  CARD_MASTERCARD_SANTANDER_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
   REAL_ESTATE_PROPERTY_VALUE_LABEL,
@@ -219,5 +220,59 @@ describe('monthly close preflight diagnostic', () => {
 
     expect(diagnostic.decision).toBe('NO_GO_DATA_QUALITY');
     expect(diagnostic.checks.find((check) => check.key === 'fx_complete')?.status).toBe('fail');
+  });
+
+  it('keeps non-mortgage debt canonical when aggregate and detailed rows coexist', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'bank-jun',
+        block: 'bank',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 120_000_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'card-detailed-jun',
+        block: 'debt',
+        label: CARD_MASTERCARD_SANTANDER_LABEL,
+        amount: 93_200_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'card-aggregate-jun',
+        block: 'debt',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 93_200_000,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:05:00Z',
+        note: 'legacy aggregate fallback',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+    });
+
+    const debtRow = diagnostic.blockRows.find((row) => row.block === 'tarjetas/deudas');
+    const debtAssetRows = diagnostic.assetRows.filter((row) => row.assetType === 'card_debt');
+    const aggregateUiRow = debtAssetRows.find((row) => row.label === DEBT_CARD_CLP_LABEL && row.includedInPatrimonioUI);
+
+    expect(debtRow?.valuePatrimonioUI).toBe(93_200_000);
+    expect(debtRow?.valueCloseTarget).toBe(93_200_000);
+    expect(debtAssetRows.reduce((sum, row) => sum + Math.abs(Number(row.amountClpCloseTarget || 0)), 0)).toBe(93_200_000);
+    expect(aggregateUiRow).toBeUndefined();
+    expect(diagnostic.checks.find((check) => check.key === 'debt_assets_match_blocks')?.status).toBe('ok');
   });
 });
