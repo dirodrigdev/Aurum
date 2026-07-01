@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Aurum wealth data is user-scoped. This includes:
+    // - root wealth doc
+    // - monthly close checkpoints
+    // - backups
+    // - undo audit
+    match /aurum_wealth/{userId} {
+      allow read, create, update, delete: if isOwner(userId);
+
+      match /{subPath=**} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+    }
+
+    // User-scoped MIDAS config persisted in the same Firebase project.
+    match /users/{userId} {
+      allow read, create, update, delete: if isOwner(userId);
+
+      match /{subPath=**} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+    }
+
+    // Published Aurum snapshot is read by authenticated clients.
+    // Writes are performed by server/admin code only.
+    match /aurum_published/{docId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Legacy global MIDAS config can still be inspected by authenticated clients,
+    // but should not be written directly from the browser.
+    match /midas_config/{docId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Refresh intents are managed by server/admin code.
+    match /fintoc_refresh_intents/{docId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, create, update, delete: if false;
+    }
+  }
+}
