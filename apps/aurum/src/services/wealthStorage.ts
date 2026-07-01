@@ -3313,49 +3313,15 @@ const saveMonthlyCloseCheckpointToCloud = async (
         path: `${WEALTH_CLOUD_DOC_COLLECTION}/{uid}/${WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_COLLECTION}/${storageKey}`,
         monthKey: checkpoint.monthKey,
       });
-      const wealthRef = await getWealthCloudRef();
-      if (!wealthRef) {
-        return {
-          ok: false,
-          message: classified.code === 'permission-denied'
-            ? classified.message
-            : 'No hay una sesión Firebase válida para guardar el checkpoint cloud del cierre.',
-          storage: null,
-          code: classified.code,
-          storageKey,
-        };
-      }
-      try {
-        await setDoc(
-          wealthRef,
-          {
-            [WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD]: {
-              [storageKey]: checkpointPayload,
-            },
-          },
-          { merge: true },
-        );
-        return {
-          ok: true,
-          message: 'Checkpoint guardado en doc raíz cloud.',
-          storage: 'root-doc',
-          storageKey,
-        };
-      } catch (fallbackErr: any) {
-        const fallbackClassified = classifyCloudWriteError(fallbackErr);
-        console.error('[Aurum][close-checkpoint] root-doc fallback failed', {
-          code: fallbackClassified.code || 'unknown',
-          path: `${WEALTH_CLOUD_DOC_COLLECTION}/{uid}.${WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD}.${storageKey}`,
-          monthKey: checkpoint.monthKey,
-        });
-        return {
-          ok: false,
-          message: fallbackClassified.message,
-          storage: null,
-          code: fallbackClassified.code || classified.code,
-          storageKey,
-        };
-      }
+      return {
+        ok: false,
+        message: classified.code === 'permission-denied'
+          ? classified.message
+          : classified.message || 'No se pudo guardar el checkpoint cloud del cierre en la subcolección.',
+        storage: null,
+        code: classified.code,
+        storageKey,
+      };
     }
   }
   return {
@@ -3365,6 +3331,60 @@ const saveMonthlyCloseCheckpointToCloud = async (
     code: 'no_uid_or_firebase_config',
     storageKey,
   };
+};
+
+const pruneMonthlyCloseCheckpointSubcollection = async (input: {
+  checkpointsRef: any;
+  keep: number;
+  preserveStorageKey: string;
+}): Promise<{ ok: boolean; keptCount: number; deletedCount: number; message?: string }> => {
+  try {
+    const keep = Math.max(1, Math.min(12, input.keep));
+    const snap = await getDocs(
+      query(
+        input.checkpointsRef,
+        orderBy('createdAt', 'desc'),
+        limit(Math.max(keep + 6, 12)),
+      ),
+    );
+    const docs = snap.docs
+      .map((item: any) => {
+        const raw = item.data() || {};
+        return {
+          id: String(item.id || ''),
+          raw,
+          checkpoint: normalizeCheckpoint(raw),
+        };
+      })
+      .filter((item: { id: string; raw: any; checkpoint: WealthMonthlyCloseCheckpoint | null }) => {
+        if (!item.id || !item.checkpoint) return false;
+        if (item.id === input.preserveStorageKey) return true;
+        if (item.raw?.probe === true) return false;
+        return true;
+      })
+      .sort((a, b) => String(b.checkpoint?.createdAt || '').localeCompare(String(a.checkpoint?.createdAt || '')));
+
+    const keepIds = new Set<string>(docs.slice(0, keep).map((item) => item.id));
+    keepIds.add(input.preserveStorageKey);
+    let deletedCount = 0;
+    for (const item of docs) {
+      if (keepIds.has(item.id)) continue;
+      await deleteDoc(doc(input.checkpointsRef, item.id));
+      deletedCount += 1;
+    }
+    return {
+      ok: true,
+      keptCount: keepIds.size,
+      deletedCount,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      keptCount: 1,
+      deletedCount: 0,
+      message: String(err?.message || 'No se pudo aplicar la retención de checkpoints.'),
+    };
+  }
 };
 
 const loadMonthlyCloseCheckpointFromCloudByStorageKey = async (
@@ -3385,7 +3405,6 @@ const loadMonthlyCloseCheckpointFromCloudByStorageKey = async (
     };
   }
   const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
-  let subcollectionReadError: { code?: string; message?: string } | null = null;
   if (checkpointsRef) {
     try {
       const checkpointRef = doc(checkpointsRef, normalizedStorageKey);
@@ -3398,48 +3417,13 @@ const loadMonthlyCloseCheckpointFromCloudByStorageKey = async (
       }
     } catch (err: any) {
       const classified = classifyCloudWriteError(err);
-      subcollectionReadError = {
+      return {
+        checkpoint: null,
+        storage: null,
         code: classified.code,
         message: classified.message,
       };
     }
-  }
-  const wealthRef = await getWealthCloudRef();
-  if (!wealthRef) {
-    return {
-      checkpoint: null,
-      storage: null,
-      code: 'no_uid_or_firebase_config',
-      message: 'No hay una sesión Firebase válida para verificar el checkpoint cloud del cierre.',
-    };
-  }
-  try {
-    const snap = await getDoc(wealthRef);
-    if (snap.exists()) {
-      const raw = snap.data()?.[WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD]?.[normalizedStorageKey];
-      if (raw) {
-        return {
-          checkpoint: normalizeCheckpoint(raw),
-          storage: 'root-doc',
-        };
-      }
-    }
-  } catch (err: any) {
-    const classified = classifyCloudWriteError(err);
-    return {
-      checkpoint: null,
-      storage: null,
-      code: classified.code,
-      message: classified.message,
-    };
-  }
-  if (subcollectionReadError) {
-    return {
-      checkpoint: null,
-      storage: null,
-      code: subcollectionReadError.code,
-      message: subcollectionReadError.message,
-    };
   }
   return {
     checkpoint: null,
@@ -3470,40 +3454,6 @@ const deleteMonthlyCloseCheckpointFromCloudByStorageKey = async (
     }
     try {
       await deleteDoc(doc(checkpointsRef, normalizedStorageKey));
-      return { ok: true };
-    } catch (err: any) {
-      const classified = classifyCloudWriteError(err);
-      return {
-        ok: false,
-        code: classified.code,
-        message: classified.message,
-      };
-    }
-  }
-  if (storage === 'root-doc') {
-    const wealthRef = await getWealthCloudRef();
-    if (!wealthRef) {
-      return {
-        ok: false,
-        code: 'no_uid_or_firebase_config',
-        message: 'No hay una sesión Firebase válida para limpiar el checkpoint temporal.',
-      };
-    }
-    try {
-      const snap = await getDoc(wealthRef);
-      if (!snap.exists()) return { ok: true };
-      const current = snap.data()?.[WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD];
-      const checkpoints =
-        current && typeof current === 'object' ? { ...current } : {};
-      if (!(normalizedStorageKey in checkpoints)) return { ok: true };
-      delete checkpoints[normalizedStorageKey];
-      await setDoc(
-        wealthRef,
-        {
-          [WEALTH_CLOUD_MONTHLY_CLOSE_CHECKPOINTS_FIELD]: checkpoints,
-        },
-        { merge: true },
-      );
       return { ok: true };
     } catch (err: any) {
       const classified = classifyCloudWriteError(err);
@@ -3571,25 +3521,27 @@ const captureMonthlyCloseCheckpointCloudFirstDetailed = async (
       errorMessage: cloudResult.message,
     };
   }
+  const checkpointsRef = await getMonthlyCloseCheckpointsCollectionRef();
+  if (checkpointsRef) {
+    const retentionResult = await pruneMonthlyCloseCheckpointSubcollection({
+      checkpointsRef,
+      keep: 2,
+      preserveStorageKey: cloudResult.storageKey,
+    });
+    if (!retentionResult.ok) {
+      console.warn('[Aurum][close-checkpoint] retention prune failed', {
+        keep: 2,
+        preserveStorageKey: cloudResult.storageKey,
+        message: retentionResult.message || 'unknown',
+      });
+    }
+  }
   saveMonthlyCloseCheckpointToLocalCache(checkpoint);
   return {
     checkpoint,
     errorMessage: null,
   };
 };
-
-const isCheckpointCloudExternalBlocker = (code?: string | null) =>
-  [
-    'permission-denied',
-    'unauthenticated',
-    'auth/no-current-user',
-    'unavailable',
-    'deadline-exceeded',
-    'undo_cloud_write_timeout',
-    'undo_cloud_verify_timeout',
-    'audit_timeout',
-    'no_uid_or_firebase_config',
-  ].includes(String(code || '').trim());
 
 const buildMonthlyCloseCheckpointState = (
   monthKey: string,
@@ -3675,9 +3627,7 @@ export const verifyMonthlyCloseCheckpointReadiness = async (input: {
   });
   if (!saveResult.ok) {
     return {
-      status: isCheckpointCloudExternalBlocker(saveResult.code)
-        ? 'EXTERNAL_BLOCKER_NEEDS_USER_ACTION'
-        : 'BACKUP_NOT_READY',
+      status: 'BACKUP_NOT_READY',
       monthKey: normalizedMonthKey,
       message: saveResult.message,
       storage: saveResult.storage,
@@ -3695,9 +3645,7 @@ export const verifyMonthlyCloseCheckpointReadiness = async (input: {
       readBack.storage || saveResult.storage,
     );
     return {
-      status: isCheckpointCloudExternalBlocker(readBack.code)
-        ? 'EXTERNAL_BLOCKER_NEEDS_USER_ACTION'
-        : 'BACKUP_NOT_READY',
+      status: 'BACKUP_NOT_READY',
       monthKey: normalizedMonthKey,
       message:
         readBack.message || 'No pude confirmar el checkpoint temporal en la nube.',

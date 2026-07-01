@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
+import { deleteDoc, getDoc, getDocFromServer, setDoc } from 'firebase/firestore';
 
 type MockDoc = { __path: string };
 const cloudStore = new Map<string, any>();
@@ -16,6 +16,12 @@ vi.mock('firebase/firestore', () => {
   const collection = (ref: MockDoc, ...segments: string[]): MockDoc => ({
     __path: pathOf([ref?.__path, ...segments]),
   });
+  const orderBy = vi.fn((field: string, direction: string) => ({ kind: 'orderBy', field, direction }));
+  const limit = vi.fn((value: number) => ({ kind: 'limit', value }));
+  const query = vi.fn((ref: MockDoc, ...constraints: any[]) => ({
+    __path: ref?.__path,
+    __constraints: constraints,
+  }));
   const getDoc = vi.fn(async (ref: MockDoc) => {
     const value = cloudStore.get(ref.__path);
     return {
@@ -29,6 +35,31 @@ vi.mock('firebase/firestore', () => {
       exists: () => value !== undefined,
       data: () => value,
     };
+  });
+  const getDocs = vi.fn(async (refOrQuery: any) => {
+    const basePath = String(refOrQuery?.__path || '');
+    const constraints = Array.isArray(refOrQuery?.__constraints) ? refOrQuery.__constraints : [];
+    let docs = [...cloudStore.entries()]
+      .filter(([path]) => path.startsWith(`${basePath}/`) && !path.slice(basePath.length + 1).includes('/'))
+      .map(([path, value]) => ({
+        id: path.split('/').pop() || '',
+        data: () => value,
+      }));
+    const orderConstraint = constraints.find((item: any) => item?.kind === 'orderBy');
+    if (orderConstraint) {
+      docs = docs.sort((a, b) => {
+        const left = String(a.data()?.[orderConstraint.field] || '');
+        const right = String(b.data()?.[orderConstraint.field] || '');
+        return orderConstraint.direction === 'desc'
+          ? right.localeCompare(left)
+          : left.localeCompare(right);
+      });
+    }
+    const limitConstraint = constraints.find((item: any) => item?.kind === 'limit');
+    if (limitConstraint?.value) {
+      docs = docs.slice(0, limitConstraint.value);
+    }
+    return { docs };
   });
   const setDoc = vi.fn(async (ref: MockDoc, payload: any, options?: { merge?: boolean }) => {
     if (options?.merge && cloudStore.has(ref.__path)) {
@@ -45,11 +76,11 @@ vi.mock('firebase/firestore', () => {
     doc,
     getDoc,
     getDocFromServer,
-    getDocs: vi.fn(async () => ({ docs: [] })),
-    limit: vi.fn((value: number) => value),
+    getDocs,
+    limit,
     onSnapshot: vi.fn(() => () => {}),
-    orderBy: vi.fn((field: string, direction: string) => ({ field, direction })),
-    query: vi.fn(() => ({})),
+    orderBy,
+    query,
     setDoc,
   };
 });
@@ -210,6 +241,8 @@ describe('monthly close undo checkpoint', () => {
     expect(checkpoint?.monthKey).toBe(created.monthKey);
     expect(checkpoint?.hadPreviousClosure).toBe(false);
     expect(checkpoint?.previousClosure).toBeNull();
+    expect(cloudStore.has('aurum_wealth/test-user/monthly_close_checkpoints/2026-04')).toBe(true);
+    expect(cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints).toBeUndefined();
   });
 
   it('blocks close immediately when monthKey is invalid', async () => {
@@ -432,24 +465,9 @@ describe('monthly close undo checkpoint', () => {
     ).toBe(false);
   });
 
-  it('restores full checkpoint state from root doc fallback cloud', async () => {
+  it('restores full checkpoint state from legacy root doc checkpoint when subcollection is absent', async () => {
     const preCloseRecords = recordsForMonth('2026-05', 12_000_000, 93_200_000);
     saveWealthRecords(preCloseRecords, { skipCloudSync: true });
-
-    const setDocMock = vi.mocked(setDoc);
-    const original = setDocMock.getMockImplementation();
-    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
-      if (String(ref?.__path || '').includes('/monthly_close_checkpoints/')) {
-        const err: any = new Error('permission denied');
-        err.code = 'permission-denied';
-        throw err;
-      }
-      if (options?.merge && cloudStore.has(ref.__path)) {
-        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
-        return;
-      }
-      cloudStore.set(ref.__path, payload);
-    });
 
     await closeMonthlyWithCheckpoint({
       monthKey: '2026-05',
@@ -457,6 +475,16 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
       closedAt: '2026-05-31T23:59:59.000Z',
     });
+    const subcollectionPath = 'aurum_wealth/test-user/monthly_close_checkpoints/2026-05';
+    const checkpoint = cloudStore.get(subcollectionPath);
+    cloudStore.set('aurum_wealth/test-user', {
+      ...(cloudStore.get('aurum_wealth/test-user') || {}),
+      monthlyCloseCheckpoints: {
+        '2026-05': checkpoint,
+      },
+    });
+    cloudStore.delete(subcollectionPath);
+    localStorage.setItem('wealth_monthly_close_checkpoints_v1', '[]');
     saveWealthRecords(recordsForMonth('2026-06', 1_000_000, 500_000).map((record) => withCarryNote(record, '2026-05')), {
       skipCloudSync: true,
     });
@@ -467,12 +495,6 @@ describe('monthly close undo checkpoint', () => {
     expect(
       cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints?.['2026-05']?.state?.records?.length,
     ).toBe(preCloseRecords.length);
-
-    if (original) {
-      setDocMock.mockImplementation(original);
-    } else {
-      setDocMock.mockReset();
-    }
   });
 
   it('legacy rollback removes the bad close cloud-first without touching current records', async () => {
@@ -915,6 +937,9 @@ describe('monthly close undo checkpoint', () => {
     expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
     expect(getMonthlyCloseCheckpoint('2026-06')).toBeNull();
     expect(
+      vi.mocked(setDoc).mock.calls.some(([ref]) => String((ref as any)?.__path || '') === 'aurum_wealth/test-user'),
+    ).toBe(false);
+    expect(
       [...cloudStore.keys()].some((key) => key.includes('/monthly_close_checkpoints/probe_2026-06_')),
     ).toBe(false);
   });
@@ -929,12 +954,12 @@ describe('monthly close undo checkpoint', () => {
       fxRates,
     });
 
-    expect(result.status).toBe('EXTERNAL_BLOCKER_NEEDS_USER_ACTION');
+    expect(result.status).toBe('BACKUP_NOT_READY');
     expect(result.cloudVerified).toBe(false);
     expect(loadClosures().some((closure) => closure.monthKey === '2026-06')).toBe(false);
   });
 
-  it('falls back to root doc cloud checkpoint when subcollection write is denied', async () => {
+  it('returns BACKUP_NOT_READY when backup verification cannot write the probe subcollection', async () => {
     const setDocMock = vi.mocked(setDoc);
     const original = setDocMock.getMockImplementation();
     setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
@@ -950,19 +975,15 @@ describe('monthly close undo checkpoint', () => {
       cloudStore.set(ref.__path, payload);
     });
 
-    const created = await closeMonthlyWithCheckpoint({
-      monthKey: '2026-04',
-      records: recordsForMonth('2026-04'),
+    const result = await verifyMonthlyCloseCheckpointReadiness({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 93_200_000),
       fxRates,
-      closedAt: '2026-04-15T12:00:00.000Z',
     });
 
-    expect(created.monthKey).toBe('2026-04');
-    expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(true);
-    expect(getMonthlyCloseCheckpoint('2026-04')).not.toBeNull();
-    expect(
-      cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints?.['2026-04']?.monthKey,
-    ).toBe('2026-04');
+    expect(result.status).toBe('BACKUP_NOT_READY');
+    expect(result.cloudVerified).toBe(false);
+    expect(cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints).toBeUndefined();
 
     if (original) {
       setDocMock.mockImplementation(original);
@@ -971,7 +992,112 @@ describe('monthly close undo checkpoint', () => {
     }
   });
 
-  it('preview undo reads checkpoint from root doc fallback as cloud source', async () => {
+  it('does not depend on writing the root doc when it is already oversized and subcollection works', async () => {
+    const setDocMock = vi.mocked(setDoc);
+    const original = setDocMock.getMockImplementation();
+    setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
+      if (String(ref?.__path || '') === 'aurum_wealth/test-user' && payload?.monthlyCloseCheckpoints) {
+        const err: any = new Error("Document too large");
+        err.code = 'resource-exhausted';
+        throw err;
+      }
+      if (options?.merge && cloudStore.has(ref.__path)) {
+        cloudStore.set(ref.__path, { ...cloudStore.get(ref.__path), ...payload });
+        return;
+      }
+      cloudStore.set(ref.__path, payload);
+    });
+
+    const result = await verifyMonthlyCloseCheckpointReadiness({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 93_200_000),
+      fxRates,
+    });
+
+    expect(result.status).toBe('BACKUP_READY_FOR_JUNE_CLOSE');
+    expect(result.cloudVerified).toBe(true);
+    expect(
+      vi.mocked(setDoc).mock.calls.some(([ref, payload]) =>
+        String((ref as any)?.__path || '') === 'aurum_wealth/test-user' && !!(payload as any)?.monthlyCloseCheckpoints,
+      ),
+    ).toBe(false);
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
+  });
+
+  it('retains at most two real checkpoints in subcollection', async () => {
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 10_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 11_000_000, 2_000_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 3_000_000),
+      fxRates,
+      closedAt: '2026-06-30T23:59:59.000Z',
+    });
+
+    const checkpointPaths = [...cloudStore.keys()].filter((key) =>
+      key.startsWith('aurum_wealth/test-user/monthly_close_checkpoints/'),
+    );
+    expect(checkpointPaths).toHaveLength(2);
+    expect(checkpointPaths).toContain('aurum_wealth/test-user/monthly_close_checkpoints/2026-05');
+    expect(checkpointPaths).toContain('aurum_wealth/test-user/monthly_close_checkpoints/2026-06');
+  });
+
+  it('keeps at least the latest checkpoint when retention cleanup fails', async () => {
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-04',
+      records: recordsForMonth('2026-04', 10_000_000, 1_000_000),
+      fxRates,
+      closedAt: '2026-04-30T23:59:59.000Z',
+    });
+    await closeMonthlyWithCheckpoint({
+      monthKey: '2026-05',
+      records: recordsForMonth('2026-05', 11_000_000, 2_000_000),
+      fxRates,
+      closedAt: '2026-05-31T23:59:59.000Z',
+    });
+
+    const deleteDocMock = vi.mocked(deleteDoc);
+    const originalDelete = deleteDocMock.getMockImplementation();
+    deleteDocMock.mockImplementation(async (ref: any) => {
+      if (String(ref?.__path || '').endsWith('/2026-04')) {
+        throw new Error('cleanup failed');
+      }
+      cloudStore.delete(ref.__path);
+    });
+
+    const created = await closeMonthlyWithCheckpoint({
+      monthKey: '2026-06',
+      records: recordsForMonth('2026-06', 12_000_000, 3_000_000),
+      fxRates,
+      closedAt: '2026-06-30T23:59:59.000Z',
+    });
+
+    expect(created.monthKey).toBe('2026-06');
+    expect(cloudStore.has('aurum_wealth/test-user/monthly_close_checkpoints/2026-06')).toBe(true);
+
+    if (originalDelete) {
+      deleteDocMock.mockImplementation(originalDelete);
+    } else {
+      deleteDocMock.mockReset();
+    }
+  });
+
+  it('blocks close when subcollection checkpoint write is denied and does not write root doc fallback', async () => {
     const setDocMock = vi.mocked(setDoc);
     const original = setDocMock.getMockImplementation();
     setDocMock.mockImplementation(async (ref: any, payload: any, options?: { merge?: boolean }) => {
@@ -987,24 +1113,46 @@ describe('monthly close undo checkpoint', () => {
       cloudStore.set(ref.__path, payload);
     });
 
+    await expect(
+      closeMonthlyWithCheckpoint({
+        monthKey: '2026-04',
+        records: recordsForMonth('2026-04'),
+        fxRates,
+        closedAt: '2026-04-15T12:00:00.000Z',
+      }),
+    ).rejects.toThrow();
+    expect(loadClosures().some((closure) => closure.monthKey === '2026-04')).toBe(false);
+    expect(cloudStore.get('aurum_wealth/test-user')?.monthlyCloseCheckpoints).toBeUndefined();
+
+    if (original) {
+      setDocMock.mockImplementation(original);
+    } else {
+      setDocMock.mockReset();
+    }
+  });
+
+  it('preview undo reads legacy root doc checkpoint as cloud source', async () => {
     await closeMonthlyWithCheckpoint({
       monthKey: '2026-04',
       records: recordsForMonth('2026-04', 12_000_000, 1_500_000),
       fxRates,
       closedAt: '2026-04-15T12:00:00.000Z',
     });
+    const checkpoint = cloudStore.get('aurum_wealth/test-user/monthly_close_checkpoints/2026-04');
+    cloudStore.set('aurum_wealth/test-user', {
+      ...(cloudStore.get('aurum_wealth/test-user') || {}),
+      monthlyCloseCheckpoints: {
+        '2026-04': checkpoint,
+      },
+    });
+    cloudStore.delete('aurum_wealth/test-user/monthly_close_checkpoints/2026-04');
+    localStorage.setItem('wealth_monthly_close_checkpoints_v1', '[]');
 
     const preview = await previewUndoMonthlyClose('2026-04');
 
     expect(preview.ok).toBe(true);
     expect(preview.checkpointSource).toBe('cloud');
     expect(preview.checkpoint?.monthKey).toBe('2026-04');
-
-    if (original) {
-      setDocMock.mockImplementation(original);
-    } else {
-      setDocMock.mockReset();
-    }
   });
 
   it('does not report undo success when cloud persistence fails', async () => {
