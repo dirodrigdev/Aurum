@@ -705,9 +705,10 @@ describe('returns analysis helpers', () => {
     const estimate = buildPendingReturnEstimate(rows);
     expect(estimate?.monthKey).toBe('2026-04');
     expect(estimate?.availabilityLabel).toBe('12 may');
-    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['closed_average', 'previous_closed']);
-    const averageScenario = estimate?.scenarios.find((scenario) => scenario.key === 'closed_average');
-    expect(averageScenario?.label).toBe('Promedio disponible cerrado (4 meses)');
+    expect(estimate?.scenarios.map((scenario) => scenario.key)).toEqual(['avg_12m_closed', 'avg_6m_closed', 'previous_closed']);
+    expect(estimate?.selectedScenarioKey).toBe('avg_12m_closed');
+    const averageScenario = estimate?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
+    expect(averageScenario?.label).toBe('Promedio últimos 12 meses oficiales (4 meses disponibles)');
 
     const previousScenario = estimate?.scenarios.find((scenario) => scenario.key === 'previous_closed');
     expect(previousScenario?.spendClp).toBeCloseTo(TEST_GASTOS_EUR['2026-03'] * 1000, 6);
@@ -732,7 +733,7 @@ describe('returns analysis helpers', () => {
     const view = buildReturnsSeriesView(rows);
     expect(view.hasEstimatedMonth).toBe(true);
     expect(view.pendingEstimate?.monthKey).toBe('2026-04');
-    expect(view.pendingEstimate?.estimateMethod).toBe('avg_available_closed');
+    expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
     expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(4);
 
     const officialApril = view.officialRows.find((row) => row.monthKey === '2026-04');
@@ -747,18 +748,18 @@ describe('returns analysis helpers', () => {
     expect(officialApril?.gastosStatus).toBe('pending');
     expect(estimatedApril?.gastosStatus).toBe('complete');
     expect(estimatedApril?.isEstimated).toBe(true);
-    expect(estimatedApril?.estimateMethod).toBe('avg_available_closed');
+    expect(estimatedApril?.estimateMethod).toBe('avg_12m_closed');
     expect(estimatedApril?.retornoRealClp).not.toBeNull();
     expect(estimatedYtd.validMonths).toBe(4);
     expect(estimatedYtd.coverage.expectedMonths).toBe(4);
     expect(estimatedYtd.coverage.status).toBe('complete');
     expect(estimatedYtd.coverage.nonApplicableMonths).toEqual([]);
-    expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('closed_average');
-    expect(view.pendingEstimateDetail?.scenarios[1]?.key).toBe('previous_closed');
+    expect(view.pendingEstimateDetail?.scenarios[0]?.key).toBe('avg_12m_closed');
+    expect(view.pendingEstimateDetail?.scenarios[1]?.key).toBe('avg_6m_closed');
     expect(estimatedApril?.estimatedSpendClp).toBeCloseTo(view.pendingEstimate?.estimatedSpendClp ?? 0, 6);
   });
 
-  it('uses 12 closed months average as primary estimate method when available', () => {
+  it('uses the lower spend between 12M and 6M official averages as the estimate', () => {
     const closures: WealthMonthlyClosure[] = [];
     for (let i = 4; i <= 12; i += 1) {
       const month = String(i).padStart(2, '0');
@@ -772,9 +773,106 @@ describe('returns analysis helpers', () => {
     const view = buildReturnsSeriesView(rows);
     expect(view.hasEstimatedMonth).toBe(true);
     expect(view.pendingEstimate?.monthKey).toBe('2026-04');
-    expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
-    expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(12);
-    expect(view.pendingEstimateDetail?.scenarios[0]?.label).toBe('Promedio últimos 12 meses cerrados');
+    const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
+    const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
+    expect(avg12).toBeTruthy();
+    expect(avg6).toBeTruthy();
+    expect(view.pendingEstimate?.estimatedSpendClp).toBe(Math.min(avg12?.spendClp ?? Infinity, avg6?.spendClp ?? Infinity));
+    expect(view.pendingEstimate?.estimateMethod).toBe(
+      (avg12?.spendClp ?? Infinity) <= (avg6?.spendClp ?? Infinity) ? 'avg_12m_closed' : 'avg_6m_closed',
+    );
+  });
+
+  it('uses the 6M average when it is more conservative than 12M', () => {
+    const snapshot = { ...TEST_GASTOS_EUR };
+    Object.assign(TEST_GASTOS_EUR, {
+      '2025-05': 10_000,
+      '2025-06': 10_000,
+      '2025-07': 10_000,
+      '2025-08': 10_000,
+      '2025-09': 10_000,
+      '2025-10': 10_000,
+      '2025-11': 1_000,
+      '2025-12': 1_000,
+      '2026-01': 1_000,
+      '2026-02': 1_000,
+      '2026-03': 1_000,
+    });
+    try {
+      const closures = [
+        makeClosure('2025-05', { netClp: 800_000_000, eurClp: 1000 }),
+        makeClosure('2025-06', { netClp: 820_000_000, eurClp: 1000 }),
+        makeClosure('2025-07', { netClp: 840_000_000, eurClp: 1000 }),
+        makeClosure('2025-08', { netClp: 860_000_000, eurClp: 1000 }),
+        makeClosure('2025-09', { netClp: 880_000_000, eurClp: 1000 }),
+        makeClosure('2025-10', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2025-11', { netClp: 920_000_000, eurClp: 1000 }),
+        makeClosure('2025-12', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_020_000_000, eurClp: 1000 }),
+      ];
+      const rows = computeMonthlyRows(closures, false, 'CLP');
+      const view = buildReturnsSeriesView(rows);
+      expect(view.pendingEstimate?.estimateMethod).toBe('avg_6m_closed');
+      expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(6);
+      expect(view.pendingEstimateDetail?.selectedScenarioKey).toBe('avg_6m_closed');
+      const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
+      const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
+      expect(avg6?.spendClp ?? 0).toBeLessThan(avg12?.spendClp ?? Number.POSITIVE_INFINITY);
+    } finally {
+      Object.keys(TEST_GASTOS_EUR).forEach((key) => {
+        delete TEST_GASTOS_EUR[key];
+      });
+      Object.assign(TEST_GASTOS_EUR, snapshot);
+    }
+  });
+
+  it('keeps using the 12M average when it is more conservative than 6M', () => {
+    const snapshot = { ...TEST_GASTOS_EUR };
+    Object.assign(TEST_GASTOS_EUR, {
+      '2025-05': 1_000,
+      '2025-06': 1_000,
+      '2025-07': 1_000,
+      '2025-08': 1_000,
+      '2025-09': 1_000,
+      '2025-10': 10_000,
+      '2025-11': 10_000,
+      '2025-12': 10_000,
+      '2026-01': 10_000,
+      '2026-02': 10_000,
+      '2026-03': 10_000,
+    });
+    try {
+      const closures = [
+        makeClosure('2025-05', { netClp: 800_000_000, eurClp: 1000 }),
+        makeClosure('2025-06', { netClp: 820_000_000, eurClp: 1000 }),
+        makeClosure('2025-07', { netClp: 840_000_000, eurClp: 1000 }),
+        makeClosure('2025-08', { netClp: 860_000_000, eurClp: 1000 }),
+        makeClosure('2025-09', { netClp: 880_000_000, eurClp: 1000 }),
+        makeClosure('2025-10', { netClp: 900_000_000, eurClp: 1000 }),
+        makeClosure('2025-11', { netClp: 920_000_000, eurClp: 1000 }),
+        makeClosure('2025-12', { netClp: 940_000_000, eurClp: 1000 }),
+        makeClosure('2026-01', { netClp: 960_000_000, eurClp: 1000 }),
+        makeClosure('2026-02', { netClp: 980_000_000, eurClp: 1000 }),
+        makeClosure('2026-03', { netClp: 1_000_000_000, eurClp: 1000 }),
+        makeClosure('2026-04', { netClp: 1_020_000_000, eurClp: 1000 }),
+      ];
+      const rows = computeMonthlyRows(closures, false, 'CLP');
+      const view = buildReturnsSeriesView(rows);
+      expect(view.pendingEstimate?.estimateMethod).toBe('avg_12m_closed');
+      expect(view.pendingEstimate?.estimatedFromMonthsCount).toBe(11);
+      expect(view.pendingEstimateDetail?.selectedScenarioKey).toBe('avg_12m_closed');
+      const avg12 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed');
+      const avg6 = view.pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed');
+      expect(avg12?.spendClp ?? 0).toBeLessThan(avg6?.spendClp ?? Number.POSITIVE_INFINITY);
+    } finally {
+      Object.keys(TEST_GASTOS_EUR).forEach((key) => {
+        delete TEST_GASTOS_EUR[key];
+      });
+      Object.assign(TEST_GASTOS_EUR, snapshot);
+    }
   });
 
   it('emits official availability notice only for recent clean official months', () => {

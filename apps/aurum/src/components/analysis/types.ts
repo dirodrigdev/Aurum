@@ -56,7 +56,7 @@ export type MonthlyReturnRow = {
   inflationMonthlyRate: number | null;
   pctReal: number | null;
   isEstimated?: boolean;
-  estimateMethod?: 'avg_12m_closed' | 'avg_available_closed' | null;
+  estimateMethod?: 'avg_12m_closed' | 'avg_6m_closed' | null;
   estimatedSpendClp?: number | null;
   estimatedFromMonthsCount?: number | null;
   officialAvailableDate?: string | null;

@@ -80,7 +80,7 @@ export const buildPendingOfficialReturnInfo = (
 };
 
 export type ProvisionalReturnScenario = {
-  key: 'closed_average' | 'previous_closed';
+  key: 'avg_12m_closed' | 'avg_6m_closed' | 'previous_closed';
   label: string;
   spendDisplay: number;
   spendClp: number;
@@ -90,17 +90,20 @@ export type ProvisionalReturnScenario = {
   monthsUsed: number;
 };
 
+type AverageEstimateMethod = 'avg_12m_closed' | 'avg_6m_closed';
+
 export type PendingReturnEstimate = {
   monthKey: string;
   availabilityLabel: string | null;
   periodRangeLabel: string | null;
   varPatrimonioDisplay: number;
   scenarios: ProvisionalReturnScenario[];
+  selectedScenarioKey: AverageEstimateMethod | null;
 };
 
 export type EstimatedMonthMeta = {
   monthKey: string;
-  estimateMethod: 'avg_12m_closed' | 'avg_available_closed';
+  estimateMethod: AverageEstimateMethod;
   estimatedSpendClp: number;
   estimatedSpendDisplay: number;
   estimatedFromMonthsCount: number;
@@ -894,26 +897,32 @@ export const buildPendingReturnEstimate = (
     .filter((row) => row.monthKey < pendingRow.monthKey)
     .filter(validClosedSpendRow);
   const previousClosed = closedRows[closedRows.length - 1] || null;
-  const averageSample = closedRows.slice(-12);
   const info = buildPendingOfficialReturnInfo(pendingRow);
   const scenarios: ProvisionalReturnScenario[] = [];
 
-  if (averageSample.length >= 2) {
-    const avgDisplay = sumNumbers(averageSample.map((row) => row.gastosDisplay)) / averageSample.length;
-    const avgClp = sumNumbers(averageSample.map((row) => row.gastosClp)) / averageSample.length;
+  const buildAverageScenario = (
+    key: Extract<ProvisionalReturnScenario['key'], 'avg_12m_closed' | 'avg_6m_closed'>,
+    maxMonths: number,
+    completeLabel: string,
+  ) => {
+    const sample = closedRows.slice(-maxMonths);
+    if (sample.length < 2) return null;
+    const avgDisplay = sumNumbers(sample.map((row) => row.gastosDisplay)) / sample.length;
+    const avgClp = sumNumbers(sample.map((row) => row.gastosClp)) / sample.length;
     const scenario = buildProvisionalScenario({
-      key: 'closed_average',
-      label:
-        averageSample.length >= 12
-          ? 'Promedio últimos 12 meses cerrados'
-          : `Promedio disponible cerrado (${averageSample.length} meses)`,
+      key,
+      label: sample.length >= maxMonths ? completeLabel : `${completeLabel} (${sample.length} meses disponibles)`,
       row: pendingRow,
       spendDisplay: avgDisplay,
       spendClp: avgClp,
-      monthsUsed: averageSample.length,
+      monthsUsed: sample.length,
     });
     if (scenario) scenarios.push(scenario);
-  }
+    return scenario;
+  };
+
+  const avg12Scenario = buildAverageScenario('avg_12m_closed', 12, 'Promedio últimos 12 meses oficiales');
+  const avg6Scenario = buildAverageScenario('avg_6m_closed', 6, 'Promedio últimos 6 meses oficiales');
 
   if (previousClosed) {
     const scenario = buildProvisionalScenario({
@@ -928,12 +937,16 @@ export const buildPendingReturnEstimate = (
   }
 
   if (!scenarios.length) return null;
+  const selectedAverageScenario = [avg12Scenario, avg6Scenario]
+    .filter((scenario): scenario is NonNullable<typeof scenario> => Boolean(scenario))
+    .sort((left, right) => left.spendClp - right.spendClp)[0] ?? null;
   return {
     monthKey: pendingRow.monthKey,
     availabilityLabel: info.availabilityLabel,
     periodRangeLabel: info.periodRangeLabel,
     varPatrimonioDisplay: pendingRow.varPatrimonioDisplay,
     scenarios,
+    selectedScenarioKey: (selectedAverageScenario?.key as AverageEstimateMethod | undefined) ?? null,
   };
 };
 
@@ -956,7 +969,9 @@ export const buildReturnsSeriesView = (
     };
   }
 
-  const primaryScenario = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'closed_average') ?? null;
+  const primaryScenario = pendingEstimateDetail?.selectedScenarioKey
+    ? pendingEstimateDetail.scenarios.find((scenario) => scenario.key === pendingEstimateDetail.selectedScenarioKey) ?? null
+    : null;
   if (!primaryScenario) {
     return {
       officialRows,
@@ -968,8 +983,7 @@ export const buildReturnsSeriesView = (
     };
   }
 
-  const estimateMethod: EstimatedMonthMeta['estimateMethod'] =
-    primaryScenario.monthsUsed >= 12 ? 'avg_12m_closed' : 'avg_available_closed';
+  const estimateMethod = primaryScenario.key as EstimatedMonthMeta['estimateMethod'];
   const previousClosedScenario = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'previous_closed') ?? null;
 
   const estimatedRow: MonthlyReturnRow = {

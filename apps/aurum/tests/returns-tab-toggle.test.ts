@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, Root } from 'react-dom/client';
 import { act } from 'react';
 import userEvent from '@testing-library/user-event';
+import type { MonthlyReturnRow } from '../src/components/analysis/types';
 
 vi.mock('../src/services/firebase', () => ({
   db: {},
@@ -34,6 +35,55 @@ const emptyCurveModel = {
   domainMin: null,
   domainMax: null,
 };
+
+const makeMonthlyRow = (monthKey: string, overrides: Partial<MonthlyReturnRow> = {}): MonthlyReturnRow => ({
+  monthKey,
+  fx: { usdClp: 950, eurClp: 1030, ufClp: 39000 },
+  rawEurClp: 1030,
+  fxMethod: 'real_closure',
+  fxAuditable: true,
+  fxMissing: [],
+  gastosStatus: 'complete',
+  gastosSource: 'gastapp_firestore',
+  gastosContractStatus: 'ok',
+  gastosDataQuality: 'ok',
+  gastosIsStale: false,
+  gastosStaleReason: null,
+  gastosDayToDaySource: 'period_summaries',
+  gastosContractSource: null,
+  gastosSchemaVersion: null,
+  gastosMethodologyVersion: null,
+  gastosPeriodKey: null,
+  gastosPublishedAt: null,
+  gastosUpdatedAt: null,
+  gastosClosedAt: null,
+  gastosReportUpdatedAt: null,
+  gastosSummaryUpdatedAt: null,
+  gastosLastExpenseUpdatedAt: null,
+  gastosRevision: null,
+  gastosReportTotalEur: null,
+  gastosSummaryTotalEur: null,
+  gastosDirectExpenseTotalEur: null,
+  gastosReportVsDirectDiffEur: null,
+  gastosSummaryVsDirectDiffEur: null,
+  gastosReportVsSummaryDiffEur: null,
+  gastosCategoryGapEur: null,
+  netClp: 1_000_000_000,
+  prevNetClp: 980_000_000,
+  invalidNet: false,
+  varPatrimonioClp: 20_000_000,
+  gastosClp: 1_400_000,
+  retornoRealClp: 21_400_000,
+  netDisplay: 1_000_000_000,
+  prevNetDisplay: 980_000_000,
+  varPatrimonioDisplay: 20_000_000,
+  gastosDisplay: 1_400_000,
+  retornoRealDisplay: 21_400_000,
+  pct: 2.18,
+  inflationMonthlyRate: 0.2,
+  pctReal: 1.9,
+  ...overrides,
+});
 
 const baseProps = {
   heroSinceStart: null,
@@ -107,7 +157,7 @@ describe('ReturnsTab estimated month toggle', () => {
         hasEstimatedMonth: true,
         estimatedMonthMeta: {
           monthKey: '2026-06',
-          estimateMethod: 'avg_available_closed' as const,
+          estimateMethod: 'avg_6m_closed' as const,
           estimatedSpendClp: 1_500_000,
           estimatedSpendDisplay: 1_500_000,
           estimatedFromMonthsCount: 6,
@@ -120,10 +170,21 @@ describe('ReturnsTab estimated month toggle', () => {
           availabilityLabel: null,
           periodRangeLabel: 'P12',
           varPatrimonioDisplay: 5_000_000,
+          selectedScenarioKey: 'avg_6m_closed' as const,
           scenarios: [
             {
-              key: 'closed_average' as const,
-              label: 'Promedio disponible cerrado (6 meses)',
+              key: 'avg_12m_closed' as const,
+              label: 'Promedio últimos 12 meses oficiales (6 meses disponibles)',
+              spendDisplay: 1_700_000,
+              spendClp: 1_700_000,
+              retornoRealDisplay: 6_700_000,
+              retornoRealClp: 6_700_000,
+              pct: 0.81,
+              monthsUsed: 6,
+            },
+            {
+              key: 'avg_6m_closed' as const,
+              label: 'Promedio últimos 6 meses oficiales',
               spendDisplay: 1_500_000,
               spendClp: 1_500_000,
               retornoRealDisplay: 6_500_000,
@@ -133,6 +194,23 @@ describe('ReturnsTab estimated month toggle', () => {
             },
           ],
         },
+        officialMonthlyRowsAsc: [makeMonthlyRow('2026-05')],
+        monthlyRowsDesc: [
+          includeEstimatedMonth
+            ? makeMonthlyRow('2026-06', {
+                isEstimated: true,
+                estimateMethod: 'avg_6m_closed',
+                estimatedSpendClp: 1_500_000,
+                estimatedFromMonthsCount: 6,
+                officialAvailableDate: null,
+                gastosClp: 1_500_000,
+                gastosDisplay: 1_500_000,
+                retornoRealClp: 6_500_000,
+                retornoRealDisplay: 6_500_000,
+                pct: 0.8,
+              })
+            : makeMonthlyRow('2026-05'),
+        ],
         onToggleIncludeEstimatedMonth: () => setIncludeEstimatedMonth((prev) => !prev),
       });
     };
@@ -149,11 +227,17 @@ describe('ReturnsTab estimated month toggle', () => {
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
+    expect(container.textContent).toContain('Gasto estimado usado: $1.500.000');
+    expect(container.textContent).toContain('Promedio 12M: $1.700.000 (6 meses)');
+    expect(container.textContent).toContain('Promedio 6M: $1.500.000 (6 meses)');
+    expect(container.textContent).toContain('Último mes considerado: Mayo de 2026 · oficial');
 
     await act(async () => {
       await user.click(checkbox!);
     });
     expect(checkbox?.checked).toBe(true);
+    expect(container.textContent).toContain('Último mes considerado: Junio de 2026 · estimado');
+    expect(container.textContent).toContain('Modo estimado activo · incluye Junio de 2026 · Estimado');
 
     const titleLabel = Array.from(container.querySelectorAll('label')).find((node) =>
       node.textContent?.includes('Incluir último mes estimado (E)'),
@@ -206,6 +290,7 @@ describe('ReturnsTab estimated month toggle', () => {
             availabilityLabel: null,
             periodRangeLabel: 'P12',
             varPatrimonioDisplay: 5_000_000,
+            selectedScenarioKey: null,
             scenarios: [
               {
                 key: 'previous_closed' as const,

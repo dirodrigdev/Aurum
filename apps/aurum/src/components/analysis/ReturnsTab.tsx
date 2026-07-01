@@ -135,7 +135,7 @@ type ReturnsTabProps = {
   hasEstimatedMonth: boolean;
   estimatedMonthMeta: {
     monthKey: string;
-    estimateMethod: 'avg_12m_closed' | 'avg_available_closed';
+    estimateMethod: 'avg_12m_closed' | 'avg_6m_closed';
     estimatedSpendClp: number;
     estimatedSpendDisplay: number;
     estimatedFromMonthsCount: number;
@@ -149,6 +149,7 @@ type ReturnsTabProps = {
     periodRangeLabel: string | null;
     varPatrimonioDisplay: number;
     scenarios: ProvisionalReturnScenario[];
+    selectedScenarioKey: 'avg_12m_closed' | 'avg_6m_closed' | null;
   } | null;
   officialAvailabilityNotice: {
     monthKey: string;
@@ -181,14 +182,20 @@ type ReturnsTabProps = {
   exportingTransactionalDataRoom: boolean;
 };
 
+const estimateMethodLabel = (method: 'avg_12m_closed' | 'avg_6m_closed') =>
+  method === 'avg_6m_closed' ? 'promedio 6M' : 'promedio 12M';
+
 const SummaryTable: React.FC<{
   title: string;
   items: AggregatedSummary[];
   currency: WealthCurrency;
-}> = ({ title, items, currency }) => (
+  lastConsideredLabel: string | null;
+}> = ({ title, items, currency, lastConsideredLabel }) => (
     <Card className="p-3 border-slate-200">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <div className="mt-0.5 text-[11px] text-slate-500">Promedio mensual</div>
+      <div className="mt-0.5 text-[11px] text-slate-500">
+        Promedio mensual{lastConsideredLabel ? ` · Último mes considerado: ${lastConsideredLabel}` : ''}
+      </div>
       <div className="mt-2 overflow-x-auto">
       <table className="w-full min-w-[600px] table-fixed text-xs">
         <thead>
@@ -265,6 +272,7 @@ const ReturnRealHero: React.FC<{
   includeRiskCapitalInTotals: boolean;
   onToggleRiskMode: () => void;
   crpContributionInsight: CrpContributionInsight | null;
+  lastConsideredLabel: string | null;
 }> = ({
   sinceStart,
   last12,
@@ -277,6 +285,7 @@ const ReturnRealHero: React.FC<{
   includeRiskCapitalInTotals,
   onToggleRiskMode,
   crpContributionInsight,
+  lastConsideredLabel,
 }) => {
   const rows = [
     { key: 'inicio', label: 'DESDE INICIO', showEstimatedBadge: includeEstimatedMonth, value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
@@ -312,6 +321,11 @@ const ReturnRealHero: React.FC<{
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
             <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
             <div className="mt-1 text-[9px] text-slate-500/70">Gastos desde GastApp (P → mes equivalente)</div>
+            {lastConsideredLabel ? (
+              <div className="mt-2 inline-flex rounded-full border border-amber-300/30 bg-white/5 px-2 py-1 text-[10px] font-medium text-amber-100">
+                {`Último mes considerado: ${lastConsideredLabel}`}
+              </div>
+            ) : null}
             {includeRiskCapitalInTotals && crpContributionInsight && (
               <div
                 className={cn(
@@ -1131,10 +1145,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
   const mainPendingOfficial = pendingOfficialRows[0] || null;
   const provisionalEstimate = pendingEstimateDetail;
   const estimatedToggleEnabled = hasEstimatedMonth && !!estimatedMonthMeta;
+  const estimateScenarios = React.useMemo(() => {
+    const avg12 = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_12m_closed') ?? null;
+    const avg6 = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'avg_6m_closed') ?? null;
+    const previousClosed = pendingEstimateDetail?.scenarios.find((scenario) => scenario.key === 'previous_closed') ?? null;
+    const selectedAverage = pendingEstimateDetail?.selectedScenarioKey
+      ? pendingEstimateDetail.scenarios.find((scenario) => scenario.key === pendingEstimateDetail.selectedScenarioKey) ?? null
+      : null;
+    return { avg12, avg6, previousClosed, selectedAverage };
+  }, [pendingEstimateDetail]);
   const estimatedToggleReason = React.useMemo(() => {
     if (estimatedToggleEnabled) return null;
     if (!pendingEstimateDetail) return null;
-    if (!pendingEstimateDetail.scenarios.some((scenario) => scenario.key === 'closed_average')) {
+    if (!pendingEstimateDetail.selectedScenarioKey) {
       return 'No disponible todavía: faltan al menos 2 meses cerrados con gasto oficial para estimar un promedio confiable.';
     }
     return 'No disponible: este mes ya no necesita estimación o le falta una base válida para activarla.';
@@ -1158,6 +1181,19 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
     if (spendTrustState?.severity === 'ok') return 'Gasto observado desde fuente principal';
     return 'Sin avisos de datos';
   }, [mainPendingOfficial, pendingSpendMonths.length, missingSpendMonths.length, spendTrustState]);
+  const lastOfficialConsideredMonthKey = React.useMemo(
+    () => [...officialMonthlyRowsAsc].reverse().find((row) => row.retornoRealDisplay !== null)?.monthKey ?? null,
+    [officialMonthlyRowsAsc],
+  );
+  const lastConsideredLabel = React.useMemo(() => {
+    if (includeEstimatedMonth && estimatedMonthMeta) {
+      return `${monthLabel(estimatedMonthMeta.monthKey)} · estimado`;
+    }
+    if (lastOfficialConsideredMonthKey) {
+      return `${monthLabel(lastOfficialConsideredMonthKey)} · oficial`;
+    }
+    return null;
+  }, [estimatedMonthMeta, includeEstimatedMonth, lastOfficialConsideredMonthKey]);
 
   const historyRows = React.useMemo(
     () =>
@@ -1337,6 +1373,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
       includeRiskCapitalInTotals={includeRiskCapitalInTotals}
       onToggleRiskMode={onToggleRiskMode}
       crpContributionInsight={crpContributionInsight}
+      lastConsideredLabel={lastConsideredLabel}
     />
 
     {(estimatedToggleEnabled || pendingEstimateDetail) && (
@@ -1364,9 +1401,25 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                 {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)}${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
               </div>
             )}
+            {estimateScenarios.selectedAverage && estimatedMonthMeta && (
+              <div className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-900">
+                <div className="font-medium">
+                  {`Gasto estimado usado: ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)} · menor entre promedio 12M y 6M.`}
+                </div>
+                <div className="mt-1 text-[10px] text-amber-800">
+                  {`Promedio 12M: ${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg12 ? ` (${estimateScenarios.avg12.monthsUsed} meses)` : ''}`}
+                </div>
+                <div className="text-[10px] text-amber-800">
+                  {`Promedio 6M: ${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg6 ? ` (${estimateScenarios.avg6.monthsUsed} meses)` : ''}`}
+                </div>
+                <div className="text-[10px] font-medium text-amber-900">
+                  {`Criterio: menor entre 12M y 6M · usado ${estimateMethodLabel(estimatedMonthMeta.estimateMethod)}.`}
+                </div>
+              </div>
+            )}
             {includeEstimatedMonth && estimatedMonthMeta && (
               <div className="mt-1 text-[11px] font-medium text-slate-800">
-                {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} (E)${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
+                {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} · Estimado${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
               </div>
             )}
             {!estimatedToggleEnabled && estimatedToggleReason && (
@@ -1526,6 +1579,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           Historial completo
         </div>
         <div className="flex items-center gap-1.5">
+          {lastConsideredLabel ? (
+            <div className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+              {`Último mes considerado: ${lastConsideredLabel}`}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={exportDiagnostics}
@@ -1575,7 +1633,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                       <span>{monthLabelShort(row.monthKey)}</span>
                       {estimated && (
                         <span className="rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
-                          E
+                          Estimado
                         </span>
                       )}
                     </div>
@@ -1712,6 +1770,11 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
               {provisionalEstimate.scenarios.map((scenario) => (
                 <div key={scenario.key} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                   <div className="text-[11px] font-semibold text-slate-800">{scenario.label}</div>
+                  {provisionalEstimate.selectedScenarioKey === scenario.key && (
+                    <div className="mt-1 inline-flex rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                      Gasto usado en la vista estimada
+                    </div>
+                  )}
                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                     <span className="text-slate-500">Gasto usado</span>
                     <span className="text-right font-medium text-slate-800">{formatCurrency(scenario.spendDisplay, currency)}</span>
@@ -1728,13 +1791,18 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
                 </div>
               ))}
             </div>
+            {(estimateScenarios.avg12 || estimateScenarios.avg6) && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-900">
+                {`Criterio conservador: se usa el menor entre promedio 12M (${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}) y promedio 6M (${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}).`}
+              </div>
+            )}
           </div>
         )}
       </Card>
     )}
 
-    <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} />
-    <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} />
+    <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
+    <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
   </>
   );
 };
