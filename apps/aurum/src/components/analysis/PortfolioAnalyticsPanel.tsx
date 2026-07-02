@@ -71,7 +71,13 @@ type MetricDefinition = {
   label: string;
   infoTitle: string;
   infoBody: string;
+  infoLimit?: string;
   microcopy?: string;
+  scale?: {
+    direction: 'higher_better' | 'lower_better' | 'less_negative_better';
+    items: string[];
+    note: string;
+  };
   formatter: (value: ReturnType<typeof calculatePortfolioAnalytics>) => string;
 };
 
@@ -85,6 +91,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Retorno compuesto',
         infoBody:
           'Mide el retorno acumulado del período componiendo los retornos mensuales. No usa promedio mensual lineal.',
+        infoLimit: 'Se basa en la serie mensual visible en Aurum.',
         formatter: (value) => formatPctDecimal(value.cumulativeReturnPct),
       },
       {
@@ -93,6 +100,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Retorno anualizado',
         infoBody:
           'Convierte el retorno compuesto del período a una tasa anual equivalente. Es más útil para comparar horizontes distintos.',
+        infoLimit: 'Puede variar si cambia la ventana o entran meses estimados.',
         formatter: (value) => formatPctDecimal(value.annualizedReturnPct),
       },
       {
@@ -101,6 +109,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Mediana mensual',
         infoBody:
           'Mes típico de retorno. La mitad de los meses quedó por encima y la mitad por debajo.',
+        infoLimit: 'Describe retornos mensuales; no resume por sí sola el retorno acumulado.',
         formatter: (value) => formatPctDecimal(value.medianMonthlyReturnPct),
       },
       {
@@ -109,6 +118,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Promedio mensual sin outliers',
         infoBody:
           'Promedio mensual ajustado para reducir el efecto de meses extremos. Sirve para ver una tendencia más estable.',
+        infoLimit: 'Es una métrica descriptiva mensual, no un retorno acumulado.',
         formatter: (value) => formatPctDecimal(value.winsorizedMeanMonthlyReturnPct),
       },
     ],
@@ -122,6 +132,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Volatilidad anualizada',
         infoBody:
           'Mide cuánto varían los retornos mensuales, expresado en escala anual. Menor = más estable.',
+        infoLimit: 'Se calcula con retornos mensuales visibles, no con movimientos intra-mes.',
+        scale: {
+          direction: 'lower_better',
+          items: ['0%–5% baja', '5%–10% moderada', '10%–20% alta', '>20% muy alta'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPctDecimal(value.volatilityAnnualizedPct),
       },
       {
@@ -130,6 +146,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Máx. drawdown',
         infoBody:
           'Mayor caída desde un máximo hasta un mínimo dentro del período. Menos negativo = mejor.',
+        infoLimit: 'Aurum usa drawdown mensual; no captura caídas intra-mes.',
+        scale: {
+          direction: 'less_negative_better',
+          items: ['0% a -5% bajo', '-5% a -10% moderado', '-10% a -20% alto', '< -20% severo'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPctDecimal(value.maxDrawdownPct),
       },
       {
@@ -138,6 +160,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Drawdown actual',
         infoBody:
           'Caída actual desde el último máximo del período. Si es 0%, está en máximo o recuperado.',
+        infoLimit: 'Se calcula sobre cierres mensuales visibles.',
         formatter: (value) => formatPctDecimal(value.currentDrawdownPct),
       },
       {
@@ -145,6 +168,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         label: 'Peor mes',
         infoTitle: 'Peor mes',
         infoBody: 'Mes con menor retorno del período seleccionado.',
+        infoLimit: 'Identifica un mes puntual; no resume persistencia de caídas.',
         formatter: (value) =>
           value.worstMonth
             ? `${monthLabelShort(value.worstMonth.monthKey)} · ${formatPctDecimal(value.worstMonth.returnPct)}`
@@ -160,6 +184,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         label: '% meses positivos',
         infoTitle: '% meses positivos',
         infoBody: 'Porcentaje de meses con retorno económico positivo.',
+        infoLimit: 'No mide magnitud del retorno, solo frecuencia de meses positivos.',
+        scale: {
+          direction: 'higher_better',
+          items: ['<45% débil', '45%–55% mixto', '55%–65% bueno', '>65% fuerte'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPctDecimal(value.positiveMonthsPct),
       },
       {
@@ -168,6 +198,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'P10 / P50 / P90',
         infoBody:
           'Percentiles de retornos mensuales. P50 es la mediana; P10 muestra un mes débil típico; P90 muestra un mes fuerte típico.',
+        infoLimit: 'Describen distribución mensual; no son metas ni garantías.',
         formatter: (value) =>
           value.percentiles.p50 === null
             ? '—'
@@ -178,6 +209,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         label: 'Mejor mes',
         infoTitle: 'Mejor mes',
         infoBody: 'Mes con mayor retorno del período seleccionado.',
+        infoLimit: 'Es un extremo puntual y puede depender de un solo mes fuera de tendencia.',
         formatter: (value) =>
           value.bestMonth
             ? `${monthLabelShort(value.bestMonth.monthKey)} · ${formatPctDecimal(value.bestMonth.returnPct)}`
@@ -195,6 +227,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Mide retorno anualizado por unidad de volatilidad. Mayor = mejor. En Aurum se calcula sobre retornos mensuales y tasa libre de riesgo 0% anual.',
         microcopy: 'mayor = mejor',
+        infoLimit: 'Es un indicador simple; no reemplaza juicio de riesgo ni attribution.',
+        scale: {
+          direction: 'higher_better',
+          items: ['<0 débil', '0–0,5 bajo', '0,5–1 razonable', '1–2 bueno', '>2 muy bueno'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPlainNumber(value.sharpeSimple, 2),
       },
       {
@@ -204,6 +242,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Similar a Sharpe, pero penaliza solo la volatilidad negativa. Mayor = mejor. Útil para mirar riesgo de caídas.',
         microcopy: 'mayor = mejor',
+        infoLimit: 'Usa downside risk mensual visible; no mide colas extremas intra-mes.',
+        scale: {
+          direction: 'higher_better',
+          items: ['<0 débil', '0–1 bajo/razonable', '1–2 bueno', '>2 muy bueno'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPlainNumber(value.sortinoSimple, 2),
       },
       {
@@ -213,6 +257,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Retorno anualizado dividido por máximo drawdown. Mayor = mejor. Si no hubo drawdown suficiente, puede mostrarse como —.',
         microcopy: 'mayor = mejor',
+        infoLimit: 'Es sensible a drawdowns cortos o atípicos dentro del horizonte.',
+        scale: {
+          direction: 'higher_better',
+          items: ['<0 débil', '0–0,5 bajo', '0,5–1 razonable', '1–3 bueno', '>3 muy bueno'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPlainNumber(value.calmarSimple, 2),
       },
     ],
@@ -226,6 +276,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoTitle: 'Recuperación',
         infoBody:
           'Indica si la peor caída del período ya se recuperó. Si aplica, muestra cuántos meses tomó recuperarse.',
+        infoLimit: 'Mira solo la peor caída del período visible.',
         formatter: (value) =>
           formatRecovery({
             isRecovered: value.isRecovered,
@@ -240,6 +291,12 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Mide profundidad y duración de caídas. Menor = mejor. 0 indica ausencia de drawdowns mensuales.',
         microcopy: 'menor = mejor',
+        infoLimit: 'Se construye con drawdowns mensuales visibles, no diarios.',
+        scale: {
+          direction: 'lower_better',
+          items: ['0 sin caídas', '0–2 muy bajo', '2–5 moderado', '5–10 elevado', '>10 alto'],
+          note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
+        },
         formatter: (value) => formatPlainNumber(value.ulcerIndex, 3),
       },
     ],
@@ -257,6 +314,11 @@ const HORIZONS: HorizonConfig[] = [
   { key: '12m', label: '12M', count: 12 },
   { key: 'since_start', label: 'Inicio', count: 'all' },
 ];
+
+const scaleGradientClass = (direction: 'higher_better' | 'lower_better' | 'less_negative_better') => {
+  if (direction === 'higher_better') return 'bg-gradient-to-r from-rose-400 via-amber-300 to-emerald-400';
+  return 'bg-gradient-to-r from-emerald-400 via-amber-300 to-rose-400';
+};
 
 type MetricInfoDialogProps = {
   definition: MetricDefinition | null;
@@ -277,7 +339,7 @@ const MetricInfoDialog: React.FC<MetricInfoDialogProps> = ({ definition, onClose
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-3 sm:items-center"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/35 px-3 pb-3 pt-[12vh] sm:pt-[10vh]"
       role="presentation"
       onClick={onClose}
     >
@@ -285,13 +347,16 @@ const MetricInfoDialog: React.FC<MetricInfoDialogProps> = ({ definition, onClose
         role="dialog"
         aria-modal="true"
         aria-label={`Información: ${definition.label}`}
-        className="w-full max-w-md rounded-[24px] border border-slate-200 bg-white p-4 shadow-2xl"
+        className="w-full max-w-lg rounded-[24px] border border-slate-200 bg-white p-4 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-900">{definition.infoTitle}</div>
             <div className="mt-1 text-sm leading-6 text-slate-600">{definition.infoBody}</div>
+            {definition.infoLimit ? (
+              <div className="mt-2 text-[12px] leading-5 text-slate-500">{definition.infoLimit}</div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -302,6 +367,21 @@ const MetricInfoDialog: React.FC<MetricInfoDialogProps> = ({ definition, onClose
             <X size={16} />
           </button>
         </div>
+
+        {definition.scale ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Escala referencial</div>
+            <div className={cn('mt-2 h-2.5 rounded-full', scaleGradientClass(definition.scale.direction))} />
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
+              {definition.scale.items.map((item) => (
+                <span key={item} className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
+                  {item}
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 text-[11px] leading-5 text-slate-500">{definition.scale.note}</div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -316,32 +396,35 @@ type MetricComparisonCardProps = {
 const MetricComparisonCard: React.FC<MetricComparisonCardProps> = ({ definition, values, onOpenInfo }) => (
   <div
     data-portfolio-metric-card="true"
-    className="rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm"
+    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm"
   >
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div className="min-w-0 lg:max-w-[28%]">
-        <div className="flex items-center gap-2">
-          <div className="text-sm font-semibold text-slate-900">{definition.label}</div>
+    <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(72px,0.6fr)_minmax(72px,0.6fr)_minmax(86px,0.8fr)] md:items-center md:gap-3">
+      <div className="min-w-0">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 text-sm font-semibold leading-5 text-slate-900">{definition.label}</div>
           <button
             type="button"
             aria-label={`Información sobre ${definition.label}`}
             onClick={() => onOpenInfo(definition)}
-            className="rounded-full border border-slate-200 p-1 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+            className="mt-0.5 shrink-0 rounded-full border border-slate-200 p-1 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
           >
             <Info size={14} />
           </button>
         </div>
         {definition.microcopy ? (
-          <div className="mt-1 text-[11px] text-slate-500">{definition.microcopy}</div>
+          <div className="mt-0.5 text-[11px] text-slate-500">{definition.microcopy}</div>
         ) : null}
       </div>
 
-      <div className="grid flex-1 grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 md:contents">
         {values.map((item) => (
-          <div key={`${definition.key}-${item.horizonLabel}`} className="rounded-xl bg-slate-50 px-3 py-2 text-right">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{item.horizonLabel}</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900 sm:text-base">{item.value}</div>
-            {item.meta ? <div className="mt-1 text-[10px] text-slate-500">{item.meta}</div> : null}
+          <div
+            key={`${definition.key}-${item.horizonLabel}`}
+            className="rounded-xl bg-slate-50 px-2.5 py-2 text-right md:bg-transparent md:px-0 md:py-0"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">{item.horizonLabel}</div>
+            <div className="mt-0.5 text-sm font-semibold text-slate-900 sm:text-base">{item.value}</div>
+            {item.meta ? <div className="mt-0.5 text-[10px] text-slate-500">{item.meta}</div> : null}
           </div>
         ))}
       </div>
@@ -400,7 +483,7 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
   return (
     <>
       <Card className="border-slate-200 p-3 sm:p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolio Analytics</div>
             <div className="mt-0.5 text-[11px] text-slate-500">
@@ -423,7 +506,7 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
           {horizonResults.map(({ horizon, result }) => (
             <span
               key={horizon.key}
@@ -438,6 +521,12 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
           {METRIC_DEFINITIONS.map((section) => (
             <section key={section.section}>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{section.section}</div>
+              <div className="mb-2 hidden grid-cols-[minmax(0,1.4fr)_minmax(72px,0.6fr)_minmax(72px,0.6fr)_minmax(86px,0.8fr)] items-center gap-3 px-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400 md:grid">
+                <div>Indicador</div>
+                <div className="text-right">3M</div>
+                <div className="text-right">12M</div>
+                <div className="text-right">Inicio</div>
+              </div>
               <div className="space-y-2">
                 {section.metrics.map((metric) => (
                   <MetricComparisonCard
@@ -465,6 +554,7 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
             <div>Sharpe, Sortino y Calmar son indicadores simples.</div>
             <div>Tasa libre de riesgo usada: 0% anual.</div>
             <div>Meses estimados pueden cambiar al llegar el dato oficial.</div>
+            <div>Las escalas de interpretación son referenciales.</div>
 
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Warnings del servicio</div>

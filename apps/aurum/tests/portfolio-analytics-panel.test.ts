@@ -113,8 +113,9 @@ const makeRow = (monthKey: string, overrides: Partial<MonthlyReturnRow> = {}): M
 
 const buildRows = (count: number, estimatedMonthKey?: string) =>
   Array.from({ length: count }, (_, index) => {
-    const month = index + 1;
-    const monthKey = `2026-${String(month).padStart(2, '0')}`;
+    const year = 2025 + Math.floor(index / 12);
+    const month = (index % 12) + 1;
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
     return makeRow(monthKey, {
       pct: 1 + index / 10,
       isEstimated: monthKey === estimatedMonthKey,
@@ -148,7 +149,7 @@ describe('PortfolioAnalyticsPanel', () => {
   };
 
   it('renderiza moneda actual y horizontes 3M, 12M e Inicio', async () => {
-    await renderPanel(buildRows(14, '2026-06'), 'USD');
+    await renderPanel(buildRows(14, '2026-02'), 'USD');
 
     expect(container?.textContent).toContain('Vista: USD');
     expect(container?.textContent).toContain('3M');
@@ -157,16 +158,16 @@ describe('PortfolioAnalyticsPanel', () => {
   });
 
   it('usa 3M, 12M e Inicio sobre la serie visible actual', async () => {
-    await renderPanel(buildRows(14, '2026-06'));
+    await renderPanel(buildRows(14, '2026-02'));
 
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls).toHaveLength(3);
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0]).toHaveLength(3);
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[1]?.[0]).toHaveLength(12);
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[2]?.[0]).toHaveLength(14);
     expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0].map((point) => point.monthKey)).toEqual([
-      '2026-12',
-      '2026-13',
-      '2026-14',
+      '2025-12',
+      '2026-01',
+      '2026-02',
     ]);
   });
 
@@ -237,6 +238,11 @@ describe('PortfolioAnalyticsPanel', () => {
 
     expect(container?.querySelector('table')).toBeNull();
     expect(container?.querySelectorAll('[data-portfolio-metric-card="true"]').length).toBeGreaterThanOrEqual(16);
+    const firstCard = container?.querySelector('[data-portfolio-metric-card="true"]');
+    expect(firstCard?.textContent).toContain('Retorno compuesto');
+    expect(firstCard?.textContent).toContain('3M');
+    expect(firstCard?.textContent).toContain('12M');
+    expect(firstCard?.textContent).toContain('Inicio');
   });
 
   it('muestra botón de ayuda por indicador y abre un diálogo accesible', async () => {
@@ -260,8 +266,104 @@ describe('PortfolioAnalyticsPanel', () => {
     expect(container?.ownerDocument.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it('cierra el diálogo con click fuera y con botón cerrar', async () => {
+    await renderPanel(buildRows(12));
+
+    const user = userEvent.setup();
+    const infoButton = container?.querySelector('button[aria-label="Información sobre Sharpe"]') as HTMLButtonElement | null;
+    expect(infoButton).not.toBeNull();
+
+    await act(async () => {
+      await user.click(infoButton!);
+    });
+
+    let dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+
+    const backdrop = dialog?.parentElement as HTMLElement | null;
+    expect(backdrop).not.toBeNull();
+    await act(async () => {
+      await user.click(backdrop!);
+    });
+    expect(container?.ownerDocument.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      await user.click(infoButton!);
+    });
+    dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    const closeButton = dialog?.querySelector('button[aria-label="Cerrar ayuda"]') as HTMLButtonElement | null;
+    expect(closeButton).not.toBeNull();
+    await act(async () => {
+      await user.click(closeButton!);
+    });
+    expect(container?.ownerDocument.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('muestra escalas referenciales cuando aplican y no las muestra cuando no aplican', async () => {
+    await renderPanel(buildRows(12));
+
+    const user = userEvent.setup();
+
+    const sharpeButton = container?.querySelector('button[aria-label="Información sobre Sharpe"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(sharpeButton!);
+    });
+    let dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Escala referencial');
+    expect(dialog?.textContent).toContain('<0 débil');
+    expect(dialog?.textContent).toContain('>2 muy bueno');
+    expect(dialog?.textContent).toContain('Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.');
+
+    const closeButton = dialog?.querySelector('button[aria-label="Cerrar ayuda"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(closeButton!);
+    });
+
+    const calmarButton = container?.querySelector('button[aria-label="Información sobre Calmar"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(calmarButton!);
+    });
+    dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('>3 muy bueno');
+
+    await act(async () => {
+      await user.click(dialog?.querySelector('button[aria-label="Cerrar ayuda"]') as HTMLButtonElement);
+    });
+
+    const ulcerButton = container?.querySelector('button[aria-label="Información sobre Ulcer Index"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(ulcerButton!);
+    });
+    dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Menor = mejor');
+    expect(dialog?.textContent).toContain('0–2 muy bajo');
+
+    await act(async () => {
+      await user.click(dialog?.querySelector('button[aria-label="Cerrar ayuda"]') as HTMLButtonElement);
+    });
+
+    const drawdownButton = container?.querySelector('button[aria-label="Información sobre Máx. drawdown"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(drawdownButton!);
+    });
+    dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('-5% a -10% moderado');
+    expect(dialog?.textContent).toContain('< -20% severo');
+
+    await act(async () => {
+      await user.click(dialog?.querySelector('button[aria-label="Cerrar ayuda"]') as HTMLButtonElement);
+    });
+
+    const compoundButton = container?.querySelector('button[aria-label="Información sobre Retorno compuesto"]') as HTMLButtonElement | null;
+    await act(async () => {
+      await user.click(compoundButton!);
+    });
+    dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).not.toContain('Escala referencial');
+  });
+
   it('muestra metodología compacta con nota de composición y warnings del servicio', async () => {
-    await renderPanel(buildRows(12, '2026-06'));
+    await renderPanel(buildRows(12, '2025-06'));
 
     const user = userEvent.setup();
     const summary = Array.from(container?.querySelectorAll('summary') ?? []).find((node) =>
@@ -274,6 +376,7 @@ describe('PortfolioAnalyticsPanel', () => {
 
     expect(container?.textContent).toContain('Los retornos acumulados y anualizados se calculan de forma compuesta.');
     expect(container?.textContent).toContain('No se usa promedio mensual lineal para calcular retornos de período.');
+    expect(container?.textContent).toContain('Las escalas de interpretación son referenciales.');
     expect(container?.textContent).toContain('monthly_drawdown_only');
     expect(container?.textContent).toContain('estimated_months_included');
   });
