@@ -13,43 +13,47 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 vi.mock('../src/services/portfolioAnalytics', () => ({
-  calculatePortfolioAnalytics: vi.fn((series: Array<{ monthKey: string; returnPct: number; isEstimated?: boolean }>) => ({
-    monthsTotal: series.length,
-    monthsUsed: series.length,
-    estimatedMonthsUsed: series.filter((point) => point.isEstimated).length,
-    firstMonthKey: series[0]?.monthKey,
-    lastMonthKey: series[series.length - 1]?.monthKey,
-    lastMonthIsEstimated: Boolean(series[series.length - 1]?.isEstimated),
-    cumulativeReturnPct: 0.24,
-    annualizedReturnPct: 0.12,
-    averageMonthlyReturnPct: 0.01,
-    medianMonthlyReturnPct: 0.009,
-    geometricMonthlyReturnPct: 0.0095,
-    volatilityMonthlyPct: 0.02,
-    volatilityAnnualizedPct: 0.0692820323,
-    downsideDeviationMonthlyPct: 0.01,
-    downsideDeviationAnnualizedPct: 0.0346410161,
-    bestMonth: { monthKey: '2026-06', returnPct: 0.03, isEstimated: true },
-    worstMonth: { monthKey: '2026-03', returnPct: -0.02, isEstimated: false },
-    positiveMonthsPct: 0.75,
-    negativeMonthsPct: 0.25,
-    zeroMonthsPct: 0,
-    percentiles: { p10: -0.01, p25: 0.002, p50: 0.009, p75: 0.015, p90: 0.025 },
-    trimmedMeanMonthlyReturnPct: 0.011,
-    winsorizedMeanMonthlyReturnPct: 0.01,
-    maxDrawdownPct: -0.15,
-    maxDrawdownStartMonthKey: '2026-02',
-    maxDrawdownTroughMonthKey: '2026-03',
-    maxDrawdownRecoveryMonthKey: null,
-    currentDrawdownPct: null,
-    monthsToRecovery: null,
-    isRecovered: false,
-    ulcerIndex: 0.123,
-    sharpeSimple: 1.11,
-    sortinoSimple: null,
-    calmarSimple: null,
-    warnings: ['monthly_drawdown_only', 'estimated_months_included'],
-  })),
+  calculatePortfolioAnalytics: vi.fn((series: Array<{ monthKey: string; returnPct: number; isEstimated?: boolean }>) => {
+    const count = series.length;
+    const last = series[series.length - 1];
+    return {
+      monthsTotal: count,
+      monthsUsed: count,
+      estimatedMonthsUsed: series.filter((point) => point.isEstimated).length,
+      firstMonthKey: series[0]?.monthKey,
+      lastMonthKey: last?.monthKey,
+      lastMonthIsEstimated: Boolean(last?.isEstimated),
+      cumulativeReturnPct: count ? count / 100 : null,
+      annualizedReturnPct: count ? count / 200 : null,
+      averageMonthlyReturnPct: count ? 0.01 : null,
+      medianMonthlyReturnPct: count ? 0.009 : null,
+      geometricMonthlyReturnPct: count ? 0.0095 : null,
+      volatilityMonthlyPct: count > 1 ? 0.02 : null,
+      volatilityAnnualizedPct: count > 1 ? 0.0692820323 : null,
+      downsideDeviationMonthlyPct: count > 1 ? 0.01 : null,
+      downsideDeviationAnnualizedPct: count > 1 ? 0.0346410161 : null,
+      bestMonth: last ? { monthKey: last.monthKey, returnPct: 0.03, isEstimated: Boolean(last.isEstimated) } : null,
+      worstMonth: last ? { monthKey: series[0].monthKey, returnPct: -0.02, isEstimated: false } : null,
+      positiveMonthsPct: count ? 0.75 : null,
+      negativeMonthsPct: count ? 0.25 : null,
+      zeroMonthsPct: 0,
+      percentiles: count ? { p10: -0.01, p25: 0.002, p50: 0.009, p75: 0.015, p90: 0.025 } : { p10: null, p25: null, p50: null, p75: null, p90: null },
+      trimmedMeanMonthlyReturnPct: count ? 0.011 : null,
+      winsorizedMeanMonthlyReturnPct: count ? 0.01 : null,
+      maxDrawdownPct: count ? -0.15 : null,
+      maxDrawdownStartMonthKey: count ? series[0].monthKey : undefined,
+      maxDrawdownTroughMonthKey: count ? series[Math.min(1, count - 1)].monthKey : undefined,
+      maxDrawdownRecoveryMonthKey: null,
+      currentDrawdownPct: count > 1 ? -0.04 : null,
+      monthsToRecovery: count > 2 ? 4 : null,
+      isRecovered: count > 2 ? true : null,
+      ulcerIndex: count > 1 ? 0.123 : null,
+      sharpeSimple: count > 1 ? 1.11 : null,
+      sortinoSimple: count > 1 ? 1.33 : null,
+      calmarSimple: count > 1 ? 0.9 : null,
+      warnings: count ? ['monthly_drawdown_only', ...(series.some((point) => point.isEstimated) ? ['estimated_months_included'] : [])] : [],
+    };
+  }),
 }));
 
 import { calculatePortfolioAnalytics } from '../src/services/portfolioAnalytics';
@@ -107,6 +111,16 @@ const makeRow = (monthKey: string, overrides: Partial<MonthlyReturnRow> = {}): M
   ...overrides,
 });
 
+const buildRows = (count: number, estimatedMonthKey?: string) =>
+  Array.from({ length: count }, (_, index) => {
+    const month = index + 1;
+    const monthKey = `2026-${String(month).padStart(2, '0')}`;
+    return makeRow(monthKey, {
+      pct: 1 + index / 10,
+      isEstimated: monthKey === estimatedMonthKey,
+    });
+  });
+
 describe('PortfolioAnalyticsPanel', () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -124,33 +138,56 @@ describe('PortfolioAnalyticsPanel', () => {
     document.body.innerHTML = '';
   });
 
-  const renderPanel = async (rows: MonthlyReturnRow[]) => {
+  const renderPanel = async (rows: MonthlyReturnRow[], currency: 'CLP' | 'USD' | 'EUR' | 'UF' = 'CLP') => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
-      root?.render(React.createElement(PortfolioAnalyticsPanel, { monthlyRows: rows }));
+      root?.render(React.createElement(PortfolioAnalyticsPanel, { monthlyRows: rows, currency }));
     });
   };
 
-  it('renderiza el panel con métricas principales y badges', async () => {
-    await renderPanel([
-      makeRow('2026-05', { pct: 1.5 }),
-      makeRow('2026-06', { pct: 3, isEstimated: true }),
-    ]);
+  it('renderiza moneda actual y horizontes 3M, 12M e Inicio', async () => {
+    await renderPanel(buildRows(14, '2026-06'), 'USD');
 
-    expect(container?.textContent).toContain('Portfolio Analytics');
-    expect(container?.textContent).toContain('Oficiales: 1 meses');
-    expect(container?.textContent).toContain('Estimados: 1');
-    expect(container?.textContent).toContain('Último mes: Junio de 2026 · estimado');
-    expect(container?.textContent).toContain('Retorno acumulado');
-    expect(container?.textContent).toContain('Volatilidad anualizada');
-    expect(container?.textContent).toContain('% meses positivos');
-    expect(container?.textContent).toContain('Ulcer Index');
-    expect(container?.textContent).toContain('E');
+    expect(container?.textContent).toContain('Vista: USD');
+    expect(container?.textContent).toContain('3M');
+    expect(container?.textContent).toContain('12M');
+    expect(container?.textContent).toContain('Inicio · 14 meses');
   });
 
-  it('muestra guion cuando una métrica es null y formatea sin NaN', async () => {
+  it('usa 3M, 12M e Inicio sobre la serie visible actual', async () => {
+    await renderPanel(buildRows(14, '2026-06'));
+
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls).toHaveLength(3);
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0]).toHaveLength(3);
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[1]?.[0]).toHaveLength(12);
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[2]?.[0]).toHaveLength(14);
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0].map((point) => point.monthKey)).toEqual([
+      '2026-12',
+      '2026-13',
+      '2026-14',
+    ]);
+  });
+
+  it('respeta el mes estimado visible y no rompe con menos meses que el horizonte', async () => {
+    await renderPanel([
+      makeRow('2026-04', { pct: 1.2 }),
+      makeRow('2026-05', { pct: 1.5 }),
+      makeRow('2026-06', { pct: 2.1, isEstimated: true }),
+    ]);
+
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0]).toEqual([
+      { monthKey: '2026-04', returnPct: 0.012, isEstimated: false },
+      { monthKey: '2026-05', returnPct: 0.015, isEstimated: false },
+      { monthKey: '2026-06', returnPct: 0.021, isEstimated: true },
+    ]);
+    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[1]?.[0]).toHaveLength(3);
+    expect(container?.textContent).toContain('Estimados: 1');
+    expect(container?.textContent).toContain('Último mes: Junio de 2026 · estimado');
+  });
+
+  it('muestra guion cuando una métrica es inválida y nunca muestra NaN', async () => {
     vi.mocked(calculatePortfolioAnalytics).mockReturnValueOnce({
       monthsTotal: 1,
       monthsUsed: 1,
@@ -176,6 +213,9 @@ describe('PortfolioAnalyticsPanel', () => {
       trimmedMeanMonthlyReturnPct: null,
       winsorizedMeanMonthlyReturnPct: null,
       maxDrawdownPct: null,
+      maxDrawdownStartMonthKey: undefined,
+      maxDrawdownTroughMonthKey: undefined,
+      maxDrawdownRecoveryMonthKey: undefined,
       currentDrawdownPct: null,
       monthsToRecovery: null,
       isRecovered: null,
@@ -192,40 +232,49 @@ describe('PortfolioAnalyticsPanel', () => {
     expect(container?.textContent).toContain('—');
   });
 
-  it('convierte pct visible a decimal y excluye filas sin retorno visible', async () => {
-    await renderPanel([
-      makeRow('2026-07', { pct: null, gastosStatus: 'pending' }),
-      makeRow('2026-05', { pct: 1.5 }),
-      makeRow('2026-06', { pct: 3, isEstimated: true }),
-    ]);
+  it('no se renderiza como tabla visible y usa cards separadas por métrica', async () => {
+    await renderPanel(buildRows(12));
 
-    expect(calculatePortfolioAnalytics).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(calculatePortfolioAnalytics).mock.calls[0]?.[0]).toEqual([
-      { monthKey: '2026-05', returnPct: 0.015, isEstimated: false },
-      { monthKey: '2026-06', returnPct: 0.03, isEstimated: true },
-    ]);
-    expect(container?.textContent).not.toContain('Julio de 2026');
+    expect(container?.querySelector('table')).toBeNull();
+    expect(container?.querySelectorAll('[data-portfolio-metric-card="true"]').length).toBeGreaterThanOrEqual(16);
   });
 
-  it('muestra metodología y warnings al expandir', async () => {
-    await renderPanel([
-      makeRow('2026-05', { pct: 1.5 }),
-      makeRow('2026-06', { pct: 3, isEstimated: true }),
-    ]);
+  it('muestra botón de ayuda por indicador y abre un diálogo accesible', async () => {
+    await renderPanel(buildRows(12));
+
+    const user = userEvent.setup();
+    const infoButton = container?.querySelector('button[aria-label="Información sobre Retorno compuesto"]') as HTMLButtonElement | null;
+    expect(infoButton).not.toBeNull();
+
+    await act(async () => {
+      await user.click(infoButton!);
+    });
+
+    const dialog = container?.ownerDocument.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Mide el retorno acumulado del período componiendo los retornos mensuales.');
+
+    await act(async () => {
+      await user.keyboard('[Escape]');
+    });
+
+    expect(container?.ownerDocument.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('muestra metodología compacta con nota de composición y warnings del servicio', async () => {
+    await renderPanel(buildRows(12, '2026-06'));
 
     const user = userEvent.setup();
     const summary = Array.from(container?.querySelectorAll('summary') ?? []).find((node) =>
       node.textContent?.includes('Ver metodología'),
     ) as HTMLElement | undefined;
-    expect(summary).toBeTruthy();
 
     await act(async () => {
       await user.click(summary!);
     });
 
-    expect(container?.textContent).toContain('Drawdown mensual; no captura caídas intra-mes.');
+    expect(container?.textContent).toContain('Los retornos acumulados y anualizados se calculan de forma compuesta.');
+    expect(container?.textContent).toContain('No se usa promedio mensual lineal para calcular retornos de período.');
     expect(container?.textContent).toContain('monthly_drawdown_only');
     expect(container?.textContent).toContain('estimated_months_included');
-    expect(container?.textContent).toContain('Sharpe simple');
   });
 });

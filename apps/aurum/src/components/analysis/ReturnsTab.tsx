@@ -1805,7 +1805,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
     <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
     <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
-    <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} />
+    <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} currency={currency} />
   </>
   );
 };

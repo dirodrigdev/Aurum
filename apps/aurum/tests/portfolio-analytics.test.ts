@@ -26,6 +26,17 @@ describe('portfolio analytics', () => {
     expect(result.annualizedReturnPct).toBeCloseTo((1.155 ** 6) - 1, 10);
   });
 
+  it('distingue promedio lineal de retorno compuesto en +10% y -10%', () => {
+    const result = calculatePortfolioAnalytics([
+      buildPoint('2026-01', 0.1),
+      buildPoint('2026-02', -0.1),
+    ]);
+
+    expect(result.averageMonthlyReturnPct).toBeCloseTo(0, 10);
+    expect(result.cumulativeReturnPct).toBeCloseTo(-0.01, 10);
+    expect(result.annualizedReturnPct).toBeCloseTo((0.99 ** 6) - 1, 10);
+  });
+
   it('ordena internamente y no muta el input', () => {
     const input = [
       buildPoint('2026-03', 0.03),
