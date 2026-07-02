@@ -169,6 +169,44 @@ describe('returns analysis helpers', () => {
     expect(summary.retornoRealAvgDisplay).not.toBeNull();
   });
 
+  it('does not represent period return as a linear monthly average', () => {
+    const rows = computeMonthlyRows(
+      [
+        makeClosure('2025-12', { netClp: 100, eurClp: 1 }),
+        makeClosure('2026-01', { netClp: 105, eurClp: 1 }),
+        makeClosure('2026-02', { netClp: 110.25, eurClp: 1 }),
+      ],
+      false,
+      'CLP',
+    ).map((row) => ({
+      ...row,
+      gastosStatus: 'complete' as const,
+      gastosSource: 'gastapp_firestore' as const,
+      gastosContractStatus: 'complete' as const,
+      gastosDataQuality: 'ok' as const,
+      gastosIsStale: false,
+      gastosClp: 0,
+      gastosDisplay: 0,
+      retornoRealClp: row.monthKey === '2026-01' ? 5 : row.monthKey === '2026-02' ? 5.25 : row.retornoRealClp,
+      retornoRealDisplay: row.monthKey === '2026-01' ? 5 : row.monthKey === '2026-02' ? 5.25 : row.retornoRealDisplay,
+      pct: row.monthKey === '2026-01' || row.monthKey === '2026-02' ? 5 : row.pct,
+    }));
+
+    const summary = aggregateRows(
+      'period-return',
+      'Period return',
+      rows.filter((row) => row.monthKey >= '2026-01'),
+      100,
+      { expectedMonthKeys: ['2026-01', '2026-02'] },
+    );
+
+    expect(summary.validMonths).toBe(2);
+    expect(summary.retornoRealAcumDisplay).toBe(10.25);
+    expect(summary.retornoRealAvgDisplay).toBe(5.125);
+    expect(summary.pctRetorno).toBeCloseTo(((1.1025 ** 6) - 1) * 100, 10);
+    expect(summary.pctRetorno).not.toBeCloseTo(summary.retornoRealAvgDisplay ?? 0, 10);
+  });
+
   it('includes complete official GastApp spend in closed aggregates', () => {
     const rows = computeMonthlyRows(
       [

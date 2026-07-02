@@ -159,6 +159,24 @@ describe('PortfolioAnalyticsPanel', () => {
     expect(container?.textContent).not.toContain('Indicador');
   });
 
+  it('renderiza las vistas de moneda CLP, USD, EUR y UF sin valores inválidos', async () => {
+    for (const currency of ['CLP', 'USD', 'EUR', 'UF'] as const) {
+      await renderPanel(buildRows(6), currency);
+
+      expect(container?.textContent).toContain(`Vista: ${currency}`);
+      expect(container?.textContent).not.toMatch(/NaN|Infinity|undefined/);
+
+      if (root) {
+        await act(async () => {
+          root?.unmount();
+        });
+      }
+      root = null;
+      container?.remove();
+      container = null;
+    }
+  });
+
   it('usa 3M, 12M e Inicio sobre la serie visible actual', async () => {
     await renderPanel(buildRows(14, '2026-02'));
 

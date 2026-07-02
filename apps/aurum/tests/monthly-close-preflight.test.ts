@@ -228,6 +228,72 @@ describe('monthly close preflight diagnostic', () => {
     expect(diagnostic.checks.find((check) => check.key === 'fx_complete')?.status).toBe('fail');
   });
 
+  it('returns NO_GO_DATA_QUALITY when a target record has NaN amount', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'bank-jun',
+        block: 'bank',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: Number.NaN,
+        currency: 'CLP',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.decision).toBe('NO_GO_DATA_QUALITY');
+    expect(diagnostic.checks.find((check) => check.key === 'critical_values')?.status).toBe('fail');
+  });
+
+  it('dedupes equivalent property records so property is not included twice', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'prop-jun-a',
+        block: 'real_estate',
+        label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
+        amount: 3000,
+        currency: 'UF',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:00:00Z',
+      }),
+      record({
+        id: 'prop-jun-b',
+        block: 'real_estate',
+        label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
+        amount: 3000,
+        currency: 'UF',
+        snapshotDate: '2026-06-30',
+        createdAt: '2026-06-30T10:05:00Z',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-06',
+      targetMonthKey: '2026-06',
+      calendarMonthKey: '2026-06',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+    expect(diagnostic.closeTargetRecords.filter((item) => item.label === REAL_ESTATE_PROPERTY_VALUE_LABEL)).toHaveLength(1);
+    expect(diagnostic.checks.find((check) => check.key === 'property_single')?.status).toBe('ok');
+  });
+
   it('keeps non-mortgage debt canonical when aggregate and detailed rows coexist', () => {
     const records: WealthRecord[] = [
       record({

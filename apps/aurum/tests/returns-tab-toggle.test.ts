@@ -148,6 +148,43 @@ describe('ReturnsTab estimated month toggle', () => {
     document.body.innerHTML = '';
   });
 
+  it('renders the Retornos smoke surface with Portfolio Analytics on mobile and desktop widths', async () => {
+    for (const width of [390, 1280]) {
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+
+      await act(async () => {
+        root?.render(
+          React.createElement(ReturnsTab, {
+            ...baseProps,
+            monthlyRowsDesc: [makeMonthlyRow('2026-06'), makeMonthlyRow('2026-05')],
+            officialMonthlyRowsAsc: [makeMonthlyRow('2026-05'), makeMonthlyRow('2026-06')],
+            hasEstimatedMonth: false,
+            includeEstimatedMonth: false,
+            estimatedMonthMeta: null,
+            pendingEstimateDetail: null,
+          }),
+        );
+      });
+
+      expect(container.textContent).toContain('Retorno económico');
+      expect(container.textContent).toContain('Historial completo');
+      expect(container.textContent).toContain('Portfolio Analytics');
+      expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
+
+      await act(async () => {
+        root?.unmount();
+      });
+      root = null;
+      container.remove();
+      container = null;
+      document.body.innerHTML = '';
+    }
+  });
+
   it('toggles on desktop by checkbox, label text, full card row, and keyboard', async () => {
     const Harness = () => {
       const [includeEstimatedMonth, setIncludeEstimatedMonth] = React.useState(false);
@@ -275,10 +312,12 @@ describe('ReturnsTab estimated month toggle', () => {
     await act(async () => {
       await user.click(summary!);
     });
+    expect(checkbox?.checked).toBe(true);
     expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
     expect(container.textContent).toContain('Junio de 2026 se incluye como estimado (E) · gasto usado $1.500.000');
     expect(container.textContent).toContain('Prom. 12M: $1.700.000 (6 meses)');
     expect(container.textContent).toContain('Prom. 6M: $1.500.000 (6 meses)');
+    expect(container.textContent).not.toMatch(/NaN|Infinity|undefined/);
 
     await act(async () => {
       await user.tab();
