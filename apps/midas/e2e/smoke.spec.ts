@@ -1,9 +1,23 @@
 import { expect, test } from '@playwright/test';
 
+const heroQuestionPattern = /¿Llegarás a (los )?\d+ años\?/i;
+
 async function openApp(page: import('@playwright/test').Page) {
   await page.goto('/');
   await expect(page.getByText('Modo local de revisión', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Simulación', exact: true })).toBeVisible();
+}
+
+async function expectStableSimulationShell(page: import('@playwright/test').Page) {
+  const hero = page.locator('[data-simulation-section="hero-result"]');
+  const body = page.locator('body');
+
+  await expect(hero).toBeVisible();
+  await expect(hero).toContainText(heroQuestionPattern);
+  await expect(body).not.toContainText(/NaN/);
+  await expect(body).not.toContainText(/undefined/);
+  await expect(body).not.toContainText('[object Object]');
+  await expect(body).not.toContainText(/error boundary/i);
 }
 
 async function openTab(
@@ -33,7 +47,7 @@ test('simulation home loads in local read-only mode', async ({ page }) => {
   await openApp(page);
   const technicalDetailLine = page.getByText(/Bloques fuera del motor:/);
 
-  await expect(page.getByText('¿LLEGARÁS A 40 AÑOS?')).toBeVisible();
+  await expectStableSimulationShell(page);
   await expect(page.locator('body')).not.toContainText(/Calculando/i);
   await expect(page.getByText(/Fuente de datos/i).last()).toBeVisible();
   await expect(technicalDetailLine).toBeHidden();
@@ -90,7 +104,7 @@ test.describe('mobile smoke', () => {
   test('loads without horizontal overflow', async ({ page }) => {
     await openApp(page);
 
-    await expect(page.getByText('¿LLEGARÁS A 40 AÑOS?')).toBeVisible();
+    await expectStableSimulationShell(page);
     await expect(page.getByRole('button', { name: 'Ajustes', exact: true })).toBeVisible();
 
     const hasHorizontalOverflow = await page.evaluate(() => {
