@@ -148,13 +148,15 @@ describe('PortfolioAnalyticsPanel', () => {
     });
   };
 
-  it('renderiza moneda actual y horizontes 3M, 12M e Inicio', async () => {
+  it('renderiza moneda actual y contexto compacto sin pills superiores de horizonte', async () => {
     await renderPanel(buildRows(14, '2026-02'), 'USD');
 
     expect(container?.textContent).toContain('Vista: USD');
     expect(container?.textContent).toContain('3M');
     expect(container?.textContent).toContain('12M');
-    expect(container?.textContent).toContain('Inicio · 14 meses');
+    expect(container?.textContent).toContain('Inicio');
+    expect(container?.textContent).not.toContain('Inicio · 14 meses');
+    expect(container?.textContent).not.toContain('Indicador');
   });
 
   it('usa 3M, 12M e Inicio sobre la serie visible actual', async () => {
@@ -233,16 +235,47 @@ describe('PortfolioAnalyticsPanel', () => {
     expect(container?.textContent).toContain('—');
   });
 
-  it('no se renderiza como tabla visible y usa cards separadas por métrica', async () => {
+  it('usa headers compactos por bloque y cards separadas por métrica', async () => {
     await renderPanel(buildRows(12));
 
     expect(container?.querySelector('table')).toBeNull();
+    const sectionHeaders = Array.from(container?.querySelectorAll('[data-testid="portfolio-section-header"]') ?? []);
+    expect(sectionHeaders.length).toBe(5);
+    expect(sectionHeaders[0]?.textContent).toContain('Retorno');
+    expect(sectionHeaders[0]?.textContent).toContain('3M');
+    expect(sectionHeaders[0]?.textContent).toContain('12M');
+    expect(sectionHeaders[0]?.textContent).toContain('Inicio');
+    expect(container?.textContent).not.toContain('Indicador');
     expect(container?.querySelectorAll('[data-portfolio-metric-card="true"]').length).toBeGreaterThanOrEqual(16);
     const firstCard = container?.querySelector('[data-portfolio-metric-card="true"]');
     expect(firstCard?.textContent).toContain('Retorno compuesto');
     expect(firstCard?.textContent).toContain('3M');
     expect(firstCard?.textContent).toContain('12M');
     expect(firstCard?.textContent).toContain('Inicio');
+  });
+
+  it('prioriza el valor de mejor/peor mes y deja el mes como detalle secundario', async () => {
+    await renderPanel(buildRows(12));
+
+    const cards = Array.from(container?.querySelectorAll('[data-portfolio-metric-card="true"]') ?? []);
+    const worstMonthCard = cards.find((card) => card.textContent?.includes('Peor mes')) as HTMLElement | undefined;
+    const bestMonthCard = cards.find((card) => card.textContent?.includes('Mejor mes')) as HTMLElement | undefined;
+
+    expect(worstMonthCard?.querySelector('[data-testid="portfolio-metric-value"]')?.textContent).toBe('-2,00%');
+    expect(worstMonthCard?.querySelector('[data-testid="portfolio-metric-detail"]')?.textContent).toBe('Oct 2025');
+    expect(bestMonthCard?.querySelector('[data-testid="portfolio-metric-value"]')?.textContent).toBe('+3,00%');
+    expect(bestMonthCard?.querySelector('[data-testid="portfolio-metric-detail"]')?.textContent).toBe('Dic 2025');
+  });
+
+  it('simplifica recuperación y muestra hints visuales solo en métricas interpretables', async () => {
+    await renderPanel(buildRows(12));
+
+    const cards = Array.from(container?.querySelectorAll('[data-portfolio-metric-card="true"]') ?? []);
+    const recoveryCard = cards.find((card) => card.textContent?.includes('Recuperación')) as HTMLElement | undefined;
+
+    expect(recoveryCard?.textContent).toContain('4 meses');
+    expect(recoveryCard?.textContent).not.toContain('Recuperado ·');
+    expect(container?.querySelectorAll('[data-testid="portfolio-interpretation-hint"]').length).toBeGreaterThan(0);
   });
 
   it('muestra botón de ayuda por indicador y abre un diálogo accesible', async () => {

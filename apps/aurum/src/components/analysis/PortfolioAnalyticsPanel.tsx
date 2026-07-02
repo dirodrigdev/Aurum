@@ -42,10 +42,17 @@ const formatRecovery = ({
 }) => {
   if (maxDrawdownPct === null) return '—';
   if (maxDrawdownPct === 0) return 'Sin caída';
-  if (isRecovered === true && monthsToRecovery !== null) return `Recuperado · ${monthsToRecovery} meses`;
+  if (isRecovered === true && monthsToRecovery !== null) {
+    return monthsToRecovery === 1 ? '1 mes' : `${monthsToRecovery} meses`;
+  }
   if (isRecovered === true) return 'Recuperado';
   if (isRecovered === false) return 'No recuperado';
   return '—';
+};
+
+type MetricDisplayValue = {
+  value: string;
+  detail?: string;
 };
 
 type AnalyticsMetricKey =
@@ -78,8 +85,10 @@ type MetricDefinition = {
     items: string[];
     note: string;
   };
-  formatter: (value: ReturnType<typeof calculatePortfolioAnalytics>) => string;
+  formatter: (value: ReturnType<typeof calculatePortfolioAnalytics>) => MetricDisplayValue;
 };
+
+const metricValue = (value: string, detail?: string): MetricDisplayValue => ({ value, detail });
 
 const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }> = [
   {
@@ -92,7 +101,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Mide el retorno acumulado del período componiendo los retornos mensuales. No usa promedio mensual lineal.',
         infoLimit: 'Se basa en la serie mensual visible en Aurum.',
-        formatter: (value) => formatPctDecimal(value.cumulativeReturnPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.cumulativeReturnPct)),
       },
       {
         key: 'annualizedReturnPct',
@@ -101,7 +110,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Convierte el retorno compuesto del período a una tasa anual equivalente. Es más útil para comparar horizontes distintos.',
         infoLimit: 'Puede variar si cambia la ventana o entran meses estimados.',
-        formatter: (value) => formatPctDecimal(value.annualizedReturnPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.annualizedReturnPct)),
       },
       {
         key: 'medianMonthlyReturnPct',
@@ -110,7 +119,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Mes típico de retorno. La mitad de los meses quedó por encima y la mitad por debajo.',
         infoLimit: 'Describe retornos mensuales; no resume por sí sola el retorno acumulado.',
-        formatter: (value) => formatPctDecimal(value.medianMonthlyReturnPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.medianMonthlyReturnPct)),
       },
       {
         key: 'winsorizedMeanMonthlyReturnPct',
@@ -119,7 +128,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Promedio mensual ajustado para reducir el efecto de meses extremos. Sirve para ver una tendencia más estable.',
         infoLimit: 'Es una métrica descriptiva mensual, no un retorno acumulado.',
-        formatter: (value) => formatPctDecimal(value.winsorizedMeanMonthlyReturnPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.winsorizedMeanMonthlyReturnPct)),
       },
     ],
   },
@@ -138,7 +147,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['0%–5% baja', '5%–10% moderada', '10%–20% alta', '>20% muy alta'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPctDecimal(value.volatilityAnnualizedPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.volatilityAnnualizedPct)),
       },
       {
         key: 'maxDrawdownPct',
@@ -152,7 +161,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['0% a -5% bajo', '-5% a -10% moderado', '-10% a -20% alto', '< -20% severo'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPctDecimal(value.maxDrawdownPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.maxDrawdownPct)),
       },
       {
         key: 'currentDrawdownPct',
@@ -161,7 +170,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoBody:
           'Caída actual desde el último máximo del período. Si es 0%, está en máximo o recuperado.',
         infoLimit: 'Se calcula sobre cierres mensuales visibles.',
-        formatter: (value) => formatPctDecimal(value.currentDrawdownPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.currentDrawdownPct)),
       },
       {
         key: 'worstMonth',
@@ -171,8 +180,8 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoLimit: 'Identifica un mes puntual; no resume persistencia de caídas.',
         formatter: (value) =>
           value.worstMonth
-            ? `${monthLabelShort(value.worstMonth.monthKey)} · ${formatPctDecimal(value.worstMonth.returnPct)}`
-            : '—',
+            ? metricValue(formatPctDecimal(value.worstMonth.returnPct), monthLabelShort(value.worstMonth.monthKey))
+            : metricValue('—'),
       },
     ],
   },
@@ -190,7 +199,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['<45% débil', '45%–55% mixto', '55%–65% bueno', '>65% fuerte'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPctDecimal(value.positiveMonthsPct),
+        formatter: (value) => metricValue(formatPctDecimal(value.positiveMonthsPct)),
       },
       {
         key: 'percentiles',
@@ -201,8 +210,10 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoLimit: 'Describen distribución mensual; no son metas ni garantías.',
         formatter: (value) =>
           value.percentiles.p50 === null
-            ? '—'
-            : `${formatPctDecimal(value.percentiles.p10)} · ${formatPctDecimal(value.percentiles.p50)} · ${formatPctDecimal(value.percentiles.p90)}`,
+            ? metricValue('—')
+            : metricValue(
+                `${formatPctDecimal(value.percentiles.p10)} · ${formatPctDecimal(value.percentiles.p50)} · ${formatPctDecimal(value.percentiles.p90)}`,
+              ),
       },
       {
         key: 'bestMonth',
@@ -212,8 +223,8 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
         infoLimit: 'Es un extremo puntual y puede depender de un solo mes fuera de tendencia.',
         formatter: (value) =>
           value.bestMonth
-            ? `${monthLabelShort(value.bestMonth.monthKey)} · ${formatPctDecimal(value.bestMonth.returnPct)}`
-            : '—',
+            ? metricValue(formatPctDecimal(value.bestMonth.returnPct), monthLabelShort(value.bestMonth.monthKey))
+            : metricValue('—'),
       },
     ],
   },
@@ -233,7 +244,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['<0 débil', '0–0,5 bajo', '0,5–1 razonable', '1–2 bueno', '>2 muy bueno'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPlainNumber(value.sharpeSimple, 2),
+        formatter: (value) => metricValue(formatPlainNumber(value.sharpeSimple, 2)),
       },
       {
         key: 'sortinoSimple',
@@ -248,7 +259,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['<0 débil', '0–1 bajo/razonable', '1–2 bueno', '>2 muy bueno'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPlainNumber(value.sortinoSimple, 2),
+        formatter: (value) => metricValue(formatPlainNumber(value.sortinoSimple, 2)),
       },
       {
         key: 'calmarSimple',
@@ -263,7 +274,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['<0 débil', '0–0,5 bajo', '0,5–1 razonable', '1–3 bueno', '>3 muy bueno'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPlainNumber(value.calmarSimple, 2),
+        formatter: (value) => metricValue(formatPlainNumber(value.calmarSimple, 2)),
       },
     ],
   },
@@ -278,11 +289,13 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           'Indica si la peor caída del período ya se recuperó. Si aplica, muestra cuántos meses tomó recuperarse.',
         infoLimit: 'Mira solo la peor caída del período visible.',
         formatter: (value) =>
-          formatRecovery({
-            isRecovered: value.isRecovered,
-            maxDrawdownPct: value.maxDrawdownPct,
-            monthsToRecovery: value.monthsToRecovery,
-          }),
+          metricValue(
+            formatRecovery({
+              isRecovered: value.isRecovered,
+              maxDrawdownPct: value.maxDrawdownPct,
+              monthsToRecovery: value.monthsToRecovery,
+            }),
+          ),
       },
       {
         key: 'ulcerIndex',
@@ -297,7 +310,7 @@ const METRIC_DEFINITIONS: Array<{ section: string; metrics: MetricDefinition[] }
           items: ['0 sin caídas', '0–2 muy bajo', '2–5 moderado', '5–10 elevado', '>10 alto'],
           note: 'Rangos referenciales; dependen del horizonte, moneda y perfil de riesgo.',
         },
-        formatter: (value) => formatPlainNumber(value.ulcerIndex, 3),
+        formatter: (value) => metricValue(formatPlainNumber(value.ulcerIndex, 3)),
       },
     ],
   },
@@ -318,6 +331,65 @@ const HORIZONS: HorizonConfig[] = [
 const scaleGradientClass = (direction: 'higher_better' | 'lower_better' | 'less_negative_better') => {
   if (direction === 'higher_better') return 'bg-gradient-to-r from-rose-400 via-amber-300 to-emerald-400';
   return 'bg-gradient-to-r from-emerald-400 via-amber-300 to-rose-400';
+};
+
+type HintTone = 'good' | 'mixed' | 'risk';
+
+const hintToneClass: Record<HintTone, string> = {
+  good: 'bg-emerald-500',
+  mixed: 'bg-amber-400',
+  risk: 'bg-rose-500',
+};
+
+const getMetricHintTone = (
+  definition: MetricDefinition,
+  result: ReturnType<typeof calculatePortfolioAnalytics>,
+): HintTone | null => {
+  const valueByKey: Partial<Record<AnalyticsMetricKey, number | null>> = {
+    volatilityAnnualizedPct: result.volatilityAnnualizedPct,
+    maxDrawdownPct: result.maxDrawdownPct,
+    positiveMonthsPct: result.positiveMonthsPct,
+    sharpeSimple: result.sharpeSimple,
+    sortinoSimple: result.sortinoSimple,
+    calmarSimple: result.calmarSimple,
+    ulcerIndex: result.ulcerIndex,
+  };
+
+  const value = valueByKey[definition.key];
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+
+  if (definition.key === 'volatilityAnnualizedPct') {
+    if (value <= 0.05) return 'good';
+    if (value <= 0.1) return 'mixed';
+    return 'risk';
+  }
+  if (definition.key === 'maxDrawdownPct') {
+    if (value >= -0.05) return 'good';
+    if (value >= -0.1) return 'mixed';
+    return 'risk';
+  }
+  if (definition.key === 'positiveMonthsPct') {
+    if (value >= 0.65) return 'good';
+    if (value >= 0.45) return 'mixed';
+    return 'risk';
+  }
+  if (definition.key === 'ulcerIndex') {
+    if (value <= 2) return 'good';
+    if (value <= 5) return 'mixed';
+    return 'risk';
+  }
+  if (definition.key === 'calmarSimple') {
+    if (value >= 1) return 'good';
+    if (value >= 0.5) return 'mixed';
+    return 'risk';
+  }
+  if (definition.key === 'sharpeSimple' || definition.key === 'sortinoSimple') {
+    if (value >= 1) return 'good';
+    if (value >= 0) return 'mixed';
+    return 'risk';
+  }
+
+  return null;
 };
 
 type MetricInfoDialogProps = {
@@ -389,16 +461,16 @@ const MetricInfoDialog: React.FC<MetricInfoDialogProps> = ({ definition, onClose
 
 type MetricComparisonCardProps = {
   definition: MetricDefinition;
-  values: Array<{ horizonLabel: string; value: string; meta?: string | null }>;
+  values: Array<{ horizonLabel: string; display: MetricDisplayValue; hintTone: HintTone | null }>;
   onOpenInfo: (definition: MetricDefinition) => void;
 };
 
 const MetricComparisonCard: React.FC<MetricComparisonCardProps> = ({ definition, values, onOpenInfo }) => (
   <div
     data-portfolio-metric-card="true"
-    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm"
+    className="rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm"
   >
-    <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(72px,0.6fr)_minmax(72px,0.6fr)_minmax(86px,0.8fr)] md:items-center md:gap-3">
+    <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,1.35fr)_minmax(74px,0.65fr)_minmax(74px,0.65fr)_minmax(88px,0.75fr)] md:items-center md:gap-3">
       <div className="min-w-0">
         <div className="flex items-start gap-2">
           <div className="min-w-0 text-sm font-semibold leading-5 text-slate-900">{definition.label}</div>
@@ -423,8 +495,21 @@ const MetricComparisonCard: React.FC<MetricComparisonCardProps> = ({ definition,
             className="rounded-xl bg-slate-50 px-2.5 py-2 text-right md:bg-transparent md:px-0 md:py-0"
           >
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">{item.horizonLabel}</div>
-            <div className="mt-0.5 text-sm font-semibold text-slate-900 sm:text-base">{item.value}</div>
-            {item.meta ? <div className="mt-0.5 text-[10px] text-slate-500">{item.meta}</div> : null}
+            <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[13px] font-semibold text-slate-900 sm:text-sm">
+              {item.hintTone ? (
+                <span
+                  aria-hidden="true"
+                  data-testid="portfolio-interpretation-hint"
+                  className={cn('h-1.5 w-1.5 rounded-full', hintToneClass[item.hintTone])}
+                />
+              ) : null}
+              <span data-testid="portfolio-metric-value">{item.display.value}</span>
+            </div>
+            {item.display.detail ? (
+              <div data-testid="portfolio-metric-detail" className="mt-0.5 text-[9px] text-slate-400 sm:text-[10px]">
+                {item.display.detail}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -483,7 +568,7 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
   return (
     <>
       <Card className="border-slate-200 p-3 sm:p-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolio Analytics</div>
             <div className="mt-0.5 text-[11px] text-slate-500">
@@ -506,26 +591,19 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-          {horizonResults.map(({ horizon, result }) => (
-            <span
-              key={horizon.key}
-              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-600"
-            >
-              {horizon.key === 'since_start' ? `${horizon.label} · ${result.monthsUsed} meses` : horizon.label}
-            </span>
-          ))}
-        </div>
-
         <div className="mt-4 space-y-4">
           {METRIC_DEFINITIONS.map((section) => (
             <section key={section.section}>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{section.section}</div>
-              <div className="mb-2 hidden grid-cols-[minmax(0,1.4fr)_minmax(72px,0.6fr)_minmax(72px,0.6fr)_minmax(86px,0.8fr)] items-center gap-3 px-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400 md:grid">
-                <div>Indicador</div>
-                <div className="text-right">3M</div>
-                <div className="text-right">12M</div>
-                <div className="text-right">Inicio</div>
+              <div
+                data-testid="portfolio-section-header"
+                className="mb-2 grid grid-cols-[minmax(0,1.35fr)_minmax(48px,0.65fr)_minmax(48px,0.65fr)_minmax(58px,0.75fr)] items-center gap-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400 md:grid-cols-[minmax(0,1.35fr)_minmax(74px,0.65fr)_minmax(74px,0.65fr)_minmax(88px,0.75fr)] md:gap-3 md:px-3"
+              >
+                <div className="text-[11px] text-slate-500">{section.section}</div>
+                {HORIZONS.map((horizon) => (
+                  <div key={horizon.key} className="text-right">
+                    {horizon.label}
+                  </div>
+                ))}
               </div>
               <div className="space-y-2">
                 {section.metrics.map((metric) => (
@@ -535,7 +613,8 @@ export const PortfolioAnalyticsPanel: React.FC<PortfolioAnalyticsPanelProps> = (
                     onOpenInfo={setActiveInfo}
                     values={horizonResults.map(({ horizon, result }) => ({
                       horizonLabel: horizon.label,
-                      value: metric.formatter(result),
+                      display: metric.formatter(result),
+                      hintTone: getMetricHintTone(metric, result),
                     }))}
                   />
                 ))}
