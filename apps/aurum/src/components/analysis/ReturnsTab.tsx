@@ -293,8 +293,8 @@ const ReturnRealHero: React.FC<{
     { key: 'ytd', label: 'YTD 2026', showEstimatedBadge: includeEstimatedMonth, value: ytd2026, pct: ytd2026?.pctRetorno ?? null },
     {
       key: 'mes',
-      label: 'ÚLT. MES VÁLIDO',
-      showEstimatedBadge: false,
+      label: 'ÚLT. MES CONSIDERADO',
+      showEstimatedBadge: includeEstimatedMonth,
       value: lastMonth,
       pct: lastMonthPctMonthly,
       pctReal: lastMonthPctMonthlyReal,
@@ -391,7 +391,7 @@ const ReturnRealHero: React.FC<{
                   </div>
                   <div className="mt-0.5 text-[10px] text-slate-500">
                     {row.key === 'mes'
-                      ? 'Comparación mensual válida'
+                      ? 'Último mes que entra en el cálculo'
                       : row.key === 'ytd'
                         ? 'Desde enero · Tasa anual equivalente'
                         : 'Tasa anual equivalente'}
@@ -1398,30 +1398,32 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             </div>
             {estimatedMonthMeta && (
               <div className="mt-1 text-[11px] text-slate-600">
-                {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)}${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
-              </div>
-            )}
-            {estimateScenarios.selectedAverage && estimatedMonthMeta && (
-              <div className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-900">
-                <div className="font-medium">
-                  {`Gasto estimado usado: ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)} · menor entre promedio 12M y 6M.`}
-                </div>
-                <div className="mt-1 text-[10px] text-amber-800">
-                  {`Promedio 12M: ${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg12 ? ` (${estimateScenarios.avg12.monthsUsed} meses)` : ''}`}
-                </div>
-                <div className="text-[10px] text-amber-800">
-                  {`Promedio 6M: ${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg6 ? ` (${estimateScenarios.avg6.monthsUsed} meses)` : ''}`}
-                </div>
-                <div className="text-[10px] font-medium text-amber-900">
-                  {`Criterio: menor entre 12M y 6M · usado ${estimateMethodLabel(estimatedMonthMeta.estimateMethod)}.`}
-                </div>
+                {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)} · ${estimatedMonthMeta.officialAvailableDate ? `oficial ${estimatedMonthMeta.officialAvailableDate}` : 'oficial pendiente'}`}
               </div>
             )}
             {includeEstimatedMonth && estimatedMonthMeta && (
               <div className="mt-1 text-[11px] font-medium text-slate-800">
-                {`Modo estimado activo · incluye ${monthLabel(estimatedMonthMeta.monthKey)} · Estimado${estimatedMonthMeta.officialAvailableDate ? ` · oficial ${estimatedMonthMeta.officialAvailableDate}` : ''}`}
+                {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como estimado (E) · gasto usado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
               </div>
             )}
+            {estimateScenarios.selectedAverage && estimatedMonthMeta ? (
+              <details className="mt-1 text-[10px] text-slate-500">
+                <summary className="cursor-pointer select-none font-medium text-slate-600">
+                  Ver detalle
+                </summary>
+                <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-amber-900">
+                  <div>
+                    {`Prom. 12M: ${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg12 ? ` (${estimateScenarios.avg12.monthsUsed} meses)` : ''}`}
+                  </div>
+                  <div>
+                    {`Prom. 6M: ${estimateScenarios.avg6 ? formatCurrency(estimateScenarios.avg6.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg6 ? ` (${estimateScenarios.avg6.monthsUsed} meses)` : ''}`}
+                  </div>
+                  <div className="font-medium">
+                    {`Usado: ${estimateMethodLabel(estimatedMonthMeta.estimateMethod)} · menor entre ambos`}
+                  </div>
+                </div>
+              </details>
+            ) : null}
             {!estimatedToggleEnabled && estimatedToggleReason && (
               <div className="mt-1 text-[11px] font-medium text-amber-700">
                 {estimatedToggleReason}

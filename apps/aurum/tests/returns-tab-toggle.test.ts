@@ -227,9 +227,10 @@ describe('ReturnsTab estimated month toggle', () => {
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
-    expect(container.textContent).toContain('Gasto estimado usado: $1.500.000');
-    expect(container.textContent).toContain('Promedio 12M: $1.700.000 (6 meses)');
-    expect(container.textContent).toContain('Promedio 6M: $1.500.000 (6 meses)');
+    expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
+    expect(container.textContent).toContain('Ver detalle');
+    expect(container.textContent).not.toContain('Promedio 12M:');
+    expect(container.textContent).not.toContain('Promedio 6M:');
     expect(container.textContent).toContain('Último mes considerado: Mayo de 2026 · oficial');
 
     await act(async () => {
@@ -237,7 +238,9 @@ describe('ReturnsTab estimated month toggle', () => {
     });
     expect(checkbox?.checked).toBe(true);
     expect(container.textContent).toContain('Último mes considerado: Junio de 2026 · estimado');
-    expect(container.textContent).toContain('Modo estimado activo · incluye Junio de 2026 · Estimado');
+    expect(container.textContent).toContain('Junio de 2026 se incluye como estimado (E) · gasto usado $1.500.000');
+    expect(container.textContent).toContain('Jun 2026');
+    expect((container.querySelectorAll('[aria-label="Estimado"]') ?? []).length).toBe(4);
 
     const titleLabel = Array.from(container.querySelectorAll('label')).find((node) =>
       node.textContent?.includes('Incluir último mes estimado (E)'),

@@ -355,16 +355,16 @@ export const AnalysisAurum: React.FC = () => {
           });
         })();
         const heroLastMonth = (() => {
-          const row = [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null) || null;
+          const row = [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null) || null;
           if (!row) return null;
           return aggregateRows('hero-ultimo', 'Últ. mes válido', [row], row.prevNetDisplay, {
             expectedMonthKeys: [row.monthKey],
           });
         })();
         const heroLastMonthPctMonthly =
-          [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
+          [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pct ?? null;
         const heroLastMonthPctMonthlyReal =
-          [...returnsSeriesView.officialRows].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
+          [...monthlyRowsAsc].reverse().find((item) => item.retornoRealDisplay !== null)?.pctReal ?? null;
         const wealthLabModel = buildWealthLabModel(closures, includeRiskCapitalInTotals);
         const financialFreedomBase = resolveFinancialFreedomBase(closures, includeRiskCapitalInTotals);
 
@@ -614,31 +614,35 @@ export const AnalysisAurum: React.FC = () => {
             Lab
           </Button>
         </div>
-        {tab === 'returns' && <div className="mt-2 flex items-center gap-1">
-          {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setCurrency(item)}
-              className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
-                currency === item
-                  ? 'border-slate-800 bg-slate-800 text-white'
-                  : 'border-slate-300 bg-white text-slate-600'
-              }`}
-            >
-              {item}
-            </button>
-          ))}
-        </div>}
-        <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-500">
-          <span>{`Última actualización: ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
-          <div className="flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {tab === 'returns' ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {(['CLP', 'USD', 'EUR', 'UF'] as WealthCurrency[]).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setCurrency(item)}
+                  className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
+                    currency === item
+                      ? 'border-slate-800 bg-slate-800 text-white'
+                      : 'border-slate-300 bg-white text-slate-600'
+                  }`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div />
+          )}
+          <div className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
+            <span className="whitespace-nowrap">{`Act. ${formatAnalysisUpdatedAt(analysisEntry.builtAt)}`}</span>
             <button
               type="button"
               onClick={refreshAnalysisModels}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 transition hover:bg-slate-50"
+              className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 transition hover:bg-slate-50"
             >
-              Actualizar análisis
+              Actualizar
             </button>
           </div>
         </div>
