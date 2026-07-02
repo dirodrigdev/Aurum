@@ -7,6 +7,7 @@ import { getGastappMonthlyRuntimeDiagnostic } from '../../services/gastosMonthly
 import { buildPendingOfficialReturnInfo, buildReturnsMonthlySourceDiagnostics } from '../../services/returnsAnalysis';
 import type { ProvisionalReturnScenario } from '../../services/returnsAnalysis';
 import type { WealthEvolutionComparisonModel } from '../../services/returnsAnalysis';
+import { PortfolioAnalyticsPanel } from './PortfolioAnalyticsPanel';
 import type {
   AggregatedSummary,
   CrpContributionInsight,
@@ -1804,6 +1805,7 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
 
     <SummaryTable title="Resúmenes por período" items={periodSummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
     <SummaryTable title="Resúmenes por año" items={yearlySummaries} currency={currency} lastConsideredLabel={lastConsideredLabel} />
+    <PortfolioAnalyticsPanel monthlyRows={monthlyRowsDesc} />
   </>
   );
 };
