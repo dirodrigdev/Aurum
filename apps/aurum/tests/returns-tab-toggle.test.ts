@@ -227,20 +227,24 @@ describe('ReturnsTab estimated month toggle', () => {
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
-    expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
     expect(container.textContent).toContain('Ver detalle');
-    expect(container.textContent).not.toContain('Promedio 12M:');
-    expect(container.textContent).not.toContain('Promedio 6M:');
-    expect(container.textContent).toContain('Último mes considerado: Mayo de 2026 · oficial');
+    const detail = container.querySelector('details');
+    expect(detail).not.toBeNull();
+    expect(detail?.hasAttribute('open')).toBe(false);
+    const historyTitle = Array.from(container.querySelectorAll('div')).find((node) =>
+      node.textContent?.trim() === 'Historial completo',
+    );
+    const historyCard = historyTitle?.closest('.border-slate-200') as HTMLDivElement | null;
+    expect(historyCard).not.toBeNull();
+    expect(historyCard?.textContent).not.toContain('Último mes considerado: Mayo de 2026 · oficial');
 
     await act(async () => {
       await user.click(checkbox!);
     });
     expect(checkbox?.checked).toBe(true);
-    expect(container.textContent).toContain('Último mes considerado: Junio de 2026 · estimado');
-    expect(container.textContent).toContain('Junio de 2026 se incluye como estimado (E) · gasto usado $1.500.000');
     expect(container.textContent).toContain('Jun 2026');
     expect((container.querySelectorAll('[aria-label="Estimado"]') ?? []).length).toBe(4);
+    expect(historyCard?.textContent).not.toContain('Último mes considerado: Junio de 2026 · estimado');
 
     const titleLabel = Array.from(container.querySelectorAll('label')).find((node) =>
       node.textContent?.includes('Incluir último mes estimado (E)'),
@@ -252,16 +256,29 @@ describe('ReturnsTab estimated month toggle', () => {
     });
     expect(checkbox?.checked).toBe(false);
 
-    const eligibleText = Array.from(container.querySelectorAll('div')).find((node) =>
-      node.textContent?.includes('Mes elegible: Junio de 2026'),
+    const toggleTitle = Array.from(container.querySelectorAll('label')).find((node) =>
+      node.textContent?.includes('Incluir último mes estimado (E)'),
     );
-    const card = eligibleText?.closest('.rounded-2xl') as HTMLDivElement | null;
+    const card = toggleTitle?.closest('.rounded-2xl') as HTMLDivElement | null;
     expect(card).not.toBeNull();
 
     await act(async () => {
       await user.click(card!);
     });
     expect(checkbox?.checked).toBe(true);
+    expect(detail?.hasAttribute('open')).toBe(false);
+    const summary = Array.from(container.querySelectorAll('summary')).find((node) =>
+      node.textContent?.includes('Ver detalle'),
+    ) as HTMLElement | undefined;
+    expect(summary).toBeTruthy();
+
+    await act(async () => {
+      await user.click(summary!);
+    });
+    expect(container.textContent).toContain('Mes elegible: Junio de 2026 · oficial pendiente');
+    expect(container.textContent).toContain('Junio de 2026 se incluye como estimado (E) · gasto usado $1.500.000');
+    expect(container.textContent).toContain('Prom. 12M: $1.700.000 (6 meses)');
+    expect(container.textContent).toContain('Prom. 6M: $1.500.000 (6 meses)');
 
     await act(async () => {
       await user.tab();

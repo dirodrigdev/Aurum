@@ -1396,22 +1396,26 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
             <div className="mt-0.5 text-[11px] text-slate-600">
               Usa el cierre patrimonial del mes y un gasto estimado. No reemplaza el dato oficial.
             </div>
-            {estimatedMonthMeta && (
-              <div className="mt-1 text-[11px] text-slate-600">
-                {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)} · ${estimatedMonthMeta.officialAvailableDate ? `oficial ${estimatedMonthMeta.officialAvailableDate}` : 'oficial pendiente'}`}
-              </div>
-            )}
-            {includeEstimatedMonth && estimatedMonthMeta && (
-              <div className="mt-1 text-[11px] font-medium text-slate-800">
-                {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como estimado (E) · gasto usado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
-              </div>
-            )}
             {estimateScenarios.selectedAverage && estimatedMonthMeta ? (
-              <details className="mt-1 text-[10px] text-slate-500">
-                <summary className="cursor-pointer select-none font-medium text-slate-600">
+              <details
+                className="mt-1 text-[10px] text-slate-500"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <summary
+                  className="cursor-pointer select-none font-medium text-slate-600"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   Ver detalle
                 </summary>
                 <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-amber-900">
+                  <div>
+                    {`Mes elegible: ${monthLabel(estimatedMonthMeta.monthKey)} · ${estimatedMonthMeta.officialAvailableDate ? `oficial ${estimatedMonthMeta.officialAvailableDate}` : 'oficial pendiente'}`}
+                  </div>
+                  {includeEstimatedMonth ? (
+                    <div>
+                      {`${monthLabel(estimatedMonthMeta.monthKey)} se incluye como estimado (E) · gasto usado ${formatCurrency(estimatedMonthMeta.estimatedSpendDisplay, currency)}`}
+                    </div>
+                  ) : null}
                   <div>
                     {`Prom. 12M: ${estimateScenarios.avg12 ? formatCurrency(estimateScenarios.avg12.spendDisplay, currency) : 'no disponible'}${estimateScenarios.avg12 ? ` (${estimateScenarios.avg12.monthsUsed} meses)` : ''}`}
                   </div>
@@ -1581,11 +1585,6 @@ export const ReturnsTab: React.FC<ReturnsTabProps> = ({
           Historial completo
         </div>
         <div className="flex items-center gap-1.5">
-          {lastConsideredLabel ? (
-            <div className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-              {`Último mes considerado: ${lastConsideredLabel}`}
-            </div>
-          ) : null}
           <button
             type="button"
             onClick={exportDiagnostics}
