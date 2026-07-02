@@ -83,7 +83,8 @@ function isBlockingSource(status: SourceStatus) {
   return status === 'missing' || status === 'error' || status === 'provisional';
 }
 
-function isReviewSource(status: SourceStatus) {
+function isReviewSource(sourceKey: keyof ResultConfidenceCriticalSources, status: SourceStatus) {
+  if (sourceKey === 'capitalAdjustments' && status === 'local') return false;
   return status === 'fallback' || status === 'local' || status === 'sandbox';
 }
 
@@ -178,7 +179,7 @@ export function buildResultConfidence(input: BuildResultConfidenceInput): Result
         sourceKey,
         `${SOURCE_LABELS[sourceKey]} está en estado ${status}.`,
       ));
-    } else if (isReviewSource(status)) {
+    } else if (isReviewSource(sourceKey, status)) {
       reasons.push(reason(
         `${sourceKey}_${status}`,
         'review',

@@ -71,7 +71,11 @@ import {
   type SimulationConfigHydrationStatus,
 } from './integrations/midas/simulationConfigCanonical';
 import { buildM8InputFingerprint, type M8InputFingerprint } from './domain/model/m8InputFingerprint';
-import { buildSimulationActionStatus, buildSimulationInputSyncState } from './domain/model/simulationActionStatus';
+import {
+  buildSimulationActionStatus,
+  buildSimulationInputSyncState,
+  buildSimulationVisualStatus,
+} from './domain/model/simulationActionStatus';
 import { buildAuthGateStatus } from './domain/model/authGateStatus';
 import {
   evaluateCanonicalInputReadiness,
@@ -4220,6 +4224,14 @@ export default function App() {
     () => computeEffectiveEngineInputHashForParams(visibleSimParams),
     [visibleSimParams],
   );
+  const canonicalBaseInputHash = useMemo(
+    () => computeEffectiveEngineInputHashForParams(baseParams),
+    [baseParams],
+  );
+  const hasVisibleScenarioChanges = useMemo(
+    () => effectiveRunInputHash !== canonicalBaseInputHash,
+    [canonicalBaseInputHash, effectiveRunInputHash],
+  );
   const cloudHydrationReady = useMemo(() => {
     return resolveCanonicalCloudHydrationReady({
       isCanonicalUserSession,
@@ -4544,11 +4556,7 @@ export default function App() {
             ? 'provisional'
             : 'missing';
     const hasManualAdjustments = manualCapitalAdjustments.length > 0;
-    const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics.manualCurrentAdjustmentsAffectEngine
-      ? 'error'
-      : hasManualAdjustments
-        ? 'local'
-        : 'canonical';
+    const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments ? 'local' : 'canonical';
 
     return buildResultConfidence({
       criticalSources: {
@@ -4579,7 +4587,7 @@ export default function App() {
   }, [
     assumptionModeDiagnostics,
     aurumIntegrationStatus,
-    engineFingerprintDiagnostics.manualCurrentAdjustmentsAffectEngine,
+    hasVisibleScenarioChanges,
     manualCapitalAdjustments.length,
     lastAppliedAurumSnapshotSignature,
     lastRenderedResultHash,
@@ -4614,6 +4622,11 @@ export default function App() {
   const headerBlockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const headerHasOnlyRunResultBlockingReasons = headerBlockingReasons.length > 0 && headerBlockingReasons.every((item) => item.source === 'runResult');
   const headerShowsStaleResult = heroPhase === 'stale' || simulationInputSync.status === 'stale' || (resultConfidence.status === 'not_decisional' && headerHasOnlyRunResultBlockingReasons);
+  const headerVisualStatus = useMemo(() => buildSimulationVisualStatus({
+    inputSyncStatus: simulationInputSync.status,
+    hasVisibleScenarioChanges,
+    hasBlockingError: resultConfidence.status === 'not_decisional' && !headerHasOnlyRunResultBlockingReasons,
+  }), [hasVisibleScenarioChanges, headerHasOnlyRunResultBlockingReasons, resultConfidence.status, simulationInputSync.status]);
   const headerMetricText = canonicalInputBlockDisplay
     ? canonicalInputBlockDisplay.metricText
     : headerShowsStaleResult
@@ -4631,16 +4644,16 @@ export default function App() {
     ? 'Recalcular'
     : localReadOnlyCloudFallbackEnabled && !headerShowsDefinitiveNumber
       ? 'Revisión local'
-    : resultConfidence.label;
+    : headerVisualStatus.label;
   const headerStatusColor = canonicalInputBlockDisplay
     ? T.warning
     : headerShowsStaleResult
     ? T.warning
-    : resultConfidence.status === 'canonical'
-      ? T.positive
-      : resultConfidence.status === 'review'
+    : headerVisualStatus.status === 'pending'
         ? T.warning
-        : T.negative;
+        : headerVisualStatus.status === 'error'
+          ? T.negative
+          : T.positive;
 
   useEffect(() => {
     const effectiveHash = effectiveRunInputHash;
@@ -4892,6 +4905,7 @@ export default function App() {
       lastRecalcCause={lastRecalcCause}
       simulationPreset={simulationPreset}
       isScenarioAdjusted={isScenarioAdjusted}
+      hasVisibleScenarioChanges={hasVisibleScenarioChanges}
       aurumIntegrationStatus={aurumIntegrationStatus}
       aurumSnapshotLabel={aurumSnapshotLabel}
       aurumSnapshotPublishedAt={aurumSnapshotPublishedAt}

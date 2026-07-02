@@ -174,9 +174,10 @@ const base = () => ({
       manualLocalAdjustmentsAffectEngine: true,
     },
   });
-  assert.equal(policy.status, 'canonical_with_warnings');
-  assert.ok(!policy.forbiddenSourcesUsed.includes('manual_local_adjustments_effective'));
+  assert.equal(policy.status, 'canonical_pure');
+  assert.equal(policy.decisionWarnings.length, 0);
   assert.ok(policy.sources.some((entry) => entry.id === 'manual_capital_adjustments' && entry.usedForRun));
+  assert.ok(policy.technicalNotes.some((notice) => notice.code === 'manual_future_adjustments_effective'));
 }
 
 {
@@ -190,8 +191,9 @@ const base = () => ({
       manualLocalAdjustmentsAffectEngine: true,
     },
   });
-  assert.equal(policy.status, 'not_comparable');
-  assert.ok(policy.forbiddenSourcesUsed.includes('manual_local_adjustments_effective'));
+  assert.equal(policy.status, 'canonical_pure');
+  assert.equal(policy.decisionWarnings.length, 0);
+  assert.ok(policy.technicalNotes.some((notice) => notice.code === 'manual_current_adjustments_effective'));
 }
 
 {

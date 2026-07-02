@@ -11,6 +11,11 @@ export type SimulationActionStatus = {
   label: 'OK' | 'Revisar';
 };
 
+export type SimulationVisualStatus = {
+  status: 'base' | 'scenario' | 'pending' | 'error';
+  label: 'Base' | 'Escenario' | 'Pendiente' | 'Error';
+};
+
 export function buildSimulationInputSyncState(input: {
   visibleInputFingerprint: string | null;
   lastEvaluatedInputFingerprint?: string | null;
@@ -64,5 +69,28 @@ export function buildSimulationActionStatus(input: {
   return {
     ready,
     label: ready ? 'OK' : 'Revisar',
+  };
+}
+
+export function buildSimulationVisualStatus(input: {
+  inputSyncStatus: SimulationInputSyncState['status'];
+  hasVisibleScenarioChanges: boolean;
+  hasBlockingError: boolean;
+}): SimulationVisualStatus {
+  if (input.hasBlockingError) {
+    return {
+      status: 'error',
+      label: 'Error',
+    };
+  }
+  if (input.inputSyncStatus !== 'current') {
+    return {
+      status: 'pending',
+      label: 'Pendiente',
+    };
+  }
+  return {
+    status: input.hasVisibleScenarioChanges ? 'scenario' : 'base',
+    label: input.hasVisibleScenarioChanges ? 'Escenario' : 'Base',
   };
 }

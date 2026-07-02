@@ -57,8 +57,8 @@ const canonicalInput = (): BuildResultConfidenceInput => ({
     ...canonicalInput(),
     criticalSources: { ...canonicalSources(), capitalAdjustments: 'local' },
   });
-  assert.equal(result.status, 'review');
-  assert.equal(result.label, 'Revisar');
+  assert.equal(result.status, 'canonical');
+  assert.equal(result.label, 'OK');
 })();
 
 (() => {
@@ -144,7 +144,7 @@ const canonicalInput = (): BuildResultConfidenceInput => ({
     ...canonicalInput(),
     criticalSources: { ...canonicalSources(), capitalAdjustments: 'local' },
   });
-  assert.notEqual(result.status, 'canonical');
+  assert.equal(result.status, 'canonical');
 })();
 
 (() => {

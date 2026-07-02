@@ -20,6 +20,7 @@ import type { ResultConfidence } from '../domain/model/resultConfidence';
 import type { AssumptionModeDiagnostics } from '../domain/model/assumptionMode';
 import {
   buildSimulationInputSyncState,
+  buildSimulationVisualStatus,
   type SimulationInputSyncState,
 } from '../domain/model/simulationActionStatus';
 import type { M8Input } from '../domain/simulation/m8.types';
@@ -626,6 +627,7 @@ export function SimulationPage({
   lastRecalcCause,
   simulationPreset,
   isScenarioAdjusted,
+  hasVisibleScenarioChanges,
   aurumIntegrationStatus,
   aurumSnapshotLabel,
   aurumSnapshotPublishedAt,
@@ -709,6 +711,7 @@ export function SimulationPage({
   lastRecalcCause: string | null;
   simulationPreset: SimulationPreset;
   isScenarioAdjusted: boolean;
+  hasVisibleScenarioChanges: boolean;
   aurumIntegrationStatus: 'loading' | 'refreshing' | 'available' | 'partial' | 'missing' | 'error' | 'unconfigured';
   aurumSnapshotLabel: string | null;
   aurumSnapshotPublishedAt: string | null;
@@ -1326,43 +1329,18 @@ export function SimulationPage({
     lastEvaluatedInputFingerprint,
     resultFingerprint,
   }), [lastEvaluatedInputFingerprint, resultFingerprint, visibleInputFingerprint]);
-  const primaryReasonCode = resultConfidence.reasons.find((item) => item.severity !== 'info')?.code ?? null;
   const blockingReasons = resultConfidence.reasons.filter((item) => item.severity === 'blocking');
   const hasOnlyRunResultBlockingReasons = blockingReasons.length > 0 && blockingReasons.every((item) => item.source === 'runResult');
-  const reviewCause = useMemo(() => {
-    if (!primaryReasonCode) return 'Resultado usable con salvedades.';
-    if (primaryReasonCode.startsWith('instrumentUniverse_')) {
-      return 'Resultado usable con salvedades.';
-    }
-    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Hay ajustes locales de capital incorporados al input evaluado.';
-    }
-    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
-      return 'Estás viendo una simulación temporal, no el Modelo Base.';
-    }
-    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
-      return 'La base de Aurum aplicada no es la fuente cloud final.';
-    }
-    return 'Resultado usable con salvedades.';
-  }, [primaryReasonCode]);
-  const reviewGap = useMemo(() => {
-    if (!primaryReasonCode || primaryReasonCode.startsWith('instrumentUniverse_')) {
-      return 'Falta: Sincronizar el mix aperturado por instrumento para llegar a OK.';
-    }
-    if (primaryReasonCode.startsWith('capitalAdjustments_')) {
-      return 'Falta: Confirmar o descartar esos ajustes locales antes de tratar este resultado como base definitiva compartida.';
-    }
-    if (primaryReasonCode.startsWith('sandbox_') || primaryReasonCode === 'sandbox_active') {
-      return 'Falta: Volver al Modelo Base o guardar el escenario temporal.';
-    }
-    if (primaryReasonCode.startsWith('aurumSnapshot_')) {
-      return 'Falta: Aplicar la nueva base Aurum disponible.';
-    }
-    if (primaryReasonCode.startsWith('simulationConfig_')) {
-      return 'Falta: Terminar la carga de configuración cloud de simulación.';
-    }
-    return 'Falta: Resolver la salvedad principal para llegar a OK.';
-  }, [primaryReasonCode]);
+  const evaluatedScenarioState = useMemo(() => buildSimulationVisualStatus({
+    inputSyncStatus: simulationInputSync.status,
+    hasVisibleScenarioChanges,
+    hasBlockingError: resultConfidence.status === 'not_decisional' && !hasOnlyRunResultBlockingReasons,
+  }), [
+    hasOnlyRunResultBlockingReasons,
+    hasVisibleScenarioChanges,
+    resultConfidence.status,
+    simulationInputSync.status,
+  ]);
   const heroPrimaryState = useMemo(() => {
     if (canonicalInputBlocked) {
       const pendingSourceCopy = canonicalInputPendingSource
@@ -1423,37 +1401,29 @@ export function SimulationPage({
     }
     if (heroPhase === 'stale') {
       return {
-        label: showGhostResult ? 'Resultado anterior' : 'Pendiente',
+        label: 'Pendiente',
         tone: T.warning,
-        headline: showGhostResult
-          ? 'Resultado anterior · recalcular.'
-          : 'Pendiente de recalcular.',
-        explanation: showGhostResult
-          ? 'La configuración cambió. El resultado visible pertenece a la configuración anterior.'
-          : 'No hay resultado actualizado para esta configuración.',
-        gap: 'Ejecuta simulación para validar Depto ON/OFF + Capital de riesgo ON/OFF.',
+        headline: 'Configuración pendiente de recalcular.',
+        explanation: showGhostResult ? 'Hay un resultado anterior visible.' : 'No hay resultado actualizado para esta configuración.',
+        gap: 'Recalcula para validar esta configuración.',
       };
     }
     if (simulationInputSync.status === 'stale') {
       return {
-        label: heroResult ? 'Resultado anterior' : 'Pendiente',
+        label: 'Pendiente',
         tone: T.warning,
-        headline: heroResult ? 'Resultado anterior · recalcular.' : 'Pendiente de recalcular.',
-        explanation: heroResult
-          ? 'La configuración visible actual no coincide con el fingerprint del resultado mostrado.'
-          : 'No hay resultado actualizado para esta configuración.',
-        gap: 'Configuración actual pendiente de recalcular. Ejecuta simulación para validar los cambios.',
+        headline: 'Configuración pendiente de recalcular.',
+        explanation: heroResult ? 'Hay un resultado anterior visible.' : 'No hay resultado actualizado para esta configuración.',
+        gap: 'Recalcula para validar los cambios.',
       };
     }
     if (resultConfidence.status === 'not_decisional' && hasOnlyRunResultBlockingReasons) {
       return {
-        label: heroResult ? 'Resultado anterior' : 'Pendiente',
+        label: 'Pendiente',
         tone: T.warning,
-        headline: heroResult
-          ? 'Resultado anterior · recalcular.'
-          : 'Pendiente de recalcular.',
+        headline: 'Configuración pendiente de recalcular.',
         explanation: 'No hay resultado actualizado para esta configuración.',
-        gap: 'Ejecuta simulación para validar los cambios.',
+        gap: 'Recalcula para validar los cambios.',
       };
     }
     if (resultConfidence.status === 'not_decisional') {
@@ -1467,26 +1437,17 @@ export function SimulationPage({
         };
       }
       return {
-        label: 'No usar',
+        label: 'Error',
         tone: T.negative,
-        headline: 'No hay resultado auditado para el input actual.',
-        explanation: 'Falta recalcular un resultado auditado para este input.',
-        gap: 'Falta: Recalcular resultado para el input actual. Si no cambia, recarga.',
-      };
-    }
-    if (resultConfidence.status === 'review') {
-      return {
-        label: 'Revisar',
-        tone: T.warning,
-        headline: 'Resultado usable con salvedades.',
-        explanation: reviewCause,
-        gap: reviewGap,
+        headline: 'No hay resultado verificable para este input.',
+        explanation: 'MIDAS no pudo validar el resultado actual.',
+        gap: 'Revisa la fuente o vuelve a recalcular.',
       };
     }
     return {
-      label: 'OK',
+      label: evaluatedScenarioState.label,
       tone: T.positive,
-      headline: 'Resultado canónico.',
+      headline: 'Resultado vigente.',
       explanation: null as string | null,
       gap: null as string | null,
     };
@@ -1504,9 +1465,8 @@ export function SimulationPage({
     heroResult,
     heroShowsRunActive,
     localReadOnlyFallbackActive,
+    evaluatedScenarioState.label,
     resultConfidence.status,
-    reviewCause,
-    reviewGap,
     simulationInputSync.status,
     showGhostResult,
   ]);
@@ -1896,8 +1856,8 @@ export function SimulationPage({
       : 'Configuración patrimonial válida para esta corrida.';
   const patrimonioMidasHoyAjustadoT0Clp = patrimonioAmpliadoModeloClp ?? patrimonioConsideradoEfectivoCorridaClp;
   const heroResourcesTodayNote = committedManualSummaryT0.count > 0
-    ? `Recursos habilitados hoy · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
-    : 'Recursos habilitados hoy';
+    ? `Capital inicial evaluado · ${committedManualSummaryT0.count} ajuste${committedManualSummaryT0.count === 1 ? '' : 's'} T0`
+    : 'Capital inicial evaluado';
   const heroFutureAdjustmentsNote = committedManualSummaryFuture.count > 0
     ? `Ajustes futuros: ${committedManualSummaryFuture.netClp >= 0 ? '+' : '-'}${formatMoneyCompact(Math.abs(committedManualSummaryFuture.netClp))}${committedManualSummaryFuture.firstFutureDate ? ` en ${committedManualSummaryFuture.firstFutureDate.slice(0, 4)}` : ''}`
     : null;
@@ -2693,11 +2653,11 @@ export function SimulationPage({
             50% { transform: scale(1.25); opacity: 1; }
           }
         `}</style>
-        <div style={{ opacity: heroPrimaryState.label === 'No usar' ? 0.72 : 1 }}>
+        <div style={{ opacity: heroPrimaryState.label === 'Error' ? 0.72 : 1 }}>
           <HeroCard
             label={heroQuestion}
             valuePct={showBootPlaceholder ? null : heroProbSuccess}
-            stale={showGhostResult || heroShowsRunActive}
+            stale={showGhostResult || heroShowsRunActive || evaluatedScenarioState.status === 'pending'}
             subtitle={
               simUiState === 'error'
                 ? `Error de recálculo: ${simUiError || 'reintenta'}`

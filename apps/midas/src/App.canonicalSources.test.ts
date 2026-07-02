@@ -23,8 +23,8 @@ assert.match(
 
 assert.match(
   appSource,
-  /const capitalAdjustmentsSource: SourceStatus = engineFingerprintDiagnostics\.manualCurrentAdjustmentsAffectEngine\s*\?\s*'error'\s*:\s*hasManualAdjustments\s*\?\s*'local'\s*:\s*'canonical';/,
-  'future flows can be local/review, but only T0 manual contamination should block canonical confidence',
+  /const capitalAdjustmentsSource: SourceStatus = hasManualAdjustments \? 'local' : 'canonical';/,
+  'manual adjustments remain traceable in diagnostics, but no longer downgrade an evaluated scenario by themselves',
 );
 
 assert.match(
