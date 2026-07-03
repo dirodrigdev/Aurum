@@ -8,6 +8,7 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import {
+  buildReconstructedClosureFromDraft,
   buildHistoricalClosureSnapshot,
   buildApril2026BankRepairPreview,
   buildClosureAuditDiagnosis,
@@ -15,6 +16,7 @@ import {
   buildClosureEditDraftFromRecords,
   buildClosureRecordsFromDetailDraft,
   buildEditedClosureRecordsFromDraft,
+  getClosureDetailEditability,
   resolveHistoricalClosureEditFx,
 } from '../src/pages/ClosingAurum';
 import { buildClosureBlockIntegrityAudit, buildClosureDetailRecoveryAudit } from '../src/services/wealthIntegrityAudit';
@@ -55,6 +57,15 @@ const makeRecord = (
   snapshotDate: '2026-04-30',
   createdAt: '2026-04-30T12:00:00.000Z',
   ...input,
+});
+
+const makeClosure = (monthKey: string, records: WealthRecord[], rates = fxRates) => ({
+  id: `closure-${monthKey}`,
+  monthKey,
+  closedAt: `${monthKey}-30T23:59:59.000Z`,
+  fxRates: rates,
+  records,
+  summary: buildCanonicalClosureSummary(records, rates),
 });
 
 const makeMemoryStorage = () => {
@@ -305,6 +316,209 @@ describe('closure edit record draft', () => {
     expect(after.mortgageDebtClp).toBe(before.mortgageDebtClp);
     expect(after.netClp - before.netClp).toBe(3000 * fxRates.usdClp);
     expect(JSON.stringify(nextRecords)).not.toMatch(/NaN|undefined/);
+  });
+
+  it('treats bank leaf records as editable and derived bank aggregates as readonly when children exist', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_USD_LABEL,
+        amount: 22_135.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 14_502,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_USD_LABEL,
+        amount: 2_803.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 4_830,
+        currency: 'USD',
+      }),
+    ];
+
+    expect(getClosureDetailEditability(records[3], records)).toMatchObject({
+      editable: true,
+      reason: 'provider_leaf',
+    });
+    expect(getClosureDetailEditability(records[0], records)).toMatchObject({
+      editable: false,
+      reason: 'derived_from_detail',
+    });
+  });
+
+  it('keeps aggregate editable when no lower detail exists', () => {
+    const records = poorAggregateBankRecords();
+
+    expect(getClosureDetailEditability(records[1], records)).toMatchObject({
+      editable: true,
+      reason: 'atomic_no_children',
+    });
+  });
+
+  it('treats mortgage closure records as editable atomic values', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 1000,
+        currency: 'UF',
+      }),
+    ];
+
+    expect(getClosureDetailEditability(records[0], records)).toMatchObject({
+      editable: true,
+      reason: 'atomic_no_children',
+    });
+  });
+
+  it('editing existing usd bank detail rebuilds derived subtotal without requiring an extra adjustment', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_USD_LABEL,
+        amount: 22_135.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 14_502,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_USD_LABEL,
+        amount: 2_803.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 4_830,
+        currency: 'USD',
+      }),
+    ];
+    const detailDraft = Object.fromEntries(records.map((record) => [record.id, String(record.amount)]));
+    detailDraft[records[3].id] = '7830';
+
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records,
+      detailDraft,
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      closureFx: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+      closureId: 'closure-jun-2026',
+      closureClosedAt: '2026-06-30T23:59:59.000Z',
+    });
+    const usdSubtotal = nextRecords
+      .filter(
+        (record) =>
+          record.block === 'bank' &&
+          record.currency === 'USD' &&
+          record.label !== BANK_BALANCE_USD_LABEL,
+      )
+      .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+
+    expect(usdSubtotal).toBe(25_135.57);
+    expect(nextRecords.find((record) => record.label === BANK_SCOTIA_USD_LABEL)?.amount).toBe(7_830);
+    expect(nextRecords.some((record) => record.label === 'Ajuste bancos USD — Junio de 2026')).toBe(false);
+  });
+
+  it('validates against the rebuilt closure summary instead of stale visible subtotals', () => {
+    const staleVisibleClosure = {
+      ...makeClosure('2026-06', [
+        makeRecord({
+          block: 'bank',
+          source: 'Histórico manual',
+          label: BANK_BALANCE_USD_LABEL,
+          amount: 22_135.57,
+          currency: 'USD',
+        }),
+      ], { usdClp: 891, eurClp: 991, ufClp: 38_765 }),
+      summary: {
+        ...buildCanonicalClosureSummary([
+          makeRecord({
+            block: 'bank',
+            source: 'Histórico manual',
+            label: BANK_BALANCE_USD_LABEL,
+            amount: 22_135.57,
+            currency: 'USD',
+          }),
+        ], { usdClp: 891, eurClp: 991, ufClp: 38_765 }),
+        bankClp: Math.round(22_135.57 * 891),
+      },
+    };
+    const editedRecords: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_USD_LABEL,
+        amount: 22_135.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 14_502,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SANTANDER_USD_LABEL,
+        amount: 2_803.57,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 7_830,
+        currency: 'USD',
+      }),
+    ];
+
+    const staleValidation = reconcileClosureDetailRecords({
+      closure: staleVisibleClosure,
+      records: editedRecords,
+      fxRates: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+      monthKey: '2026-06',
+    });
+    const rebuiltClosure = buildReconstructedClosureFromDraft({
+      closure: staleVisibleClosure,
+      records: editedRecords,
+      fxRates: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+    });
+    const rebuiltValidation = reconcileClosureDetailRecords({
+      closure: rebuiltClosure,
+      records: editedRecords,
+      fxRates: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+      monthKey: '2026-06',
+    });
+
+    expect(staleValidation.status).toBe('blocked');
+    expect(staleValidation.reasons).toContain('bank_detail_exceeds_visible_subtotal');
+    expect(rebuiltValidation.status).toBe('ok');
   });
 
   it('uses closure fx when adding usd bank adjustment', () => {

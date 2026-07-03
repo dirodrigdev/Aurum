@@ -230,6 +230,8 @@ const matchCanonicalWithAliases = (label: string, canonicalLabel: string) => {
   return aliases.some((alias) => key === labelMatchKey(alias));
 };
 
+const normalizeText = (value: string) => labelMatchKey(value);
+
 const REQUIRED_INVESTMENT_LABELS = [
   INVESTMENT_SURA_FIN_LABEL,
   INVESTMENT_SURA_PREV_LABEL,
@@ -281,6 +283,19 @@ interface ClosureEditableField {
   currency: WealthCurrency;
   section: 'inversiones' | 'bienes_raices' | 'bancos' | 'deudas';
   normalizeAmount?: (value: number) => number;
+}
+
+export type ClosureDetailEditabilityReason =
+  | 'leaf_record'
+  | 'derived_from_detail'
+  | 'atomic_no_children'
+  | 'legacy_readonly'
+  | 'provider_leaf'
+  | 'manual_adjustment_leaf';
+
+export interface ClosureDetailEditability {
+  editable: boolean;
+  reason: ClosureDetailEditabilityReason;
 }
 
 const CLOSURE_EDITABLE_FIELDS: ClosureEditableField[] = [
@@ -932,6 +947,58 @@ const isBankDetailRecord = (record: WealthRecord) =>
 const isNonMortgageDebtDetailRecord = (record: WealthRecord) =>
   isNonMortgageDebtRecord(record) && !isDebtAggregateField(record);
 
+const isManualClosureAdjustmentRecord = (record: Pick<WealthRecord, 'source' | 'label' | 'note'>) =>
+  String(record.source || '') === 'Edición cierre' ||
+  String(record.label || '').startsWith('Ajuste bancos') ||
+  String(record.note || '').includes('manual_closure_detail_adjustment');
+
+export const getClosureDetailEditability = (
+  record: WealthRecord,
+  allClosureRecords: WealthRecord[],
+): ClosureDetailEditability => {
+  if (isManualClosureAdjustmentRecord(record)) {
+    return { editable: true, reason: 'manual_adjustment_leaf' };
+  }
+  if (record.block === 'bank') {
+    if (isBankAggregateField(record)) {
+      const hasChildren = allClosureRecords.some(
+        (candidate) =>
+          candidate.id !== record.id &&
+          candidate.currency === record.currency &&
+          isBankDetailRecord(candidate),
+      );
+      return hasChildren
+        ? { editable: false, reason: 'derived_from_detail' }
+        : { editable: true, reason: 'atomic_no_children' };
+    }
+    return {
+      editable: true,
+      reason: normalizeText(record.source).includes('fintoc') ? 'provider_leaf' : 'leaf_record',
+    };
+  }
+  if (isNonMortgageDebtRecord(record)) {
+    if (isDebtAggregateField(record)) {
+      const hasChildren = allClosureRecords.some(
+        (candidate) =>
+          candidate.id !== record.id &&
+          candidate.currency === record.currency &&
+          isNonMortgageDebtDetailRecord(candidate),
+      );
+      return hasChildren
+        ? { editable: false, reason: 'derived_from_detail' }
+        : { editable: true, reason: 'atomic_no_children' };
+    }
+    return { editable: true, reason: 'leaf_record' };
+  }
+  if (record.block === 'debt' && (isMortgagePrincipalDebtLabel(record.label) || isMortgageMetaDebtLabel(record.label))) {
+    return { editable: true, reason: 'atomic_no_children' };
+  }
+  if (record.block === 'real_estate' || record.block === 'investment') {
+    return { editable: true, reason: 'atomic_no_children' };
+  }
+  return { editable: false, reason: 'legacy_readonly' };
+};
+
 const hasCanonicalDetailForDerivedField = (records: WealthRecord[], field: ClosureEditableField) => {
   if (field.key === 'bancosClp' || field.key === 'bancosUsd') {
     return records.some((record) => record.currency === field.currency && isBankDetailRecord(record));
@@ -974,6 +1041,24 @@ export const buildHistoricalClosureSnapshot = ({
   };
 };
 
+export const buildReconstructedClosureFromDraft = ({
+  closure,
+  records,
+  fxRates,
+}: {
+  closure: WealthMonthlyClosure;
+  records: WealthRecord[];
+  fxRates: WealthFxRates;
+}): WealthMonthlyClosure => {
+  const deduped = dedupeClosureRecords(records);
+  return {
+    ...closure,
+    fxRates: { ...fxRates },
+    records: deduped,
+    summary: buildCanonicalClosureSummary(deduped, fxRates),
+  };
+};
+
 export const buildClosureRecordsFromDetailDraft = ({
   records,
   detailDraft,
@@ -1008,6 +1093,7 @@ export const buildClosureRecordsFromDetailDraft = ({
       : null,
   };
   const nextRecords = records.map((record) => {
+    if (!getClosureDetailEditability(record, records).editable) return { ...record };
     const raw = detailDraft[record.id];
     if (raw === undefined) return { ...record };
     const parsed = parseStrictNumber(raw);
@@ -1763,10 +1849,14 @@ export const ClosingAurum: React.FC = () => {
         if (record.block === 'investment') return true;
         return false;
       })
+      .map((record) => ({
+        record,
+        editability: getClosureDetailEditability(record, records),
+      }))
       .sort((a, b) => {
-        const order = (sectionOrder[a.block] || 9) - (sectionOrder[b.block] || 9);
+        const order = (sectionOrder[a.record.block] || 9) - (sectionOrder[b.record.block] || 9);
         if (order !== 0) return order;
-        return a.currency.localeCompare(b.currency) || a.label.localeCompare(b.label);
+        return a.record.currency.localeCompare(b.record.currency) || a.record.label.localeCompare(b.record.label);
       });
   }, [selectedClosureRecordsRaw]);
   const selectedClosureHasRiskCapital = useMemo(() => {
@@ -2216,8 +2306,13 @@ export const ClosingAurum: React.FC = () => {
       monthKey: selectedClosure.monthKey,
       createdAt,
     });
-    const reconciliation = reconcileClosureDetailRecords({
+    const reconstructedDraftClosure = buildReconstructedClosureFromDraft({
       closure: selectedClosure,
+      records: normalizedNextRecords,
+      fxRates: nextFx,
+    });
+    const reconciliation = reconcileClosureDetailRecords({
+      closure: reconstructedDraftClosure,
       records: normalizedNextRecords,
       fxRates: nextFx,
       monthKey: selectedClosure.monthKey,
@@ -2248,7 +2343,7 @@ export const ClosingAurum: React.FC = () => {
     }
 
     const integrityAudit = buildClosureBlockIntegrityAuditReadOnly({
-      closure: selectedClosure,
+      closure: reconstructedDraftClosure,
       editableRecords: finalNextRecords,
       fxRates: nextFx,
     });
@@ -2367,6 +2462,9 @@ export const ClosingAurum: React.FC = () => {
     }
     setRevision((v) => v + 1);
   };
+
+  const closureAdjustmentWouldDoubleCount =
+    closureDetailDirty && String(closureBankUsdAdjustmentDraft || '').trim() !== '';
 
   const copyAuditPreview = async () => {
     if (!selectedAuditSnapshot) return;
@@ -3382,7 +3480,7 @@ export const ClosingAurum: React.FC = () => {
               Editar cierre {monthLabel(selectedClosure.monthKey)}
             </div>
             <div className="mt-1 text-sm text-slate-600">
-              Edita fuentes directas del cierre (no campos calculados). Al guardar, se sobrescribe este cierre y se conserva la versión anterior.
+              Edita fuentes directas del cierre (no campos calculados). Antes de guardar se conservará una copia de respaldo del cierre anterior para auditoría o reversión.
             </div>
             {!selectedClosureIsLatest && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -3505,7 +3603,7 @@ export const ClosingAurum: React.FC = () => {
                   {closureDetailVisible && (
                     <div className="mt-3 space-y-3">
                       <div className="grid grid-cols-1 gap-2">
-                        {selectedClosureDetailRows.map((record) => (
+                        {selectedClosureDetailRows.map(({ record, editability }) => (
                           <div
                             key={record.id}
                             className="grid grid-cols-[minmax(0,1fr)_110px] items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2 py-2"
@@ -3515,6 +3613,13 @@ export const ClosingAurum: React.FC = () => {
                               <div className="text-[10px] uppercase tracking-wide text-slate-400">
                                 {record.block} · {record.currency}
                               </div>
+                              {!editability.editable && (
+                                <div className="mt-1 text-[10px] text-amber-700">
+                                  {editability.reason === 'derived_from_detail'
+                                    ? 'Subtotal derivado del detalle'
+                                    : 'Calculado desde líneas inferiores'}
+                                </div>
+                              )}
                             </div>
                             <Input
                               value={closureDetailDraft[record.id] ?? String(record.amount)}
@@ -3523,16 +3628,21 @@ export const ClosingAurum: React.FC = () => {
                                 setClosureDetailDirty(true);
                               }}
                               inputMode="decimal"
-                              disabled={!selectedClosureIsLatest}
+                              disabled={!selectedClosureIsLatest || !editability.editable}
                             />
                           </div>
                         ))}
                       </div>
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <div className="text-xs font-semibold text-amber-900">Agregar ajuste USD</div>
+                        <div className="text-xs font-semibold text-amber-900">Agregar ajuste nuevo (opcional)</div>
                         <div className="mt-1 text-[11px] text-amber-800">
-                          Crea un record detallado: Ajuste bancos USD — {monthLabel(selectedClosure.monthKey)}.
+                          Úsalo solo si falta una línea en el detalle o si prefieres no modificar una cuenta existente.
                         </div>
+                        {closureAdjustmentWouldDoubleCount && (
+                          <div className="mt-2 rounded-md border border-amber-300 bg-white/80 px-2 py-1 text-[11px] text-amber-900">
+                            Ya modificaste una línea existente. Este ajuste se sumará adicionalmente.
+                          </div>
+                        )}
                         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[140px_minmax(0,1fr)]">
                           <Input
                             value={closureBankUsdAdjustmentDraft}
@@ -3691,8 +3801,8 @@ export const ClosingAurum: React.FC = () => {
         title="Confirmar guardado de edición"
         message={
           selectedClosure
-            ? `Vas a sobrescribir el cierre de ${monthLabel(selectedClosure.monthKey)}. Se guardará una versión anterior.`
-            : 'Vas a sobrescribir este cierre y se guardará una versión anterior.'
+            ? `Antes de guardar se conservará una copia de respaldo del cierre anterior de ${monthLabel(selectedClosure.monthKey)} para auditoría o reversión.`
+            : 'Antes de guardar se conservará una copia de respaldo del cierre anterior para auditoría o reversión.'
         }
         confirmText="Confirmar guardado"
         cancelText="Cancelar"
