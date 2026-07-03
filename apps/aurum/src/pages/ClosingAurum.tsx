@@ -62,6 +62,7 @@ import {
   saveIncludeRiskCapitalInTotals,
   summarizeWealth,
   previewUndoMonthlyClose,
+  propagateClosureEditToOpenMonth,
   rollbackLegacyMonthlyClose,
   undoMonthlyCloseToCheckpoint,
   WEALTH_LABEL_CATALOG,
@@ -1301,6 +1302,8 @@ export const ClosingAurum: React.FC = () => {
   const [undoCloseBusy, setUndoCloseBusy] = useState(false);
   const [undoCloseMessage, setUndoCloseMessage] = useState('');
   const [undoCloseMessageTone, setUndoCloseMessageTone] = useState<UndoCloseMessageTone>('info');
+  const [closureEditMessage, setClosureEditMessage] = useState('');
+  const [closureEditMessageTone, setClosureEditMessageTone] = useState<UndoCloseMessageTone>('info');
   const [undoClosePreview, setUndoClosePreview] = useState<WealthMonthlyCloseUndoPreview | null>(null);
   const [undoLocalCheckpointAcknowledged, setUndoLocalCheckpointAcknowledged] = useState(false);
   const [aprilRepairConfirmOpen, setAprilRepairConfirmOpen] = useState(false);
@@ -1958,6 +1961,7 @@ export const ClosingAurum: React.FC = () => {
     if (!selectedClosure) return;
     const latestClosureBlocked = !selectedClosureIsLatest;
     const snapshotFx = resolveHistoricalClosureEditFx(selectedClosure);
+    setClosureEditMessage('');
     setClosureDetailVisible(false);
     setClosureDetailDraft({});
     setClosureDetailDirty(false);
@@ -2340,8 +2344,27 @@ export const ClosingAurum: React.FC = () => {
       );
       return;
     }
+    const propagationResult = propagateClosureEditToOpenMonth({
+      previousClosure: selectedClosure,
+      updatedClosure: persistedClosure,
+    });
     setClosureEditOpen(false);
     setClosureEditError('');
+    if (propagationResult.status === 'propagated') {
+      setClosureEditMessage('Cierre corregido. También se actualizó el mes abierto en los componentes arrastrados.');
+      setClosureEditMessageTone('success');
+    } else if (propagationResult.status === 'partial') {
+      setClosureEditMessage(
+        'Cierre corregido. Algunos componentes del mes abierto ya tenían datos actualizados y no se modificaron.',
+      );
+      setClosureEditMessageTone('info');
+    } else if (propagationResult.status === 'action_required') {
+      setClosureEditMessage('Cierre corregido. Revisa el mes abierto para aplicar ajustes pendientes.');
+      setClosureEditMessageTone('info');
+    } else {
+      setClosureEditMessage('Cierre corregido.');
+      setClosureEditMessageTone('success');
+    }
     setRevision((v) => v + 1);
   };
 
@@ -2639,6 +2662,11 @@ export const ClosingAurum: React.FC = () => {
 
       {tab === 'cierre' && (
         <div className="relative space-y-2.5 pb-12">
+          {!!closureEditMessage && (
+            <Card className={`p-3 border ${formatUndoCloseFeedbackClass(closureEditMessageTone)}`}>
+              <div className="text-[11px]">{closureEditMessage}</div>
+            </Card>
+          )}
           {(may2023HotfixTarget || may2023HotfixMessage) && (
             <Card className="p-3 border border-amber-200 bg-amber-50/70">
               <div className="flex flex-wrap items-center justify-between gap-2">

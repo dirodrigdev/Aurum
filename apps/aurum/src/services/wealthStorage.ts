@@ -126,6 +126,17 @@ export interface WealthMonthlyCloseCheckpoint {
   state?: WealthCheckpointStateSnapshot;
 }
 
+export interface ClosureEditPropagationResult {
+  status: 'propagated' | 'partial' | 'action_required' | 'skipped';
+  sourceMonthKey: string;
+  targetMonthKey: string | null;
+  updated: number;
+  created: number;
+  skippedUpdated: number;
+  skippedMissing: number;
+  warnings: string[];
+}
+
 export type MonthlyCloseCheckpointReadinessStatus =
   | 'BACKUP_READY_FOR_JUNE_CLOSE'
   | 'BACKUP_NOT_READY'
@@ -712,6 +723,30 @@ const normalizeLabelKey = (value: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+const NOTE_METADATA_SEPARATOR = ' · ';
+
+const appendNoteMetadata = (note: string | undefined, metadata: Record<string, unknown>) =>
+  [String(note || '').trim(), JSON.stringify(metadata)].filter(Boolean).join(NOTE_METADATA_SEPARATOR);
+
+const extractNoteMetadata = (note?: string): Array<Record<string, unknown>> =>
+  String(note || '')
+    .split(NOTE_METADATA_SEPARATOR)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.startsWith('{') && chunk.endsWith('}'))
+    .flatMap((chunk) => {
+      try {
+        const parsed = JSON.parse(chunk);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? [parsed as Record<string, unknown>]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+
+const findNoteMetadataByType = (note: string | undefined, type: string) =>
+  extractNoteMetadata(note).find((entry) => String(entry.type || '') === type) || null;
 
 export const MORTGAGE_DEBT_BALANCE_LABEL = 'Saldo deuda hipotecaria';
 export const MORTGAGE_DIVIDEND_LABEL = 'Dividendo hipotecario mensual';
@@ -5621,6 +5656,13 @@ export const fillMissingWithPreviousClosure = (
   if (!previous) {
     return { added: 0, sourceMonth: null };
   }
+  const carryForwardMetadata = {
+    type: 'carry_forward_from_closure',
+    sourceClosureMonthKey: previous.monthKey,
+    sourceClosureId: previous.id,
+    reason: 'fill_missing_with_previous_closure',
+    carriedAt: nowIso(),
+  };
   const sourceFromSummary = (): WealthRecord[] => {
     const summary = previous.summary as WealthSnapshotSummary & {
       realEstateNetClp?: number;
@@ -5655,7 +5697,10 @@ export const fillMissingWithPreviousClosure = (
         currency: 'CLP',
         snapshotDate,
         createdAt: nowIso(),
-        note: `Mes anterior (summary): cierre ${previous.monthKey}`,
+        note: appendNoteMetadata(
+          `Mes anterior (summary): cierre ${previous.monthKey}`,
+          carryForwardMetadata,
+        ),
       });
     };
     if (investmentWithoutRisk !== null && Math.abs(investmentWithoutRisk) > 0) {
@@ -5730,7 +5775,7 @@ export const fillMissingWithPreviousClosure = (
       currency: oldRecord.currency,
       snapshotDate,
       createdAt: nowIso(),
-      note: `Mes anterior: cierre ${previous.monthKey}`,
+      note: appendNoteMetadata(`Mes anterior: cierre ${previous.monthKey}`, carryForwardMetadata),
     });
   }
 
@@ -5744,7 +5789,265 @@ export const fillMissingWithPreviousClosure = (
 
 const isAutoFillNote = (note?: string) => {
   const n = String(note || '').toLowerCase();
-  return n.includes('arrastrado') || n.includes('mes anterior') || n.includes('estimado');
+  return (
+    n.includes('arrastrado') ||
+    n.includes('mes anterior') ||
+    n.includes('estimado') ||
+    !!findNoteMetadataByType(note, 'carry_forward_from_closure')
+  );
+};
+
+const isCarryForwardFromClosure = (
+  record: Pick<WealthRecord, 'note'>,
+  sourceClosureMonthKey: string,
+) => {
+  const metadata = findNoteMetadataByType(record.note, 'carry_forward_from_closure');
+  if (metadata) {
+    return String(metadata.sourceClosureMonthKey || '') === sourceClosureMonthKey;
+  }
+  return String(record.note || '').includes(`cierre ${sourceClosureMonthKey}`);
+};
+
+const isPropagationRecordForClosure = (
+  record: Pick<WealthRecord, 'note'>,
+  sourceClosureMonthKey: string,
+) => {
+  const metadata = findNoteMetadataByType(record.note, 'propagated_from_closure_edit');
+  if (!metadata) return false;
+  return String(metadata.sourceClosureMonthKey || '') === sourceClosureMonthKey;
+};
+
+const samePropagationFamily = (left: WealthRecord, right: WealthRecord) => {
+  if (left.block !== right.block || left.currency !== right.currency) return false;
+  if (left.block === 'bank') return !isNonMortgageDebtRecord(left) && !isNonMortgageDebtRecord(right);
+  if (left.block === 'debt') {
+    const leftMortgage = isMortgagePrincipalDebtLabel(left.label) || isMortgageMetaDebtLabel(left.label);
+    const rightMortgage = isMortgagePrincipalDebtLabel(right.label) || isMortgageMetaDebtLabel(right.label);
+    return leftMortgage === rightMortgage;
+  }
+  return true;
+};
+
+interface ClosureEditDeltaRecord {
+  block: WealthBlock;
+  label: string;
+  currency: WealthCurrency;
+  deltaNative: number;
+  previousAmount: number;
+  nextAmount: number;
+  sourceRecordId: string | null;
+  sourceAdjustmentId: string | null;
+  createdByAdjustment: boolean;
+}
+
+const buildClosureEditDeltaRecords = (
+  beforeRecords: WealthRecord[],
+  afterRecords: WealthRecord[],
+): ClosureEditDeltaRecord[] => {
+  const beforeMap = new Map(dedupeLatestByAsset(beforeRecords).map((record) => [makeAssetKey(record), record]));
+  const afterMap = new Map(dedupeLatestByAsset(afterRecords).map((record) => [makeAssetKey(record), record]));
+  const keys = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+  const deltas: ClosureEditDeltaRecord[] = [];
+
+  for (const key of keys) {
+    const before = beforeMap.get(key) || null;
+    const after = afterMap.get(key) || null;
+    const previousAmount = Number(before?.amount || 0);
+    const nextAmount = Number(after?.amount || 0);
+    const deltaNative = nextAmount - previousAmount;
+    if (Math.abs(deltaNative) <= 1e-9) continue;
+    const sample = after || before;
+    if (!sample) continue;
+    deltas.push({
+      block: sample.block,
+      label: sample.label,
+      currency: sample.currency,
+      deltaNative,
+      previousAmount,
+      nextAmount,
+      sourceRecordId: after?.id || before?.id || null,
+      sourceAdjustmentId:
+        after && isManualClosureDetailAdjustmentRecord(after) && !before ? after.id : null,
+      createdByAdjustment: !!(after && isManualClosureDetailAdjustmentRecord(after) && !before),
+    });
+  }
+
+  return deltas;
+};
+
+export const propagateClosureEditToOpenMonth = (input: {
+  previousClosure: WealthMonthlyClosure;
+  updatedClosure: WealthMonthlyClosure;
+  targetMonthKey?: string;
+  snapshotDate?: string;
+}): ClosureEditPropagationResult => {
+  const sourceMonthKey = normalizeMonthKey(input.updatedClosure.monthKey) || '';
+  const expectedTargetMonthKey = monthAfter(sourceMonthKey);
+  const targetMonthKey = normalizeMonthKey(input.targetMonthKey) || currentMonthKey();
+
+  if (!sourceMonthKey || !expectedTargetMonthKey || targetMonthKey !== expectedTargetMonthKey) {
+    return {
+      status: 'skipped',
+      sourceMonthKey,
+      targetMonthKey: expectedTargetMonthKey,
+      updated: 0,
+      created: 0,
+      skippedUpdated: 0,
+      skippedMissing: 0,
+      warnings: ['Editar cierres anteriores no propaga automaticamente al mes abierto.'],
+    };
+  }
+
+  const allRecords = loadWealthRecords();
+  const targetMonthRecords = latestRecordsForMonth(allRecords, targetMonthKey);
+  if (!targetMonthRecords.length) {
+    return {
+      status: 'action_required',
+      sourceMonthKey,
+      targetMonthKey,
+      updated: 0,
+      created: 0,
+      skippedUpdated: 0,
+      skippedMissing: 1,
+      warnings: ['El mes abierto todavia no tiene records arrastrados compatibles para propagar la correccion.'],
+    };
+  }
+
+  const deltas = buildClosureEditDeltaRecords(
+    input.previousClosure.records || [],
+    input.updatedClosure.records || [],
+  );
+  if (!deltas.length) {
+    return {
+      status: 'skipped',
+      sourceMonthKey,
+      targetMonthKey,
+      updated: 0,
+      created: 0,
+      skippedUpdated: 0,
+      skippedMissing: 0,
+      warnings: [],
+    };
+  }
+
+  const nextRecords = [...allRecords];
+  const propagationWarnings = new Set<string>();
+  let updated = 0;
+  let created = 0;
+  let skippedUpdated = 0;
+  let skippedMissing = 0;
+
+  const targetSnapshotDate =
+    input.snapshotDate ||
+    targetMonthRecords[0]?.snapshotDate ||
+    `${targetMonthKey}-01`;
+
+  for (const delta of deltas) {
+    const sampleRecord = (input.updatedClosure.records || []).find(
+      (record) =>
+        record.block === delta.block &&
+        record.currency === delta.currency &&
+        sameCanonicalLabel(record.label, delta.label),
+    );
+    if (!sampleRecord) continue;
+
+    const matchingTarget = targetMonthRecords.find(
+      (record) =>
+        record.block === delta.block &&
+        record.currency === delta.currency &&
+        sameCanonicalLabel(record.label, delta.label),
+    );
+    const propagationMetadata = {
+      type: 'propagated_from_closure_edit',
+      sourceClosureMonthKey: sourceMonthKey,
+      sourceClosureId: input.updatedClosure.id,
+      sourceAdjustmentId: delta.sourceAdjustmentId,
+      deltaNative: delta.deltaNative,
+      currency: delta.currency,
+      block: delta.block,
+      propagatedAt: nowIso(),
+      reason: 'latest_closure_edit_to_open_month',
+    };
+
+    if (matchingTarget) {
+      if (!isCarryForwardFromClosure(matchingTarget, sourceMonthKey)) {
+        skippedUpdated += 1;
+        propagationWarnings.add(
+          'El cierre fue corregido, pero el mes abierto ya tenia datos actualizados para este componente. No se aplico propagacion automatica.',
+        );
+        continue;
+      }
+      if (isPropagationRecordForClosure(matchingTarget, sourceMonthKey)) {
+        skippedUpdated += 1;
+        continue;
+      }
+
+      const nextAmount =
+        delta.block === 'debt'
+          ? Math.max(0, Number(matchingTarget.amount || 0) + delta.deltaNative)
+          : Number(matchingTarget.amount || 0) + delta.deltaNative;
+      const nextRecord: WealthRecord = {
+        ...matchingTarget,
+        amount: nextAmount,
+        updatedAt: propagationMetadata.propagatedAt,
+        note: appendNoteMetadata(matchingTarget.note, propagationMetadata),
+      };
+      const targetIndex = nextRecords.findIndex((record) => record.id === matchingTarget.id);
+      if (targetIndex >= 0) nextRecords[targetIndex] = nextRecord;
+      updated += 1;
+      continue;
+    }
+
+    const familyRecords = targetMonthRecords.filter((record) => samePropagationFamily(record, sampleRecord));
+    const hasCarryForwardFamily = familyRecords.some((record) => isCarryForwardFromClosure(record, sourceMonthKey));
+    const hasProtectedFamily = familyRecords.some((record) => !isCarryForwardFromClosure(record, sourceMonthKey));
+    if (delta.createdByAdjustment && hasCarryForwardFamily && !hasProtectedFamily) {
+      nextRecords.push({
+        id: crypto.randomUUID(),
+        block: sampleRecord.block,
+        source: 'Propagacion cierre',
+        label: sampleRecord.label,
+        amount: delta.nextAmount,
+        currency: sampleRecord.currency,
+        snapshotDate: targetSnapshotDate,
+        createdAt: propagationMetadata.propagatedAt,
+        updatedAt: propagationMetadata.propagatedAt,
+        note: appendNoteMetadata(
+          `Propagado desde cierre ${sourceMonthKey}`,
+          propagationMetadata,
+        ),
+      });
+      created += 1;
+      continue;
+    }
+
+    skippedMissing += 1;
+    propagationWarnings.add('Cierre corregido. Revisa el mes abierto para aplicar ajustes pendientes.');
+  }
+
+  if (updated || created) {
+    saveWealthRecords(nextRecords.sort(sortByCreatedDesc));
+  }
+
+  const status =
+    propagationWarnings.size === 0
+      ? updated || created
+        ? 'propagated'
+        : 'skipped'
+      : updated || created
+        ? 'partial'
+        : 'action_required';
+
+  return {
+    status,
+    sourceMonthKey,
+    targetMonthKey,
+    updated,
+    created,
+    skippedUpdated,
+    skippedMissing,
+    warnings: [...propagationWarnings],
+  };
 };
 
 export const applyMortgageAutoCalculation = (
