@@ -363,7 +363,7 @@ describe('wealth data lineage invariants', () => {
     expect(summary.bankClp).toBe(21_007_517);
   });
 
-  it('reports a structural conflict when bank aggregate and detail coexist but do not match', () => {
+  it('marks bank aggregate mismatch as ignored legacy when canonical detail already wins', () => {
     const records = [
       record({
         id: 'bank-bchile-clp',
@@ -397,6 +397,8 @@ describe('wealth data lineage invariants', () => {
     expect(bankConflict).toBeTruthy();
     expect(bankConflict?.aggregateClp).toBe(21_000_000);
     expect(bankConflict?.detailClp).toBe(15_000_000);
+    expect(bankConflict?.status).toBe('ignored_legacy');
+    expect(bankConflict?.reason).toBe('canonical_detail_excludes_legacy_aggregate');
     expect(selectCanonicalWealthExposureRecords(records, true).map((entry) => entry.record.label)).not.toContain(BANK_BALANCE_CLP_LABEL);
   });
 

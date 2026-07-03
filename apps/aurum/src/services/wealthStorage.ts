@@ -2728,7 +2728,30 @@ export const detectAggregateCompetitionConflicts = (
         ? !AGGREGATE_BANK_LABELS_CLP.has(normalizedLabel)
         : !AGGREGATE_BANK_LABELS_USD.has(normalizedLabel);
     });
-    const bankConflict = summarizeAggregateCompetition('bank', currency, bankAggregate, bankDetail, fxRates);
+    const canonicalBankEntries = canonicalExposure.filter(
+      (entry) => entry.group === 'bank' && entry.record.currency === currency,
+    );
+    const canonicalBankUsesAggregate = canonicalBankEntries.some((entry) =>
+      currency === 'CLP'
+        ? AGGREGATE_BANK_LABELS_CLP.has(normalizeText(entry.record.label))
+        : AGGREGATE_BANK_LABELS_USD.has(normalizeText(entry.record.label)),
+    );
+    const canonicalBankUsesDetail = canonicalBankEntries.some((entry) =>
+      currency === 'CLP'
+        ? !AGGREGATE_BANK_LABELS_CLP.has(normalizeText(entry.record.label))
+        : !AGGREGATE_BANK_LABELS_USD.has(normalizeText(entry.record.label)),
+    );
+    const bankConflict = summarizeAggregateCompetition(
+      'bank',
+      currency,
+      bankAggregate,
+      bankDetail,
+      fxRates,
+      canonicalBankUsesDetail && !canonicalBankUsesAggregate ? 'ignored_legacy' : 'blocked',
+      canonicalBankUsesDetail && !canonicalBankUsesAggregate
+        ? 'canonical_detail_excludes_legacy_aggregate'
+        : 'aggregate_competes_with_detail',
+    );
     if (bankConflict) conflicts.push(bankConflict);
 
     const debtRecords = latest.filter(

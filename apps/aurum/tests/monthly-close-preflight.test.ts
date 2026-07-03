@@ -9,8 +9,11 @@ vi.mock('../src/services/firebase', () => ({
 
 import {
   BANK_BALANCE_CLP_LABEL,
+  BANK_BALANCE_USD_LABEL,
   BANK_BCHILE_CLP_LABEL,
+  BANK_BCHILE_USD_LABEL,
   BANK_SCOTIA_CLP_LABEL,
+  BANK_SCOTIA_USD_LABEL,
   CARD_MASTERCARD_SANTANDER_LABEL,
   DEBT_CARD_CLP_LABEL,
   MORTGAGE_DEBT_BALANCE_LABEL,
@@ -442,7 +445,78 @@ describe('monthly close preflight diagnostic', () => {
       investmentInstruments: [],
     });
 
-    expect(diagnostic.decision).toBe('NO_GO_SOURCE_OF_TRUTH_UNCLEAR');
-    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('fail');
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.aggregateCompetitionConflicts).toEqual([
+      expect.objectContaining({
+        family: 'bank',
+        currency: 'CLP',
+        status: 'ignored_legacy',
+        reason: 'canonical_detail_excludes_legacy_aggregate',
+      }),
+    ]);
+  });
+
+  it('ignores legacy bank usd aggregate when provider detail is canonical for close target', () => {
+    const records: WealthRecord[] = [
+      record({
+        id: 'bank-usd-aggregate-jul',
+        block: 'bank',
+        source: 'Histórico manual',
+        label: BANK_BALANCE_USD_LABEL,
+        amount: 4408.376842105263,
+        currency: 'USD',
+        snapshotDate: '2026-07-31',
+        createdAt: '2026-07-31T10:00:00Z',
+      }),
+      record({
+        id: 'bank-usd-bchile-jul',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 14000,
+        currency: 'USD',
+        snapshotDate: '2026-07-31',
+        createdAt: '2026-07-31T10:05:00Z',
+      }),
+      record({
+        id: 'bank-usd-scotia-jul',
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 9971.395789473683,
+        currency: 'USD',
+        snapshotDate: '2026-07-31',
+        createdAt: '2026-07-31T10:06:00Z',
+      }),
+    ];
+
+    const diagnostic = buildMonthlyClosePreflightDiagnostic({
+      records,
+      closures: [],
+      fxForClose: fx,
+      includeRiskCapitalInTotals: false,
+      uiMonthKey: '2026-07',
+      targetMonthKey: '2026-07',
+      calendarMonthKey: '2026-07',
+      investmentInstruments: [],
+    });
+
+    expect(diagnostic.decision).toBe('GO_PARA_CERRAR');
+    expect(diagnostic.checks.find((check) => check.key === 'ui_assets_vs_close')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'ui_amounts_vs_close')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'summary_matches_records')?.status).toBe('ok');
+    expect(diagnostic.checks.find((check) => check.key === 'aggregate_conflicts')?.status).toBe('warn');
+    expect(diagnostic.aggregateCompetitionConflicts).toEqual([
+      expect.objectContaining({
+        family: 'bank',
+        currency: 'USD',
+        aggregateClp: 4_187_958,
+        detailClp: 22_772_826,
+        status: 'ignored_legacy',
+        reason: 'canonical_detail_excludes_legacy_aggregate',
+      }),
+    ]);
+    expect(buildMonthlyClosePreflightReport(diagnostic)).toContain('Agregados legacy ignorados');
   });
 });
