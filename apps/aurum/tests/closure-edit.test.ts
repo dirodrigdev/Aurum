@@ -12,6 +12,7 @@ import {
   buildClosureAuditDiagnosis,
   buildClosureAuditSnapshot,
   buildClosureEditDraftFromRecords,
+  buildClosureRecordsFromDetailDraft,
   buildEditedClosureRecordsFromDraft,
 } from '../src/pages/ClosingAurum';
 import { buildClosureBlockIntegrityAudit, buildClosureDetailRecoveryAudit } from '../src/services/wealthIntegrityAudit';
@@ -25,6 +26,8 @@ import {
   BANK_SANTANDER_CLP_LABEL,
   BANK_SANTANDER_USD_LABEL,
   DEBT_CARD_CLP_LABEL,
+  MORTGAGE_DEBT_BALANCE_LABEL,
+  REAL_ESTATE_PROPERTY_VALUE_LABEL,
   TENENCIA_CXC_PREFIX_LABEL,
   buildCanonicalClosureSummary,
   createMonthlyClosure,
@@ -207,7 +210,7 @@ describe('closure edit record draft', () => {
     expect(summary.nonMortgageDebtClp).toBe(93_256_478);
   });
 
-  it('replaces bank records with an aggregate only when bank is explicitly edited', () => {
+  it('does not replace detailed bank records with a derived aggregate when bank subtotal is edited', () => {
     const { records } = buildEditedClosureRecordsFromDraft({
       records: baseRecords(),
       draft: {
@@ -220,12 +223,84 @@ describe('closure edit record draft', () => {
     });
 
     const summary = buildCanonicalClosureSummary(records, fxRates);
-    expect(records.some((record) => record.label === BANK_BCHILE_CLP_LABEL)).toBe(false);
-    expect(records.some((record) => record.label === BANK_SCOTIA_CLP_LABEL)).toBe(false);
-    expect(records.some((record) => record.label === BANK_BALANCE_CLP_LABEL && record.amount === 40_000_000)).toBe(true);
+    expect(records.some((record) => record.label === BANK_BCHILE_CLP_LABEL)).toBe(true);
+    expect(records.some((record) => record.label === BANK_SCOTIA_CLP_LABEL)).toBe(true);
+    expect(records.some((record) => record.label === BANK_BALANCE_CLP_LABEL && record.amount === 40_000_000)).toBe(false);
     expect(records.some((record) => record.label === DEBT_CARD_CLP_LABEL)).toBe(true);
-    expect(summary.bankClp).toBe(40_000_000);
+    expect(summary.bankClp).toBe(31_486_718);
     expect(summary.nonMortgageDebtClp).toBe(93_256_478);
+  });
+
+  it('adds a detailed USD bank adjustment and recalculates summary from closure records', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 10_135,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 15_000,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 1_000_000,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: DEBT_CARD_CLP_LABEL,
+        amount: 500_000,
+        currency: 'CLP',
+      }),
+      makeRecord({
+        block: 'real_estate',
+        source: 'Manual',
+        label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
+        amount: 3000,
+        currency: 'UF',
+      }),
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 1000,
+        currency: 'UF',
+      }),
+    ];
+    const before = buildCanonicalClosureSummary(records, fxRates);
+    const detailDraft = Object.fromEntries(records.map((record) => [record.id, String(record.amount)]));
+
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records,
+      detailDraft,
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      bankUsdAdjustment: 3000,
+      note: 'Corrección bancos USD',
+    });
+    const after = buildCanonicalClosureSummary(nextRecords, fxRates);
+    const bankUsdNative = nextRecords
+      .filter((record) => record.block === 'bank' && record.currency === 'USD')
+      .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+
+    expect(bankUsdNative).toBe(28_135);
+    expect(nextRecords.some((record) => record.label === 'Ajuste bancos USD — Junio de 2026')).toBe(true);
+    expect(nextRecords.some((record) => record.label === BANK_BALANCE_USD_LABEL)).toBe(false);
+    expect(after.bankClp - before.bankClp).toBe(3000 * fxRates.usdClp);
+    expect(after.nonMortgageDebtClp).toBe(before.nonMortgageDebtClp);
+    expect(after.realEstateAssetsClp).toBe(before.realEstateAssetsClp);
+    expect(after.mortgageDebtClp).toBe(before.mortgageDebtClp);
+    expect(after.netClp - before.netClp).toBe(3000 * fxRates.usdClp);
+    expect(JSON.stringify(nextRecords)).not.toMatch(/NaN|undefined/);
   });
 
   it('does not remove non-mortgage debt stored as bank when unrelated fields change', () => {

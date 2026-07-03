@@ -2479,6 +2479,19 @@ const PROVIDER_BANK_LABELS_USD = new Set(
   BANK_PROVIDER_USD_LABELS.map(normalizeText),
 );
 
+const isManualClosureDetailAdjustmentRecord = (
+  record: Pick<WealthRecord, 'source' | 'label' | 'note'>,
+) => {
+  const source = normalizeText(record.source || '');
+  const label = normalizeText(record.label || '');
+  const note = normalizeText(String(record.note || ''));
+  return (
+    note.includes('manual_closure_detail_adjustment') ||
+    source === normalizeText('Edición cierre') ||
+    label.startsWith(normalizeText('Ajuste bancos'))
+  );
+};
+
 export const maybeNormalizeMinorUnitAmount = (record: WealthRecord, amount: number): number => {
   const value = Number(amount);
   if (!Number.isFinite(value)) return 0;
@@ -2531,6 +2544,7 @@ export const computeWealthBankLiquiditySnapshot = (
 
   const bankDetails = bankCandidates.filter((record) => {
     const label = normalizeText(record.label);
+    if (isManualClosureDetailAdjustmentRecord(record)) return true;
     if (record.currency === 'CLP' && hasDetailedBankClp) {
       if (hasProviderBankClp) return PROVIDER_BANK_LABELS_CLP.has(label);
       return !AGGREGATE_BANK_LABELS_CLP.has(label);
@@ -2780,12 +2794,13 @@ export const selectCanonicalWealthExposureRecords = (
       continue;
     }
     if (record.block === 'bank' && !nonMortgageDebt) {
+      const manualClosureAdjustment = isManualClosureDetailAdjustmentRecord(record);
       if (record.currency === 'CLP') {
-        if (hasProviderBankClp && !PROVIDER_BANK_LABELS_CLP.has(label)) continue;
+        if (hasProviderBankClp && !PROVIDER_BANK_LABELS_CLP.has(label) && !manualClosureAdjustment) continue;
         if (!hasProviderBankClp && hasDetailedBankClp && AGGREGATE_BANK_LABELS_CLP.has(label)) continue;
       }
       if (record.currency === 'USD') {
-        if (hasProviderBankUsd && !PROVIDER_BANK_LABELS_USD.has(label)) continue;
+        if (hasProviderBankUsd && !PROVIDER_BANK_LABELS_USD.has(label) && !manualClosureAdjustment) continue;
         if (!hasProviderBankUsd && hasDetailedBankUsd && AGGREGATE_BANK_LABELS_USD.has(label)) continue;
       }
       selected.push({ record, group: 'bank', isDebt: false });
@@ -2956,16 +2971,17 @@ export const buildWealthNetBreakdown = (
     if (isMortgageMetaDebtLabel(record.label) && !isMortgagePrincipalDebtLabel(record.label)) return;
     const treatsAsNonMortgageDebt = isNonMortgageDebtRecord(record);
     if (record.block === 'bank' && !treatsAsNonMortgageDebt) {
+      const manualClosureAdjustment = isManualClosureDetailAdjustmentRecord(record);
       if (record.currency === 'CLP') {
         if (hasProviderBankClp) {
-          if (!PROVIDER_BANK_LABELS_CLP.has(normalizedLabel)) return;
+          if (!PROVIDER_BANK_LABELS_CLP.has(normalizedLabel) && !manualClosureAdjustment) return;
         } else if (hasDetailedBankClp) {
           if (AGGREGATE_BANK_LABELS_CLP.has(normalizedLabel)) return;
         }
       }
       if (record.currency === 'USD') {
         if (hasProviderBankUsd) {
-          if (!PROVIDER_BANK_LABELS_USD.has(normalizedLabel)) return;
+          if (!PROVIDER_BANK_LABELS_USD.has(normalizedLabel) && !manualClosureAdjustment) return;
         } else if (hasDetailedBankUsd) {
           if (AGGREGATE_BANK_LABELS_USD.has(normalizedLabel)) return;
         }
