@@ -45,7 +45,6 @@ import {
   currentMonthKey,
   FX_RATES_UPDATED_EVENT,
   loadIncludeRiskCapitalInTotals,
-  validateFxRange,
   WEALTH_DATA_UPDATED_EVENT,
   isMortgageMetaDebtLabel,
   isMortgagePrincipalDebtLabel,
@@ -944,6 +943,36 @@ const hasCanonicalDetailForDerivedField = (records: WealthRecord[], field: Closu
 
 const closureSnapshotDate = (monthKey: string) => `${monthKey}-01`;
 
+export const resolveHistoricalClosureEditFx = (
+  closure: Pick<WealthMonthlyClosure, 'fxRates'> | null | undefined,
+): WealthFxRates | null => {
+  if (!closure?.fxRates) return null;
+  const usdClp = Number(closure.fxRates.usdClp);
+  const eurClp = Number(closure.fxRates.eurClp);
+  const ufClp = Number(closure.fxRates.ufClp);
+  if (![usdClp, eurClp, ufClp].every((value) => Number.isFinite(value) && value > 0)) {
+    return null;
+  }
+  return { usdClp, eurClp, ufClp };
+};
+
+export const buildHistoricalClosureSnapshot = ({
+  closure,
+  records,
+}: {
+  closure: Pick<WealthMonthlyClosure, 'fxRates'>;
+  records: WealthRecord[];
+}) => {
+  const fx = resolveHistoricalClosureEditFx(closure);
+  if (!fx) return null;
+  const deduped = dedupeClosureRecords(records);
+  return {
+    fx,
+    records: deduped,
+    summary: buildCanonicalClosureSummary(deduped, fx),
+  };
+};
+
 export const buildClosureRecordsFromDetailDraft = ({
   records,
   detailDraft,
@@ -951,6 +980,9 @@ export const buildClosureRecordsFromDetailDraft = ({
   createdAt,
   bankUsdAdjustment,
   note,
+  closureFx,
+  closureId,
+  closureClosedAt,
 }: {
   records: WealthRecord[];
   detailDraft: Record<string, string>;
@@ -958,7 +990,22 @@ export const buildClosureRecordsFromDetailDraft = ({
   createdAt: string;
   bankUsdAdjustment?: number;
   note?: string;
+  closureFx?: WealthFxRates | null;
+  closureId?: string | null;
+  closureClosedAt?: string | null;
 }): WealthRecord[] => {
+  const snapshotMetadata = {
+    closureId: closureId || null,
+    closureClosedAt: closureClosedAt || null,
+    closureSnapshotDate: closureSnapshotDate(monthKey),
+    fxUsed: closureFx
+      ? {
+          usdClp: Number(closureFx.usdClp),
+          eurClp: Number(closureFx.eurClp),
+          ufClp: Number(closureFx.ufClp),
+        }
+      : null,
+  };
   const nextRecords = records.map((record) => {
     const raw = detailDraft[record.id];
     if (raw === undefined) return { ...record };
@@ -979,6 +1026,7 @@ export const buildClosureRecordsFromDetailDraft = ({
           deltaNative: parsed - Number(record.amount || 0),
           note: note || null,
           createdAt,
+          ...snapshotMetadata,
         }),
       ].filter(Boolean).join(' · '),
     };
@@ -1003,6 +1051,7 @@ export const buildClosureRecordsFromDetailDraft = ({
         deltaNative: bankUsdAdjustment,
         note: note || null,
         createdAt,
+        ...snapshotMetadata,
       }),
     });
   }
@@ -1726,6 +1775,10 @@ export const ClosingAurum: React.FC = () => {
     }
     return Number(selectedClosure.summary?.riskCapitalClp || 0) > 0;
   }, [selectedClosure]);
+  const selectedClosureSnapshotFx = useMemo(
+    () => resolveHistoricalClosureEditFx(selectedClosure),
+    [selectedClosure],
+  );
   const compareClosureForSelectedRecordsRaw = compareClosureForSelected?.records || null;
   const selectedClosureRecords = useMemo(
     () =>
@@ -1904,6 +1957,7 @@ export const ClosingAurum: React.FC = () => {
   const openClosureEditModal = () => {
     if (!selectedClosure) return;
     const latestClosureBlocked = !selectedClosureIsLatest;
+    const snapshotFx = resolveHistoricalClosureEditFx(selectedClosure);
     setClosureDetailVisible(false);
     setClosureDetailDraft({});
     setClosureDetailDirty(false);
@@ -1931,12 +1985,16 @@ export const ClosingAurum: React.FC = () => {
         nonMortgageDebtClp: String(Math.round(nonMortgageDebtClp)),
       });
       setClosureEditRates({
-        usdClp: String(Math.round(selectedClosureFx.usdClp)),
-        eurUsd: String(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp)),
-        ufClp: String(Math.round(selectedClosureFx.ufClp)),
+        usdClp: snapshotFx ? String(Math.round(snapshotFx.usdClp)) : '',
+        eurUsd: snapshotFx ? String(snapshotFx.eurClp / Math.max(1, snapshotFx.usdClp)) : '',
+        ufClp: snapshotFx ? String(Math.round(snapshotFx.ufClp)) : '',
       });
       setClosureEditError(
-        latestClosureBlocked ? 'Por ahora solo se permite corregir el último cierre cerrado.' : '',
+        latestClosureBlocked
+          ? 'Por ahora solo se permite corregir el último cierre cerrado.'
+          : snapshotFx
+            ? ''
+            : 'Este cierre no guarda FX/UF snapshot válidos. No se puede editar sin el contexto original del cierre.',
       );
       setClosureEditDirtyFields({});
       setClosureEditOpen(true);
@@ -1952,12 +2010,16 @@ export const ClosingAurum: React.FC = () => {
     );
     setClosureEditDirtyFields({});
     setClosureEditRates({
-      usdClp: String(Math.round(selectedClosureFx.usdClp)),
-      eurUsd: String(selectedClosureFx.eurClp / Math.max(1, selectedClosureFx.usdClp)),
-      ufClp: String(Math.round(selectedClosureFx.ufClp)),
+      usdClp: snapshotFx ? String(Math.round(snapshotFx.usdClp)) : '',
+      eurUsd: snapshotFx ? String(snapshotFx.eurClp / Math.max(1, snapshotFx.usdClp)) : '',
+      ufClp: snapshotFx ? String(Math.round(snapshotFx.ufClp)) : '',
     });
     setClosureEditError(
-      latestClosureBlocked ? 'Por ahora solo se permite corregir el último cierre cerrado.' : '',
+      latestClosureBlocked
+        ? 'Por ahora solo se permite corregir el último cierre cerrado.'
+        : snapshotFx
+          ? ''
+          : 'Este cierre no guarda FX/UF snapshot válidos. No se puede editar sin el contexto original del cierre.',
     );
     setClosureEditOpen(true);
   };
@@ -1969,42 +2031,13 @@ export const ClosingAurum: React.FC = () => {
       setClosureEditError('Por ahora solo se permite corregir el último cierre cerrado.');
       return;
     }
-
-    const usdClp = parseStrictNumber(closureEditRates.usdClp);
-    const eurUsd = parseStrictNumber(closureEditRates.eurUsd);
-    const ufClp = parseStrictNumber(closureEditRates.ufClp);
-    if (![usdClp, eurUsd, ufClp].every((n) => Number.isFinite(n) && n > 0)) {
-      setClosureEditError('Revisa TC/UF: USD/CLP, EUR/USD y UF/CLP deben ser mayores que 0.');
-      return;
-    }
-    const eurClpCandidate = usdClp * eurUsd;
-    const eurClp =
-      Number.isFinite(selectedClosureFx.eurClp) &&
-      selectedClosureFx.eurClp > 0 &&
-      Math.abs(eurClpCandidate - selectedClosureFx.eurClp) <
-        1e-9 * Math.max(1, Math.abs(selectedClosureFx.eurClp))
-        ? selectedClosureFx.eurClp
-        : eurClpCandidate;
-    const invalidFx = [
-      validateFxRange('usd_clp', usdClp),
-      validateFxRange('eur_usd', eurUsd),
-      validateFxRange('uf_clp', ufClp),
-      validateFxRange('eur_clp', eurClp),
-    ].find((result) => !!result);
-    if (invalidFx) {
-      console.error('[Closing][fx-range-error]', {
-        monthKey: selectedClosure.monthKey,
-        field: invalidFx.field,
-        value: invalidFx.value,
-        min: invalidFx.min,
-        max: invalidFx.max,
-      });
+    const nextFx = resolveHistoricalClosureEditFx(selectedClosure);
+    if (!nextFx) {
       setClosureEditError(
-        `Valor fuera de rango esperado. Campo: ${invalidFx.field}, valor: ${invalidFx.value}, mes: ${selectedClosure.monthKey}.`,
+        'Este cierre no guarda FX/UF snapshot válidos. No se puede editar sin el contexto original del cierre.',
       );
       return;
     }
-    const nextFx: WealthFxRates = { usdClp, eurClp, ufClp };
 
     if (!selectedClosureRecordsRaw?.length) {
       const investmentClp = parseStrictNumber(closureSummaryEditDraft.investmentClp);
@@ -2144,6 +2177,9 @@ export const ClosingAurum: React.FC = () => {
             createdAt,
             bankUsdAdjustment,
             note: closureDetailNote,
+            closureFx: nextFx,
+            closureId: selectedClosure.id,
+            closureClosedAt: selectedClosure.closedAt,
           })
         : selectedClosureRecordsRaw;
 
@@ -3327,13 +3363,17 @@ export const ClosingAurum: React.FC = () => {
             )}
 
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-              <div className="text-xs font-semibold text-slate-700">Tipos de cambio usados en el cierre</div>
+              <div className="text-xs font-semibold text-slate-700">Tipos de cambio guardados en el cierre</div>
+              <div className="text-[11px] leading-5 text-slate-600">
+                Se usan solo como referencia del snapshot historico. Esta edicion no toma FX/UF actuales ni del mes vivo.
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <label className="text-[11px] text-slate-600">USD/CLP</label>
                   <Input
                     value={closureEditRates.usdClp}
-                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, usdClp: e.target.value }))}
+                    readOnly
+                    disabled
                     inputMode="decimal"
                   />
                 </div>
@@ -3341,7 +3381,8 @@ export const ClosingAurum: React.FC = () => {
                   <label className="text-[11px] text-slate-600">EUR/USD</label>
                   <Input
                     value={closureEditRates.eurUsd}
-                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, eurUsd: e.target.value }))}
+                    readOnly
+                    disabled
                     inputMode="decimal"
                   />
                 </div>
@@ -3349,7 +3390,8 @@ export const ClosingAurum: React.FC = () => {
                   <label className="text-[11px] text-slate-600">UF/CLP</label>
                   <Input
                     value={closureEditRates.ufClp}
-                    onChange={(e) => setClosureEditRates((prev) => ({ ...prev, ufClp: e.target.value }))}
+                    readOnly
+                    disabled
                     inputMode="decimal"
                   />
                 </div>
@@ -3545,7 +3587,7 @@ export const ClosingAurum: React.FC = () => {
                 onClick={() => {
                   setClosureEditConfirmOpen(true);
                 }}
-                disabled={!selectedClosureIsLatest}
+                disabled={!selectedClosureIsLatest || !selectedClosureSnapshotFx}
               >
                 Guardar cambios
               </Button>

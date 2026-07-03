@@ -8,12 +8,14 @@ vi.mock('../src/services/firebase', () => ({
 }));
 
 import {
+  buildHistoricalClosureSnapshot,
   buildApril2026BankRepairPreview,
   buildClosureAuditDiagnosis,
   buildClosureAuditSnapshot,
   buildClosureEditDraftFromRecords,
   buildClosureRecordsFromDetailDraft,
   buildEditedClosureRecordsFromDraft,
+  resolveHistoricalClosureEditFx,
 } from '../src/pages/ClosingAurum';
 import { buildClosureBlockIntegrityAudit, buildClosureDetailRecoveryAudit } from '../src/services/wealthIntegrityAudit';
 import {
@@ -31,9 +33,11 @@ import {
   TENENCIA_CXC_PREFIX_LABEL,
   buildCanonicalClosureSummary,
   createMonthlyClosure,
+  loadWealthRecords,
   loadClosures,
   reconcileClosureDetailRecords,
   saveClosures,
+  saveWealthRecords,
   upsertMonthlyClosure,
 } from '../src/services/wealthStorage';
 import type { WealthRecord } from '../src/services/wealthStorage';
@@ -301,6 +305,277 @@ describe('closure edit record draft', () => {
     expect(after.mortgageDebtClp).toBe(before.mortgageDebtClp);
     expect(after.netClp - before.netClp).toBe(3000 * fxRates.usdClp);
     expect(JSON.stringify(nextRecords)).not.toMatch(/NaN|undefined/);
+  });
+
+  it('uses closure fx when adding usd bank adjustment', () => {
+    const closureFx = {
+      usdClp: 891,
+      eurClp: 991,
+      ufClp: 39_111,
+    };
+    localStorage.setItem(
+      'wealth_fx_rates_v1',
+      JSON.stringify({ usdClp: 1000, eurClp: 1200, ufClp: 45_000 }),
+    );
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 10_135,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_SCOTIA_USD_LABEL,
+        amount: 15_000,
+        currency: 'USD',
+      }),
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_CLP_LABEL,
+        amount: 1_000_000,
+        currency: 'CLP',
+      }),
+    ];
+    const closure = {
+      id: 'closure-jun-2026',
+      monthKey: '2026-06',
+      closedAt: '2026-06-30T23:59:59.000Z',
+      fxRates: closureFx,
+    };
+    const before = buildHistoricalClosureSnapshot({ closure, records });
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records,
+      detailDraft: Object.fromEntries(records.map((record) => [record.id, String(record.amount)])),
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      bankUsdAdjustment: 3000,
+      note: 'Correccion bancos USD',
+      closureFx,
+      closureId: closure.id,
+      closureClosedAt: closure.closedAt,
+    });
+    const after = buildHistoricalClosureSnapshot({ closure, records: nextRecords });
+    const finalUsd = nextRecords
+      .filter((record) => record.block === 'bank' && record.currency === 'USD')
+      .reduce((sum, record) => sum + Number(record.amount || 0), 0);
+
+    expect(before?.fx.usdClp).toBe(891);
+    expect(after?.fx.usdClp).toBe(891);
+    expect(finalUsd).toBe(28_135);
+    expect(after?.summary.bankClp).toBe(before!.summary.bankClp + 3000 * 891);
+    expect(after?.summary.bankClp).not.toBe(before!.summary.bankClp + 3000 * 950);
+    expect(after?.summary.bankClp).not.toBe(before!.summary.bankClp + 3000 * 1000);
+    expect(after?.summary.netClp).toBe(before!.summary.netClp + 3000 * 891);
+  });
+
+  it('uses closure uf when editing uf fields', () => {
+    const closure = {
+      id: 'closure-jun-2026',
+      monthKey: '2026-06',
+      closedAt: '2026-06-30T23:59:59.000Z',
+      fxRates: {
+        usdClp: 891,
+        eurClp: 991,
+        ufClp: 38_765,
+      },
+    };
+    localStorage.setItem(
+      'wealth_fx_rates_v1',
+      JSON.stringify({ usdClp: 1000, eurClp: 1200, ufClp: 42_000 }),
+    );
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'real_estate',
+        source: 'Manual',
+        label: REAL_ESTATE_PROPERTY_VALUE_LABEL,
+        amount: 3000,
+        currency: 'UF',
+      }),
+      makeRecord({
+        block: 'debt',
+        source: 'Manual',
+        label: MORTGAGE_DEBT_BALANCE_LABEL,
+        amount: 1000,
+        currency: 'UF',
+      }),
+    ];
+    const before = buildHistoricalClosureSnapshot({ closure, records });
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records,
+      detailDraft: {
+        [records[0].id]: '3100',
+        [records[1].id]: '1000',
+      },
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      closureFx: closure.fxRates,
+      closureId: closure.id,
+      closureClosedAt: closure.closedAt,
+    });
+    const after = buildHistoricalClosureSnapshot({ closure, records: nextRecords });
+
+    expect(after?.summary.realEstateAssetsClp).toBe(before!.summary.realEstateAssetsClp + 100 * 38_765);
+    expect(after?.summary.realEstateAssetsClp).not.toBe(before!.summary.realEstateAssetsClp + 100 * 42_000);
+    expect(after?.summary.realEstateNetClp).toBe(before!.summary.realEstateNetClp + 100 * 38_765);
+  });
+
+  it('does not read live month records during historical closure edit', () => {
+    const closure = {
+      id: 'closure-jun-2026',
+      monthKey: '2026-06',
+      closedAt: '2026-06-30T23:59:59.000Z',
+      fxRates: {
+        usdClp: 891,
+        eurClp: 991,
+        ufClp: 38_765,
+      },
+    };
+    const juneRecords: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 25_135,
+        currency: 'USD',
+      }),
+    ];
+    const julyLiveRecords: WealthRecord[] = [
+      {
+        ...makeRecord({
+          block: 'bank',
+          source: 'Fintoc',
+          label: BANK_BCHILE_CLP_LABEL,
+          amount: 50_000_000,
+          currency: 'CLP',
+        }),
+        id: 'live-july-bank',
+        snapshotDate: '2026-07-01',
+      },
+    ];
+    saveWealthRecords(julyLiveRecords, { skipCloudSync: true, silent: true });
+
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records: juneRecords,
+      detailDraft: { [juneRecords[0].id]: '28135' },
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      closureFx: closure.fxRates,
+      closureId: closure.id,
+      closureClosedAt: closure.closedAt,
+    });
+    const after = buildHistoricalClosureSnapshot({ closure, records: nextRecords });
+
+    expect(loadWealthRecords()).toEqual(julyLiveRecords);
+    expect(after?.summary.bankClp).toBe(28_135 * 891);
+    expect(after?.summary.bankClp).not.toBe(50_000_000 + 28_135 * 891);
+  });
+
+  it('does not mutate live records', () => {
+    const liveRecords: WealthRecord[] = [
+      {
+        ...makeRecord({
+          block: 'investment',
+          source: 'Manual',
+          label: TENENCIA_CXC_PREFIX_LABEL,
+          amount: 77_000_000,
+          currency: 'CLP',
+        }),
+        id: 'live-current-record',
+        snapshotDate: '2026-07-01',
+      },
+    ];
+    const closureRecords: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 25_135,
+        currency: 'USD',
+      }),
+    ];
+    saveWealthRecords(liveRecords, { skipCloudSync: true, silent: true });
+
+    buildClosureRecordsFromDetailDraft({
+      records: closureRecords,
+      detailDraft: { [closureRecords[0].id]: '28135' },
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      closureFx: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+      closureId: 'closure-jun-2026',
+      closureClosedAt: '2026-06-30T23:59:59.000Z',
+    });
+
+    expect(loadWealthRecords()).toEqual(liveRecords);
+  });
+
+  it('manual adjustment metadata stores closure context', () => {
+    const records: WealthRecord[] = [
+      makeRecord({
+        block: 'bank',
+        source: 'Fintoc',
+        label: BANK_BCHILE_USD_LABEL,
+        amount: 25_135,
+        currency: 'USD',
+      }),
+    ];
+    const nextRecords = buildClosureRecordsFromDetailDraft({
+      records,
+      detailDraft: { [records[0].id]: '25135' },
+      monthKey: '2026-06',
+      createdAt: '2026-07-03T10:00:00.000Z',
+      bankUsdAdjustment: 3000,
+      note: 'Correccion bancos USD',
+      closureFx: { usdClp: 891, eurClp: 991, ufClp: 38_765 },
+      closureId: 'closure-jun-2026',
+      closureClosedAt: '2026-06-30T23:59:59.000Z',
+    });
+    const adjustment = nextRecords.find((record) => record.label === 'Ajuste bancos USD — Junio de 2026');
+    const metadata = adjustment ? JSON.parse(String(adjustment.note || '{}')) : null;
+
+    expect(metadata).toMatchObject({
+      type: 'manual_closure_detail_adjustment',
+      monthKey: '2026-06',
+      currency: 'USD',
+      deltaNative: 3000,
+      closureId: 'closure-jun-2026',
+      closureClosedAt: '2026-06-30T23:59:59.000Z',
+      closureSnapshotDate: '2026-06-01',
+      fxUsed: {
+        usdClp: 891,
+        eurClp: 991,
+        ufClp: 38_765,
+      },
+    });
+  });
+
+  it('requires stored snapshot fx for historical closure edit', () => {
+    expect(resolveHistoricalClosureEditFx(null)).toBe(null);
+    expect(
+      resolveHistoricalClosureEditFx({
+        fxRates: {
+          usdClp: 0,
+          eurClp: 991,
+          ufClp: 38_765,
+        },
+      }),
+    ).toBe(null);
+    expect(
+      resolveHistoricalClosureEditFx({
+        fxRates: {
+          usdClp: 891,
+          eurClp: 991,
+          ufClp: 38_765,
+        },
+      }),
+    ).toEqual({
+      usdClp: 891,
+      eurClp: 991,
+      ufClp: 38_765,
+    });
   });
 
   it('does not remove non-mortgage debt stored as bank when unrelated fields change', () => {
