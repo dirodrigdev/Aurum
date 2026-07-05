@@ -4,6 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
 import { formatFreedomCompactClp, formatPct } from '../components/analysis/shared';
 import {
+  GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+  warmGastappMonthlyContable,
+} from '../services/gastosMonthly';
+import {
   FX_RATES_UPDATED_EVENT,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
   WEALTH_DATA_UPDATED_EVENT,
@@ -78,8 +82,8 @@ const ExecutivePositionCard = ({
       <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
     </div>
     <div className="min-w-0 pr-8 sm:pr-11">
-      <div className={cn('text-[7px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:text-[8px] sm:tracking-[0.18em]', labelClassName)}>{label}</div>
-      <div className={cn('mt-7 text-[clamp(1.5rem,5vw,2.3rem)] font-semibold leading-none tracking-[-0.06em] sm:mt-8', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
+      <div className={cn('min-h-[3.45rem] text-[7px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:min-h-[3.9rem] sm:text-[8px] sm:tracking-[0.18em]', labelClassName)}>{label}</div>
+      <div className={cn('mt-2 text-[clamp(1.5rem,5vw,2.3rem)] font-semibold leading-none tracking-[-0.06em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
       <div className={cn('mt-2 text-[12px] leading-tight text-slate-500 sm:text-[13px]', subtitleClassName)}>{subtitle}</div>
     </div>
   </Card>
@@ -191,6 +195,7 @@ export const DashboardAurum: React.FC = () => {
   const [closures, setClosures] = useState<WealthMonthlyClosure[]>(() => sortClosures(loadClosures()));
   const [records, setRecords] = useState<WealthRecord[]>(() => loadWealthRecords());
   const [fx, setFx] = useState<WealthFxRates>(() => loadFxRates());
+  const [gastosSourceVersion, setGastosSourceVersion] = useState(0);
   const [includeRiskCapitalInTotals, setIncludeRiskCapitalInTotals] = useState<boolean>(() =>
     loadIncludeRiskCapitalInTotals(),
   );
@@ -203,12 +208,18 @@ export const DashboardAurum: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const onGastappSourceUpdated = () => setGastosSourceVersion((current) => current + 1);
     const onFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       refreshDashboardState();
     };
 
     refreshDashboardState();
+    void warmGastappMonthlyContable();
+    window.addEventListener(
+      GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+      onGastappSourceUpdated as EventListener,
+    );
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
     window.addEventListener('focus', onFocus);
@@ -218,6 +229,10 @@ export const DashboardAurum: React.FC = () => {
       refreshDashboardState as EventListener,
     );
     return () => {
+      window.removeEventListener(
+        GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
+        onGastappSourceUpdated as EventListener,
+      );
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
       window.removeEventListener('focus', onFocus);
@@ -255,7 +270,7 @@ export const DashboardAurum: React.FC = () => {
       return12Usd: buildTrailingSummary(usdRows, 12, 'dashboard-12m-usd', 'RETORNO 12M'),
       return12Uf: buildTrailingSummary(ufRows, 12, 'dashboard-12m-uf', 'RETORNO 12M'),
     };
-  }, [closures, includeRiskCapitalInTotals]);
+  }, [closures, includeRiskCapitalInTotals, gastosSourceVersion]);
 
   const heroMessage = useMemo(() => {
     if (model.coverageRatio === null) return 'Necesitas al menos un cierre confirmado para construir esta lectura.';

@@ -6,6 +6,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as wealthStorage from '../src/services/wealthStorage';
 
+const { warmGastappMonthlyContableMock } = vi.hoisted(() => ({
+  warmGastappMonthlyContableMock: vi.fn(async () => {}),
+}));
+
 vi.mock('../src/services/wealthStorage', () => ({
   FX_RATES_UPDATED_EVENT: 'fx-updated',
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT: 'risk-updated',
@@ -84,6 +88,11 @@ vi.mock('../src/services/returnsAnalysis', () => ({
     if (count === 12 && currency === 'UF') return { pctRetorno: 15.3, validMonths: 12 };
     return null;
   }),
+}));
+
+vi.mock('../src/services/gastosMonthly', () => ({
+  GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT: 'gastapp-source-updated',
+  warmGastappMonthlyContable: warmGastappMonthlyContableMock,
 }));
 
 import { DashboardAurum } from '../src/pages/DashboardAurum';
@@ -180,11 +189,35 @@ describe('DashboardAurum layout', () => {
 
     const callsAfterMount = loadClosuresMock.mock.calls.length;
     expect(callsAfterMount).toBeGreaterThanOrEqual(2);
+    expect(warmGastappMonthlyContableMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       window.dispatchEvent(new Event('focus'));
     });
 
     expect(loadClosuresMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
+  });
+
+  it('recomputes returns when gastapp monthly source finishes warming', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(DashboardAurum),
+        ),
+      );
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('gastapp-source-updated'));
+    });
+
+    expect(container.textContent).toContain('+10,6%');
+    expect(container.textContent).toContain('+25,4%');
   });
 });
