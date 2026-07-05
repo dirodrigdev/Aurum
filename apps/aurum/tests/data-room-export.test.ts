@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { escapeCsvValue, buildCsv } from '../src/services/dataRoom/csv';
 import { buildFinancialDataRoomManifest } from '../src/services/dataRoom/buildManifest';
 import { buildFinancialDataRoom } from '../src/services/dataRoom/buildFinancialDataRoom';
+import { buildAurumDataRoomData } from '../src/services/dataRoom/aurumDataRoomAdapter';
 import type {
+  AnalysisExportContext,
   AurumAdapterResult,
   GastappDataRoomV2ManifestResult,
   GastappDataRoomV2PeriodSummary,
@@ -310,6 +312,127 @@ describe('data room csv', () => {
     expect(escapeCsvValue('a"b')).toBe('"a""b"');
     expect(escapeCsvValue('a\nb')).toBe('"a\nb"');
     expect(buildCsv(['a', 'b'], [{ a: 'x,y', b: 1 }])).toBe('a,b\n"x,y",1\n');
+  });
+});
+
+describe('aurum data room adapter', () => {
+  it('exports the compounded annualized return already calculated in returns summaries', () => {
+    const compoundedAnnualizedPct = ((1.1 * 1.05) ** 6 - 1) * 100;
+    const context = {
+      closures: [{
+        id: '2026-04',
+        monthKey: '2026-04',
+        closedAt: '2026-04-30T23:59:59.000Z',
+        summary: {
+          netClp: 1000,
+          netClpWithRisk: 1000,
+          netConsolidatedClp: 1000,
+        },
+        fxRates: { usdClp: 900, eurClp: 1000, ufClp: 40000 },
+        records: [],
+      }],
+      officialMonthlyRowsAsc: [{
+        monthKey: '2026-04',
+        prevNetClp: 800,
+        netClp: 1000,
+        pct: 5,
+        varPatrimonioClp: 50,
+        gastosClp: 10,
+        retornoRealClp: 60,
+        netDisplay: 1000,
+        prevNetDisplay: 800,
+        varPatrimonioDisplay: 50,
+        gastosDisplay: 10,
+        retornoRealDisplay: 60,
+        fx: { usdClp: 900, eurClp: 1000, ufClp: 40000 },
+        rawEurClp: 1000,
+        fxMethod: 'real_closure',
+        fxAuditable: true,
+        fxMissing: [],
+        gastosStatus: 'complete',
+        gastosSource: 'gastapp_firestore',
+        gastosContractStatus: 'complete',
+        gastosDataQuality: 'ok',
+        gastosIsStale: false,
+        gastosStaleReason: null,
+        gastosDayToDaySource: 'period_summaries',
+        gastosContractSource: null,
+        gastosSchemaVersion: null,
+        gastosMethodologyVersion: null,
+        gastosPeriodKey: null,
+        gastosPublishedAt: null,
+        gastosUpdatedAt: null,
+        gastosClosedAt: null,
+        gastosReportUpdatedAt: null,
+        gastosSummaryUpdatedAt: null,
+        gastosLastExpenseUpdatedAt: null,
+        gastosRevision: null,
+        gastosReportTotalEur: null,
+        gastosSummaryTotalEur: null,
+        gastosDirectExpenseTotalEur: null,
+        gastosReportVsDirectDiffEur: null,
+        gastosSummaryVsDirectDiffEur: null,
+        gastosReportVsSummaryDiffEur: null,
+        gastosCategoryGapEur: null,
+        invalidNet: false,
+        inflationMonthlyRate: 0,
+        pctReal: 4.5,
+      }],
+      wealthEvolutionModel: {
+        points: [{ monthKey: '2026-04', netClp: 1000, netUf: 25 }],
+      },
+      periodSummaries: [{
+        key: 'period-12M',
+        label: '12M',
+        periodStartMonthKey: '2025-05',
+        periodEndMonthKey: '2026-04',
+        validMonths: 12,
+        coverage: { validMonths: 12, expectedMonths: 12, excludedMonths: [], nonApplicableMonths: [], status: 'complete' },
+        varPatrimonioAcumClp: 500,
+        gastosAcumClp: 100,
+        retornoRealAcumClp: 600,
+        varPatrimonioAcumDisplay: 500,
+        gastosAcumDisplay: 100,
+        retornoRealAcumDisplay: 600,
+        pctRetorno: compoundedAnnualizedPct,
+        pctRetornoReal: 11.1,
+        pctRetornoNote: null,
+        spendPct: 16.6,
+        varPatrimonioAvgDisplay: 41.6,
+        gastosAvgDisplay: 8.3,
+        retornoRealAvgDisplay: 50,
+      }],
+      yearlySummaries: [],
+      heroSinceStart: null,
+      heroLast12: {
+        key: 'hero-12m',
+        label: 'Últ. 12M',
+        periodStartMonthKey: '2025-05',
+        periodEndMonthKey: '2026-04',
+        validMonths: 12,
+        coverage: { validMonths: 12, expectedMonths: 12, excludedMonths: [], nonApplicableMonths: [], status: 'complete' },
+        varPatrimonioAcumClp: 500,
+        gastosAcumClp: 100,
+        retornoRealAcumClp: 600,
+        varPatrimonioAcumDisplay: 500,
+        gastosAcumDisplay: 100,
+        retornoRealAcumDisplay: 600,
+        pctRetorno: compoundedAnnualizedPct,
+        pctRetornoReal: 11.1,
+        pctRetornoNote: null,
+        spendPct: 16.6,
+        varPatrimonioAvgDisplay: 41.6,
+        gastosAvgDisplay: 8.3,
+        retornoRealAvgDisplay: 50,
+      },
+      heroYtd2026: null,
+      heroLastMonth: null,
+    } as unknown as AnalysisExportContext;
+
+    const result = buildAurumDataRoomData(context);
+
+    expect(result.return12mPct).toBeCloseTo(compoundedAnnualizedPct, 10);
+    expect(result.returnRows[0]?.retorno_economico_pct).toBeCloseTo(compoundedAnnualizedPct, 10);
   });
 });
 

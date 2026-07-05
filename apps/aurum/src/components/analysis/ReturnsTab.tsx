@@ -195,7 +195,7 @@ const SummaryTable: React.FC<{
     <Card className="p-3 border-slate-200">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
       <div className="mt-0.5 text-[11px] text-slate-500">
-        Promedio mensual{lastConsideredLabel ? ` · Último mes considerado: ${lastConsideredLabel}` : ''}
+        Resumen del tramo{lastConsideredLabel ? ` · Último mes considerado: ${lastConsideredLabel}` : ''}
       </div>
       <div className="mt-2 overflow-x-auto">
       <table className="w-full min-w-[600px] table-fixed text-xs">
@@ -203,7 +203,12 @@ const SummaryTable: React.FC<{
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
             <th className="w-[56px] py-1 pr-2 text-right text-[10px] font-semibold text-slate-400">(R)</th>
-            <th className="py-1 pr-2 text-right">% anual equiv.</th>
+            <th
+              className="py-1 pr-2 text-right"
+              title="Calculado componiendo los retornos mensuales del período y anualizando el resultado."
+            >
+              Retorno anualizado
+            </th>
             <th className="py-1 pr-2 text-right">Ret.Econ.</th>
             <th className="py-1 pr-2 text-right">Var.Pat</th>
             <th className="py-1 text-right">Gastos</th>
@@ -394,8 +399,8 @@ const ReturnRealHero: React.FC<{
                     {row.key === 'mes'
                       ? 'Último mes que entra en el cálculo'
                       : row.key === 'ytd'
-                        ? 'Desde enero · Tasa anual equivalente'
-                        : 'Tasa anual equivalente'}
+                        ? 'Desde enero · Retorno anualizado compuesto'
+                        : 'Retorno anualizado compuesto'}
                   </div>
                   {periodRangeLabel(row.value) ? (
                     <div className="mt-0.5 text-[10px] text-slate-500">{periodRangeLabel(row.value)}</div>

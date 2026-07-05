@@ -25,6 +25,36 @@ const DEFAULT_FX_RATES: WealthFxRates = {
   ufClp: 39000,
 };
 
+const toMonthlyReturnDecimal = (pct: number | null | undefined) => {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return null;
+  return pct / 100;
+};
+
+const getValidMonthlyReturnDecimals = (rows: Array<Pick<MonthlyReturnRow, 'pct'>>) =>
+  rows
+    .map((row) => toMonthlyReturnDecimal(row.pct))
+    .filter((value): value is number => value !== null);
+
+export const calculateCompoundedReturnFromMonthlyPct = (
+  rows: Array<Pick<MonthlyReturnRow, 'pct'>>,
+): number | null => {
+  const monthlyReturns = getValidMonthlyReturnDecimals(rows);
+  if (!monthlyReturns.length) return null;
+  const compoundedGrowth = monthlyReturns.reduce((product, value) => product * (1 + value), 1);
+  if (!Number.isFinite(compoundedGrowth) || compoundedGrowth <= 0) return null;
+  return (compoundedGrowth - 1) * 100;
+};
+
+export const calculateAnnualizedCompoundedReturnFromMonthlyPct = (
+  rows: Array<Pick<MonthlyReturnRow, 'pct'>>,
+): number | null => {
+  const monthlyReturns = getValidMonthlyReturnDecimals(rows);
+  if (!monthlyReturns.length) return null;
+  const compoundedGrowth = monthlyReturns.reduce((product, value) => product * (1 + value), 1);
+  if (!Number.isFinite(compoundedGrowth) || compoundedGrowth <= 0) return null;
+  return (Math.pow(compoundedGrowth, 12 / monthlyReturns.length) - 1) * 100;
+};
+
 const previousMonthKey = (monthKey: string) => {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw)) return monthKey;
@@ -690,7 +720,7 @@ export const aggregateRows = (
   key: string,
   label: string,
   rows: MonthlyReturnRow[],
-  baseNetDisplay: number | null,
+  _baseNetDisplay: number | null,
   options?: AggregateRowsOptions,
 ): AggregatedSummary => {
   const expectedSet = options?.expectedMonthKeys ? new Set(options.expectedMonthKeys) : null;
@@ -714,31 +744,9 @@ export const aggregateRows = (
   let pctRetornoReal: number | null = null;
   let pctRetornoNote: string | null = null;
 
-  if (validMonths > 0 && retornoRealAcumDisplay !== null && baseNetDisplay !== null && baseNetDisplay > 0) {
-    const periodReturn = retornoRealAcumDisplay / baseNetDisplay;
-    const growthBase = 1 + periodReturn;
-    if (growthBase <= 0) {
-      pctRetorno = null;
-      pctRetornoNote = 'período negativo';
-      console.warn('[Analysis][pct-anual-equiv-negativo]', { key, label, validMonths, periodReturn, baseNetDisplay });
-    } else {
-      const annualized = (Math.pow(growthBase, 12 / validMonths) - 1) * 100;
-      if (annualized > 200 || annualized < -100) {
-        pctRetorno = null;
-        pctRetornoNote = 'fuera de rango';
-        console.warn('[Analysis][pct-anual-equiv-fuera-rango]', {
-          key,
-          label,
-          validMonths,
-          annualized,
-          periodReturn,
-          baseNetDisplay,
-          retornoRealAcumDisplay,
-        });
-      } else {
-        pctRetorno = annualized;
-      }
-    }
+  pctRetorno = calculateAnnualizedCompoundedReturnFromMonthlyPct(validRows);
+  if (validMonths > 0 && pctRetorno === null) {
+    pctRetornoNote = 'no anualizable';
   }
   if (validMonths > 0 && validRows.length) {
     const realGrowthFactors = validRows.map((row) => {

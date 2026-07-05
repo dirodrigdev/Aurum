@@ -265,6 +265,9 @@ describe('ReturnsTab estimated month toggle', () => {
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
     expect(container.textContent).toContain('Ver detalle');
+    expect(container.textContent).toContain('Resumen del tramo');
+    expect(container.textContent).toContain('Retorno anualizado');
+    expect(container.textContent).not.toContain('% anual equiv.');
     const detail = container.querySelector('details');
     expect(detail).not.toBeNull();
     expect(detail?.hasAttribute('open')).toBe(false);

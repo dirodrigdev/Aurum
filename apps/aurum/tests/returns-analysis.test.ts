@@ -45,6 +45,8 @@ import {
   buildTrailingSummary,
   buildPatrimonyCurve,
   buildTrajectoryCurve,
+  calculateAnnualizedCompoundedReturnFromMonthlyPct,
+  calculateCompoundedReturnFromMonthlyPct,
   computeMonthlyRows,
 } from '../src/services/returnsAnalysis';
 import { buildReturnSpendInsight } from '../src/components/analysis/shared';
@@ -173,8 +175,8 @@ describe('returns analysis helpers', () => {
     const rows = computeMonthlyRows(
       [
         makeClosure('2025-12', { netClp: 100, eurClp: 1 }),
-        makeClosure('2026-01', { netClp: 105, eurClp: 1 }),
-        makeClosure('2026-02', { netClp: 110.25, eurClp: 1 }),
+        makeClosure('2026-01', { netClp: 110, eurClp: 1 }),
+        makeClosure('2026-02', { netClp: 120, eurClp: 1 }),
       ],
       false,
       'CLP',
@@ -187,9 +189,9 @@ describe('returns analysis helpers', () => {
       gastosIsStale: false,
       gastosClp: 0,
       gastosDisplay: 0,
-      retornoRealClp: row.monthKey === '2026-01' ? 5 : row.monthKey === '2026-02' ? 5.25 : row.retornoRealClp,
-      retornoRealDisplay: row.monthKey === '2026-01' ? 5 : row.monthKey === '2026-02' ? 5.25 : row.retornoRealDisplay,
-      pct: row.monthKey === '2026-01' || row.monthKey === '2026-02' ? 5 : row.pct,
+      retornoRealClp: row.monthKey === '2026-01' ? 10 : row.monthKey === '2026-02' ? 10 : row.retornoRealClp,
+      retornoRealDisplay: row.monthKey === '2026-01' ? 10 : row.monthKey === '2026-02' ? 10 : row.retornoRealDisplay,
+      pct: row.monthKey === '2026-01' ? 10 : row.monthKey === '2026-02' ? 5 : row.pct,
     }));
 
     const summary = aggregateRows(
@@ -201,10 +203,46 @@ describe('returns analysis helpers', () => {
     );
 
     expect(summary.validMonths).toBe(2);
-    expect(summary.retornoRealAcumDisplay).toBe(10.25);
-    expect(summary.retornoRealAvgDisplay).toBe(5.125);
-    expect(summary.pctRetorno).toBeCloseTo(((1.1025 ** 6) - 1) * 100, 10);
+    expect(summary.retornoRealAcumDisplay).toBe(20);
+    expect(summary.retornoRealAvgDisplay).toBe(10);
+    expect(summary.pctRetorno).toBeCloseTo(((1.1 * 1.05) ** 6 - 1) * 100, 10);
+    expect(summary.pctRetorno).not.toBeCloseTo(((1.2 ** 6) - 1) * 100, 10);
     expect(summary.pctRetorno).not.toBeCloseTo(summary.retornoRealAvgDisplay ?? 0, 10);
+  });
+
+  it('compone y anualiza usando los porcentajes mensuales visibles una sola vez', () => {
+    const rows = [
+      { pct: 1.52 },
+      { pct: 4.24 },
+      { pct: 2.59 },
+      { pct: 1.57 },
+      { pct: 0.23 },
+      { pct: 0.28 },
+      { pct: 0.31 },
+      { pct: -0.03 },
+      { pct: 1.23 },
+      { pct: -0.32 },
+      { pct: 4.96 },
+      { pct: 1.55 },
+    ];
+
+    const compounded = calculateCompoundedReturnFromMonthlyPct(rows);
+    const annualized = calculateAnnualizedCompoundedReturnFromMonthlyPct(rows);
+    const expectedGrowth = rows.reduce((product, row) => product * (1 + row.pct / 100), 1);
+
+    expect(compounded).toBeCloseTo((expectedGrowth - 1) * 100, 10);
+    expect(compounded).toBeCloseTo(19.54, 2);
+    expect(annualized).toBeCloseTo(compounded ?? 0, 10);
+  });
+
+  it('annualiza con la cantidad real de meses válidos del tramo', () => {
+    const rows3m = [{ pct: 1 }, { pct: 2 }, { pct: 3 }];
+    const rows24m = Array.from({ length: 24 }, () => ({ pct: 1 }));
+    const rows36m = Array.from({ length: 36 }, () => ({ pct: 0.8 }));
+
+    expect(calculateAnnualizedCompoundedReturnFromMonthlyPct(rows3m)).toBeCloseTo((((1.01 * 1.02 * 1.03) ** 4) - 1) * 100, 10);
+    expect(calculateAnnualizedCompoundedReturnFromMonthlyPct(rows24m)).toBeCloseTo(((1.01 ** 24) ** (12 / 24) - 1) * 100, 10);
+    expect(calculateAnnualizedCompoundedReturnFromMonthlyPct(rows36m)).toBeCloseTo(((1.008 ** 36) ** (12 / 36) - 1) * 100, 10);
   });
 
   it('includes complete official GastApp spend in closed aggregates', () => {
