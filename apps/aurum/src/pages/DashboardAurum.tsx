@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, RefreshCcw, Sparkles, Zap } from 'lucide-react';
+import { BrainCircuit, ChevronRight, Home, RefreshCcw, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
-import { formatFreedomCompactClp, monthKeyToYearLabel } from '../components/analysis/shared';
+import { formatFreedomCompactClp, formatPct, monthKeyToYearLabel } from '../components/analysis/shared';
 import {
   FX_RATES_UPDATED_EVENT,
   RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
@@ -22,6 +22,7 @@ import {
   buildExecutiveDashboardModel,
   type DashboardCoverageTone,
 } from '../services/dashboardExecutive';
+import { buildTrailingSummary, computeMonthlyRows } from '../services/returnsAnalysis';
 
 const sortClosures = (items: WealthMonthlyClosure[]) => [...items].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
 
@@ -38,11 +39,12 @@ const freshnessBarSegments = [
   { key: 'stalePct', label: '> 30 días', className: 'bg-rose-300' },
 ] as const;
 
-const DashboardMetricCard = ({
+const ExecutivePositionCard = ({
   label,
   value,
   subtitle,
   tone,
+  icon: Icon,
   className,
   valueClassName,
   subtitleClassName,
@@ -52,16 +54,97 @@ const DashboardMetricCard = ({
   value: string;
   subtitle: string;
   tone: DashboardCoverageTone;
+  icon: React.ComponentType<{ className?: string }>;
   className?: string;
   valueClassName?: string;
   subtitleClassName?: string;
   labelClassName?: string;
 }) => (
-  <Card className={cn('border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 backdrop-blur-sm shadow-[0_16px_40px_rgba(3,10,26,0.24)] sm:p-5', className)}>
-    <div className={cn('text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88', labelClassName)}>{label}</div>
-    <div className={cn('mt-4 text-3xl font-semibold tracking-[-0.03em] sm:text-[2.15rem]', toneClasses[tone], valueClassName)}>{value}</div>
-    <div className={cn('mt-2 text-sm text-slate-200/82', subtitleClassName)}>{subtitle}</div>
+  <Card className={cn('rounded-[26px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] sm:p-5', className)}>
+    <div className="flex items-start gap-3">
+      <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-slate-500">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0">
+        <div className={cn('text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500', labelClassName)}>{label}</div>
+        <div className={cn('mt-3 text-[2rem] font-semibold tracking-[-0.04em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
+        <div className={cn('mt-1.5 text-sm text-slate-500', subtitleClassName)}>{subtitle}</div>
+      </div>
+    </div>
   </Card>
+);
+
+const ExecutiveReturnCard = ({
+  title,
+  usdValue,
+  ufValue,
+  footer,
+  emphasis,
+  badge,
+  testId,
+}: {
+  title: string;
+  usdValue: string;
+  ufValue: string;
+  footer: string;
+  emphasis: 'primary' | 'secondary';
+  badge?: string;
+  testId: string;
+}) => (
+  <Card
+    data-testid={testId}
+    data-emphasis={emphasis}
+    className={cn(
+      'rounded-[28px] border bg-[radial-gradient(circle_at_top_right,_rgba(99,245,177,0.08),_transparent_28%),linear-gradient(145deg,#071834_0%,#0d2449_52%,#08142d_100%)] p-5 text-white shadow-[0_22px_60px_rgba(3,10,26,0.28)]',
+      emphasis === 'primary'
+        ? 'border-emerald-400/30 ring-1 ring-emerald-300/15'
+        : 'border-white/10 opacity-[0.94]',
+    )}
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.32em] text-slate-300/84">{title}</div>
+        {badge ? (
+          <div className="mt-2 inline-flex rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2 py-0.5 text-[10px] font-medium text-emerald-200">
+            {badge}
+          </div>
+        ) : null}
+      </div>
+      <div className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/12 bg-white/5 text-emerald-300">
+        <TrendingUp className="h-5 w-5" />
+      </div>
+    </div>
+    <div className="mt-5 grid grid-cols-2 gap-4">
+      <div className="border-r border-white/10 pr-4">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">USD</div>
+        <div className="mt-2 text-[2rem] font-semibold tracking-[-0.05em] text-emerald-300">{usdValue}</div>
+      </div>
+      <div>
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">UF</div>
+        <div className="mt-2 text-[2rem] font-semibold tracking-[-0.05em] text-emerald-300">{ufValue}</div>
+      </div>
+    </div>
+    <div className="mt-5 border-t border-white/10 pt-3 text-[12px] text-slate-300/84">
+      <div>{footer}</div>
+      <div className="mt-0.5 text-slate-400">Retorno anualizado compuesto</div>
+    </div>
+  </Card>
+);
+
+const CompactInfoCard = ({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+}) => (
+  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">{title}</div>
+    <div className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+    <div className="mt-1 text-[11px] text-slate-500">{subtitle}</div>
+  </div>
 );
 
 const DashboardBar = ({
@@ -148,14 +231,58 @@ export const DashboardAurum: React.FC = () => {
     return `${Math.round(model.freshness.fresh7dPct * 100)}%`;
   }, [model.freshness]);
 
+  const dashboardReturns = useMemo(() => {
+    const usdRows = computeMonthlyRows(closures, includeRiskCapitalInTotals, 'USD');
+    const ufRows = computeMonthlyRows(closures, includeRiskCapitalInTotals, 'UF');
+    return {
+      return36Usd: buildTrailingSummary(usdRows, 36, 'dashboard-36m-usd', 'RETORNO 36M'),
+      return36Uf: buildTrailingSummary(ufRows, 36, 'dashboard-36m-uf', 'RETORNO 36M'),
+      return12Usd: buildTrailingSummary(usdRows, 12, 'dashboard-12m-usd', 'RETORNO 12M'),
+      return12Uf: buildTrailingSummary(ufRows, 12, 'dashboard-12m-uf', 'RETORNO 12M'),
+    };
+  }, [closures, includeRiskCapitalInTotals]);
+
+  const heroMessage = useMemo(() => {
+    if (model.coverageRatio === null) return 'Necesitas al menos un cierre confirmado para construir esta lectura.';
+    if (model.coverageRatio < 1) return 'Hoy tu patrimonio no sostiene tu vida actual.';
+    if ((model.marginClp ?? 0) < 0) return 'Tu cobertura existe, pero el margen todavía es negativo.';
+    if ((model.marginClp ?? 0) < 500_000) return 'Puedes sostener tu vida actual, pero con un margen muy corto.';
+    return 'Puedes sostener tu vida actual con un margen positivo.';
+  }, [model.coverageRatio, model.marginClp]);
+
+  const returnFootnote = (label: string, validMonths: number | null | undefined, expectedMonths: number) => {
+    if (!validMonths || validMonths <= 0) return `Sin base suficiente para ${label}`;
+    if (validMonths < expectedMonths) return `${validMonths} meses válidos`;
+    return `Últimos ${expectedMonths} meses`;
+  };
+
   return (
-    <div className="space-y-4 px-3 py-2 sm:space-y-5 sm:px-4">
-      <section className="relative overflow-hidden rounded-[30px] border border-[#5c4b3d] bg-[radial-gradient(circle_at_top_right,_rgba(181,126,74,0.18),_transparent_32%),linear-gradient(145deg,#071834_0%,#0d2449_50%,#08142d_100%)] p-5 text-white shadow-[0_28px_90px_rgba(3,10,26,0.46)] sm:p-6">
+    <div className="space-y-5 bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.08),transparent_38%)] px-3 py-3 sm:space-y-6 sm:px-4">
+      <header data-testid="dashboard-header" className="flex items-start justify-between gap-4 px-1 pt-1">
+        <div>
+          <div className="text-[2.2rem] font-semibold tracking-[-0.06em] text-slate-950 sm:text-[2.6rem]">Aurum</div>
+          <div className="mt-1 text-base text-slate-500">Gestor de patrimonio neto</div>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="rounded-full border border-slate-200 bg-white/80 px-3 text-slate-600 shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:bg-white"
+          onClick={refreshDashboardState}
+        >
+          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+          Actualizar
+        </Button>
+      </header>
+
+      <section
+        data-testid="dashboard-hero"
+        className="relative overflow-hidden rounded-[32px] border border-[#5c4b3d] bg-[radial-gradient(circle_at_top_right,_rgba(99,245,177,0.10),_transparent_30%),linear-gradient(145deg,#071834_0%,#0d2449_50%,#08142d_100%)] p-5 text-white shadow-[0_28px_90px_rgba(3,10,26,0.34)] sm:p-6"
+      >
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.03),transparent_40%,rgba(255,255,255,0.01))]" />
         <div className="relative space-y-5">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.34em] text-[#d5c0a6]">Dashboard ejecutivo</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.34em] text-[#d5c0a6]">Salud patrimonial</div>
               <h1 className="max-w-xl text-[29px] font-semibold leading-tight tracking-[-0.03em] text-white sm:text-[34px]">
                 ¿Tu patrimonio sostiene tu vida actual?
               </h1>
@@ -211,123 +338,82 @@ export const DashboardAurum: React.FC = () => {
                   {chip}
                 </span>
               ))}
+              {model.sourceMonthKey ? (
+                <span className="inline-flex items-center rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-medium text-slate-200">
+                  {sourceLabel}
+                </span>
+              ) : null}
             </div>
-            <div className="flex flex-col gap-1.5 text-xs text-slate-300/72 sm:flex-row sm:items-center sm:justify-between">
-              <span>Simulación simple determinista</span>
-              <span>
-                Inputs: {DASHBOARD_EXECUTIVE_ASSUMPTIONS.horizonYears} años ·{' '}
-                {DASHBOARD_EXECUTIVE_ASSUMPTIONS.annualRatePct}% anual · base {baselineLabel}
-                {model.sourceMonthKey ? ` · cierre confirmado de ${sourceLabel}` : ''}
-              </span>
+            <div className="flex items-center gap-2 border-t border-white/10 pt-3 text-sm text-slate-200/88">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              <span>{heroMessage}</span>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-3 sm:gap-4 lg:grid-cols-3">
-        <DashboardMetricCard
+      <section data-testid="dashboard-returns" className="space-y-3">
+        <div className="px-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Rendimiento anualizado compuesto</div>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <ExecutiveReturnCard
+            testId="dashboard-return-36m"
+            title="Retorno 36M"
+            badge="Largo plazo"
+            emphasis="primary"
+            usdValue={formatPct(dashboardReturns.return36Usd?.pctRetorno ?? null, 1)}
+            ufValue={formatPct(dashboardReturns.return36Uf?.pctRetorno ?? null, 1)}
+            footer={returnFootnote('36M', dashboardReturns.return36Usd?.validMonths, 36)}
+          />
+          <ExecutiveReturnCard
+            testId="dashboard-return-12m"
+            title="Retorno 12M"
+            emphasis="secondary"
+            usdValue={formatPct(dashboardReturns.return12Usd?.pctRetorno ?? null, 1)}
+            ufValue={formatPct(dashboardReturns.return12Uf?.pctRetorno ?? null, 1)}
+            footer={returnFootnote('12M', dashboardReturns.return12Usd?.validMonths, 12)}
+          />
+        </div>
+      </section>
+
+      <section data-testid="dashboard-position" className="space-y-3">
+        <div className="px-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Tu posición financiera</div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+        <ExecutivePositionCard
           label={model.cards.sustainable.label}
           value={formatFreedomCompactClp(model.cards.sustainable.valueClp)}
           subtitle={model.cards.sustainable.subtitle}
           tone={model.cards.sustainable.tone}
+          icon={Shield}
         />
-        <DashboardMetricCard
+        <ExecutivePositionCard
           label={model.cards.lifestyle.label}
           value={formatFreedomCompactClp(model.cards.lifestyle.valueClp)}
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
-          className="border-[#b68357]/45 bg-[linear-gradient(180deg,rgba(210,170,129,0.96),rgba(167,114,69,0.88))] shadow-[0_16px_40px_rgba(46,27,11,0.16)]"
-          labelClassName="text-[#52301a]/84"
-          valueClassName="text-[#221105]"
-          subtitleClassName="text-[#352010]/88"
+          icon={Home}
+          className="border-[#eadcca] bg-[linear-gradient(180deg,rgba(255,250,244,0.98),rgba(247,238,228,0.94))]"
+          labelClassName="text-[#8a6541]"
+          valueClassName="text-[#b68357]"
+          subtitleClassName="text-[#7d6850]"
         />
-        <DashboardMetricCard
+        <ExecutivePositionCard
           label={model.cards.margin.label}
           value={formatFreedomCompactClp(model.cards.margin.valueClp)}
           subtitle={model.cards.margin.subtitle}
           tone={model.cards.margin.tone}
+          icon={TrendingUp}
         />
-      </section>
-
-      <section className="grid gap-3 sm:gap-4 lg:grid-cols-2">
-        <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)]">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
-            Frescura patrimonial
-          </div>
-          <div className="mt-4 text-[2.4rem] font-semibold tracking-[-0.04em] text-white">{freshnessKpi}</div>
-          <div className="mt-1 text-sm text-slate-200/82">Patrimonio actualizado ≤ 7 días</div>
-          <div className="mt-1 text-[11px] text-slate-300/64">
-            Calculado sobre exposición patrimonial absoluta.
-            {model.freshness.riskCapitalExcluded ? ' CapRiesgo excluido.' : ''}
-          </div>
-          <div className="mt-5">
-            <DashboardBar
-              values={freshnessBarSegments.map((segment) => ({
-                label: segment.label,
-                pct: model.freshness[segment.key] ?? 0,
-                className: segment.className,
-              }))}
-            />
-          </div>
-          {model.freshness.laggards.length > 0 && (
-            <div className="mt-4 space-y-2 text-[11px] text-slate-200/80">
-              <div className="text-[10px] uppercase tracking-[0.24em] text-slate-300/70">
-                Actualiza para llegar a 100%
-              </div>
-              <ul className="space-y-1">
-                {model.freshness.laggards.map((item) => (
-                  <li key={`${item.id}-${item.daysOld ?? 'unknown'}`} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate">{item.label}</span>
-                    <span className="shrink-0 text-slate-200/70">
-                      {Math.round(item.weightPct * 100)}% · {item.daysOld === null ? 'sin fecha' : `${item.daysOld}d`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </Card>
-
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)] sm:p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia</div>
-            <div
-              className={cn(
-                'mt-3 text-[1.9rem] font-semibold tracking-[-0.04em] sm:text-[2.1rem]',
-                model.capRiskDependence.level === 'Alta'
-                  ? 'text-amber-200'
-                  : model.capRiskDependence.level === 'Media'
-                    ? 'text-slate-100'
-                    : 'text-emerald-300',
-              )}
-            >
-              {model.capRiskDependence.level}
-            </div>
-            <div className="mt-2 text-[11px] leading-relaxed text-slate-200/78 sm:text-xs">
-              {model.capRiskDependence.dependenceSummary}
-            </div>
-          </Card>
-
-          <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)] sm:p-5">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Impacto</div>
-            <div className="mt-3 text-[1.9rem] font-semibold tracking-[-0.04em] text-slate-100 sm:text-[2.1rem]">
-              {model.capRiskDependence.impactRatioDelta === null
-                ? '—'
-                : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}x`}
-            </div>
-            <div className="mt-2 text-[11px] leading-relaxed text-slate-200/78 sm:text-xs">
-              {model.capRiskDependence.impactSummary}
-            </div>
-          </Card>
         </div>
       </section>
 
       <Card
+        data-testid="dashboard-insight"
         className={cn(
-          'border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.12)]',
+          'rounded-[28px] border p-4 shadow-[0_12px_30px_rgba(3,10,26,0.12)]',
           model.coverageTone === 'positive'
             ? 'border-emerald-400/12 bg-[#0a1630] text-emerald-50'
             : model.coverageTone === 'warning'
@@ -337,17 +423,56 @@ export const DashboardAurum: React.FC = () => {
                 : 'border-white/8 bg-[#0a1630] text-slate-50',
         )}
       >
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/70">Insight ejecutivo</div>
-        <div className="mt-2 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#f4d03f]">Insight ejecutivo</div>
+            <div className="mt-2 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
+          </div>
+          <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[#f4d03f]">
+            <ChevronRight className="h-5 w-5" />
+          </div>
+        </div>
       </Card>
 
-      <Card className="border-white/10 bg-[linear-gradient(180deg,rgba(15,34,68,0.94),rgba(9,23,49,0.92))] p-4 text-white shadow-[0_10px_24px_rgba(3,10,26,0.18)] backdrop-blur-sm">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/84">Accesos rápidos</div>
+      <section data-testid="dashboard-quality" className="space-y-3">
+        <div className="px-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Calidad del patrimonio</div>
+        </div>
+        <Card className="rounded-[28px] border-white/10 bg-[linear-gradient(180deg,rgba(14,37,77,0.98),rgba(9,23,49,0.95))] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.28)] sm:p-5">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-emerald-300">
+                <Shield className="h-7 w-7" />
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300/88">Frescura patrimonial</div>
+                <div className="mt-2 text-[3rem] font-semibold tracking-[-0.05em] text-emerald-300">{freshnessKpi}</div>
+                <div className="text-sm text-slate-200/82">Patrimonio actualizado ≤ 7 días.</div>
+              </div>
+            </div>
+            <div className="min-w-0 flex-1 lg:max-w-[30rem]">
+              <DashboardBar
+                values={freshnessBarSegments.map((segment) => ({
+                  label: segment.label,
+                  pct: model.freshness[segment.key] ?? 0,
+                  className: segment.className,
+                }))}
+              />
+              {model.freshness.riskCapitalExcluded ? (
+                <div className="mt-3 text-[11px] text-slate-400">CapRiesgo excluido de esta lectura.</div>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <Card data-testid="dashboard-secondary" className="rounded-[28px] border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.06)]">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Accesos secundarios</div>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
+            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'returns' } })}
           >
             Ver Retornos
@@ -355,7 +480,7 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
+            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'freedom' } })}
           >
             <BrainCircuit className="mr-1 h-3.5 w-3.5" />
@@ -364,7 +489,7 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
+            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
             onClick={() => navigate('/analysis', { state: { analysisTab: 'lab' } })}
           >
             <Sparkles className="mr-1 h-3.5 w-3.5" />
@@ -373,12 +498,31 @@ export const DashboardAurum: React.FC = () => {
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full border border-white/12 bg-white/7 px-3 text-slate-100 hover:bg-white/12 hover:text-white"
+            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
             onClick={refreshDashboardState}
           >
             <RefreshCcw className="mr-1 h-3.5 w-3.5" />
             Actualizar datos
           </Button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <CompactInfoCard
+            title="Dependencia CapRiesgo"
+            value={model.capRiskDependence.level}
+            subtitle={model.capRiskDependence.dependenceSummary}
+          />
+          <CompactInfoCard
+            title="Impacto en cobertura"
+            value={
+              model.capRiskDependence.impactRatioDelta === null
+                ? '—'
+                : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}x`
+            }
+            subtitle={model.capRiskDependence.impactSummary}
+          />
         </div>
       </Card>
     </div>
