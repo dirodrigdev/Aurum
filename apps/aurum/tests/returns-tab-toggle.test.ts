@@ -85,6 +85,34 @@ const makeMonthlyRow = (monthKey: string, overrides: Partial<MonthlyReturnRow> =
   ...overrides,
 });
 
+const makeSummary = (label: string) => ({
+  key: label.toLowerCase().replace(/\s+/g, '-'),
+  label,
+  periodStartMonthKey: '2026-01',
+  periodEndMonthKey: '2026-06',
+  validMonths: 6,
+  coverage: {
+    validMonths: 6,
+    expectedMonths: 6,
+    excludedMonths: [],
+    nonApplicableMonths: [],
+    status: 'complete' as const,
+  },
+  varPatrimonioAcumClp: 120_000_000,
+  gastosAcumClp: 8_400_000,
+  retornoRealAcumClp: 128_400_000,
+  varPatrimonioAcumDisplay: 120_000_000,
+  gastosAcumDisplay: 8_400_000,
+  retornoRealAcumDisplay: 128_400_000,
+  pctRetorno: 19.5,
+  pctRetornoReal: 15.3,
+  pctRetornoNote: null,
+  spendPct: 6.5,
+  varPatrimonioAvgDisplay: 20_000_000,
+  gastosAvgDisplay: 1_400_000,
+  retornoRealAvgDisplay: 21_400_000,
+});
+
 const baseProps = {
   heroSinceStart: null,
   heroLast12: null,
@@ -381,5 +409,80 @@ describe('ReturnsTab estimated month toggle', () => {
       await user.click(checkbox!);
     });
     expect(onToggleIncludeEstimatedMonth).not.toHaveBeenCalled();
+  });
+
+  it('shows (R) only in CLP and explains that it discounts Chilean inflation', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(ReturnsTab, {
+          ...baseProps,
+          currency: 'CLP',
+          heroSinceStart: makeSummary('Desde inicio'),
+          heroLast12: makeSummary('Últ. 12M'),
+          heroYtd2026: makeSummary('YTD 2026'),
+          heroLastMonth: makeSummary('Últ. mes válido'),
+          heroLastMonthPctMonthly: 2.2,
+          heroLastMonthPctMonthlyReal: 1.7,
+          periodSummaries: [makeSummary('12M')],
+          yearlySummaries: [makeSummary('2026')],
+          monthlyRowsDesc: [makeMonthlyRow('2026-06')],
+          officialMonthlyRowsAsc: [makeMonthlyRow('2026-06')],
+          hasEstimatedMonth: false,
+          includeEstimatedMonth: false,
+          estimatedMonthMeta: null,
+          pendingEstimateDetail: null,
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain('(R) descuenta inflación chilena');
+    expect(container.textContent).toContain('(R) +15,3%');
+    expect(container.textContent).toContain('(R)');
+  });
+
+  it('hides (R) in USD, EUR, and UF views', async () => {
+    for (const currency of ['USD', 'EUR', 'UF'] as const) {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+      root = createRoot(container);
+
+      await act(async () => {
+        root?.render(
+          React.createElement(ReturnsTab, {
+            ...baseProps,
+            currency,
+            heroSinceStart: makeSummary('Desde inicio'),
+            heroLast12: makeSummary('Últ. 12M'),
+            heroYtd2026: makeSummary('YTD 2026'),
+            heroLastMonth: makeSummary('Últ. mes válido'),
+            heroLastMonthPctMonthly: 2.2,
+            heroLastMonthPctMonthlyReal: null,
+            periodSummaries: [makeSummary('12M')],
+            yearlySummaries: [makeSummary('2026')],
+            monthlyRowsDesc: [makeMonthlyRow('2026-06', { pctReal: null })],
+            officialMonthlyRowsAsc: [makeMonthlyRow('2026-06', { pctReal: null })],
+            hasEstimatedMonth: false,
+            includeEstimatedMonth: false,
+            estimatedMonthMeta: null,
+            pendingEstimateDetail: null,
+          }),
+        );
+      });
+
+      expect(container.textContent).not.toContain('(R)');
+      expect(container.textContent).not.toContain('descuenta inflación chilena');
+
+      await act(async () => {
+        root?.unmount();
+      });
+      root = null;
+      container.remove();
+      container = null;
+      document.body.innerHTML = '';
+    }
   });
 });

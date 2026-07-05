@@ -623,6 +623,7 @@ export const computeMonthlyRows = (
         : (retornoRealDisplay / prevNetDisplay) * 100;
     const currentUfClp = Number(fx.ufClp);
     const inflationMonthlyRate =
+      currency === 'CLP' &&
       fxAuditable &&
       previousAuditableUfClp !== null &&
       Number.isFinite(currentUfClp) &&

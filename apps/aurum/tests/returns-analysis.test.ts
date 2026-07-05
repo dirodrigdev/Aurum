@@ -759,6 +759,42 @@ describe('returns analysis helpers', () => {
     expect(spendEur.kind).toBe('negative-return');
   });
 
+  it('keeps real return metrics only for CLP and does not deflate USD, EUR, or UF with Chilean inflation', () => {
+    const closures = [
+      makeClosure('2026-01', { netClp: 1_000_000_000, usdClp: 1000, eurClp: 1000, ufClp: 39000 }),
+      makeClosure('2026-02', { netClp: 1_050_000_000, usdClp: 1050, eurClp: 1200, ufClp: 40000 }),
+    ];
+
+    const rowsClp = computeMonthlyRows(closures, false, 'CLP');
+    const rowsUsd = computeMonthlyRows(closures, false, 'USD');
+    const rowsEur = computeMonthlyRows(closures, false, 'EUR');
+    const rowsUf = computeMonthlyRows(closures, false, 'UF');
+
+    const clpFeb = rowsClp.find((row) => row.monthKey === '2026-02');
+    const usdFeb = rowsUsd.find((row) => row.monthKey === '2026-02');
+    const eurFeb = rowsEur.find((row) => row.monthKey === '2026-02');
+    const ufFeb = rowsUf.find((row) => row.monthKey === '2026-02');
+
+    expect(clpFeb?.inflationMonthlyRate).not.toBeNull();
+    expect(clpFeb?.pctReal).not.toBeNull();
+    expect(usdFeb?.inflationMonthlyRate).toBeNull();
+    expect(usdFeb?.pctReal).toBeNull();
+    expect(eurFeb?.inflationMonthlyRate).toBeNull();
+    expect(eurFeb?.pctReal).toBeNull();
+    expect(ufFeb?.inflationMonthlyRate).toBeNull();
+    expect(ufFeb?.pctReal).toBeNull();
+
+    const summaryClp = aggregateRows('clp-real', 'CLP', rowsClp, rowsClp[0].netDisplay);
+    const summaryUsd = aggregateRows('usd-real', 'USD', rowsUsd, rowsUsd[0].netDisplay);
+    const summaryEur = aggregateRows('eur-real', 'EUR', rowsEur, rowsEur[0].netDisplay);
+    const summaryUf = aggregateRows('uf-real', 'UF', rowsUf, rowsUf[0].netDisplay);
+
+    expect(summaryClp.pctRetornoReal).not.toBeNull();
+    expect(summaryUsd.pctRetornoReal).toBeNull();
+    expect(summaryEur.pctRetornoReal).toBeNull();
+    expect(summaryUf.pctRetornoReal).toBeNull();
+  });
+
   it('explains pending official returns and builds provisional estimates without closed aggregates', () => {
     const rows = computeMonthlyRows(
       [

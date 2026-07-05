@@ -191,7 +191,9 @@ const SummaryTable: React.FC<{
   items: AggregatedSummary[];
   currency: WealthCurrency;
   lastConsideredLabel: string | null;
-}> = ({ title, items, currency, lastConsideredLabel }) => (
+}> = ({ title, items, currency, lastConsideredLabel }) => {
+  const showRealReturn = currency === 'CLP';
+  return (
     <Card className="p-3 border-slate-200">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
       <div className="mt-0.5 text-[11px] text-slate-500">
@@ -202,7 +204,14 @@ const SummaryTable: React.FC<{
         <thead>
           <tr className="text-left text-slate-500">
             <th className="py-1 pr-2">Tramo</th>
-            <th className="w-[56px] py-1 pr-2 text-right text-[10px] font-semibold text-slate-400">(R)</th>
+            {showRealReturn ? (
+              <th
+                className="w-[56px] py-1 pr-2 text-right text-[10px] font-semibold text-slate-400"
+                title="Retorno real descontando inflación chilena."
+              >
+                (R)
+              </th>
+            ) : null}
             <th
               className="py-1 pr-2 text-right"
               title="Calculado componiendo los retornos mensuales del período y anualizando el resultado."
@@ -228,14 +237,17 @@ const SummaryTable: React.FC<{
                     <CoverageBadge item={item} />
                   </div>
                 </td>
-                <td
-                  className={cn(
-                    'py-1.5 pr-2 text-right text-[11px] font-medium',
-                    item.pctRetornoReal === null ? 'text-slate-400' : item.pctRetornoReal >= 0 ? 'text-emerald-600/85' : 'text-rose-500/80',
-                  )}
-                >
-                  <div className="truncate max-w-[56px]">{formatPct(item.pctRetornoReal)}</div>
-                </td>
+                {showRealReturn ? (
+                  <td
+                    className={cn(
+                      'py-1.5 pr-2 text-right text-[11px] font-medium',
+                      item.pctRetornoReal === null ? 'text-slate-400' : item.pctRetornoReal >= 0 ? 'text-emerald-600/85' : 'text-rose-500/80',
+                    )}
+                    title="Retorno real descontando inflación chilena."
+                  >
+                    <div className="truncate max-w-[56px]">{formatPct(item.pctRetornoReal)}</div>
+                  </td>
+                ) : null}
                 <td className={cn('py-1.5 pr-2 text-right font-semibold', positive ? 'text-emerald-700' : 'text-rose-700')}>
                   <div className="truncate max-w-[90px]">{formatPct(item.pctRetorno)}</div>
                   {item.pctRetorno === null && item.pctRetornoNote ? (
@@ -264,7 +276,8 @@ const SummaryTable: React.FC<{
       </table>
     </div>
   </Card>
-);
+  );
+};
 
 const ReturnRealHero: React.FC<{
   sinceStart: AggregatedSummary | null;
@@ -293,6 +306,7 @@ const ReturnRealHero: React.FC<{
   crpContributionInsight,
   lastConsideredLabel,
 }) => {
+  const showRealReturn = currency === 'CLP';
   const rows = [
     { key: 'inicio', label: 'DESDE INICIO', showEstimatedBadge: includeEstimatedMonth, value: sinceStart, pct: sinceStart?.pctRetorno ?? null },
     { key: '12m', label: 'ÚLT. 12M', showEstimatedBadge: includeEstimatedMonth, value: last12, pct: last12?.pctRetorno ?? null },
@@ -327,6 +341,14 @@ const ReturnRealHero: React.FC<{
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Retorno económico</div>
             <div className="mt-1 text-[11px] text-slate-400">Lectura oficial del período, incluyendo lo que gastaste</div>
             <div className="mt-1 text-[9px] text-slate-500/70">Gastos desde GastApp (P → mes equivalente)</div>
+            {showRealReturn ? (
+              <div
+                className="mt-1 text-[9px] text-slate-400/90"
+                title="(R) significa retorno real descontando inflación chilena."
+              >
+                (R) descuenta inflación chilena
+              </div>
+            ) : null}
             {lastConsideredLabel ? (
               <div className="mt-2 inline-flex rounded-full border border-amber-300/30 bg-white/5 px-2 py-1 text-[10px] font-medium text-amber-100">
                 {`Último mes considerado: ${lastConsideredLabel}`}
@@ -413,16 +435,19 @@ const ReturnRealHero: React.FC<{
                 </div>
                 <div className="min-w-0 text-right">
                   <div className="flex items-end justify-end gap-2">
-                    <div
-                      className={cn(
-                        'text-[11px] font-medium leading-none',
-                        pctRealClass(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)),
-                      )}
-                    >
-                      {(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)) === null
-                        ? '—'
-                        : `(R) ${formatPct(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null), 1)}`}
-                    </div>
+                    {showRealReturn ? (
+                      <div
+                        className={cn(
+                          'text-[11px] font-medium leading-none',
+                          pctRealClass(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)),
+                        )}
+                        title="Retorno real descontando inflación chilena."
+                      >
+                        {(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null)) === null
+                          ? '—'
+                          : `(R) ${formatPct(row.key === 'mes' ? (row.pctReal ?? null) : (row.value?.pctRetornoReal ?? null), 1)}`}
+                      </div>
+                    ) : null}
                     <div className={cn('text-[22px] font-semibold leading-none tracking-tight', pctClass(row.pct))}>
                       {formatPct(row.pct, 1)}
                     </div>
