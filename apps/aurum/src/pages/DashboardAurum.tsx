@@ -196,6 +196,47 @@ const curvePath = (
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${pointX(point).toFixed(2)} ${pointY(point.value, series).toFixed(2)}`)
     .join(' ');
 
+const buildTrendPoints = (
+  points: ReturnCurvePoint[],
+  monthIndex: Map<string, number>,
+): ReturnCurvePoint[] => {
+  const valid = points
+    .map((point) => {
+      const x = monthIndex.get(point.monthKey);
+      if (x === undefined || !Number.isFinite(point.value)) return null;
+      return { point, x };
+    })
+    .filter((item): item is { point: ReturnCurvePoint; x: number } => !!item);
+
+  if (valid.length < 2) return [];
+
+  const n = valid.length;
+  const sumX = valid.reduce((sum, item) => sum + item.x, 0);
+  const sumY = valid.reduce((sum, item) => sum + item.point.value, 0);
+  const sumXY = valid.reduce((sum, item) => sum + item.x * item.point.value, 0);
+  const sumXX = valid.reduce((sum, item) => sum + item.x * item.x, 0);
+  const denominator = n * sumXX - sumX * sumX;
+  if (Math.abs(denominator) < 1e-9) return [];
+
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+  const first = valid[0];
+  const last = valid[valid.length - 1];
+
+  return [
+    {
+      id: `${first.point.id}-trend-start`,
+      monthKey: first.point.monthKey,
+      value: intercept + slope * first.x,
+    },
+    {
+      id: `${last.point.id}-trend-end`,
+      monthKey: last.point.monthKey,
+      value: intercept + slope * last.x,
+    },
+  ];
+};
+
 const DashboardWealthEvolutionChart = ({
   ufPoints,
   usdPoints,
@@ -239,6 +280,8 @@ const DashboardWealthEvolutionChart = ({
     const domain = series === 'uf' ? ufScale : usdScale;
     return padding.top + ((domain.max - value) / Math.max(1e-6, domain.max - domain.min)) * innerHeight;
   };
+  const ufTrendPoints = buildTrendPoints(ufPoints, monthIndex);
+  const usdTrendPoints = buildTrendPoints(usdPoints, monthIndex);
   const lastUf = ufPoints[ufPoints.length - 1]?.value ?? null;
   const lastUsd = usdPoints[usdPoints.length - 1]?.value ?? null;
 
@@ -255,10 +298,10 @@ const DashboardWealthEvolutionChart = ({
       </div>
       <div className="mt-3">
         <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full" role="img" aria-label="Evolución patrimonial en UF y USD">
-          <text x={padding.left} y="10" fontSize="10" fill="rgba(110,231,183,0.86)">
+          <text x={padding.left} y="12" fontSize="14" fontWeight="700" fill="#6ee7b7">
             UF
           </text>
-          <text x={width - padding.right} y="10" textAnchor="end" fontSize="10" fill="rgba(147,197,253,0.86)">
+          <text x={width - padding.right} y="12" textAnchor="end" fontSize="14" fontWeight="700" fill="#93c5fd">
             USD
           </text>
           {[0.25, 0.5, 0.75].map((ratio) => (
@@ -272,8 +315,14 @@ const DashboardWealthEvolutionChart = ({
               strokeWidth="1"
             />
           ))}
-          <path d={curvePath(ufPoints, pointX, pointY, 'uf')} fill="none" stroke="#6ee7b7" strokeWidth="3" strokeLinecap="round" />
-          <path d={curvePath(usdPoints, pointX, pointY, 'usd')} fill="none" stroke="#93c5fd" strokeWidth="3" strokeLinecap="round" />
+          {ufTrendPoints.length ? (
+            <path d={curvePath(ufTrendPoints, pointX, pointY, 'uf')} fill="none" stroke="#6ee7b7" strokeWidth="2" strokeLinecap="round" strokeDasharray="7 7" opacity="0.46" />
+          ) : null}
+          {usdTrendPoints.length ? (
+            <path d={curvePath(usdTrendPoints, pointX, pointY, 'usd')} fill="none" stroke="#93c5fd" strokeWidth="2" strokeLinecap="round" strokeDasharray="7 7" opacity="0.46" />
+          ) : null}
+          <path d={curvePath(ufPoints, pointX, pointY, 'uf')} fill="none" stroke="#6ee7b7" strokeWidth="3.2" strokeLinecap="round" />
+          <path d={curvePath(usdPoints, pointX, pointY, 'usd')} fill="none" stroke="#93c5fd" strokeWidth="3.2" strokeLinecap="round" />
           {[ufPoints[ufPoints.length - 1], usdPoints[usdPoints.length - 1]].map((point, index) => (
             <circle
               key={`${point.id}-${index}`}
