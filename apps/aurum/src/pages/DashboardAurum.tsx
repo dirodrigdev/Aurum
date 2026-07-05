@@ -73,16 +73,14 @@ const ExecutivePositionCard = ({
   subtitleClassName?: string;
   labelClassName?: string;
 }) => (
-  <Card className={cn('rounded-[24px] border border-slate-200/80 bg-white p-3.5 shadow-[0_14px_34px_rgba(15,23,42,0.07)] sm:p-4', className)}>
-    <div className="flex items-start gap-2.5">
-      <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-slate-500">
-        <Icon className="h-[18px] w-[18px]" />
-      </div>
-      <div className="min-w-0">
-        <div className={cn('text-[8px] font-semibold uppercase tracking-[0.18em] text-slate-500', labelClassName)}>{label}</div>
-        <div className={cn('mt-2.5 text-[clamp(1.65rem,5.2vw,2.3rem)] font-semibold leading-none tracking-[-0.06em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
-        <div className={cn('mt-2 text-[13px] leading-tight text-slate-500', subtitleClassName)}>{subtitle}</div>
-      </div>
+  <Card className={cn('relative overflow-hidden rounded-[24px] border border-slate-200/80 bg-white p-3.5 shadow-[0_14px_34px_rgba(15,23,42,0.07)] sm:p-4', className)}>
+    <div className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-slate-50 text-slate-500 sm:h-10 sm:w-10">
+      <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+    </div>
+    <div className="min-w-0 pr-8 sm:pr-11">
+      <div className={cn('text-[7px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:text-[8px] sm:tracking-[0.18em]', labelClassName)}>{label}</div>
+      <div className={cn('mt-7 text-[clamp(1.5rem,5vw,2.3rem)] font-semibold leading-none tracking-[-0.06em] sm:mt-8', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
+      <div className={cn('mt-2 text-[12px] leading-tight text-slate-500 sm:text-[13px]', subtitleClassName)}>{subtitle}</div>
     </div>
   </Card>
 );
