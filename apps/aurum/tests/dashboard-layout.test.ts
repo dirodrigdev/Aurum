@@ -88,6 +88,20 @@ vi.mock('../src/services/returnsAnalysis', () => ({
     if (count === 12 && currency === 'UF') return { pctRetorno: 15.3, validMonths: 12 };
     return null;
   }),
+  buildWealthEvolutionComparisonModel: vi.fn(() => ({
+    ufSeries: {
+      points: [
+        { id: '2025-01', monthKey: '2025-01', value: 42000 },
+        { id: '2026-06', monthKey: '2026-06', value: 46000 },
+      ],
+    },
+    usdSeries: {
+      points: [
+        { id: '2025-01', monthKey: '2025-01', value: 1_600_000 },
+        { id: '2026-06', monthKey: '2026-06', value: 1_850_000 },
+      ],
+    },
+  })),
 }));
 
 vi.mock('../src/services/gastosMonthly', () => ({
@@ -137,19 +151,27 @@ describe('DashboardAurum layout', () => {
     const return12 = container.querySelector('[data-testid="dashboard-return-12m"]');
     const position = container.querySelector('[data-testid="dashboard-position"]');
     const insight = container.querySelector('[data-testid="dashboard-insight"]');
+    const capRisk = container.querySelector('[data-testid="dashboard-cap-risk"]');
+    const evolution = container.querySelector('[data-testid="dashboard-evolution"]');
     const quality = container.querySelector('[data-testid="dashboard-quality"]');
+    const secondary = container.querySelector('[data-testid="dashboard-secondary"]');
 
     expect(container.textContent).toContain('¿Tu patrimonio sostiene tu vida actual?');
     expect(container.textContent).toContain('Rendimiento anualizado compuesto');
     expect(container.textContent).toContain('Tu posición financiera');
     expect(container.textContent).toContain('Insight ejecutivo');
+    expect(container.textContent).toContain('Dependencia CapRiesgo');
+    expect(container.textContent).toContain('Evolución patrimonial');
     expect(container.textContent).toContain('Calidad del patrimonio');
     expect(container.textContent).toContain('Frescura patrimonial');
 
     expect(hero?.compareDocumentPosition(returns as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(returns?.compareDocumentPosition(position as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(position?.compareDocumentPosition(insight as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(insight?.compareDocumentPosition(quality as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(insight?.compareDocumentPosition(capRisk as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(capRisk?.compareDocumentPosition(evolution as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(evolution?.compareDocumentPosition(quality as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(quality?.compareDocumentPosition(secondary as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     expect(return36?.compareDocumentPosition(return12 as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(return36?.getAttribute('data-emphasis')).toBe('primary');
@@ -168,6 +190,12 @@ describe('DashboardAurum layout', () => {
     expect(container.textContent).toContain('$8,2MM');
     expect(container.textContent).toContain('$6,0MM');
     expect(container.textContent).toContain('$2,2MM');
+    expect(capRisk?.textContent).toContain('Baja');
+    expect(capRisk?.textContent).toContain('+0,18x');
+    expect(evolution?.textContent).toContain('UF');
+    expect(evolution?.textContent).toContain('USD');
+    expect(secondary?.textContent).toContain('Patrimonio');
+    expect(secondary?.textContent).toContain('Cierre');
   });
 
   it('refreshes dashboard state on mount and when the window regains focus', async () => {

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, ChevronRight, Home, RefreshCcw, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { BrainCircuit, CalendarRange, ChevronRight, Home, Landmark, LineChart, RefreshCcw, Settings, Shield, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, cn } from '../components/Components';
 import { formatFreedomCompactClp, formatPct } from '../components/analysis/shared';
+import type { ReturnCurvePoint } from '../components/analysis/types';
 import {
   GASTAPP_MONTHLY_SOURCE_UPDATED_EVENT,
   warmGastappMonthlyContable,
@@ -25,7 +26,7 @@ import {
   buildExecutiveDashboardModel,
   type DashboardCoverageTone,
 } from '../services/dashboardExecutive';
-import { buildTrailingSummary, computeMonthlyRows } from '../services/returnsAnalysis';
+import { buildTrailingSummary, buildWealthEvolutionComparisonModel, computeMonthlyRows } from '../services/returnsAnalysis';
 
 const sortClosures = (items: WealthMonthlyClosure[]) => [...items].sort((a, b) => b.monthKey.localeCompare(a.monthKey));
 
@@ -145,22 +146,6 @@ const ExecutiveReturnCard = ({
   </Card>
 );
 
-const CompactInfoCard = ({
-  title,
-  value,
-  subtitle,
-}: {
-  title: string;
-  value: string;
-  subtitle: string;
-}) => (
-  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">{title}</div>
-    <div className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
-    <div className="mt-1 text-[11px] text-slate-500">{subtitle}</div>
-  </div>
-);
-
 const DashboardBar = ({
   values,
 }: {
@@ -188,6 +173,191 @@ const DashboardBar = ({
       ))}
     </div>
   </div>
+);
+
+const formatChartValue = (value: number | null, unit: 'UF' | 'USD') => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  if (unit === 'UF') {
+    return `${Math.round(value).toLocaleString('es-CL')} UF`;
+  }
+  return `US$${(value / 1_000_000).toLocaleString('es-CL', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })}M`;
+};
+
+const curvePath = (
+  points: ReturnCurvePoint[],
+  pointX: (point: ReturnCurvePoint) => number,
+  pointY: (value: number, series: 'uf' | 'usd') => number,
+  series: 'uf' | 'usd',
+) =>
+  points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${pointX(point).toFixed(2)} ${pointY(point.value, series).toFixed(2)}`)
+    .join(' ');
+
+const DashboardWealthEvolutionChart = ({
+  ufPoints,
+  usdPoints,
+}: {
+  ufPoints: ReturnCurvePoint[];
+  usdPoints: ReturnCurvePoint[];
+}) => {
+  const months = Array.from(new Set([...ufPoints, ...usdPoints].map((point) => point.monthKey))).sort();
+  if (months.length < 2 || ufPoints.length < 2 || usdPoints.length < 2) {
+    return (
+      <Card data-testid="dashboard-evolution" className="rounded-[28px] border-white/10 bg-[#0a1630] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.22)]">
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
+          <LineChart className="h-4 w-4 text-emerald-300" />
+          Evolución patrimonial
+        </div>
+        <div className="mt-3 text-sm text-slate-300">Aún faltan cierres auditables para comparar UF y USD.</div>
+      </Card>
+    );
+  }
+
+  const width = 640;
+  const height = 178;
+  const padding = { top: 14, right: 22, bottom: 24, left: 22 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const monthIndex = new Map(months.map((monthKey, index) => [monthKey, index]));
+  const scale = (points: ReturnCurvePoint[]) => {
+    const values = points.map((point) => point.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const pad = Math.max(1, (max - min) * 0.12);
+    return { min: min - pad, max: max + pad };
+  };
+  const ufScale = scale(ufPoints);
+  const usdScale = scale(usdPoints);
+  const pointX = (point: ReturnCurvePoint) => {
+    const index = monthIndex.get(point.monthKey) ?? 0;
+    return padding.left + (innerWidth * index) / Math.max(1, months.length - 1);
+  };
+  const pointY = (value: number, series: 'uf' | 'usd') => {
+    const domain = series === 'uf' ? ufScale : usdScale;
+    return padding.top + ((domain.max - value) / Math.max(1e-6, domain.max - domain.min)) * innerHeight;
+  };
+  const lastUf = ufPoints[ufPoints.length - 1]?.value ?? null;
+  const lastUsd = usdPoints[usdPoints.length - 1]?.value ?? null;
+
+  return (
+    <Card data-testid="dashboard-evolution" className="rounded-[28px] border-white/10 bg-[linear-gradient(145deg,#071834_0%,#0d2449_52%,#08142d_100%)] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.24)]">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">
+            <LineChart className="h-4 w-4 text-emerald-300" />
+            Evolución patrimonial
+          </div>
+          <div className="mt-1 text-sm text-slate-300">Patrimonio expresado en UF y USD.</div>
+        </div>
+      </div>
+      <div className="mt-3">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-40 w-full" role="img" aria-label="Evolución patrimonial en UF y USD">
+          <text x={padding.left} y="10" fontSize="10" fill="rgba(110,231,183,0.86)">
+            UF
+          </text>
+          <text x={width - padding.right} y="10" textAnchor="end" fontSize="10" fill="rgba(147,197,253,0.86)">
+            USD
+          </text>
+          {[0.25, 0.5, 0.75].map((ratio) => (
+            <line
+              key={ratio}
+              x1={padding.left}
+              x2={width - padding.right}
+              y1={padding.top + innerHeight * ratio}
+              y2={padding.top + innerHeight * ratio}
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth="1"
+            />
+          ))}
+          <path d={curvePath(ufPoints, pointX, pointY, 'uf')} fill="none" stroke="#6ee7b7" strokeWidth="3" strokeLinecap="round" />
+          <path d={curvePath(usdPoints, pointX, pointY, 'usd')} fill="none" stroke="#93c5fd" strokeWidth="3" strokeLinecap="round" />
+          {[ufPoints[ufPoints.length - 1], usdPoints[usdPoints.length - 1]].map((point, index) => (
+            <circle
+              key={`${point.id}-${index}`}
+              cx={pointX(point)}
+              cy={pointY(point.value, index === 0 ? 'uf' : 'usd')}
+              r="4"
+              fill={index === 0 ? '#6ee7b7' : '#93c5fd'}
+            />
+          ))}
+          <text x={padding.left} y={height - 6} fontSize="10" fill="rgba(226,232,240,0.72)">
+            {months[0].slice(2)}
+          </text>
+          <text x={width - padding.right} y={height - 6} textAnchor="end" fontSize="10" fill="rgba(226,232,240,0.72)">
+            {months[months.length - 1].slice(2)}
+          </text>
+        </svg>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/15 bg-emerald-300/8 px-2 py-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-300" />
+          UF {formatChartValue(lastUf, 'UF')}
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-300/15 bg-blue-300/8 px-2 py-1">
+          <span className="h-2 w-2 rounded-full bg-blue-300" />
+          USD {formatChartValue(lastUsd, 'USD')}
+        </span>
+      </div>
+    </Card>
+  );
+};
+
+const DashboardCapRiskCard = ({
+  level,
+  dependenceSummary,
+  impactValue,
+  impactSummary,
+}: {
+  level: string;
+  dependenceSummary: string;
+  impactValue: string;
+  impactSummary: string;
+}) => (
+  <Card data-testid="dashboard-cap-risk" className="rounded-[28px] border border-emerald-400/20 bg-[radial-gradient(circle_at_top_left,_rgba(110,231,183,0.12),_transparent_34%),linear-gradient(145deg,#071834_0%,#102549_100%)] p-4 text-white shadow-[0_18px_50px_rgba(3,10,26,0.22)]">
+    <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-300/88">Dependencia CapRiesgo</div>
+    <div className="mt-3 grid grid-cols-2 gap-3">
+      <div className="border-r border-white/10 pr-3">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">Dependencia</div>
+        <div className="mt-2 text-[1.7rem] font-semibold leading-none tracking-[-0.04em] text-emerald-300">{level}</div>
+        <div className="mt-2 text-[12px] leading-snug text-slate-300">{dependenceSummary}</div>
+      </div>
+      <div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">Cobertura</div>
+        <div className="mt-2 text-[1.7rem] font-semibold leading-none tracking-[-0.04em] text-emerald-300">{impactValue}</div>
+        <div className="mt-2 text-[12px] leading-snug text-slate-300">{impactSummary}</div>
+      </div>
+    </div>
+  </Card>
+);
+
+const DashboardNavCard = ({
+  title,
+  subtitle,
+  icon: Icon,
+  onClick,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ComponentType<{ className?: string }>;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="group flex min-h-[5.1rem] items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_10px_24px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_14px_30px_rgba(15,23,42,0.08)]"
+  >
+    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-slate-600 group-hover:text-emerald-500">
+      <Icon className="h-5 w-5" />
+    </span>
+    <span className="min-w-0 flex-1">
+      <span className="block text-sm font-semibold leading-tight text-slate-900">{title}</span>
+      <span className="mt-1 block text-[11px] leading-tight text-slate-500">{subtitle}</span>
+    </span>
+    <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 group-hover:text-emerald-400" />
+  </button>
 );
 
 export const DashboardAurum: React.FC = () => {
@@ -272,6 +442,11 @@ export const DashboardAurum: React.FC = () => {
     };
   }, [closures, includeRiskCapitalInTotals, gastosSourceVersion]);
 
+  const wealthEvolution = useMemo(
+    () => buildWealthEvolutionComparisonModel(closures, includeRiskCapitalInTotals),
+    [closures, includeRiskCapitalInTotals],
+  );
+
   const heroMessage = useMemo(() => {
     if (model.coverageRatio === null) return 'Necesitas al menos un cierre confirmado para construir esta lectura.';
     if (model.coverageRatio < 1) return 'Hoy tu patrimonio no sostiene tu vida actual.';
@@ -285,6 +460,14 @@ export const DashboardAurum: React.FC = () => {
     if (validMonths < expectedMonths) return `${validMonths} meses válidos`;
     return `Últimos ${expectedMonths} meses`;
   };
+
+  const capRiskImpactValue =
+    model.capRiskDependence.impactRatioDelta === null
+      ? '—'
+      : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}x`;
 
   return (
     <div className="space-y-4 bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.08),transparent_38%)] px-3 py-2.5 sm:space-y-5 sm:px-4">
@@ -417,16 +600,23 @@ export const DashboardAurum: React.FC = () => {
                 : 'border-white/8 bg-[#0a1630] text-slate-50',
         )}
       >
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#f4d03f]">Insight ejecutivo</div>
-            <div className="mt-1.5 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
-          </div>
-          <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[#f4d03f]">
-            <ChevronRight className="h-5 w-5" />
-          </div>
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#f4d03f]">Insight ejecutivo</div>
+          <div className="mt-1.5 text-[15px] font-semibold leading-snug text-white sm:text-base">{model.insight}</div>
         </div>
       </Card>
+
+      <DashboardCapRiskCard
+        level={model.capRiskDependence.level}
+        dependenceSummary={model.capRiskDependence.dependenceSummary}
+        impactValue={capRiskImpactValue}
+        impactSummary={model.capRiskDependence.impactSummary}
+      />
+
+      <DashboardWealthEvolutionChart
+        ufPoints={wealthEvolution.ufSeries.points}
+        usdPoints={wealthEvolution.usdSeries.points}
+      />
 
       <section data-testid="dashboard-quality" className="space-y-2.5">
         <div className="px-1">
@@ -460,65 +650,58 @@ export const DashboardAurum: React.FC = () => {
         </Card>
       </section>
 
-      <Card data-testid="dashboard-secondary" className="rounded-[28px] border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.06)]">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Accesos secundarios</div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+      <section data-testid="dashboard-secondary" className="space-y-2.5">
+        <div className="px-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Explorar Aurum</div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <DashboardNavCard
+            title="Retornos"
+            subtitle="Serie histórica y retorno económico"
+            icon={TrendingUp}
             onClick={() => navigate('/analysis', { state: { analysisTab: 'returns' } })}
-          >
-            Ver Retornos
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+          />
+          <DashboardNavCard
+            title="Libertad"
+            subtitle="Capacidad, retiro y escenarios"
+            icon={BrainCircuit}
             onClick={() => navigate('/analysis', { state: { analysisTab: 'freedom' } })}
-          >
-            <BrainCircuit className="mr-1 h-3.5 w-3.5" />
-            Ver Libertad Financiera
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+          />
+          <DashboardNavCard
+            title="Patrimonio"
+            subtitle="Activos, deuda y detalle vivo"
+            icon={Landmark}
+            onClick={() => navigate('/patrimonio')}
+          />
+          <DashboardNavCard
+            title="Cierre"
+            subtitle="Preflight y cierre mensual"
+            icon={CalendarRange}
+            onClick={() => navigate('/closing')}
+          />
+          <DashboardNavCard
+            title="Lab"
+            subtitle="Simulaciones y sensibilidad"
+            icon={Sparkles}
             onClick={() => navigate('/analysis', { state: { analysisTab: 'lab' } })}
-          >
-            <Sparkles className="mr-1 h-3.5 w-3.5" />
-            Ver Lab
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-            onClick={refreshDashboardState}
-          >
-            <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-            Actualizar datos
-          </Button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <CompactInfoCard
-            title="Dependencia CapRiesgo"
-            value={model.capRiskDependence.level}
-            subtitle={model.capRiskDependence.dependenceSummary}
           />
-          <CompactInfoCard
-            title="Impacto en cobertura"
-            value={
-              model.capRiskDependence.impactRatioDelta === null
-                ? '—'
-                : `${model.capRiskDependence.impactRatioDelta >= 0 ? '+' : ''}${model.capRiskDependence.impactRatioDelta.toLocaleString('es-CL', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}x`
-            }
-            subtitle={model.capRiskDependence.impactSummary}
+          <DashboardNavCard
+            title="Ajustes"
+            subtitle="Sincronización y fuentes"
+            icon={Settings}
+            onClick={() => navigate('/settings')}
           />
         </div>
-      </Card>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="mt-1 rounded-full border border-slate-200 bg-white px-3 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.04)] hover:bg-slate-50 hover:text-slate-900"
+          onClick={refreshDashboardState}
+        >
+          <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+          Actualizar datos
+        </Button>
+      </section>
     </div>
   );
 };
