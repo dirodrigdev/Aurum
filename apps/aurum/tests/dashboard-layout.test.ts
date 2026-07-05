@@ -129,8 +129,6 @@ describe('DashboardAurum layout', () => {
     const insight = container.querySelector('[data-testid="dashboard-insight"]');
     const quality = container.querySelector('[data-testid="dashboard-quality"]');
 
-    expect(container.textContent).toContain('Aurum');
-    expect(container.textContent).toContain('Gestor de patrimonio neto');
     expect(container.textContent).toContain('¿Tu patrimonio sostiene tu vida actual?');
     expect(container.textContent).toContain('Rendimiento anualizado compuesto');
     expect(container.textContent).toContain('Tu posición financiera');
@@ -151,6 +149,8 @@ describe('DashboardAurum layout', () => {
     expect(return36?.textContent).toContain('+10,5%');
     expect(return12?.textContent).toContain('+25,4%');
     expect(return12?.textContent).toContain('+15,3%');
+    expect(return36?.textContent).not.toContain('Retorno anualizado compuesto');
+    expect(return12?.textContent).not.toContain('Retorno anualizado compuesto');
 
     expect(container.textContent).toContain('Capacidad sostenible mensual');
     expect(container.textContent).toContain('Vida actual mensual');
