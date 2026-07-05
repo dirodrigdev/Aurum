@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as wealthStorage from '../src/services/wealthStorage';
 
 vi.mock('../src/services/wealthStorage', () => ({
   FX_RATES_UPDATED_EVENT: 'fx-updated',
@@ -155,5 +156,35 @@ describe('DashboardAurum layout', () => {
     expect(container.textContent).toContain('Capacidad sostenible mensual');
     expect(container.textContent).toContain('Vida actual mensual');
     expect(container.textContent).toContain('Margen sostenible');
+    expect(container.textContent).toContain('$8,2MM');
+    expect(container.textContent).toContain('$6,0MM');
+    expect(container.textContent).toContain('$2,2MM');
+  });
+
+  it('refreshes dashboard state on mount and when the window regains focus', async () => {
+    const loadClosuresMock = vi.mocked(wealthStorage.loadClosures);
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(DashboardAurum),
+        ),
+      );
+    });
+
+    const callsAfterMount = loadClosuresMock.mock.calls.length;
+    expect(callsAfterMount).toBeGreaterThanOrEqual(2);
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(loadClosuresMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
   });
 });

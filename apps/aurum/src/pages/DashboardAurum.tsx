@@ -38,6 +38,20 @@ const freshnessBarSegments = [
   { key: 'stalePct', label: '> 30 días', className: 'bg-rose-300' },
 ] as const;
 
+const formatDashboardCompactClp = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    const scaled = (abs / 1_000_000).toLocaleString('es-CL', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+    return `${sign}$${scaled}MM`;
+  }
+  return formatFreedomCompactClp(value);
+};
+
 const ExecutivePositionCard = ({
   label,
   value,
@@ -65,8 +79,8 @@ const ExecutivePositionCard = ({
         <Icon className="h-[18px] w-[18px]" />
       </div>
       <div className="min-w-0">
-        <div className={cn('text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500', labelClassName)}>{label}</div>
-        <div className={cn('mt-2.5 text-[clamp(2rem,4.5vw,2.45rem)] font-semibold leading-none tracking-[-0.05em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
+        <div className={cn('text-[8px] font-semibold uppercase tracking-[0.18em] text-slate-500', labelClassName)}>{label}</div>
+        <div className={cn('mt-2.5 text-[clamp(1.65rem,5.2vw,2.3rem)] font-semibold leading-none tracking-[-0.06em]', tone === 'neutral' ? 'text-slate-900' : toneClasses[tone], valueClassName)}>{value}</div>
         <div className={cn('mt-2 text-[13px] leading-tight text-slate-500', subtitleClassName)}>{subtitle}</div>
       </div>
     </div>
@@ -113,14 +127,14 @@ const ExecutiveReturnCard = ({
         <TrendingUp className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
       </div>
     </div>
-    <div className="mt-4 grid grid-cols-2 gap-3.5">
-      <div className="border-r border-white/10 pr-4">
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 sm:gap-3.5">
+      <div className="border-b border-white/10 pb-3 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">USD</div>
-        <div className="mt-2 text-[clamp(2rem,4.7vw,2.6rem)] font-semibold leading-none tracking-[-0.05em] text-emerald-300">{usdValue}</div>
+        <div className="mt-2 text-[clamp(1.65rem,6.8vw,2.45rem)] font-semibold leading-none tracking-[-0.06em] text-emerald-300">{usdValue}</div>
       </div>
       <div>
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">UF</div>
-        <div className="mt-2 text-[clamp(2rem,4.7vw,2.6rem)] font-semibold leading-none tracking-[-0.05em] text-emerald-300">{ufValue}</div>
+        <div className="mt-2 text-[clamp(1.65rem,6.8vw,2.45rem)] font-semibold leading-none tracking-[-0.06em] text-emerald-300">{ufValue}</div>
       </div>
     </div>
     <div className="mt-4 border-t border-white/10 pt-3 text-[13px] text-slate-300/84">
@@ -191,8 +205,16 @@ export const DashboardAurum: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const onFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      refreshDashboardState();
+    };
+
+    refreshDashboardState();
     window.addEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
     window.addEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
     window.addEventListener(
       RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
       refreshDashboardState as EventListener,
@@ -200,6 +222,8 @@ export const DashboardAurum: React.FC = () => {
     return () => {
       window.removeEventListener(WEALTH_DATA_UPDATED_EVENT, refreshDashboardState as EventListener);
       window.removeEventListener(FX_RATES_UPDATED_EVENT, refreshDashboardState as EventListener);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
       window.removeEventListener(
         RISK_CAPITAL_TOTALS_PREFERENCE_UPDATED_EVENT,
         refreshDashboardState as EventListener,
@@ -341,14 +365,14 @@ export const DashboardAurum: React.FC = () => {
         <div className="grid grid-cols-3 gap-3">
         <ExecutivePositionCard
           label={model.cards.sustainable.label}
-          value={formatFreedomCompactClp(model.cards.sustainable.valueClp)}
+          value={formatDashboardCompactClp(model.cards.sustainable.valueClp)}
           subtitle={model.cards.sustainable.subtitle}
           tone={model.cards.sustainable.tone}
           icon={Shield}
         />
         <ExecutivePositionCard
           label={model.cards.lifestyle.label}
-          value={formatFreedomCompactClp(model.cards.lifestyle.valueClp)}
+          value={formatDashboardCompactClp(model.cards.lifestyle.valueClp)}
           subtitle={model.cards.lifestyle.subtitle}
           tone={model.cards.lifestyle.tone}
           icon={Home}
@@ -359,7 +383,7 @@ export const DashboardAurum: React.FC = () => {
         />
         <ExecutivePositionCard
           label={model.cards.margin.label}
-          value={formatFreedomCompactClp(model.cards.margin.valueClp)}
+          value={formatDashboardCompactClp(model.cards.margin.valueClp)}
           subtitle={model.cards.margin.subtitle}
           tone={model.cards.margin.tone}
           icon={TrendingUp}
